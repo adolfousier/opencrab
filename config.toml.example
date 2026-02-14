@@ -1,0 +1,84 @@
+# OpenCrab Configuration File
+# Copy this file to one of these locations:
+#   - Linux/macOS: ~/.config/opencrab/config.toml or ~/opencrab/config.toml
+#   - Windows: %APPDATA%\opencrab\config.toml or opencrab\config.toml
+
+[database]
+# Database file location (stores conversation history)
+path = "~/.opencrab/opencrab.db"
+
+[providers]
+# ========================================
+# OpenAI-Compatible Provider (Local LLMs)
+# ========================================
+# Use this for LM Studio, Ollama, LocalAI, etc.
+[providers.openai]
+enabled = true
+base_url = "http://localhost:1234/v1/chat/completions"  # LM Studio default
+# ⭐ IMPORTANT: Set this to match the model name loaded in LM Studio!
+# Common examples:
+#   - qwen2.5-coder-7b-instruct
+#   - codellama-7b-instruct
+#   - deepseek-coder-6.7b-instruct
+#   - llama-3.2-1b-instruct
+default_model = "qwen2.5-coder-7b-instruct"
+
+# Other local LLM servers:
+# Ollama: base_url = "http://localhost:11434/v1/chat/completions"
+# LocalAI: base_url = "http://localhost:8080/v1/chat/completions"
+
+# ========================================
+# Official OpenAI Provider
+# ========================================
+# [providers.openai]
+# enabled = true
+# api_key = "sk-..."  # Or use OPENAI_API_KEY environment variable
+# default_model = "gpt-4-turbo-preview"  # Optional: override default model
+
+# ========================================
+# Anthropic Provider (Claude)
+# ========================================
+# [providers.anthropic]
+# enabled = true
+# api_key = "sk-ant-..."  # Or use ANTHROPIC_API_KEY environment variable
+# default_model = "claude-3-5-sonnet-20240620"  # Optional: override default
+
+# ========================================
+# Qwen Provider (Local vLLM / DashScope Cloud)
+# ========================================
+# For local Qwen deployment (vLLM, LM Studio with Qwen models):
+# [providers.qwen]
+# enabled = true
+# base_url = "http://localhost:8000/v1/chat/completions"  # vLLM default
+# default_model = "qwen3-8b"
+# tool_parser = "hermes"  # Options: "hermes" (XML tags), "native" (✿FUNCTION✿ markers), "openai"
+# enable_thinking = true  # Enable Qwen3 thinking mode
+# thinking_budget = 5000  # Optional: limit thinking tokens
+
+# Tool parser options:
+# - "hermes": Uses <tool_call> XML tags (recommended for vLLM with --tool-call-parser hermes)
+# - "native" or "qwen": Uses ✿FUNCTION✿ Unicode markers (official Qwen-Agent format)
+# - "openai": Uses standard OpenAI tool_calls format
+
+# For DashScope cloud API:
+# [providers.qwen]
+# enabled = true
+# api_key = "your-dashscope-key"  # Or use DASHSCOPE_API_KEY env var
+# region = "intl"  # "intl" (Singapore) or "cn" (Beijing)
+# default_model = "qwen-plus"  # qwen-max, qwen-plus, qwen-turbo
+# enable_thinking = false  # Thinking mode for Qwen3 models only
+
+# Environment variables for Qwen:
+# - QWEN_BASE_URL: Local endpoint URL
+# - DASHSCOPE_API_KEY: Cloud API key
+# - QWEN_ENABLE_THINKING: Enable/disable thinking mode (true/false)
+
+# ========================================
+# Tips for Using Local LLMs
+# ========================================
+# 1. Make sure LM Studio is running before starting OpenCrab
+# 2. Load a model in LM Studio first
+# 3. Set default_model to EXACTLY match the model name shown in LM Studio
+# 4. Increase context length in LM Studio if you get overflow errors:
+#    - Recommended: 8192 or higher
+#    - Location: LM Studio > Model Settings > Context Length
