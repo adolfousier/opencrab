@@ -14,6 +14,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
+use unicode_width::UnicodeWidthStr;
 
 /// Render the entire UI
 pub fn render(f: &mut Frame, app: &App) {
@@ -125,8 +126,10 @@ pub fn render(f: &mut Frame, app: &App) {
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
     // Format working directory - show relative or full path
     let working_dir = app.working_directory.to_string_lossy().to_string();
-    let display_dir = if working_dir.len() > 60 {
-        format!("...{}", &working_dir[working_dir.len() - 57..])
+    let display_dir = if working_dir.width() > 60 {
+        // Take the last ~57 display-width chars, ensuring we split at a char boundary
+        let suffix_start = char_boundary_at_width_from_end(&working_dir, 57);
+        format!("...{}", &working_dir[suffix_start..])
     } else {
         working_dir
     };
@@ -162,11 +165,13 @@ fn wrap_line_with_padding<'a>(line: Line<'a>, max_width: usize, padding: &'a str
     if max_width == 0 {
         return vec![line];
     }
-    // Flatten all spans into a single styled string for wrapping
-    let total_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+    // Use display width (not byte length) for wrapping decisions
+    let total_width: usize = line.spans.iter().map(|s| s.content.width()).sum();
     if total_width <= max_width {
         return vec![line];
     }
+
+    let padding_width = padding.width();
 
     // Collect all text and track style boundaries
     let mut segments: Vec<(String, Style)> = Vec::new();
@@ -186,25 +191,30 @@ fn wrap_line_with_padding<'a>(line: Line<'a>, max_width: usize, padding: &'a str
             if available == 0 {
                 result.push(Line::from(current_spans));
                 current_spans = vec![Span::styled(padding.to_string(), Style::default())];
-                current_width = padding.len();
+                current_width = padding_width;
                 continue;
             }
 
-            if remaining.len() <= available {
+            let remaining_width = remaining.width();
+            if remaining_width <= available {
                 current_spans.push(Span::styled(remaining.to_string(), style));
-                current_width += remaining.len();
+                current_width += remaining_width;
                 break;
             } else {
-                let break_at = remaining[..available]
+                // Find the byte index where cumulative display width reaches `available`
+                let byte_limit = char_boundary_at_width(remaining, available);
+                // Look for a word break (space) within that range
+                let break_at = remaining[..byte_limit]
                     .rfind(' ')
                     .map(|p| p + 1)
-                    .unwrap_or(available);
+                    .unwrap_or(byte_limit);
+                let break_at = if break_at == 0 { byte_limit.max(remaining.ceil_char_boundary(1)) } else { break_at };
                 let (chunk, rest) = remaining.split_at(break_at);
                 current_spans.push(Span::styled(chunk.to_string(), style));
                 remaining = rest.trim_start();
                 result.push(Line::from(current_spans));
                 current_spans = vec![Span::styled(padding.to_string(), Style::default())];
-                current_width = padding.len();
+                current_width = padding_width;
             }
         }
     }
@@ -215,6 +225,34 @@ fn wrap_line_with_padding<'a>(line: Line<'a>, max_width: usize, padding: &'a str
         result.push(line);
     }
     result
+}
+
+/// Find the byte index in `s` where the cumulative display width first reaches or exceeds `target_width`.
+/// Always returns a valid char boundary.
+fn char_boundary_at_width(s: &str, target_width: usize) -> usize {
+    let mut width = 0;
+    for (idx, ch) in s.char_indices() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > target_width {
+            return idx;
+        }
+        width += ch_width;
+    }
+    s.len()
+}
+
+/// Find the byte index to start a suffix of approximately `target_width` display columns.
+/// Always returns a valid char boundary.
+fn char_boundary_at_width_from_end(s: &str, target_width: usize) -> usize {
+    let mut width = 0;
+    for (idx, ch) in s.char_indices().rev() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        width += ch_width;
+        if width >= target_width {
+            return idx;
+        }
+    }
+    0
 }
 
 /// Render the chat messages
@@ -579,16 +617,18 @@ fn render_inline_approval<'a>(
                     for (key, value) in obj.iter().take(3) {
                         let value_str = match value {
                             serde_json::Value::String(s) => {
-                                if s.len() > 50 {
-                                    format!("\"{}...\"", &s[..47])
+                                if s.width() > 50 {
+                                    let end = char_boundary_at_width(s, 47);
+                                    format!("\"{}...\"", &s[..end])
                                 } else {
                                     format!("\"{}\"", s)
                                 }
                             }
                             _ => {
                                 let s = value.to_string();
-                                if s.len() > 50 {
-                                    format!("{}...", &s[..47])
+                                if s.width() > 50 {
+                                    let end = char_boundary_at_width(&s, 47);
+                                    format!("{}...", &s[..end])
                                 } else {
                                     s
                                 }

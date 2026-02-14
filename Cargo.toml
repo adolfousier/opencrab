@@ -96,6 +96,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 keyring = "3.6"
 
 # Misc
+unicode-width = "0.2"
 bytes = "1.9"
 mime = "0.3"
 base64 = "0.22"
