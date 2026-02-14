@@ -333,9 +333,14 @@ impl App {
         self.agent_service = agent_service;
     }
 
-    /// Receive next event
+    /// Receive next event (blocks until available)
     pub async fn next_event(&mut self) -> Option<TuiEvent> {
         self.event_handler.next().await
+    }
+
+    /// Try to receive next event without blocking (returns None if queue is empty)
+    pub fn try_next_event(&mut self) -> Option<TuiEvent> {
+        self.event_handler.try_next()
     }
 
     /// Handle an event
@@ -410,6 +415,9 @@ impl App {
                 } else {
                     self.push_system_message(format!("{} -- FAILED: {}", desc, summary));
                 }
+            }
+            TuiEvent::FocusGained | TuiEvent::FocusLost => {
+                // Handled by the event loop for tick coalescing
             }
             TuiEvent::Resize(_, _) | TuiEvent::AgentProcessing => {
                 // These are handled by the render loop

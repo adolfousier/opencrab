@@ -18,6 +18,12 @@ pub enum TuiEvent {
     /// Mouse scroll event
     MouseScroll(i8), // positive = up, negative = down
 
+    /// Terminal gained focus
+    FocusGained,
+
+    /// Terminal lost focus
+    FocusLost,
+
     /// User pasted text
     Paste(String),
 
@@ -160,9 +166,14 @@ impl EventHandler {
         self.tx.clone()
     }
 
-    /// Receive the next event
+    /// Receive the next event (blocks until available)
     pub async fn next(&mut self) -> Option<TuiEvent> {
         self.rx.recv().await
+    }
+
+    /// Try to receive the next event without blocking
+    pub fn try_next(&mut self) -> Option<TuiEvent> {
+        self.rx.try_recv().ok()
     }
 
     /// Start listening for terminal events
@@ -208,7 +219,16 @@ impl EventHandler {
                                     break;
                                 }
                             }
-                            _ => {}
+                            crossterm::event::Event::FocusGained => {
+                                if tx.send(TuiEvent::FocusGained).is_err() {
+                                    break;
+                                }
+                            }
+                            crossterm::event::Event::FocusLost => {
+                                if tx.send(TuiEvent::FocusLost).is_err() {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }

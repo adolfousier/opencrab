@@ -133,7 +133,7 @@ fn validate_plan_file_path(path: &Path, working_dir: &Path) -> Result<()> {
     }
 
     // Extract and validate UUID portion
-    let uuid_part = &file_name[14..file_name.len() - 5]; // Remove ".opencrabs_plan_" and ".json"
+    let uuid_part = &file_name[16..file_name.len() - 5]; // Remove ".opencrabs_plan_" (16 chars) and ".json" (5 chars)
     uuid::Uuid::parse_str(uuid_part).map_err(|_| {
         ToolError::InvalidInput("Plan filename must contain a valid UUID".to_string())
     })?;

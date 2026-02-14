@@ -7,7 +7,10 @@ use super::events::EventHandler;
 use super::render;
 use anyhow::Result;
 use crossterm::{
-    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -22,7 +25,13 @@ pub async fn run(mut app: App) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture,
+        EnableFocusChange
+    )?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -43,7 +52,8 @@ pub async fn run(mut app: App) -> Result<()> {
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableBracketedPaste,
-        DisableMouseCapture
+        DisableMouseCapture,
+        DisableFocusChange
     )?;
     terminal.show_cursor()?;
 
@@ -55,6 +65,8 @@ async fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Resu
 where
     B::Error: Send + Sync + 'static,
 {
+    use super::events::TuiEvent;
+
     loop {
         // Render
         terminal.draw(|f| render::render(f, app))?;
@@ -64,15 +76,31 @@ where
             break;
         }
 
-        // Wait for next event with timeout
+        // Wait for at least one event (with timeout for animation refresh)
         let event =
             tokio::time::timeout(tokio::time::Duration::from_millis(100), app.next_event()).await;
 
-        // Handle event if received
         if let Ok(Some(event)) = event {
             if let Err(e) = app.handle_event(event).await {
-                // Show error in UI
                 app.error_message = Some(e.to_string());
+            }
+
+            // Drain all remaining queued events before re-rendering.
+            // This prevents stale Tick events from accumulating while
+            // backgrounded and causing UI lag on resume.
+            loop {
+                match app.try_next_event() {
+                    Some(TuiEvent::Tick) => {
+                        // Coalesce consecutive ticks — skip without re-rendering
+                        continue;
+                    }
+                    Some(event) => {
+                        if let Err(e) = app.handle_event(event).await {
+                            app.error_message = Some(e.to_string());
+                        }
+                    }
+                    None => break,
+                }
             }
         }
     }

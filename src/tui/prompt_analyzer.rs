@@ -213,7 +213,7 @@ mod tests {
 
         let prompt = "make a plan for implementing JWT authentication";
         let result = analyzer.analyze_and_transform(prompt);
-        assert!(result.contains("TOOL HINT"));
+        assert!(result.contains("CRITICAL"));
         assert!(result.contains("`plan` tool"));
     }
 
@@ -262,7 +262,7 @@ mod tests {
 
         let prompt = "MAKE A PLAN for this feature";
         let result = analyzer.analyze_and_transform(prompt);
-        assert!(result.contains("TOOL HINT"));
+        assert!(result.contains("CRITICAL"));
         assert!(result.contains("`plan` tool"));
     }
 
