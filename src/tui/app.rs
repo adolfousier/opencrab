@@ -244,6 +244,9 @@ pub struct App {
     // Queued message — shared with agent so it can be injected between tool calls
     pub(crate) message_queue: Arc<tokio::sync::Mutex<Option<String>>>,
 
+    // Shared session ID — channels (Telegram, WhatsApp) read this to use the same session
+    shared_session_id: Arc<tokio::sync::Mutex<Option<Uuid>>>,
+
     // Context window tracking
     pub context_max_tokens: u32,
     pub last_input_tokens: Option<u32>,
@@ -318,6 +321,7 @@ impl App {
             force_onboard: false,
             cancel_token: None,
             message_queue: Arc::new(tokio::sync::Mutex::new(None)),
+            shared_session_id: Arc::new(tokio::sync::Mutex::new(None)),
             context_max_tokens: agent_service.context_window_for_model(agent_service.provider_model()),
             last_input_tokens: None,
             active_tool_group: None,
@@ -339,6 +343,11 @@ impl App {
     /// Get the provider model
     pub fn provider_model(&self) -> &str {
         self.agent_service.provider_model()
+    }
+
+    /// Get the shared session ID handle (for channels like Telegram/WhatsApp)
+    pub fn shared_session_id(&self) -> Arc<tokio::sync::Mutex<Option<Uuid>>> {
+        self.shared_session_id.clone()
     }
 
     /// Initialize the app by loading or creating a session
@@ -800,12 +809,10 @@ impl App {
                         };
                         let _ = response_tx.send(response.clone());
                         let _ = self.event_sender().send(TuiEvent::ToolApprovalResponse(response));
-                        if let Some(approval) = self.messages.iter_mut().rev()
-                            .find_map(|m| m.approval.as_mut())
-                            .filter(|a| a.state == ApprovalState::Pending)
-                        {
-                            approval.state = ApprovalState::Approved(option);
-                        }
+                        // Remove the approval message — tool progress is shown in the tool group
+                        self.messages.retain(|m| {
+                            !m.approval.as_ref().is_some_and(|a| a.state == ApprovalState::Pending)
+                        });
                     }
                 }
                 return Ok(());
@@ -1130,6 +1137,7 @@ impl App {
                 if is_current {
                     self.current_session = None;
                     self.messages.clear();
+                    *self.shared_session_id.lock().await = None;
                 }
                 self.load_sessions().await?;
                 // Adjust index if it's now out of bounds
@@ -1256,6 +1264,9 @@ impl App {
         self.mode = AppMode::Chat;
         self.approval_auto_session = false;
 
+        // Sync shared session ID for channels (Telegram, WhatsApp)
+        *self.shared_session_id.lock().await = Some(session.id);
+
         // Reload sessions list
         self.load_sessions().await?;
 
@@ -1275,10 +1286,26 @@ impl App {
             .list_messages_for_session(session_id)
             .await?;
 
-        self.current_session = Some(session);
+        self.current_session = Some(session.clone());
         self.messages = messages.into_iter().map(DisplayMessage::from).collect();
         self.scroll_offset = 0;
         self.approval_auto_session = false;
+
+        // Sync shared session ID for channels (Telegram, WhatsApp)
+        *self.shared_session_id.lock().await = Some(session.id);
+
+        // Estimate context usage from loaded messages (chars/3 heuristic)
+        // This gets replaced by the actual API input_tokens on the next response
+        let estimated_tokens: u32 = self
+            .messages
+            .iter()
+            .map(|m| (m.content.len() as u32) / 3)
+            .sum();
+        if estimated_tokens > 0 {
+            self.last_input_tokens = Some(estimated_tokens);
+        } else {
+            self.last_input_tokens = None;
+        }
 
         Ok(())
     }
@@ -1428,21 +1455,21 @@ impl App {
                     format!("bash: {}", short)
                 }
             }
-            "read" => {
+            "read_file" | "read" => {
                 let path = tool_input.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
                 format!("Read {}", path)
             }
-            "write" => {
+            "write_file" | "write" => {
                 let path = tool_input.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
-                format!("Wrote {}", path)
+                format!("Write {}", path)
             }
-            "edit" => {
+            "edit_file" | "edit" => {
                 let path = tool_input.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
-                format!("Edited {}", path)
+                format!("Edit {}", path)
             }
             "ls" => {
                 let path = tool_input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                format!("Listed {}", path)
+                format!("ls {}", path)
             }
             "glob" => {
                 let pattern = tool_input.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
@@ -1469,6 +1496,32 @@ impl App {
                 let query = tool_input.get("query").and_then(|v| v.as_str()).unwrap_or("?");
                 format!("Brave search: {}", query)
             }
+            "http_request" => {
+                let url = tool_input.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+                let method = tool_input.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
+                format!("{} {}", method, url)
+            }
+            "execute_code" => {
+                let lang = tool_input.get("language").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Execute {}", lang)
+            }
+            "notebook_edit" => {
+                let path = tool_input.get("notebook_path").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Notebook {}", path)
+            }
+            "parse_document" => {
+                let path = tool_input.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Parse {}", path)
+            }
+            "task_manager" => {
+                let action = tool_input.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Task: {}", action)
+            }
+            "plan" => {
+                let action = tool_input.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Plan: {}", action)
+            }
+            "session_context" => "Session context".to_string(),
             other => other.to_string(),
         }
     }

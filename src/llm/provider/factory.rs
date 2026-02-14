@@ -9,28 +9,43 @@ use super::{
     Provider,
 };
 use crate::config::{Config, ProviderConfig, QwenProviderConfig};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 
 /// Create a provider based on configuration with fallback priority
 ///
 /// Priority order:
-/// 1. Qwen (if configured with credentials)
-/// 2. OpenAI (if configured with credentials)
-/// 3. Anthropic (default fallback)
+/// 1. Qwen (if explicitly configured with base_url or DashScope key)
+/// 2. Anthropic (default — recommended provider)
+/// 3. OpenAI (only if Anthropic is unavailable)
+///
+/// Note: OPENAI_API_KEY may be present just for TTS voice synthesis.
+/// OpenAI is only used as the text provider when Anthropic has no credentials.
 pub fn create_provider(config: &Config) -> Result<Arc<dyn Provider>> {
-    // Try Qwen first
+    // Try Qwen first (only if explicitly configured)
     if let Some(provider) = try_create_qwen(config)? {
         return Ok(provider);
     }
 
-    // Try OpenAI
+    // Try Anthropic (default provider)
+    if let Some(provider) = try_create_anthropic(config)? {
+        return Ok(provider);
+    }
+
+    // Fall back to OpenAI (only if Anthropic unavailable)
     if let Some(provider) = try_create_openai(config)? {
         return Ok(provider);
     }
 
-    // Fall back to Anthropic
-    create_anthropic(config)
+    anyhow::bail!(
+        "No provider configured.\n\nPlease set one of:\n  \
+         - ANTHROPIC_API_KEY for Claude\n  \
+         - ANTHROPIC_MAX_SETUP_TOKEN for Claude Max (OAuth)\n  \
+         - OPENAI_API_KEY for OpenAI/GPT\n  \
+         - OPENAI_BASE_URL for local LLMs (LM Studio, Ollama)\n  \
+         - QWEN_BASE_URL for local Qwen (vLLM)\n  \
+         - DASHSCOPE_API_KEY for DashScope cloud"
+    )
 }
 
 /// Try to create Qwen provider if configured
@@ -150,17 +165,17 @@ fn configure_openai(mut provider: OpenAIProvider, config: &ProviderConfig) -> Op
     provider
 }
 
-/// Create Anthropic provider (default fallback)
-fn create_anthropic(config: &Config) -> Result<Arc<dyn Provider>> {
-    let anthropic_config = config.providers.anthropic.as_ref().context(
-        "No provider configured.\n\nPlease set one of:\n  - ANTHROPIC_API_KEY for Claude\n  - ANTHROPIC_MAX_SETUP_TOKEN for Claude Max (OAuth)\n  - OPENAI_API_KEY for OpenAI/GPT\n  - OPENAI_BASE_URL for local LLMs (LM Studio, Ollama)\n  - QWEN_BASE_URL for local Qwen (vLLM)\n  - DASHSCOPE_API_KEY for DashScope cloud\n\nExample for vLLM with Qwen:\n  export QWEN_BASE_URL=\"http://localhost:8000/v1/chat/completions\"",
-    )?;
+/// Try to create Anthropic provider if configured
+fn try_create_anthropic(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
+    let anthropic_config = match &config.providers.anthropic {
+        Some(cfg) => cfg,
+        None => return Ok(None),
+    };
 
-    let api_key = anthropic_config
-        .api_key
-        .as_ref()
-        .context("Anthropic API key not set")?
-        .clone();
+    let api_key = match &anthropic_config.api_key {
+        Some(key) => key.clone(),
+        None => return Ok(None),
+    };
 
     let mut provider = AnthropicProvider::new(api_key);
 
@@ -173,7 +188,7 @@ fn create_anthropic(config: &Config) -> Result<Arc<dyn Provider>> {
     tracing::info!("Using Anthropic provider");
     println!("🤖 Using Anthropic Claude\n");
 
-    Ok(Arc::new(provider))
+    Ok(Some(Arc::new(provider)))
 }
 
 #[cfg(test)]
@@ -203,12 +218,13 @@ mod tests {
     }
 
     #[test]
-    fn test_create_provider_with_openai() {
+    fn test_anthropic_takes_priority_over_openai() {
+        // When both are configured, Anthropic wins (OpenAI key may be for TTS only)
         let config = Config {
             providers: ProviderConfigs {
                 openai: Some(ProviderConfig {
                     enabled: true,
-                    api_key: Some("test-key".to_string()),
+                    api_key: Some("openai-key".to_string()),
                     base_url: None,
                     default_model: None,
                 }),
@@ -218,6 +234,29 @@ mod tests {
                     base_url: None,
                     default_model: None,
                 }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let result = create_provider(&config);
+        assert!(result.is_ok());
+        let provider = result.unwrap();
+        assert_eq!(provider.name(), "anthropic");
+    }
+
+    #[test]
+    fn test_openai_used_when_anthropic_unavailable() {
+        // OpenAI is only used as text provider when Anthropic has no credentials
+        let config = Config {
+            providers: ProviderConfigs {
+                openai: Some(ProviderConfig {
+                    enabled: true,
+                    api_key: Some("openai-key".to_string()),
+                    base_url: None,
+                    default_model: None,
+                }),
+                anthropic: None,
                 ..Default::default()
             },
             ..Default::default()
@@ -268,8 +307,7 @@ mod tests {
 
         let result = create_provider(&config);
         assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("No provider configured"));
-        }
+        let err = format!("{}", result.as_ref().err().expect("should be error"));
+        assert!(err.contains("No provider configured"), "error: {}", err);
     }
 }

@@ -127,6 +127,8 @@ pub enum OnboardingStep {
     Workspace,
     Gateway,
     Channels,
+    TelegramSetup,
+    VoiceSetup,
     Daemon,
     HealthCheck,
     BrainSetup,
@@ -142,16 +144,18 @@ impl OnboardingStep {
             Self::Workspace => 3,
             Self::Gateway => 4,
             Self::Channels => 5,
-            Self::Daemon => 6,
-            Self::HealthCheck => 7,
-            Self::BrainSetup => 8,
-            Self::Complete => 9,
+            Self::TelegramSetup => 5, // sub-step of Channels
+            Self::VoiceSetup => 6,
+            Self::Daemon => 7,
+            Self::HealthCheck => 8,
+            Self::BrainSetup => 9,
+            Self::Complete => 10,
         }
     }
 
     /// Total number of steps (excluding Complete)
     pub fn total() -> usize {
-        8
+        9
     }
 
     /// Step title
@@ -162,6 +166,8 @@ impl OnboardingStep {
             Self::Workspace => "Workspace Setup",
             Self::Gateway => "Gateway Configuration",
             Self::Channels => "Channel Integrations",
+            Self::TelegramSetup => "Telegram Bot Setup",
+            Self::VoiceSetup => "Voice Configuration",
             Self::Daemon => "Background Service",
             Self::HealthCheck => "Health Check",
             Self::BrainSetup => "Brain Personalization",
@@ -177,6 +183,8 @@ impl OnboardingStep {
             Self::Workspace => "Set up your brain workspace directory",
             Self::Gateway => "Configure the HTTP API gateway",
             Self::Channels => "Enable messaging integrations",
+            Self::TelegramSetup => "Connect your Telegram bot",
+            Self::VoiceSetup => "Speech-to-text and text-to-speech",
             Self::Daemon => "Install background service",
             Self::HealthCheck => "Verify your setup",
             Self::BrainSetup => "Let your agent actually know who you are",
@@ -209,6 +217,19 @@ pub enum AuthField {
     Model,
     CustomBaseUrl,
     CustomModel,
+}
+
+/// Which field is focused in TelegramSetup step
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelegramField {
+    BotToken,
+}
+
+/// Which field is focused in VoiceSetup step
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceField {
+    GroqApiKey,
+    TtsToggle,
 }
 
 /// Which text area is focused in BrainSetup step
@@ -244,7 +265,16 @@ pub struct OnboardingWizard {
     // Step 5: Channels
     pub channel_toggles: Vec<(String, bool)>,
 
-    // Step 6: Daemon
+    // Step 5b: Telegram Setup (shown when Telegram is enabled)
+    pub telegram_field: TelegramField,
+    pub telegram_token_input: String,
+
+    // Step 6: Voice Setup
+    pub voice_field: VoiceField,
+    pub groq_api_key_input: String,
+    pub tts_enabled: bool,
+
+    // Step 7: Daemon
     pub install_daemon: bool,
 
     // Step 7: Health check
@@ -309,6 +339,13 @@ impl OnboardingWizard {
                 .iter()
                 .map(|name| (name.to_string(), false))
                 .collect(),
+
+            telegram_field: TelegramField::BotToken,
+            telegram_token_input: String::new(),
+
+            voice_field: VoiceField::GroqApiKey,
+            groq_api_key_input: String::new(),
+            tts_enabled: false,
 
             install_daemon: false,
 
@@ -412,6 +449,23 @@ impl OnboardingWizard {
                 self.step = OnboardingStep::Channels;
             }
             OnboardingStep::Channels => {
+                // If Telegram was enabled, go to Telegram setup sub-step
+                if self.is_telegram_enabled() {
+                    self.step = OnboardingStep::TelegramSetup;
+                    self.telegram_field = TelegramField::BotToken;
+                    self.detect_existing_telegram_token();
+                } else {
+                    self.step = OnboardingStep::VoiceSetup;
+                    self.voice_field = VoiceField::GroqApiKey;
+                    self.detect_existing_groq_key();
+                }
+            }
+            OnboardingStep::TelegramSetup => {
+                self.step = OnboardingStep::VoiceSetup;
+                self.voice_field = VoiceField::GroqApiKey;
+                self.detect_existing_groq_key();
+            }
+            OnboardingStep::VoiceSetup => {
                 self.step = OnboardingStep::Daemon;
             }
             OnboardingStep::Daemon => {
@@ -457,8 +511,20 @@ impl OnboardingWizard {
             OnboardingStep::Channels => {
                 self.step = OnboardingStep::Gateway;
             }
-            OnboardingStep::Daemon => {
+            OnboardingStep::TelegramSetup => {
                 self.step = OnboardingStep::Channels;
+            }
+            OnboardingStep::VoiceSetup => {
+                if self.is_telegram_enabled() {
+                    self.step = OnboardingStep::TelegramSetup;
+                    self.telegram_field = TelegramField::BotToken;
+                } else {
+                    self.step = OnboardingStep::Channels;
+                }
+            }
+            OnboardingStep::Daemon => {
+                self.step = OnboardingStep::VoiceSetup;
+                self.voice_field = VoiceField::GroqApiKey;
             }
             OnboardingStep::HealthCheck => {
                 if self.mode == WizardMode::QuickStart {
@@ -558,6 +624,8 @@ impl OnboardingWizard {
             OnboardingStep::Workspace => self.handle_workspace_key(event),
             OnboardingStep::Gateway => self.handle_gateway_key(event),
             OnboardingStep::Channels => self.handle_channels_key(event),
+            OnboardingStep::TelegramSetup => self.handle_telegram_setup_key(event),
+            OnboardingStep::VoiceSetup => self.handle_voice_setup_key(event),
             OnboardingStep::Daemon => self.handle_daemon_key(event),
             OnboardingStep::HealthCheck => self.handle_health_check_key(event),
             OnboardingStep::BrainSetup => self.handle_brain_setup_key(event),
@@ -833,6 +901,106 @@ impl OnboardingWizard {
                 self.next_step();
             }
             _ => {}
+        }
+        WizardAction::None
+    }
+
+    /// Check if Telegram channel is enabled in toggles
+    fn is_telegram_enabled(&self) -> bool {
+        self.channel_toggles.first().is_some_and(|t| t.1)
+    }
+
+    /// Detect existing Telegram bot token from env var
+    fn detect_existing_telegram_token(&mut self) {
+        if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN")
+            && !token.is_empty()
+        {
+            self.telegram_token_input = EXISTING_KEY_SENTINEL.to_string();
+            return;
+        }
+        // Also check keyring
+        if SecretString::from_keyring_optional("telegram_bot_token").is_some() {
+            self.telegram_token_input = EXISTING_KEY_SENTINEL.to_string();
+        }
+    }
+
+    /// Check if telegram token holds a pre-existing value
+    pub fn has_existing_telegram_token(&self) -> bool {
+        self.telegram_token_input == EXISTING_KEY_SENTINEL
+    }
+
+    /// Detect existing Groq API key from env var
+    fn detect_existing_groq_key(&mut self) {
+        if let Ok(key) = std::env::var("GROQ_API_KEY")
+            && !key.is_empty()
+        {
+            self.groq_api_key_input = EXISTING_KEY_SENTINEL.to_string();
+        }
+    }
+
+    /// Check if groq key holds a pre-existing value
+    pub fn has_existing_groq_key(&self) -> bool {
+        self.groq_api_key_input == EXISTING_KEY_SENTINEL
+    }
+
+    fn handle_telegram_setup_key(&mut self, event: KeyEvent) -> WizardAction {
+        match self.telegram_field {
+            TelegramField::BotToken => match event.code {
+                KeyCode::Char(c) => {
+                    if self.has_existing_telegram_token() {
+                        self.telegram_token_input.clear();
+                    }
+                    self.telegram_token_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    if self.has_existing_telegram_token() {
+                        self.telegram_token_input.clear();
+                    } else {
+                        self.telegram_token_input.pop();
+                    }
+                }
+                KeyCode::Enter => {
+                    self.next_step();
+                }
+                _ => {}
+            },
+        }
+        WizardAction::None
+    }
+
+    fn handle_voice_setup_key(&mut self, event: KeyEvent) -> WizardAction {
+        match self.voice_field {
+            VoiceField::GroqApiKey => match event.code {
+                KeyCode::Char(c) => {
+                    if self.has_existing_groq_key() {
+                        self.groq_api_key_input.clear();
+                    }
+                    self.groq_api_key_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    if self.has_existing_groq_key() {
+                        self.groq_api_key_input.clear();
+                    } else {
+                        self.groq_api_key_input.pop();
+                    }
+                }
+                KeyCode::Tab | KeyCode::Enter => {
+                    self.voice_field = VoiceField::TtsToggle;
+                }
+                _ => {}
+            },
+            VoiceField::TtsToggle => match event.code {
+                KeyCode::Char(' ') | KeyCode::Up | KeyCode::Down => {
+                    self.tts_enabled = !self.tts_enabled;
+                }
+                KeyCode::BackTab => {
+                    self.voice_field = VoiceField::GroqApiKey;
+                }
+                KeyCode::Enter => {
+                    self.next_step();
+                }
+                _ => {}
+            },
         }
         WizardAction::None
     }
@@ -1140,12 +1308,19 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
             enabled: false,
         };
 
-        // Channels config
+        // Channels config — Telegram gets the token from the wizard
+        let telegram_token = if !self.telegram_token_input.is_empty()
+            && !self.has_existing_telegram_token()
+        {
+            Some(self.telegram_token_input.clone())
+        } else {
+            None
+        };
         config.channels = ChannelsConfig {
             telegram: ChannelConfig {
-                enabled: self.channel_toggles.first().is_some_and(|t| t.1),
-                token: None,
-                allowed_users: Vec::new(),
+                enabled: self.is_telegram_enabled(),
+                token: telegram_token,
+                allowed_users: Vec::new(), // user adds via /start after setup
             },
             discord: ChannelConfig {
                 enabled: self.channel_toggles.get(1).is_some_and(|t| t.1),
@@ -1174,6 +1349,22 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
             },
         };
 
+        // Voice config
+        let groq_key = if !self.groq_api_key_input.is_empty()
+            && !self.has_existing_groq_key()
+        {
+            Some(self.groq_api_key_input.clone())
+        } else {
+            None
+        };
+        config.voice = crate::config::VoiceConfig {
+            stt_enabled: groq_key.is_some() || self.has_existing_groq_key(),
+            tts_enabled: self.tts_enabled,
+            tts_voice: "ash".to_string(),
+            tts_model: "gpt-4o-mini-tts".to_string(),
+            groq_api_key: groq_key,
+        };
+
         // Write config.toml
         let config_path = dirs::config_dir()
             .ok_or_else(|| "Cannot determine config directory".to_string())?
@@ -1192,6 +1383,15 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
                 secret
                     .save_to_keyring(provider.keyring_key)
                     .map_err(|e| format!("Failed to save API key to keyring: {}", e))?;
+            }
+        }
+
+        // Store Telegram bot token in keyring (if new)
+        if !self.telegram_token_input.is_empty() && !self.has_existing_telegram_token() {
+            let secret = SecretString::from_str(&self.telegram_token_input);
+            if let Err(e) = secret.save_to_keyring("telegram_bot_token") {
+                tracing::warn!("Failed to save Telegram token to keyring: {}", e);
+                // Non-fatal — the token is also in config.toml
             }
         }
 
@@ -1427,6 +1627,8 @@ mod tests {
         assert_eq!(wizard.step, OnboardingStep::Gateway);
         wizard.next_step(); // -> Channels
         assert_eq!(wizard.step, OnboardingStep::Channels);
+        wizard.next_step(); // -> VoiceSetup (Telegram not enabled, skips TelegramSetup)
+        assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
         wizard.next_step(); // -> Daemon
         assert_eq!(wizard.step, OnboardingStep::Daemon);
         wizard.next_step(); // -> HealthCheck
@@ -1434,11 +1636,39 @@ mod tests {
     }
 
     #[test]
+    fn test_telegram_enabled_shows_telegram_setup() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.mode = WizardMode::Advanced;
+        wizard.api_key_input = "test-key".to_string();
+
+        wizard.next_step(); // -> ProviderAuth
+        wizard.next_step(); // -> Workspace
+        wizard.next_step(); // -> Gateway
+        wizard.next_step(); // -> Channels
+
+        // Enable Telegram
+        wizard.channel_toggles[0].1 = true;
+        wizard.next_step(); // -> TelegramSetup (because Telegram is on)
+        assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
+        wizard.next_step(); // -> VoiceSetup
+        assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
+    }
+
+    #[test]
+    fn test_voice_setup_defaults() {
+        let wizard = OnboardingWizard::new();
+        assert!(wizard.groq_api_key_input.is_empty());
+        assert!(!wizard.tts_enabled);
+        assert_eq!(wizard.voice_field, VoiceField::GroqApiKey);
+    }
+
+    #[test]
     fn test_step_numbers() {
         assert_eq!(OnboardingStep::ModeSelect.number(), 1);
-        assert_eq!(OnboardingStep::HealthCheck.number(), 7);
-        assert_eq!(OnboardingStep::BrainSetup.number(), 8);
-        assert_eq!(OnboardingStep::total(), 8);
+        assert_eq!(OnboardingStep::VoiceSetup.number(), 6);
+        assert_eq!(OnboardingStep::HealthCheck.number(), 8);
+        assert_eq!(OnboardingStep::BrainSetup.number(), 9);
+        assert_eq!(OnboardingStep::total(), 9);
     }
 
     #[test]

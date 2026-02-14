@@ -732,18 +732,7 @@ fn render_inline_approval<'a>(
             }
         }
         ApprovalState::Approved(_option) => {
-            let desc = super::app::App::format_tool_description(
-                &approval.tool_name,
-                &approval.tool_input,
-            );
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("  {} -- approved", desc),
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::ITALIC),
-                ),
-            ]));
+            // Silently skip — tool execution is already shown in the tool group
         }
         ApprovalState::Denied(reason) => {
             let desc = super::app::App::format_tool_description(
@@ -959,10 +948,22 @@ fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         let is_renaming = is_selected && app.session_renaming;
 
         let prefix = if is_selected { "  > " } else { "    " };
-        let suffix = if is_current { " [current]" } else { "" };
 
         let name = session.title.as_deref().unwrap_or("Untitled");
         let created = session.created_at.format("%Y-%m-%d %H:%M");
+
+        // Format session history size (total stored tokens)
+        let history_label = format_token_count(session.token_count);
+
+        // For current session, show live context window usage
+        let context_info = if is_current {
+            let pct = app.context_usage_percent();
+            format!(" [ctx: {:.0}%]", pct)
+        } else {
+            String::new()
+        };
+
+        let current_suffix = if is_current { " *" } else { "" };
 
         if is_renaming {
             // Show rename input
@@ -975,12 +976,12 @@ fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!(" - {}{}", created, suffix),
+                    format!(" - {}", created),
                     Style::default().fg(Color::DarkGray),
                 ),
             ]));
         } else {
-            let style = if is_selected {
+            let name_style = if is_selected {
                 Style::default()
                     .fg(Color::Rgb(184, 134, 11))
                     .add_modifier(Modifier::BOLD)
@@ -990,10 +991,46 @@ fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            lines.push(Line::from(Span::styled(
-                format!("{}{} - {}{}", prefix, name, created, suffix),
-                style,
-            )));
+            let mut spans = vec![
+                Span::styled(format!("{}{}", prefix, name), name_style),
+                Span::styled(
+                    format!(" - {} ", created),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ];
+
+            // History size badge
+            if session.token_count > 0 {
+                spans.push(Span::styled(
+                    format!(" {}", history_label),
+                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                ));
+            }
+
+            // Context usage for current session
+            if !context_info.is_empty() {
+                let ctx_pct = app.context_usage_percent();
+                let ctx_color = if ctx_pct > 80.0 {
+                    Color::Red
+                } else if ctx_pct > 50.0 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                };
+                spans.push(Span::styled(context_info, Style::default().fg(ctx_color)));
+            }
+
+            // Current marker
+            if !current_suffix.is_empty() {
+                spans.push(Span::styled(
+                    current_suffix,
+                    Style::default()
+                        .fg(Color::Rgb(70, 130, 180))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+
+            lines.push(Line::from(spans));
         }
     }
 
@@ -1791,6 +1828,20 @@ fn render_restart_dialog(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(dialog, dialog_area);
 }
 
+/// Format a token count as human-readable (e.g. "0", "850", "12.5K", "1.2M")
+fn format_token_count(tokens: i32) -> String {
+    let tokens = tokens.max(0) as f64;
+    if tokens >= 1_000_000.0 {
+        format!("{:.1}M tok", tokens / 1_000_000.0)
+    } else if tokens >= 1_000.0 {
+        format!("{:.1}K tok", tokens / 1_000.0)
+    } else if tokens > 0.0 {
+        format!("{} tok", tokens as i32)
+    } else {
+        "new".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1922,6 +1973,38 @@ mod tests {
         let line = Line::from(format!("  {}", input));
         let result = wrap_line_with_padding(line, 170, "  ");
         assert!(!result.is_empty());
+    }
+
+    // ── format_token_count ────────────────────────────────────────────
+
+    #[test]
+    fn test_format_token_count_zero() {
+        assert_eq!(format_token_count(0), "new");
+    }
+
+    #[test]
+    fn test_format_token_count_small() {
+        assert_eq!(format_token_count(500), "500 tok");
+        assert_eq!(format_token_count(1), "1 tok");
+    }
+
+    #[test]
+    fn test_format_token_count_thousands() {
+        assert_eq!(format_token_count(1000), "1.0K tok");
+        assert_eq!(format_token_count(12500), "12.5K tok");
+        assert_eq!(format_token_count(150000), "150.0K tok");
+    }
+
+    #[test]
+    fn test_format_token_count_millions() {
+        assert_eq!(format_token_count(1_000_000), "1.0M tok");
+        assert_eq!(format_token_count(2_100_000), "2.1M tok");
+    }
+
+    #[test]
+    fn test_format_token_count_negative() {
+        // Negative values clamp to 0
+        assert_eq!(format_token_count(-100), "new");
     }
 }
 

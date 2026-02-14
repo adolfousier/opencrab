@@ -3,7 +3,8 @@
 //! Render functions for each step of the onboarding wizard.
 
 use super::onboarding::{
-    AuthField, BrainField, HealthStatus, OnboardingStep, OnboardingWizard, WizardMode, PROVIDERS,
+    AuthField, BrainField, HealthStatus, OnboardingStep, OnboardingWizard, TelegramField,
+    VoiceField, WizardMode, PROVIDERS,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
@@ -75,6 +76,8 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
         OnboardingStep::Workspace => render_workspace(&mut lines, wizard),
         OnboardingStep::Gateway => render_gateway(&mut lines, wizard),
         OnboardingStep::Channels => render_channels(&mut lines, wizard),
+        OnboardingStep::TelegramSetup => render_telegram_setup(&mut lines, wizard),
+        OnboardingStep::VoiceSetup => render_voice_setup(&mut lines, wizard),
         OnboardingStep::Daemon => render_daemon(&mut lines, wizard),
         OnboardingStep::HealthCheck => render_health_check(&mut lines, wizard),
         OnboardingStep::BrainSetup => render_brain_setup(&mut lines, wizard),
@@ -480,6 +483,153 @@ fn render_channels(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             ),
         ]));
     }
+}
+
+fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
+    // Help text
+    lines.push(Line::from(Span::styled(
+        "  1. Open Telegram, search @BotFather",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  2. Send /newbot, follow the prompts",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  3. Copy the bot token and paste below",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    // Bot token input
+    let token_focused = wizard.telegram_field == TelegramField::BotToken;
+    let (masked_token, token_hint) = if wizard.has_existing_telegram_token() {
+        ("**************************".to_string(), " (already configured)".to_string())
+    } else if wizard.telegram_token_input.is_empty() {
+        ("paste your bot token".to_string(), String::new())
+    } else {
+        ("*".repeat(wizard.telegram_token_input.len().min(30)), String::new())
+    };
+    let cursor = if token_focused && !wizard.has_existing_telegram_token() { "_" } else { "" };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Bot Token: ",
+            Style::default().fg(if token_focused { BRAND_BLUE } else { Color::DarkGray }),
+        ),
+        Span::styled(
+            format!("{}{}", masked_token, cursor),
+            Style::default().fg(
+                if wizard.has_existing_telegram_token() { Color::Green }
+                else if token_focused { Color::White }
+                else { Color::DarkGray }
+            ),
+        ),
+    ]));
+
+    if !token_hint.is_empty() && token_focused {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", token_hint.trim()),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  After setup, send /start to your bot",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  to get your user ID for the allowlist",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Skip with Enter if you'll add it later",
+        Style::default().fg(Color::DarkGray),
+    )));
+}
+
+fn render_voice_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
+    // STT section
+    lines.push(Line::from(Span::styled(
+        "  Speech-to-Text (Groq Whisper)".to_string(),
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Transcribes voice notes from Telegram",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    let groq_focused = wizard.voice_field == VoiceField::GroqApiKey;
+    let (masked_key, key_hint) = if wizard.has_existing_groq_key() {
+        ("**************************".to_string(), " (from GROQ_API_KEY env)".to_string())
+    } else if wizard.groq_api_key_input.is_empty() {
+        ("get key from console.groq.com".to_string(), String::new())
+    } else {
+        ("*".repeat(wizard.groq_api_key_input.len().min(30)), String::new())
+    };
+    let cursor = if groq_focused && !wizard.has_existing_groq_key() { "_" } else { "" };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Groq Key: ",
+            Style::default().fg(if groq_focused { BRAND_BLUE } else { Color::DarkGray }),
+        ),
+        Span::styled(
+            format!("{}{}", masked_key, cursor),
+            Style::default().fg(
+                if wizard.has_existing_groq_key() { Color::Green }
+                else if groq_focused { Color::White }
+                else { Color::DarkGray }
+            ),
+        ),
+    ]));
+
+    if !key_hint.is_empty() && groq_focused {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", key_hint.trim()),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    lines.push(Line::from(""));
+
+    // TTS section
+    lines.push(Line::from(Span::styled(
+        "  Text-to-Speech (OpenAI TTS)".to_string(),
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Reply with voice notes (uses OpenAI key)",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    let tts_focused = wizard.voice_field == VoiceField::TtsToggle;
+    lines.push(Line::from(vec![
+        Span::styled(
+            if tts_focused { " > " } else { "   " },
+            Style::default().fg(ACCENT_GOLD),
+        ),
+        Span::styled(
+            if wizard.tts_enabled { "[x]" } else { "[ ]" },
+            Style::default().fg(if wizard.tts_enabled { BRAND_GOLD } else { Color::DarkGray }),
+        ),
+        Span::styled(
+            " Enable TTS replies (ash voice)",
+            Style::default()
+                .fg(if tts_focused { Color::White } else { Color::DarkGray })
+                .add_modifier(if tts_focused { Modifier::BOLD } else { Modifier::empty() }),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Skip with Enter to set up later",
+        Style::default().fg(Color::DarkGray),
+    )));
 }
 
 fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {

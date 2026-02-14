@@ -45,6 +45,10 @@ pub struct Config {
     /// Messaging channel integrations
     #[serde(default)]
     pub channels: ChannelsConfig,
+
+    /// Voice processing (STT/TTS) configuration
+    #[serde(default)]
+    pub voice: VoiceConfig,
 }
 
 /// HTTP API gateway configuration
@@ -117,6 +121,46 @@ pub struct ChannelConfig {
     /// Allowlisted user IDs (Telegram user IDs, Discord user IDs, etc.)
     #[serde(default)]
     pub allowed_users: Vec<i64>,
+}
+
+/// Voice processing configuration (STT + TTS)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceConfig {
+    /// Enable speech-to-text transcription (Groq Whisper)
+    #[serde(default = "default_true")]
+    pub stt_enabled: bool,
+
+    /// Enable text-to-speech replies (OpenAI TTS)
+    #[serde(default)]
+    pub tts_enabled: bool,
+
+    /// TTS voice name (default: "ash")
+    #[serde(default = "default_tts_voice")]
+    pub tts_voice: String,
+
+    /// TTS model (default: "gpt-4o-mini-tts")
+    #[serde(default = "default_tts_model")]
+    pub tts_model: String,
+
+    /// Groq API key for STT (loaded from GROQ_API_KEY env var)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub groq_api_key: Option<String>,
+}
+
+fn default_true() -> bool { true }
+fn default_tts_voice() -> String { "ash".to_string() }
+fn default_tts_model() -> String { "gpt-4o-mini-tts".to_string() }
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            stt_enabled: true,
+            tts_enabled: false,
+            tts_voice: default_tts_voice(),
+            tts_model: default_tts_model(),
+            groq_api_key: None,
+        }
+    }
 }
 
 /// Debug configuration options
@@ -284,6 +328,7 @@ impl Default for Config {
             providers: ProviderConfigs::default(),
             gateway: GatewayConfig::default(),
             channels: ChannelsConfig::default(),
+            voice: VoiceConfig::default(),
         }
     }
 }
@@ -383,6 +428,7 @@ impl Config {
             providers: overlay.providers,
             gateway: overlay.gateway,
             channels: overlay.channels,
+            voice: overlay.voice,
         }
     }
 
@@ -425,6 +471,11 @@ impl Config {
             config.crabrace.auto_update = auto_update.parse().unwrap_or(true);
         }
 
+        // Groq API key for voice STT
+        if let Ok(groq_key) = std::env::var("GROQ_API_KEY") {
+            config.voice.groq_api_key = Some(groq_key);
+        }
+
         // Provider API keys from environment
         Self::load_provider_api_keys(&mut config)?;
 
@@ -458,18 +509,17 @@ impl Config {
             provider.default_model = Some(model);
         }
 
-        // OpenAI
-        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-            let provider = config.providers.openai.get_or_insert(ProviderConfig {
-                enabled: true,
-                api_key: None,
-                base_url: None,
-                default_model: None,
-            });
+        // OpenAI — ONLY set api_key on an EXISTING provider config.
+        // Do NOT auto-create an OpenAI text provider just from OPENAI_API_KEY,
+        // because that key may only be for TTS (gpt-4o-mini-tts).
+        // Users who want OpenAI for text must explicitly configure it in config.toml.
+        if let Ok(api_key) = std::env::var("OPENAI_API_KEY")
+            && let Some(provider) = config.providers.openai.as_mut()
+        {
             provider.api_key = Some(api_key);
         }
 
-        // OpenAI base URL (for LM Studio, Ollama, etc.)
+        // OpenAI base URL (for LM Studio, Ollama, etc.) — explicit local LLM setup
         if let Ok(base_url) = std::env::var("OPENAI_BASE_URL") {
             let provider = config.providers.openai.get_or_insert(ProviderConfig {
                 enabled: true,

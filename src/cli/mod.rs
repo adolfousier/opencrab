@@ -754,6 +754,8 @@ async fn cmd_chat(config: &crate::config::Config, _session_id: Option<String>, f
     // Create agent service with approval callback, progress callback, and message queue
     tracing::debug!("Creating agent service with approval, progress, and message queue callbacks");
     let shared_tool_registry = Arc::new(tool_registry);
+    let shared_brain = system_brain.clone();
+    let shared_brain_path = brain_path.clone();
     let agent_service = Arc::new(
         AgentService::new(provider.clone(), service_context.clone())
             .with_system_brain(system_brain)
@@ -781,25 +783,28 @@ async fn cmd_chat(config: &crate::config::Config, _session_id: Option<String>, f
         let tg_token = tg.token.clone().or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok());
         if tg.enabled || tg_token.is_some() {
             if let Some(ref token) = tg_token {
-                // Build a separate agent service for Telegram (shared tools, no TUI callbacks)
-                let tg_brain = BrainLoader::new(BrainLoader::resolve_path())
-                    .build_system_brain(Some(&RuntimeInfo {
-                        model: Some(provider.default_model().to_string()),
-                        provider: Some(provider.name().to_string()),
-                        working_directory: Some(working_directory.to_string_lossy().to_string()),
-                    }), None);
+                // Build a separate agent service for Telegram — same brain, tools,
+                // and working directory as the TUI agent (minus TUI callbacks).
                 let tg_agent = Arc::new(
                     AgentService::new(provider.clone(), service_context.clone())
-                        .with_system_brain(tg_brain)
+                        .with_system_brain(shared_brain.clone())
                         .with_tool_registry(shared_tool_registry.clone())
                         .with_auto_approve_tools(true)
                         .with_max_tool_iterations(20)
-                        .with_working_directory(working_directory.clone()),
+                        .with_working_directory(working_directory.clone())
+                        .with_brain_path(shared_brain_path.clone()),
                 );
+                // Extract OpenAI API key for TTS (from env or provider config)
+                // TTS uses gpt-4o-mini-tts, NOT a text generation model
+                let openai_key = std::env::var("OPENAI_API_KEY").ok()
+                    .or_else(|| config.providers.openai.as_ref().and_then(|p| p.api_key.clone()));
                 let bot = crate::telegram::TelegramBot::new(
                     tg_agent,
                     service_context.clone(),
                     tg.allowed_users.clone(),
+                    config.voice.clone(),
+                    openai_key,
+                    app.shared_session_id(),
                 );
                 tracing::info!("Spawning Telegram bot ({} allowed users)", tg.allowed_users.len());
                 Some(bot.start(token.clone()))

@@ -40,6 +40,7 @@ pub mod utils;
 
 #[cfg(feature = "telegram")]
 pub mod telegram;
+pub mod voice;
 
 // Placeholder modules for future features
 // TODO: Implement these modules when ready

@@ -5,7 +5,6 @@
 use crate::llm::agent::AgentResponse;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::Value;
-use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -177,68 +176,75 @@ impl EventHandler {
     }
 
     /// Start listening for terminal events
+    ///
+    /// Uses crossterm's async EventStream instead of blocking poll/read
+    /// to avoid starving the tokio runtime during I/O-heavy operations
+    /// (e.g. Telegram voice processing, agent responses).
     pub fn start_terminal_listener(tx: mpsc::UnboundedSender<TuiEvent>) {
+        use crossterm::event::EventStream;
+        use futures::StreamExt;
+
         tokio::spawn(async move {
+            let mut reader = EventStream::new();
+            let tick_interval = std::time::Duration::from_millis(100);
+
             loop {
-                // Poll for crossterm events with timeout
-                if crossterm::event::poll(Duration::from_millis(100)).unwrap_or(false)
-                    && let Ok(event) = crossterm::event::read() {
-                        match event {
-                            crossterm::event::Event::Key(key) => {
-                                // Only process key press events to avoid duplicates
-                                // Ignore key release and repeat events
-                                if key.kind == crossterm::event::KeyEventKind::Press
-                                    && tx.send(TuiEvent::Key(key)).is_err()
-                                {
-                                    break;
-                                }
-                            }
-                            crossterm::event::Event::Mouse(mouse) => {
-                                use crossterm::event::MouseEventKind;
-                                match mouse.kind {
-                                    MouseEventKind::ScrollUp => {
-                                        if tx.send(TuiEvent::MouseScroll(1)).is_err() {
-                                            break;
-                                        }
-                                    }
-                                    MouseEventKind::ScrollDown => {
-                                        if tx.send(TuiEvent::MouseScroll(-1)).is_err() {
-                                            break;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            crossterm::event::Event::Resize(w, h) => {
-                                if tx.send(TuiEvent::Resize(w, h)).is_err() {
-                                    break;
-                                }
-                            }
-                            crossterm::event::Event::Paste(text) => {
-                                if tx.send(TuiEvent::Paste(text)).is_err() {
-                                    break;
-                                }
-                            }
-                            crossterm::event::Event::FocusGained => {
-                                if tx.send(TuiEvent::FocusGained).is_err() {
-                                    break;
-                                }
-                            }
-                            crossterm::event::Event::FocusLost => {
-                                if tx.send(TuiEvent::FocusLost).is_err() {
-                                    break;
-                                }
-                            }
+                // Race: next terminal event vs tick timer
+                let event = tokio::select! {
+                    maybe_event = reader.next() => {
+                        match maybe_event {
+                            Some(Ok(event)) => Some(event),
+                            Some(Err(_)) => None,
+                            None => break, // Stream closed
                         }
                     }
+                    _ = tokio::time::sleep(tick_interval) => None,
+                };
+
+                if let Some(event) = event {
+                    let should_break = match event {
+                        crossterm::event::Event::Key(key) => {
+                            // Only process key press events to avoid duplicates
+                            if key.kind == crossterm::event::KeyEventKind::Press {
+                                tx.send(TuiEvent::Key(key)).is_err()
+                            } else {
+                                false
+                            }
+                        }
+                        crossterm::event::Event::Mouse(mouse) => {
+                            use crossterm::event::MouseEventKind;
+                            match mouse.kind {
+                                MouseEventKind::ScrollUp => {
+                                    tx.send(TuiEvent::MouseScroll(1)).is_err()
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    tx.send(TuiEvent::MouseScroll(-1)).is_err()
+                                }
+                                _ => false,
+                            }
+                        }
+                        crossterm::event::Event::Resize(w, h) => {
+                            tx.send(TuiEvent::Resize(w, h)).is_err()
+                        }
+                        crossterm::event::Event::Paste(text) => {
+                            tx.send(TuiEvent::Paste(text)).is_err()
+                        }
+                        crossterm::event::Event::FocusGained => {
+                            tx.send(TuiEvent::FocusGained).is_err()
+                        }
+                        crossterm::event::Event::FocusLost => {
+                            tx.send(TuiEvent::FocusLost).is_err()
+                        }
+                    };
+                    if should_break {
+                        break;
+                    }
+                }
 
                 // Send tick event for animations
                 if tx.send(TuiEvent::Tick).is_err() {
                     break;
                 }
-
-                // Small delay to prevent CPU spinning
-                tokio::time::sleep(Duration::from_millis(50)).await;
             }
         });
     }
