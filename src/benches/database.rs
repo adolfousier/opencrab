@@ -9,7 +9,7 @@
 #![allow(clippy::all)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use opencrab::db::{models::Session, Database};
+use opencrabs::db::{models::Session, Database};
 use tempfile::TempDir;
 
 /// Helper to create a test database in memory

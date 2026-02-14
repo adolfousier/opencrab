@@ -1,4 +1,4 @@
--- Initial database schema for OpenCrab
+-- Initial database schema for OpenCrabs
 -- SQLite database for local-first AI assistant
 
 -- Sessions table: Stores chat sessions

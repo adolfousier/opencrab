@@ -83,7 +83,7 @@ fn is_database_locked(err: &sqlx::Error) -> bool {
 ///
 /// # Example
 /// ```no_run
-/// use opencrab::db::retry::{retry_db_operation, DbRetryConfig};
+/// use opencrabs::db::retry::{retry_db_operation, DbRetryConfig};
 /// use sqlx::SqlitePool;
 ///
 /// async fn example() {

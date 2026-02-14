@@ -37,6 +37,83 @@ pub struct Config {
     /// LLM provider configurations
     #[serde(default)]
     pub providers: ProviderConfigs,
+
+    /// HTTP API gateway configuration
+    #[serde(default)]
+    pub gateway: GatewayConfig,
+
+    /// Messaging channel integrations
+    #[serde(default)]
+    pub channels: ChannelsConfig,
+}
+
+/// HTTP API gateway configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    /// Gateway port (default: 18789)
+    #[serde(default = "default_gateway_port")]
+    pub port: u16,
+
+    /// Bind address (default: "127.0.0.1")
+    #[serde(default = "default_gateway_bind")]
+    pub bind: String,
+
+    /// Authentication mode: "token" or "none" (default: "token")
+    #[serde(default = "default_gateway_auth")]
+    pub auth_mode: String,
+
+    /// Whether the gateway is enabled
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+fn default_gateway_port() -> u16 {
+    18789
+}
+
+fn default_gateway_bind() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_gateway_auth() -> String {
+    "token".to_string()
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            port: default_gateway_port(),
+            bind: default_gateway_bind(),
+            auth_mode: default_gateway_auth(),
+            enabled: false,
+        }
+    }
+}
+
+/// Messaging channel integrations configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelsConfig {
+    #[serde(default)]
+    pub telegram: ChannelConfig,
+    #[serde(default)]
+    pub discord: ChannelConfig,
+    #[serde(default)]
+    pub whatsapp: ChannelConfig,
+    #[serde(default)]
+    pub signal: ChannelConfig,
+    #[serde(default)]
+    pub google_chat: ChannelConfig,
+    #[serde(default)]
+    pub imessage: ChannelConfig,
+}
+
+/// Individual channel configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// Debug configuration options
@@ -161,8 +238,8 @@ impl Default for DatabaseConfig {
 fn default_db_path() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("opencrab")
-        .join("opencrab.db")
+        .join("opencrabs")
+        .join("opencrabs.db")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,6 +279,8 @@ impl Default for Config {
             },
             debug: DebugConfig::default(),
             providers: ProviderConfigs::default(),
+            gateway: GatewayConfig::default(),
+            channels: ChannelsConfig::default(),
         }
     }
 }
@@ -211,8 +290,8 @@ impl Config {
     ///
     /// Priority (lowest to highest):
     /// 1. Default values
-    /// 2. System config: ~/.config/opencrab/config.toml
-    /// 3. Local config: ./opencrab.toml
+    /// 2. System config: ~/.config/opencrabs/config.toml
+    /// 3. Local config: ./opencrabs.toml
     /// 4. Environment variables
     pub fn load() -> Result<Self> {
         tracing::debug!("Loading configuration...");
@@ -269,14 +348,14 @@ impl Config {
         Ok(config)
     }
 
-    /// Get the system config path: ~/.config/opencrab/config.toml
+    /// Get the system config path: ~/.config/opencrabs/config.toml
     fn system_config_path() -> Option<PathBuf> {
-        dirs::config_dir().map(|dir| dir.join("opencrab").join("config.toml"))
+        dirs::config_dir().map(|dir| dir.join("opencrabs").join("config.toml"))
     }
 
-    /// Get the local config path: ./opencrab.toml
+    /// Get the local config path: ./opencrabs.toml
     fn local_config_path() -> PathBuf {
-        PathBuf::from("./opencrab.toml")
+        PathBuf::from("./opencrabs.toml")
     }
 
     /// Load and merge configuration from a TOML file
@@ -300,45 +379,47 @@ impl Config {
             logging: overlay.logging,
             debug: overlay.debug,
             providers: overlay.providers,
+            gateway: overlay.gateway,
+            channels: overlay.channels,
         }
     }
 
     /// Apply environment variable overrides
     fn apply_env_overrides(mut config: Self) -> Result<Self> {
         // Database path
-        if let Ok(db_path) = std::env::var("OPENCRAB_DB_PATH") {
+        if let Ok(db_path) = std::env::var("OPENCRABS_DB_PATH") {
             config.database.path = PathBuf::from(db_path);
         }
 
         // Log level
-        if let Ok(log_level) = std::env::var("OPENCRAB_LOG_LEVEL") {
+        if let Ok(log_level) = std::env::var("OPENCRABS_LOG_LEVEL") {
             config.logging.level = log_level;
         }
 
         // Log file
-        if let Ok(log_file) = std::env::var("OPENCRAB_LOG_FILE") {
+        if let Ok(log_file) = std::env::var("OPENCRABS_LOG_FILE") {
             config.logging.file = Some(PathBuf::from(log_file));
         }
 
         // Debug options
-        if let Ok(debug_lsp) = std::env::var("OPENCRAB_DEBUG_LSP") {
+        if let Ok(debug_lsp) = std::env::var("OPENCRABS_DEBUG_LSP") {
             config.debug.debug_lsp = debug_lsp.parse().unwrap_or(false);
         }
 
-        if let Ok(profiling) = std::env::var("OPENCRAB_PROFILING") {
+        if let Ok(profiling) = std::env::var("OPENCRABS_PROFILING") {
             config.debug.profiling = profiling.parse().unwrap_or(false);
         }
 
         // Crabrace options
-        if let Ok(enabled) = std::env::var("OPENCRAB_CRABRACE_ENABLED") {
+        if let Ok(enabled) = std::env::var("OPENCRABS_CRABRACE_ENABLED") {
             config.crabrace.enabled = enabled.parse().unwrap_or(true);
         }
 
-        if let Ok(base_url) = std::env::var("OPENCRAB_CRABRACE_URL") {
+        if let Ok(base_url) = std::env::var("OPENCRABS_CRABRACE_URL") {
             config.crabrace.base_url = base_url;
         }
 
-        if let Ok(auto_update) = std::env::var("OPENCRAB_CRABRACE_AUTO_UPDATE") {
+        if let Ok(auto_update) = std::env::var("OPENCRABS_CRABRACE_AUTO_UPDATE") {
             config.crabrace.auto_update = auto_update.parse().unwrap_or(true);
         }
 
@@ -479,6 +560,20 @@ impl Config {
     }
 
     /// Validate configuration
+    /// Check if any provider has an API key configured (from env, keyring, or config).
+    pub fn has_any_api_key(&self) -> bool {
+        let has_anthropic = self.providers.anthropic.as_ref()
+            .map_or(false, |p| p.api_key.is_some());
+        let has_openai = self.providers.openai.as_ref()
+            .map_or(false, |p| p.api_key.is_some());
+        let has_gemini = self.providers.gemini.as_ref()
+            .map_or(false, |p| p.api_key.is_some());
+        let has_qwen = self.providers.qwen.as_ref()
+            .map_or(false, |p| p.api_key.is_some());
+
+        has_anthropic || has_openai || has_gemini || has_qwen
+    }
+
     pub fn validate(&self) -> Result<()> {
         tracing::debug!("Validating configuration...");
 
@@ -661,14 +756,14 @@ api_key = "test-openai-key"
         let path = Config::system_config_path();
         assert!(path.is_some());
         let path = path.unwrap();
-        assert!(path.to_string_lossy().contains("opencrab"));
+        assert!(path.to_string_lossy().contains("opencrabs"));
         assert!(path.to_string_lossy().ends_with("config.toml"));
     }
 
     #[test]
     fn test_local_config_path() {
         let path = Config::local_config_path();
-        assert_eq!(path, PathBuf::from("./opencrab.toml"));
+        assert_eq!(path, PathBuf::from("./opencrabs.toml"));
     }
 
     #[test]

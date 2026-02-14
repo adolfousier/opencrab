@@ -11,7 +11,7 @@ use std::fmt;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Service name for keyring entries
-const KEYRING_SERVICE: &str = "opencrab";
+const KEYRING_SERVICE: &str = "opencrabs";
 
 /// A secure string that zeroizes its contents on drop
 ///
@@ -358,14 +358,14 @@ mod tests {
     #[test]
     fn test_secret_string_from_env_missing() {
         // Test that a non-existent env var returns an error
-        let result = SecretString::from_env("OPENCRAB_TEST_NONEXISTENT_KEY_12345");
+        let result = SecretString::from_env("OPENCRABS_TEST_NONEXISTENT_KEY_12345");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_secret_string_from_env_optional_missing() {
         // Test with non-existent variable returns None
-        let secret = SecretString::from_env_optional("OPENCRAB_TEST_NONEXISTENT_KEY_12345");
+        let secret = SecretString::from_env_optional("OPENCRABS_TEST_NONEXISTENT_KEY_12345");
         assert!(secret.is_none());
     }
 

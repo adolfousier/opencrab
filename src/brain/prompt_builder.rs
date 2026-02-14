@@ -16,7 +16,7 @@ const BRAIN_FILES: &[(&str, &str)] = &[
 ];
 
 /// Brain preamble — always present regardless of workspace contents.
-const BRAIN_PREAMBLE: &str = r#"You are OpenCrab, an AI orchestration agent with powerful tools to help with software development tasks.
+const BRAIN_PREAMBLE: &str = r#"You are OpenCrabs, an AI orchestration agent with powerful tools to help with software development tasks.
 
 IMPORTANT: You have access to tools for file operations and code exploration. USE THEM PROACTIVELY!
 
@@ -95,29 +95,29 @@ impl BrainLoader {
     }
 
     /// Resolve the brain workspace path using priority order:
-    /// 1. `OPENCRAB_BRAIN_PATH` env var
-    /// 2. `~/opencrab/brain/workspace/`
-    /// 3. Fallback: `$CWD/.opencrab/brain/`
+    /// 1. `OPENCRABS_BRAIN_PATH` env var
+    /// 2. `~/opencrabs/brain/workspace/`
+    /// 3. Fallback: `$CWD/.opencrabs/brain/`
     pub fn resolve_path() -> PathBuf {
         // 1. Environment variable
-        if let Ok(path) = std::env::var("OPENCRAB_BRAIN_PATH") {
+        if let Ok(path) = std::env::var("OPENCRABS_BRAIN_PATH") {
             let p = PathBuf::from(path);
             if p.exists() {
                 return p;
             }
         }
 
-        // 2. ~/opencrab/brain/workspace/
+        // 2. ~/opencrabs/brain/workspace/
         if let Some(home) = dirs::home_dir() {
-            let p = home.join("opencrab").join("brain").join("workspace");
+            let p = home.join("opencrabs").join("brain").join("workspace");
             if p.exists() {
                 return p;
             }
         }
 
-        // 3. Fallback: cwd/.opencrab/brain/
+        // 3. Fallback: cwd/.opencrabs/brain/
         let cwd = std::env::current_dir().unwrap_or_default();
-        cwd.join(".opencrab").join("brain")
+        cwd.join(".opencrabs").join("brain")
     }
 
     /// Read a single markdown file from the workspace. Returns `None` if missing.
@@ -215,7 +215,7 @@ mod tests {
         let prompt = loader.build_system_brain(None, None);
 
         // Should contain brain preamble even with no brain files
-        assert!(prompt.contains("You are OpenCrab"));
+        assert!(prompt.contains("You are OpenCrabs"));
         assert!(prompt.contains("CRITICAL RULE"));
     }
 
@@ -227,7 +227,7 @@ mod tests {
         let loader = BrainLoader::new(dir.path().to_path_buf());
         let prompt = loader.build_system_brain(None, None);
 
-        assert!(prompt.contains("You are OpenCrab"));
+        assert!(prompt.contains("You are OpenCrabs"));
         assert!(prompt.contains("I am a helpful crab."));
         assert!(prompt.contains("SOUL.md"));
     }

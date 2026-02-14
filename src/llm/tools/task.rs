@@ -294,7 +294,7 @@ fn parse_status(status_str: &str) -> Result<TaskStatus> {
 fn get_store_path(context: &ToolExecutionContext) -> PathBuf {
     context
         .working_directory
-        .join(".opencrab")
+        .join(".opencrabs")
         .join("tasks.json")
 }
 

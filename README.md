@@ -1,21 +1,23 @@
-# OpenCrab
+[![Rust Edition](https://img.shields.io/badge/rust-2024_edition-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-FSL--1.1--MIT-blue.svg)](LICENSE.md)
+[![CI](https://github.com/adolfousier/opencrabs/actions/workflows/ci.yml/badge.svg)](https://github.com/adolfousier/opencrabs/actions/workflows/ci.yml)
+[![GitHub Stars](https://img.shields.io/github/stars/adolfousier/opencrabs?style=social)](https://github.com/adolfousier/opencrabs)
+
+# OpenCrabs
 
 **High-Performance Terminal AI Orchestration Agent for Software Development**
 
-> A terminal-native AI orchestration agent written in Rust with Ratatui. Inspired by [Claude Code](https://github.com/anthropics/claude-code).
-
-[![Rust Edition](https://img.shields.io/badge/rust-2024_edition-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-FSL--1.1--MIT-blue.svg)](LICENSE.md)
-[![CI](https://github.com/adolfousier/opencrab/actions/workflows/ci.yml/badge.svg)](https://github.com/adolfousier/opencrab/actions/workflows/ci.yml)
-[![GitHub Stars](https://img.shields.io/github/stars/adolfousier/opencrab?style=social)](https://github.com/adolfousier/opencrab)
+> A terminal-native AI orchestration agent written in Rust with Ratatui. Inspired by [Open Claw](https://github.com/openclaw/openclaw).
 
 ```
-   ___                    ___           _
-  / _ \ _ __  ___ _ _    / __|_ _ __ _| |__
- | (_) | '_ \/ -_) ' \  | (__| '_/ _` | '_ \
-  \___/| .__/\___|_||_|  \___|_| \__,_|_.__/
-       |_|
-    🦀 Shell Yeah! AI Orchestration at Rust Speed.
+    ___                    ___           _
+   / _ \ _ __  ___ _ _    / __|_ _ __ _| |__  ___
+  | (_) | '_ \/ -_) ' \  | (__| '_/ _` | '_ \(_-<
+   \___/| .__/\___|_||_|  \___|_| \__,_|_.__//__/
+        |_|
+
+ 🦀 Shell Yeah! AI Orchestration at Rust Speed.
+
 ```
 
 **Author:** [Adolfo Usier](https://github.com/adolfousier)
@@ -26,9 +28,9 @@
 
 - [Screenshots](#-screenshots)
 - [Core Features](#-core-features)
-- [Interactive Approval System](#-interactive-approval-system)
 - [Supported AI Providers](#-supported-ai-providers)
 - [Quick Start](#-quick-start)
+- [Onboarding Wizard](#-onboarding-wizard)
 - [Authentication Methods](#-authentication-methods)
 - [Using Local LLMs](#-using-local-llms)
 - [Configuration](#-configuration)
@@ -49,21 +51,23 @@
 
 ## 📸 Screenshots
 
-### Main Interface
-![OpenCrab Main Interface](src/docs/screenshots/main-screen.png)
-*Interactive chat interface with syntax highlighting and real-time streaming*
+### Splash Screen
+![Splash Screen](src/screenshots/splash.png)
+*ASCII art splash with provider and model info*
 
-### Deep Code Analysis
-![Deep Code Analysis](src/docs/screenshots/deeply-analyse.png)
-*Comprehensive code analysis with detailed insights and suggestions*
+### Chat Interface
+![Chat Interface](src/screenshots/opencrabs-ui.png)
+*Interactive chat with markdown rendering, syntax highlighting, and real-time streaming*
 
-### AI Thinking Mode
-![AI Thinking Mode](src/docs/screenshots/thinking-mode.png)
-*Watch the AI reasoning process in real-time as it analyzes your code*
+### Onboarding Wizard
+![Onboarding Step 1](src/screenshots/onboard1.png)
+*Step 1: Mode selection — QuickStart or Advanced*
 
-### Help & Commands
-![Help Screen](src/docs/screenshots/help-screnn.png)
-*Built-in help system and keyboard shortcuts for efficient navigation*
+![Onboarding Step 2](src/screenshots/onboard2.png)
+*Step 2: Provider authentication with auto-detected setup token*
+
+![Onboarding Step 3](src/screenshots/onboard3.png)
+*Step 3: Workspace setup with template seeding*
 
 ---
 
@@ -73,55 +77,19 @@
 |---------|-------------|
 | **Dynamic Brain System** | System brain assembled from workspace MD files — personality, identity, memory, all editable live |
 | **Self-Sustaining** | Agent can modify its own source, build, test, and hot-restart via Unix `exec()` |
-| **Natural Language Commands** | Tell OpenCrab to create slash commands — it writes them to `commands.json` autonomously |
+| **Natural Language Commands** | Tell OpenCrabs to create slash commands — it writes them to `commands.json` autonomously |
 | **Built-in Tools** | Read/write files, execute commands, grep, glob, web search, and more |
-| **Interactive Approval** | Permission dialogs for dangerous operations — full control over what AI can do |
+| **Session Management** | Create, rename, delete sessions with persistent SQLite storage |
 | **Syntax Highlighting** | 100+ languages with line numbers via syntect |
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private |
 | **Multi-Provider** | Anthropic Claude (with OAuth), OpenAI, Qwen, and OpenAI-compatible APIs |
 | **Session Context** | Persistent conversation memory with SQLite storage |
 | **Streaming** | Real-time character-by-character response generation |
 | **Cost Tracking** | Per-message token count and cost displayed in header |
-| **Plan Mode** | Structured task decomposition with approval workflow |
+| **Plan Mode** | Structured task decomposition with review workflow |
 | **Multi-line Input** | Paste entire functions, send with Ctrl+Enter |
 | **Markdown Rendering** | Rich text formatting with code blocks and headings |
 | **Debug Logging** | Conditional file logging with `-d` flag, clean workspace by default |
-
----
-
-## 🔒 Interactive Approval System
-
-When the AI wants to modify files or execute commands, OpenCrab pauses and asks for your permission:
-
-```
-┌────────────────────────────────────────────────────┐
-│ ⚠️  PERMISSION REQUIRED                            │
-├────────────────────────────────────────────────────┤
-│ 🔒 Permission Request                              │
-│                                                    │
-│ Claude wants to use the tool: write_file          │
-│                                                    │
-│ Description: Write content to a file...            │
-│                                                    │
-│ ⚠️  Capabilities:                                   │
-│    • WriteFiles                                    │
-│    • SystemModification                            │
-│                                                    │
-│ Parameters:                                        │
-│    path: "config.json"                             │
-│    content: "{ \"debug\": true }"                  │
-│                                                    │
-│ [A]pprove  [D]eny  [V]iew Details  [Esc] Cancel  │
-└────────────────────────────────────────────────────┘
-```
-
-**Security model:**
-
-- **Dangerous operations always require approval:** file writes, shell commands, system modifications
-- **Safe operations proceed automatically:** file reads, information queries
-- **Full transparency:** view exact parameters before deciding, toggle detailed JSON view with `V`
-- **Auto-deny timeout:** 5-minute countdown with visual color-coded timer (green/yellow/red)
-- **Keyboard:** `A`/`Y` approve, `D`/`N` deny, `V` view details, `Esc` cancel
 
 ---
 
@@ -183,61 +151,108 @@ Compatible with any OpenAI-compatible API endpoint via `OPENAI_BASE_URL`.
 
 ```bash
 # Clone
-git clone https://github.com/adolfousier/opencrab.git
-cd opencrab
+git clone https://github.com/adolfousier/opencrabs.git
+cd opencrabs
 
 # Set up credentials (pick one)
 cp .env.example .env
 # Edit .env with your API key(s)
 
-# Build
-cargo build --release
+# Build & run (development)
+cargo run --bin opencrabs
 
-# Run
-cargo run
+# Or build release and run directly
+cargo build --release
+./target/release/opencrabs
 ```
 
-OpenCrab auto-loads `.env` via `dotenvy` at startup — no need to manually export variables.
+OpenCrabs auto-loads `.env` via `dotenvy` at startup — no need to manually export variables.
+
+> **First run?** The onboarding wizard will guide you through provider setup, workspace, and more. See [Onboarding Wizard](#-onboarding-wizard).
 
 ### CLI Commands
 
 ```bash
 # Interactive TUI (default)
-cargo run
-cargo run -- chat
+cargo run --bin opencrabs
+cargo run --bin opencrabs -- chat
+
+# Onboarding wizard (first-time setup)
+cargo run --bin opencrabs -- onboard
+cargo run --bin opencrabs -- chat --onboard   # Force wizard before chat
 
 # Non-interactive single command
-cargo run -- run "What is Rust?"
-cargo run -- run --format json "List 3 programming languages"
-cargo run -- run --format markdown "Explain async/await"
+cargo run --bin opencrabs -- run "What is Rust?"
+cargo run --bin opencrabs -- run --format json "List 3 programming languages"
+cargo run --bin opencrabs -- run --format markdown "Explain async/await"
 
 # Configuration
-cargo run -- init              # Initialize config
-cargo run -- config            # Show current config
-cargo run -- config --show-secrets
+cargo run --bin opencrabs -- init              # Initialize config
+cargo run --bin opencrabs -- config            # Show current config
+cargo run --bin opencrabs -- config --show-secrets
 
 # Database
-cargo run -- db init           # Initialize database
-cargo run -- db stats          # Show statistics
+cargo run --bin opencrabs -- db init           # Initialize database
+cargo run --bin opencrabs -- db stats          # Show statistics
 
 # Keyring (secure OS credential storage)
-cargo run -- keyring set anthropic YOUR_KEY
-cargo run -- keyring get anthropic
-cargo run -- keyring list
+cargo run --bin opencrabs -- keyring set anthropic YOUR_KEY
+cargo run --bin opencrabs -- keyring get anthropic
+cargo run --bin opencrabs -- keyring list
 
 # Debug mode
-cargo run -- -d                # Enable file logging
-cargo run -- -d run "analyze this"
+cargo run --bin opencrabs -- -d                # Enable file logging
+cargo run --bin opencrabs -- -d run "analyze this"
 
 # Log management
-cargo run -- logs status
-cargo run -- logs view
-cargo run -- logs view -l 100
-cargo run -- logs clean
-cargo run -- logs clean -d 3
+cargo run --bin opencrabs -- logs status
+cargo run --bin opencrabs -- logs view
+cargo run --bin opencrabs -- logs view -l 100
+cargo run --bin opencrabs -- logs clean
+cargo run --bin opencrabs -- logs clean -d 3
 ```
 
+> **Tip:** After `cargo build --release`, run the binary directly: `./target/release/opencrabs`
+
 **Output formats** for non-interactive mode: `text` (default), `json`, `markdown`
+
+---
+
+## 🧙 Onboarding Wizard
+
+First-time users are guided through an 8-step setup wizard that appears automatically after the splash screen.
+
+### How It Triggers
+
+- **Automatic:** When no `~/.config/opencrabs/config.toml` exists and no API keys are set in env/keyring
+- **CLI:** `cargo run --bin opencrabs -- onboard` (or `opencrabs onboard` after install)
+- **Chat flag:** `cargo run --bin opencrabs -- chat --onboard` to force the wizard before chat
+- **Slash command:** Type `/onboard` in the chat to re-run it anytime
+
+### The 8 Steps
+
+| Step | Title | What It Does |
+|------|-------|-------------|
+| 1 | **Mode Selection** | QuickStart (sensible defaults) vs Advanced (full control) |
+| 2 | **Model & Auth** | Pick provider (Anthropic, OpenAI, Gemini, Qwen, Custom) → enter token/key → select model. Auto-detects existing keys from env/keyring |
+| 3 | **Workspace** | Set brain workspace path (default `~/opencrabs/brain/workspace/`) → seed template files (SOUL.md, IDENTITY.md, etc.) |
+| 4 | **Gateway** | Configure HTTP API gateway: port, bind address, auth mode |
+| 5 | **Channels** | Toggle messaging integrations (Telegram, Discord, WhatsApp, Signal, Google Chat, iMessage) |
+| 6 | **Daemon** | Install background service (systemd on Linux, LaunchAgent on macOS) |
+| 7 | **Health Check** | Verify API key, config, workspace — shows pass/fail summary |
+| 8 | **Brain Personalization** | Tell the agent about yourself and your preferred agent vibe → AI generates personalized brain files (SOUL.md, IDENTITY.md, USER.md, etc.) |
+
+**QuickStart mode** skips steps 4-6 with sensible defaults. **Advanced mode** lets you configure everything.
+
+### Wizard Navigation
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Navigate between fields |
+| `Up` / `Down` | Scroll through lists |
+| `Enter` | Confirm / next step |
+| `Space` | Toggle checkboxes |
+| `Esc` | Go back one step |
 
 ---
 
@@ -251,7 +266,7 @@ ANTHROPIC_MAX_SETUP_TOKEN=sk-ant-oat01-YOUR_OAUTH_TOKEN
 ANTHROPIC_MAX_MODEL=claude-opus-4-6
 ```
 
-The `sk-ant-oat` prefix is auto-detected. OpenCrab will use `Authorization: Bearer` with the `anthropic-beta: oauth-2025-04-20` header.
+The `sk-ant-oat` prefix is auto-detected. OpenCrabs will use `Authorization: Bearer` with the `anthropic-beta: oauth-2025-04-20` header.
 
 ### Option B: Standard API Key
 
@@ -275,14 +290,14 @@ cargo run -- keyring set anthropic YOUR_API_KEY
 
 ## 🏠 Using Local LLMs
 
-OpenCrab works with any OpenAI-compatible local inference server for **100% private, zero-cost** operation.
+OpenCrabs works with any OpenAI-compatible local inference server for **100% private, zero-cost** operation.
 
 ### LM Studio (Recommended)
 
 1. Download and install [LM Studio](https://lmstudio.ai/)
 2. Download a model (e.g., `qwen2.5-coder-7b-instruct`, `Mistral-7B-Instruct`, `Llama-3-8B`)
 3. Start the local server (default port 1234)
-4. Configure OpenCrab:
+4. Configure OpenCrabs:
 
 ```bash
 # .env or environment
@@ -290,7 +305,7 @@ OPENAI_API_KEY="lm-studio"
 OPENAI_BASE_URL="http://localhost:1234/v1"
 ```
 
-Or via `opencrab.toml`:
+Or via `opencrabs.toml`:
 
 ```toml
 [providers.openai]
@@ -342,12 +357,12 @@ See [LM_STUDIO_GUIDE.md](src/docs/guides/LM_STUDIO_GUIDE.md) for detailed setup 
 
 ## 📝 Configuration
 
-### Configuration File (`opencrab.toml`)
+### Configuration File (`opencrabs.toml`)
 
-OpenCrab searches for config in this order:
-1. `./opencrab.toml` (current directory)
-2. `~/.config/opencrab/opencrab.toml` (Linux/macOS) or `%APPDATA%\opencrab\opencrab.toml` (Windows)
-3. `~/opencrab.toml`
+OpenCrabs searches for config in this order:
+1. `./opencrabs.toml` (current directory)
+2. `~/.config/opencrabs/opencrabs.toml` (Linux/macOS) or `%APPDATA%\opencrabs\opencrabs.toml` (Windows)
+3. `~/opencrabs.toml`
 
 Environment variables override config file settings. `.env` files are auto-loaded.
 
@@ -356,14 +371,14 @@ Environment variables override config file settings. `.env` files are auto-loade
 cargo run -- init
 
 # Copy the example
-cp config.toml.example ~/.config/opencrab/opencrab.toml
+cp config.toml.example ~/.config/opencrabs/opencrabs.toml
 ```
 
 ### Example: Hybrid Setup (Local + Cloud)
 
 ```toml
 [database]
-path = "~/.opencrab/opencrab.db"
+path = "~/.opencrabs/opencrabs.db"
 
 # Local LLM for daily development
 [providers.openai]
@@ -394,38 +409,25 @@ default_model = "claude-opus-4-6"
 
 ## 🔧 Tool System
 
-OpenCrab includes a built-in tool execution system. The AI can use these tools during conversation:
+OpenCrabs includes a built-in tool execution system. The AI can use these tools during conversation:
 
-| Tool | Description | Requires Approval |
-|------|-------------|-------------------|
-| `read_file` | Read file contents with syntax awareness | No |
-| `write_file` | Create or modify files | **Yes** |
-| `edit_file` | Precise text replacements in files | **Yes** |
-| `bash` | Execute shell commands | **Yes** |
-| `ls` | List directory contents | No |
-| `glob` | Find files matching patterns | No |
-| `grep` | Search file contents with regex | No |
-| `web_search` | Search the web | No |
-| `execute_code` | Run code in various languages | **Yes** |
-| `notebook_edit` | Edit Jupyter notebooks | **Yes** |
-| `parse_document` | Extract text from PDF, DOCX, HTML | No |
-| `task_manager` | Manage agent tasks | No |
-| `http_request` | Make HTTP requests | **Yes** |
-| `session_context` | Access session information | No |
-| `plan` | Create structured execution plans | No |
-
-**Example session:**
-
-```
-You: "Read src/main.rs"
-OpenCrab: [reads file with syntax highlighting]
-
-You: "Add error handling to the database connection"
-OpenCrab: [approval dialog] → [modifies file with write tool]
-
-You: "Run cargo test"
-OpenCrab: [approval dialog] → [executes] ✅ 145 tests passed
-```
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file contents with syntax awareness |
+| `write_file` | Create or modify files |
+| `edit_file` | Precise text replacements in files |
+| `bash` | Execute shell commands |
+| `ls` | List directory contents |
+| `glob` | Find files matching patterns |
+| `grep` | Search file contents with regex |
+| `web_search` | Search the web |
+| `execute_code` | Run code in various languages |
+| `notebook_edit` | Edit Jupyter notebooks |
+| `parse_document` | Extract text from PDF, DOCX, HTML |
+| `task_manager` | Manage agent tasks |
+| `http_request` | Make HTTP requests |
+| `session_context` | Access session information |
+| `plan` | Create structured execution plans |
 
 ---
 
@@ -460,7 +462,7 @@ You: Use the plan tool to create a plan for implementing JWT authentication.
      middleware, updating login endpoint, and writing tests.
      Call operation=finalize when done.
 
-OpenCrab: [Creates plan with 5 tasks, dependencies, complexity ratings]
+OpenCrabs: [Creates plan with 5 tasks, dependencies, complexity ratings]
          ✓ Plan finalized! Press Ctrl+P to review.
 ```
 
@@ -495,7 +497,9 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `Ctrl+H` | Show help screen |
 | `Ctrl+N` | New session |
 | `Ctrl+L` | List/switch sessions |
+| `Ctrl+K` | Clear current session |
 | `Page Up/Down` | Scroll chat history |
+| `Mouse Scroll` | Scroll chat history |
 | `Escape` | Clear input / close overlay |
 
 ### Chat Mode
@@ -508,6 +512,18 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `/model` | Show current model |
 | `/models` | Switch model |
 | `/usage` | Token/cost stats |
+| `/onboard` | Run setup wizard |
+| `/sessions` | Open session manager |
+
+### Sessions Mode
+
+| Shortcut | Action |
+|----------|--------|
+| `↑` / `↓` | Navigate sessions |
+| `Enter` | Load selected session |
+| `R` | Rename session |
+| `D` | Delete session |
+| `Esc` | Back to chat |
 
 ### Plan Mode
 
@@ -523,25 +539,25 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 
 ## 🔍 Debug and Logging
 
-OpenCrab uses a **conditional logging system** — no log files by default.
+OpenCrabs uses a **conditional logging system** — no log files by default.
 
 ```bash
 # Enable debug mode (creates log files)
-opencrab -d
+opencrabs -d
 cargo run -- -d
 
-# Logs stored in .opencrab/logs/ (auto-gitignored)
+# Logs stored in .opencrabs/logs/ (auto-gitignored)
 # Daily rolling rotation, auto-cleanup after 7 days
 
 # Management
-opencrab logs status    # Check logging status
-opencrab logs view      # View recent entries
-opencrab logs clean     # Clean old logs
-opencrab logs clean -d 3  # Clean logs older than 3 days
+opencrabs logs status    # Check logging status
+opencrabs logs view      # View recent entries
+opencrabs logs clean     # Clean old logs
+opencrabs logs clean -d 3  # Clean logs older than 3 days
 ```
 
 **When debug mode is enabled:**
-- Log files created in `.opencrab/logs/`
+- Log files created in `.opencrabs/logs/`
 - DEBUG level with thread IDs, file names, line numbers
 - Daily rolling rotation
 
@@ -554,11 +570,11 @@ opencrab logs clean -d 3  # Clean logs older than 3 days
 
 ## 🧠 Brain System (v0.1.1)
 
-OpenCrab's brain is **dynamic and self-sustaining**. Instead of a hardcoded system prompt, the agent assembles its personality, knowledge, and behavior from workspace files that can be edited between turns.
+OpenCrabs's brain is **dynamic and self-sustaining**. Instead of a hardcoded system prompt, the agent assembles its personality, knowledge, and behavior from workspace files that can be edited between turns.
 
 ### Brain Workspace
 
-The brain reads markdown files from `~/opencrab/brain/workspace/` (or `OPENCRAB_BRAIN_PATH` env var):
+The brain reads markdown files from `~/opencrabs/brain/workspace/` (or `OPENCRABS_BRAIN_PATH` env var):
 
 | File | Purpose |
 |------|---------|
@@ -573,7 +589,7 @@ Files are re-read **every turn** — edit them between messages and the agent im
 
 ### User-Defined Slash Commands
 
-Tell OpenCrab in natural language: *"Create a /deploy command that runs deploy.sh"* — and it writes the command to `~/opencrab/brain/commands.json`:
+Tell OpenCrabs in natural language: *"Create a /deploy command that runs deploy.sh"* — and it writes the command to `~/opencrabs/brain/commands.json`:
 
 ```json
 [
@@ -590,7 +606,7 @@ Commands appear in autocomplete alongside built-in commands. After each agent re
 
 ### Self-Sustaining Architecture
 
-OpenCrab can modify its own source code, build, test, and hot-restart itself:
+OpenCrabs can modify its own source code, build, test, and hot-restart itself:
 
 1. The agent edits source files using its tools
 2. Builds with `cargo build --release`
@@ -643,12 +659,12 @@ Integration Layer (LLM Providers, LSP, MCP)
 ## 📁 Project Structure
 
 ```
-opencrab/
+opencrabs/
 ├── src/
 │   ├── main.rs           # Entry point
-│   ├── lib.rs            # Library root
-│   ├── error.rs          # Error types
-│   ├── logging.rs        # Conditional logging system
+│   ├── lib.rs            # Library root (crate root — required by Rust)
+│   ├── error/            # Error types (OpenCrabsError, ErrorCode)
+│   ├── logging/          # Conditional logging system
 │   ├── app/              # Application lifecycle
 │   ├── brain/            # Dynamic brain system (v0.1.1)
 │   │   ├── mod.rs        # Module root
@@ -666,6 +682,12 @@ opencrab/
 │   │   ├── tools/        # Tool system (read, write, bash, glob, grep, etc.)
 │   │   └── prompt/       # Prompt engineering
 │   ├── tui/              # Terminal UI (Ratatui)
+│   │   ├── onboarding.rs     # 7-step onboarding wizard (state + logic)
+│   │   ├── onboarding_render.rs  # Wizard rendering
+│   │   ├── splash.rs     # Splash screen
+│   │   ├── app.rs        # App state + event handling
+│   │   ├── render.rs     # Main render dispatch
+│   │   └── runner.rs     # TUI event loop
 │   ├── lsp/              # LSP integration
 │   ├── mcp/              # Model Context Protocol
 │   ├── events/           # Event handling
@@ -764,7 +786,7 @@ See [BUILD_NOTES.md](src/docs/guides/BUILD_NOTES.md) for detailed troubleshootin
 
 ### Development Status
 
-OpenCrab is under active development. While functional, it may contain bugs or incomplete features.
+OpenCrabs is under active development. While functional, it may contain bugs or incomplete features.
 
 ### Token Cost Responsibility
 
@@ -777,7 +799,7 @@ OpenCrab is under active development. While functional, it may contain bugs or i
 
 ### Support
 
-Cloud API issues, billing questions, and account problems should be directed to the respective providers. OpenCrab provides the tool; you manage your API relationships.
+Cloud API issues, billing questions, and account problems should be directed to the respective providers. OpenCrabs provides the tool; you manage your API relationships.
 
 ---
 
@@ -787,8 +809,8 @@ Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidel
 
 ```bash
 # Setup
-git clone https://github.com/adolfousier/opencrab.git
-cd opencrab
+git clone https://github.com/adolfousier/opencrabs.git
+cd opencrabs
 cargo build
 cargo test
 # Make changes, then submit a PR
@@ -818,8 +840,8 @@ See [LICENSE.md](LICENSE.md) for details.
 
 ## 📞 Support
 
-- **Issues:** [GitHub Issues](https://github.com/adolfousier/opencrab/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/adolfousier/opencrab/discussions)
+- **Issues:** [GitHub Issues](https://github.com/adolfousier/opencrabs/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/adolfousier/opencrabs/discussions)
 - **Docs:** [src/docs/](src/docs/)
 
 ---

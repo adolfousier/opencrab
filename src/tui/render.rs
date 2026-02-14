@@ -5,6 +5,7 @@
 use super::app::App;
 use super::events::AppMode;
 use super::markdown::parse_markdown;
+use super::onboarding_render;
 use super::splash;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -22,13 +23,41 @@ pub fn render(f: &mut Frame, app: &App) {
         return;
     }
 
+    // Show onboarding wizard if in onboarding mode
+    if app.mode == AppMode::Onboarding {
+        if let Some(ref wizard) = app.onboarding {
+            onboarding_render::render_onboarding(f, wizard);
+        }
+        return;
+    }
+
+    // Dynamic input height: 3 lines base (1 content + 2 border), grows with content
+    let input_line_count = if app.input_buffer.is_empty() {
+        1
+    } else {
+        let terminal_width = f.area().width.saturating_sub(4) as usize; // borders + padding
+        app.input_buffer
+            .lines()
+            .map(|line| {
+                if line.is_empty() {
+                    1
+                } else {
+                    // Account for "  " padding prefix
+                    (line.len() + 2).div_ceil(terminal_width.max(1))
+                }
+            })
+            .sum::<usize>()
+            .max(1)
+    };
+    let input_height = (input_line_count as u16 + 2).min(10); // +2 for borders, cap at 10
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Header (1 content line + borders)
-            Constraint::Min(10),   // Main content
-            Constraint::Length(5), // Input
-            Constraint::Length(1), // Status bar
+            Constraint::Length(3),            // Header (1 content line + borders)
+            Constraint::Min(10),              // Main content
+            Constraint::Length(input_height),  // Input (dynamic)
+            Constraint::Length(1),             // Status bar
         ])
         .split(f.area());
 
@@ -82,6 +111,9 @@ pub fn render(f: &mut Frame, app: &App) {
             render_input(f, app, chunks[2]);
             render_restart_dialog(f, app, f.area());
         }
+        AppMode::Onboarding => {
+            // Handled by early return above
+        }
     }
 
     render_status_bar(f, app, chunks[3]);
@@ -111,7 +143,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
         Block::default()
             .borders(Borders::ALL)
             .title(Span::styled(
-                " 🦀 OpenCrab AI Orchestration Agent ",
+                " 🦀 OpenCrabs AI Orchestration Agent ",
                 Style::default()
                     .fg(Color::Rgb(70, 130, 180))
                     .add_modifier(Modifier::BOLD),
@@ -120,6 +152,67 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
     );
 
     f.render_widget(header, area);
+}
+
+/// Pre-wrap a Line's text content to fit within max_width, preserving the style
+/// of the first span and prepending `padding` to each continuation line.
+fn wrap_line_with_padding<'a>(line: Line<'a>, max_width: usize, padding: &'a str) -> Vec<Line<'a>> {
+    if max_width == 0 {
+        return vec![line];
+    }
+    // Flatten all spans into a single styled string for wrapping
+    let total_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+    if total_width <= max_width {
+        return vec![line];
+    }
+
+    // Collect all text and track style boundaries
+    let mut segments: Vec<(String, Style)> = Vec::new();
+    for span in &line.spans {
+        segments.push((span.content.to_string(), span.style));
+    }
+
+    // Build wrapped lines
+    let mut result: Vec<Line<'a>> = Vec::new();
+    let mut current_spans: Vec<Span<'a>> = Vec::new();
+    let mut current_width: usize = 0;
+
+    for (text, style) in segments {
+        let mut remaining = text.as_str();
+        while !remaining.is_empty() {
+            let available = max_width.saturating_sub(current_width);
+            if available == 0 {
+                result.push(Line::from(current_spans));
+                current_spans = vec![Span::styled(padding.to_string(), Style::default())];
+                current_width = padding.len();
+                continue;
+            }
+
+            if remaining.len() <= available {
+                current_spans.push(Span::styled(remaining.to_string(), style));
+                current_width += remaining.len();
+                break;
+            } else {
+                let break_at = remaining[..available]
+                    .rfind(' ')
+                    .map(|p| p + 1)
+                    .unwrap_or(available);
+                let (chunk, rest) = remaining.split_at(break_at);
+                current_spans.push(Span::styled(chunk.to_string(), style));
+                remaining = rest.trim_start();
+                result.push(Line::from(current_spans));
+                current_spans = vec![Span::styled(padding.to_string(), Style::default())];
+                current_width = padding.len();
+            }
+        }
+    }
+    if !current_spans.is_empty() {
+        result.push(Line::from(current_spans));
+    }
+    if result.is_empty() {
+        result.push(line);
+    }
+    result
 }
 
 /// Render the chat messages
@@ -168,6 +261,8 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
         .and_then(|s| s.model.as_deref())
         .unwrap_or("AI");
 
+    let content_width = area.width.saturating_sub(2) as usize; // borders
+
     for msg in &app.messages {
         if msg.role == "system" {
             // System messages: compact, DarkGray italic, ℹ️ prefix, no separator
@@ -201,11 +296,11 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
             )
         } else {
             (
-                format!("🤖 {}", model_name),
+                model_name.to_string(),
                 Style::default()
                     .fg(Color::Blue)
                     .add_modifier(Modifier::BOLD),
-                "",
+                "  ",
             )
         };
 
@@ -218,14 +313,21 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
             ),
         ]));
 
-        // Parse and render message content as markdown
-        let mut content_lines = parse_markdown(&msg.content);
-        lines.append(&mut content_lines);
+        // Parse and render message content as markdown (with left padding)
+        let content_lines = parse_markdown(&msg.content);
+        for line in content_lines {
+            let mut padded_spans = vec![Span::raw("  ")];
+            padded_spans.extend(line.spans);
+            let padded_line = Line::from(padded_spans);
+            for wrapped in wrap_line_with_padding(padded_line, content_width, "  ") {
+                lines.push(wrapped);
+            }
+        }
 
         // Add spacing between messages
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "─".repeat(60),
+            format!("  {}", "─".repeat(58)),
             Style::default().fg(Color::DarkGray),
         )));
         lines.push(Line::from(""));
@@ -235,7 +337,7 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
     if let Some(ref response) = app.streaming_response {
         lines.push(Line::from(vec![
             Span::styled(
-                format!("🤖 {} ", model_name),
+                format!("{} ", model_name),
                 Style::default()
                     .fg(Color::Blue)
                     .add_modifier(Modifier::BOLD),
@@ -243,8 +345,15 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("[streaming]", Style::default().fg(Color::DarkGray)),
         ]));
 
-        let mut streaming_lines = parse_markdown(response);
-        lines.append(&mut streaming_lines);
+        let streaming_lines = parse_markdown(response);
+        for line in streaming_lines {
+            let mut padded_spans = vec![Span::raw("  ")];
+            padded_spans.extend(line.spans);
+            let padded_line = Line::from(padded_spans);
+            for wrapped in wrap_line_with_padding(padded_line, content_width, "  ") {
+                lines.push(wrapped);
+            }
+        }
     }
 
     // Show processing indicator with animated spinner
@@ -267,10 +376,7 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
         ]));
     }
 
-    // Calculate scroll offset for ratatui
-    // app.scroll_offset represents "lines scrolled up from the bottom"
-    // 0 = at the bottom (auto-scroll, showing latest messages)
-    // N = scrolled up N lines from the bottom (showing older messages)
+    // Calculate scroll offset — lines are pre-wrapped so count is accurate
     let total_lines = lines.len();
     let visible_height = area.height.saturating_sub(2) as usize; // Subtract borders
     let max_scroll = total_lines.saturating_sub(visible_height);
@@ -281,7 +387,7 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
         .as_ref()
         .and_then(|s| s.title.as_deref())
         .unwrap_or("New Session");
-    let chat_title = format!(" 💬 {} ", session_name);
+    let chat_title = format!(" {} ", session_name);
 
     let chat = Paragraph::new(lines)
         .block(
@@ -295,7 +401,6 @@ fn render_chat(f: &mut Frame, app: &App, area: Rect) {
                 ))
                 .border_style(Style::default().fg(Color::Rgb(70, 130, 180))),
         )
-        .wrap(Wrap { trim: false })
         .scroll((actual_scroll_offset as u16, 0));
 
     f.render_widget(chat, area);
@@ -310,19 +415,26 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
         input_text.push('█');
     }
 
-    let input_lines: Vec<Line> = input_text
-        .lines()
-        .map(|line| Line::from(line.to_string()))
-        .collect();
+    let input_content_width = area.width.saturating_sub(2) as usize; // borders
+    let mut input_lines: Vec<Line> = Vec::new();
+    for line in input_text.lines() {
+        let padded = Line::from(format!("  {}", line));
+        for wrapped in wrap_line_with_padding(padded, input_content_width, "  ") {
+            input_lines.push(wrapped);
+        }
+    }
+    if input_lines.is_empty() {
+        input_lines.push(Line::from("  "));
+    }
 
     let title = if app.is_processing {
         Span::styled(
-            " ⏸️  Input (waiting for response...) ",
+            " Waiting for response...",
             Style::default().fg(Color::DarkGray),
         )
     } else {
         Span::styled(
-            " ✏️  Type your message (Enter to send, Alt+Enter for newline) ",
+            " Type here (enter = send | alt + enter = newline)",
             Style::default()
                 .fg(Color::Rgb(70, 130, 180))
                 .add_modifier(Modifier::BOLD),
@@ -342,8 +454,7 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .title(title)
                 .border_style(border_style),
-        )
-        .wrap(Wrap { trim: false });
+        );
 
     f.render_widget(input, area);
 }
@@ -413,12 +524,39 @@ fn render_slash_autocomplete(f: &mut Frame, app: &App, input_area: Rect) {
 fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    lines.push(Line::from(Span::styled(
-        "Sessions (↑/↓ to navigate, Enter to select, Esc to cancel)",
-        Style::default()
-            .fg(Color::Rgb(70, 130, 180))
-            .add_modifier(Modifier::BOLD),
-    )));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  [↑↓] ",
+            Style::default()
+                .fg(Color::Rgb(70, 130, 180))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Navigate  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "[Enter] ",
+            Style::default()
+                .fg(Color::Rgb(70, 130, 180))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Select  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "[R] ",
+            Style::default()
+                .fg(Color::Rgb(184, 134, 11))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Rename  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "[D] ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Delete  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "[Esc] ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Back", Style::default().fg(Color::White)),
+    ]));
     lines.push(Line::from(""));
 
     for (idx, session) in app.sessions.iter().enumerate() {
@@ -429,26 +567,45 @@ fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
             .map(|s| s.id == session.id)
             .unwrap_or(false);
 
-        let prefix = if is_selected { "> " } else { "  " };
+        let is_renaming = is_selected && app.session_renaming;
+
+        let prefix = if is_selected { "  > " } else { "    " };
         let suffix = if is_current { " [current]" } else { "" };
 
         let name = session.title.as_deref().unwrap_or("Untitled");
         let created = session.created_at.format("%Y-%m-%d %H:%M");
 
-        let style = if is_selected {
-            Style::default()
-                .fg(Color::Rgb(184, 134, 11))
-                .add_modifier(Modifier::BOLD)
-        } else if is_current {
-            Style::default().fg(Color::Blue)
+        if is_renaming {
+            // Show rename input
+            lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(Color::Rgb(184, 134, 11))),
+                Span::styled(
+                    format!("{}█", app.session_rename_buffer),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" - {}{}", created, suffix),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]));
         } else {
-            Style::default().fg(Color::White)
-        };
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Rgb(184, 134, 11))
+                    .add_modifier(Modifier::BOLD)
+            } else if is_current {
+                Style::default().fg(Color::Blue)
+            } else {
+                Style::default().fg(Color::White)
+            };
 
-        lines.push(Line::from(Span::styled(
-            format!("{}{} - {}{}", prefix, name, created, suffix),
-            style,
-        )));
+            lines.push(Line::from(Span::styled(
+                format!("{}{} - {}{}", prefix, name, created, suffix),
+                style,
+            )));
+        }
     }
 
     let sessions = Paragraph::new(lines)
@@ -464,7 +621,7 @@ fn render_help(f: &mut Frame, _app: &App, area: Rect) {
         Line::from(vec![
             Span::styled("🥐 ", Style::default().fg(Color::Rgb(218, 165, 32))),
             Span::styled(
-                "OpenCrab Help",
+                "OpenCrabs Help",
                 Style::default()
                     .fg(Color::Rgb(70, 130, 180))
                     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
@@ -659,6 +816,32 @@ fn render_help(f: &mut Frame, _app: &App, area: Rect) {
             Span::styled("→ ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 "Session usage stats",
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  /onboard     ",
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("→ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "Run setup wizard",
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  /sessions    ",
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("→ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "List all sessions",
                 Style::default().fg(Color::White),
             ),
         ]),
@@ -1737,6 +1920,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         AppMode::ModelSelector => "MODEL SELECTOR",
         AppMode::UsageDialog => "USAGE",
         AppMode::RestartPending => "RESTART",
+        AppMode::Onboarding => "SETUP",
     };
 
     let status = if let Some(ref error) = app.error_message {
@@ -1745,7 +1929,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         format!(" [{}] Processing...", mode_text)
     } else {
         format!(
-            " [{}] Ready │ Ctrl+H: Help │ Ctrl+K: Clear │ Ctrl+L: Sessions │ Ctrl+N: New │ Ctrl+C: Quit",
+            " [{}] Ctrl+N: New │ Ctrl+K: Clear │ Ctrl+L: Sessions │ Ctrl+H: Help │ Ctrl+C: Quit │ / Commands",
             mode_text
         )
     };

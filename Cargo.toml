@@ -1,11 +1,11 @@
 [package]
-name = "opencrab"
-version = "0.1.1"
+name = "opencrabs"
+version = "0.1.2"
 edition = "2024"
-authors = ["OpenCrab Team"]
+authors = ["OpenCrabs Team"]
 license = "FSL-1.1-MIT"
 description = "High-performance terminal AI orchestration agent for software development"
-repository = "https://github.com/adolfousier/opencrab"
+repository = "https://github.com/adolfousier/opencrabs"
 keywords = ["ai", "terminal", "assistant", "llm", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
@@ -144,7 +144,7 @@ opt-level = "z"
 strip = true
 
 [[bin]]
-name = "opencrab"
+name = "opencrabs"
 path = "src/main.rs"
 
 # Benchmarks

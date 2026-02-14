@@ -170,7 +170,7 @@ impl Tool for CodeExecTool {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| ToolError::Internal(format!("Failed to get system time: {}", e)))?
             .as_nanos();
-        let temp_file = temp_dir.join(format!("opencrab_exec_{}.{}", timestamp, extension));
+        let temp_file = temp_dir.join(format!("opencrabs_exec_{}.{}", timestamp, extension));
 
         // Write code to temp file
         fs::write(&temp_file, &input.code)

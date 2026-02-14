@@ -1,5 +1,5 @@
 ---
-summary: "Overview of OpenCrab onboarding options and flows"
+summary: "Overview of OpenCrabs onboarding options and flows"
 read_when:
   - Choosing an onboarding path
   - Setting up a new environment
@@ -9,7 +9,7 @@ sidebarTitle: "Onboarding Overview"
 
 # Onboarding Overview
 
-OpenCrab supports multiple onboarding paths depending on where the Gateway runs
+OpenCrabs supports multiple onboarding paths depending on where the Gateway runs
 and how you prefer to configure providers.
 
 ## Choose your onboarding path
@@ -22,18 +22,18 @@ and how you prefer to configure providers.
 Run the wizard in a terminal:
 
 ```bash
-opencrab onboard
+opencrabs onboard
 ```
 
 Use the CLI wizard when you want full control of the Gateway, workspace,
 channels, and skills. Docs:
 
 - [Onboarding Wizard (CLI)](/start/wizard)
-- [`opencrab onboard` command](/cli/onboard)
+- [`opencrabs onboard` command](/cli/onboard)
 
 ## macOS app onboarding
 
-Use the OpenCrab app when you want a fully guided setup on macOS. Docs:
+Use the OpenCrabs app when you want a fully guided setup on macOS. Docs:
 
 - [Onboarding (macOS App)](/start/onboarding)
 

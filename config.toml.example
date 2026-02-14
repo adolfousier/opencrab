@@ -1,11 +1,11 @@
-# OpenCrab Configuration File
+# OpenCrabs Configuration File
 # Copy this file to one of these locations:
-#   - Linux/macOS: ~/.config/opencrab/config.toml or ~/opencrab/config.toml
-#   - Windows: %APPDATA%\opencrab\config.toml or opencrab\config.toml
+#   - Linux/macOS: ~/.config/opencrabs/config.toml or ~/opencrabs/config.toml
+#   - Windows: %APPDATA%\opencrabs\config.toml or opencrabs\config.toml
 
 [database]
 # Database file location (stores conversation history)
-path = "~/.opencrab/opencrab.db"
+path = "~/.opencrabs/opencrabs.db"
 
 [providers]
 # ========================================
@@ -76,7 +76,7 @@ default_model = "qwen2.5-coder-7b-instruct"
 # ========================================
 # Tips for Using Local LLMs
 # ========================================
-# 1. Make sure LM Studio is running before starting OpenCrab
+# 1. Make sure LM Studio is running before starting OpenCrabs
 # 2. Load a model in LM Studio first
 # 3. Set default_model to EXACTLY match the model name shown in LM Studio
 # 4. Increase context length in LM Studio if you get overflow errors:

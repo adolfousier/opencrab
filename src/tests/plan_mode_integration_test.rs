@@ -6,11 +6,11 @@
 //! - Multiple concurrent plans
 //! - Database and JSON synchronization
 
-use opencrab::db::models::Session;
-use opencrab::db::repository::session::SessionRepository;
-use opencrab::db::Database;
-use opencrab::services::{PlanService, ServiceContext};
-use opencrab::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskStatus, TaskType};
+use opencrabs::db::models::Session;
+use opencrabs::db::repository::session::SessionRepository;
+use opencrabs::db::Database;
+use opencrabs::services::{PlanService, ServiceContext};
+use opencrabs::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskStatus, TaskType};
 use tempfile::TempDir;
 use uuid::Uuid;
 

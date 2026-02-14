@@ -1,6 +1,6 @@
 //! CLI Module
 //!
-//! Command-line interface for OpenCrab using Clap v4.
+//! Command-line interface for OpenCrabs using Clap v4.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -9,12 +9,12 @@ use std::sync::Arc;
 use crate::brain::{BrainLoader, CommandLoader};
 use crate::brain::prompt_builder::RuntimeInfo;
 
-/// OpenCrab - High-Performance Terminal AI Orchestration Agent
+/// OpenCrabs - High-Performance Terminal AI Orchestration Agent
 #[derive(Parser, Debug)]
-#[command(name = "opencrab")]
+#[command(name = "opencrabs")]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    /// Enable debug mode (creates log files in .opencrab/logs/)
+    /// Enable debug mode (creates log files in .opencrabs/logs/)
     #[arg(short, long, global = true)]
     pub debug: bool,
 
@@ -34,7 +34,14 @@ pub enum Commands {
         /// Session ID to resume
         #[arg(short, long)]
         session: Option<String>,
+
+        /// Force onboarding wizard before chat
+        #[arg(long)]
+        onboard: bool,
     },
+
+    /// Run the onboarding setup wizard
+    Onboard,
 
     /// Run a single command non-interactively
     Run {
@@ -159,14 +166,35 @@ pub async fn run() -> Result<()> {
     // Load configuration
     let config = load_config(cli.config.as_deref()).await?;
 
+    // Auto-generate config.toml if API keys exist in env but no config file yet.
+    // This prevents the onboarding wizard from triggering when .env is already set up.
+    let config_path = dirs::config_dir()
+        .map(|d| d.join("opencrabs").join("config.toml"));
+    if let Some(ref path) = config_path {
+        if !path.exists() && config.has_any_api_key() {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            if let Err(e) = config.save(path) {
+                tracing::warn!("Failed to auto-generate config.toml: {}", e);
+            } else {
+                tracing::info!("Auto-generated config.toml from environment");
+            }
+        }
+    }
+
     match cli.command {
-        None | Some(Commands::Chat { session: _ }) => {
+        None | Some(Commands::Chat { .. }) => {
             // Default: Interactive TUI mode
-            let session = match &cli.command {
-                Some(Commands::Chat { session }) => session.clone(),
-                _ => None,
+            let (session, force_onboard) = match &cli.command {
+                Some(Commands::Chat { session, onboard }) => (session.clone(), *onboard),
+                _ => (None, false),
             };
-            cmd_chat(&config, session).await
+            cmd_chat(&config, session, force_onboard).await
+        }
+        Some(Commands::Onboard) => {
+            // Launch TUI with onboarding wizard (skip splash)
+            cmd_chat(&config, None, true).await
         }
         Some(Commands::Init { force }) => cmd_init(&config, force).await,
         Some(Commands::Config { show_secrets }) => cmd_config(&config, show_secrets).await,
@@ -203,11 +231,11 @@ async fn load_config(config_path: Option<&str>) -> Result<crate::config::Config>
 async fn cmd_init(_config: &crate::config::Config, force: bool) -> Result<()> {
     use crate::config::Config;
 
-    println!("🦀 OpenCrab Configuration Initialization\n");
+    println!("🦀 OpenCrabs Configuration Initialization\n");
 
     let config_path = dirs::config_dir()
         .context("Could not determine config directory")?
-        .join("opencrab")
+        .join("opencrabs")
         .join("config.toml");
 
     // Check if config already exists
@@ -226,14 +254,14 @@ async fn cmd_init(_config: &crate::config::Config, force: bool) -> Result<()> {
     println!("\n📝 Next steps:");
     println!("   1. Edit the config file to add your API keys");
     println!("   2. Set ANTHROPIC_API_KEY environment variable");
-    println!("   3. Run 'opencrab' or 'opencrab chat' to start");
+    println!("   3. Run 'opencrabs' or 'opencrabs chat' to start");
 
     Ok(())
 }
 
 /// Show configuration
 async fn cmd_config(config: &crate::config::Config, show_secrets: bool) -> Result<()> {
-    println!("🦀 OpenCrab Configuration\n");
+    println!("🦀 OpenCrabs Configuration\n");
 
     if show_secrets {
         println!("{:#?}", config);
@@ -389,7 +417,7 @@ async fn cmd_db(config: &crate::config::Config, operation: DbCommands) -> Result
 }
 
 /// Start interactive chat session
-async fn cmd_chat(config: &crate::config::Config, _session_id: Option<String>) -> Result<()> {
+async fn cmd_chat(config: &crate::config::Config, _session_id: Option<String>, force_onboard: bool) -> Result<()> {
     use crate::{
         db::Database,
         llm::{
@@ -406,7 +434,7 @@ async fn cmd_chat(config: &crate::config::Config, _session_id: Option<String>) -
         tui,
     };
 
-    println!("🦀 Starting OpenCrab AI Orchestration Agent...\n");
+    println!("🦀 Starting OpenCrabs AI Orchestration Agent...\n");
 
     // Initialize database
     tracing::info!("Connecting to database: {}", config.database.path.display());
@@ -701,6 +729,11 @@ async fn cmd_chat(config: &crate::config::Config, _session_id: Option<String>) -
     // Update app with the configured agent service (preserve event channels!)
     app.set_agent_service(agent_service);
 
+    // Set force onboard flag if requested
+    if force_onboard {
+        app.force_onboard = true;
+    }
+
     // Run TUI
     tracing::debug!("Launching TUI");
     tui::run(app).await.context("TUI error")?;
@@ -883,7 +916,7 @@ async fn cmd_keyring(operation: KeyringCommands) -> Result<()> {
                 None => {
                     println!("❌ No API key found for {} in OS keyring", provider);
                     println!("\n💡 To store an API key, use:");
-                    println!("   opencrab keyring set {} YOUR_API_KEY", provider);
+                    println!("   opencrabs keyring set {} YOUR_API_KEY", provider);
                 }
             }
 
@@ -928,7 +961,7 @@ async fn cmd_keyring(operation: KeyringCommands) -> Result<()> {
             if !found_any {
                 println!("\n💡 No API keys found in keyring.");
                 println!("   To store an API key, use:");
-                println!("   opencrab keyring set <provider> <api-key>");
+                println!("   opencrabs keyring set <provider> <api-key>");
             }
 
             Ok(())
@@ -941,11 +974,11 @@ async fn cmd_logs(operation: LogCommands) -> Result<()> {
     use crate::logging;
     use std::io::{BufRead, BufReader};
 
-    let log_dir = std::env::current_dir()?.join(".opencrab").join("logs");
+    let log_dir = std::env::current_dir()?.join(".opencrabs").join("logs");
 
     match operation {
         LogCommands::Status => {
-            println!("📊 OpenCrab Logging Status\n");
+            println!("📊 OpenCrabs Logging Status\n");
             println!("Log directory: {}", log_dir.display());
 
             if log_dir.exists() {
@@ -984,11 +1017,11 @@ async fn cmd_logs(operation: LogCommands) -> Result<()> {
                 }
 
                 println!("\n💡 To enable debug logging, run with -d flag:");
-                println!("   opencrab -d");
+                println!("   opencrabs -d");
             } else {
                 println!("Status: ❌ No logs found");
                 println!("\n💡 To enable debug logging, run with -d flag:");
-                println!("   opencrab -d");
+                println!("   opencrabs -d");
                 println!("\nThis will create log files in:");
                 println!("   {}", log_dir.display());
             }
@@ -1020,8 +1053,8 @@ async fn cmd_logs(operation: LogCommands) -> Result<()> {
                 }
             } else {
                 println!("❌ No log files found.\n");
-                println!("💡 Run OpenCrab with -d flag to enable debug logging:");
-                println!("   opencrab -d");
+                println!("💡 Run OpenCrabs with -d flag to enable debug logging:");
+                println!("   opencrabs -d");
             }
 
             Ok(())
@@ -1049,8 +1082,8 @@ async fn cmd_logs(operation: LogCommands) -> Result<()> {
         LogCommands::Open => {
             if !log_dir.exists() {
                 println!("❌ Log directory does not exist: {}", log_dir.display());
-                println!("\n💡 Run OpenCrab with -d flag to enable debug logging:");
-                println!("   opencrab -d");
+                println!("\n💡 Run OpenCrabs with -d flag to enable debug logging:");
+                println!("   opencrabs -d");
                 return Ok(());
             }
 

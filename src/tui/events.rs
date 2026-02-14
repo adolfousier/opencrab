@@ -15,6 +15,9 @@ pub enum TuiEvent {
     /// User pressed a key
     Key(KeyEvent),
 
+    /// Mouse scroll event
+    MouseScroll(i8), // positive = up, negative = down
+
     /// User pasted text
     Paste(String),
 
@@ -135,6 +138,8 @@ pub enum AppMode {
     UsageDialog,
     /// Restart confirmation pending (after successful /rebuild)
     RestartPending,
+    /// Onboarding wizard
+    Onboarding,
 }
 
 /// Event handler for the TUI
@@ -178,6 +183,22 @@ impl EventHandler {
                                     && tx.send(TuiEvent::Key(key)).is_err()
                                 {
                                     break;
+                                }
+                            }
+                            crossterm::event::Event::Mouse(mouse) => {
+                                use crossterm::event::MouseEventKind;
+                                match mouse.kind {
+                                    MouseEventKind::ScrollUp => {
+                                        if tx.send(TuiEvent::MouseScroll(1)).is_err() {
+                                            break;
+                                        }
+                                    }
+                                    MouseEventKind::ScrollDown => {
+                                        if tx.send(TuiEvent::MouseScroll(-1)).is_err() {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                             crossterm::event::Event::Resize(w, h) => {

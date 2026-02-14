@@ -1,4 +1,4 @@
-//! OpenCrab - High-Performance Terminal AI Orchestration Agent
+//! OpenCrabs - High-Performance Terminal AI Orchestration Agent
 //!
 //! A blazingly fast, memory-efficient terminal-based AI orchestration agent for software development.
 //! Written in Rust for superior performance, memory safety, and reduced resource consumption.
@@ -18,13 +18,13 @@
 //!
 //! ```bash
 //! # Interactive mode
-//! opencrab
+//! opencrabs
 //!
 //! # Non-interactive mode
-//! opencrab run "explain this code"
+//! opencrabs run "explain this code"
 //!
 //! # With auto-approve (dangerous!)
-//! opencrab run --auto-approve "refactor this file"
+//! opencrabs run --auto-approve "refactor this file"
 //! ```
 
 pub mod app;
@@ -53,7 +53,7 @@ pub mod message;
 pub mod sync;
 
 // Re-export commonly used types
-pub use error::{OpenCrabError, ErrorCode};
+pub use error::{OpenCrabsError, ErrorCode};
 
 /// Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1,6 +1,6 @@
 //! Self-Update Module
 //!
-//! Handles building, testing, and hot-restarting OpenCrab.
+//! Handles building, testing, and hot-restarting OpenCrabs.
 //! The running binary is in memory — modifying source on disk is safe.
 //! After a successful build, `exec()` replaces the current process with the new binary.
 
@@ -8,9 +8,9 @@ use anyhow::Result;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-/// Handles building, testing, and restarting OpenCrab from source.
+/// Handles building, testing, and restarting OpenCrabs from source.
 pub struct SelfUpdater {
-    /// Root of the OpenCrab project (where Cargo.toml lives)
+    /// Root of the OpenCrabs project (where Cargo.toml lives)
     project_root: PathBuf,
     /// Path to the compiled binary
     binary_path: PathBuf,
@@ -54,7 +54,7 @@ impl SelfUpdater {
         let binary_path = project_root
             .join("target")
             .join("release")
-            .join("opencrab");
+            .join("opencrabs");
 
         Ok(Self {
             project_root,
@@ -66,7 +66,7 @@ impl SelfUpdater {
     ///
     /// Returns `Ok(binary_path)` on success or `Err(compiler_output)` on failure.
     pub async fn build(&self) -> Result<PathBuf, String> {
-        tracing::info!("Building OpenCrab at {}", self.project_root.display());
+        tracing::info!("Building OpenCrabs at {}", self.project_root.display());
 
         let output = tokio::process::Command::new("cargo")
             .arg("build")
@@ -120,7 +120,7 @@ impl SelfUpdater {
         use std::os::unix::process::CommandExt;
 
         tracing::info!(
-            "Restarting OpenCrab: {} chat --session {}",
+            "Restarting OpenCrabs: {} chat --session {}",
             self.binary_path.display(),
             session_id
         );
@@ -159,7 +159,7 @@ mod tests {
     fn test_new() {
         let updater = SelfUpdater::new(
             PathBuf::from("/tmp/project"),
-            PathBuf::from("/tmp/project/target/release/opencrab"),
+            PathBuf::from("/tmp/project/target/release/opencrabs"),
         );
         assert_eq!(
             updater.project_root(),
@@ -167,7 +167,7 @@ mod tests {
         );
         assert_eq!(
             updater.binary_path(),
-            std::path::Path::new("/tmp/project/target/release/opencrab")
+            std::path::Path::new("/tmp/project/target/release/opencrabs")
         );
     }
 }

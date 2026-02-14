@@ -119,9 +119,9 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: opencrab-${{ matrix.os }}
+          name: opencrabs-${{ matrix.os }}
           path: |
-            target/release/opencrab${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+            target/release/opencrabs${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
   coverage:
     name: Code Coverage

@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum OpenCrabError {
+pub enum OpenCrabsError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -52,7 +52,7 @@ pub enum ErrorCode {
     PermissionNotGranted = 4001,
 }
 
-impl OpenCrabError {
+impl OpenCrabsError {
     pub fn code(&self) -> Option<ErrorCode> {
         match self {
             Self::Config { code, .. } => Some(*code),
@@ -66,7 +66,7 @@ impl OpenCrabError {
         match self {
             Self::Config { message, .. } => {
                 format!(
-                    "Configuration error: {}\nPlease check your opencrab.json file.",
+                    "Configuration error: {}\nPlease check your opencrabs.json file.",
                     message
                 )
             }

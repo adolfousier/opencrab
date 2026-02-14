@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use opencrab::{
+use opencrabs::{
     db::Database,
     llm::{
         agent::AgentService,

@@ -120,20 +120,20 @@ fn validate_plan_file_path(path: &Path, working_dir: &Path) -> Result<()> {
         }
     }
 
-    // Verify filename matches pattern .opencrab_plan_{uuid}.json (no traversal)
+    // Verify filename matches pattern .opencrabs_plan_{uuid}.json (no traversal)
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| ToolError::InvalidInput("Invalid plan filename".to_string()))?;
 
-    if !file_name.starts_with(".opencrab_plan_") || !file_name.ends_with(".json") {
+    if !file_name.starts_with(".opencrabs_plan_") || !file_name.ends_with(".json") {
         return Err(ToolError::InvalidInput(
-            "Plan filename must match pattern .opencrab_plan_{session_id}.json".to_string(),
+            "Plan filename must match pattern .opencrabs_plan_{session_id}.json".to_string(),
         ));
     }
 
     // Extract and validate UUID portion
-    let uuid_part = &file_name[14..file_name.len() - 5]; // Remove ".opencrab_plan_" and ".json"
+    let uuid_part = &file_name[14..file_name.len() - 5]; // Remove ".opencrabs_plan_" and ".json"
     uuid::Uuid::parse_str(uuid_part).map_err(|_| {
         ToolError::InvalidInput("Plan filename must contain a valid UUID".to_string())
     })?;
@@ -304,7 +304,7 @@ impl Tool for PlanTool {
         let operation: PlanOperation = serde_json::from_value(input)?;
 
         // Load or create plan state from context (session-scoped)
-        let plan_filename = format!(".opencrab_plan_{}.json", context.session_id);
+        let plan_filename = format!(".opencrabs_plan_{}.json", context.session_id);
         let plan_file = context.working_directory.join(&plan_filename);
 
         // Security: Validate plan file path

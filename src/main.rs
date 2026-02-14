@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use opencrab::{cli, logging};
+use opencrabs::{cli, logging};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
 
     // Initialize logging based on debug flag
     // - Debug mode OFF: No log files created, silent logging
-    // - Debug mode ON: Creates log files in .opencrab/logs/, detailed logging
+    // - Debug mode ON: Creates log files in .opencrabs/logs/, detailed logging
     let _guard = logging::setup_from_cli(cli_args.debug)
         .map_err(|e| anyhow::anyhow!("Failed to initialize logging: {}", e))?;
 

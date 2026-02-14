@@ -41,8 +41,8 @@ impl CommandLoader {
 
     /// Resolve the commands.json path from the brain workspace path.
     pub fn from_brain_path(brain_path: &std::path::Path) -> Self {
-        // commands.json lives alongside the workspace, at ~/opencrab/brain/commands.json
-        // If brain_path is ~/opencrab/brain/workspace/, go up one level
+        // commands.json lives alongside the workspace, at ~/opencrabs/brain/commands.json
+        // If brain_path is ~/opencrabs/brain/workspace/, go up one level
         let parent = if brain_path.ends_with("workspace") {
             brain_path
                 .parent()

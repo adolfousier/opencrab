@@ -1,4 +1,4 @@
-// Crabrace client integration for OpenCrab
+// Crabrace client integration for OpenCrabs
 // Replaces the planned Catwalk integration with Crabrace
 
 use anyhow::{Context, Result};
@@ -53,7 +53,7 @@ impl Default for CrabraceConfig {
     }
 }
 
-/// Crabrace client wrapper for OpenCrab
+/// Crabrace client wrapper for OpenCrabs
 pub struct CrabraceIntegration {
     client: CrabraceClient,
     config: CrabraceConfig,

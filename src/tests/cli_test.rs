@@ -3,12 +3,12 @@
 //! Tests for command-line argument parsing using Clap.
 
 use clap::Parser;
-use opencrab::cli::{Cli, Commands, DbCommands, OutputFormat};
+use opencrabs::cli::{Cli, Commands, DbCommands, OutputFormat};
 
 #[test]
 fn test_cli_parse_no_command() {
     // When no command is given, command should be None (defaults to chat)
-    let cli = Cli::try_parse_from(["opencrab"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs"]).unwrap();
     assert!(cli.command.is_none());
     assert!(!cli.debug);
     assert!(cli.config.is_none());
@@ -16,7 +16,7 @@ fn test_cli_parse_no_command() {
 
 #[test]
 fn test_cli_parse_chat_command() {
-    let cli = Cli::try_parse_from(["opencrab", "chat"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "chat"]).unwrap();
     match cli.command {
         Some(Commands::Chat { session }) => {
             assert!(session.is_none());
@@ -27,7 +27,7 @@ fn test_cli_parse_chat_command() {
 
 #[test]
 fn test_cli_parse_chat_with_session() {
-    let cli = Cli::try_parse_from(["opencrab", "chat", "--session", "test-session-id"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "chat", "--session", "test-session-id"]).unwrap();
     match cli.command {
         Some(Commands::Chat { session }) => {
             assert_eq!(session, Some("test-session-id".to_string()));
@@ -38,7 +38,7 @@ fn test_cli_parse_chat_with_session() {
 
 #[test]
 fn test_cli_parse_run_command() {
-    let cli = Cli::try_parse_from(["opencrab", "run", "Hello, how are you?"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "run", "Hello, how are you?"]).unwrap();
     match cli.command {
         Some(Commands::Run {
             prompt,
@@ -55,7 +55,7 @@ fn test_cli_parse_run_command() {
 
 #[test]
 fn test_cli_parse_run_with_json_format() {
-    let cli = Cli::try_parse_from(["opencrab", "run", "--format", "json", "Test prompt"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "run", "--format", "json", "Test prompt"]).unwrap();
     match cli.command {
         Some(Commands::Run {
             prompt,
@@ -73,7 +73,7 @@ fn test_cli_parse_run_with_json_format() {
 #[test]
 fn test_cli_parse_run_with_markdown_format() {
     let cli =
-        Cli::try_parse_from(["opencrab", "run", "--format", "markdown", "Test prompt"]).unwrap();
+        Cli::try_parse_from(["opencrabs", "run", "--format", "markdown", "Test prompt"]).unwrap();
     match cli.command {
         Some(Commands::Run {
             prompt,
@@ -90,7 +90,7 @@ fn test_cli_parse_run_with_markdown_format() {
 
 #[test]
 fn test_cli_parse_run_with_auto_approve() {
-    let cli = Cli::try_parse_from(["opencrab", "run", "--auto-approve", "Test prompt"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "run", "--auto-approve", "Test prompt"]).unwrap();
     match cli.command {
         Some(Commands::Run {
             prompt,
@@ -106,7 +106,7 @@ fn test_cli_parse_run_with_auto_approve() {
 
 #[test]
 fn test_cli_parse_run_with_yolo_alias() {
-    let cli = Cli::try_parse_from(["opencrab", "run", "--yolo", "Test prompt"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "run", "--yolo", "Test prompt"]).unwrap();
     match cli.command {
         Some(Commands::Run {
             prompt,
@@ -122,7 +122,7 @@ fn test_cli_parse_run_with_yolo_alias() {
 
 #[test]
 fn test_cli_parse_init_command() {
-    let cli = Cli::try_parse_from(["opencrab", "init"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "init"]).unwrap();
     match cli.command {
         Some(Commands::Init { force }) => {
             assert!(!force);
@@ -133,7 +133,7 @@ fn test_cli_parse_init_command() {
 
 #[test]
 fn test_cli_parse_init_with_force() {
-    let cli = Cli::try_parse_from(["opencrab", "init", "--force"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "init", "--force"]).unwrap();
     match cli.command {
         Some(Commands::Init { force }) => {
             assert!(force);
@@ -144,7 +144,7 @@ fn test_cli_parse_init_with_force() {
 
 #[test]
 fn test_cli_parse_config_command() {
-    let cli = Cli::try_parse_from(["opencrab", "config"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "config"]).unwrap();
     match cli.command {
         Some(Commands::Config { show_secrets }) => {
             assert!(!show_secrets);
@@ -155,7 +155,7 @@ fn test_cli_parse_config_command() {
 
 #[test]
 fn test_cli_parse_config_with_show_secrets() {
-    let cli = Cli::try_parse_from(["opencrab", "config", "--show-secrets"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "config", "--show-secrets"]).unwrap();
     match cli.command {
         Some(Commands::Config { show_secrets }) => {
             assert!(show_secrets);
@@ -166,7 +166,7 @@ fn test_cli_parse_config_with_show_secrets() {
 
 #[test]
 fn test_cli_parse_db_init() {
-    let cli = Cli::try_parse_from(["opencrab", "db", "init"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "db", "init"]).unwrap();
     match cli.command {
         Some(Commands::Db { operation }) => {
             assert!(matches!(operation, DbCommands::Init));
@@ -177,7 +177,7 @@ fn test_cli_parse_db_init() {
 
 #[test]
 fn test_cli_parse_db_stats() {
-    let cli = Cli::try_parse_from(["opencrab", "db", "stats"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "db", "stats"]).unwrap();
     match cli.command {
         Some(Commands::Db { operation }) => {
             assert!(matches!(operation, DbCommands::Stats));
@@ -188,32 +188,32 @@ fn test_cli_parse_db_stats() {
 
 #[test]
 fn test_cli_parse_debug_flag() {
-    let cli = Cli::try_parse_from(["opencrab", "--debug"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "--debug"]).unwrap();
     assert!(cli.debug);
 }
 
 #[test]
 fn test_cli_parse_debug_flag_short() {
-    let cli = Cli::try_parse_from(["opencrab", "-d"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "-d"]).unwrap();
     assert!(cli.debug);
 }
 
 #[test]
 fn test_cli_parse_config_path() {
-    let cli = Cli::try_parse_from(["opencrab", "--config", "/path/to/config.toml"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "--config", "/path/to/config.toml"]).unwrap();
     assert_eq!(cli.config, Some("/path/to/config.toml".to_string()));
 }
 
 #[test]
 fn test_cli_parse_config_path_short() {
-    let cli = Cli::try_parse_from(["opencrab", "-c", "/path/to/config.toml"]).unwrap();
+    let cli = Cli::try_parse_from(["opencrabs", "-c", "/path/to/config.toml"]).unwrap();
     assert_eq!(cli.config, Some("/path/to/config.toml".to_string()));
 }
 
 #[test]
 fn test_cli_parse_combined_flags() {
     let cli = Cli::try_parse_from([
-        "opencrab",
+        "opencrabs",
         "--debug",
         "--config",
         "/path/config.toml",
@@ -244,30 +244,30 @@ fn test_cli_parse_combined_flags() {
 
 #[test]
 fn test_cli_invalid_format() {
-    let result = Cli::try_parse_from(["opencrab", "run", "--format", "invalid", "Test"]);
+    let result = Cli::try_parse_from(["opencrabs", "run", "--format", "invalid", "Test"]);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_cli_missing_prompt_for_run() {
-    let result = Cli::try_parse_from(["opencrab", "run"]);
+    let result = Cli::try_parse_from(["opencrabs", "run"]);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_cli_invalid_subcommand() {
-    let result = Cli::try_parse_from(["opencrab", "invalid"]);
+    let result = Cli::try_parse_from(["opencrabs", "invalid"]);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_cli_db_missing_operation() {
-    let result = Cli::try_parse_from(["opencrab", "db"]);
+    let result = Cli::try_parse_from(["opencrabs", "db"]);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_cli_db_invalid_operation() {
-    let result = Cli::try_parse_from(["opencrab", "db", "invalid"]);
+    let result = Cli::try_parse_from(["opencrabs", "db", "invalid"]);
     assert!(result.is_err());
 }

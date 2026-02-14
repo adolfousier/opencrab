@@ -28,7 +28,7 @@ impl AzureOpenAIProvider {
     ///
     /// # Example
     /// ```
-    /// use opencrab::llm::provider::azure::AzureOpenAIProvider;
+    /// use opencrabs::llm::provider::azure::AzureOpenAIProvider;
     ///
     /// let provider = AzureOpenAIProvider::new(
     ///     "your-api-key".to_string(),

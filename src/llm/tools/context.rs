@@ -129,7 +129,7 @@ struct ContextInput {
 fn get_store_path(context: &ToolExecutionContext) -> PathBuf {
     context
         .working_directory
-        .join(".opencrab")
+        .join(".opencrabs")
         .join(format!("context_{}.json", context.session_id))
 }
 

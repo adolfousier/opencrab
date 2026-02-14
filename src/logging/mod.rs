@@ -13,7 +13,7 @@ pub struct LogConfig {
     /// Enable debug mode (creates log files)
     pub debug_mode: bool,
 
-    /// Log directory path (default: .opencrab/logs)
+    /// Log directory path (default: .opencrabs/logs)
     pub log_dir: PathBuf,
 
     /// Minimum log level (default: INFO, DEBUG mode: DEBUG)
@@ -34,10 +34,10 @@ impl Default for LogConfig {
         let cwd = std::env::current_dir().unwrap_or_default();
         Self {
             debug_mode: false,
-            log_dir: cwd.join(".opencrab").join("logs"),
+            log_dir: cwd.join(".opencrabs").join("logs"),
             log_level: Level::INFO,
             console_output: false,
-            log_prefix: "opencrab".to_string(),
+            log_prefix: "opencrabs".to_string(),
             max_age_days: 7,
         }
     }
@@ -113,10 +113,10 @@ impl LoggerGuard {
 ///
 /// # Behavior
 /// - **Debug mode OFF**: No log files created, minimal console output
-/// - **Debug mode ON**: Creates log files in `.opencrab/logs/`, detailed logging
+/// - **Debug mode ON**: Creates log files in `.opencrabs/logs/`, detailed logging
 pub fn init_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::error::Error>> {
     if config.debug_mode {
-        // Debug mode: Create log files in .opencrab/logs/
+        // Debug mode: Create log files in .opencrabs/logs/
         init_debug_logging(config)
     } else {
         // Normal mode: Minimal logging, no files
@@ -129,13 +129,13 @@ fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::err
     // Create log directory
     std::fs::create_dir_all(&config.log_dir)?;
 
-    // Create gitignore file in .opencrab to ignore logs
-    let opencrab_dir = config.log_dir.parent().unwrap_or(&config.log_dir);
-    let gitignore_path = opencrab_dir.join(".gitignore");
+    // Create gitignore file in .opencrabs to ignore logs
+    let opencrabs_dir = config.log_dir.parent().unwrap_or(&config.log_dir);
+    let gitignore_path = opencrabs_dir.join(".gitignore");
     if !gitignore_path.exists() {
         std::fs::write(
             &gitignore_path,
-            "# Ignore all OpenCrab runtime files\n*\n!.gitignore\n",
+            "# Ignore all OpenCrabs runtime files\n*\n!.gitignore\n",
         )
         .ok();
     }
@@ -167,7 +167,7 @@ fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::err
         .init();
 
     // Log startup information
-    tracing::info!("🚀 OpenCrab debug mode enabled");
+    tracing::info!("🚀 OpenCrabs debug mode enabled");
     tracing::info!("📁 Log directory: {}", config.log_dir.display());
     tracing::info!("📊 Log level: {:?}", config.log_level);
     tracing::debug!("Debug logging initialized successfully");
@@ -180,7 +180,7 @@ fn init_minimal_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::e
     // Build environment filter - minimal logging
     let env_filter = EnvFilter::from_default_env()
         .add_directive(Level::WARN.into()) // Only warnings and errors
-        .add_directive("opencrab=info".parse()?); // INFO for opencrab itself
+        .add_directive("opencrabs=info".parse()?); // INFO for opencrabs itself
 
     if config.console_output {
         // Console output for non-TUI modes
@@ -214,7 +214,7 @@ pub fn setup_from_cli(debug: bool) -> Result<LoggerGuard, Box<dyn std::error::Er
 /// Get the path to the current log file (if debug mode is enabled)
 pub fn get_log_path() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
-    let log_dir = cwd.join(".opencrab").join("logs");
+    let log_dir = cwd.join(".opencrabs").join("logs");
 
     if log_dir.exists() {
         // Return the most recent log file
@@ -238,7 +238,7 @@ pub fn get_log_path() -> Option<PathBuf> {
 /// Clean up old log files based on max age
 pub fn cleanup_old_logs(max_age_days: u64) -> Result<usize, Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
-    let log_dir = cwd.join(".opencrab").join("logs");
+    let log_dir = cwd.join(".opencrabs").join("logs");
 
     if !log_dir.exists() {
         return Ok(0);
@@ -278,7 +278,7 @@ mod tests {
         assert!(!config.debug_mode);
         assert_eq!(config.log_level, Level::INFO);
         assert!(!config.console_output);
-        assert_eq!(config.log_prefix, "opencrab");
+        assert_eq!(config.log_prefix, "opencrabs");
     }
 
     #[test]
@@ -301,10 +301,10 @@ mod tests {
     }
 
     #[test]
-    fn test_log_dir_in_opencrab_folder() {
+    fn test_log_dir_in_opencrabs_folder() {
         let config = LogConfig::default();
         let log_dir_str = config.log_dir.to_string_lossy();
-        assert!(log_dir_str.contains(".opencrab"));
+        assert!(log_dir_str.contains(".opencrabs"));
         assert!(log_dir_str.contains("logs"));
     }
 }

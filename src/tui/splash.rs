@@ -44,9 +44,9 @@ fn render_splash_content(f: &mut Frame, area: Rect, provider_name: &str, model_n
     // Pad all ASCII art lines to the same width so centering keeps them aligned
     let logo_lines: Vec<String> = vec![
         "   ___                    ___           _".to_string(),
-        "  / _ \\ _ __  ___ _ _    / __|_ _ __ _| |__".to_string(),
-        " | (_) | '_ \\/ -_) ' \\  | (__| '_/ _` | '_ \\".to_string(),
-        r"  \___/| .__/\___|_||_|  \___|_| \__,_|_.__/".to_string(),
+        "  / _ \\ _ __  ___ _ _    / __|_ _ __ _| |__  ___".to_string(),
+        " | (_) | '_ \\/ -_) ' \\  | (__| '_/ _` | '_ \\(_-<".to_string(),
+        r"  \___/| .__/\___|_||_|  \___|_| \__,_|_.__//__/".to_string(),
         "       |_|".to_string(),
     ];
     let max_len = logo_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
@@ -77,7 +77,7 @@ fn render_splash_content(f: &mut Frame, area: Rect, provider_name: &str, model_n
         Line::from(vec![
             Span::styled("╭─── ", Style::default().fg(Color::Rgb(70, 130, 180))),
             Span::styled(
-                "🦀 OpenCrab",
+                "🦀 OpenCrabs",
                 Style::default()
                     .fg(Color::Rgb(218, 165, 32))
                     .add_modifier(Modifier::BOLD),

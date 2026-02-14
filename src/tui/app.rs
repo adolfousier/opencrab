@@ -3,11 +3,13 @@
 //! Core state management for the terminal user interface.
 
 use super::events::{AppMode, EventHandler, ToolApprovalRequest, ToolApprovalResponse, TuiEvent};
+use super::onboarding::{OnboardingWizard, WizardAction};
 use super::plan::PlanDocument;
 use super::prompt_analyzer::PromptAnalyzer;
 use crate::brain::{BrainLoader, CommandLoader, SelfUpdater, UserCommand};
 use crate::db::models::{Message, Session};
 use crate::llm::agent::AgentService;
+use crate::llm::provider::{ContentBlock, LLMRequest};
 use crate::services::{MessageService, PlanService, ServiceContext, SessionService};
 use anyhow::Result;
 use std::path::PathBuf;
@@ -38,6 +40,14 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/usage",
         description: "Session usage stats",
+    },
+    SlashCommand {
+        name: "/onboard",
+        description: "Run setup wizard",
+    },
+    SlashCommand {
+        name: "/sessions",
+        description: "List all sessions",
     },
 ];
 
@@ -114,6 +124,10 @@ pub struct App {
     pub slash_filtered: Vec<usize>, // indices into SLASH_COMMANDS
     pub slash_selected_index: usize,
 
+    // Session rename state
+    pub session_renaming: bool,
+    pub session_rename_buffer: String,
+
     // Model selector state
     pub model_selector_models: Vec<String>,
     pub model_selector_selected: usize,
@@ -124,6 +138,10 @@ pub struct App {
     // Brain state
     pub brain_path: PathBuf,
     pub user_commands: Vec<UserCommand>,
+
+    // Onboarding wizard state
+    pub onboarding: Option<OnboardingWizard>,
+    pub force_onboard: bool,
 
     // Self-update state
     pub rebuild_status: Option<String>,
@@ -176,11 +194,15 @@ impl App {
             slash_suggestions_active: false,
             slash_filtered: Vec::new(),
             slash_selected_index: 0,
+            session_renaming: false,
+            session_rename_buffer: String::new(),
             model_selector_models: Vec::new(),
             model_selector_selected: 0,
             working_directory: std::env::current_dir().unwrap_or_default(),
             brain_path,
             user_commands,
+            onboarding: None,
+            force_onboard: false,
             rebuild_status: None,
             session_service: SessionService::new(context.clone()),
             message_service: MessageService::new(context.clone()),
@@ -247,6 +269,15 @@ impl App {
         match event {
             TuiEvent::Key(key_event) => {
                 self.handle_key_event(key_event).await?;
+            }
+            TuiEvent::MouseScroll(direction) => {
+                if self.mode == AppMode::Chat {
+                    if direction > 0 {
+                        self.scroll_offset = self.scroll_offset.saturating_add(3);
+                    } else {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(3);
+                    }
+                }
             }
             TuiEvent::Paste(text) => {
                 // Handle paste events - only in Chat mode
@@ -397,7 +428,16 @@ impl App {
                 if let Some(shown_at) = self.splash_shown_at {
                     if shown_at.elapsed() >= std::time::Duration::from_secs(3) {
                         self.splash_shown_at = None;
-                        self.switch_mode(AppMode::Chat).await?;
+                        // Check if onboarding should be shown
+                        if self.force_onboard
+                            || super::onboarding::is_first_time()
+                        {
+                            self.force_onboard = false;
+                            self.onboarding = Some(OnboardingWizard::new());
+                            self.switch_mode(AppMode::Onboarding).await?;
+                        } else {
+                            self.switch_mode(AppMode::Chat).await?;
+                        }
                     }
                     // If not enough time has elapsed, ignore the key press
                 }
@@ -430,6 +470,9 @@ impl App {
                         }
                     }
                 }
+            }
+            AppMode::Onboarding => {
+                self.handle_onboarding_key(event).await?;
             }
             AppMode::Help | AppMode::Settings => {
                 if keys::is_cancel(&event) {
@@ -555,7 +598,54 @@ impl App {
     /// Handle keys in sessions mode
     async fn handle_sessions_key(&mut self, event: crossterm::event::KeyEvent) -> Result<()> {
         use super::events::keys;
+        use crossterm::event::KeyCode;
 
+        // Rename mode: typing the new name
+        if self.session_renaming {
+            match event.code {
+                KeyCode::Enter => {
+                    // Save the new name
+                    if let Some(session) = self.sessions.get(self.selected_session_index) {
+                        let new_title = if self.session_rename_buffer.trim().is_empty() {
+                            None
+                        } else {
+                            Some(self.session_rename_buffer.trim().to_string())
+                        };
+                        let session_id = session.id;
+                        self.session_service
+                            .update_session_title(session_id, new_title)
+                            .await?;
+                        // Update current session if it's the one being renamed
+                        if let Some(ref mut current) = self.current_session {
+                            if current.id == session_id {
+                                current.title = if self.session_rename_buffer.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(self.session_rename_buffer.trim().to_string())
+                                };
+                            }
+                        }
+                        self.load_sessions().await?;
+                    }
+                    self.session_renaming = false;
+                    self.session_rename_buffer.clear();
+                }
+                KeyCode::Esc => {
+                    self.session_renaming = false;
+                    self.session_rename_buffer.clear();
+                }
+                KeyCode::Backspace => {
+                    self.session_rename_buffer.pop();
+                }
+                KeyCode::Char(c) => {
+                    self.session_rename_buffer.push(c);
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        // Normal sessions mode
         if keys::is_cancel(&event) {
             self.switch_mode(AppMode::Chat).await?;
         } else if keys::is_up(&event) {
@@ -567,6 +657,32 @@ impl App {
             if let Some(session) = self.sessions.get(self.selected_session_index) {
                 self.load_session(session.id).await?;
                 self.switch_mode(AppMode::Chat).await?;
+            }
+        } else if event.code == KeyCode::Char('r') || event.code == KeyCode::Char('R') {
+            // Start renaming the selected session
+            if let Some(session) = self.sessions.get(self.selected_session_index) {
+                self.session_renaming = true;
+                self.session_rename_buffer = session.title.clone().unwrap_or_default();
+            }
+        } else if event.code == KeyCode::Char('d') || event.code == KeyCode::Char('D') {
+            // Delete the selected session
+            if let Some(session) = self.sessions.get(self.selected_session_index) {
+                let session_id = session.id;
+                let is_current = self
+                    .current_session
+                    .as_ref()
+                    .map(|s| s.id == session_id)
+                    .unwrap_or(false);
+                self.session_service.delete_session(session_id).await?;
+                if is_current {
+                    self.current_session = None;
+                    self.messages.clear();
+                }
+                self.load_sessions().await?;
+                // Adjust index if it's now out of bounds
+                if self.selected_session_index >= self.sessions.len() {
+                    self.selected_session_index = self.sessions.len().saturating_sub(1);
+                }
             }
         }
 
@@ -769,6 +885,16 @@ impl App {
             }
             "/usage" => {
                 self.mode = AppMode::UsageDialog;
+                true
+            }
+            "/onboard" => {
+                self.onboarding = Some(OnboardingWizard::new());
+                self.mode = AppMode::Onboarding;
+                true
+            }
+            "/sessions" => {
+                self.mode = AppMode::Sessions;
+                let _ = self.event_sender().send(TuiEvent::SwitchMode(AppMode::Sessions));
                 true
             }
             "/help" => {
@@ -1037,7 +1163,7 @@ impl App {
         }
 
         // Fallback to JSON file for backward compatibility / migration
-        let plan_filename = format!(".opencrab_plan_{}.json", session_id);
+        let plan_filename = format!(".opencrabs_plan_{}.json", session_id);
         let plan_file = self.working_directory.join(&plan_filename);
 
         tracing::debug!("Looking for plan file at: {}", plan_file.display());
@@ -1140,7 +1266,7 @@ impl App {
         }
 
         // Fallback to JSON file for backward compatibility / migration
-        let plan_filename = format!(".opencrab_plan_{}.json", session_id);
+        let plan_filename = format!(".opencrabs_plan_{}.json", session_id);
         let plan_file = self.working_directory.join(&plan_filename);
 
         tracing::debug!("Looking for plan file at: {}", plan_file.display());
@@ -1325,7 +1451,7 @@ impl App {
             }
 
             // Backup: Save to JSON file (for backward compatibility and backup)
-            let plan_filename = format!(".opencrab_plan_{}.json", session_id);
+            let plan_filename = format!(".opencrabs_plan_{}.json", session_id);
             let plan_file = self.working_directory.join(&plan_filename);
 
             if let Err(e) = self.plan_service.export_to_json(plan, &plan_file).await {
@@ -1636,6 +1762,106 @@ impl App {
         }
 
         Ok(())
+    }
+
+    /// Handle keys in onboarding wizard mode
+    async fn handle_onboarding_key(&mut self, event: crossterm::event::KeyEvent) -> Result<()> {
+        if let Some(ref mut wizard) = self.onboarding {
+            let action = wizard.handle_key(event);
+            match action {
+                WizardAction::Cancel => {
+                    self.onboarding = None;
+                    self.switch_mode(AppMode::Chat).await?;
+                }
+                WizardAction::Complete => {
+                    // Apply wizard config before transitioning
+                    if let Some(ref wizard) = self.onboarding {
+                        match wizard.apply_config() {
+                            Ok(()) => {
+                                self.push_system_message(
+                                    "Setup complete! OpenCrabs is configured and ready."
+                                        .to_string(),
+                                );
+                            }
+                            Err(e) => {
+                                self.push_system_message(format!(
+                                    "Setup finished with warnings: {}",
+                                    e
+                                ));
+                            }
+                        }
+                    }
+                    self.onboarding = None;
+                    self.switch_mode(AppMode::Chat).await?;
+                }
+                WizardAction::GenerateBrain => {
+                    self.generate_brain_files().await;
+                }
+                WizardAction::None => {
+                    // Stay in onboarding
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Generate personalized brain files via the AI provider
+    async fn generate_brain_files(&mut self) {
+        // Extract what we need before borrowing wizard mutably
+        let prompt = {
+            let Some(ref wizard) = self.onboarding else { return };
+            wizard.build_brain_prompt()
+        };
+
+        // Mark as generating
+        if let Some(ref mut wizard) = self.onboarding {
+            wizard.brain_generating = true;
+            wizard.brain_error = None;
+        }
+
+        // Get provider and model from the wizard's selected provider
+        let provider = self.agent_service.provider().clone();
+        let model = self.agent_service.provider_model().to_string();
+
+        // Build LLM request
+        let request = LLMRequest::new(
+            model,
+            vec![crate::llm::provider::Message::user(prompt)],
+        )
+        .with_max_tokens(65536);
+
+        // Call the provider
+        match provider.complete(request).await {
+            Ok(response) => {
+                // Extract text from response
+                let text: String = response
+                    .content
+                    .iter()
+                    .filter_map(|block| {
+                        if let ContentBlock::Text { text } = block {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if let Some(ref mut wizard) = self.onboarding {
+                    wizard.apply_generated_brain(&text);
+                    // Auto-advance to Complete if generation succeeded
+                    if wizard.brain_generated {
+                        wizard.step = super::onboarding::OnboardingStep::Complete;
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Brain generation failed: {}", e);
+                if let Some(ref mut wizard) = self.onboarding {
+                    wizard.brain_generating = false;
+                    wizard.brain_error = Some(format!("Generation failed: {}", e));
+                }
+            }
+        }
     }
 
     /// Open file picker and populate file list

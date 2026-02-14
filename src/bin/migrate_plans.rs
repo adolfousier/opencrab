@@ -2,19 +2,19 @@
 //!
 //! Migrates existing JSON plan files to the database.
 //!
-//! Usage: cargo run --bin migrate_plans -- --data-dir ~/.opencrab --working-dir .
+//! Usage: cargo run --bin migrate_plans -- --data-dir ~/.opencrabs --working-dir .
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use opencrab::db::Database;
-use opencrab::services::PlanService;
+use opencrabs::db::Database;
+use opencrabs::services::PlanService;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Data directory containing the database
-    #[arg(long, default_value = "~/.opencrab")]
+    #[arg(long, default_value = "~/.opencrabs")]
     data_dir: String,
 
     /// Working directory to search for plan JSON files
@@ -42,18 +42,18 @@ async fn main() -> Result<()> {
     let data_dir = shellexpand::tilde(&args.data_dir);
     let data_dir = PathBuf::from(data_dir.as_ref());
 
-    let db_path = data_dir.join("opencrab.db");
+    let db_path = data_dir.join("opencrabs.db");
 
     tracing::info!("Connecting to database: {:?}", db_path);
     let db = Database::connect(&db_path).await?;
     db.run_migrations().await?;
 
-    let plan_service = PlanService::new(opencrab::services::ServiceContext::new(db.pool().clone()));
+    let plan_service = PlanService::new(opencrabs::services::ServiceContext::new(db.pool().clone()));
 
-    // Find all .opencrab_plan_*.json files in the working directory
+    // Find all .opencrabs_plan_*.json files in the working directory
     let pattern = args
         .working_dir
-        .join(".opencrab_plan_*.json")
+        .join(".opencrabs_plan_*.json")
         .to_string_lossy()
         .into_owned();
 

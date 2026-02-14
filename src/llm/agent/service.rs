@@ -128,6 +128,11 @@ impl AgentService {
         self.provider.supported_models()
     }
 
+    /// Get a reference to the underlying LLM provider
+    pub fn provider(&self) -> &Arc<dyn Provider> {
+        &self.provider
+    }
+
     /// Send a message and get a response
     ///
     /// This will:
