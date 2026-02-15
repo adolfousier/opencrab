@@ -65,25 +65,56 @@
 
 ## 🎯 Core Features
 
+### AI & Providers
 | Feature | Description |
 |---------|-------------|
-| **Dynamic Brain System** | System brain assembled from workspace MD files — personality, identity, memory, all editable live |
+| **Multi-Provider** | Anthropic Claude (with OAuth), OpenAI, Qwen, Azure, and any OpenAI-compatible API |
+| **Real-time Streaming** | Character-by-character response streaming with animated spinner showing model name and live text |
+| **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
+| **Cost Tracking** | Per-message token count and cost displayed in header |
+| **Context Awareness** | Live context usage indicator with color-coded percentage (green/yellow/red); auto-compaction at 80% |
+| **Dynamic Brain System** | System brain assembled from workspace MD files (SOUL, IDENTITY, USER, AGENTS, TOOLS, MEMORY) — all editable live between turns |
+
+### Multimodal Input
+| Feature | Description |
+|---------|-------------|
+| **Image Attachments** | Paste image paths or URLs into the input — auto-detected and attached as vision content blocks for multimodal models |
+| **PDF Support** | Attach PDF files by path — native Anthropic PDF support; for other providers, text is extracted locally via `pdf-extract` |
+| **Document Parsing** | Built-in `parse_document` tool extracts text from PDF, DOCX, HTML, TXT, MD, JSON, XML |
+| **Voice (STT)** | Telegram voice notes transcribed via Groq Whisper (`whisper-large-v3-turbo`) and processed as text |
+| **Voice (TTS)** | Agent replies to voice notes with audio via OpenAI TTS (`gpt-4o-mini-tts`, `ash` voice); falls back to text if disabled |
+| **Attachment Indicator** | Attached images show as `[IMG1:filename.png]` in the input title bar |
+
+### Messaging Integrations
+| Feature | Description |
+|---------|-------------|
+| **Telegram Bot** | Full-featured Telegram bot running alongside the TUI — shared session, photo/voice support, allowlisted user IDs |
+| **WhatsApp** | Coming soon |
+| **Slack** | Coming soon |
+
+### Terminal UI
+| Feature | Description |
+|---------|-------------|
+| **Cursor Navigation** | Full cursor movement: Left/Right arrows, Ctrl+Left/Right word jump, Home/End, Delete, Backspace at position |
+| **Input History** | Persistent command history (`~/.config/opencrabs/history.txt`), loaded on startup, capped at 500 entries |
+| **Inline Tool Approval** | Claude Code-style `❯ Yes / Always / No` selector with arrow key navigation |
+| **Inline Plan Approval** | Interactive plan review selector (Approve / Reject / Request Changes / View Plan) |
+| **Session Management** | Create, rename, delete sessions with persistent SQLite storage; token counts and context % per session |
+| **Syntax Highlighting** | 100+ languages with line numbers via syntect |
+| **Markdown Rendering** | Rich text formatting with code blocks, headings, lists, and inline styles |
+| **Tool Context Persistence** | Tool call groups saved to DB and reconstructed on session reload — no vanishing tool history |
+| **Multi-line Input** | Alt+Enter / Shift+Enter for newlines; Enter to send |
+| **Abort Processing** | Escape×2 within 3 seconds to cancel any in-progress request |
+
+### Agent Capabilities
+| Feature | Description |
+|---------|-------------|
+| **Built-in Tools** | Read/write/edit files, bash, glob, grep, web search (EXA, Brave), plan mode, and more |
+| **Plan Mode** | Structured task decomposition with dependency graphs, complexity ratings, and inline approval workflow |
 | **Self-Sustaining** | Agent can modify its own source, build, test, and hot-restart via Unix `exec()` |
 | **Natural Language Commands** | Tell OpenCrabs to create slash commands — it writes them to `commands.json` autonomously |
-| **Built-in Tools** | Read/write files, execute commands, grep, glob, web search, and more |
-| **Session Management** | Create, rename, delete sessions with persistent SQLite storage |
-| **Syntax Highlighting** | 100+ languages with line numbers via syntect |
-| **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private |
-| **Multi-Provider** | Anthropic Claude (with OAuth), OpenAI, Qwen, and OpenAI-compatible APIs |
-| **Session Context** | Persistent conversation memory with SQLite storage |
-| **Streaming** | Real-time character-by-character response generation |
-| **Cost Tracking** | Per-message token count and cost displayed in header |
-| **Context Awareness** | Live context usage indicator with color-coded percentage; auto-compaction when nearing limits |
-| **Web Search** | Real-time internet search via EXA AI (neural) or Brave Search APIs — activate with an API key |
-| **Plan Mode** | Structured task decomposition with review workflow |
-| **Multi-line Input** | Paste entire functions, send with Ctrl+Enter |
-| **Markdown Rendering** | Rich text formatting with code blocks and headings |
-| **Debug Logging** | Conditional file logging with `-d` flag, clean workspace by default |
+| **Web Search** | EXA AI (neural, free via MCP) and Brave Search APIs |
+| **Debug Logging** | `--debug` flag enables file logging; `DEBUG_LOGS_LOCATION` env var for custom log directory |
 
 ---
 
@@ -128,7 +159,7 @@ Compatible with any OpenAI-compatible API endpoint via `OPENAI_BASE_URL`.
 | OpenRouter | Compatible | `OPENAI_BASE_URL="https://openrouter.ai/api/v1"` |
 | Groq | Compatible | `OPENAI_BASE_URL="https://api.groq.com/openai/v1"` |
 
-**Provider priority:** Qwen > OpenAI > Anthropic (fallback). The first provider with a configured API key is used.
+**Provider priority:** Qwen > Anthropic > OpenAI (fallback). The first provider with a configured API key is used. `OPENAI_API_KEY` is isolated to TTS only — it won't create a text provider unless explicitly configured.
 
 ---
 
@@ -398,10 +429,12 @@ default_model = "claude-opus-4-6"
 | `OPENAI_BASE_URL` | OpenAI / Compatible | Custom endpoint URL |
 | `QWEN_API_KEY` | Qwen | API key |
 | `QWEN_BASE_URL` | Qwen | Custom endpoint URL |
-| `EXA_API_KEY` | EXA AI Search | Optional — enables direct API mode (higher rate limits) |
+| `EXA_API_KEY` | EXA AI Search | Neural web search — free via MCP by default; set key for direct API with higher rate limits |
 | `BRAVE_API_KEY` | Brave Search | Web search (free $5/mo credits at brave.com/search/api) |
-| `EXA_API_KEY` | EXA AI Search | Neural web search (free credits on signup at exa.ai) |
-| `BRAVE_API_KEY` | Brave Search | Web search (free $5/mo credits at brave.com/search/api) |
+| `GROQ_API_KEY` | Groq (STT) | Voice transcription via Whisper (`whisper-large-v3-turbo`) |
+| `DEBUG_LOGS_LOCATION` | Logging | Custom log directory path (default: `.opencrabs/logs/`) |
+| `TELEGRAM_BOT_TOKEN` | Telegram | Bot token from @BotFather |
+| `TELEGRAM_ALLOWED_USERS` | Telegram | Comma-separated allowlisted Telegram user IDs |
 
 ---
 
@@ -440,11 +473,11 @@ Plan Mode breaks complex tasks into structured, reviewable, executable plans.
 1. **Request:** Ask the AI to create a plan using the plan tool
 2. **AI creates:** Structured tasks with dependencies, complexity estimates, and types
 3. **Review:** Press `Ctrl+P` to view the plan in a visual TUI panel
-4. **Decide:**
-   - `Ctrl+A` — Approve and execute
-   - `Ctrl+R` — Reject the plan
-   - `Ctrl+I` — Request changes (returns to chat with context)
-   - `Esc` — Go back without changes
+4. **Decide:** An inline selector appears with arrow key navigation:
+   - **Approve** — Execute the plan
+   - **Reject** — Discard the plan
+   - **Request Changes** — Returns to chat with context for revisions
+   - **View Plan** — Open the full plan panel (`Ctrl+P`)
 
 ### Plan States
 
@@ -507,6 +540,12 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 |----------|--------|
 | `Enter` | Send message |
 | `Alt+Enter` / `Shift+Enter` | New line in input |
+| `←` / `→` | Move cursor one character |
+| `Ctrl+←` / `Ctrl+→` | Jump by word |
+| `Home` / `End` | Jump to start/end of input |
+| `Delete` | Delete character after cursor |
+| `Ctrl+Backspace` / `Alt+Backspace` | Delete word before cursor |
+| `Escape` ×2 | Abort in-progress request |
 | `/help` | Open help dialog |
 | `/model` | Show current model |
 | `/models` | Switch model |
@@ -514,7 +553,6 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `/onboard` | Run setup wizard |
 | `/sessions` | Open session manager |
 | `/approve` | Tool approval policy selector (approve-only / session / yolo) |
-| `/compact` | Compact context (summarize + trim for long sessions) |
 | `/compact` | Compact context (summarize + trim for long sessions) |
 
 ### Sessions Mode
@@ -554,15 +592,15 @@ Use `/approve` to change your approval policy at any time:
 | **Allow all (session)** | Auto-approve all tools for the current session |
 | **Yolo mode** | Execute everything without approval until reset |
 
-### Plan Mode
+### Plan Approval (Inline)
+
+When a plan is submitted for approval, an inline selector appears in chat:
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+P` | View current plan |
-| `Ctrl+A` | Approve plan |
-| `Ctrl+R` | Reject plan |
-| `Ctrl+I` | Request changes |
-| `↑` / `↓` | Scroll through plan |
+| `↑` / `↓` | Navigate approval options (Approve / Reject / Request Changes / View Plan) |
+| `Enter` | Confirm selected option |
+| `Ctrl+P` | View full plan panel |
 
 ---
 
