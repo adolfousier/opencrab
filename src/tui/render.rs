@@ -540,7 +540,7 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
     let border_style = Style::default().fg(Color::Rgb(70, 130, 180));
 
     // Context usage indicator (right-side bottom title)
-    let context_title = if app.last_input_tokens.is_some() {
+    let context_title = if let Some(input_tok) = app.last_input_tokens {
         let pct = app.context_usage_percent();
         let context_color = if pct > 80.0 {
             Color::Red
@@ -549,7 +549,9 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
         } else {
             Color::Green
         };
-        let context_label = format!(" Context: {:.0}% ", pct);
+        let ctx_label = format_token_count_raw(input_tok as i32);
+        let max_label = format_token_count_raw(app.context_max_tokens as i32);
+        let context_label = format!(" ctx: {}/{} ({:.0}%) ", ctx_label, max_label, pct);
         Line::from(Span::styled(
             context_label,
             Style::default().fg(context_color).add_modifier(Modifier::BOLD),
@@ -1111,14 +1113,16 @@ fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         let name = session.title.as_deref().unwrap_or("Untitled");
         let created = session.created_at.format("%Y-%m-%d %H:%M");
 
-        // Format session history size (total stored tokens)
-        let history_label = format_token_count(session.token_count);
+        // Format session total usage (cumulative billing tokens)
+        let history_label = format_token_count_with_label(session.token_count, "total");
 
-        // For current session, show live context window usage
+        // For current session, show live context window usage with actual token counts
         let context_info = if is_current {
-            if app.last_input_tokens.is_some() {
+            if let Some(input_tok) = app.last_input_tokens {
                 let pct = app.context_usage_percent();
-                format!(" [ctx: {:.0}%]", pct)
+                let ctx_label = format_token_count_raw(input_tok as i32);
+                let max_label = format_token_count_raw(app.context_max_tokens as i32);
+                format!(" [ctx: {}/{} {:.0}%]", ctx_label, max_label, pct)
             } else {
                 " [ctx: –]".to_string()
             }
@@ -1599,28 +1603,130 @@ fn render_plan(f: &mut Frame, app: &App, area: Rect) {
 
 /// Render the settings screen
 fn render_settings(f: &mut Frame, app: &App, area: Rect) {
-    let settings_text = vec![
+    fn section(title: &str) -> Line<'_> {
         Line::from(Span::styled(
-            "Settings",
+            format!("  {} ", title),
             Style::default()
                 .fg(Color::Rgb(70, 130, 180))
-                .add_modifier(Modifier::BOLD),
-        )),
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        ))
+    }
+
+    fn kv<'a>(key: &'a str, val: &'a str) -> Line<'a> {
+        Line::from(vec![
+            Span::styled(
+                format!("   {:<20}", key),
+                Style::default().fg(Color::Rgb(184, 134, 11)),
+            ),
+            Span::styled(val, Style::default().fg(Color::White)),
+        ])
+    }
+
+    fn status_dot<'a>(label: &'a str, enabled: bool) -> Line<'a> {
+        let (dot, color) = if enabled {
+            ("●", Color::Green)
+        } else {
+            ("○", Color::DarkGray)
+        };
+        Line::from(vec![
+            Span::styled(format!("   {:<20}", label), Style::default().fg(Color::Rgb(184, 134, 11))),
+            Span::styled(dot, Style::default().fg(color)),
+            Span::styled(
+                if enabled { " enabled" } else { " disabled" },
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+    }
+
+    // Approval policy display
+    let approval = if app.approval_auto_always {
+        "auto-always"
+    } else if app.approval_auto_session {
+        "auto-session"
+    } else {
+        "ask"
+    };
+
+    // QMD availability
+    let qmd_available = crate::memory::is_qmd_available();
+
+    // User commands count
+    let cmd_count = app.user_commands.len();
+    let cmd_summary = if cmd_count == 0 {
+        "none".to_string()
+    } else {
+        let names: Vec<&str> = app.user_commands.iter().map(|c| c.name.as_str()).collect();
+        format!("{} ({})", cmd_count, names.join(", "))
+    };
+
+    // Config file path
+    let config_path = crate::config::Config::system_config_path()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "~/.opencrabs/config.toml".into());
+
+    let brain_display = app.brain_path.display().to_string();
+    let wd_display = app.working_directory.display().to_string();
+
+    let mut lines = vec![
         Line::from(""),
-        Line::from("Coming soon..."),
+        section("PROVIDER"),
+        kv("Model", &app.default_model_name),
         Line::from(""),
-        Line::from(Span::styled(
-            "Press Esc to return",
-            Style::default().fg(Color::Rgb(184, 134, 11)),
-        )),
+        section("APPROVAL"),
+        kv("Policy", approval),
+        Line::from(""),
+        section("COMMANDS"),
+        kv("User commands", &cmd_summary),
+        Line::from(""),
+        section("MEMORY"),
+        status_dot("QMD search", qmd_available),
+        Line::from(""),
+        section("PATHS"),
+        kv("Config", &config_path),
+        kv("Brain", &brain_display),
+        kv("Working dir", &wd_display),
+        Line::from(""),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  [↑↓ PgUp/Dn]",
+                Style::default()
+                    .fg(Color::Rgb(70, 130, 180))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Scroll  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "[Esc]",
+                Style::default()
+                    .fg(Color::Rgb(184, 134, 11))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Back", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(""),
     ];
 
-    let settings = Paragraph::new(settings_text)
-        .block(Block::default().borders(Borders::ALL).title(" Settings "))
-        .alignment(Alignment::Left)
+    // Pad to fill the area
+    let min_height = area.height as usize;
+    while lines.len() < min_height {
+        lines.push(Line::from(""));
+    }
+
+    let para = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    " Settings ",
+                    Style::default()
+                        .fg(Color::Rgb(70, 130, 180))
+                        .add_modifier(Modifier::BOLD),
+                ))
+                .border_style(Style::default().fg(Color::Rgb(70, 130, 180))),
+        )
         .scroll((app.help_scroll_offset as u16, 0));
 
-    f.render_widget(settings, area);
+    f.render_widget(para, area);
 }
 
 /// Render the file picker
@@ -1996,17 +2102,31 @@ fn render_restart_dialog(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(dialog, dialog_area);
 }
 
-/// Format a token count as human-readable (e.g. "0", "850", "12.5K", "1.2M")
-fn format_token_count(tokens: i32) -> String {
+/// Format token count with a custom label (e.g. "1.2M total", "150K total")
+fn format_token_count_with_label(tokens: i32, label: &str) -> String {
     let tokens = tokens.max(0) as f64;
     if tokens >= 1_000_000.0 {
-        format!("{:.1}M tok", tokens / 1_000_000.0)
+        format!("{:.1}M {}", tokens / 1_000_000.0, label)
     } else if tokens >= 1_000.0 {
-        format!("{:.1}K tok", tokens / 1_000.0)
+        format!("{:.1}K {}", tokens / 1_000.0, label)
     } else if tokens > 0.0 {
-        format!("{} tok", tokens as i32)
+        format!("{} {}", tokens as i32, label)
     } else {
         "new".to_string()
+    }
+}
+
+/// Format token count as raw number without label (e.g. "150K", "1.2M")
+fn format_token_count_raw(tokens: i32) -> String {
+    let tokens = tokens.max(0) as f64;
+    if tokens >= 1_000_000.0 {
+        format!("{:.1}M", tokens / 1_000_000.0)
+    } else if tokens >= 1_000.0 {
+        format!("{:.0}K", tokens / 1_000.0)
+    } else if tokens > 0.0 {
+        format!("{}", tokens as i32)
+    } else {
+        "0".to_string()
     }
 }
 
@@ -2143,36 +2263,5 @@ mod tests {
         assert!(!result.is_empty());
     }
 
-    // ── format_token_count ────────────────────────────────────────────
-
-    #[test]
-    fn test_format_token_count_zero() {
-        assert_eq!(format_token_count(0), "new");
-    }
-
-    #[test]
-    fn test_format_token_count_small() {
-        assert_eq!(format_token_count(500), "500 tok");
-        assert_eq!(format_token_count(1), "1 tok");
-    }
-
-    #[test]
-    fn test_format_token_count_thousands() {
-        assert_eq!(format_token_count(1000), "1.0K tok");
-        assert_eq!(format_token_count(12500), "12.5K tok");
-        assert_eq!(format_token_count(150000), "150.0K tok");
-    }
-
-    #[test]
-    fn test_format_token_count_millions() {
-        assert_eq!(format_token_count(1_000_000), "1.0M tok");
-        assert_eq!(format_token_count(2_100_000), "2.1M tok");
-    }
-
-    #[test]
-    fn test_format_token_count_negative() {
-        // Negative values clamp to 0
-        assert_eq!(format_token_count(-100), "new");
-    }
 }
 

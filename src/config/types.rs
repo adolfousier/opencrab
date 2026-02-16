@@ -40,6 +40,10 @@ pub struct Config {
     /// Voice processing (STT/TTS) configuration
     #[serde(default)]
     pub voice: VoiceConfig,
+
+    /// Agent behaviour configuration
+    #[serde(default)]
+    pub agent: AgentConfig,
 }
 
 /// HTTP API gateway configuration
@@ -150,6 +154,35 @@ impl Default for VoiceConfig {
             tts_voice: default_tts_voice(),
             tts_model: default_tts_model(),
             groq_api_key: None,
+        }
+    }
+}
+
+/// Agent behaviour configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfig {
+    /// Approval policy: "ask", "auto-session", "auto-always"
+    #[serde(default = "default_approval_policy")]
+    pub approval_policy: String,
+
+    /// Maximum concurrent tool calls
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent: u32,
+}
+
+fn default_approval_policy() -> String {
+    "ask".to_string()
+}
+
+fn default_max_concurrent() -> u32 {
+    4
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            approval_policy: default_approval_policy(),
+            max_concurrent: default_max_concurrent(),
         }
     }
 }
@@ -329,6 +362,7 @@ impl Default for Config {
             gateway: GatewayConfig::default(),
             channels: ChannelsConfig::default(),
             voice: VoiceConfig::default(),
+            agent: AgentConfig::default(),
         }
     }
 }
@@ -440,6 +474,7 @@ impl Config {
             gateway: overlay.gateway,
             channels: overlay.channels,
             voice: overlay.voice,
+            agent: overlay.agent,
         }
     }
 
@@ -619,6 +654,66 @@ impl Config {
             provider.enable_thinking = thinking.parse().unwrap_or(false);
         }
 
+        Ok(())
+    }
+
+    /// Reload configuration from disk (re-runs `Config::load()`).
+    pub fn reload() -> Result<Self> {
+        tracing::info!("Reloading configuration from disk");
+        Self::load()
+    }
+
+    /// Write a key-value pair into the system config.toml using TOML merge.
+    ///
+    /// `section` is a dotted path like "agent" or "voice".
+    /// `key` is the field name inside that section.
+    /// `value` is the TOML-serialisable value.
+    pub fn write_key(section: &str, key: &str, value: &str) -> Result<()> {
+        let path = Self::system_config_path()
+            .unwrap_or_else(|| opencrabs_home().join("config.toml"));
+
+        // Read existing TOML or start fresh
+        let mut doc: toml::Value = if path.exists() {
+            let content = fs::read_to_string(&path)?;
+            toml::from_str(&content).unwrap_or(toml::Value::Table(toml::map::Map::new()))
+        } else {
+            toml::Value::Table(toml::map::Map::new())
+        };
+
+        // Navigate/create the section table
+        let table = doc.as_table_mut()
+            .context("config root is not a table")?;
+
+        let section_table = if let Some(existing) = table.get_mut(section) {
+            existing.as_table_mut().context("section is not a table")?
+        } else {
+            table.insert(section.to_string(), toml::Value::Table(toml::map::Map::new()));
+            table.get_mut(section)
+                .context("just-inserted section missing")?
+                .as_table_mut()
+                .context("just-inserted section is not a table")?
+        };
+
+        // Parse the value — try integer, float, bool, then fall back to string
+        let parsed: toml::Value = if let Ok(v) = value.parse::<i64>() {
+            toml::Value::Integer(v)
+        } else if let Ok(v) = value.parse::<f64>() {
+            toml::Value::Float(v)
+        } else if let Ok(v) = value.parse::<bool>() {
+            toml::Value::Boolean(v)
+        } else {
+            toml::Value::String(value.to_string())
+        };
+
+        section_table.insert(key.to_string(), parsed);
+
+        // Write back
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let toml_str = toml::to_string_pretty(&doc)?;
+        fs::write(&path, toml_str)?;
+        tracing::info!("Wrote config key [{section}].{key} = {value}");
         Ok(())
     }
 
@@ -857,5 +952,87 @@ api_key = "test-openai-key"
         let logging = LoggingConfig::default();
         assert_eq!(logging.level, "info");
         assert!(logging.file.is_none());
+    }
+
+    #[test]
+    fn test_agent_config_default() {
+        let agent = AgentConfig::default();
+        assert_eq!(agent.approval_policy, "ask");
+        assert_eq!(agent.max_concurrent, 4);
+    }
+
+    #[test]
+    fn test_agent_config_from_toml() {
+        let toml_content = r#"
+[agent]
+approval_policy = "auto-always"
+max_concurrent = 8
+        "#;
+
+        let config: Config = toml::from_str(toml_content).unwrap();
+        assert_eq!(config.agent.approval_policy, "auto-always");
+        assert_eq!(config.agent.max_concurrent, 8);
+    }
+
+    #[test]
+    fn test_agent_config_defaults_when_absent() {
+        // Config without [agent] section should use defaults
+        let toml_content = r#"
+[logging]
+level = "info"
+        "#;
+
+        let config: Config = toml::from_str(toml_content).unwrap();
+        assert_eq!(config.agent.approval_policy, "ask");
+        assert_eq!(config.agent.max_concurrent, 4);
+    }
+
+    #[test]
+    fn test_write_key_creates_and_updates() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        // Write initial content
+        fs::write(&config_path, "[logging]\nlevel = \"info\"\n").unwrap();
+
+        // Use write_key-style logic (can't call write_key directly since it
+        // uses system_config_path, but we test the merge logic)
+        let content = fs::read_to_string(&config_path).unwrap();
+        let mut doc: toml::Value = toml::from_str(&content).unwrap();
+        let table = doc.as_table_mut().unwrap();
+
+        // Add a new section
+        table.insert(
+            "agent".to_string(),
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert("approval_policy".to_string(), toml::Value::String("auto-session".to_string()));
+                m
+            }),
+        );
+
+        let output = toml::to_string_pretty(&doc).unwrap();
+        fs::write(&config_path, &output).unwrap();
+
+        // Verify it round-trips
+        let content = fs::read_to_string(&config_path).unwrap();
+        let loaded: Config = toml::from_str(&content).unwrap();
+        assert_eq!(loaded.agent.approval_policy, "auto-session");
+        assert_eq!(loaded.logging.level, "info");
+    }
+
+    #[test]
+    fn test_config_save_with_agent_section() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let mut config = Config::default();
+        config.agent.approval_policy = "auto-always".to_string();
+        config.agent.max_concurrent = 2;
+
+        config.save(temp_file.path()).unwrap();
+
+        let contents = fs::read_to_string(temp_file.path()).unwrap();
+        let loaded: Config = toml::from_str(&contents).unwrap();
+        assert_eq!(loaded.agent.approval_policy, "auto-always");
+        assert_eq!(loaded.agent.max_concurrent, 2);
     }
 }

@@ -5,6 +5,40 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-02-16
+
+### Fixed
+- **Context Token Display** -- TUI context indicator showed inflated values (e.g. `640K/200K`) because `input_tokens` was accumulated across all tool-loop iterations instead of using the last API call's actual context size; now `AgentResponse.context_tokens` tracks the last iteration's `input_tokens` for accurate display while `usage` still accumulates for correct billing
+- **Per-Message Token Count** -- `DisplayMessage.token_count` now shows only output tokens (the actual generated content) instead of the inflated `input + output` sum which double-counted shared context
+- **Clippy Warning** -- Fixed `redundant_closure` warning in `trim_messages_to_budget`
+
+### Changed
+- **Compaction Threshold** -- Lowered auto-compaction trigger from 80% to 70% of context window for earlier, safer compaction with more headroom
+- **Token Counting** -- `trim_messages_to_budget` now uses tiktoken (`cl100k_base`) instead of `chars/3` heuristic; history budget targets 60% of context window (was 70%) to leave more room for tool results
+
+### Added
+- **2 New Tests** -- `test_context_tokens_is_last_iteration_not_accumulated` and `test_context_tokens_equals_input_tokens_without_tools` verifying correct context vs billing token separation (450 total)
+
+### Removed
+- **Dead Code** -- Removed unused `format_token_count` function and its 5 tests from `render.rs`
+
+## [0.2.1] - 2026-02-16
+
+### Added
+- **Config Management Tool** -- New `config_manager` agent tool with 6 operations: `read_config`, `write_config`, `read_commands`, `add_command`, `remove_command`, `reload`; the agent can now read/write `config.toml` and `commands.toml` at runtime
+- **Commands TOML Migration** -- User-defined slash commands now stored in `commands.toml` (`[[commands]]` array) instead of `commands.json`; existing `commands.json` files auto-migrate on first load
+- **Settings TUI Screen** -- Press `S` for a real Settings screen showing: current provider/model, approval policy, user commands summary, QMD memory search status, and file paths (config, brain, working directory)
+- **Approval Policy Persistence** -- `/approve` command now saves the selected policy to `[agent].approval_policy` in `config.toml`; policy is restored on startup instead of always defaulting to "ask"
+- **AgentConfig Section** -- New `[agent]` config section with `approval_policy` ("ask" / "auto-session" / "auto-always") and `max_concurrent` (default: 4) fields
+- **Live Config Reload** -- `Config::reload()` method and `TuiEvent::ConfigReloaded` event for refreshing cached config values after tool writes
+- **Config Write Helper** -- `Config::write_key(section, key, value)` safely merges key-value pairs into `config.toml` without overwriting unrelated sections
+- **Command Management Helpers** -- `CommandLoader::add_command()` and `CommandLoader::remove_command()` for atomic command CRUD
+- **20 New Tests** -- 14 onboarding tests (key handlers, mode select, provider navigation, API key input, field flow, validation, model selection, workspace/health/brain defaults) + 6 config tests (AgentConfig defaults, TOML parsing, write_key merge, save round-trip) -- 443 total
+
+### Changed
+- **config.toml.example** -- Added `[agent]` and `[voice]` example sections with documentation
+- **Commands Auto-Reload** -- After `ConfigReloaded` event, user commands are refreshed from `commands.toml`
+
 ## [0.2.0] - 2026-02-15
 
 ### Added
@@ -158,6 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Overlay Approval Dialog** — Replaced by inline approval in chat
 - **Bottom Status Bar** — Removed entirely for more screen space
 
+[0.2.1]: https://github.com/adolfousier/opencrabs/releases/tag/v0.2.1
 [0.2.0]: https://github.com/adolfousier/opencrabs/releases/tag/v0.2.0
 [0.1.9]: https://github.com/adolfousier/opencrabs/releases/tag/v0.1.9
 [0.1.8]: https://github.com/adolfousier/opencrabs/releases/tag/v0.1.8

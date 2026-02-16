@@ -74,6 +74,22 @@ default_model = "qwen2.5-coder-7b-instruct"
 # - QWEN_ENABLE_THINKING: Enable/disable thinking mode (true/false)
 
 # ========================================
+# Agent Behaviour
+# ========================================
+# [agent]
+# approval_policy = "ask"       # "ask" | "auto-session" | "auto-always"
+# max_concurrent = 4            # Maximum concurrent tool calls
+
+# ========================================
+# Voice (STT / TTS)
+# ========================================
+# [voice]
+# stt_enabled = true            # Groq Whisper transcription
+# tts_enabled = false           # OpenAI TTS replies
+# tts_voice = "ash"             # TTS voice name
+# tts_model = "gpt-4o-mini-tts" # TTS model
+
+# ========================================
 # Tips for Using Local LLMs
 # ========================================
 # 1. Make sure LM Studio is running before starting OpenCrabs

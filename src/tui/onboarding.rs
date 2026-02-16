@@ -1702,4 +1702,190 @@ mod tests {
         assert!(toggle_names.contains(&"Discord"));
         assert!(toggle_names.contains(&"iMessage"));
     }
+
+    // ── handle_key tests ──
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, crossterm::event::KeyModifiers::empty())
+    }
+
+    #[test]
+    fn test_handle_key_mode_select_up_down() {
+        let mut wizard = OnboardingWizard::new();
+        assert_eq!(wizard.mode, WizardMode::QuickStart);
+
+        wizard.handle_key(key(KeyCode::Down));
+        assert_eq!(wizard.mode, WizardMode::Advanced);
+
+        wizard.handle_key(key(KeyCode::Up));
+        assert_eq!(wizard.mode, WizardMode::QuickStart);
+    }
+
+    #[test]
+    fn test_handle_key_mode_select_number_keys() {
+        let mut wizard = OnboardingWizard::new();
+
+        wizard.handle_key(key(KeyCode::Char('2')));
+        assert_eq!(wizard.mode, WizardMode::Advanced);
+
+        wizard.handle_key(key(KeyCode::Char('1')));
+        assert_eq!(wizard.mode, WizardMode::QuickStart);
+    }
+
+    #[test]
+    fn test_handle_key_mode_select_enter_advances() {
+        let mut wizard = OnboardingWizard::new();
+        let action = wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(action, WizardAction::None);
+        assert_eq!(wizard.step, OnboardingStep::ProviderAuth);
+    }
+
+    #[test]
+    fn test_handle_key_escape_from_step1_cancels() {
+        let mut wizard = OnboardingWizard::new();
+        let action = wizard.handle_key(key(KeyCode::Esc));
+        assert_eq!(action, WizardAction::Cancel);
+    }
+
+    #[test]
+    fn test_handle_key_escape_from_step2_goes_back() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.handle_key(key(KeyCode::Enter)); // -> ProviderAuth
+        assert_eq!(wizard.step, OnboardingStep::ProviderAuth);
+
+        let action = wizard.handle_key(key(KeyCode::Esc));
+        assert_eq!(action, WizardAction::None);
+        assert_eq!(wizard.step, OnboardingStep::ModeSelect);
+    }
+
+    #[test]
+    fn test_handle_key_provider_navigation() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.handle_key(key(KeyCode::Enter)); // -> ProviderAuth
+        assert_eq!(wizard.selected_provider, 0);
+
+        wizard.handle_key(key(KeyCode::Down));
+        assert_eq!(wizard.selected_provider, 1);
+
+        wizard.handle_key(key(KeyCode::Up));
+        assert_eq!(wizard.selected_provider, 0);
+
+        // Can't go below 0
+        wizard.handle_key(key(KeyCode::Up));
+        assert_eq!(wizard.selected_provider, 0);
+    }
+
+    #[test]
+    fn test_handle_key_api_key_typing() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.handle_key(key(KeyCode::Enter)); // -> ProviderAuth
+
+        // Tab to ApiKey field
+        wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(wizard.auth_field, AuthField::ApiKey);
+
+        // Type a key
+        wizard.handle_key(key(KeyCode::Char('s')));
+        wizard.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(wizard.api_key_input, "sk");
+
+        // Backspace
+        wizard.handle_key(key(KeyCode::Backspace));
+        assert_eq!(wizard.api_key_input, "s");
+    }
+
+    #[test]
+    fn test_handle_key_provider_auth_field_flow() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.handle_key(key(KeyCode::Enter)); // -> ProviderAuth
+        assert_eq!(wizard.auth_field, AuthField::Provider);
+
+        // Enter goes to ApiKey
+        wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(wizard.auth_field, AuthField::ApiKey);
+
+        // Tab goes to Model
+        wizard.handle_key(key(KeyCode::Tab));
+        assert_eq!(wizard.auth_field, AuthField::Model);
+
+        // BackTab goes back to ApiKey
+        wizard.handle_key(key(KeyCode::BackTab));
+        assert_eq!(wizard.auth_field, AuthField::ApiKey);
+
+        // BackTab from ApiKey goes to Provider
+        wizard.handle_key(key(KeyCode::BackTab));
+        assert_eq!(wizard.auth_field, AuthField::Provider);
+    }
+
+    #[test]
+    fn test_handle_key_complete_step_returns_complete() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::Complete;
+        let action = wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(action, WizardAction::Complete);
+    }
+
+    #[test]
+    fn test_quickstart_skips_gateway_channels_daemon() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.mode = WizardMode::QuickStart;
+        wizard.api_key_input = "test-key".to_string();
+
+        wizard.next_step(); // ModeSelect -> ProviderAuth
+        wizard.next_step(); // ProviderAuth -> Workspace
+        wizard.next_step(); // Workspace -> HealthCheck (skips Gateway/Channels/Voice/Daemon)
+        assert_eq!(wizard.step, OnboardingStep::HealthCheck);
+    }
+
+    #[test]
+    fn test_provider_auth_validation_empty_key() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::ProviderAuth;
+        // api_key_input is empty
+        wizard.next_step();
+        // Should stay on ProviderAuth with error
+        assert_eq!(wizard.step, OnboardingStep::ProviderAuth);
+        assert!(wizard.error_message.is_some());
+        assert!(wizard.error_message.as_ref().map_or(false, |m| m.contains("required")));
+    }
+
+    #[test]
+    fn test_model_selection() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::ProviderAuth;
+        wizard.auth_field = AuthField::Model;
+
+        assert_eq!(wizard.selected_model, 0);
+        wizard.handle_key(key(KeyCode::Down));
+        assert_eq!(wizard.selected_model, 1);
+        wizard.handle_key(key(KeyCode::Down));
+        assert_eq!(wizard.selected_model, 2);
+        // Should clamp to max
+        for _ in 0..20 {
+            wizard.handle_key(key(KeyCode::Down));
+        }
+        assert!(wizard.selected_model < PROVIDERS[0].models.len());
+    }
+
+    #[test]
+    fn test_workspace_path_default() {
+        let wizard = OnboardingWizard::new();
+        // Should have a default workspace path
+        assert!(!wizard.workspace_path.is_empty());
+    }
+
+    #[test]
+    fn test_health_check_initial_state() {
+        let wizard = OnboardingWizard::new();
+        // health_results starts empty (populated on start_health_check)
+        assert!(wizard.health_results.is_empty());
+    }
+
+    #[test]
+    fn test_brain_setup_defaults() {
+        let wizard = OnboardingWizard::new();
+        assert!(wizard.about_me.is_empty());
+        assert!(wizard.about_agent.is_empty());
+        assert_eq!(wizard.brain_field, BrainField::AboutMe);
+    }
 }

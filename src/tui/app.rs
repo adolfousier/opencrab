@@ -322,6 +322,16 @@ impl App {
         let command_loader = CommandLoader::from_brain_path(&brain_path);
         let user_commands = command_loader.load();
 
+        // Load persisted approval policy from config.toml
+        let (approval_auto_session, approval_auto_always) = match crate::config::Config::load() {
+            Ok(cfg) => match cfg.agent.approval_policy.as_str() {
+                "auto-session" => (true, false),
+                "auto-always" => (false, true),
+                _ => (false, false),
+            },
+            Err(_) => (false, false),
+        };
+
         Self {
             current_session: None,
             messages: Vec::new(),
@@ -342,8 +352,8 @@ impl App {
             escape_pending_at: None,
             ctrl_c_pending_at: None,
             help_scroll_offset: 0,
-            approval_auto_session: false,
-            approval_auto_always: false,
+            approval_auto_session,
+            approval_auto_always,
             current_plan: None,
             plan_scroll_offset: 0,
             selected_task_index: None,
@@ -613,6 +623,11 @@ impl App {
                     tool_group: None,
                     plan_approval: None,
                 });
+            }
+            TuiEvent::ConfigReloaded => {
+                // Refresh cached config values and commands
+                self.reload_user_commands();
+                tracing::info!("Config reloaded — refreshed commands and settings");
             }
             TuiEvent::FocusGained | TuiEvent::FocusLost => {
                 // Handled by the event loop for tick coalescing
@@ -945,6 +960,16 @@ impl App {
                     .filter(|m| m.state == ApproveMenuState::Pending)
                 {
                     menu.state = ApproveMenuState::Selected(selected);
+                }
+
+                // Persist to config.toml
+                let policy_str = match selected {
+                    0 => "ask",
+                    1 => "auto-session",
+                    _ => "auto-always",
+                };
+                if let Err(e) = crate::config::Config::write_key("agent", "approval_policy", policy_str) {
+                    tracing::warn!("Failed to persist approval policy: {}", e);
                 }
 
                 self.push_system_message(format!("Approval policy set to: {}", label));
@@ -2355,7 +2380,7 @@ impl App {
         };
 
         // Track context usage from latest response
-        self.last_input_tokens = Some(response.usage.input_tokens);
+        self.last_input_tokens = Some(response.context_tokens);
 
         // Add assistant message to UI
         let assistant_msg = DisplayMessage {
@@ -2363,9 +2388,7 @@ impl App {
             role: "assistant".to_string(),
             content: response.content,
             timestamp: chrono::Utc::now(),
-            token_count: Some(
-                response.usage.input_tokens as i32 + response.usage.output_tokens as i32,
-            ),
+            token_count: Some(response.usage.output_tokens as i32),
             cost: Some(response.cost),
             approval: None,
             approve_menu: None,
@@ -2975,7 +2998,7 @@ impl App {
         self.messages.iter().filter_map(|m| m.token_count).sum()
     }
 
-    /// Get context usage as a percentage (0.0 - 100.0)
+    /// Get context usage as a percentage (0.0 - 100.0, capped)
     /// Uses the latest response's input_tokens as the current context size
     pub fn context_usage_percent(&self) -> f64 {
         if self.context_max_tokens == 0 {
@@ -2984,7 +3007,8 @@ impl App {
         // Find the most recent assistant message's input token count
         // input_tokens represents how much context was sent to the LLM
         let used = self.last_input_tokens.unwrap_or(0) as f64;
-        (used / self.context_max_tokens as f64) * 100.0
+        let pct = (used / self.context_max_tokens as f64) * 100.0;
+        pct.min(100.0) // Never show more than 100%
     }
 
     /// Get total cost for current session

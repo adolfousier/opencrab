@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod provider;
+pub mod tokenizer;
 pub mod tools;
 
 // Re-exports for convenience

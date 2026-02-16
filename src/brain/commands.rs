@@ -1,6 +1,6 @@
 //! User-Defined Slash Commands
 //!
-//! Loads and saves user slash commands from a JSON file in the brain workspace.
+//! Loads and saves user slash commands from TOML (with JSON fallback/migration).
 //! Commands are merged with built-in slash commands for autocomplete.
 
 use anyhow::Result;
@@ -28,69 +28,135 @@ fn default_action() -> String {
     "prompt".to_string()
 }
 
-/// Loads and saves user-defined slash commands from a JSON file.
+/// TOML wrapper: `[[commands]]` array
+#[derive(Debug, Serialize, Deserialize)]
+struct CommandsFile {
+    #[serde(default)]
+    commands: Vec<UserCommand>,
+}
+
+/// Loads and saves user-defined slash commands (TOML primary, JSON fallback).
 pub struct CommandLoader {
-    path: PathBuf,
+    /// Path to commands.toml
+    toml_path: PathBuf,
+    /// Path to legacy commands.json (for migration)
+    json_path: PathBuf,
 }
 
 impl CommandLoader {
-    /// Create a new CommandLoader with the given JSON file path.
+    /// Create a new CommandLoader pointing at a specific TOML file path.
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        let json_path = path.with_extension("json");
+        Self { toml_path: path, json_path }
     }
 
-    /// Resolve the commands.json path from the brain path.
+    /// Resolve the commands paths from the brain path.
     pub fn from_brain_path(brain_path: &std::path::Path) -> Self {
-        // commands.json lives at ~/.opencrabs/commands.json
-        Self { path: brain_path.join("commands.json") }
+        Self {
+            toml_path: brain_path.join("commands.toml"),
+            json_path: brain_path.join("commands.json"),
+        }
     }
 
-    /// Load user commands from JSON file. Returns empty vec if file doesn't exist.
+    /// Load user commands. Priority: TOML → JSON (with auto-migration) → empty.
     pub fn load(&self) -> Vec<UserCommand> {
-        match std::fs::read_to_string(&self.path) {
-            Ok(content) => match serde_json::from_str::<Vec<UserCommand>>(&content) {
-                Ok(commands) => {
+        // 1. Try TOML first
+        if let Ok(content) = std::fs::read_to_string(&self.toml_path) {
+            match toml::from_str::<CommandsFile>(&content) {
+                Ok(file) => {
                     tracing::info!(
                         "Loaded {} user commands from {}",
-                        commands.len(),
-                        self.path.display()
+                        file.commands.len(),
+                        self.toml_path.display()
                     );
-                    commands
+                    return file.commands;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse commands.toml at {}: {}",
+                        self.toml_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
+        // 2. Fall back to JSON and auto-migrate
+        if let Ok(content) = std::fs::read_to_string(&self.json_path) {
+            match serde_json::from_str::<Vec<UserCommand>>(&content) {
+                Ok(commands) => {
+                    tracing::info!(
+                        "Loaded {} user commands from legacy {} — migrating to TOML",
+                        commands.len(),
+                        self.json_path.display()
+                    );
+                    // Auto-migrate: save as TOML
+                    if let Err(e) = self.save(&commands) {
+                        tracing::warn!("Failed to auto-migrate commands to TOML: {}", e);
+                    } else {
+                        tracing::info!(
+                            "Migrated commands.json → {}",
+                            self.toml_path.display()
+                        );
+                    }
+                    return commands;
                 }
                 Err(e) => {
                     tracing::warn!(
                         "Failed to parse commands.json at {}: {}",
-                        self.path.display(),
+                        self.json_path.display(),
                         e
                     );
-                    Vec::new()
                 }
-            },
-            Err(_) => {
-                tracing::debug!(
-                    "No commands.json found at {} (this is normal)",
-                    self.path.display()
-                );
-                Vec::new()
             }
         }
+
+        tracing::debug!(
+            "No commands file found at {} (this is normal)",
+            self.toml_path.display()
+        );
+        Vec::new()
     }
 
-    /// Save user commands to JSON file.
+    /// Save user commands to TOML file.
     pub fn save(&self, commands: &[UserCommand]) -> Result<()> {
-        // Ensure parent directory exists
-        if let Some(parent) = self.path.parent() {
+        if let Some(parent) = self.toml_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        let json = serde_json::to_string_pretty(commands)?;
-        std::fs::write(&self.path, json)?;
+        let file = CommandsFile { commands: commands.to_vec() };
+        let toml_str = toml::to_string_pretty(&file)?;
+        std::fs::write(&self.toml_path, toml_str)?;
         tracing::info!(
             "Saved {} user commands to {}",
             commands.len(),
-            self.path.display()
+            self.toml_path.display()
         );
         Ok(())
+    }
+
+    /// Add a single command, preserving existing ones.
+    pub fn add_command(&self, command: UserCommand) -> Result<()> {
+        let mut commands = self.load();
+        // Replace if same name exists
+        if let Some(pos) = commands.iter().position(|c| c.name == command.name) {
+            commands[pos] = command;
+        } else {
+            commands.push(command);
+        }
+        self.save(&commands)
+    }
+
+    /// Remove a command by name. Returns true if found and removed.
+    pub fn remove_command(&self, name: &str) -> Result<bool> {
+        let mut commands = self.load();
+        let len_before = commands.len();
+        commands.retain(|c| c.name != name);
+        let removed = commands.len() < len_before;
+        if removed {
+            self.save(&commands)?;
+        }
+        Ok(removed)
     }
 
     /// Generate a slash commands section for the system brain.
@@ -123,15 +189,15 @@ mod tests {
 
     #[test]
     fn test_load_nonexistent() {
-        let loader = CommandLoader::new(PathBuf::from("/nonexistent/commands.json"));
+        let loader = CommandLoader::new(PathBuf::from("/nonexistent/commands.toml"));
         let commands = loader.load();
         assert!(commands.is_empty());
     }
 
     #[test]
-    fn test_save_and_load() {
+    fn test_save_and_load_toml() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("commands.json");
+        let path = dir.path().join("commands.toml");
         let loader = CommandLoader::new(path);
 
         let commands = vec![
@@ -154,6 +220,105 @@ mod tests {
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].name, "/deploy");
         assert_eq!(loaded[1].name, "/test");
+    }
+
+    #[test]
+    fn test_json_migration() {
+        let dir = TempDir::new().unwrap();
+        let json_path = dir.path().join("commands.json");
+        let toml_path = dir.path().join("commands.toml");
+
+        // Write legacy JSON
+        let commands = vec![UserCommand {
+            name: "/legacy".to_string(),
+            description: "Legacy command".to_string(),
+            action: "prompt".to_string(),
+            prompt: "do legacy stuff".to_string(),
+        }];
+        let json = serde_json::to_string_pretty(&commands).unwrap();
+        std::fs::write(&json_path, json).unwrap();
+
+        // Load should find JSON and auto-migrate
+        let loader = CommandLoader::new(toml_path.clone());
+        let loaded = loader.load();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "/legacy");
+
+        // TOML file should now exist
+        assert!(toml_path.exists());
+
+        // Loading again should use TOML
+        let loaded2 = loader.load();
+        assert_eq!(loaded2.len(), 1);
+    }
+
+    #[test]
+    fn test_add_command() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("commands.toml");
+        let loader = CommandLoader::new(path);
+
+        loader.add_command(UserCommand {
+            name: "/first".to_string(),
+            description: "First".to_string(),
+            action: "prompt".to_string(),
+            prompt: "first".to_string(),
+        }).unwrap();
+
+        loader.add_command(UserCommand {
+            name: "/second".to_string(),
+            description: "Second".to_string(),
+            action: "prompt".to_string(),
+            prompt: "second".to_string(),
+        }).unwrap();
+
+        let loaded = loader.load();
+        assert_eq!(loaded.len(), 2);
+
+        // Update existing
+        loader.add_command(UserCommand {
+            name: "/first".to_string(),
+            description: "Updated first".to_string(),
+            action: "prompt".to_string(),
+            prompt: "updated".to_string(),
+        }).unwrap();
+
+        let loaded = loader.load();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].description, "Updated first");
+    }
+
+    #[test]
+    fn test_remove_command() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("commands.toml");
+        let loader = CommandLoader::new(path);
+
+        let commands = vec![
+            UserCommand {
+                name: "/keep".to_string(),
+                description: "Keep".to_string(),
+                action: "prompt".to_string(),
+                prompt: "keep".to_string(),
+            },
+            UserCommand {
+                name: "/remove".to_string(),
+                description: "Remove".to_string(),
+                action: "prompt".to_string(),
+                prompt: "remove".to_string(),
+            },
+        ];
+        loader.save(&commands).unwrap();
+
+        let removed = loader.remove_command("/remove").unwrap();
+        assert!(removed);
+
+        let loaded = loader.load();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "/keep");
+
+        let removed = loader.remove_command("/nonexistent").unwrap();
+        assert!(!removed);
     }
 
     #[test]

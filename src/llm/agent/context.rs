@@ -5,6 +5,7 @@
 
 use crate::db::models::Message as DbMessage;
 use crate::llm::provider::{ContentBlock, Message, Role};
+use crate::llm::tokenizer;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -139,12 +140,10 @@ impl AgentContext {
         tokens + 4
     }
 
-    /// Conservative token estimation (~3 chars per token).
-    /// Using /3 instead of /4 to avoid underestimating — the API's actual
-    /// tokenizer often counts more tokens than a naive chars/4 estimate,
-    /// especially for code, JSON, and tool definitions.
-    fn estimate_tokens(text: &str) -> usize {
-        (text.len() / 3).max(1)
+    /// Token estimation using tiktoken cl100k_base BPE encoding.
+    /// No more chars/N guessing — this gives real token counts.
+    pub fn estimate_tokens(text: &str) -> usize {
+        tokenizer::count_tokens(text)
     }
 
     /// Get the current token usage percentage

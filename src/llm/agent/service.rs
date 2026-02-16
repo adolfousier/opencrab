@@ -253,6 +253,7 @@ impl AgentService {
             message_id: assistant_db_msg.id,
             content: assistant_text,
             stop_reason: response.stop_reason,
+            context_tokens: response.usage.input_tokens,
             usage: response.usage,
             cost,
             model: response.model,
@@ -370,8 +371,9 @@ impl AgentService {
             100.0
         };
 
-        // Auto-compaction: if context usage exceeds 80% (accounting for tool overhead)
-        if effective_usage > 80.0 {
+        // Auto-compaction: if context usage exceeds 70% (accounting for tool overhead)
+        // Trigger early to ensure we never exceed the context window limit
+        if effective_usage > 70.0 {
             tracing::warn!(
                 "Context usage at {:.0}% (effective {:.0}% with {} tool overhead) — triggering auto-compaction",
                 context.usage_percentage(),
@@ -391,6 +393,7 @@ impl AgentService {
         let mut iteration = 0;
         let mut total_input_tokens = 0u32;
         let mut total_output_tokens = 0u32;
+        let mut last_input_tokens = 0u32;
         let mut final_response: Option<LLMResponse> = None;
         let mut accumulated_text = String::new(); // Collect text from all iterations (not just final)
         let mut recent_tool_calls: Vec<String> = Vec::new(); // Track tool calls to detect loops
@@ -416,6 +419,26 @@ impl AgentService {
             // Emit thinking progress
             if let Some(ref cb) = self.progress_callback {
                 cb(ProgressEvent::Thinking);
+            }
+
+            // --- HARD CONTEXT BUDGET CHECK (every iteration) ---
+            // Tool results accumulate inside the loop. Re-check context budget
+            // BEFORE every API call to prevent sending >200K tokens (which
+            // Anthropic will happily bill for without rejection).
+            let tool_overhead = self.tool_registry.count() * 500;
+            let effective_max = context.max_tokens.saturating_sub(tool_overhead);
+            let effective_usage = if effective_max > 0 {
+                (context.token_count as f64 / effective_max as f64) * 100.0
+            } else {
+                100.0
+            };
+            if effective_usage > 70.0 {
+                tracing::warn!(
+                    "Context at {:.0}% inside tool loop (iteration {}) — compacting before next API call",
+                    effective_usage,
+                    iteration,
+                );
+                let _ = self.compact_context(&mut context, &model_name).await;
             }
 
             // Build LLM request with tools if available
@@ -459,8 +482,26 @@ impl AgentService {
             };
 
             // Track token usage
+            last_input_tokens = response.usage.input_tokens;
             total_input_tokens += response.usage.input_tokens;
             total_output_tokens += response.usage.output_tokens;
+
+            // Calibrate context token count with the API's real input_tokens.
+            // Even with tiktoken, there's some drift since Anthropic's tokenizer differs slightly.
+            // The API knows the exact count — use it to keep our tracking honest.
+            let api_input = response.usage.input_tokens as usize;
+            let tool_overhead = self.tool_registry.count() * 500;
+            let real_message_tokens = api_input.saturating_sub(tool_overhead);
+            if real_message_tokens > 0 {
+                let drift = (context.token_count as f64 - real_message_tokens as f64).abs();
+                if drift > 5000.0 {
+                    tracing::info!(
+                        "Token calibration: estimated {} → API actual {} (drift: {:.0})",
+                        context.token_count, real_message_tokens, drift,
+                    );
+                    context.token_count = real_message_tokens;
+                }
+            }
 
             // Separate text blocks and tool use blocks from the response
             tracing::debug!("Response has {} content blocks", response.content.len());
@@ -911,6 +952,30 @@ impl AgentService {
             };
             context.add_message(tool_result_msg);
 
+            // Budget re-check: ensure we haven't blown past the context window
+            // during the tool loop. Tool results can be massive (file contents, grep, etc.)
+            // and without this check we'd send 200K+ tokens and get billed for it.
+            let usage_pct = context.usage_percentage();
+            if usage_pct > 70.0 {
+                tracing::warn!(
+                    "Context at {:.0}% ({} tokens) inside tool loop — forcing compaction",
+                    usage_pct, context.token_count
+                );
+                match self.compact_context(&mut context, &model_name).await {
+                    Ok(summary) => {
+                        tracing::info!(
+                            "Mid-loop compaction complete: {} tokens, summary len={}",
+                            context.token_count, summary.len()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Mid-loop compaction failed: {}", e);
+                        // If compaction fails, break the tool loop to avoid sending a huge request
+                        break;
+                    }
+                }
+            }
+
             // Check for queued user messages to inject between tool iterations.
             // This lets the user provide follow-up feedback mid-execution (like Claude Code).
             if let Some(ref queue_cb) = self.message_queue_callback
@@ -967,6 +1032,7 @@ impl AgentService {
                 input_tokens: total_input_tokens,
                 output_tokens: total_output_tokens,
             },
+            context_tokens: last_input_tokens,
             cost,
             model: response.model,
         })
@@ -1159,21 +1225,24 @@ impl AgentService {
 
     /// Trim DB messages to fit within the context budget.
     ///
-    /// Keeps only the most recent messages that fit within ~70% of the context window
+    /// Keeps only the most recent messages that fit within ~60% of the context window
     /// after reserving space for tool definitions, brain, and response.
+    /// Uses tiktoken cl100k_base for accurate token counting — no more chars/N guessing.
     fn trim_messages_to_budget(
         all_messages: Vec<crate::db::models::Message>,
         context_window: usize,
         tool_count: usize,
         brain: Option<&str>,
     ) -> Vec<crate::db::models::Message> {
+        use crate::llm::tokenizer;
+
         let tool_budget = tool_count * 500;
-        let brain_budget = brain.map(|b| b.len() / 3).unwrap_or(0);
+        let brain_budget = brain.map(tokenizer::count_tokens).unwrap_or(0);
         let history_budget = context_window
             .saturating_sub(tool_budget)
             .saturating_sub(brain_budget)
             .saturating_sub(16384) // reserve for response
-            * 70 / 100;
+            * 60 / 100; // Target 60% to leave headroom for tool results and overhead
 
         let mut token_acc = 0usize;
         let mut keep_from = 0usize;
@@ -1181,7 +1250,7 @@ impl AgentService {
             if msg.content.is_empty() {
                 continue;
             }
-            let msg_tokens = msg.content.len() / 3;
+            let msg_tokens = tokenizer::count_message_tokens(&msg.content);
             if token_acc + msg_tokens > history_budget {
                 keep_from = i + 1;
                 break;
@@ -1192,8 +1261,8 @@ impl AgentService {
         if keep_from > 0 {
             let kept = all_messages.len() - keep_from;
             tracing::info!(
-                "Context budget: keeping last {} of {} messages ({} est. tokens, budget {})",
-                kept, all_messages.len(), token_acc, history_budget
+                "Context budget: keeping last {} of {} messages ({} tokens via tiktoken, budget {}, window {})",
+                kept, all_messages.len(), token_acc, history_budget, context_window
             );
             all_messages[keep_from..].to_vec()
         } else {
@@ -1476,8 +1545,11 @@ pub struct AgentResponse {
     /// Stop reason
     pub stop_reason: Option<StopReason>,
 
-    /// Token usage
+    /// Token usage (accumulated across all tool-loop iterations — for billing)
     pub usage: crate::llm::provider::TokenUsage,
+
+    /// Actual context window usage from the last API call (for display)
+    pub context_tokens: u32,
 
     /// Cost in USD
     pub cost: f64,
@@ -2087,5 +2159,53 @@ mod tests {
         assert!(!chunks.is_empty(), "should have received streaming chunks");
         let combined: String = chunks.iter().cloned().collect();
         assert!(!combined.is_empty(), "combined chunks should have content");
+    }
+
+    #[tokio::test]
+    async fn test_context_tokens_is_last_iteration_not_accumulated() {
+        // When tool loop runs 2 iterations (10 + 15 input tokens),
+        // context_tokens should be 15 (last iteration), not 25 (sum).
+        let db = Database::connect_in_memory().await.unwrap();
+        db.run_migrations().await.unwrap();
+        let context = ServiceContext::new(db.pool().clone());
+        let provider = Arc::new(MockProviderWithTools::new());
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(MockTool));
+
+        let agent_service = AgentService::new(provider, context.clone())
+            .with_tool_registry(Arc::new(registry))
+            .with_auto_approve_tools(true);
+
+        let session_service = SessionService::new(context);
+        let session = session_service
+            .create_session(Some("Context Tokens Test".to_string()))
+            .await
+            .unwrap();
+
+        let response = agent_service
+            .send_message_with_tools(session.id, "Use the test tool".to_string(), None)
+            .await
+            .unwrap();
+
+        // usage.input_tokens = accumulated (10 + 15 = 25) — for billing
+        assert_eq!(response.usage.input_tokens, 25);
+        // context_tokens = last iteration only (15) — for display
+        assert_eq!(response.context_tokens, 15);
+    }
+
+    #[tokio::test]
+    async fn test_context_tokens_equals_input_tokens_without_tools() {
+        // Without tool use, context_tokens should equal usage.input_tokens
+        // (single API call, no accumulation).
+        let (agent_service, session_id) = create_test_service().await;
+
+        let response = agent_service
+            .send_message(session_id, "Hello".to_string(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(response.context_tokens, response.usage.input_tokens);
+        assert_eq!(response.context_tokens, 10); // MockProvider returns 10
     }
 }

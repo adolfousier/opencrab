@@ -25,6 +25,7 @@ pub mod notebook;
 pub mod web_search;
 
 // Tool implementations - Phase 3: Workflow & Integration
+pub mod config_tool;
 pub mod context;
 pub mod http;
 pub mod memory_search;

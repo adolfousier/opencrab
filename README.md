@@ -72,7 +72,7 @@
 | **Real-time Streaming** | Character-by-character response streaming with animated spinner showing model name and live text |
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
 | **Cost Tracking** | Per-message token count and cost displayed in header |
-| **Context Awareness** | Live context usage indicator with color-coded percentage (green/yellow/red); auto-compaction at 80% with tool overhead budgeting |
+| **Context Awareness** | Live context usage indicator showing actual token counts (e.g. `ctx: 45K/200K (23%)`); auto-compaction at 70% with tool overhead budgeting; accurate tiktoken-based counting calibrated against API actuals |
 | **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory loaded every turn, (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Memory Search** — `memory_search` tool for semantic retrieval across all past logs via QMD |
 | **Dynamic Brain System** | System brain assembled from workspace MD files (SOUL, IDENTITY, USER, AGENTS, TOOLS, MEMORY) — all editable live between turns |
 
@@ -115,7 +115,8 @@
 | **Built-in Tools** | Read/write/edit files, bash, glob, grep, web search (EXA, Brave), plan mode, and more |
 | **Plan Mode** | Structured task decomposition with dependency graphs, complexity ratings, and inline approval workflow |
 | **Self-Sustaining** | Agent can modify its own source, build, test, and hot-restart via Unix `exec()` |
-| **Natural Language Commands** | Tell OpenCrabs to create slash commands — it writes them to `commands.json` autonomously |
+| **Natural Language Commands** | Tell OpenCrabs to create slash commands — it writes them to `commands.toml` autonomously via the `config_manager` tool |
+| **Live Settings** | Agent can read/write `config.toml` at runtime; Settings TUI screen (press `S`) shows current config; approval policy persists across restarts |
 | **Web Search** | EXA AI (neural, free via MCP) and Brave Search APIs |
 | **Debug Logging** | `--debug` flag enables file logging; `DEBUG_LOGS_LOCATION` env var for custom log directory |
 
@@ -463,6 +464,7 @@ OpenCrabs includes a built-in tool execution system. The AI can use these tools 
 | `task_manager` | Manage agent tasks |
 | `http_request` | Make HTTP requests |
 | `memory_search` | Search past conversation memory logs for context from previous sessions (QMD-backed, graceful skip if not installed) |
+| `config_manager` | Read/write config.toml and commands.toml at runtime (change settings, add/remove commands, reload config) |
 | `session_context` | Access session information |
 | `plan` | Create structured execution plans |
 
@@ -558,6 +560,7 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `/sessions` | Open session manager |
 | `/approve` | Tool approval policy selector (approve-only / session / yolo) |
 | `/compact` | Compact context (summarize + trim for long sessions) |
+| `/settings` or `S` | Open Settings screen (provider, approval, commands, paths) |
 
 ### Sessions Mode
 
@@ -588,7 +591,7 @@ When the AI requests a tool that needs permission, an inline approval prompt app
 | **Allow all for this task** | Auto-approve all tools this session (resets on session switch) |
 | **Allow all moving forward** | Auto-approve all tools permanently (app lifetime) |
 
-Use `/approve` to change your approval policy at any time:
+Use `/approve` to change your approval policy at any time (persisted to `config.toml`):
 
 | Policy | Description |
 |--------|-------------|
@@ -639,7 +642,7 @@ opencrabs logs clean -d 3  # Clean logs older than 3 days
 
 ---
 
-## 🧠 Brain System & 3-Tier Memory (v0.2.0)
+## 🧠 Brain System & 3-Tier Memory
 
 OpenCrabs's brain is **dynamic and self-sustaining**. Instead of a hardcoded system prompt, the agent assembles its personality, knowledge, and behavior from workspace files that can be edited between turns.
 
@@ -667,7 +670,7 @@ Files are re-read **every turn** — edit them between messages and the agent im
 | **3. Memory Search** | `memory_search` tool via QMD | Semantic search across all daily logs — the agent can recall past decisions, files, errors | Agent (via tool call) |
 
 **How it works:**
-1. When context hits 80%, auto-compaction summarizes the conversation into a structured breakdown (current task, decisions, files modified, errors, next steps)
+1. When context hits 70%, auto-compaction summarizes the conversation into a structured breakdown (current task, decisions, files modified, errors, next steps)
 2. The summary is saved to a daily log at `~/.opencrabs/memory/2026-02-15.md` (multiple compactions per day stack in the same file)
 3. The summary is shown to you in chat so you see exactly what was remembered
 4. If [QMD](https://github.com/qmd-project/qmd) is installed, the index is updated in the background so the agent can search past logs with `memory_search`
@@ -677,20 +680,17 @@ Files are re-read **every turn** — edit them between messages and the agent im
 
 ### User-Defined Slash Commands
 
-Tell OpenCrabs in natural language: *"Create a /deploy command that runs deploy.sh"* — and it writes the command to `~/.opencrabs/commands.json`:
+Tell OpenCrabs in natural language: *"Create a /deploy command that runs deploy.sh"* — and it writes the command to `~/.opencrabs/commands.toml` via the `config_manager` tool:
 
-```json
-[
-  {
-    "name": "/deploy",
-    "description": "Deploy to staging server",
-    "action": "prompt",
-    "prompt": "Run the deployment script at ./scripts/deploy.sh for the staging environment."
-  }
-]
+```toml
+[[commands]]
+name = "/deploy"
+description = "Deploy to staging server"
+action = "prompt"
+prompt = "Run the deployment script at ./scripts/deploy.sh for the staging environment."
 ```
 
-Commands appear in autocomplete alongside built-in commands. After each agent response, `commands.json` is automatically reloaded — no restart needed.
+Commands appear in autocomplete alongside built-in commands. After each agent response, `commands.toml` is automatically reloaded — no restart needed. Legacy `commands.json` files are auto-migrated on first load.
 
 ### Self-Sustaining Architecture
 
@@ -715,7 +715,7 @@ OpenCrabs can modify its own source code, build, test, and hot-restart itself vi
 - If the build fails, the agent stays running and can read compiler errors to fix them
 - Session persistence via SQLite means no conversation context is lost across restarts
 - Brain files (`SOUL.md`, `MEMORY.md`, etc.) are re-read every turn, so edits take effect immediately without rebuild
-- User-defined slash commands (`commands.json`) also auto-reload after each agent response
+- User-defined slash commands (`commands.toml`) also auto-reload after each agent response
 - Hot restart is Unix-only (`exec()` syscall); on Windows the build/test steps work but restart requires manual relaunch
 
 **Module:** `src/brain/self_update.rs` — `SelfUpdater` struct with `auto_detect()`, `build()`, `test()`, `restart()`
@@ -729,7 +729,7 @@ Presentation Layer
     ↓
 CLI (Clap) + TUI (Ratatui + Crossterm)
     ↓
-Brain Layer (Dynamic system brain, user commands, self-update)
+Brain Layer (Dynamic system brain, user commands, config management, self-update)
     ↓
 Application Layer
     ↓
@@ -773,7 +773,7 @@ opencrabs/
 │   ├── brain/            # Dynamic brain system (v0.1.1)
 │   │   ├── mod.rs        # Module root
 │   │   ├── prompt_builder.rs  # BrainLoader — assembles system brain from workspace files
-│   │   ├── commands.rs   # CommandLoader — user-defined slash commands (JSON)
+│   │   ├── commands.rs   # CommandLoader — user-defined slash commands (TOML, with JSON migration)
 │   │   └── self_update.rs # SelfUpdater — build, test, hot-restart via exec()
 │   ├── cli/              # Command-line interface (Clap)
 │   ├── config/           # Configuration (TOML + env + keyring)
@@ -784,7 +784,7 @@ opencrabs/
 │   ├── llm/              # LLM integration
 │   │   ├── agent/        # Agent service + context management
 │   │   ├── provider/     # Provider implementations (Anthropic, OpenAI, Qwen)
-│   │   ├── tools/        # Tool system (read, write, bash, glob, grep, memory_search, etc.)
+│   │   ├── tools/        # Tool system (read, write, bash, glob, grep, memory_search, config_manager, etc.)
 │   │   └── prompt/       # Prompt engineering
 │   ├── tui/              # Terminal UI (Ratatui)
 │   │   ├── onboarding.rs     # 7-step onboarding wizard (state + logic)
