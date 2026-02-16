@@ -254,7 +254,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         } else {
             wizard.custom_base_url.clone()
         };
-        let cursor = if base_focused { "_" } else { "" };
+        let cursor = if base_focused { "█" } else { "" };
         lines.push(Line::from(vec![
             Span::styled(
                 "  Base URL: ",
@@ -271,7 +271,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         } else {
             wizard.custom_model.clone()
         };
-        let cursor = if model_focused { "_" } else { "" };
+        let cursor = if model_focused { "█" } else { "" };
         lines.push(Line::from(vec![
             Span::styled(
                 "  Model:    ",
@@ -302,7 +302,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         } else {
             ("*".repeat(wizard.api_key_input.len().min(30)), String::new())
         };
-        let cursor = if key_focused && !wizard.has_existing_key() { "_" } else { "" };
+        let cursor = if key_focused && !wizard.has_existing_key() { "█" } else { "" };
 
         lines.push(Line::from(vec![
             Span::styled(
@@ -355,7 +355,7 @@ fn render_workspace(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     let path_focused = wizard.focused_field == 0;
     let seed_focused = wizard.focused_field == 1;
 
-    let cursor = if path_focused { "_" } else { "" };
+    let cursor = if path_focused { "█" } else { "" };
     lines.push(Line::from(vec![
         Span::styled(
             "  Path: ",
@@ -394,7 +394,7 @@ fn render_gateway(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     let bind_focused = wizard.focused_field == 1;
     let auth_focused = wizard.focused_field == 2;
 
-    let cursor_p = if port_focused { "_" } else { "" };
+    let cursor_p = if port_focused { "█" } else { "" };
     lines.push(Line::from(vec![
         Span::styled(
             "  Port: ",
@@ -406,7 +406,7 @@ fn render_gateway(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
         ),
     ]));
 
-    let cursor_b = if bind_focused { "_" } else { "" };
+    let cursor_b = if bind_focused { "█" } else { "" };
     lines.push(Line::from(vec![
         Span::styled(
             "  Bind: ",
@@ -510,7 +510,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     } else {
         ("*".repeat(wizard.telegram_token_input.len().min(30)), String::new())
     };
-    let cursor = if token_focused && !wizard.has_existing_telegram_token() { "_" } else { "" };
+    let cursor = if token_focused && !wizard.has_existing_telegram_token() { "█" } else { "" };
 
     lines.push(Line::from(vec![
         Span::styled(
@@ -570,7 +570,7 @@ fn render_voice_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     } else {
         ("*".repeat(wizard.groq_api_key_input.len().min(30)), String::new())
     };
-    let cursor = if groq_focused && !wizard.has_existing_groq_key() { "_" } else { "" };
+    let cursor = if groq_focused && !wizard.has_existing_groq_key() { "█" } else { "" };
 
     lines.push(Line::from(vec![
         Span::styled(
@@ -806,7 +806,7 @@ fn render_brain_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     let me_display = if wizard.about_me.is_empty() && !me_focused {
         "  name, role, links, projects, whatever you got".to_string()
     } else {
-        let cursor = if me_focused { "_" } else { "" };
+        let cursor = if me_focused { "█" } else { "" };
         format!("  {}{}", wizard.about_me, cursor)
     };
     let me_style = if wizard.about_me.is_empty() && !me_focused {
@@ -833,7 +833,7 @@ fn render_brain_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     let agent_display = if wizard.about_agent.is_empty() && !agent_focused {
         "  personality, vibe, how it should talk to you".to_string()
     } else {
-        let cursor = if agent_focused { "_" } else { "" };
+        let cursor = if agent_focused { "█" } else { "" };
         format!("  {}{}", wizard.about_agent, cursor)
     };
     let agent_style = if wizard.about_agent.is_empty() && !agent_focused {
