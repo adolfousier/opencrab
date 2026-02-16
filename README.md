@@ -560,6 +560,7 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `/sessions` | Open session manager |
 | `/approve` | Tool approval policy selector (approve-only / session / yolo) |
 | `/compact` | Compact context (summarize + trim for long sessions) |
+| `/rebuild` | Build from source & hot-restart via `exec()` |
 | `/settings` or `S` | Open Settings screen (provider, approval, commands, paths) |
 
 ### Sessions Mode
@@ -694,31 +695,43 @@ Commands appear in autocomplete alongside built-in commands. After each agent re
 
 ### Self-Sustaining Architecture
 
-OpenCrabs can modify its own source code, build, test, and hot-restart itself via the `/rebuild` command:
+OpenCrabs can modify its own source code, build, test, and hot-restart itself — triggered by the agent via the `rebuild` tool or by the user via `/rebuild`:
 
 ```
-/rebuild          # Triggers build → test → restart
+/rebuild          # User-triggered: build → restart prompt
+rebuild tool      # Agent-triggered: build → ProgressEvent::RestartReady → restart prompt
 ```
 
 **How it works:**
 
 1. The agent edits source files using its built-in tools (read, write, edit, bash)
 2. `SelfUpdater::build()` runs `cargo build --release` asynchronously
-3. `SelfUpdater::test()` runs `cargo test` to verify correctness
-4. On success, the TUI shows a **RestartPending** confirmation dialog
+3. On success, a `ProgressEvent::RestartReady` is emitted → bridged to `TuiEvent::RestartReady`
+4. The TUI switches to **RestartPending** mode — user presses Enter to confirm
 5. `SelfUpdater::restart(session_id)` replaces the process via Unix `exec()`
-6. The new binary starts with `opencrabs chat --session <uuid>` — resuming the same conversation from SQLite
+6. The new binary starts with `opencrabs chat --session <uuid>` — resuming the same conversation
+7. A hidden wake-up message is sent to the agent so it greets the user and continues where it left off
+
+**Two trigger paths:**
+
+| Path | Entry point | Signal |
+|------|-------------|--------|
+| **Agent-triggered** | `rebuild` tool (called by the agent after editing source) | `ProgressCallback` → `RestartReady` |
+| **User-triggered** | `/rebuild` slash command | `TuiEvent::RestartReady` directly |
 
 **Key details:**
 
 - The running binary is in memory — source changes on disk don't affect it until restart
 - If the build fails, the agent stays running and can read compiler errors to fix them
 - Session persistence via SQLite means no conversation context is lost across restarts
+- After restart, the agent auto-wakes with session context — no user input needed
 - Brain files (`SOUL.md`, `MEMORY.md`, etc.) are re-read every turn, so edits take effect immediately without rebuild
 - User-defined slash commands (`commands.toml`) also auto-reload after each agent response
 - Hot restart is Unix-only (`exec()` syscall); on Windows the build/test steps work but restart requires manual relaunch
 
-**Module:** `src/brain/self_update.rs` — `SelfUpdater` struct with `auto_detect()`, `build()`, `test()`, `restart()`
+**Modules:**
+- `src/brain/self_update.rs` — `SelfUpdater` struct with `auto_detect()`, `build()`, `test()`, `restart()`
+- `src/llm/tools/rebuild.rs` — `RebuildTool` (agent-callable, emits `ProgressEvent::RestartReady`)
 
 ---
 

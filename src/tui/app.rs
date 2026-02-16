@@ -60,6 +60,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/compact",
         description: "Compact context now",
     },
+    SlashCommand {
+        name: "/rebuild",
+        description: "Build & restart from source",
+    },
 ];
 
 /// Approval option selected by the user
@@ -302,6 +306,9 @@ pub struct App {
     // Self-update state
     pub rebuild_status: Option<String>,
 
+    /// Session to resume after restart (set via --session CLI arg)
+    pub resume_session_id: Option<Uuid>,
+
     // Services
     agent_service: Arc<AgentService>,
     session_service: SessionService,
@@ -385,6 +392,7 @@ impl App {
             last_input_tokens: None,
             active_tool_group: None,
             rebuild_status: None,
+            resume_session_id: None,
             session_service: SessionService::new(context.clone()),
             message_service: MessageService::new(context.clone()),
             plan_service: PlanService::new(context),
@@ -411,8 +419,35 @@ impl App {
 
     /// Initialize the app by loading or creating a session
     pub async fn initialize(&mut self) -> Result<()> {
-        // Try to load most recent session
-        if let Some(session) = self.session_service.get_most_recent_session().await? {
+        // Resume a specific session (e.g. after /rebuild restart) or load the most recent
+        if let Some(session_id) = self.resume_session_id.take() {
+            self.load_session(session_id).await?;
+            // Skip splash — go straight to chat
+            self.mode = AppMode::Chat;
+            self.splash_shown_at = None;
+            // Send a hidden wake-up message to the agent (not shown in UI)
+            self.is_processing = true;
+            let agent_service = self.agent_service.clone();
+            let event_sender = self.event_sender();
+            let token = CancellationToken::new();
+            self.cancel_token = Some(token.clone());
+            tokio::spawn(async move {
+                let wake_up = "[SYSTEM: You just rebuilt yourself from source and restarted \
+                    via exec(). Greet the user, confirm the restart succeeded, and continue \
+                    where you left off.]";
+                match agent_service
+                    .send_message_with_tools_and_mode(session_id, wake_up.to_string(), None, false, Some(token))
+                    .await
+                {
+                    Ok(response) => {
+                        let _ = event_sender.send(TuiEvent::ResponseComplete(response));
+                    }
+                    Err(e) => {
+                        let _ = event_sender.send(TuiEvent::Error(e.to_string()));
+                    }
+                }
+            });
+        } else if let Some(session) = self.session_service.get_most_recent_session().await? {
             self.load_session(session.id).await?;
         } else {
             // Create a new session if none exists
@@ -623,6 +658,10 @@ impl App {
                     tool_group: None,
                     plan_approval: None,
                 });
+            }
+            TuiEvent::RestartReady(status) => {
+                self.rebuild_status = Some(status);
+                self.switch_mode(AppMode::RestartPending).await?;
             }
             TuiEvent::ConfigReloaded => {
                 // Refresh cached config values and commands
@@ -1859,6 +1898,32 @@ impl App {
                 let _ = sender.send(TuiEvent::MessageSubmitted(
                     "[SYSTEM: Compact context now. Summarize this conversation for continuity.]".to_string(),
                 ));
+                true
+            }
+            "/rebuild" => {
+                self.push_system_message("Building from source...".to_string());
+                let sender = self.event_sender();
+                tokio::spawn(async move {
+                    match SelfUpdater::auto_detect() {
+                        Ok(updater) => match updater.build().await {
+                            Ok(_) => {
+                                let _ = sender.send(TuiEvent::RestartReady(
+                                    "Build successful".into(),
+                                ));
+                            }
+                            Err(e) => {
+                                let _ = sender.send(TuiEvent::Error(format!(
+                                    "Build failed:\n{}", e
+                                )));
+                            }
+                        },
+                        Err(e) => {
+                            let _ = sender.send(TuiEvent::Error(format!(
+                                "Cannot detect project: {}", e
+                            )));
+                        }
+                    }
+                });
                 true
             }
             "/help" => {

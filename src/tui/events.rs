@@ -77,6 +77,9 @@ pub enum TuiEvent {
     /// Context was auto-compacted — show the summary to the user
     CompactionSummary(String),
 
+    /// Build completed — offer restart to the user
+    RestartReady(String),
+
     /// Configuration was reloaded (e.g. after config_tool write)
     ConfigReloaded,
 }

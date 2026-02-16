@@ -50,6 +50,8 @@ pub enum ProgressEvent {
     Compacting,
     /// Compaction finished — carry the summary so the TUI can display it
     CompactionSummary { summary: String },
+    /// Build completed — TUI should offer restart
+    RestartReady { status: String },
 }
 
 /// Callback for reporting progress during agent execution

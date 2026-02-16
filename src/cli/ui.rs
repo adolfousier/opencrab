@@ -9,7 +9,7 @@ use crate::brain::{BrainLoader, CommandLoader};
 /// Start interactive chat session
 pub(crate) async fn cmd_chat(
     config: &crate::config::Config,
-    _session_id: Option<String>,
+    session_id: Option<String>,
     force_onboard: bool,
 ) -> Result<()> {
     use crate::{
@@ -194,6 +194,9 @@ pub(crate) async fn cmd_chat(
             ProgressEvent::CompactionSummary { summary } => {
                 let _ = progress_sender.send(TuiEvent::CompactionSummary(summary));
             }
+            ProgressEvent::RestartReady { status } => {
+                let _ = progress_sender.send(TuiEvent::RestartReady(status));
+            }
         }
     });
 
@@ -203,6 +206,11 @@ pub(crate) async fn cmd_chat(
         let queue = message_queue.clone();
         Box::pin(async move { queue.lock().await.take() })
     });
+
+    // Register rebuild tool (needs the progress callback for restart signaling)
+    tool_registry.register(Arc::new(
+        crate::llm::tools::rebuild::RebuildTool::new(Some(progress_callback.clone())),
+    ));
 
     // Create agent service with approval callback, progress callback, and message queue
     tracing::debug!("Creating agent service with approval, progress, and message queue callbacks");
@@ -227,6 +235,13 @@ pub(crate) async fn cmd_chat(
     // Set force onboard flag if requested
     if force_onboard {
         app.force_onboard = true;
+    }
+
+    // Resume a specific session (e.g. after /rebuild restart)
+    if let Some(ref sid) = session_id
+        && let Ok(uuid) = uuid::Uuid::parse_str(sid)
+    {
+        app.resume_session_id = Some(uuid);
     }
 
     // Spawn Telegram bot if configured

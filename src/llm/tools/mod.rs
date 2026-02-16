@@ -30,6 +30,7 @@ pub mod context;
 pub mod http;
 pub mod memory_search;
 pub mod plan_tool;
+pub mod rebuild;
 pub mod task;
 
 // Re-exports
