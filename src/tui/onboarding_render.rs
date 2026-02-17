@@ -3,8 +3,8 @@
 //! Render functions for each step of the onboarding wizard.
 
 use super::onboarding::{
-    AuthField, BrainField, HealthStatus, OnboardingStep, OnboardingWizard, TelegramField,
-    VoiceField, WizardMode, PROVIDERS,
+    AuthField, BrainField, HealthStatus, MessagingField, OnboardingStep, OnboardingWizard,
+    TelegramField, VoiceField, WizardMode, PROVIDERS,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
@@ -73,6 +73,7 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
     match step {
         OnboardingStep::ModeSelect => render_mode_select(&mut lines, wizard),
         OnboardingStep::ProviderAuth => render_provider_auth(&mut lines, wizard),
+        OnboardingStep::MessagingSetup => render_messaging_setup(&mut lines, wizard),
         OnboardingStep::Workspace => render_workspace(&mut lines, wizard),
         OnboardingStep::Gateway => render_gateway(&mut lines, wizard),
         OnboardingStep::Channels => render_channels(&mut lines, wizard),
@@ -349,6 +350,73 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             }
         }
     }
+}
+
+fn render_messaging_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
+    lines.push(Line::from(Span::styled(
+        "  Pick your channels (Space to toggle):",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    // Telegram toggle
+    let tg_focused = wizard.messaging_field == MessagingField::Telegram;
+    let tg_on = wizard.messaging_telegram;
+    lines.push(Line::from(vec![
+        Span::styled(
+            if tg_focused { " > " } else { "   " },
+            Style::default().fg(ACCENT_GOLD),
+        ),
+        Span::styled(
+            if tg_on { "[x]" } else { "[ ]" },
+            Style::default().fg(if tg_on { BRAND_GOLD } else { Color::DarkGray }),
+        ),
+        Span::styled(
+            " Telegram",
+            Style::default()
+                .fg(if tg_focused { Color::White } else { Color::DarkGray })
+                .add_modifier(if tg_focused { Modifier::BOLD } else { Modifier::empty() }),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "       Chat via Telegram bot (needs bot token)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    // WhatsApp toggle
+    let wa_focused = wizard.messaging_field == MessagingField::WhatsApp;
+    let wa_on = wizard.messaging_whatsapp;
+    lines.push(Line::from(vec![
+        Span::styled(
+            if wa_focused { " > " } else { "   " },
+            Style::default().fg(ACCENT_GOLD),
+        ),
+        Span::styled(
+            if wa_on { "[x]" } else { "[ ]" },
+            Style::default().fg(if wa_on { BRAND_GOLD } else { Color::DarkGray }),
+        ),
+        Span::styled(
+            " WhatsApp",
+            Style::default()
+                .fg(if wa_focused { Color::White } else { Color::DarkGray })
+                .add_modifier(if wa_focused { Modifier::BOLD } else { Modifier::empty() }),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "       Chat via WhatsApp Web (QR code pairing)",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  WhatsApp pairs later — just say \"connect WhatsApp\"",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Skip both with Enter if you're not into it",
+        Style::default().fg(Color::DarkGray),
+    )));
 }
 
 fn render_workspace(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {

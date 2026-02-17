@@ -90,7 +90,7 @@
 | Feature | Description |
 |---------|-------------|
 | **Telegram Bot** | Full-featured Telegram bot running alongside the TUI — shared session, photo/voice support, allowlisted user IDs |
-| **WhatsApp** | Coming soon |
+| **WhatsApp** | Connect via QR code pairing at runtime ("connect my WhatsApp") or from onboarding wizard. Text + image support, shared session with TUI, phone allowlist, session persists across restarts |
 | **Slack** | Coming soon |
 
 ### Terminal UI
@@ -171,7 +171,7 @@ Compatible with any OpenAI-compatible API endpoint via `OPENAI_BASE_URL`.
 
 ### Prerequisites
 
-- **Rust (2024 edition)** — [Install Rust](https://rustup.rs/)
+- **Rust nightly (2024 edition)** — [Install Rust](https://rustup.rs/), then `rustup toolchain install nightly`. The project includes a `rust-toolchain.toml` that selects nightly automatically. Required by the WhatsApp integration (`wacore-binary` uses `portable_simd`).
 - **An API key** from at least one supported provider
 - **SQLite** (bundled via sqlx)
 - **Linux:** `build-essential`, `pkg-config`, `libssl-dev`, `libchafa-dev`

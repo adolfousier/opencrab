@@ -212,11 +212,34 @@ pub(crate) async fn cmd_chat(
         crate::llm::tools::rebuild::RebuildTool::new(Some(progress_callback.clone())),
     ));
 
+    // Create ChannelFactory (shared by static channel spawn + WhatsApp connect tool).
+    // Tool registry is set lazily after Arc wrapping to break circular dependency.
+    let channel_factory = Arc::new(crate::channels::ChannelFactory::new(
+        provider.clone(),
+        service_context.clone(),
+        system_brain.clone(),
+        working_directory.clone(),
+        brain_path.clone(),
+        app.shared_session_id(),
+        config.voice.clone(),
+    ));
+
+    // Register WhatsApp connect tool (agent-callable QR pairing)
+    #[cfg(feature = "whatsapp")]
+    tool_registry.register(Arc::new(
+        crate::llm::tools::whatsapp_connect::WhatsAppConnectTool::new(
+            Some(progress_callback.clone()),
+            channel_factory.clone(),
+        ),
+    ));
+
     // Create agent service with approval callback, progress callback, and message queue
     tracing::debug!("Creating agent service with approval, progress, and message queue callbacks");
     let shared_tool_registry = Arc::new(tool_registry);
-    let shared_brain = system_brain.clone();
-    let shared_brain_path = brain_path.clone();
+
+    // Now that the registry is Arc'd, give it to the channel factory
+    channel_factory.set_tool_registry(shared_tool_registry.clone());
+
     let agent_service = Arc::new(
         AgentService::new(provider.clone(), service_context.clone())
             .with_system_brain(system_brain)
@@ -251,17 +274,7 @@ pub(crate) async fn cmd_chat(
         let tg_token = tg.token.clone().or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok());
         if tg.enabled || tg_token.is_some() {
             if let Some(ref token) = tg_token {
-                // Build a separate agent service for Telegram — same brain, tools,
-                // and working directory as the TUI agent (minus TUI callbacks).
-                let tg_agent = Arc::new(
-                    AgentService::new(provider.clone(), service_context.clone())
-                        .with_system_brain(shared_brain.clone())
-                        .with_tool_registry(shared_tool_registry.clone())
-                        .with_auto_approve_tools(true)
-            
-                        .with_working_directory(working_directory.clone())
-                        .with_brain_path(shared_brain_path.clone()),
-                );
+                let tg_agent = channel_factory.create_agent_service();
                 // Extract OpenAI API key for TTS (from env or provider config)
                 // TTS uses gpt-4o-mini-tts, NOT a text generation model
                 let openai_key = std::env::var("OPENAI_API_KEY").ok()
@@ -280,6 +293,28 @@ pub(crate) async fn cmd_chat(
                 tracing::warn!("Telegram enabled but no token configured");
                 None
             }
+        } else {
+            None
+        }
+    };
+
+    // Spawn WhatsApp agent if configured (already paired via session.db)
+    #[cfg(feature = "whatsapp")]
+    let _whatsapp_handle = {
+        let wa = &config.channels.whatsapp;
+        if wa.enabled {
+            let wa_agent = crate::whatsapp::WhatsAppAgent::new(
+                channel_factory.create_agent_service(),
+                service_context.clone(),
+                wa.allowed_phones.clone(),
+                config.voice.clone(),
+                app.shared_session_id(),
+            );
+            tracing::info!(
+                "Spawning WhatsApp agent ({} allowed phones)",
+                wa.allowed_phones.len()
+            );
+            Some(wa_agent.start())
         } else {
             None
         }

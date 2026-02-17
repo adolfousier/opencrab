@@ -116,6 +116,9 @@ pub struct ChannelConfig {
     /// Allowlisted user IDs (Telegram user IDs, Discord user IDs, etc.)
     #[serde(default)]
     pub allowed_users: Vec<i64>,
+    /// Allowlisted phone numbers for WhatsApp (E.164 format: "+15551234567")
+    #[serde(default)]
+    pub allowed_phones: Vec<String>,
 }
 
 /// Voice processing configuration (STT + TTS)

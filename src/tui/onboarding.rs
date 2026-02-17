@@ -124,6 +124,7 @@ const TEMPLATE_FILES: &[(&str, &str)] = &[
 pub enum OnboardingStep {
     ModeSelect,
     ProviderAuth,
+    MessagingSetup,
     Workspace,
     Gateway,
     Channels,
@@ -141,54 +142,57 @@ impl OnboardingStep {
         match self {
             Self::ModeSelect => 1,
             Self::ProviderAuth => 2,
-            Self::Workspace => 3,
-            Self::Gateway => 4,
-            Self::Channels => 5,
-            Self::TelegramSetup => 5, // sub-step of Channels
-            Self::VoiceSetup => 6,
-            Self::Daemon => 7,
-            Self::HealthCheck => 8,
-            Self::BrainSetup => 9,
-            Self::Complete => 10,
+            Self::MessagingSetup => 3,
+            Self::Workspace => 4,
+            Self::Gateway => 5,
+            Self::Channels => 6,
+            Self::TelegramSetup => 6, // sub-step of Channels
+            Self::VoiceSetup => 7,
+            Self::Daemon => 8,
+            Self::HealthCheck => 9,
+            Self::BrainSetup => 10,
+            Self::Complete => 11,
         }
     }
 
     /// Total number of steps (excluding Complete)
     pub fn total() -> usize {
-        9
+        10
     }
 
     /// Step title
     pub fn title(&self) -> &'static str {
         match self {
-            Self::ModeSelect => "Mode Selection",
-            Self::ProviderAuth => "Model & Authentication",
-            Self::Workspace => "Workspace Setup",
-            Self::Gateway => "Gateway Configuration",
-            Self::Channels => "Channel Integrations",
-            Self::TelegramSetup => "Telegram Bot Setup",
-            Self::VoiceSetup => "Voice Configuration",
-            Self::Daemon => "Background Service",
-            Self::HealthCheck => "Health Check",
-            Self::BrainSetup => "Brain Personalization",
-            Self::Complete => "Complete",
+            Self::ModeSelect => "Pick Your Vibe",
+            Self::ProviderAuth => "Brain Fuel",
+            Self::MessagingSetup => "Chat Me Anywhere",
+            Self::Workspace => "Home Base",
+            Self::Gateway => "API Gateway",
+            Self::Channels => "More Channels",
+            Self::TelegramSetup => "Telegram Bot",
+            Self::VoiceSetup => "Voice Superpowers",
+            Self::Daemon => "Always On",
+            Self::HealthCheck => "Vibe Check",
+            Self::BrainSetup => "Make It Yours",
+            Self::Complete => "Let's Go!",
         }
     }
 
     /// Step subtitle
     pub fn subtitle(&self) -> &'static str {
         match self {
-            Self::ModeSelect => "Choose your setup experience",
-            Self::ProviderAuth => "Choose your AI provider and authenticate",
-            Self::Workspace => "Set up your brain workspace directory",
-            Self::Gateway => "Configure the HTTP API gateway",
-            Self::Channels => "Enable messaging integrations",
-            Self::TelegramSetup => "Connect your Telegram bot",
-            Self::VoiceSetup => "Speech-to-text and text-to-speech",
-            Self::Daemon => "Install background service",
-            Self::HealthCheck => "Verify your setup",
-            Self::BrainSetup => "Let your agent actually know who you are",
-            Self::Complete => "Setup complete!",
+            Self::ModeSelect => "Quick and easy or full control — your call",
+            Self::ProviderAuth => "Pick your AI model and drop your key",
+            Self::MessagingSetup => "Chat with me from your phone — Telegram, WhatsApp, whatever",
+            Self::Workspace => "Where my brain lives on disk",
+            Self::Gateway => "Open up an HTTP API if you want one",
+            Self::Channels => "Wire up even more messaging apps",
+            Self::TelegramSetup => "Hook up your Telegram bot token",
+            Self::VoiceSetup => "Talk to me, literally",
+            Self::Daemon => "Keep me running in the background",
+            Self::HealthCheck => "Making sure everything's wired up right",
+            Self::BrainSetup => "Tell me about yourself so I actually get you",
+            Self::Complete => "You're all set — let's build something cool",
         }
     }
 }
@@ -217,6 +221,13 @@ pub enum AuthField {
     Model,
     CustomBaseUrl,
     CustomModel,
+}
+
+/// Which field is focused in MessagingSetup step
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessagingField {
+    Telegram,
+    WhatsApp,
 }
 
 /// Which field is focused in TelegramSetup step
@@ -253,7 +264,12 @@ pub struct OnboardingWizard {
     pub custom_base_url: String,
     pub custom_model: String,
 
-    // Step 3: Workspace
+    // Step 3: MessagingSetup (shown in both modes)
+    pub messaging_field: MessagingField,
+    pub messaging_telegram: bool,
+    pub messaging_whatsapp: bool,
+
+    // Step 4: Workspace
     pub workspace_path: String,
     pub seed_templates: bool,
 
@@ -325,6 +341,10 @@ impl OnboardingWizard {
             auth_field: AuthField::Provider,
             custom_base_url: String::new(),
             custom_model: String::new(),
+
+            messaging_field: MessagingField::Telegram,
+            messaging_telegram: false,
+            messaging_whatsapp: false,
 
             workspace_path: default_workspace.to_string_lossy().to_string(),
             seed_templates: true,
@@ -432,11 +452,27 @@ impl OnboardingWizard {
                         Some("Base URL and model name are required for custom provider".to_string());
                     return;
                 }
-                self.step = OnboardingStep::Workspace;
+                // Always show messaging setup (both modes)
+                self.step = OnboardingStep::MessagingSetup;
+                self.messaging_field = MessagingField::Telegram;
+            }
+            OnboardingStep::MessagingSetup => {
+                // Sync messaging toggles into channel_toggles for apply_config
+                self.channel_toggles[0].1 = self.messaging_telegram; // Telegram
+                self.channel_toggles[2].1 = self.messaging_whatsapp; // WhatsApp
+
+                // If Telegram was picked, go to TelegramSetup for the bot token
+                if self.messaging_telegram {
+                    self.step = OnboardingStep::TelegramSetup;
+                    self.telegram_field = TelegramField::BotToken;
+                    self.detect_existing_telegram_token();
+                } else {
+                    self.step = OnboardingStep::Workspace;
+                }
             }
             OnboardingStep::Workspace => {
                 if self.mode == WizardMode::QuickStart {
-                    // Skip steps 4-6, go straight to health check
+                    // Skip gateway/channels/voice/daemon, go straight to health check
                     self.step = OnboardingStep::HealthCheck;
                     self.start_health_check();
                 } else {
@@ -459,9 +495,7 @@ impl OnboardingWizard {
                 }
             }
             OnboardingStep::TelegramSetup => {
-                self.step = OnboardingStep::VoiceSetup;
-                self.voice_field = VoiceField::GroqApiKey;
-                self.detect_existing_groq_key();
+                self.step = OnboardingStep::Workspace;
             }
             OnboardingStep::VoiceSetup => {
                 self.step = OnboardingStep::Daemon;
@@ -499,9 +533,19 @@ impl OnboardingWizard {
             OnboardingStep::ProviderAuth => {
                 self.step = OnboardingStep::ModeSelect;
             }
-            OnboardingStep::Workspace => {
+            OnboardingStep::MessagingSetup => {
                 self.step = OnboardingStep::ProviderAuth;
                 self.auth_field = AuthField::Provider;
+            }
+            OnboardingStep::Workspace => {
+                // Go back to TelegramSetup if it was shown, otherwise MessagingSetup
+                if self.messaging_telegram {
+                    self.step = OnboardingStep::TelegramSetup;
+                    self.telegram_field = TelegramField::BotToken;
+                } else {
+                    self.step = OnboardingStep::MessagingSetup;
+                    self.messaging_field = MessagingField::Telegram;
+                }
             }
             OnboardingStep::Gateway => {
                 self.step = OnboardingStep::Workspace;
@@ -510,7 +554,8 @@ impl OnboardingWizard {
                 self.step = OnboardingStep::Gateway;
             }
             OnboardingStep::TelegramSetup => {
-                self.step = OnboardingStep::Channels;
+                self.step = OnboardingStep::MessagingSetup;
+                self.messaging_field = MessagingField::Telegram;
             }
             OnboardingStep::VoiceSetup => {
                 if self.is_telegram_enabled() {
@@ -617,6 +662,7 @@ impl OnboardingWizard {
         match self.step {
             OnboardingStep::ModeSelect => self.handle_mode_select_key(event),
             OnboardingStep::ProviderAuth => self.handle_provider_auth_key(event),
+            OnboardingStep::MessagingSetup => self.handle_messaging_setup_key(event),
             OnboardingStep::Workspace => self.handle_workspace_key(event),
             OnboardingStep::Gateway => self.handle_gateway_key(event),
             OnboardingStep::Channels => self.handle_channels_key(event),
@@ -764,6 +810,32 @@ impl OnboardingWizard {
                 }
                 _ => {}
             },
+        }
+        WizardAction::None
+    }
+
+    fn handle_messaging_setup_key(&mut self, event: KeyEvent) -> WizardAction {
+        match event.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.messaging_field = MessagingField::Telegram;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.messaging_field = MessagingField::WhatsApp;
+            }
+            KeyCode::Char(' ') => {
+                match self.messaging_field {
+                    MessagingField::Telegram => {
+                        self.messaging_telegram = !self.messaging_telegram;
+                    }
+                    MessagingField::WhatsApp => {
+                        self.messaging_whatsapp = !self.messaging_whatsapp;
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                self.next_step();
+            }
+            _ => {}
         }
         WizardAction::None
     }
@@ -1317,31 +1389,37 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
                 enabled: self.is_telegram_enabled(),
                 token: telegram_token,
                 allowed_users: Vec::new(), // user adds via /start after setup
+                allowed_phones: Vec::new(),
             },
             discord: ChannelConfig {
                 enabled: self.channel_toggles.get(1).is_some_and(|t| t.1),
                 token: None,
                 allowed_users: Vec::new(),
+                allowed_phones: Vec::new(),
             },
             whatsapp: ChannelConfig {
                 enabled: self.channel_toggles.get(2).is_some_and(|t| t.1),
                 token: None,
                 allowed_users: Vec::new(),
+                allowed_phones: Vec::new(), // user provides via chat or config.toml
             },
             signal: ChannelConfig {
                 enabled: self.channel_toggles.get(3).is_some_and(|t| t.1),
                 token: None,
                 allowed_users: Vec::new(),
+                allowed_phones: Vec::new(),
             },
             google_chat: ChannelConfig {
                 enabled: self.channel_toggles.get(4).is_some_and(|t| t.1),
                 token: None,
                 allowed_users: Vec::new(),
+                allowed_phones: Vec::new(),
             },
             imessage: ChannelConfig {
                 enabled: self.channel_toggles.get(5).is_some_and(|t| t.1),
                 token: None,
                 allowed_users: Vec::new(),
+                allowed_phones: Vec::new(),
             },
         };
 
@@ -1604,7 +1682,9 @@ mod tests {
         assert_eq!(wizard.step, OnboardingStep::ModeSelect);
         wizard.next_step();
         assert_eq!(wizard.step, OnboardingStep::ProviderAuth);
-        wizard.next_step();
+        wizard.next_step(); // -> MessagingSetup
+        assert_eq!(wizard.step, OnboardingStep::MessagingSetup);
+        wizard.next_step(); // -> Workspace (no telegram enabled)
         assert_eq!(wizard.step, OnboardingStep::Workspace);
 
         // QuickStart skips to health check
@@ -1619,7 +1699,9 @@ mod tests {
         wizard.api_key_input = "test-key".to_string();
 
         wizard.next_step(); // -> ProviderAuth
-        wizard.next_step(); // -> Workspace
+        wizard.next_step(); // -> MessagingSetup
+        assert_eq!(wizard.step, OnboardingStep::MessagingSetup);
+        wizard.next_step(); // -> Workspace (no telegram/whatsapp)
         wizard.next_step(); // -> Gateway (not skipped in Advanced)
         assert_eq!(wizard.step, OnboardingStep::Gateway);
         wizard.next_step(); // -> Channels
@@ -1633,22 +1715,53 @@ mod tests {
     }
 
     #[test]
+    fn test_messaging_setup_telegram_goes_to_telegram_setup() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.api_key_input = "test-key".to_string();
+
+        wizard.next_step(); // -> ProviderAuth
+        wizard.next_step(); // -> MessagingSetup
+
+        // Enable Telegram in messaging step
+        wizard.messaging_telegram = true;
+        wizard.next_step(); // -> TelegramSetup (because Telegram is on)
+        assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
+        wizard.next_step(); // -> Workspace
+        assert_eq!(wizard.step, OnboardingStep::Workspace);
+    }
+
+    #[test]
+    fn test_messaging_setup_whatsapp_skips_to_workspace() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.api_key_input = "test-key".to_string();
+
+        wizard.next_step(); // -> ProviderAuth
+        wizard.next_step(); // -> MessagingSetup
+
+        // Enable WhatsApp only (no token step needed)
+        wizard.messaging_whatsapp = true;
+        wizard.next_step(); // -> Workspace (WhatsApp has no sub-step)
+        assert_eq!(wizard.step, OnboardingStep::Workspace);
+        // Verify channel_toggles got synced
+        assert!(wizard.channel_toggles[2].1); // WhatsApp enabled
+    }
+
+    #[test]
     fn test_telegram_enabled_shows_telegram_setup() {
         let mut wizard = OnboardingWizard::new();
         wizard.mode = WizardMode::Advanced;
         wizard.api_key_input = "test-key".to_string();
 
         wizard.next_step(); // -> ProviderAuth
-        wizard.next_step(); // -> Workspace
+        wizard.next_step(); // -> MessagingSetup
+        wizard.next_step(); // -> Workspace (nothing enabled)
         wizard.next_step(); // -> Gateway
         wizard.next_step(); // -> Channels
 
-        // Enable Telegram
+        // Enable Telegram in advanced channels step
         wizard.channel_toggles[0].1 = true;
         wizard.next_step(); // -> TelegramSetup (because Telegram is on)
         assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
-        wizard.next_step(); // -> VoiceSetup
-        assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
     }
 
     #[test]
@@ -1662,10 +1775,11 @@ mod tests {
     #[test]
     fn test_step_numbers() {
         assert_eq!(OnboardingStep::ModeSelect.number(), 1);
-        assert_eq!(OnboardingStep::VoiceSetup.number(), 6);
-        assert_eq!(OnboardingStep::HealthCheck.number(), 8);
-        assert_eq!(OnboardingStep::BrainSetup.number(), 9);
-        assert_eq!(OnboardingStep::total(), 9);
+        assert_eq!(OnboardingStep::MessagingSetup.number(), 3);
+        assert_eq!(OnboardingStep::VoiceSetup.number(), 7);
+        assert_eq!(OnboardingStep::HealthCheck.number(), 9);
+        assert_eq!(OnboardingStep::BrainSetup.number(), 10);
+        assert_eq!(OnboardingStep::total(), 10);
     }
 
     #[test]
@@ -1832,7 +1946,9 @@ mod tests {
         wizard.api_key_input = "test-key".to_string();
 
         wizard.next_step(); // ModeSelect -> ProviderAuth
-        wizard.next_step(); // ProviderAuth -> Workspace
+        wizard.next_step(); // ProviderAuth -> MessagingSetup
+        assert_eq!(wizard.step, OnboardingStep::MessagingSetup);
+        wizard.next_step(); // MessagingSetup -> Workspace (nothing enabled)
         wizard.next_step(); // Workspace -> HealthCheck (skips Gateway/Channels/Voice/Daemon)
         assert_eq!(wizard.step, OnboardingStep::HealthCheck);
     }

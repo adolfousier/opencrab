@@ -1,0 +1,33 @@
+[package]
+name = "wacore-binary"
+version = "0.2.0"
+edition = "2024"
+authors = ["João Lucas <jlucaso@hotmail.com>"]
+license = "MIT"
+repository = "https://github.com/jlucaso1/whatsapp-rust"
+description = "Binary data and constants for WhatsApp protocol"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dependencies]
+flate2 = { workspace = true, features = ["zlib-rs"], default-features = false }
+indexmap = { version = "2.12.1", features = ["serde"] }
+phf = { version = "0.13.1", default-features = false }
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[build-dependencies]
+phf_codegen = "0.13.1"
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+iai-callgrind = "0.16"
+
+[[bench]]
+name = "binary_benchmark"
+harness = false

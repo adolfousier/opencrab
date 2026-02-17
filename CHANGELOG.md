@@ -5,7 +5,21 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.2] - 2026-02-16
+## [0.2.12] - 2026-02-17
+
+### Added
+- **WhatsApp Integration** -- Chat with your agent via WhatsApp Web. Connect dynamically at runtime ("connect my WhatsApp") or from the onboarding wizard. QR code pairing displayed in terminal using Unicode block characters, session persists across restarts via SQLite
+- **WhatsApp Image Support** -- Send images to the agent via WhatsApp; they're downloaded, base64-encoded, and forwarded to the AI backend for multimodal analysis
+- **WhatsApp Connect Tool** -- New `whatsapp_connect` agent tool: generates QR code, waits for scan (2 min timeout), spawns persistent listener, updates config automatically
+- **Onboarding: Messaging Setup** -- New step in both QuickStart and Advanced onboarding modes to enable Telegram and/or WhatsApp channels right after provider auth
+- **Channel Factory** -- Shared `ChannelFactory` for creating channel agent services at runtime, used by both static startup and dynamic connection tools
+- **Custom SQLx WhatsApp Store** -- `wacore::store::Backend` implementation using the project's existing `sqlx` SQLite driver, avoiding the `libsqlite3-sys` version conflict with `whatsapp-rust-sqlite-storage` (Diesel-based). 15 tables, 33 trait methods, full test coverage
+- **Nightly Rust Requirement** -- `wacore-binary` requires `#![feature(portable_simd)]`; added `rust-toolchain.toml` pinning to nightly. Local patch for `wacore-binary` fixes `std::simd::Select` API breakage on latest nightly
+
+### Changed
+- **Version Numbering** -- Corrected from 0.2.2 to 0.2.11 (following 0.2.1), this release is 0.2.12
+
+## [0.2.11] - 2026-02-16
 
 ### Fixed
 - **Context Token Display** -- TUI context indicator showed inflated values (e.g. `640K/200K`) because `input_tokens` was accumulated across all tool-loop iterations instead of using the last API call's actual context size; now `AgentResponse.context_tokens` tracks the last iteration's `input_tokens` for accurate display while `usage` still accumulates for correct billing

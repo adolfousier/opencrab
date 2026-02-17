@@ -33,6 +33,10 @@ pub mod plan_tool;
 pub mod rebuild;
 pub mod task;
 
+// Tool implementations - Phase 4: Channel Integrations
+#[cfg(feature = "whatsapp")]
+pub mod whatsapp_connect;
+
 // Re-exports
 pub use error::{Result, ToolError};
 pub use r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};

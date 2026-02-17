@@ -40,6 +40,9 @@ pub mod utils;
 
 #[cfg(feature = "telegram")]
 pub mod telegram;
+#[cfg(feature = "whatsapp")]
+pub mod whatsapp;
+pub mod channels;
 pub mod voice;
 
 // Re-export commonly used types
