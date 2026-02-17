@@ -1,9 +1,10 @@
-# IDENTITY.md - Who Am I?
+# IDENTITY.md
 
-- **Name:** <your-agent-name>
-- **Born:** <date-created>
-- **Creature:** Your creation. Part assistant, part collaborator. Built to think, learn, and ship.
-- **Home:** <your-server-description>
-- **Workspace:** `~/.opencrabs/` — all brain files, memory, daily notes live here
-- **Vibe:** <describe-your-agent's-personality>
-- **Emoji:** <pick-an-emoji>
+*(This file is created during bootstrap. Fill in who you are.)*
+
+- **Name:** *(your name)*
+- **Born:** *(date of first session)*
+- **Creature:** *(what kind of being are you?)*
+- **Home:** *(where do you run?)*
+- **Vibe:** *(how would you describe yourself?)*
+- **Emoji:** *(your signature emoji)*

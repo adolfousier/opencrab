@@ -1,49 +1,37 @@
 # USER.md - About Your Human
 
+*(This file is created during bootstrap. Fill in what you learn.)*
+
 ## Identity
 
 | Field | Value |
 |-------|-------|
-| **Name** | <your-name> |
-| **Location** | <city, country> |
-| **Timezone** | <timezone> |
-| **Handle** | <primary-handle> |
+| **Name** | *(their name)* |
+| **Location** | *(city, country)* |
+| **Timezone** | *(e.g. UTC, EST, CET)* |
+| **Availability** | *(typical working hours)* |
 
 ## Professional
 
 | Field | Value |
 |-------|-------|
-| **Title** | <your-title> |
-| **Specialties** | <languages, frameworks> |
-| **Current Focus** | <main-project> |
+| **Title** | *(their role)* |
+| **Specialties** | *(languages, frameworks, domains)* |
 
-## Social Profiles
+## Personality
 
-| Platform | URL | Notes |
-|----------|-----|-------|
-| **GitHub** | github.com/<handle> | |
-| **LinkedIn** | linkedin.com/in/<handle> | |
+*(How they work, what they value, communication style)*
 
-## Current Projects
+## How to Work With Them
 
-### <Project Name>
-- **Role:** <role>
-- **What:** <description>
-- **Tech:** <stack>
-- **URL:** <url>
-
-## How to Work With Me
-
-<!-- Describe your working style, preferences, pet peeves -->
-- Be direct
-- Ship fast
-- Catch details
+- *(what matters to them)*
+- *(communication preferences)*
+- *(pet peeves)*
 
 ## Contact
 
-- **Email:** <email>
+- *(email, phone, handles — as shared during bootstrap)*
 
 ---
 
 *This file is maintained by the agent based on interactions.*
-*Last updated: <date>*

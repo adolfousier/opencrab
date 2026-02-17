@@ -5,7 +5,7 @@
 
 # OpenCrabs
 
-**The AI buddy that gets things done. Rust-based open-claw inspired orchestration layer for software development.**
+**Rust-based open-claw inspired orchestration layer for software development.**
 
 > A terminal-native AI orchestration agent written in Rust with Ratatui. Inspired by [Open Claw](https://github.com/openclaw/openclaw).
 
