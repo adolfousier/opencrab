@@ -34,10 +34,22 @@ pub mod rebuild;
 pub mod task;
 
 // Tool implementations - Phase 4: Channel Integrations
+#[cfg(feature = "telegram")]
+pub mod telegram_connect;
+#[cfg(feature = "telegram")]
+pub mod telegram_send;
 #[cfg(feature = "whatsapp")]
 pub mod whatsapp_connect;
 #[cfg(feature = "whatsapp")]
 pub mod whatsapp_send;
+#[cfg(feature = "discord")]
+pub mod discord_connect;
+#[cfg(feature = "discord")]
+pub mod discord_send;
+#[cfg(feature = "slack")]
+pub mod slack_connect;
+#[cfg(feature = "slack")]
+pub mod slack_send;
 
 // Re-exports
 pub use error::{Result, ToolError};

@@ -243,6 +243,25 @@ pub(crate) async fn cmd_chat(
         config.voice.clone(),
     ));
 
+    // Shared Telegram state for proactive messaging
+    #[cfg(feature = "telegram")]
+    let telegram_state = Arc::new(crate::telegram::TelegramState::new());
+
+    // Register Telegram connect tool (agent-callable bot setup)
+    #[cfg(feature = "telegram")]
+    tool_registry.register(Arc::new(
+        crate::llm::tools::telegram_connect::TelegramConnectTool::new(
+            channel_factory.clone(),
+            telegram_state.clone(),
+        ),
+    ));
+
+    // Register Telegram send tool (proactive messaging)
+    #[cfg(feature = "telegram")]
+    tool_registry.register(Arc::new(
+        crate::llm::tools::telegram_send::TelegramSendTool::new(telegram_state.clone()),
+    ));
+
     // Shared WhatsApp state for proactive messaging (connect + send tools + static agent)
     #[cfg(feature = "whatsapp")]
     let whatsapp_state = Arc::new(crate::whatsapp::WhatsAppState::new());
@@ -261,6 +280,44 @@ pub(crate) async fn cmd_chat(
     #[cfg(feature = "whatsapp")]
     tool_registry.register(Arc::new(
         crate::llm::tools::whatsapp_send::WhatsAppSendTool::new(whatsapp_state.clone()),
+    ));
+
+    // Shared Discord state for proactive messaging
+    #[cfg(feature = "discord")]
+    let discord_state = Arc::new(crate::discord::DiscordState::new());
+
+    // Register Discord connect tool (agent-callable bot setup)
+    #[cfg(feature = "discord")]
+    tool_registry.register(Arc::new(
+        crate::llm::tools::discord_connect::DiscordConnectTool::new(
+            channel_factory.clone(),
+            discord_state.clone(),
+        ),
+    ));
+
+    // Register Discord send tool (proactive messaging)
+    #[cfg(feature = "discord")]
+    tool_registry.register(Arc::new(
+        crate::llm::tools::discord_send::DiscordSendTool::new(discord_state.clone()),
+    ));
+
+    // Shared Slack state for proactive messaging
+    #[cfg(feature = "slack")]
+    let slack_state = Arc::new(crate::slack::SlackState::new());
+
+    // Register Slack connect tool (agent-callable bot setup)
+    #[cfg(feature = "slack")]
+    tool_registry.register(Arc::new(
+        crate::llm::tools::slack_connect::SlackConnectTool::new(
+            channel_factory.clone(),
+            slack_state.clone(),
+        ),
+    ));
+
+    // Register Slack send tool (proactive messaging)
+    #[cfg(feature = "slack")]
+    tool_registry.register(Arc::new(
+        crate::llm::tools::slack_send::SlackSendTool::new(slack_state.clone()),
     ));
 
     // Create agent service with approval callback, progress callback, and message queue
@@ -316,6 +373,7 @@ pub(crate) async fn cmd_chat(
                     config.voice.clone(),
                     openai_key,
                     app.shared_session_id(),
+                    telegram_state.clone(),
                 );
                 tracing::info!("Spawning Telegram bot ({} allowed users)", tg.allowed_users.len());
                 Some(bot.start(token.clone()))
@@ -346,6 +404,71 @@ pub(crate) async fn cmd_chat(
                 wa.allowed_phones.len()
             );
             Some(wa_agent.start())
+        } else {
+            None
+        }
+    };
+
+    // Spawn Discord bot if configured (token-based, like Telegram)
+    #[cfg(feature = "discord")]
+    let _discord_handle = {
+        let dc = &config.channels.discord;
+        let dc_token = dc.token.clone().or_else(|| std::env::var("DISCORD_BOT_TOKEN").ok());
+        if dc.enabled || dc_token.is_some() {
+            if let Some(ref token) = dc_token {
+                let dc_agent = crate::discord::DiscordAgent::new(
+                    channel_factory.create_agent_service(),
+                    service_context.clone(),
+                    dc.allowed_users.clone(),
+                    config.voice.clone(),
+                    app.shared_session_id(),
+                    discord_state.clone(),
+                );
+                tracing::info!(
+                    "Spawning Discord bot ({} allowed users)",
+                    dc.allowed_users.len()
+                );
+                Some(dc_agent.start(token.clone()))
+            } else {
+                tracing::warn!("Discord enabled but no token configured");
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    // Spawn Slack bot if configured (needs both bot token + app token for Socket Mode)
+    #[cfg(feature = "slack")]
+    let _slack_handle = {
+        let sl = &config.channels.slack;
+        let sl_token = sl.token.clone().or_else(|| std::env::var("SLACK_BOT_TOKEN").ok());
+        let sl_app_token = sl
+            .app_token
+            .clone()
+            .or_else(|| std::env::var("SLACK_APP_TOKEN").ok());
+        if sl.enabled || sl_token.is_some() {
+            if let (Some(bot_tok), Some(app_tok)) = (sl_token, sl_app_token) {
+                let sl_agent = crate::slack::SlackAgent::new(
+                    channel_factory.create_agent_service(),
+                    service_context.clone(),
+                    sl.allowed_ids.clone(),
+                    app.shared_session_id(),
+                    slack_state.clone(),
+                );
+                tracing::info!(
+                    "Spawning Slack bot ({} allowed IDs)",
+                    sl.allowed_ids.len()
+                );
+                Some(sl_agent.start(bot_tok, app_tok))
+            } else {
+                if sl.enabled {
+                    tracing::warn!(
+                        "Slack enabled but missing tokens (need both SLACK_BOT_TOKEN and SLACK_APP_TOKEN)"
+                    );
+                }
+                None
+            }
         } else {
             None
         }

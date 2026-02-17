@@ -99,6 +99,8 @@ pub struct ChannelsConfig {
     #[serde(default)]
     pub whatsapp: ChannelConfig,
     #[serde(default)]
+    pub slack: ChannelConfig,
+    #[serde(default)]
     pub signal: ChannelConfig,
     #[serde(default)]
     pub google_chat: ChannelConfig,
@@ -113,12 +115,18 @@ pub struct ChannelConfig {
     pub enabled: bool,
     #[serde(default)]
     pub token: Option<String>,
+    /// Secondary token (Slack app-level token `xapp-...`)
+    #[serde(default)]
+    pub app_token: Option<String>,
     /// Allowlisted user IDs (Telegram user IDs, Discord user IDs, etc.)
     #[serde(default)]
     pub allowed_users: Vec<i64>,
     /// Allowlisted phone numbers for WhatsApp (E.164 format: "+15551234567")
     #[serde(default)]
     pub allowed_phones: Vec<String>,
+    /// String-based user IDs (Slack `U12345678`, future channels)
+    #[serde(default)]
+    pub allowed_ids: Vec<String>,
 }
 
 /// Voice processing configuration (STT + TTS)

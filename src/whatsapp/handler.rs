@@ -22,28 +22,28 @@ pub const MSG_HEADER: &str = "\u{1f980} *OpenCrabs*";
 /// Returns the innermost Message that contains actual content.
 fn unwrap_message(msg: &Message) -> &Message {
     // device_sent_message: wraps messages synced across linked devices
-    if let Some(ref dsm) = msg.device_sent_message {
-        if let Some(ref inner) = dsm.message {
-            return unwrap_message(inner);
-        }
+    if let Some(ref dsm) = msg.device_sent_message
+        && let Some(ref inner) = dsm.message
+    {
+        return unwrap_message(inner);
     }
     // ephemeral_message: disappearing messages
-    if let Some(ref eph) = msg.ephemeral_message {
-        if let Some(ref inner) = eph.message {
-            return unwrap_message(inner);
-        }
+    if let Some(ref eph) = msg.ephemeral_message
+        && let Some(ref inner) = eph.message
+    {
+        return unwrap_message(inner);
     }
     // view_once_message
-    if let Some(ref vo) = msg.view_once_message {
-        if let Some(ref inner) = vo.message {
-            return unwrap_message(inner);
-        }
+    if let Some(ref vo) = msg.view_once_message
+        && let Some(ref inner) = vo.message
+    {
+        return unwrap_message(inner);
     }
     // document_with_caption_message
-    if let Some(ref dwc) = msg.document_with_caption_message {
-        if let Some(ref inner) = dwc.message {
-            return unwrap_message(inner);
-        }
+    if let Some(ref dwc) = msg.document_with_caption_message
+        && let Some(ref inner) = dwc.message
+    {
+        return unwrap_message(inner);
     }
     msg
 }
@@ -217,13 +217,13 @@ pub(crate) async fn handle_message(
 
     // Download image if present, append <<IMG:path>> marker
     let mut content = text.unwrap_or_default();
-    if has_img {
-        if let Some(img_path) = download_image(&msg, &client).await {
-            if content.is_empty() {
-                content = "Describe this image.".to_string();
-            }
-            content.push_str(&format!(" <<IMG:{}>>", img_path));
+    if has_img
+        && let Some(img_path) = download_image(&msg, &client).await
+    {
+        if content.is_empty() {
+            content = "Describe this image.".to_string();
         }
+        content.push_str(&format!(" <<IMG:{}>>", img_path));
     }
 
     if content.is_empty() {

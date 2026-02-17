@@ -3,8 +3,8 @@
 //! Render functions for each step of the onboarding wizard.
 
 use super::onboarding::{
-    AuthField, BrainField, HealthStatus, MessagingField, OnboardingStep, OnboardingWizard,
-    TelegramField, VoiceField, WizardMode, PROVIDERS,
+    AuthField, BrainField, DiscordField, HealthStatus, MessagingField, OnboardingStep,
+    OnboardingWizard, SlackField, TelegramField, VoiceField, WizardMode, PROVIDERS,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
@@ -78,6 +78,8 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
         OnboardingStep::Gateway => render_gateway(&mut lines, wizard),
         OnboardingStep::Channels => render_channels(&mut lines, wizard),
         OnboardingStep::TelegramSetup => render_telegram_setup(&mut lines, wizard),
+        OnboardingStep::DiscordSetup => render_discord_setup(&mut lines, wizard),
+        OnboardingStep::SlackSetup => render_slack_setup(&mut lines, wizard),
         OnboardingStep::VoiceSetup => render_voice_setup(&mut lines, wizard),
         OnboardingStep::Daemon => render_daemon(&mut lines, wizard),
         OnboardingStep::HealthCheck => render_health_check(&mut lines, wizard),
@@ -359,62 +361,41 @@ fn render_messaging_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiz
     )));
     lines.push(Line::from(""));
 
-    // Telegram toggle
-    let tg_focused = wizard.messaging_field == MessagingField::Telegram;
-    let tg_on = wizard.messaging_telegram;
-    lines.push(Line::from(vec![
-        Span::styled(
-            if tg_focused { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
-        ),
-        Span::styled(
-            if tg_on { "[x]" } else { "[ ]" },
-            Style::default().fg(if tg_on { BRAND_GOLD } else { Color::DarkGray }),
-        ),
-        Span::styled(
-            " Telegram",
-            Style::default()
-                .fg(if tg_focused { Color::White } else { Color::DarkGray })
-                .add_modifier(if tg_focused { Modifier::BOLD } else { Modifier::empty() }),
-        ),
-    ]));
-    lines.push(Line::from(Span::styled(
-        "       Chat via Telegram bot (needs bot token)",
-        Style::default().fg(Color::DarkGray),
-    )));
-    lines.push(Line::from(""));
+    // Channel entries: (field, label, enabled, description)
+    let channels: Vec<(MessagingField, &str, bool, &str)> = vec![
+        (MessagingField::Telegram, "Telegram", wizard.messaging_telegram, "Bot token (via @BotFather)"),
+        (MessagingField::Discord, "Discord", wizard.messaging_discord, "Bot token (via Developer Portal)"),
+        (MessagingField::WhatsApp, "WhatsApp", wizard.messaging_whatsapp, "QR code pairing — set up later"),
+        (MessagingField::Slack, "Slack", wizard.messaging_slack, "Socket Mode (bot + app tokens)"),
+    ];
 
-    // WhatsApp toggle
-    let wa_focused = wizard.messaging_field == MessagingField::WhatsApp;
-    let wa_on = wizard.messaging_whatsapp;
-    lines.push(Line::from(vec![
-        Span::styled(
-            if wa_focused { " > " } else { "   " },
-            Style::default().fg(ACCENT_GOLD),
-        ),
-        Span::styled(
-            if wa_on { "[x]" } else { "[ ]" },
-            Style::default().fg(if wa_on { BRAND_GOLD } else { Color::DarkGray }),
-        ),
-        Span::styled(
-            " WhatsApp",
-            Style::default()
-                .fg(if wa_focused { Color::White } else { Color::DarkGray })
-                .add_modifier(if wa_focused { Modifier::BOLD } else { Modifier::empty() }),
-        ),
-    ]));
-    lines.push(Line::from(Span::styled(
-        "       Chat via WhatsApp Web (QR code pairing)",
-        Style::default().fg(Color::DarkGray),
-    )));
+    for (field, label, on, desc) in &channels {
+        let focused = wizard.messaging_field == *field;
+        lines.push(Line::from(vec![
+            Span::styled(
+                if focused { " > " } else { "   " },
+                Style::default().fg(ACCENT_GOLD),
+            ),
+            Span::styled(
+                if *on { "[x]" } else { "[ ]" },
+                Style::default().fg(if *on { BRAND_GOLD } else { Color::DarkGray }),
+            ),
+            Span::styled(
+                format!(" {}", label),
+                Style::default()
+                    .fg(if focused { Color::White } else { Color::DarkGray })
+                    .add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() }),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("       {}", desc),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  WhatsApp pairs later — just say \"connect WhatsApp\"",
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-    )));
-    lines.push(Line::from(Span::styled(
-        "  Skip both with Enter if you're not into it",
+        "  Skip all with Enter if you're not into it",
         Style::default().fg(Color::DarkGray),
     )));
 }
@@ -614,6 +595,151 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Skip with Enter if you'll add it later",
+        Style::default().fg(Color::DarkGray),
+    )));
+}
+
+fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
+    // Help text
+    lines.push(Line::from(Span::styled(
+        "  1. Go to discord.com/developers/applications",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  2. Create app > Bot > Copy token",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  3. Enable Message Content Intent",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    // Bot token input
+    let token_focused = wizard.discord_field == DiscordField::BotToken;
+    let (masked_token, token_hint) = if wizard.has_existing_discord_token() {
+        ("**************************".to_string(), " (already configured)".to_string())
+    } else if wizard.discord_token_input.is_empty() {
+        ("paste your bot token".to_string(), String::new())
+    } else {
+        ("*".repeat(wizard.discord_token_input.len().min(30)), String::new())
+    };
+    let cursor = if token_focused && !wizard.has_existing_discord_token() { "\u{2588}" } else { "" };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Bot Token: ",
+            Style::default().fg(if token_focused { BRAND_BLUE } else { Color::DarkGray }),
+        ),
+        Span::styled(
+            format!("{}{}", masked_token, cursor),
+            Style::default().fg(
+                if wizard.has_existing_discord_token() { Color::Green }
+                else if token_focused { Color::White }
+                else { Color::DarkGray }
+            ),
+        ),
+    ]));
+
+    if !token_hint.is_empty() && token_focused {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", token_hint.trim()),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Skip with Enter if you'll add it later",
+        Style::default().fg(Color::DarkGray),
+    )));
+}
+
+fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
+    // Help text
+    lines.push(Line::from(Span::styled(
+        "  1. Go to api.slack.com/apps > Create App",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  2. Enable Socket Mode > copy App Token",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  3. OAuth > Install > copy Bot Token",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    // Bot token input
+    let bot_focused = wizard.slack_field == SlackField::BotToken;
+    let (masked_bot, bot_hint) = if wizard.has_existing_slack_bot_token() {
+        ("**************************".to_string(), " (already configured)".to_string())
+    } else if wizard.slack_bot_token_input.is_empty() {
+        ("xoxb-...".to_string(), String::new())
+    } else {
+        ("*".repeat(wizard.slack_bot_token_input.len().min(30)), String::new())
+    };
+    let cursor_b = if bot_focused && !wizard.has_existing_slack_bot_token() { "\u{2588}" } else { "" };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Bot Token: ",
+            Style::default().fg(if bot_focused { BRAND_BLUE } else { Color::DarkGray }),
+        ),
+        Span::styled(
+            format!("{}{}", masked_bot, cursor_b),
+            Style::default().fg(
+                if wizard.has_existing_slack_bot_token() { Color::Green }
+                else if bot_focused { Color::White }
+                else { Color::DarkGray }
+            ),
+        ),
+    ]));
+
+    if !bot_hint.is_empty() && bot_focused {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", bot_hint.trim()),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    // App token input
+    let app_focused = wizard.slack_field == SlackField::AppToken;
+    let (masked_app, app_hint) = if wizard.has_existing_slack_app_token() {
+        ("**************************".to_string(), " (already configured)".to_string())
+    } else if wizard.slack_app_token_input.is_empty() {
+        ("xapp-...".to_string(), String::new())
+    } else {
+        ("*".repeat(wizard.slack_app_token_input.len().min(30)), String::new())
+    };
+    let cursor_a = if app_focused && !wizard.has_existing_slack_app_token() { "\u{2588}" } else { "" };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  App Token: ",
+            Style::default().fg(if app_focused { BRAND_BLUE } else { Color::DarkGray }),
+        ),
+        Span::styled(
+            format!("{}{}", masked_app, cursor_a),
+            Style::default().fg(
+                if wizard.has_existing_slack_app_token() { Color::Green }
+                else if app_focused { Color::White }
+                else { Color::DarkGray }
+            ),
+        ),
+    ]));
+
+    if !app_hint.is_empty() && app_focused {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", app_hint.trim()),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Skip with Enter if you'll add tokens later",
         Style::default().fg(Color::DarkGray),
     )));
 }

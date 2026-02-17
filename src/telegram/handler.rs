@@ -2,6 +2,7 @@
 //!
 //! Processes incoming messages: text, voice (STT/TTS), photos, image documents, allowlist enforcement.
 
+use super::TelegramState;
 use crate::config::VoiceConfig;
 use crate::llm::agent::AgentService;
 use crate::services::SessionService;
@@ -11,6 +12,8 @@ use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+pub const MSG_HEADER: &str = "🦀 *OpenCrabs*";
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_message(
@@ -24,6 +27,7 @@ pub(crate) async fn handle_message(
     openai_key: Arc<Option<String>>,
     bot_token: Arc<String>,
     shared_session: Arc<Mutex<Option<Uuid>>>,
+    telegram_state: Arc<TelegramState>,
 ) -> ResponseResult<()> {
     let user = match msg.from {
         Some(ref u) => u,
@@ -270,6 +274,11 @@ pub(crate) async fn handle_message(
     // Resolve session: owner shares the TUI session, other users get their own
     let is_owner = allowed.len() == 1 || allowed.iter().next() == Some(&user_id);
 
+    // Track owner's chat ID for proactive messaging
+    if is_owner {
+        telegram_state.set_owner_chat_id(msg.chat.id.0).await;
+    }
+
     let session_id = if is_owner {
         // Owner shares the TUI's current session
         let shared = shared_session.lock().await;
@@ -456,7 +465,7 @@ fn find_closing_marker(chars: &[char], marker: &[char]) -> Option<usize> {
 }
 
 /// Split a message into chunks that fit Telegram's 4096 char limit
-fn split_message(text: &str, max_len: usize) -> Vec<&str> {
+pub(crate) fn split_message(text: &str, max_len: usize) -> Vec<&str> {
     if text.len() <= max_len {
         return vec![text];
     }

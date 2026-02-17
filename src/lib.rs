@@ -42,6 +42,10 @@ pub mod utils;
 pub mod telegram;
 #[cfg(feature = "whatsapp")]
 pub mod whatsapp;
+#[cfg(feature = "discord")]
+pub mod discord;
+#[cfg(feature = "slack")]
+pub mod slack;
 pub mod channels;
 pub mod voice;
 

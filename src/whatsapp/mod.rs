@@ -23,6 +23,12 @@ pub struct WhatsAppState {
     owner_jid: Mutex<Option<String>>,
 }
 
+impl Default for WhatsAppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WhatsAppState {
     pub fn new() -> Self {
         Self {

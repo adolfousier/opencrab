@@ -88,6 +88,12 @@ waproto = { version = "0.2", optional = true }
 qrcode = { version = "0.14", optional = true }
 rmp-serde = { version = "1", optional = true }
 
+# Discord
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "native_tls_backend"], optional = true }
+
+# Slack
+slack-morphism = { version = "2", features = ["hyper"], optional = true }
+
 # Misc
 unicode-width = "0.2"
 
@@ -113,11 +119,13 @@ mockito = "1.7"
 pprof = { version = "0.15", features = ["flamegraph", "frame-pointer"], optional = true }
 
 [features]
-default = ["telegram", "whatsapp"]
+default = ["telegram", "whatsapp", "discord", "slack"]
 # Profiling feature enables pprof on Unix only (no-op on Windows)
 profiling = []
 telegram = ["teloxide"]
 whatsapp = ["whatsapp-rust", "whatsapp-rust-tokio-transport", "whatsapp-rust-ureq-http-client", "wacore", "wacore-binary", "waproto", "dep:qrcode", "dep:rmp-serde"]
+discord = ["serenity"]
+slack = ["slack-morphism"]
 
 [profile.dev]
 opt-level = 0
