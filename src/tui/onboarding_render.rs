@@ -325,30 +325,53 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             )));
         }
 
-        // Model selection
+        // Model selection (use fetched models when available, static fallback)
         let model_focused = wizard.auth_field == AuthField::Model;
-        let models = wizard.current_provider().models;
-        if !models.is_empty() {
+        let model_count = wizard.model_count();
+        if model_count > 0 || wizard.models_fetching {
             lines.push(Line::from(""));
+            let label = if wizard.models_fetching {
+                "  Model: (fetching...)".to_string()
+            } else {
+                "  Model:".to_string()
+            };
             lines.push(Line::from(Span::styled(
-                "  Model:".to_string(),
+                label,
                 Style::default().fg(if model_focused { BRAND_BLUE } else { Color::DarkGray }),
             )));
 
-            for (i, model) in models.iter().enumerate() {
-                let selected = i == wizard.selected_model;
-                let prefix = if selected && model_focused { " > " } else { "   " };
-                let marker = if selected { "(*)" } else { "( )" };
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {}{} ", prefix, marker),
-                        Style::default().fg(if selected { ACCENT_GOLD } else { Color::DarkGray }),
-                    ),
-                    Span::styled(
-                        model.to_string(),
-                        Style::default().fg(if selected { Color::White } else { Color::DarkGray }),
-                    ),
-                ]));
+            if !wizard.fetched_models.is_empty() {
+                for (i, model) in wizard.fetched_models.iter().enumerate() {
+                    let selected = i == wizard.selected_model;
+                    let prefix = if selected && model_focused { " > " } else { "   " };
+                    let marker = if selected { "(*)" } else { "( )" };
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("  {}{} ", prefix, marker),
+                            Style::default().fg(if selected { ACCENT_GOLD } else { Color::DarkGray }),
+                        ),
+                        Span::styled(
+                            model.to_string(),
+                            Style::default().fg(if selected { Color::White } else { Color::DarkGray }),
+                        ),
+                    ]));
+                }
+            } else if !wizard.models_fetching {
+                for (i, model) in wizard.current_provider().models.iter().enumerate() {
+                    let selected = i == wizard.selected_model;
+                    let prefix = if selected && model_focused { " > " } else { "   " };
+                    let marker = if selected { "(*)" } else { "( )" };
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("  {}{} ", prefix, marker),
+                            Style::default().fg(if selected { ACCENT_GOLD } else { Color::DarkGray }),
+                        ),
+                        Span::styled(
+                            model.to_string(),
+                            Style::default().fg(if selected { Color::White } else { Color::DarkGray }),
+                        ),
+                    ]));
+                }
             }
         }
     }
@@ -1111,14 +1134,10 @@ fn render_complete(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             ),
         ]));
     } else {
-        let model = provider
-            .models
-            .get(wizard.selected_model)
-            .unwrap_or(&"default");
         lines.push(Line::from(vec![
             Span::styled("  Model:    ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                model.to_string(),
+                wizard.selected_model_name().to_string(),
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),

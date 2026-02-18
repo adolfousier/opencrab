@@ -49,8 +49,14 @@ pub trait Provider: Send + Sync {
     /// Get the default model for this provider
     fn default_model(&self) -> &str;
 
-    /// Get supported models
+    /// Get supported models (hardcoded fallback list)
     fn supported_models(&self) -> Vec<String>;
+
+    /// Fetch available models from the provider API.
+    /// Falls back to the hardcoded `supported_models()` list on error.
+    async fn fetch_models(&self) -> Vec<String> {
+        self.supported_models()
+    }
 
     /// Validate that a model is supported
     fn validate_model(&self, model: &str) -> bool {

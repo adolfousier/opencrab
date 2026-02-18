@@ -669,6 +669,15 @@ impl App {
                 self.reload_user_commands();
                 tracing::info!("Config reloaded — refreshed commands and settings");
             }
+            TuiEvent::OnboardingModelsFetched(models) => {
+                if let Some(ref mut wizard) = self.onboarding {
+                    wizard.models_fetching = false;
+                    if !models.is_empty() {
+                        wizard.fetched_models = models;
+                        wizard.selected_model = 0;
+                    }
+                }
+            }
             TuiEvent::FocusGained | TuiEvent::FocusLost => {
                 // Handled by the event loop for tick coalescing
             }
@@ -1275,7 +1284,7 @@ impl App {
                     self.input_buffer.clear();
                     self.cursor_position = 0;
                     self.slash_suggestions_active = false;
-                    self.handle_slash_command(&cmd_name);
+                    self.handle_slash_command(&cmd_name).await;
                 }
                 return Ok(());
             } else if keys::is_cancel(&event) {
@@ -1298,7 +1307,7 @@ impl App {
         } else if keys::is_submit(&event) && (!self.input_buffer.trim().is_empty() || !self.attachments.is_empty()) {
             // Check for slash commands before sending to LLM
             let content = self.input_buffer.clone();
-            if self.handle_slash_command(content.trim()) {
+            if self.handle_slash_command(content.trim()).await {
                 self.input_buffer.clear();
                 self.cursor_position = 0;
                 self.slash_suggestions_active = false;
@@ -1837,11 +1846,11 @@ impl App {
     }
 
     /// Handle slash commands locally (returns true if handled)
-    fn handle_slash_command(&mut self, input: &str) -> bool {
+    async fn handle_slash_command(&mut self, input: &str) -> bool {
         let cmd = input.split_whitespace().next().unwrap_or("");
         match cmd {
             "/models" => {
-                self.open_model_selector();
+                self.open_model_selector().await;
                 true
             }
             "/usage" => {
@@ -3254,9 +3263,9 @@ impl App {
         self.user_commands = command_loader.load();
     }
 
-    /// Open the model selector dialog
-    fn open_model_selector(&mut self) {
-        self.model_selector_models = self.agent_service.supported_models();
+    /// Open the model selector dialog (fetches live models from API)
+    async fn open_model_selector(&mut self) {
+        self.model_selector_models = self.agent_service.fetch_models().await;
         let current = self
             .current_session
             .as_ref()
@@ -3336,6 +3345,41 @@ impl App {
                     }
                     self.onboarding = None;
                     self.switch_mode(AppMode::Chat).await?;
+                }
+                WizardAction::FetchModels => {
+                    let provider_idx = wizard.selected_provider;
+                    // Resolve API key from keyring/env or raw input
+                    let api_key = if wizard.has_existing_key() {
+                        let info = &super::onboarding::PROVIDERS[provider_idx];
+                        let mut key = None;
+                        if !info.keyring_key.is_empty() {
+                            if let Some(s) = crate::config::secrets::SecretString::from_keyring_optional(info.keyring_key) {
+                                key = Some(s.expose_secret().to_string());
+                            }
+                        }
+                        if key.is_none() {
+                            for env_var in info.env_vars {
+                                if let Ok(val) = std::env::var(env_var) {
+                                    if !val.is_empty() {
+                                        key = Some(val);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        key
+                    } else if !wizard.api_key_input.is_empty() {
+                        Some(wizard.api_key_input.clone())
+                    } else {
+                        None
+                    };
+                    wizard.models_fetching = true;
+
+                    let sender = self.event_sender();
+                    tokio::spawn(async move {
+                        let models = super::onboarding::fetch_provider_models(provider_idx, api_key.as_deref()).await;
+                        let _ = sender.send(TuiEvent::OnboardingModelsFetched(models));
+                    });
                 }
                 WizardAction::GenerateBrain => {
                     self.generate_brain_files().await;

@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_MODELS_URL: &str = "https://api.anthropic.com/v1/models";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120); // Total request timeout
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10); // Connection timeout
@@ -382,6 +383,45 @@ impl Provider for AnthropicProvider {
             "claude-3-5-sonnet-20240620".to_string(),
             "claude-3-haiku-20240307".to_string(),
         ]
+    }
+
+    async fn fetch_models(&self) -> Vec<String> {
+        #[derive(Deserialize)]
+        struct ModelEntry { id: String }
+        #[derive(Deserialize)]
+        struct ModelsResponse { data: Vec<ModelEntry> }
+
+        let mut req = self.client
+            .get(ANTHROPIC_MODELS_URL)
+            .header("anthropic-version", ANTHROPIC_VERSION);
+
+        if self.api_key.starts_with("sk-ant-oat") {
+            req = req
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("anthropic-beta", "oauth-2025-04-20");
+        } else {
+            req = req.header("x-api-key", &self.api_key);
+        }
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<ModelsResponse>().await {
+                    Ok(body) => {
+                        let mut models: Vec<String> = body.data
+                            .into_iter()
+                            .map(|m| m.id)
+                            .collect();
+                        models.sort();
+                        if models.is_empty() {
+                            return self.supported_models();
+                        }
+                        models
+                    }
+                    Err(_) => self.supported_models(),
+                }
+            }
+            _ => self.supported_models(),
+        }
     }
 
     fn context_window(&self, model: &str) -> Option<u32> {

@@ -139,16 +139,3 @@ jobs:
           files: release-assets/*
           draft: false
           prerelease: false
-
-  publish-crate:
-    name: Publish to crates.io
-    needs: create-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CARGO_TOKEN }}

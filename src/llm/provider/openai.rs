@@ -585,6 +585,43 @@ impl Provider for OpenAIProvider {
         ]
     }
 
+    async fn fetch_models(&self) -> Vec<String> {
+        // Derive models URL from base_url (replace /chat/completions with /models)
+        let models_url = self
+            .base_url
+            .replace("/chat/completions", "/models");
+
+        #[derive(Deserialize)]
+        struct ModelEntry { id: String }
+        #[derive(Deserialize)]
+        struct ModelsResponse { data: Vec<ModelEntry> }
+
+        match self.client
+            .get(&models_url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<ModelsResponse>().await {
+                    Ok(body) => {
+                        let mut models: Vec<String> = body.data
+                            .into_iter()
+                            .map(|m| m.id)
+                            .collect();
+                        models.sort();
+                        if models.is_empty() {
+                            return self.supported_models();
+                        }
+                        models
+                    }
+                    Err(_) => self.supported_models(),
+                }
+            }
+            _ => self.supported_models(),
+        }
+    }
+
     fn context_window(&self, model: &str) -> Option<u32> {
         match model {
             "gpt-4-turbo-preview" => Some(128_000),

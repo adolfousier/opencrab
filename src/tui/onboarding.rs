@@ -67,6 +67,21 @@ pub const PROVIDERS: &[ProviderInfo] = &[
         ],
     },
     ProviderInfo {
+        name: "OpenRouter",
+        env_vars: &["OPENROUTER_API_KEY"],
+        keyring_key: "openrouter_api_key",
+        models: &[
+            "anthropic/claude-sonnet-4",
+            "openai/gpt-4.1",
+            "google/gemini-2.5-pro-preview",
+        ],
+        key_label: "API Key",
+        help_lines: &[
+            "Get your API key from openrouter.ai/keys",
+            "100+ models, one key — pay per token",
+        ],
+    },
+    ProviderInfo {
         name: "Custom (OpenAI-compatible)",
         env_vars: &[],
         keyring_key: "",
@@ -286,6 +301,9 @@ pub struct OnboardingWizard {
     pub auth_field: AuthField,
     pub custom_base_url: String,
     pub custom_model: String,
+    /// Models fetched live from provider API (overrides static list when non-empty)
+    pub fetched_models: Vec<String>,
+    pub models_fetching: bool,
 
     // Step 3: MessagingSetup (shown in both modes)
     pub messaging_field: MessagingField,
@@ -375,6 +393,8 @@ impl OnboardingWizard {
             auth_field: AuthField::Provider,
             custom_base_url: String::new(),
             custom_model: String::new(),
+            fetched_models: Vec::new(),
+            models_fetching: false,
 
             messaging_field: MessagingField::Telegram,
             messaging_telegram: false,
@@ -441,6 +461,30 @@ impl OnboardingWizard {
     pub fn is_custom_provider(&self) -> bool {
         self.selected_provider == PROVIDERS.len() - 1
     }
+
+    /// Number of models available for current provider (fetched or static)
+    pub fn model_count(&self) -> usize {
+        if !self.fetched_models.is_empty() {
+            self.fetched_models.len()
+        } else {
+            self.current_provider().models.len()
+        }
+    }
+
+    /// Get the selected model name
+    pub fn selected_model_name(&self) -> &str {
+        if !self.fetched_models.is_empty() {
+            self.fetched_models.get(self.selected_model).map(|s| s.as_str()).unwrap_or("default")
+        } else {
+            self.current_provider().models.get(self.selected_model).unwrap_or(&"default")
+        }
+    }
+
+    /// Whether the current provider supports live model fetching
+    pub fn supports_model_fetch(&self) -> bool {
+        matches!(self.selected_provider, 0 | 1 | 4) // Anthropic, OpenAI, OpenRouter
+    }
+
 
     /// Whether the current api_key_input holds a pre-existing key (from env/keyring)
     pub fn has_existing_key(&self) -> bool {
@@ -812,6 +856,13 @@ impl OnboardingWizard {
             }
             KeyCode::Enter => {
                 self.next_step();
+                // If entering ProviderAuth with existing key detected, pre-fetch models
+                if self.step == OnboardingStep::ProviderAuth
+                    && self.has_existing_key()
+                    && self.supports_model_fetch()
+                {
+                    return WizardAction::FetchModels;
+                }
             }
             _ => {}
         }
@@ -825,6 +876,7 @@ impl OnboardingWizard {
                     self.selected_provider = self.selected_provider.saturating_sub(1);
                     self.selected_model = 0;
                     self.api_key_input.clear();
+                    self.fetched_models.clear();
                     self.detect_existing_key();
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -832,6 +884,7 @@ impl OnboardingWizard {
                         (self.selected_provider + 1).min(PROVIDERS.len() - 1);
                     self.selected_model = 0;
                     self.api_key_input.clear();
+                    self.fetched_models.clear();
                     self.detect_existing_key();
                 }
                 KeyCode::Enter | KeyCode::Tab => {
@@ -864,6 +917,14 @@ impl OnboardingWizard {
                 }
                 KeyCode::Enter | KeyCode::Tab => {
                     self.auth_field = AuthField::Model;
+                    // Fetch live models when we have a key and provider supports it
+                    if self.supports_model_fetch()
+                        && (!self.api_key_input.is_empty() || self.has_existing_key())
+                    {
+                        self.fetched_models.clear();
+                        self.selected_model = 0;
+                        return WizardAction::FetchModels;
+                    }
                 }
                 KeyCode::BackTab => {
                     self.auth_field = AuthField::Provider;
@@ -879,10 +940,10 @@ impl OnboardingWizard {
                 KeyCode::Down | KeyCode::Char('j')
                     if event.modifiers.is_empty() || event.code == KeyCode::Down =>
                 {
-                    let models = self.current_provider().models;
-                    if !models.is_empty() {
+                    let count = self.model_count();
+                    if count > 0 {
                         self.selected_model =
-                            (self.selected_model + 1).min(models.len() - 1);
+                            (self.selected_model + 1).min(count - 1);
                     }
                 }
                 KeyCode::Enter => {
@@ -1552,59 +1613,44 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
     pub fn apply_config(&self) -> Result<(), String> {
         let mut config = Config::default();
 
-        // Provider config (indices match PROVIDERS array: 0=Anthropic, 1=OpenAI, 2=Gemini, 3=Qwen, 4=Custom)
+        // Provider config (indices match PROVIDERS array:
+        // 0=Anthropic, 1=OpenAI, 2=Gemini, 3=Qwen, 4=OpenRouter, 5=Custom)
+        let model = self.selected_model_name().to_string();
         match self.selected_provider {
             0 => {
                 // Anthropic Claude (setup token or API key)
-                let provider = &PROVIDERS[0];
-                let model = provider
-                    .models
-                    .get(self.selected_model)
-                    .unwrap_or(&"claude-opus-4-6");
                 config.providers.anthropic = Some(ProviderConfig {
                     enabled: true,
                     api_key: None, // stored in keyring or env
                     base_url: None,
-                    default_model: Some(model.to_string()),
+                    default_model: Some(model),
                 });
             }
             1 => {
                 // OpenAI
-                let model = PROVIDERS[1]
-                    .models
-                    .get(self.selected_model)
-                    .unwrap_or(&"gpt-5.1-codex-mini");
                 config.providers.openai = Some(ProviderConfig {
                     enabled: true,
                     api_key: None,
                     base_url: None,
-                    default_model: Some(model.to_string()),
+                    default_model: Some(model),
                 });
             }
             2 => {
                 // Gemini
-                let model = PROVIDERS[2]
-                    .models
-                    .get(self.selected_model)
-                    .unwrap_or(&"gemini-3-flash-preview");
                 config.providers.gemini = Some(ProviderConfig {
                     enabled: true,
                     api_key: None,
                     base_url: None,
-                    default_model: Some(model.to_string()),
+                    default_model: Some(model),
                 });
             }
             3 => {
                 // Qwen/DashScope
-                let model = PROVIDERS[3]
-                    .models
-                    .get(self.selected_model)
-                    .unwrap_or(&"qwen3-coder-next");
                 config.providers.qwen = Some(QwenProviderConfig {
                     enabled: true,
                     api_key: None,
                     base_url: None,
-                    default_model: Some(model.to_string()),
+                    default_model: Some(model),
                     tool_parser: None,
                     enable_thinking: false,
                     thinking_budget: None,
@@ -1612,6 +1658,15 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
                 });
             }
             4 => {
+                // OpenRouter (OpenAI-compatible with base_url)
+                config.providers.openai = Some(ProviderConfig {
+                    enabled: true,
+                    api_key: None,
+                    base_url: Some("https://openrouter.ai/api/v1/chat/completions".to_string()),
+                    default_model: Some(model),
+                });
+            }
+            5 => {
                 // Custom OpenAI-compatible
                 config.providers.openai = Some(ProviderConfig {
                     enabled: true,
@@ -1812,6 +1867,8 @@ pub enum WizardAction {
     Complete,
     /// Trigger async AI generation of brain files
     GenerateBrain,
+    /// Trigger async model list fetch from provider API
+    FetchModels,
 }
 
 /// First-time detection: no config file AND no API keys in environment.
@@ -1835,7 +1892,8 @@ pub fn is_first_time() -> bool {
         || std::env::var("ANTHROPIC_API_KEY").is_ok()
         || std::env::var("OPENAI_API_KEY").is_ok()
         || std::env::var("GEMINI_API_KEY").is_ok()
-        || std::env::var("DASHSCOPE_API_KEY").is_ok();
+        || std::env::var("DASHSCOPE_API_KEY").is_ok()
+        || std::env::var("OPENROUTER_API_KEY").is_ok();
 
     !has_env_key
 }
@@ -1959,6 +2017,78 @@ fn install_launchagent() -> Result<(), String> {
         .map_err(|e| format!("Failed to load launch agent: {}", e))?;
 
     Ok(())
+}
+
+/// Fetch models from provider API. No API key needed for most providers.
+/// If api_key is provided, includes it (some endpoints filter by access level).
+/// Returns empty vec on failure (callers fall back to static list).
+pub async fn fetch_provider_models(provider_index: usize, api_key: Option<&str>) -> Vec<String> {
+    #[derive(serde::Deserialize)]
+    struct ModelEntry { id: String }
+    #[derive(serde::Deserialize)]
+    struct ModelsResponse { data: Vec<ModelEntry> }
+
+    let client = reqwest::Client::new();
+
+    let result = match provider_index {
+        0 => {
+            // Anthropic — /v1/models is public
+            let mut req = client
+                .get("https://api.anthropic.com/v1/models")
+                .header("anthropic-version", "2023-06-01");
+
+            // Include key if available (may show more models)
+            if let Some(key) = api_key {
+                if key.starts_with("sk-ant-oat") {
+                    req = req
+                        .header("Authorization", format!("Bearer {}", key))
+                        .header("anthropic-beta", "oauth-2025-04-20");
+                } else if !key.is_empty() {
+                    req = req.header("x-api-key", key);
+                }
+            }
+
+            req.send().await
+        }
+        1 => {
+            // OpenAI — /v1/models
+            let mut req = client.get("https://api.openai.com/v1/models");
+            if let Some(key) = api_key {
+                if !key.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", key));
+                }
+            }
+            req.send().await
+        }
+        4 => {
+            // OpenRouter — /api/v1/models
+            let mut req = client.get("https://openrouter.ai/api/v1/models");
+            if let Some(key) = api_key {
+                if !key.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", key));
+                }
+            }
+            req.send().await
+        }
+        _ => return Vec::new(),
+    };
+
+    match result {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<ModelsResponse>().await {
+                Ok(body) => {
+                    let mut models: Vec<String> = body.data
+                        .into_iter()
+                        .map(|m| m.id)
+                        .collect();
+                    models.sort();
+                    models
+                }
+                Err(_) => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -2302,5 +2432,120 @@ mod tests {
         assert!(wizard.about_me.is_empty());
         assert!(wizard.about_agent.is_empty());
         assert_eq!(wizard.brain_field, BrainField::AboutMe);
+    }
+
+    // --- Model fetching helpers ---
+
+    #[test]
+    fn test_openrouter_provider_index() {
+        // OpenRouter is index 4, Custom is last
+        assert_eq!(PROVIDERS[4].name, "OpenRouter");
+        assert!(PROVIDERS[4].env_vars.contains(&"OPENROUTER_API_KEY"));
+        assert_eq!(PROVIDERS.last().unwrap().name, "Custom (OpenAI-compatible)");
+    }
+
+    #[test]
+    fn test_model_count_uses_fetched_when_available() {
+        let mut wizard = OnboardingWizard::new();
+        // Static fallback
+        assert_eq!(wizard.model_count(), PROVIDERS[0].models.len());
+
+        // After fetching
+        wizard.fetched_models = vec!["model-a".into(), "model-b".into(), "model-c".into(), "model-d".into()];
+        assert_eq!(wizard.model_count(), 4);
+    }
+
+    #[test]
+    fn test_selected_model_name_uses_fetched() {
+        let mut wizard = OnboardingWizard::new();
+        assert_eq!(wizard.selected_model_name(), PROVIDERS[0].models[0]);
+
+        wizard.fetched_models = vec!["live-model-1".into(), "live-model-2".into()];
+        wizard.selected_model = 1;
+        assert_eq!(wizard.selected_model_name(), "live-model-2");
+    }
+
+    #[test]
+    fn test_supports_model_fetch() {
+        let mut wizard = OnboardingWizard::new();
+        wizard.selected_provider = 0; // Anthropic
+        assert!(wizard.supports_model_fetch());
+        wizard.selected_provider = 1; // OpenAI
+        assert!(wizard.supports_model_fetch());
+        wizard.selected_provider = 2; // Gemini
+        assert!(!wizard.supports_model_fetch());
+        wizard.selected_provider = 3; // Qwen
+        assert!(!wizard.supports_model_fetch());
+        wizard.selected_provider = 4; // OpenRouter
+        assert!(wizard.supports_model_fetch());
+        wizard.selected_provider = 5; // Custom
+        assert!(!wizard.supports_model_fetch());
+    }
+
+    #[test]
+    fn test_fetch_models_unsupported_provider_returns_empty() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(fetch_provider_models(99, None));
+        assert!(result.is_empty());
+    }
+
+    // --- Live API integration tests (skipped if env var not set) ---
+
+    #[test]
+    fn test_fetch_anthropic_models_with_api_key() {
+        let key = match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(k) if !k.is_empty() => k,
+            _ => { eprintln!("ANTHROPIC_API_KEY not set, skipping"); return; }
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let models = rt.block_on(fetch_provider_models(0, Some(&key)));
+        assert!(!models.is_empty(), "Anthropic should return models with API key");
+        // Should contain at least one claude model
+        assert!(models.iter().any(|m| m.contains("claude")), "Expected claude model, got: {:?}", models);
+    }
+
+    #[test]
+    fn test_fetch_anthropic_models_with_setup_token() {
+        let key = match std::env::var("ANTHROPIC_MAX_SETUP_TOKEN") {
+            Ok(k) if !k.is_empty() && k.starts_with("sk-ant-oat") => k,
+            _ => { eprintln!("ANTHROPIC_MAX_SETUP_TOKEN not set, skipping"); return; }
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let models = rt.block_on(fetch_provider_models(0, Some(&key)));
+        assert!(!models.is_empty(), "Anthropic should return models with setup token");
+        assert!(models.iter().any(|m| m.contains("claude")), "Expected claude model, got: {:?}", models);
+    }
+
+    #[test]
+    fn test_fetch_openai_models_with_api_key() {
+        let key = match std::env::var("OPENAI_API_KEY") {
+            Ok(k) if !k.is_empty() => k,
+            _ => { eprintln!("OPENAI_API_KEY not set, skipping"); return; }
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let models = rt.block_on(fetch_provider_models(1, Some(&key)));
+        assert!(!models.is_empty(), "OpenAI should return models with API key");
+        assert!(models.iter().any(|m| m.contains("gpt")), "Expected gpt model, got: {:?}", models);
+    }
+
+    #[test]
+    fn test_fetch_openrouter_models_with_api_key() {
+        let key = match std::env::var("OPENROUTER_API_KEY") {
+            Ok(k) if !k.is_empty() => k,
+            _ => { eprintln!("OPENROUTER_API_KEY not set, skipping"); return; }
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let models = rt.block_on(fetch_provider_models(4, Some(&key)));
+        assert!(!models.is_empty(), "OpenRouter should return models");
+        // OpenRouter has 400+ models
+        assert!(models.len() > 50, "Expected 50+ models from OpenRouter, got {}", models.len());
+    }
+
+    #[test]
+    fn test_fetch_models_bad_key_returns_empty() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Bad key should fail gracefully (empty vec, not panic)
+        let models = rt.block_on(fetch_provider_models(0, Some("sk-bad-key-definitely-invalid")));
+        assert!(models.is_empty(), "Bad key should return empty, got {} models", models.len());
     }
 }

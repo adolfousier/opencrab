@@ -181,9 +181,14 @@ impl AgentService {
         self.provider.default_model()
     }
 
-    /// Get the list of supported models for this provider
+    /// Get the list of supported models for this provider (hardcoded fallback)
     pub fn supported_models(&self) -> Vec<String> {
         self.provider.supported_models()
+    }
+
+    /// Fetch available models from the provider API (live)
+    pub async fn fetch_models(&self) -> Vec<String> {
+        self.provider.fetch_models().await
     }
 
     /// Get a reference to the underlying LLM provider

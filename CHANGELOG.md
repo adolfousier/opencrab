@@ -5,6 +5,17 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.18] - 2026-02-18
+
+### Added
+- **OpenRouter Provider** -- First-class OpenRouter support in onboarding wizard. One API key, 400+ models including free and stealth models (DeepSeek, Llama, Mistral, Qwen, Gemma, and more). Live model list fetched from `openrouter.ai/api/v1/models`
+- **Live Model Fetching** -- `/models` command and onboarding wizard now fetch available models live from provider APIs (Anthropic, OpenAI, OpenRouter). When a new model drops, it shows up immediately — no binary update needed. Falls back to hardcoded list if offline
+- **`Provider::fetch_models()` Trait Method** -- All providers implement async model fetching with graceful fallback to static lists
+
+### Changed
+- **Onboarding Wizard** -- Provider step 2 now shows live model list fetched from API after entering key. Shows "(fetching...)" while loading. OpenRouter added as 5th provider option
+- **Removed `cargo publish` from CI** -- Release workflow no longer attempts crates.io publish (was never configured, caused false failures)
+
 ## [0.2.17] - 2026-02-18
 
 ### Changed

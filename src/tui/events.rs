@@ -82,6 +82,9 @@ pub enum TuiEvent {
 
     /// Configuration was reloaded (e.g. after config_tool write)
     ConfigReloaded,
+
+    /// Onboarding wizard received fetched model list from provider API
+    OnboardingModelsFetched(Vec<String>),
 }
 
 /// Tool approval request details

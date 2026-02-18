@@ -69,7 +69,7 @@
 ### AI & Providers
 | Feature | Description |
 |---------|-------------|
-| **Multi-Provider** | Anthropic Claude (with OAuth), OpenAI, Qwen, Azure, and any OpenAI-compatible API |
+| **Multi-Provider** | Anthropic Claude (with OAuth), OpenAI, OpenRouter (400+ models), Qwen, Azure, and any OpenAI-compatible API. Model lists fetched live from provider APIs — new models available instantly |
 | **Real-time Streaming** | Character-by-character response streaming with animated spinner showing model name and live text |
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
 | **Cost Tracking** | Per-message token count and cost displayed in header |
@@ -150,6 +150,14 @@ Set a custom model with `ANTHROPIC_MAX_MODEL` (e.g., `claude-opus-4-6`).
 
 Compatible with any OpenAI-compatible API endpoint via `OPENAI_BASE_URL`.
 
+### OpenRouter — 400+ Models, One Key
+
+**Setup:** `export OPENROUTER_API_KEY="sk-or-YOUR_KEY"` — get one at [openrouter.ai/keys](https://openrouter.ai/keys)
+
+Access 400+ models from every major provider through a single API key — Anthropic, OpenAI, Google, Meta, Mistral, DeepSeek, Qwen, and many more. Includes **free models** (DeepSeek-R1, Llama 3.3, Gemma 2, Mistral 7B) and stealth/preview models as they drop.
+
+Model list is **fetched live** from the OpenRouter API during onboarding and via `/models` — no binary update needed when new models are added.
+
 ### Qwen (via OpenAI-compatible)
 
 **Setup:** Configure via `QWEN_API_KEY` and `QWEN_BASE_URL`.
@@ -161,7 +169,6 @@ Compatible with any OpenAI-compatible API endpoint via `OPENAI_BASE_URL`.
 | **LM Studio** | Tested | `OPENAI_BASE_URL="http://localhost:1234/v1"` |
 | **Ollama** | Compatible | `OPENAI_BASE_URL="http://localhost:11434/v1"` |
 | **LocalAI** | Compatible | `OPENAI_BASE_URL="http://localhost:8080/v1"` |
-| OpenRouter | Compatible | `OPENAI_BASE_URL="https://openrouter.ai/api/v1"` |
 | Groq | Compatible | `OPENAI_BASE_URL="https://api.groq.com/openai/v1"` |
 
 **Provider priority:** Qwen > Anthropic > OpenAI (fallback). The first provider with a configured API key is used. `OPENAI_API_KEY` is isolated to TTS only — it won't create a text provider unless explicitly configured.
@@ -264,7 +271,7 @@ First-time users are guided through an 8-step setup wizard that appears automati
 | Step | Title | What It Does |
 |------|-------|-------------|
 | 1 | **Mode Selection** | QuickStart (sensible defaults) vs Advanced (full control) |
-| 2 | **Model & Auth** | Pick provider (Anthropic, OpenAI, Gemini, Qwen, Custom) → enter token/key → select model. Auto-detects existing keys from env/keyring |
+| 2 | **Model & Auth** | Pick provider (Anthropic, OpenAI, Gemini, Qwen, OpenRouter, Custom) → enter token/key → model list fetched live from API → select model. Auto-detects existing keys from env/keyring |
 | 3 | **Workspace** | Set brain workspace path (default `~/.opencrabs/`) → seed template files (SOUL.md, IDENTITY.md, etc.) |
 | 4 | **Gateway** | Configure HTTP API gateway: port, bind address, auth mode |
 | 5 | **Channels** | Toggle messaging integrations (Telegram, Discord, WhatsApp, Signal, Google Chat, iMessage) |
@@ -432,6 +439,7 @@ default_model = "claude-opus-4-6"
 | `ANTHROPIC_API_KEY` | Anthropic | Standard API key |
 | `OPENAI_API_KEY` | OpenAI / Compatible | API key |
 | `OPENAI_BASE_URL` | OpenAI / Compatible | Custom endpoint URL |
+| `OPENROUTER_API_KEY` | OpenRouter | API key — 400+ models, one key ([openrouter.ai/keys](https://openrouter.ai/keys)) |
 | `QWEN_API_KEY` | Qwen | API key |
 | `QWEN_BASE_URL` | Qwen | Custom endpoint URL |
 | `EXA_API_KEY` | EXA AI Search | Neural web search — free via MCP by default; set key for direct API with higher rate limits |
@@ -555,7 +563,7 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `Escape` ×2 | Abort in-progress request |
 | `/help` | Open help dialog |
 | `/model` | Show current model |
-| `/models` | Switch model |
+| `/models` | Switch model (fetches live from provider API) |
 | `/usage` | Token/cost stats |
 | `/onboard` | Run setup wizard |
 | `/sessions` | Open session manager |
