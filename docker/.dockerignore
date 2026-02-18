@@ -1,0 +1,8 @@
+target/
+.git/
+docker/
+*.db
+*.swp
+*.swo
+.env
+.opencrabs_*.json

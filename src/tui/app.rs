@@ -1902,22 +1902,30 @@ impl App {
                 true
             }
             "/rebuild" => {
-                self.push_system_message("Building from source...".to_string());
+                self.push_system_message(
+                    "Detecting source... (auto-clones if needed)".to_string(),
+                );
                 let sender = self.event_sender();
                 tokio::spawn(async move {
                     match SelfUpdater::auto_detect() {
-                        Ok(updater) => match updater.build().await {
-                            Ok(_) => {
-                                let _ = sender.send(TuiEvent::RestartReady(
-                                    "Build successful".into(),
-                                ));
+                        Ok(updater) => {
+                            let root = updater.project_root().display().to_string();
+                            let _ = sender.send(TuiEvent::Error(format!(
+                                "Building from {}...", root
+                            )));
+                            match updater.build().await {
+                                Ok(_) => {
+                                    let _ = sender.send(TuiEvent::RestartReady(
+                                        "Build successful".into(),
+                                    ));
+                                }
+                                Err(e) => {
+                                    let _ = sender.send(TuiEvent::Error(format!(
+                                        "Build failed:\n{}", e
+                                    )));
+                                }
                             }
-                            Err(e) => {
-                                let _ = sender.send(TuiEvent::Error(format!(
-                                    "Build failed:\n{}", e
-                                )));
-                            }
-                        },
+                        }
                         Err(e) => {
                             let _ = sender.send(TuiEvent::Error(format!(
                                 "Cannot detect project: {}", e

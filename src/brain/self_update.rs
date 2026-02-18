@@ -3,10 +3,16 @@
 //! Handles building, testing, and hot-restarting OpenCrabs.
 //! The running binary is in memory — modifying source on disk is safe.
 //! After a successful build, `exec()` replaces the current process with the new binary.
+//!
+//! If the binary was downloaded (no source tree), `auto_detect()` automatically
+//! clones the repo into `~/.opencrabs/source/` so `/rebuild` works everywhere.
 
 use anyhow::Result;
 use std::path::PathBuf;
 use uuid::Uuid;
+
+/// GitHub repo URL for auto-cloning when source is not available locally.
+const REPO_URL: &str = "https://github.com/adolfousier/opencrabs.git";
 
 /// Handles building, testing, and restarting OpenCrabs from source.
 pub struct SelfUpdater {
@@ -29,35 +35,68 @@ impl SelfUpdater {
     }
 
     /// Auto-detect project root and binary path from the current executable.
+    ///
+    /// First walks up from the binary looking for `Cargo.toml` (build-from-source).
+    /// If not found (pre-built binary), checks `~/.opencrabs/source/` for a
+    /// previous clone. If that doesn't exist either, clones the repo there.
     pub fn auto_detect() -> Result<Self> {
         let exe = std::env::current_exe()?;
 
         // Walk up from the executable to find Cargo.toml
-        let mut project_root = exe
+        let mut search_dir = exe
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Cannot determine executable parent directory"))?
             .to_path_buf();
 
-        // Try to find Cargo.toml by walking up directories
         loop {
-            if project_root.join("Cargo.toml").exists() {
-                break;
+            if search_dir.join("Cargo.toml").exists() {
+                let binary_path = search_dir
+                    .join("target")
+                    .join("release")
+                    .join("opencrabs");
+                return Ok(Self {
+                    project_root: search_dir,
+                    binary_path,
+                });
             }
-            if !project_root.pop() {
-                return Err(anyhow::anyhow!(
-                    "Could not find Cargo.toml in any parent directory of {}",
-                    exe.display()
-                ));
+            if !search_dir.pop() {
+                break;
             }
         }
 
-        let binary_path = project_root
+        // No source tree found — use ~/.opencrabs/source/
+        let source_dir = crate::config::opencrabs_home().join("source");
+
+        if source_dir.join("Cargo.toml").exists() {
+            // Source already cloned — pull latest
+            tracing::info!("Updating source at {}", source_dir.display());
+            let _ = std::process::Command::new("git")
+                .args(["pull", "--ff-only"])
+                .current_dir(&source_dir)
+                .output();
+        } else {
+            // Clone the repo
+            tracing::info!("Cloning OpenCrabs source to {}", source_dir.display());
+            let output = std::process::Command::new("git")
+                .args(["clone", "--depth", "1", REPO_URL, &source_dir.to_string_lossy()])
+                .output()
+                .map_err(|e| anyhow::anyhow!(
+                    "Failed to clone source (is git installed?): {}", e
+                ))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow::anyhow!("git clone failed: {}", stderr));
+            }
+        }
+
+        let binary_path = source_dir
             .join("target")
             .join("release")
             .join("opencrabs");
 
         Ok(Self {
-            project_root,
+            project_root: source_dir,
             binary_path,
         })
     }

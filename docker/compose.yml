@@ -1,0 +1,33 @@
+services:
+  opencrabs:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: opencrabs
+    restart: unless-stopped
+    # Load .env from project root if it exists (optional — onboarding wizard works without it)
+    env_file:
+      - path: ../.env
+        required: false
+    # Explicit env vars override .env (set on host or in shell)
+    environment:
+      - ANTHROPIC_API_KEY
+      - ANTHROPIC_MAX_SETUP_TOKEN
+      - OPENAI_API_KEY
+      - OPENROUTER_API_KEY
+      - GEMINI_API_KEY
+      - DASHSCOPE_API_KEY
+      - GROQ_API_KEY
+      - TELEGRAM_BOT_TOKEN
+      - DISCORD_BOT_TOKEN
+      - SLACK_BOT_TOKEN
+      - SLACK_APP_TOKEN
+    volumes:
+      # Persist config, workspace, memory DB across restarts
+      - opencrabs-data:/home/opencrabs/.opencrabs
+    # Interactive TUI needs a TTY
+    tty: true
+    stdin_open: true
+
+volumes:
+  opencrabs-data:

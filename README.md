@@ -177,21 +177,36 @@ Model list is **fetched live** from the OpenRouter API during onboarding and via
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Option 1: Download Binary (just run it)
 
-- **Rust nightly (2024 edition)** — [Install Rust](https://rustup.rs/), then `rustup toolchain install nightly`. The project includes a `rust-toolchain.toml` that selects nightly automatically. Required by the WhatsApp integration (`wacore-binary` uses `portable_simd`).
+Grab a pre-built binary from [GitHub Releases](https://github.com/adolfousier/opencrabs/releases) — available for Linux (amd64/arm64), macOS (amd64/arm64), and Windows.
+
+```bash
+# Download, extract, run
+tar xzf opencrabs-linux-amd64.tar.gz
+./opencrabs
+```
+
+The onboarding wizard handles everything on first run. Set your API key via environment variable or the wizard will prompt you.
+
+> **Note:** `/rebuild` works even with pre-built binaries — it auto-clones the source to `~/.opencrabs/source/` on first use, then builds and hot-restarts. For active development or adding custom tools, Option 2 gives you the source tree directly.
+
+### Option 2: Build from Source (full control)
+
+Required for `/rebuild`, adding custom tools, or modifying the agent.
+
+**Prerequisites:**
+- **Rust nightly (2024 edition)** — [Install Rust](https://rustup.rs/), then `rustup toolchain install nightly`. The project includes a `rust-toolchain.toml` that selects nightly automatically
 - **An API key** from at least one supported provider
 - **SQLite** (bundled via sqlx)
 - **Linux:** `build-essential`, `pkg-config`, `libssl-dev`, `libchafa-dev`
-
-### Install & Run
 
 ```bash
 # Clone
 git clone https://github.com/adolfousier/opencrabs.git
 cd opencrabs
 
-# Set up credentials (pick one)
+# Set up credentials
 cp .env.example .env
 # Edit .env with your API key(s)
 
@@ -206,6 +221,25 @@ cargo build --release
 OpenCrabs auto-loads `.env` via `dotenvy` at startup — no need to manually export variables.
 
 > **First run?** The onboarding wizard will guide you through provider setup, workspace, and more. See [Onboarding Wizard](#-onboarding-wizard).
+
+### Option 3: Docker (sandboxed)
+
+Run OpenCrabs in an isolated container. Build takes ~15min (Rust release + LTO).
+
+```bash
+# Clone and run
+git clone https://github.com/adolfousier/opencrabs.git
+cd opencrabs
+
+# Option A: With .env file (auto-loaded)
+cp .env.example .env   # add your API keys
+docker compose -f docker/compose.yml up --build
+
+# Option B: No .env — onboarding wizard handles setup interactively
+docker compose -f docker/compose.yml run opencrabs
+```
+
+Config, workspace, and memory DB persist in a Docker volume across restarts. Keys are passed via environment — never baked into the image.
 
 ### CLI Commands
 
@@ -569,7 +603,7 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `/sessions` | Open session manager |
 | `/approve` | Tool approval policy selector (approve-only / session / yolo) |
 | `/compact` | Compact context (summarize + trim for long sessions) |
-| `/rebuild` | Build from source & hot-restart via `exec()` |
+| `/rebuild` | Build from source & hot-restart — auto-clones repo if no source tree found |
 | `/settings` or `S` | Open Settings screen (provider, approval, commands, paths) |
 
 ### Sessions Mode
