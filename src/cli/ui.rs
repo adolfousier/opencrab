@@ -101,7 +101,7 @@ pub(crate) async fn cmd_chat(
         tracing::info!("Registered Brave search tool");
     }
 
-    // Index existing memory files in the background (non-blocking)
+    // Index existing memory files and warm up embedding engine in the background
     tokio::spawn(async {
         match crate::memory::get_store() {
             Ok(store) => {
@@ -111,6 +111,14 @@ pub(crate) async fn cmd_chat(
                 }
             }
             Err(e) => tracing::warn!("Memory store init failed at startup: {e}"),
+        }
+        // Warm up embedding engine so first search doesn't pay model download cost.
+        // reindex() already calls get_engine() during backfill, but if all docs were
+        // already embedded, this ensures the engine is ready for search.
+        match tokio::task::spawn_blocking(crate::memory::get_engine).await {
+            Ok(Ok(_)) => tracing::info!("Embedding engine warmed up"),
+            Ok(Err(e)) => tracing::warn!("Embedding engine init skipped: {e}"),
+            Err(e) => tracing::warn!("Embedding engine warmup failed: {e}"),
         }
     });
 

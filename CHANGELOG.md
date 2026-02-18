@@ -5,6 +5,17 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.17] - 2026-02-18
+
+### Changed
+- **QMD Vector Search + RRF** -- qmd's `EmbeddingEngine` (embeddinggemma-300M, 768-dim GGUF) wired up alongside FTS5 with Reciprocal Rank Fusion. Local model, no API key, zero cost, works offline. Auto-downloads ~300MB on first use, falls back to FTS-only when unavailable
+- **Batch Embedding Backfill** -- On startup reindex, documents missing embeddings are batch-embedded via qmd. Single-file indexes (post-compaction) embed immediately when engine is warm
+- **Discord Voice (STT + TTS)** -- Discord bot now transcribes audio attachments via Groq Whisper and replies with synthesized voice (OpenAI TTS) when enabled
+- **WhatsApp Voice (STT)** -- WhatsApp bot now transcribes voice notes via Groq Whisper. Text replies only (media upload for TTS pending)
+- **CI Release Workflow** -- Fixed nightly toolchain for all build targets, added ARM64 cross-linker config
+- **AVX CPU Guard** -- Embedding engine checks for AVX support at init; gracefully falls back to FTS-only on older CPUs
+- **Stderr Suppression** -- llama.cpp C-level stderr output redirected to /dev/null during model load to prevent TUI corruption
+
 ## [0.2.16] - 2026-02-18
 
 ### Changed

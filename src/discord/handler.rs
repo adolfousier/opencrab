@@ -4,7 +4,7 @@
 //! session routing (owner shares TUI session, others get per-user sessions).
 
 use super::DiscordState;
-use crate::config::RespondTo;
+use crate::config::{RespondTo, VoiceConfig};
 use crate::llm::agent::AgentService;
 use crate::services::SessionService;
 use std::collections::{HashMap, HashSet};
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use serenity::builder::{CreateAttachment, CreateMessage};
 use serenity::model::channel::Message;
 use serenity::prelude::*;
 
@@ -51,6 +52,8 @@ pub(crate) async fn handle_message(
     discord_state: Arc<DiscordState>,
     respond_to: &RespondTo,
     allowed_channels: &HashSet<String>,
+    voice_config: Arc<VoiceConfig>,
+    openai_key: Arc<Option<String>>,
 ) {
     let user_id = msg.author.id.get() as i64;
 
@@ -90,8 +93,34 @@ pub(crate) async fn handle_message(
         }
     }
 
-    // Extract text content
+    // Check for audio attachments → STT
+    let audio_attachment = msg.attachments.iter().find(|a| {
+        a.content_type
+            .as_ref()
+            .is_some_and(|ct| ct.starts_with("audio/"))
+    });
+
+    let mut is_voice = false;
     let mut content = msg.content.clone();
+
+    if let Some(audio) = audio_attachment
+        && voice_config.stt_enabled
+        && let Some(ref groq_key) = voice_config.groq_api_key
+        && let Ok(resp) = reqwest::get(&audio.url).await
+        && let Ok(bytes) = resp.bytes().await
+    {
+        match crate::voice::transcribe_audio(bytes.to_vec(), groq_key).await {
+            Ok(transcript) => {
+                tracing::info!(
+                    "Discord: transcribed voice: {}",
+                    &transcript[..transcript.len().min(80)]
+                );
+                content = transcript;
+                is_voice = true;
+            }
+            Err(e) => tracing::error!("Discord: STT error: {e}"),
+        }
+    }
 
     // Strip bot @mention from content when responding to a mention
     if !is_dm && *respond_to == RespondTo::Mention
@@ -105,14 +134,16 @@ pub(crate) async fn handle_message(
     }
 
     // Handle image attachments — append <<IMG:url>> markers
-    for attachment in &msg.attachments {
-        if let Some(ref content_type) = attachment.content_type
-            && content_type.starts_with("image/")
-        {
-            if content.is_empty() {
-                content = "Describe this image.".to_string();
+    if !is_voice {
+        for attachment in &msg.attachments {
+            if let Some(ref content_type) = attachment.content_type
+                && content_type.starts_with("image/")
+            {
+                if content.is_empty() {
+                    content = "Describe this image.".to_string();
+                }
+                content.push_str(&format!(" <<IMG:{}>>", attachment.url));
             }
-            content.push_str(&format!(" <<IMG:{}>>", attachment.url));
         }
     }
 
@@ -183,6 +214,34 @@ pub(crate) async fn handle_message(
             for chunk in split_message(&tagged, 2000) {
                 if let Err(e) = msg.channel_id.say(&ctx.http, chunk).await {
                     tracing::error!("Discord: failed to send reply: {}", e);
+                }
+            }
+
+            // TTS: send voice reply if input was audio and TTS is enabled
+            if is_voice
+                && voice_config.tts_enabled
+                && let Some(ref oai_key) = *openai_key
+            {
+                match crate::voice::synthesize_speech(
+                    &response.content,
+                    oai_key,
+                    &voice_config.tts_voice,
+                    &voice_config.tts_model,
+                )
+                .await
+                {
+                    Ok(audio_bytes) => {
+                        let file =
+                            CreateAttachment::bytes(audio_bytes.as_slice(), "response.ogg");
+                        if let Err(e) = msg
+                            .channel_id
+                            .send_message(&ctx.http, CreateMessage::new().add_file(file))
+                            .await
+                        {
+                            tracing::error!("Discord: failed to send TTS voice: {e}");
+                        }
+                    }
+                    Err(e) => tracing::error!("Discord: TTS error: {e}"),
                 }
             }
         }

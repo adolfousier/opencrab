@@ -22,24 +22,6 @@
 
 **Author:** [Adolfo Usier](https://github.com/adolfousier)
 
-| | 🦀 OpenCrabs |
-|---|---|
-| Binary | 34 MB |
-| RAM (RSS) | 57 MB |
-| Virtual Memory | 996 MB |
-| Workspace | 1.4 MB |
-| Memory Dir | 8 KB |
-| Memory DB (FTS5) | ~20-50 KB |
-| Sessions | 220 KB (4 sessions) |
-| Language | Rust |
-| Session Storage | JSONL + FTS5 full-text search |
-| Search Latency | ~0.4ms/query |
-| Index Speed | ~0.3ms/file |
-| Reindex (50 files) | 15ms |
-| New Dependencies | 0 (uses existing sqlx) |
-
-> *Benchmarks measured locally on release build with 50 memory files (in-memory SQLite). Real-world on-disk performance may vary by hardware.*
-
 ---
 
 ## Table of Contents
@@ -92,7 +74,7 @@
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
 | **Cost Tracking** | Per-message token count and cost displayed in header |
 | **Context Awareness** | Live context usage indicator showing actual token counts (e.g. `ctx: 45K/200K (23%)`); auto-compaction at 70% with tool overhead budgeting; accurate tiktoken-based counting calibrated against API actuals |
-| **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory loaded every turn, (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Memory Search** — built-in FTS5 full-text search across all past logs (zero external deps, always-on) |
+| **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory loaded every turn, (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Hybrid Memory Search** — FTS5 keyword search + local vector embeddings (embeddinggemma-300M, 768-dim) combined via Reciprocal Rank Fusion. Runs entirely local — no API key, no cost, works offline |
 | **Dynamic Brain System** | System brain assembled from workspace MD files (SOUL, IDENTITY, USER, AGENTS, TOOLS, MEMORY) — all editable live between turns |
 
 ### Multimodal Input
@@ -482,7 +464,7 @@ OpenCrabs includes a built-in tool execution system. The AI can use these tools 
 | `parse_document` | Extract text from PDF, DOCX, HTML |
 | `task_manager` | Manage agent tasks |
 | `http_request` | Make HTTP requests |
-| `memory_search` | Search past conversation memory logs for context from previous sessions (built-in FTS5, always available) |
+| `memory_search` | Hybrid semantic search across past memory logs — FTS5 keyword + vector embeddings (768-dim, local GGUF model) combined via RRF. No API key needed, runs offline |
 | `config_manager` | Read/write config.toml and commands.toml at runtime (change settings, add/remove commands, reload config) |
 | `session_context` | Access session information |
 | `plan` | Create structured execution plans |
@@ -697,7 +679,7 @@ Brain files are re-read **every turn** — edit them between messages and the ag
 |------|----------|---------|------------|
 | **1. Brain MEMORY.md** | `~/.opencrabs/MEMORY.md` | Durable, curated knowledge loaded into system brain every turn | You (the user) |
 | **2. Daily Memory Logs** | `~/.opencrabs/memory/YYYY-MM-DD.md` | Auto-compaction summaries with structured breakdowns of each session | Auto (on compaction) |
-| **3. Memory Search** | `memory_search` tool (built-in FTS5) | BM25-ranked full-text search across all daily logs — the agent can recall past decisions, files, errors | Agent (via tool call) |
+| **3. Hybrid Memory Search** | `memory_search` tool (FTS5 + vector) | Hybrid semantic search — BM25 keyword + vector embeddings (768-dim, local GGUF) combined via Reciprocal Rank Fusion. No API key, zero cost, runs offline | Agent (via tool call) |
 
 **How it works:**
 1. When context hits 70%, auto-compaction summarizes the conversation into a structured breakdown (current task, decisions, files modified, errors, next steps)
@@ -706,9 +688,14 @@ Brain files are re-read **every turn** — edit them between messages and the ag
 4. The file is indexed in the background into the FTS5 database so the agent can search past logs with `memory_search`
 5. Brain `MEMORY.md` is **never touched** by auto-compaction — it stays as your curated, always-loaded context
 
-#### Built-in FTS5 Memory Search
+#### Hybrid Memory Search (FTS5 + Vector Embeddings)
 
-Memory search uses SQLite's FTS5 extension — built into the existing `sqlx` dependency with **zero additional crates or external tools**. No separate binary to install, no subprocess calls, always available out of the box.
+Memory search combines two strategies via **Reciprocal Rank Fusion (RRF)** for best-of-both-worlds recall:
+
+1. **FTS5 keyword search** — BM25-ranked full-text matching with porter stemming
+2. **Vector semantic search** — 768-dimensional embeddings via a local GGUF model (embeddinggemma-300M, ~300 MB)
+
+The embedding model downloads automatically on first TUI launch (~300 MB, one-time) and runs entirely on CPU. **No API key, no cloud service, no per-query cost, works offline.** If the model isn't available yet (first launch, still downloading), search gracefully falls back to FTS-only.
 
 ```
 ┌─────────────────────────────────────┐
@@ -720,42 +707,36 @@ Memory search uses SQLite's FTS5 extension — built into the existing `sqlx` de
                │ index on startup +
                │ after each compaction
                ▼
-┌─────────────────────────────────────┐
-│  memory.db  (SQLite WAL mode)       │
-│  ┌───────────────────────────────┐  │
-│  │ memory_docs (content table)   │  │  path, body, hash, modified_at
-│  └───────────────┬───────────────┘  │
-│                  │ sync triggers    │
-│  ┌───────────────▼───────────────┐  │
-│  │ memory_fts (FTS5 virtual)     │  │  porter + unicode61 tokenizer
-│  └───────────────────────────────┘  │
-└──────────────┬──────────────────────┘
-               │ MATCH query
-               ▼
-┌─────────────────────────────────────┐
-│  BM25-ranked results with snippets  │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  memory.db  (SQLite WAL mode)                   │
+│  ┌───────────────────────┐ ┌──────────────────┐ │
+│  │ documents + FTS5      │ │ vector embeddings│ │
+│  │ (BM25, porter stem)   │ │ (768-dim, cosine)│ │
+│  └───────────┬───────────┘ └────────┬─────────┘ │
+└──────────────┼──────────────────────┼───────────┘
+               │ MATCH query          │ cosine similarity
+               ▼                      ▼
+┌─────────────────────────────────────────────────┐
+│  Reciprocal Rank Fusion (k=60)                  │
+│  Merges keyword + semantic results              │
+└─────────────────────┬───────────────────────────┘
+                      ▼
+┌─────────────────────────────────────────────────┐
+│  Hybrid-ranked results with snippets            │
+└─────────────────────────────────────────────────┘
 ```
 
-**vs. previous QMD approach:**
+**Why local embeddings instead of OpenAI/cloud?**
 
-| | QMD (before) | Built-in FTS5 (now) |
+| | Local (embeddinggemma-300M) | Cloud API (e.g. OpenAI) |
 |---|---|---|
-| **Dependencies** | External `qmd` binary required | Zero — uses existing `sqlx` SQLite |
-| **Availability** | Only if user installs QMD | Always on, every install |
-| **Search method** | Subprocess call (`Command::new("qmd")`) | In-process async SQL query |
-| **Ranking** | QMD's internal scoring | FTS5 BM25 with porter stemming |
-| **Index updates** | Background `qmd update` subprocess | Direct `INSERT ON CONFLICT` (~0.3ms/file) |
-| **Failure mode** | Silent degradation if not installed | Always works |
-
-**Benchmarks** (release build, 50 memory files, in-memory SQLite):
-
-| Operation | Time |
-|---|---|
-| Index 50 files (first run) | 15ms |
-| Re-index 50 files (no changes, hash skip) | 3ms |
-| Per-file index | ~0.3ms |
-| Search query (avg over 500 queries) | ~0.4ms |
+| **Cost** | Free forever | ~$0.0001/query, adds up |
+| **Privacy** | 100% local, nothing leaves your machine | Data sent to third party |
+| **Latency** | ~2ms (in-process, no network) | 100-500ms (HTTP round-trip) |
+| **Offline** | Works without internet | Requires internet |
+| **Setup** | Automatic, no API key needed | Requires API key + billing |
+| **Quality** | Excellent for code/session recall (768-dim) | Slightly better for general-purpose |
+| **Size** | ~300 MB one-time download | N/A |
 
 ### User-Defined Slash Commands
 
@@ -845,6 +826,7 @@ Integration Layer (LLM Providers, LSP)
 | Markdown | pulldown-cmark |
 | LSP Client | Tower-LSP |
 | Provider Registry | Crabrace |
+| Memory Search | qmd (FTS5 + vector embeddings) |
 | Error Handling | anyhow + thiserror + color-eyre |
 | Logging | tracing + tracing-subscriber |
 | Security | zeroize + keyring |
@@ -940,26 +922,53 @@ cargo clippy -- -D warnings
 
 | Metric | Value |
 |--------|-------|
-| Startup time | < 50ms |
-| Memory (idle) | ~15 MB |
-| Memory (100 messages) | ~20 MB |
-| Database ops | < 10ms (session), < 5ms (message) |
+| Binary size | 34 MB (release, stripped, LTO) |
+| RAM idle (RSS) | 57 MB |
+| RAM active (100 msgs) | ~20 MB |
+| Startup time | < 50 ms |
+| Database ops | < 10 ms (session), < 5 ms (message) |
+| Embedding engine | embeddinggemma-300M (~300 MB, local GGUF, auto-downloaded) |
 
-#### Memory Search (qmd FTS5)
+#### Memory Search (qmd — FTS5 + Vector Embeddings)
+
+Hybrid semantic search: FTS5 BM25 keyword matching + 768-dim vector embeddings combined via Reciprocal Rank Fusion. Embedding model runs locally — **no API key, zero cost, works offline**.
+
 
 Benchmarked with `cargo bench --bench memory` on release builds:
 
 | Operation | Time | Notes |
 |-----------|------|-------|
-| Store open | 1.7 ms | Cold start (create DB + schema) |
-| Index file | 203 µs | Insert content + document |
-| Hash skip | 18 µs | Already indexed, unchanged — fast path |
-| Search (10 docs) | 381 µs | 2-term BM25 query |
-| Search (50 docs) | 2.4 ms | Typical user corpus |
-| Search (100 docs) | 8.5 ms | |
-| Search (single term) | 1.4 ms | 1-term query, 50 docs |
-| Bulk reindex (50 files) | 11.3 ms | From cold, includes store open |
+| Store open | 1.81 ms | Cold start (create DB + schema) |
+| Index file | 214 µs | Insert content + document |
+| Hash skip | 19.5 µs | Already indexed, unchanged — fast path |
+| FTS search (10 docs) | 397 µs | 2-term BM25 query |
+| FTS search (50 docs) | 2.57 ms | Typical user corpus |
+| FTS search (100 docs) | 9.22 ms | |
+| FTS search (500 docs) | 88.1 ms | Large corpus |
+| Vector search (10 docs) | 247 µs | 768-dim cosine similarity |
+| Vector search (50 docs) | 1.02 ms | 768-dim cosine similarity |
+| Vector search (100 docs) | 2.04 ms | 768-dim cosine similarity |
+| Hybrid RRF (50 docs) | 3.49 ms | FTS + vector → Reciprocal Rank Fusion |
+| Insert embedding | 301 µs | Single 768-dim vector |
+| Bulk reindex (50 files) | 11.4 ms | From cold, includes store open |
 | Deactivate document | 267 µs | Prune a single entry |
+
+**Benchmarks** (release build, in-memory SQLite, criterion):
+
+| Operation | Time |
+|---|---|
+| Index 50 files (first run) | 11.4 ms |
+| Per-file index | 214 µs |
+| Hash skip (unchanged file) | 19.5 µs |
+| FTS search (10 docs) | 397 µs |
+| FTS search (50 docs) | 2.57 ms |
+| FTS search (100 docs) | 9.2 ms |
+| Vector search (10 docs, 768-dim) | 247 µs |
+| Vector search (50 docs, 768-dim) | 1.02 ms |
+| Vector search (100 docs, 768-dim) | 2.04 ms |
+| Hybrid RRF (FTS + vector, 50 docs) | 3.49 ms |
+| Insert embedding | 301 µs |
+| Deactivate document | 267 µs |
 
 ---
 
@@ -970,6 +979,16 @@ Benchmarked with `cargo bench --bench memory` on release builds:
 ```bash
 sudo apt-get install build-essential pkg-config libssl-dev libchafa-dev
 ```
+
+#### Older CPUs (Sandy Bridge / AVX-only)
+
+The default release binary requires AVX2 (Haswell 2013+). If you have an older CPU with only AVX support (Sandy Bridge/Ivy Bridge, 2011-2012), build from source with:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+```
+
+Pre-built `*-compat` binaries are also available on the [releases page](https://github.com/adolfousier/opencrabs/releases) for AVX-only CPUs. If your CPU lacks AVX entirely (pre-2011), vector embeddings are disabled and search falls back to FTS-only keyword matching.
 
 ### macOS
 

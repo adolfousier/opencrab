@@ -79,6 +79,28 @@ fn has_image(msg: &Message) -> bool {
     msg.image_message.is_some()
 }
 
+/// Check if the message has a downloadable audio/voice note.
+fn has_audio(msg: &Message) -> bool {
+    let msg = unwrap_message(msg);
+    msg.audio_message.is_some()
+}
+
+/// Download audio from WhatsApp. Returns raw bytes on success.
+async fn download_audio(msg: &Message, client: &Client) -> Option<Vec<u8>> {
+    let msg = unwrap_message(msg);
+    let audio = msg.audio_message.as_ref()?;
+    match client.download(audio.as_ref()).await {
+        Ok(bytes) => {
+            tracing::debug!("WhatsApp: downloaded audio ({} bytes)", bytes.len());
+            Some(bytes)
+        }
+        Err(e) => {
+            tracing::error!("WhatsApp: failed to download audio: {e}");
+            None
+        }
+    }
+}
+
 /// Download image from WhatsApp and save to a temp file.
 /// Returns the file path on success.
 async fn download_image(msg: &Message, client: &Client) -> Option<String> {
@@ -165,7 +187,7 @@ pub(crate) async fn handle_message(
     session_svc: SessionService,
     allowed: Arc<HashSet<String>>,
     extra_sessions: Arc<Mutex<HashMap<String, Uuid>>>,
-    _voice_config: Arc<VoiceConfig>,
+    voice_config: Arc<VoiceConfig>,
     shared_session: Arc<Mutex<Option<Uuid>>>,
 ) {
     let phone = sender_phone(&info);
@@ -191,12 +213,13 @@ pub(crate) async fn handle_message(
         }
     }
 
-    // Build message content: text + optional image attachment
+    // Build message content: text, image, or audio
     let has_img = has_image(&msg);
+    let has_aud = has_audio(&msg);
     let text = extract_text(&msg);
 
-    // Require at least text or image
-    if text.is_none() && !has_img {
+    // Require at least text, image, or audio
+    if text.is_none() && !has_img && !has_aud {
         return;
     }
 
@@ -215,9 +238,32 @@ pub(crate) async fn handle_message(
         .unwrap_or("[image]");
     tracing::info!("WhatsApp: message from {}: {}", phone, text_preview);
 
+    // Audio/voice note → STT transcription
+    let mut content;
+    if has_aud
+        && voice_config.stt_enabled
+        && let Some(ref groq_key) = voice_config.groq_api_key
+        && let Some(audio_bytes) = download_audio(&msg, &client).await
+    {
+        match crate::voice::transcribe_audio(audio_bytes, groq_key).await {
+            Ok(transcript) => {
+                tracing::info!(
+                    "WhatsApp: transcribed voice: {}",
+                    &transcript[..transcript.len().min(80)]
+                );
+                content = transcript;
+            }
+            Err(e) => {
+                tracing::error!("WhatsApp: STT error: {e}");
+                content = text.unwrap_or_default();
+            }
+        }
+    } else {
+        content = text.unwrap_or_default();
+    }
+
     // Download image if present, append <<IMG:path>> marker
-    let mut content = text.unwrap_or_default();
-    if has_img
+    if has_img && !has_aud
         && let Some(img_path) = download_image(&msg, &client).await
     {
         if content.is_empty() {

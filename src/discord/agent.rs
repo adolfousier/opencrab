@@ -71,6 +71,9 @@ impl DiscordAgent {
             let allowed_channels: HashSet<String> =
                 self.allowed_channels.into_iter().collect();
 
+            let voice_config = Arc::new(self.voice_config);
+            let openai_key = Arc::new(std::env::var("OPENAI_API_KEY").ok());
+
             let event_handler = Handler {
                 agent: self.agent_service,
                 session_svc: self.session_service,
@@ -80,6 +83,8 @@ impl DiscordAgent {
                 discord_state: self.discord_state,
                 respond_to: self.respond_to,
                 allowed_channels: Arc::new(allowed_channels),
+                voice_config,
+                openai_key,
             };
 
             let intents = GatewayIntents::GUILD_MESSAGES
@@ -114,6 +119,8 @@ struct Handler {
     discord_state: Arc<DiscordState>,
     respond_to: RespondTo,
     allowed_channels: Arc<HashSet<String>>,
+    voice_config: Arc<VoiceConfig>,
+    openai_key: Arc<Option<String>>,
 }
 
 #[async_trait]
@@ -145,6 +152,8 @@ impl EventHandler for Handler {
             self.discord_state.clone(),
             &self.respond_to,
             &self.allowed_channels,
+            self.voice_config.clone(),
+            self.openai_key.clone(),
         )
         .await;
     }
