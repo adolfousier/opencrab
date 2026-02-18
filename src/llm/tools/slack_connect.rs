@@ -57,6 +57,12 @@ impl Tool for SlackConnectTool {
                     "type": "string",
                     "description": "Slack App-Level Token (starts with xapp-). Required for Socket Mode."
                 },
+                "channel_id": {
+                    "type": "string",
+                    "description": "Slack channel ID where the bot should send its welcome message \
+                                    (e.g. 'C12345678'). Right-click a channel → View channel details → \
+                                    copy the Channel ID at the bottom."
+                },
                 "allowed_ids": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -151,11 +157,26 @@ impl Tool for SlackConnectTool {
         let start = std::time::Instant::now();
         loop {
             if slack_state.is_connected().await {
-                return Ok(ToolResult::success(
-                    "Slack bot connected successfully via Socket Mode! \
-                     Now listening for messages. Connection persists across restarts."
-                        .to_string(),
-                ));
+                // Set owner channel if provided so send tool works immediately
+                if let Some(ch) = input.get("channel_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    slack_state.set_owner_channel(ch.to_string()).await;
+                }
+
+                let mut msg = "Slack bot connected successfully via Socket Mode! \
+                     Now listening for messages. Connection persists across restarts.".to_string();
+
+                if input.get("channel_id").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty()) {
+                    msg.push_str(
+                        "\n\nIMPORTANT: Send a welcome message to the user RIGHT NOW \
+                         using the `slack_send` tool. Be wildly fun — talk like their \
+                         best buddy from childhood. You can curse, be unhinged, hilarious, \
+                         and totally informal. Use your personality, SOUL.md, and any context \
+                         you have about the user. Make it memorable and uniquely yours. \
+                         No generic corporate greetings — surprise them!"
+                    );
+                }
+
+                return Ok(ToolResult::success(msg));
             }
             if start.elapsed() > timeout {
                 return Ok(ToolResult::error(

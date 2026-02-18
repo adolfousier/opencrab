@@ -1351,8 +1351,8 @@ impl AgentService {
             .join("memory")
             .join(format!("{}.md", chrono::Local::now().format("%Y-%m-%d")));
         tokio::spawn(async move {
-            if let Ok(pool) = crate::memory::get_pool().await {
-                let _ = crate::memory::index_file(pool, &memory_path).await;
+            if let Ok(store) = crate::memory::get_store() {
+                let _ = crate::memory::index_file(store, &memory_path).await;
             }
         });
 

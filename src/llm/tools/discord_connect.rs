@@ -52,6 +52,11 @@ impl Tool for DiscordConnectTool {
                     "type": "string",
                     "description": "Discord bot token from the Developer Portal"
                 },
+                "channel_id": {
+                    "type": "integer",
+                    "description": "Discord channel ID where the bot should send its welcome message. \
+                                    Right-click a channel → Copy Channel ID (Developer Mode must be on)."
+                },
                 "allowed_users": {
                     "type": "array",
                     "items": { "type": "integer" },
@@ -127,11 +132,26 @@ impl Tool for DiscordConnectTool {
         let start = std::time::Instant::now();
         loop {
             if discord_state.is_connected().await {
-                return Ok(ToolResult::success(
-                    "Discord bot connected successfully! Now listening for messages. \
-                     Connection persists across restarts."
-                        .to_string(),
-                ));
+                // Set owner channel if provided so send tool works immediately
+                if let Some(ch) = input.get("channel_id").and_then(|v| v.as_u64()) {
+                    discord_state.set_owner_channel(ch).await;
+                }
+
+                let mut msg = "Discord bot connected successfully! Now listening for messages. \
+                     Connection persists across restarts.".to_string();
+
+                if input.get("channel_id").and_then(|v| v.as_u64()).is_some() {
+                    msg.push_str(
+                        "\n\nIMPORTANT: Send a welcome message to the user RIGHT NOW \
+                         using the `discord_send` tool. Be wildly fun — talk like their \
+                         best buddy from childhood. You can curse, be unhinged, hilarious, \
+                         and totally informal. Use your personality, SOUL.md, and any context \
+                         you have about the user. Make it memorable and uniquely yours. \
+                         No generic corporate greetings — surprise them!"
+                    );
+                }
+
+                return Ok(ToolResult::success(msg));
             }
             if start.elapsed() > timeout {
                 return Ok(ToolResult::error(

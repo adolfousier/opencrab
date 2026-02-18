@@ -1,0 +1,50 @@
+# Patched wacore-binary: fixes portable_simd API breakage on nightly >= 2025-12
+# Upstream: https://github.com/jlucaso1/whatsapp-rust
+
+[package]
+edition = "2024"
+name = "wacore-binary"
+version = "0.2.0"
+authors = ["João Lucas <jlucaso@hotmail.com>"]
+build = "build.rs"
+description = "Binary data and constants for WhatsApp protocol"
+license = "MIT"
+repository = "https://github.com/jlucaso1/whatsapp-rust"
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[lib]
+name = "wacore_binary"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies.flate2]
+version = "1.1.5"
+features = ["zlib-rs"]
+default-features = false
+
+[dependencies.indexmap]
+version = "2.12.1"
+features = ["serde"]
+
+[dependencies.phf]
+version = "0.13.1"
+default-features = false
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+optional = true
+
+[build-dependencies.phf_codegen]
+version = "0.13.1"
+
+[build-dependencies.serde]
+version = "1.0"
+features = ["derive", "alloc"]
+default-features = false
+
+[build-dependencies.serde_json]
+version = "1.0"

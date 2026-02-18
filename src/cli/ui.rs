@@ -103,14 +103,14 @@ pub(crate) async fn cmd_chat(
 
     // Index existing memory files in the background (non-blocking)
     tokio::spawn(async {
-        match crate::memory::get_pool().await {
-            Ok(pool) => {
-                match crate::memory::reindex(pool).await {
+        match crate::memory::get_store() {
+            Ok(store) => {
+                match crate::memory::reindex(store).await {
                     Ok(n) => tracing::info!("Startup memory reindex: {n} files"),
                     Err(e) => tracing::warn!("Startup memory reindex failed: {e}"),
                 }
             }
-            Err(e) => tracing::warn!("Memory DB init failed at startup: {e}"),
+            Err(e) => tracing::warn!("Memory store init failed at startup: {e}"),
         }
     });
 

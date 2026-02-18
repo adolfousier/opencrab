@@ -945,6 +945,22 @@ cargo clippy -- -D warnings
 | Memory (100 messages) | ~20 MB |
 | Database ops | < 10ms (session), < 5ms (message) |
 
+#### Memory Search (qmd FTS5)
+
+Benchmarked with `cargo bench --bench memory` on release builds:
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| Store open | 1.7 ms | Cold start (create DB + schema) |
+| Index file | 203 µs | Insert content + document |
+| Hash skip | 18 µs | Already indexed, unchanged — fast path |
+| Search (10 docs) | 381 µs | 2-term BM25 query |
+| Search (50 docs) | 2.4 ms | Typical user corpus |
+| Search (100 docs) | 8.5 ms | |
+| Search (single term) | 1.4 ms | 1-term query, 50 docs |
+| Bulk reindex (50 files) | 11.3 ms | From cold, includes store open |
+| Deactivate document | 267 µs | Prune a single entry |
+
 ---
 
 ## 🐛 Platform Notes

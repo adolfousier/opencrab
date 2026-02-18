@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 
 use qrcode::QrCode;
 use wacore::types::events::Event;
-use waproto;
+
 use whatsapp_rust::bot::Bot;
 use whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory;
 use whatsapp_rust_ureq_http_client::UreqHttpClient;
@@ -310,37 +310,15 @@ impl Tool for WhatsAppConnectTool {
                 // Update config to persist for auto-reconnect on restart
                 let _ = crate::config::Config::write_key("channels.whatsapp", "enabled", "true");
 
-                // Send a surprise welcome message to the owner
-                let wa_state = self.whatsapp_state.clone();
-                tokio::spawn(async move {
-                    // Small delay to let the connection fully stabilize
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    if let (Some(client), Some(owner_jid)) =
-                        (wa_state.client().await, wa_state.owner_jid().await)
-                    {
-                        let jid: wacore_binary::jid::Jid = match owner_jid.parse() {
-                            Ok(j) => j,
-                            Err(_) => return,
-                        };
-                        let welcome = waproto::whatsapp::Message {
-                            conversation: Some(format!(
-                                "{}\n\n\
-                                 WhatsApp link is live! \
-                                 I can now read your messages and reach out to you anytime. \
-                                 Just say the word!",
-                                crate::whatsapp::handler::MSG_HEADER,
-                            )),
-                            ..Default::default()
-                        };
-                        if let Err(e) = client.send_message(jid, welcome).await {
-                            tracing::warn!("WhatsApp: failed to send welcome message: {}", e);
-                        }
-                    }
-                });
-
                 Ok(ToolResult::success(
-                    "WhatsApp connected successfully! The bot is now listening for messages. \
-                     Connection persists across restarts."
+                    "WhatsApp connected successfully! Now listening for messages. \
+                     Connection persists across restarts.\n\n\
+                     IMPORTANT: Send a welcome message to the user RIGHT NOW \
+                     using the `whatsapp_send` tool. Be wildly fun — talk like their \
+                     best buddy from childhood. You can curse, be unhinged, hilarious, \
+                     and totally informal. Use your personality, SOUL.md, and any context \
+                     you have about the user. Make it memorable and uniquely yours. \
+                     No generic corporate greetings — surprise them!"
                         .to_string(),
                 ))
             }

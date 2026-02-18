@@ -5,6 +5,21 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.16] - 2026-02-18
+
+### Changed
+- **QMD Crate for Memory Search** -- Replaced homebrew FTS5 implementation with the `qmd` crate (BM25 search, SHA-256 content hashing, collection management). Upgraded `sqlx` to 0.9 (git main) to resolve `libsqlite3-sys` linking conflict
+- **Brain Files Indexed** -- Memory search now indexes workspace brain files (`SOUL.md`, `IDENTITY.md`, `MEMORY.md`, etc.) alongside daily compaction logs for richer search context
+- **Dynamic Welcome Messages** -- All channel connect tools (Telegram, Discord, Slack, WhatsApp) now instruct the agent to craft a creative, personality-driven welcome message on successful connection instead of hardcoded greetings
+- **WhatsApp Welcome Removed** -- Replaced hardcoded WhatsApp welcome spawn with agent-generated message via `whatsapp_send` tool
+- **Patches Relocated** -- Moved `wacore-binary` patch from `patches/` to `src/patches/`, stripped benchmarks and registry metadata
+
+### Added
+- **Discord `channel_id` Parameter** -- Optional `channel_id` input on `discord_connect` so the bot can send welcome messages immediately after connection
+- **Slack `channel_id` Parameter** -- Optional `channel_id` input on `slack_connect` for the same purpose
+- **Telegram Owner Chat ID** -- `telegram_connect` now sets the owner chat ID from the first allowed user at connection time
+- **QMD Memory Benchmarks** -- Criterion benchmarks for qmd store operations: index file (203µs), hash skip (18µs), FTS5 search (381µs–2.4ms), bulk reindex 50 files (11.3ms), store open (1.7ms)
+
 ## [0.2.15] - 2026-02-17
 
 ### Changed

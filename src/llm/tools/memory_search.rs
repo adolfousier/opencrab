@@ -1,6 +1,6 @@
 //! Memory Search Tool
 //!
-//! Searches past conversation compaction logs using built-in FTS5 full-text search.
+//! Searches past conversation compaction logs using the `qmd` crate's FTS5 engine.
 //! Always available — no external dependencies required.
 
 use super::error::Result;
@@ -8,7 +8,7 @@ use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// Memory search tool backed by built-in FTS5.
+/// Memory search tool backed by the `qmd` crate's FTS5 engine.
 pub struct MemorySearchTool;
 
 #[async_trait]
@@ -65,11 +65,11 @@ impl Tool for MemorySearchTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(5) as usize;
 
-        // Get memory database pool
-        let pool = match crate::memory::get_pool().await {
-            Ok(p) => p,
+        // Get memory qmd store
+        let store = match crate::memory::get_store() {
+            Ok(s) => s,
             Err(e) => {
-                tracing::warn!("Memory DB init failed: {}", e);
+                tracing::warn!("Memory store init failed: {}", e);
                 return Ok(ToolResult::error(format!(
                     "Memory search unavailable: {e}. \
                      Daily memory logs are still saved to ~/.opencrabs/memory/ as markdown files \
@@ -78,7 +78,7 @@ impl Tool for MemorySearchTool {
             }
         };
 
-        match crate::memory::search(pool, &query, n).await {
+        match crate::memory::search(store, &query, n).await {
             Ok(results) if results.is_empty() => {
                 Ok(ToolResult::success("No matching memories found.".to_string()))
             }

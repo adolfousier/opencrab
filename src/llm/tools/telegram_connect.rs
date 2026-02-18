@@ -89,6 +89,9 @@ impl Tool for TelegramConnectTool {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
+        // Capture owner ID before vec is moved into TelegramAgent
+        let owner_chat_id = allowed_users.first().copied();
+
         // Save token to keyring for persistence
         if let Ok(entry) = keyring::Entry::new("opencrabs", "telegram_bot_token") {
             let _ = entry.set_password(&token);
@@ -126,12 +129,26 @@ impl Tool for TelegramConnectTool {
         let start = std::time::Instant::now();
         loop {
             if telegram_state.is_connected().await {
-                return Ok(ToolResult::success(
-                    "Telegram bot connected successfully! Now listening for messages. \
-                     Users can send /start to the bot to get their user ID for the allowlist. \
-                     Connection persists across restarts."
-                        .to_string(),
-                ));
+                // Set owner chat ID from first allowed user (chat_id == user_id for DMs)
+                if let Some(owner_id) = owner_chat_id {
+                    telegram_state.set_owner_chat_id(owner_id).await;
+                }
+
+                let mut msg = "Telegram bot connected successfully! Now listening for messages. \
+                     Connection persists across restarts.".to_string();
+
+                if owner_chat_id.is_some() {
+                    msg.push_str(
+                        "\n\nIMPORTANT: Send a welcome message to the user RIGHT NOW \
+                         using the `telegram_send` tool. Be wildly fun — talk like their \
+                         best buddy from childhood. You can curse, be unhinged, hilarious, \
+                         and totally informal. Use your personality, SOUL.md, and any context \
+                         you have about the user. Make it memorable and uniquely yours. \
+                         No generic corporate greetings — surprise them!"
+                    );
+                }
+
+                return Ok(ToolResult::success(msg));
             }
             if start.elapsed() > timeout {
                 return Ok(ToolResult::error(
