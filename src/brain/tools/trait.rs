@@ -4,6 +4,7 @@ use super::error::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Execution context for tools
@@ -29,6 +30,10 @@ pub struct ToolExecutionContext {
 
     /// Callback for requesting sudo password from the user (set by TUI)
     pub sudo_callback: Option<crate::brain::agent::SudoCallback>,
+
+    /// Shared working directory handle — tools can mutate this to change the
+    /// working directory at runtime (e.g. config_manager set_working_directory).
+    pub shared_working_directory: Option<Arc<std::sync::RwLock<std::path::PathBuf>>>,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -55,6 +60,7 @@ impl ToolExecutionContext {
             timeout_secs: 120,
             read_only_mode: false,
             sudo_callback: None,
+            shared_working_directory: None,
         }
     }
 

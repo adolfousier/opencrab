@@ -66,6 +66,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/whisper",
         description: "Speak anywhere, paste to clipboard",
     },
+    SlashCommand {
+        name: "/cd",
+        description: "Change working directory",
+    },
 ];
 
 /// Approval option selected by the user
@@ -223,6 +227,7 @@ pub struct App {
 
     // Streaming state
     pub is_processing: bool,
+    pub processing_started_at: Option<std::time::Instant>,
     pub streaming_response: Option<String>,
     pub error_message: Option<String>,
 
@@ -363,6 +368,7 @@ impl App {
             selected_session_index: 0,
             should_quit: false,
             is_processing: false,
+            processing_started_at: None,
             streaming_response: None,
             error_message: None,
             animation_frame: 0,
@@ -441,6 +447,7 @@ impl App {
             self.splash_shown_at = None;
             // Send a hidden wake-up message to the agent (not shown in UI)
             self.is_processing = true;
+            self.processing_started_at = Some(std::time::Instant::now());
             let agent_service = self.agent_service.clone();
             let event_sender = self.event_sender();
             let token = CancellationToken::new();
@@ -602,6 +609,8 @@ impl App {
             TuiEvent::IntermediateText(text) => {
                 tracing::info!("[TUI] IntermediateText: len={} active_group={} streaming={}",
                     text.len(), self.active_tool_group.is_some(), self.streaming_response.is_some());
+                // Reset timer for next thinking phase
+                self.processing_started_at = Some(std::time::Instant::now());
                 // Clear streaming response — text was already shown live via streaming chunks,
                 // now it becomes a permanent message in the chat history.
                 self.streaming_response = None;
@@ -645,6 +654,8 @@ impl App {
                 }
             }
             TuiEvent::ToolCallCompleted { tool_name, tool_input, success, summary } => {
+                // Reset timer so "thinking..." counter restarts after each tool call
+                self.processing_started_at = Some(std::time::Instant::now());
                 let desc = Self::format_tool_description(&tool_name, &tool_input);
                 let details = if summary.is_empty() { None } else { Some(summary) };
 
@@ -690,17 +701,19 @@ impl App {
                     self.messages.drain(..remove_count);
                     self.render_cache.clear();
                 }
-                // Show the compaction summary as a system message in chat
+                // Show the compaction summary as a system message in chat.
+                // Short label in `content` (always visible), full summary in
+                // `details` (expand with Ctrl+O) so it doesn't flood the chat.
                 self.messages.push(DisplayMessage {
                     id: Uuid::new_v4(),
                     role: "system".to_string(),
-                    content: format!("**Context compacted.** Summary saved to daily memory log.\n\n{}", summary),
+                    content: "Context compacted — summary saved to daily memory log".to_string(),
                     timestamp: chrono::Utc::now(),
                     token_count: None,
                     cost: None,
                     approval: None,
                     approve_menu: None,
-                    details: None,
+                    details: Some(summary),
                     expanded: false,
                     tool_group: None,
                     plan_approval: None,
@@ -910,6 +923,7 @@ impl App {
             AppMode::Plan => self.handle_plan_key(event).await?,
             AppMode::Sessions => self.handle_sessions_key(event).await?,
             AppMode::FilePicker => self.handle_file_picker_key(event).await?,
+            AppMode::DirectoryPicker => self.handle_directory_picker_key(event).await?,
             AppMode::ModelSelector => self.handle_model_selector_key(event).await?,
             AppMode::UsageDialog => {
                 if keys::is_cancel(&event) || keys::is_enter(&event) {
@@ -1457,6 +1471,7 @@ impl App {
                             token.cancel();
                         }
                         self.is_processing = false;
+                        self.processing_started_at = None;
                         self.streaming_response = None;
                         self.cancel_token = None;
                         self.escape_pending_at = None;
@@ -1532,7 +1547,7 @@ impl App {
                 !group.expanded
             } else if let Some(msg) = self.messages.iter().rev()
                 .find(|m| m.tool_group.is_some()) {
-                !msg.tool_group.as_ref().unwrap().expanded
+                !msg.tool_group.as_ref().expect("tool_group checked is_some above").expanded
             } else {
                 true
             };
@@ -2077,6 +2092,10 @@ impl App {
                 self.mode = AppMode::Help;
                 true
             }
+            "/cd" => {
+                let _ = self.open_directory_picker().await;
+                true
+            }
             _ if input.starts_with('/') => {
                 // Check user-defined commands
                 if let Some(user_cmd) = self.user_commands.iter().find(|c| c.name == cmd) {
@@ -2448,7 +2467,7 @@ impl App {
             self.current_session.is_some(),
             content.len());
 
-        // Deny stale pending approvals so they don't block streaming, then remove them
+        // Deny stale pending approvals so they don't block streaming
         let stale_count = self.messages.iter()
             .filter(|m| m.approval.as_ref().is_some_and(|a| a.state == ApprovalState::Pending))
             .count();
@@ -2465,7 +2484,6 @@ impl App {
                 approval.state = ApprovalState::Denied("Superseded".to_string());
             }
         }
-        self.messages.retain(|m| m.approval.is_none() || m.approval.as_ref().is_some_and(|a| a.state == ApprovalState::Pending));
 
         if self.is_processing {
             tracing::warn!("[send_message] QUEUED — agent still processing previous request");
@@ -2493,6 +2511,7 @@ impl App {
         }
         if let Some(session) = &self.current_session {
             self.is_processing = true;
+            self.processing_started_at = Some(std::time::Instant::now());
             self.error_message = None;
 
             // Analyze and transform the prompt before sending to agent
@@ -2597,10 +2616,11 @@ impl App {
         response: crate::brain::agent::AgentResponse,
     ) -> Result<()> {
         self.is_processing = false;
+        self.processing_started_at = None;
         self.streaming_response = None;
         self.cancel_token = None;
 
-        // Clean up stale pending approvals — send deny so agent callbacks don't hang, then remove
+        // Clean up stale pending approvals — send deny so agent callbacks don't hang
         for msg in &mut self.messages {
             if let Some(ref mut approval) = msg.approval && approval.state == ApprovalState::Pending {
                 tracing::warn!("Cleaning up stale pending approval for tool '{}'", approval.tool_name);
@@ -2612,7 +2632,6 @@ impl App {
                 approval.state = ApprovalState::Denied("Agent completed without resolution".to_string());
             }
         }
-        self.messages.retain(|m| m.approval.is_none() || m.approval.as_ref().is_some_and(|a| a.state == ApprovalState::Pending));
 
         // Finalize active tool group into a display message
         if let Some(group) = self.active_tool_group.take() {
@@ -3220,6 +3239,7 @@ impl App {
     /// Show an error message
     fn show_error(&mut self, error: String) {
         self.is_processing = false;
+        self.processing_started_at = None;
         self.streaming_response = None;
         self.cancel_token = None;
         // Deny any pending approvals so agent callbacks don't hang, then remove
@@ -3233,7 +3253,6 @@ impl App {
                 approval.state = ApprovalState::Denied("Error occurred".to_string());
             }
         }
-        self.messages.retain(|m| m.approval.is_none() || m.approval.as_ref().is_some_and(|a| a.state == ApprovalState::Pending));
         // Finalize any active tool group
         if let Some(group) = self.active_tool_group.take() {
             let count = group.calls.len();
@@ -3296,7 +3315,7 @@ impl App {
     fn handle_approval_requested(&mut self, request: ToolApprovalRequest) {
         tracing::info!("[APPROVAL] handle_approval_requested called for tool='{}' auto_session={} auto_always={}",
             request.tool_name, self.approval_auto_session, self.approval_auto_always);
-        // Deny and remove stale pending approvals from previous requests
+        // Deny stale pending approvals from previous requests (keep in chat for context)
         for msg in &mut self.messages {
             if let Some(ref mut approval) = msg.approval && approval.state == ApprovalState::Pending {
                 let _ = approval.response_tx.send(ToolApprovalResponse {
@@ -3307,9 +3326,6 @@ impl App {
                 approval.state = ApprovalState::Denied("Superseded by new request".to_string());
             }
         }
-        self.messages.retain(|m| {
-            m.approval.as_ref().is_none_or(|a| !matches!(a.state, ApprovalState::Denied(_)))
-        });
 
         // Auto-approve silently if policy allows
         if self.approval_auto_always || self.approval_auto_session {
@@ -3715,6 +3731,104 @@ impl App {
                     self.switch_mode(AppMode::Chat).await?;
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Open directory picker (reuses file picker state, dirs only)
+    async fn open_directory_picker(&mut self) -> Result<()> {
+        let mut files = Vec::new();
+
+        // Add parent directory option if not at root
+        if self.file_picker_current_dir.parent().is_some() {
+            files.push(self.file_picker_current_dir.join(".."));
+        }
+
+        // Read directory entries — directories only
+        if let Ok(entries) = std::fs::read_dir(&self.file_picker_current_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    files.push(path);
+                }
+            }
+        }
+
+        // Sort alphabetically
+        files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+        self.file_picker_files = files;
+        self.file_picker_selected = 0;
+        self.file_picker_scroll_offset = 0;
+        self.switch_mode(AppMode::DirectoryPicker).await?;
+
+        Ok(())
+    }
+
+    /// Handle keys in directory picker mode
+    async fn handle_directory_picker_key(
+        &mut self,
+        event: crossterm::event::KeyEvent,
+    ) -> Result<()> {
+        use super::events::keys;
+        use crossterm::event::KeyCode;
+
+        if keys::is_cancel(&event) {
+            self.switch_mode(AppMode::Chat).await?;
+        } else if keys::is_up(&event) {
+            self.file_picker_selected = self.file_picker_selected.saturating_sub(1);
+            if self.file_picker_selected < self.file_picker_scroll_offset {
+                self.file_picker_scroll_offset = self.file_picker_selected;
+            }
+        } else if keys::is_down(&event) {
+            if self.file_picker_selected + 1 < self.file_picker_files.len() {
+                self.file_picker_selected += 1;
+                let visible_items = 20;
+                if self.file_picker_selected >= self.file_picker_scroll_offset + visible_items {
+                    self.file_picker_scroll_offset =
+                        self.file_picker_selected - visible_items + 1;
+                }
+            }
+        } else if keys::is_enter(&event) {
+            // Enter navigates into directory
+            if let Some(selected_path) =
+                self.file_picker_files.get(self.file_picker_selected).cloned()
+            {
+                if selected_path.ends_with("..") {
+                    if let Some(parent) = self.file_picker_current_dir.parent() {
+                        self.file_picker_current_dir = parent.to_path_buf();
+                    }
+                } else {
+                    self.file_picker_current_dir = selected_path;
+                }
+                self.open_directory_picker().await?;
+            }
+        } else if event.code == KeyCode::Tab || event.code == KeyCode::Char(' ') {
+            // Tab/Space selects the current directory as working dir
+            let selected_dir = self.file_picker_current_dir.clone();
+            let canonical = selected_dir
+                .canonicalize()
+                .unwrap_or_else(|_| selected_dir.clone());
+
+            // Update App working directory
+            self.working_directory = canonical.clone();
+
+            // Update AgentService working directory (runtime)
+            self.agent_service.set_working_directory(canonical.clone());
+
+            // Persist to config.toml
+            let _ = crate::config::Config::write_key(
+                "agent",
+                "working_directory",
+                &canonical.to_string_lossy(),
+            );
+
+            self.push_system_message(format!(
+                "Working directory changed to: {}",
+                canonical.display()
+            ));
+            self.switch_mode(AppMode::Chat).await?;
         }
 
         Ok(())

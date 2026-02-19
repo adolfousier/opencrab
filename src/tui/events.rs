@@ -190,6 +190,8 @@ pub enum AppMode {
     UsageDialog,
     /// Restart confirmation pending (after successful /rebuild)
     RestartPending,
+    /// Directory picker dialog (triggered by /cd)
+    DirectoryPicker,
     /// Onboarding wizard
     Onboarding,
 }

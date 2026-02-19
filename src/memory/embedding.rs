@@ -6,6 +6,16 @@ use std::sync::Mutex;
 
 static ENGINE: OnceCell<Mutex<EmbeddingEngine>> = OnceCell::new();
 
+/// Disable llama.cpp's C-level logging globally.
+///
+/// Must be called once before creating any EmbeddingEngine.
+/// Routes all llama.cpp log output through the tracing framework
+/// with logging disabled — zero stderr pollution.
+fn silence_llama_logs() {
+    use llama_cpp_2::{LogOptions, send_logs_to_tracing};
+    send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+}
+
 /// Get (or create) the shared embedding engine.
 ///
 /// Downloads the embeddinggemma-300M model (~300MB) on first call.
@@ -14,17 +24,14 @@ static ENGINE: OnceCell<Mutex<EmbeddingEngine>> = OnceCell::new();
 pub fn get_engine() -> Result<&'static Mutex<EmbeddingEngine>, String> {
     ENGINE.get_or_try_init(|| {
         check_cpu_features()?;
+        silence_llama_logs();
 
         let pull = pull_model(qmd::llm::DEFAULT_EMBED_MODEL_URI, false)
             .map_err(|e| format!("Failed to pull embedding model: {e}"))?;
 
-        // Suppress llama.cpp's C-level stderr spam during model load —
-        // it corrupts the TUI and breaks Ctrl+C handling.
-        let saved = suppress_stderr();
-        let engine = EmbeddingEngine::new(&pull.path);
-        restore_stderr(saved);
+        let engine = EmbeddingEngine::new(&pull.path)
+            .map_err(|e| format!("Failed to init embedding engine: {e}"))?;
 
-        let engine = engine.map_err(|e| format!("Failed to init embedding engine: {e}"))?;
         tracing::info!(
             "Embedding engine ready: {} ({:.1} MB)",
             pull.model,
@@ -50,38 +57,6 @@ fn check_cpu_features() -> Result<(), String> {
     Ok(())
 }
 
-/// Redirect stderr to /dev/null, returning the saved fd (or -1 on failure).
-#[cfg(unix)]
-fn suppress_stderr() -> i32 {
-    unsafe {
-        let saved = libc::dup(libc::STDERR_FILENO);
-        if saved >= 0 {
-            let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
-            if devnull >= 0 {
-                libc::dup2(devnull, libc::STDERR_FILENO);
-                libc::close(devnull);
-            }
-        }
-        saved
-    }
-}
-
-/// Restore stderr from a previously saved fd.
-#[cfg(unix)]
-fn restore_stderr(saved: i32) {
-    if saved >= 0 {
-        unsafe {
-            libc::dup2(saved, libc::STDERR_FILENO);
-            libc::close(saved);
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn suppress_stderr() -> i32 { -1 }
-#[cfg(not(unix))]
-fn restore_stderr(_saved: i32) {}
-
 /// Returns the engine if already initialized, without triggering a download.
 pub(super) fn engine_if_ready() -> Option<&'static Mutex<EmbeddingEngine>> {
     ENGINE.get()
@@ -99,20 +74,14 @@ pub(super) fn embed_content(store: &Mutex<Store>, body: &str) {
     let title = Store::extract_title(body);
     let hash = Store::hash_content(body);
 
-    // Engine lock → embed → release (suppress llama.cpp stderr spam)
     let emb = match engine_mutex.lock() {
-        Ok(mut engine) => {
-            let saved = suppress_stderr();
-            let result = engine.embed_document(body, Some(&title));
-            restore_stderr(saved);
-            match result {
-                Ok(emb) => emb,
-                Err(e) => {
-                    tracing::debug!("Embedding failed: {e}");
-                    return;
-                }
+        Ok(mut engine) => match engine.embed_document(body, Some(&title)) {
+            Ok(emb) => emb,
+            Err(e) => {
+                tracing::debug!("Embedding failed: {e}");
+                return;
             }
-        }
+        },
         Err(_) => return,
     };
 
@@ -161,14 +130,13 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
         })
         .collect();
 
-    // Engine lock: batch embed → release (suppress llama.cpp stderr spam)
+    // Engine lock: batch embed → release
     let results: Vec<_> = {
         let mut engine = match engine_mutex.lock() {
             Ok(e) => e,
             Err(_) => return,
         };
-        let saved = suppress_stderr();
-        let out = engine
+        engine
             .embed_batch_with_progress(&items, |done, total| {
                 if done % 10 == 0 || done == total {
                     tracing::debug!("Embedding progress: {done}/{total}");
@@ -176,9 +144,7 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
             })
             .into_iter()
             .map(|r| r.ok())
-            .collect();
-        restore_stderr(saved);
-        out
+            .collect()
     };
 
     // Store lock: insert all embeddings → release

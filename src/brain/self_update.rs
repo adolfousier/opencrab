@@ -110,6 +110,7 @@ impl SelfUpdater {
         let output = tokio::process::Command::new("cargo")
             .arg("build")
             .arg("--release")
+            .env("RUSTFLAGS", "-C target-cpu=native")
             .current_dir(&self.project_root)
             .output()
             .await

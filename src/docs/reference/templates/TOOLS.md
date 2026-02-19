@@ -36,6 +36,7 @@ Things like:
 ## Path Tips
 - **Workspace:** `~/.opencrabs/`
 - **Path tip:** Always run `echo $HOME` or `ls ~/.opencrabs/` first to confirm the resolved path before file operations.
+- OpenCrabs tools operate on the directory you launched from. Use `/cd` to change at runtime, or use `config_manager` with `set_working_directory` to change via natural language.
 - **Env files:** `~/.opencrabs/.env` — chmod 600 (owner-only read)
 
 ## Integrations

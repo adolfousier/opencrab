@@ -194,6 +194,8 @@ When searching for new integrations, libraries, or adding new features, **always
 
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
 
+`/cd` changes the working directory for all tool execution. You can also change it via `config_manager` with `set_working_directory` — both persist to config.toml.
+
 ## Cron Jobs — Best Practices
 
 When creating cron jobs, follow these guidelines:

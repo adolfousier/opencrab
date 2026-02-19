@@ -22,8 +22,8 @@ pub(crate) async fn cmd_chat(
                 edit::EditTool, exa_search::ExaSearchTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
                 notebook::NotebookEditTool, plan_tool::PlanTool,
-                read::ReadTool, registry::ToolRegistry, task::TaskTool, web_search::WebSearchTool,
-                write::WriteTool,
+                read::ReadTool, registry::ToolRegistry, slash_command::SlashCommandTool,
+                task::TaskTool, web_search::WebSearchTool, write::WriteTool,
             },
         },
         services::ServiceContext,
@@ -90,6 +90,8 @@ pub(crate) async fn cmd_chat(
     tool_registry.register(Arc::new(MemorySearchTool));
     // Config management (read/write config.toml, commands.toml)
     tool_registry.register(Arc::new(ConfigTool));
+    // Slash command invocation (agent can call any slash command)
+    tool_registry.register(Arc::new(SlashCommandTool));
     // EXA search: always available (free via MCP), uses direct API if key is set
     let exa_key = std::env::var("EXA_API_KEY").ok();
     let exa_mode = if exa_key.is_some() { "direct API" } else { "MCP (free)" };

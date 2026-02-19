@@ -101,8 +101,8 @@ pub struct AgentService {
     /// Callback for requesting sudo password from user
     sudo_callback: Option<SudoCallback>,
 
-    /// Working directory for tool execution
-    working_directory: std::path::PathBuf,
+    /// Working directory for tool execution (shared, mutable at runtime via /cd or agent NLP)
+    working_directory: Arc<std::sync::RwLock<std::path::PathBuf>>,
 
     /// Brain path (~/.opencrabs/) for loading brain files
     brain_path: Option<std::path::PathBuf>,
@@ -122,7 +122,7 @@ impl AgentService {
             progress_callback: None,
             message_queue_callback: None,
             sudo_callback: None,
-            working_directory: std::env::current_dir().unwrap_or_default(),
+            working_directory: Arc::new(std::sync::RwLock::new(std::env::current_dir().unwrap_or_default())),
             brain_path: None,
         }
     }
@@ -176,9 +176,24 @@ impl AgentService {
     }
 
     /// Set the working directory for tool execution
-    pub fn with_working_directory(mut self, working_directory: std::path::PathBuf) -> Self {
-        self.working_directory = working_directory;
+    pub fn with_working_directory(self, working_directory: std::path::PathBuf) -> Self {
+        *self.working_directory.write().expect("working_directory lock poisoned") = working_directory;
         self
+    }
+
+    /// Get the current working directory
+    pub fn working_directory(&self) -> std::path::PathBuf {
+        self.working_directory.read().expect("working_directory lock poisoned").clone()
+    }
+
+    /// Change the working directory at runtime (called from /cd or agent tools)
+    pub fn set_working_directory(&self, path: std::path::PathBuf) {
+        *self.working_directory.write().expect("working_directory lock poisoned") = path;
+    }
+
+    /// Get a shared handle to the working directory (for tools that need to mutate it)
+    pub fn shared_working_directory(&self) -> Arc<std::sync::RwLock<std::path::PathBuf>> {
+        Arc::clone(&self.working_directory)
     }
 
     /// Set the brain path (~/.opencrabs/)
@@ -445,9 +460,10 @@ impl AgentService {
         // Create tool execution context
         let mut tool_context = ToolExecutionContext::new(session_id)
             .with_auto_approve(self.auto_approve_tools)
-            .with_working_directory(self.working_directory.clone())
+            .with_working_directory(self.working_directory.read().expect("working_directory lock poisoned").clone())
             .with_read_only_mode(read_only_mode);
         tool_context.sudo_callback = self.sudo_callback.clone();
+        tool_context.shared_working_directory = Some(Arc::clone(&self.working_directory));
 
         // Tool execution loop
         let mut iteration = 0;
@@ -917,6 +933,7 @@ impl AgentService {
                                     timeout_secs: tool_context.timeout_secs,
                                     read_only_mode: tool_context.read_only_mode,
                                     sudo_callback: tool_context.sudo_callback.clone(),
+                                    shared_working_directory: tool_context.shared_working_directory.clone(),
                                 };
 
                                 // Execute the tool with approved context

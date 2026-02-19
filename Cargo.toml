@@ -1,6 +1,6 @@
 [package]
 name = "opencrabs"
-version = "0.2.21"
+version = "0.2.22"
 edition = "2024"
 authors = ["Adolfo Usier <adolfo@meetneura.ai>"]
 license = "MIT"
@@ -11,9 +11,6 @@ categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 
 [dependencies]
-# System
-libc = "0.2"
-
 # Async Runtime
 tokio = { version = "1.43", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -112,6 +109,7 @@ tiktoken-rs = "0.9.1"
 
 # Memory Search (FTS5 + vector search)
 qmd = "0.3"
+llama-cpp-2 = "0.1.134"
 
 [dev-dependencies]
 rstest = "0.25"

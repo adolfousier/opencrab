@@ -31,6 +31,7 @@ pub mod http;
 pub mod memory_search;
 pub mod plan_tool;
 pub mod rebuild;
+pub mod slash_command;
 pub mod task;
 
 // Tool implementations - Phase 4: Channel Integrations

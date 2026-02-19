@@ -285,6 +285,26 @@ cargo run --bin opencrabs -- logs clean -d 3
 
 > **Tip:** After `cargo build --release`, run the binary directly: `./target/release/opencrabs`
 
+### Make It Available System-Wide
+
+After downloading or building, add the binary to your PATH so you can run `opencrabs` from any project directory:
+
+```bash
+# Symlink (recommended — always points to latest build)
+sudo ln -sf $(pwd)/target/release/opencrabs /usr/local/bin/opencrabs
+
+# Or copy
+sudo cp target/release/opencrabs /usr/local/bin/
+```
+
+Then from any project:
+```bash
+cd /your/project
+opencrabs
+```
+
+Use `/cd` inside OpenCrabs to switch working directory at runtime without restarting.
+
 **Output formats** for non-interactive mode: `text` (default), `json`, `markdown`
 
 ---
@@ -604,6 +624,7 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `/approve` | Tool approval policy selector (approve-only / session / yolo) |
 | `/compact` | Compact context (summarize + trim for long sessions) |
 | `/rebuild` | Build from source & hot-restart — auto-clones repo if no source tree found |
+| `/cd` | Change working directory (directory picker) |
 | `/settings` or `S` | Open Settings screen (provider, approval, commands, paths) |
 
 ### Sessions Mode

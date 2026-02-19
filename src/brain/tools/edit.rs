@@ -292,11 +292,98 @@ impl Tool for EditTool {
         let lines_before = content.lines().count();
         let lines_after = new_content.lines().count();
 
-        Ok(ToolResult::success(format!(
-            "Successfully edited {}. Lines: {} → {}",
+        // Build a compact diff for context (shown in expanded tool details)
+        let diff = build_edit_diff(&content, &new_content);
+        let mut output = format!(
+            "Successfully edited {}. Lines: {} → {}\n",
             path.display(),
             lines_before,
             lines_after
-        )))
+        );
+        output.push_str(&diff);
+
+        Ok(ToolResult::success(output))
     }
+}
+
+/// Build a compact unified-style diff between old and new content.
+/// Shows only changed lines with `-`/`+` prefixes (capped at 40 diff lines).
+fn build_edit_diff(old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+
+    let mut diff = String::new();
+    let mut diff_lines = 0usize;
+    let max_diff_lines = 40;
+
+    // Simple LCS-based diff: walk both sequences
+    let mut i = 0;
+    let mut j = 0;
+    while i < old_lines.len() || j < new_lines.len() {
+        if diff_lines >= max_diff_lines {
+            diff.push_str("... (diff truncated)\n");
+            break;
+        }
+        if i < old_lines.len() && j < new_lines.len() && old_lines[i] == new_lines[j] {
+            // Lines match — skip (context not needed for compact diff)
+            i += 1;
+            j += 1;
+        } else {
+            // Find how far ahead the old line appears in new (or vice versa)
+            let new_ahead = new_lines[j..].iter().position(|l| i < old_lines.len() && *l == old_lines[i]);
+            let old_ahead = old_lines[i..].iter().position(|l| j < new_lines.len() && *l == new_lines[j]);
+
+            match (new_ahead, old_ahead) {
+                (Some(na), Some(oa)) if na <= oa => {
+                    // new has insertions before the match
+                    for line in &new_lines[j..j + na] {
+                        diff.push_str(&format!("+ {}\n", line));
+                        diff_lines += 1;
+                        if diff_lines >= max_diff_lines { break; }
+                    }
+                    j += na;
+                }
+                (Some(_), Some(oa)) => {
+                    // old has deletions before the match
+                    for line in &old_lines[i..i + oa] {
+                        diff.push_str(&format!("- {}\n", line));
+                        diff_lines += 1;
+                        if diff_lines >= max_diff_lines { break; }
+                    }
+                    i += oa;
+                }
+                (Some(na), None) => {
+                    for line in &new_lines[j..j + na] {
+                        diff.push_str(&format!("+ {}\n", line));
+                        diff_lines += 1;
+                        if diff_lines >= max_diff_lines { break; }
+                    }
+                    j += na;
+                }
+                (None, Some(oa)) => {
+                    for line in &old_lines[i..i + oa] {
+                        diff.push_str(&format!("- {}\n", line));
+                        diff_lines += 1;
+                        if diff_lines >= max_diff_lines { break; }
+                    }
+                    i += oa;
+                }
+                (None, None) => {
+                    // No match ahead — emit both as changed
+                    if i < old_lines.len() {
+                        diff.push_str(&format!("- {}\n", old_lines[i]));
+                        diff_lines += 1;
+                        i += 1;
+                    }
+                    if diff_lines < max_diff_lines && j < new_lines.len() {
+                        diff.push_str(&format!("+ {}\n", new_lines[j]));
+                        diff_lines += 1;
+                        j += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    diff
 }

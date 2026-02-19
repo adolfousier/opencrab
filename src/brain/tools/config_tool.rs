@@ -18,7 +18,7 @@ impl Tool for ConfigTool {
     fn description(&self) -> &str {
         "Read or write OpenCrabs configuration (config.toml) and user commands (commands.toml). \
          Use this to change settings like approval policy, view current config, \
-         add/remove user slash commands, or trigger a config reload."
+         add/remove user slash commands, change working directory, or trigger a config reload."
     }
 
     fn input_schema(&self) -> Value {
@@ -33,7 +33,8 @@ impl Tool for ConfigTool {
                         "read_commands",
                         "add_command",
                         "remove_command",
-                        "reload"
+                        "reload",
+                        "set_working_directory"
                     ],
                     "description": "The operation to perform"
                 },
@@ -64,6 +65,10 @@ impl Tool for ConfigTool {
                 "command_action": {
                     "type": "string",
                     "description": "Action type for add_command: 'prompt' or 'system' (default: 'prompt')"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Absolute directory path for set_working_directory (e.g. '/home/user/project')"
                 }
             },
             "required": ["operation"]
@@ -80,7 +85,7 @@ impl Tool for ConfigTool {
         true
     }
 
-    async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
+    async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
         let operation = input
             .get("operation")
             .and_then(|v| v.as_str())
@@ -93,9 +98,10 @@ impl Tool for ConfigTool {
             "add_command" => self.add_command(&input),
             "remove_command" => self.remove_command(&input),
             "reload" => self.reload_config(),
+            "set_working_directory" => self.set_working_directory(&input, context),
             _ => Ok(ToolResult::error(format!(
                 "Unknown operation: '{}'. Valid: read_config, write_config, \
-                 read_commands, add_command, remove_command, reload",
+                 read_commands, add_command, remove_command, reload, set_working_directory",
                 operation
             ))),
         }
@@ -254,6 +260,70 @@ impl ConfigTool {
             )),
             Err(e) => Ok(ToolResult::error(format!("Failed to reload config: {}", e))),
         }
+    }
+
+    fn set_working_directory(
+        &self,
+        input: &Value,
+        context: &ToolExecutionContext,
+    ) -> Result<ToolResult> {
+        let path_str = match input.get("path").and_then(|v| v.as_str()) {
+            Some(p) => p,
+            None => {
+                return Ok(ToolResult::error(
+                    "'path' is required for set_working_directory".into(),
+                ))
+            }
+        };
+
+        let path = std::path::PathBuf::from(path_str);
+
+        // Validate the path exists and is a directory
+        if !path.exists() {
+            return Ok(ToolResult::error(format!(
+                "Path does not exist: {}",
+                path_str
+            )));
+        }
+        if !path.is_dir() {
+            return Ok(ToolResult::error(format!(
+                "Path is not a directory: {}",
+                path_str
+            )));
+        }
+
+        // Canonicalize to resolve symlinks and relative components
+        let canonical = match path.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to resolve path: {}",
+                    e
+                )))
+            }
+        };
+
+        // Update runtime working directory via shared handle
+        if let Some(ref shared_wd) = context.shared_working_directory {
+            *shared_wd.write().expect("working_directory lock poisoned") = canonical.clone();
+        }
+
+        // Persist to config.toml under [agent].working_directory
+        if let Err(e) = crate::config::Config::write_key(
+            "agent",
+            "working_directory",
+            &canonical.to_string_lossy(),
+        ) {
+            return Ok(ToolResult::error(format!(
+                "Runtime updated but failed to persist to config.toml: {}",
+                e
+            )));
+        }
+
+        Ok(ToolResult::success(format!(
+            "Working directory changed to: {}",
+            canonical.display()
+        )))
     }
 }
 

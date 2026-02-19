@@ -101,6 +101,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         AppMode::FilePicker => {
             render_file_picker(f, app, full_content_area);
         }
+        AppMode::DirectoryPicker => {
+            render_directory_picker(f, app, full_content_area);
+        }
         AppMode::ModelSelector => {
             render_chat(f, app, chunks[1]);
             render_input(f, app, chunks[2]);
@@ -292,32 +295,37 @@ fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         }
 
         if app.messages[msg_idx].role == "system" {
-            // System messages: compact, DarkGray italic, no separator
-            let mut spans = vec![
-                Span::styled("  ", Style::default()),
-                Span::styled(
-                    app.messages[msg_idx].content.clone(),
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC),
-                ),
-            ];
-            // Show expand/collapse hint if this message has details
-            if app.messages[msg_idx].details.is_some() {
-                if app.messages[msg_idx].expanded {
-                    spans.push(Span::styled(
-                        " (ctrl+o to collapse)",
-                        Style::default().fg(Color::Rgb(100, 100, 100)),
-                    ));
+            // System messages: visible yellow label, split on newlines so
+            // multi-line content actually renders (not clipped to one line).
+            let system_style = Style::default()
+                .fg(Color::Rgb(200, 170, 60))
+                .add_modifier(Modifier::ITALIC);
+
+            for (i, text_line) in app.messages[msg_idx].content.lines().enumerate() {
+                let mut spans = vec![Span::styled("  ", Style::default())];
+                if i == 0 {
+                    spans.push(Span::styled("⚡ ", system_style));
                 } else {
+                    spans.push(Span::styled("   ", Style::default()));
+                }
+                spans.push(Span::styled(text_line.to_string(), system_style));
+
+                // Show expand/collapse hint on the first line only
+                if i == 0 && app.messages[msg_idx].details.is_some() {
+                    let hint = if app.messages[msg_idx].expanded {
+                        " (ctrl+o to collapse)"
+                    } else {
+                        " (ctrl+o to expand)"
+                    };
                     spans.push(Span::styled(
-                        " (ctrl+o to expand)",
-                        Style::default().fg(Color::Rgb(100, 100, 100)),
+                        hint,
+                        Style::default().fg(Color::Rgb(120, 120, 120)),
                     ));
                 }
+                lines.push(Line::from(spans));
             }
-            lines.push(Line::from(spans));
-            // Show expanded details
+
+            // Show expanded details (e.g. compaction summary)
             if app.messages[msg_idx].expanded
                 && let Some(ref details) = app.messages[msg_idx].details {
                     for detail_line in details.lines() {
@@ -325,7 +333,7 @@ fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                             Span::styled("    ", Style::default()),
                             Span::styled(
                                 detail_line.to_string(),
-                                Style::default().fg(Color::Rgb(120, 120, 120)),
+                                Style::default().fg(Color::Rgb(150, 150, 150)),
                             ),
                         ]));
                     }
@@ -408,7 +416,11 @@ fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let frame = spinner_frames[app.animation_frame % spinner_frames.len()];
 
-        lines.push(Line::from(vec![
+        let elapsed = app.processing_started_at
+            .map(|t| t.elapsed().as_secs())
+            .unwrap_or(0);
+
+        let mut spans = vec![
             Span::styled(
                 format!("{} ", frame),
                 Style::default()
@@ -422,7 +434,14 @@ fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled("is responding...", Style::default().fg(Color::Rgb(184, 134, 11))),
-        ]));
+        ];
+        if elapsed > 0 {
+            spans.push(Span::styled(
+                format!(" ({}s)", elapsed),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        lines.push(Line::from(spans));
 
         let streaming_lines = parse_markdown(response);
         for line in streaming_lines {
@@ -440,6 +459,16 @@ fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let frame = spinner_frames[app.animation_frame % spinner_frames.len()];
 
+        let elapsed = app.processing_started_at
+            .map(|t| t.elapsed().as_secs())
+            .unwrap_or(0);
+
+        let timer_str = if elapsed > 0 {
+            format!(" ({}s)", elapsed)
+        } else {
+            String::new()
+        };
+
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled(
@@ -449,7 +478,7 @@ fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "🦀 OpenCrabs is thinking...".to_string(),
+                format!("🦀 OpenCrabs is thinking...{}", timer_str),
                 Style::default().fg(Color::Rgb(184, 134, 11)),
             ),
         ]));
@@ -722,14 +751,24 @@ fn render_tool_group<'a>(
             // Show tool output details below the description
             if let Some(ref details) = call.details {
                 let continuation = if is_last_call(i) { "   " } else { "│  " };
-                let detail_style = Style::default().fg(Color::Rgb(90, 90, 90));
+                let default_detail_style = Style::default().fg(Color::Rgb(90, 90, 90));
                 for detail_line in details.lines().take(30) {
+                    // Diff-aware coloring: red for deletions, green for additions
+                    let line_style = if detail_line.starts_with("+ ") {
+                        Style::default().fg(Color::Rgb(80, 200, 80))
+                    } else if detail_line.starts_with("- ") {
+                        Style::default().fg(Color::Rgb(220, 80, 80))
+                    } else if detail_line.starts_with("@@ ") {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        default_detail_style
+                    };
                     lines.push(Line::from(vec![
                         Span::styled(
                             format!("    {}  ", continuation),
                             Style::default().fg(Color::DarkGray),
                         ),
-                        Span::styled(detail_line.to_string(), detail_style),
+                        Span::styled(detail_line.to_string(), line_style),
                     ]));
                 }
                 // Indicate truncation if output is long
@@ -1385,6 +1424,7 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
         kv("/approve", "Tool approval policy", blue),
         kv("/compact", "Compact context now", blue),
         kv("/rebuild", "Build & restart from source", blue),
+        kv("/cd", "Change working directory", blue),
         kv("/whisper", "Speak anywhere, paste to clipboard", blue),
         Line::from(""),
         Line::from(""),
@@ -1955,6 +1995,135 @@ fn render_file_picker(f: &mut Frame, app: &App, area: Rect) {
                 .border_style(Style::default().fg(Color::Rgb(70, 130, 180)))
                 .title(Span::styled(
                     " Select a file ",
+                    Style::default()
+                        .fg(Color::Rgb(70, 130, 180))
+                        .add_modifier(Modifier::BOLD),
+                )),
+        )
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(widget, area);
+}
+
+/// Render directory picker (reuses file picker state, dirs only)
+fn render_directory_picker(f: &mut Frame, app: &App, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header
+    lines.push(Line::from(vec![
+        Span::styled(
+            "📂 Directory Picker",
+            Style::default()
+                .fg(Color::Rgb(70, 130, 180))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            app.file_picker_current_dir.to_string_lossy().to_string(),
+            Style::default().fg(Color::Rgb(184, 134, 11)),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    let visible_items = (area.height as usize).saturating_sub(6);
+    let start = app.file_picker_scroll_offset;
+    let end = (start + visible_items).min(app.file_picker_files.len());
+
+    for (idx, path) in app
+        .file_picker_files
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(end - start)
+    {
+        let is_selected = idx == app.file_picker_selected;
+
+        let icon = if path.ends_with("..") {
+            "📂 .."
+        } else {
+            "📂"
+        };
+
+        let filename = if path.ends_with("..") {
+            ".."
+        } else {
+            path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+        };
+
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(70, 130, 180))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Rgb(70, 130, 180))
+        };
+
+        let prefix = if is_selected { "▶ " } else { "  " };
+
+        let display = if path.ends_with("..") {
+            icon.to_string()
+        } else {
+            format!("{} {}", icon, filename)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(display, style),
+        ]));
+    }
+
+    if app.file_picker_files.len() > visible_items {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![Span::styled(
+            format!(
+                "Showing {}-{} of {}",
+                start + 1,
+                end,
+                app.file_picker_files.len()
+            ),
+            Style::default().fg(Color::DarkGray),
+        )]));
+    }
+
+    // Help text
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "[↑↓]",
+            Style::default()
+                .fg(Color::Rgb(70, 130, 180))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Navigate  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Open  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "[Space/Tab]",
+            Style::default()
+                .fg(Color::Rgb(50, 205, 50))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Select here  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "[Esc]",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Cancel", Style::default().fg(Color::White)),
+    ]));
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Rgb(70, 130, 180)))
+                .title(Span::styled(
+                    " Change working directory ",
                     Style::default()
                         .fg(Color::Rgb(70, 130, 180))
                         .add_modifier(Modifier::BOLD),

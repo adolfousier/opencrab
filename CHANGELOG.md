@@ -5,6 +5,22 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.22] - 2026-02-19
+
+### Added
+- **`/cd` Command** — Change working directory at runtime via slash command or agent NLP. Opens a directory picker (same UI as `@` file picker). Persists to `config.toml`. Agent can also call `config_manager` with `set_working_directory`
+- **`slash_command` Tool** — Agent-callable tool to invoke any slash command programmatically: `/cd`, `/compact`, `/rebuild`, `/approve`, and all user-defined commands from `commands.toml`. Makes the agent aware of and able to trigger any slash command
+- **Edit Diff Context** — Edit tool now includes a compact unified diff in its output. Renderer colors `+` lines green, `-` lines red, `@@` lines cyan — giving both user and agent clear visual context of changes
+
+### Fixed
+- **Stderr Bleeding into TUI** — Replaced all `unsafe` libc `dup2`/`/dev/null` hacks with `llama-cpp-2`'s proper `send_logs_to_tracing(LogOptions::default().with_logs_enabled(false))` API. Called once at engine init — kills all llama.cpp C-level stderr output permanently. Removed `libc` dependency entirely
+- **Compaction Summary Never Visible** — System messages were rendered as a single `Span` on one `Line` — Ratatui clips at terminal width, so multi-paragraph summaries were silently swallowed. Fixed: newline-aware rendering with `⚡` yellow label. Compaction summary now goes into expandable `details` (Ctrl+O to read)
+- **Tool Approval Disappearing** — Removed 4 `messages.retain()` calls that deleted approval messages immediately after denial, before the user could see or interact with them
+
+### Changed
+- **Install Instructions** — README now includes "Make It Available System-Wide" section with symlink/copy instructions
+- **Brain Templates** — BOOT.md, TOOLS.md, AGENTS.md updated to document `/cd` and `config_manager` working directory control
+
 ## [0.2.21] - 2026-02-19
 
 ### Changed
