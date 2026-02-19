@@ -60,7 +60,13 @@
 
 ![Workspace](src/screenshots/onboard3.png)
 
+![Home Base](src/screenshots/onboard4.png)
+
 ![Chat](src/screenshots/opencrabs-ui.png)
+
+![Session Usage](src/screenshots/session-usage.png)
+
+![Rebuild Complete](src/screenshots/rebuild-dialog.png)
 
 ---
 

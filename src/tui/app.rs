@@ -3534,6 +3534,27 @@ impl App {
                 }
             }
 
+            // Sort suggestions alphabetically by command name
+            self.slash_filtered.sort_by(|&a, &b| {
+                let name_a = if a < SLASH_COMMANDS.len() {
+                    SLASH_COMMANDS[a].name
+                } else {
+                    self.user_commands
+                        .get(a - SLASH_COMMANDS.len())
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("")
+                };
+                let name_b = if b < SLASH_COMMANDS.len() {
+                    SLASH_COMMANDS[b].name
+                } else {
+                    self.user_commands
+                        .get(b - SLASH_COMMANDS.len())
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("")
+                };
+                name_a.cmp(name_b)
+            });
+
             self.slash_suggestions_active = !self.slash_filtered.is_empty();
             // Clamp selected index
             if self.slash_selected_index >= self.slash_filtered.len() {
