@@ -576,6 +576,8 @@ impl Config {
         }
 
         // ANTHROPIC_MAX_MODEL sets the default model for Anthropic
+        // Only applies if config.toml doesn't already have a default_model set
+        // (user's explicit model selection in config.toml takes priority)
         if let Ok(model) = std::env::var("ANTHROPIC_MAX_MODEL") {
             let provider = config.providers.anthropic.get_or_insert(ProviderConfig {
                 enabled: true,
@@ -583,7 +585,9 @@ impl Config {
                 base_url: None,
                 default_model: None,
             });
-            provider.default_model = Some(model);
+            if provider.default_model.is_none() {
+                provider.default_model = Some(model);
+            }
         }
 
         // OpenAI — ONLY set api_key on an EXISTING provider config.

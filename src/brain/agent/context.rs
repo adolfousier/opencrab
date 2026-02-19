@@ -151,6 +151,25 @@ impl AgentContext {
         (self.token_count as f64 / self.max_tokens as f64) * 100.0
     }
 
+    /// Returns true if a message consists entirely of ToolResult blocks.
+    /// Such a message is "orphaned" if the preceding assistant(ToolUse) message
+    /// was removed, and will cause the API to reject the conversation.
+    fn is_orphaned_tool_result_msg(msg: &Message) -> bool {
+        msg.role == Role::User
+            && !msg.content.is_empty()
+            && msg.content.iter().all(|b| matches!(b, ContentBlock::ToolResult { .. }))
+    }
+
+    /// Remove any leading user messages that consist solely of ToolResult blocks.
+    /// Called after trimming to prevent orphaned tool results at the start of history.
+    fn drop_leading_orphan_tool_results(&mut self) {
+        while self.messages.first().map_or(false, Self::is_orphaned_tool_result_msg) {
+            let tokens = self.estimate_message_tokens(&self.messages[0]);
+            self.token_count = self.token_count.saturating_sub(tokens);
+            self.messages.remove(0);
+        }
+    }
+
     /// Trim old messages if context is too large
     pub fn trim_to_fit(&mut self, required_space: usize) {
         while self.would_exceed_limit(required_space) && !self.messages.is_empty() {
@@ -161,6 +180,8 @@ impl AgentContext {
                 self.messages.remove(0);
             }
         }
+        // Removing an assistant(tool_use) exposes an orphaned user(tool_result) — drop it
+        self.drop_leading_orphan_tool_results();
     }
 
     /// Hard-truncate old messages until token count is at or below `target_tokens`.
@@ -171,6 +192,8 @@ impl AgentContext {
             self.token_count = self.token_count.saturating_sub(tokens);
             self.messages.remove(0);
         }
+        // Removing an assistant(tool_use) exposes an orphaned user(tool_result) — drop it
+        self.drop_leading_orphan_tool_results();
     }
 
     /// Compact the context by replacing old messages with a summary.
@@ -179,7 +202,16 @@ impl AgentContext {
     /// summary of everything that was trimmed.
     pub fn compact_with_summary(&mut self, summary: String, keep_recent: usize) {
         // Keep at most keep_recent messages from the end
-        let keep_start = self.messages.len().saturating_sub(keep_recent);
+        let mut keep_start = self.messages.len().saturating_sub(keep_recent);
+
+        // Advance past any leading orphaned tool_result messages in the kept slice.
+        // If the assistant(tool_use) that precedes them is being dropped, they'd be invalid.
+        while keep_start < self.messages.len()
+            && Self::is_orphaned_tool_result_msg(&self.messages[keep_start])
+        {
+            keep_start += 1;
+        }
+
         let kept_messages: Vec<Message> = self.messages.drain(keep_start..).collect();
 
         // Clear all old messages

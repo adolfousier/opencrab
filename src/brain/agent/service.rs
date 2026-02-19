@@ -1467,8 +1467,22 @@ impl AgentService {
         // Build a summarization request with the full conversation
         let mut summary_messages = Vec::new();
 
-        // Include all conversation messages so the LLM sees the full context
-        for msg in &context.messages {
+        // Include all conversation messages so the LLM sees the full context.
+        // Skip any leading user messages that consist only of ToolResult blocks —
+        // they are orphaned (their tool_use was removed by a prior trim) and would
+        // cause the API to reject the request with a 400.
+        let start = context
+            .messages
+            .iter()
+            .position(|m| {
+                !(m.role == crate::brain::provider::Role::User
+                    && !m.content.is_empty()
+                    && m.content
+                        .iter()
+                        .all(|b| matches!(b, crate::brain::provider::ContentBlock::ToolResult { .. })))
+            })
+            .unwrap_or(context.messages.len());
+        for msg in &context.messages[start..] {
             summary_messages.push(msg.clone());
         }
 

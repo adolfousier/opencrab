@@ -701,22 +701,39 @@ impl App {
             }
             TuiEvent::CompactionSummary(summary) => {
                 // Agent has summarized history — clear the TUI view for a fresh start.
-                // Place the summary at top so the user sees what was retained.
                 self.messages.clear();
                 self.render_cache.clear();
                 self.hidden_older_messages = 0;
                 self.oldest_displayed_sequence = 0;
                 self.display_token_count = 0;
+
+                // Brief status notice
                 self.messages.push(DisplayMessage {
                     id: Uuid::new_v4(),
                     role: "system".to_string(),
-                    content: "Context compacted — summary saved to daily memory log".to_string(),
+                    content: "⚡ Context compacted — summary saved to daily memory log".to_string(),
                     timestamp: chrono::Utc::now(),
                     token_count: None,
                     cost: None,
                     approval: None,
                     approve_menu: None,
-                    details: Some(summary),
+                    details: None,
+                    expanded: false,
+                    tool_group: None,
+                    plan_approval: None,
+                });
+
+                // Summary rendered as a real assistant message in chat — tool calls follow below
+                self.messages.push(DisplayMessage {
+                    id: Uuid::new_v4(),
+                    role: "assistant".to_string(),
+                    content: summary,
+                    timestamp: chrono::Utc::now(),
+                    token_count: None,
+                    cost: None,
+                    approval: None,
+                    approve_menu: None,
+                    details: None,
                     expanded: false,
                     tool_group: None,
                     plan_approval: None,
@@ -3642,6 +3659,14 @@ impl App {
                         tracing::warn!("Failed to update session model: {}", e);
                     }
                 }
+                // Persist to config.toml
+                let provider_name = self.agent_service.provider_name().to_string();
+                let section = format!("providers.{}", provider_name);
+                if let Err(e) = crate::config::Config::write_key(&section, "default_model", &model_name) {
+                    tracing::warn!("Failed to persist model to config: {}", e);
+                }
+                // Update display name for splash screen
+                self.default_model_name = model_name.clone();
                 self.push_system_message(format!("Model changed to: {}", model_name));
                 self.mode = AppMode::Chat;
             }

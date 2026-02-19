@@ -36,6 +36,9 @@ pub async fn run(mut app: App) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    // Force a full clear so stale content from a previous exec() restart is wiped
+    terminal.clear()?;
+
     // Initialize app
     app.initialize().await?;
 

@@ -5,6 +5,14 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.24] - 2026-02-19
+
+### Fixed
+- **Compaction Crash (400 — Orphaned tool_result)** — After any trim or compaction, a `user(tool_result)` message could be left at the front of history without its preceding `assistant(tool_use)`. The Anthropic API rejects this with a 400 error, crashing the next compaction attempt. Fixed at three layers: `trim_to_fit` and `trim_to_target` now call `drop_leading_orphan_tool_results()` after each removal; `compact_with_summary` advances `keep_start` past any leading orphaned tool_result messages; `compact_context` skips them before sending to the API as a safety net. Conversation continues normally after compaction with no tool call drops
+- **Compaction Summary as Assistant Message** — Compaction summary was stored in a `details` field and hidden behind Ctrl+O. Now rendered as a real assistant chat message in the conversation flow. Tool calls that follow appear below it as normal tool groups with Ctrl+O expand/collapse
+- **config.toml Model Priority over .env** — `ANTHROPIC_MAX_MODEL` env var was overwriting the model set in `config.toml`, reversing the intended priority. Now `config.toml` wins; `.env` is only a fallback when no model is configured in TOML
+- **Stale Terminal on exec() Restart** — `/rebuild` hot-restart left stale rendered content from the previous process visible briefly. Terminal is now fully cleared immediately after the new process takes over
+
 ## [0.2.22] - 2026-02-19
 
 ### Added
