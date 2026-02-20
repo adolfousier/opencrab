@@ -3798,14 +3798,14 @@ impl App {
         // Enter to confirm - move to next field
         if keys::is_enter(&event) {
             if self.model_selector_focused_field == 0 {
-                // On provider field - save config, move to API key field
-                if let Err(e) = self.save_provider_selection(self.model_selector_provider_selected).await {
+                // On provider field - save config, DON'T close dialog
+                if let Err(e) = self.save_provider_selection_internal(self.model_selector_provider_selected, false).await {
                     self.push_system_message(format!("Error: {}", e));
                 } else {
                     self.model_selector_focused_field = 1;
                 }
             } else if self.model_selector_focused_field == 1 {
-                // On API key field - fetch models from provider, move to model selection
+                // On API key field - fetch models from provider, DON'T close dialog
                 let provider_idx = self.model_selector_provider_selected;
                 let provider = &PROVIDERS[provider_idx];
                 let api_key = if self.model_selector_api_key.is_empty() {
@@ -3822,8 +3822,8 @@ impl App {
                     let _ = secret.save_to_keyring(provider.keyring_key);
                 }
                 
-                // Save provider config
-                if let Err(e) = self.save_provider_selection(provider_idx).await {
+                // Save provider config - DON'T close
+                if let Err(e) = self.save_provider_selection_internal(provider_idx, false).await {
                     self.push_system_message(format!("Error: {}", e));
                 } else {
                     // Fetch live models from the provider
@@ -3843,7 +3843,13 @@ impl App {
     }
 
     /// Save provider selection to config and reload agent service
+    /// If `close_dialog` is false, stays in model selector (for step 1 and 2)
     async fn save_provider_selection(&mut self, provider_idx: usize) -> Result<()> {
+        self.save_provider_selection_internal(provider_idx, true).await
+    }
+
+    /// Internal: save provider with option to close dialog
+    async fn save_provider_selection_internal(&mut self, provider_idx: usize, close_dialog: bool) -> Result<()> {
         use super::onboarding::PROVIDERS;
         use crate::config::{ProviderConfig, QwenProviderConfig, SecretString};
 
@@ -3973,10 +3979,12 @@ impl App {
         // Update app state
         self.default_model_name = selected_model.clone();
 
-        // Close the dialog
-        let provider_name = provider.name.split('(').next().unwrap_or(provider.name).trim();
-        self.push_system_message(format!("Provider: {}, Model: {}", provider_name, selected_model));
-        self.mode = AppMode::Chat;
+        // Only close dialog if explicitly requested
+        if close_dialog {
+            let provider_name = provider.name.split('(').next().unwrap_or(provider.name).trim();
+            self.push_system_message(format!("Provider: {}, Model: {}", provider_name, selected_model));
+            self.mode = AppMode::Chat;
+        }
 
         Ok(())
     }
