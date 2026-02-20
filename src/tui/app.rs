@@ -586,7 +586,7 @@ impl App {
                 }
             }
             TuiEvent::Paste(text) => {
-                // Handle paste events - only in Chat mode
+                // Handle paste events in Chat mode or Onboarding mode
                 if self.mode == AppMode::Chat {
                     // Check if pasted text contains image paths — extract as attachments
                     let (clean_text, new_attachments) = Self::extract_image_paths(&text);
@@ -601,6 +601,11 @@ impl App {
                         self.cursor_position += text.len();
                     }
                     self.update_slash_suggestions();
+                } else if self.mode == AppMode::Onboarding {
+                    // Handle paste in onboarding wizard (for API keys, etc.)
+                    if let Some(ref mut wizard) = self.onboarding {
+                        wizard.handle_paste(&text);
+                    }
                 }
             }
             TuiEvent::MessageSubmitted(content) => {
@@ -3909,6 +3914,14 @@ impl App {
                                     "Setup complete! OpenCrabs is configured and ready."
                                         .to_string(),
                                 );
+                                // Rebuild agent service with new provider
+                                if let Err(e) = self.rebuild_agent_service().await {
+                                    tracing::warn!("Failed to rebuild agent service: {}", e);
+                                    self.push_system_message(format!(
+                                        "Warning: Failed to reload provider: {}",
+                                        e
+                                    ));
+                                }
                             }
                             Err(e) => {
                                 self.push_system_message(format!(

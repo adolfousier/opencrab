@@ -949,6 +949,26 @@ impl OnboardingWizard {
         }
     }
 
+    /// Handle paste event - inserts text at current cursor position
+    pub fn handle_paste(&mut self, text: &str) {
+        match self.auth_field {
+            AuthField::ApiKey => {
+                if self.has_existing_key() {
+                    self.api_key_input.clear();
+                }
+                self.api_key_input.push_str(text);
+                self.api_key_cursor = self.api_key_input.len();
+            }
+            AuthField::CustomBaseUrl => {
+                self.custom_base_url.push_str(text);
+            }
+            AuthField::CustomModel => {
+                self.custom_model.push_str(text);
+            }
+            _ => {}
+        }
+    }
+
     // --- Step-specific key handlers ---
 
     fn handle_mode_select_key(&mut self, event: KeyEvent) -> WizardAction {
@@ -1736,6 +1756,20 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
     pub fn apply_config(&self) -> Result<(), String> {
         // Load existing config first to preserve other settings
         let mut config = Config::load().unwrap_or_default();
+
+        // Disable all providers first - we'll enable only the selected one
+        if let Some(ref mut p) = config.providers.anthropic {
+            p.enabled = false;
+        }
+        if let Some(ref mut p) = config.providers.openai {
+            p.enabled = false;
+        }
+        if let Some(ref mut p) = config.providers.gemini {
+            p.enabled = false;
+        }
+        if let Some(ref mut p) = config.providers.qwen {
+            p.enabled = false;
+        }
 
         // Provider config (indices match PROVIDERS array:
         // 0=Anthropic, 1=OpenAI, 2=Gemini, 3=Qwen, 4=OpenRouter, 5=Custom)
