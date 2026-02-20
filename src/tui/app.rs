@@ -3795,15 +3795,14 @@ impl App {
             }
         }
 
-        // Enter to confirm - but behavior depends on focused field
+        // Enter to confirm - move to next field
         if keys::is_enter(&event) {
             if self.model_selector_focused_field == 0 {
-                // On provider field - rebuild agent service, switch to model field
+                // On provider field - save config, move to API key field
                 self.save_provider_selection(self.model_selector_provider_selected).await?;
-                // After saving, switch to model selection field
-                self.model_selector_focused_field = 2;
+                self.model_selector_focused_field = 1;
             } else if self.model_selector_focused_field == 1 {
-                // On API key field - save key, fetch models, switch to model field
+                // On API key field - fetch models from provider, move to model selection
                 let provider_idx = self.model_selector_provider_selected;
                 let provider = &PROVIDERS[provider_idx];
                 let api_key = if self.model_selector_api_key.is_empty() {
@@ -3820,14 +3819,14 @@ impl App {
                     let _ = secret.save_to_keyring(provider.keyring_key);
                 }
                 
-                // Save provider config first
+                // Save provider config
                 self.save_provider_selection(provider_idx).await?;
                 
                 // Fetch live models from the provider
                 self.model_selector_models = super::onboarding::fetch_provider_models(provider_idx, api_key.as_deref()).await;
                 self.model_selector_selected = 0;
                 
-                // Switch to model selection field
+                // Move to model selection field
                 self.model_selector_focused_field = 2;
             } else {
                 // On model field - save and close

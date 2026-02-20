@@ -2303,15 +2303,30 @@ fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(""));
 
-    // Help text
-    lines.push(Line::from(vec![
-        Span::styled("[Tab] ", Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled("Next Field  ", Style::default().fg(Color::White)),
-        Span::styled("[↑/↓] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::styled("Select  ", Style::default().fg(Color::White)),
-        Span::styled("[Enter] ", Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD)),
-        Span::styled("Confirm", Style::default().fg(Color::White)),
-    ]));
+    // Help text - show different instructions based on focused field
+    let help_text = match focused_field {
+        0 => vec![
+            ("[↑/↓]", "Select"),
+            ("[Enter]", "Next"),
+            ("[Tab]", "Skip to Model"),
+        ],
+        1 => vec![
+            ("[Type]", "API Key"),
+            ("[Enter]", "Fetch Models"),
+        ],
+        2 => vec![
+            ("[↑/↓]", "Select"),
+            ("[Enter]", "Confirm"),
+        ],
+        _ => vec![],
+    };
+
+    let mut help_spans: Vec<Span> = Vec::new();
+    for (key, action) in help_text {
+        help_spans.push(Span::styled(key, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        help_spans.push(Span::styled(format!("{}  ", action), Style::default().fg(Color::White)));
+    }
+    lines.push(Line::from(help_spans));
 
     f.render_widget(Clear, dialog_area);
     let dialog = Paragraph::new(lines).block(
