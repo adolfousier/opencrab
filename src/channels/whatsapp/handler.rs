@@ -242,10 +242,11 @@ pub(crate) async fn handle_message(
     let mut content;
     if has_aud
         && voice_config.stt_enabled
-        && let Some(ref groq_key) = voice_config.groq_api_key
+        && let Some(ref stt_provider) = voice_config.stt_provider
+        && let Some(ref stt_key) = stt_provider.api_key
         && let Some(audio_bytes) = download_audio(&msg, &client).await
     {
-        match crate::channels::voice::transcribe_audio(audio_bytes, groq_key).await {
+        match crate::channels::voice::transcribe_audio(audio_bytes, stt_key).await {
             Ok(transcript) => {
                 tracing::info!(
                     "WhatsApp: transcribed voice: {}",

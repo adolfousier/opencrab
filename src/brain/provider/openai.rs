@@ -36,6 +36,7 @@ pub struct OpenAIProvider {
     base_url: String,
     client: Client,
     custom_default_model: Option<String>,
+    name: String,
 }
 
 impl OpenAIProvider {
@@ -54,6 +55,7 @@ impl OpenAIProvider {
             base_url: DEFAULT_OPENAI_API_URL.to_string(),
             client,
             custom_default_model: None,
+            name: "openai".to_string(),
         }
     }
 
@@ -72,6 +74,7 @@ impl OpenAIProvider {
             base_url,
             client,
             custom_default_model: None,
+            name: "openai-compatible".to_string(),
         }
     }
 
@@ -90,7 +93,14 @@ impl OpenAIProvider {
             base_url,
             client,
             custom_default_model: None,
+            name: "openai-compatible".to_string(),
         }
+    }
+
+    /// Set provider name (for logging)
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
     }
 
     /// Set custom default model (useful for local LLMs with specific model names)
@@ -124,6 +134,13 @@ impl OpenAIProvider {
     /// Convert our generic request to OpenAI-specific format
     fn to_openai_request(&self, request: LLMRequest) -> OpenAIRequest {
         let mut messages = Vec::new();
+
+        // Debug: log system brain
+        if let Some(ref system) = request.system {
+            tracing::debug!("System brain present: {} chars", system.len());
+        } else {
+            tracing::warn!("NO SYSTEM BRAIN in request!");
+        }
 
         // Add system message if present
         if let Some(system) = request.system {
@@ -463,14 +480,20 @@ impl Provider for OpenAIProvider {
 
         let model = request.model.clone();
         let message_count = request.messages.len();
+        
         tracing::info!(
-            "OpenAI streaming request: model={}, messages={}",
-            model,
-            message_count
+            "{} streaming request: model={}, messages={}, base_url={}",
+            self.name(),
+            model, message_count, self.base_url
         );
 
         let mut openai_request = self.to_openai_request(request);
         openai_request.stream = Some(true);
+        
+        let tools_count = openai_request.tools.as_ref().map(|t| t.len()).unwrap_or(0);
+        tracing::debug!("OpenAI request has {} tools", tools_count);
+        tracing::debug!("OpenAI request payload: {:?}", serde_json::to_string(&openai_request).map(|s| s.chars().take(1000).collect::<String>()).unwrap_or_default());
+        
         let retry_config = RetryConfig::default();
 
         // Retry the stream connection establishment
@@ -484,6 +507,8 @@ impl Provider for OpenAIProvider {
                     .send()
                     .await?;
 
+                tracing::debug!("OpenAI response status: {}", response.status());
+
                 if !response.status().is_success() {
                     return Err(self.handle_error(response).await);
                 }
@@ -494,60 +519,191 @@ impl Provider for OpenAIProvider {
         )
         .await?;
 
-        // Parse Server-Sent Events stream
+        // Parse Server-Sent Events stream - return Vec to emit multiple events like Anthropic
         let byte_stream = response.bytes_stream();
-        let event_stream = byte_stream.map(|chunk_result| {
-            chunk_result
-                .map_err(|e| ProviderError::StreamError(e.to_string()))
-                .map(|chunk| {
-                    let text = String::from_utf8_lossy(&chunk);
+        let buffer = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        
+        // State must be outside closure and shared via Arc to persist across chunks
+        // Including tool call argument accumulation for providers like MiniMax
+        let tool_state = std::sync::Arc::new(std::sync::Mutex::new((
+            false, // emitted_message_start
+            false, // emitted_content_start
+            std::collections::HashMap::<String, String>::new(), // accumulated tool args: index -> json string
+        )));
+        
+        // Keep old state reference for now, use tool_state for accumulation
+        let state = tool_state.clone();
+        
+        let event_stream = byte_stream
+            .map(move |chunk_result| -> Vec<std::result::Result<StreamEvent, ProviderError>> {
+                match chunk_result {
+                    Err(e) => vec![Err(ProviderError::StreamError(e.to_string()))],
+                    Ok(chunk) => {
+                        // GRANULAR LOG: Raw SSE chunk
+                        let raw_text = String::from_utf8_lossy(&chunk);
+                        if raw_text.contains("tool_calls") {
+                            tracing::debug!("[STREAM_RAW] SSE chunk with tool_calls: {}", raw_text.chars().take(500).collect::<String>());
+                        }
+                        
+                        let mut buf = buffer.lock().expect("SSE buffer lock poisoned");
+                        buf.push_str(&raw_text);
 
-                    // Parse SSE format: "data: {...}\n\n"
-                    for line in text.lines() {
-                        if let Some(json_str) = line.strip_prefix("data: ") {
-                            // Check for stream end
-                            if json_str == "[DONE]" {
-                                tracing::trace!("OpenAI stream completed with [DONE] marker");
-                                return StreamEvent::MessageStop;
-                            }
+                        let mut events = Vec::new();
+                        
+                        let (mut emitted_message_start, mut emitted_content_start) = {
+                            let s = state.lock().expect("SSE state lock");
+                            (s.0, s.1)
+                        };
 
-                            // Parse JSON chunk
-                            match serde_json::from_str::<OpenAIStreamChunk>(json_str) {
-                                Ok(chunk) => {
-                                    if let Some(choice) = chunk.choices.first()
-                                        && let Some(ref delta) = choice.delta
-                                            && let Some(ref content) = delta.content
-                                                && !content.is_empty() {
-                                                    return StreamEvent::ContentBlockDelta {
-                                                        index: 0,
-                                                        delta: ContentDelta::TextDelta {
-                                                            text: content.clone(),
+                        // Process complete lines (terminated by \n)
+                        while let Some(newline_pos) = buf.find('\n') {
+                            let line = buf[..newline_pos].trim().to_string();
+                            buf.drain(..=newline_pos);
+
+                            if let Some(json_str) = line.strip_prefix("data: ") {
+                                if json_str == "[DONE]" {
+                                    events.push(Ok(StreamEvent::MessageStop));
+                                    continue;
+                                }
+
+                                match serde_json::from_str::<OpenAIStreamChunk>(json_str) {
+                                    Ok(chunk) => {
+                                        // Debug: log what minimax returns
+                                        let has_tool_calls = chunk.choices.first().and_then(|c| c.delta.as_ref()).and_then(|d| d.tool_calls.as_ref()).is_some();
+                                        if has_tool_calls {
+                                            tracing::debug!("Chunk has tool_calls!");
+                                        }
+                                        
+                                        // Emit MessageStart on first chunk with id
+                                        if !emitted_message_start && !chunk.id.is_empty() {
+                                            emitted_message_start = true;
+                                            let model = chunk.model.clone().unwrap_or_default();
+                                            events.push(Ok(StreamEvent::MessageStart {
+                                                message: crate::brain::provider::types::StreamMessage {
+                                                    id: chunk.id,
+                                                    model,
+                                                    role: Role::Assistant,
+                                                    usage: crate::brain::provider::types::TokenUsage {
+                                                        input_tokens: 0,
+                                                        output_tokens: 0,
+                                                    },
+                                                },
+                                            }));
+                                        }
+                                        
+                                        // Get content
+                                        let content = chunk.choices.first()
+                                            .and_then(|c| c.delta.as_ref())
+                                            .and_then(|d| d.content.as_ref())
+                                            .cloned();
+                                        
+                                        // Get tool_calls from delta
+                                        let tool_calls = chunk.choices.first()
+                                            .and_then(|c| c.delta.as_ref())
+                                            .and_then(|d| d.tool_calls.as_ref());
+
+                                        if let Some(tc) = tool_calls
+                                            && !tc.is_empty() {
+                                                tracing::debug!("Found {} tool_calls in stream", tc.len());
+                                                for (idx, tc_item) in tc.iter().enumerate() {
+                                                    let name = &tc_item.function.name;
+                                                    let args = &tc_item.function.arguments;
+                                                    let tc_id = &tc_item.id;
+                                                    
+                                                    // GRANULAR LOG: Tool call parsing details
+                                                    tracing::info!(
+                                                        "[TOOL_PARSE] Tool call {}: id={}, name={}, args_len={}, args_sample={}",
+                                                        idx,
+                                                        tc_id,
+                                                        name,
+                                                        args.len(),
+                                                        &args.chars().take(100).collect::<String>()
+                                                    );
+                                                    
+                                                    // Check if arguments are empty or partial JSON
+                                                    let args_trimmed = args.trim();
+                                                    if args_trimmed.is_empty() || args_trimmed == "{}" {
+                                                        tracing::warn!(
+                                                            "[TOOL_PARSE] ⚠️ Tool '{}' has EMPTY arguments! id={}, this will cause execution failure",
+                                                            name, tc_id
+                                                        );
+                                                    } else {
+                                                        // Try to parse to check if valid JSON
+                                                        match serde_json::from_str::<serde_json::Value>(args) {
+                                                            Ok(v) => {
+                                                                let keys: Vec<_> = v.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                                                                tracing::debug!("[TOOL_PARSE] ✓ Tool '{}' args parsed OK: {:?}", name, keys);
+                                                            }
+                                                            Err(e) => {
+                                                                tracing::warn!(
+                                                                    "[TOOL_PARSE] ⚠️ Tool '{}' args are INCOMPLETE JSON (will be retried in next chunk): {}",
+                                                                    name, e
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                    
+                                                    let input = serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({}));
+                                                    events.push(Ok(StreamEvent::ContentBlockStart {
+                                                        index: idx,
+                                                        content_block: ContentBlock::ToolUse {
+                                                            id: tc_item.id.clone(),
+                                                            name: tc_item.function.name.clone(),
+                                                            input,
                                                         },
-                                                    };
+                                                    }));
                                                 }
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to parse OpenAI stream chunk: {}. Data: {}",
-                                        e,
-                                        json_str.chars().take(200).collect::<String>()
-                                    );
+                                            }
+
+                                        if let Some(ref c) = content {
+                                            // Emit ContentBlockStart when we first see empty content
+                                            if !emitted_content_start && c.is_empty() {
+                                                emitted_content_start = true;
+                                                events.push(Ok(StreamEvent::ContentBlockStart {
+                                                    index: 0,
+                                                    content_block: ContentBlock::Text { text: String::new() },
+                                                }));
+                                            }
+                                            
+                                            // Emit ContentBlockDelta for actual content
+                                            if !c.is_empty() {
+                                                events.push(Ok(StreamEvent::ContentBlockDelta {
+                                                    index: 0,
+                                                    delta: ContentDelta::TextDelta {
+                                                        text: c.clone(),
+                                                    },
+                                                }));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // GRANULAR LOG: Chunk parsing failure
+                                        let json_preview = json_str.chars().take(200).collect::<String>();
+                                        tracing::warn!(
+                                            "[STREAM_PARSE] ⚠️ Failed to parse stream chunk: {} | Raw: {}",
+                                            e,
+                                            json_preview
+                                        );
+                                    }
                                 }
                             }
-                        } else if !line.trim().is_empty()
-                            && !line.starts_with("event:")
-                            && !line.starts_with("id:")
-                            && !line.starts_with("retry:")
-                        {
-                            // Log unexpected SSE line formats for debugging
-                            tracing::debug!("OpenAI: Unexpected SSE line format: {}", line);
+                        }
+
+                        if events.is_empty() {
+                            vec![Ok(StreamEvent::Ping)]
+                        } else {
+                            // Save state back
+                            {
+                                let mut s = state.lock().expect("SSE state lock");
+                                s.0 = emitted_message_start;
+                                s.1 = emitted_content_start;
+                            }
+                            events
                         }
                     }
-
-                    // Skip non-data lines
-                    StreamEvent::Ping
-                })
-        });
+                }
+            })
+            .flat_map(futures::stream::iter);
 
         Ok(Box::pin(event_stream))
     }
@@ -566,7 +722,7 @@ impl Provider for OpenAIProvider {
     }
 
     fn name(&self) -> &str {
-        "openai"
+        &self.name
     }
 
     fn default_model(&self) -> &str {
@@ -732,6 +888,7 @@ struct OpenAIUsage {
 #[allow(dead_code)]
 struct OpenAIStreamChunk {
     id: String,
+    model: Option<String>,
     choices: Vec<OpenAIStreamChoice>,
 }
 
@@ -748,6 +905,7 @@ struct OpenAIStreamChoice {
 struct OpenAIMessageDelta {
     role: Option<String>,
     content: Option<String>,
+    tool_calls: Option<Vec<OpenAIToolCall>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

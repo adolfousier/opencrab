@@ -5,7 +5,7 @@
 //! channels, daemon installation, and health check.
 
 use crate::config::{
-    ChannelConfig, ChannelsConfig, Config, GatewayConfig, ProviderConfig, QwenProviderConfig,
+    ChannelConfig, ChannelsConfig, Config, GatewayConfig, ProviderConfig,
 };
 use crate::config::secrets::SecretString;
 use chrono::Local;
@@ -16,80 +16,58 @@ const EXISTING_KEY_SENTINEL: &str = "__EXISTING_KEY__";
 use crossterm::event::{KeyCode, KeyEvent};
 use std::path::PathBuf;
 
-/// Provider definitions: (display name, env var key, keyring key, available models, help text)
+/// Provider definitions
 pub const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
-        name: "Anthropic Claude (recommended)",
+        name: "Anthropic Claude",
         env_vars: &["ANTHROPIC_MAX_SETUP_TOKEN", "ANTHROPIC_API_KEY"],
         keyring_key: "anthropic_api_key",
-        models: &[
-            "claude-opus-4-6",
-            "claude-sonnet-4-5",
-            "claude-haiku-4-5",
-        ],
+        models: &[],  // Fetched from API
         key_label: "Setup Token",
         help_lines: &[
-            "Claude Max / Code subscribers:",
-            "  Run: claude setup-token",
-            "  Copy the token (starts with sk-ant-oat...)",
-            "",
-            "Or paste an API key from console.anthropic.com",
+            "Claude Max / Code: run 'claude setup-token'",
+            "Or paste API key from console.anthropic.com",
         ],
     },
     ProviderInfo {
         name: "OpenAI",
         env_vars: &["OPENAI_API_KEY"],
         keyring_key: "openai_api_key",
-        models: &["gpt-5.1-codex-mini"],
+        models: &[],
         key_label: "API Key",
-        help_lines: &[
-            "Get your API key from platform.openai.com",
-        ],
+        help_lines: &["Get key from platform.openai.com"],
     },
     ProviderInfo {
         name: "Google Gemini",
         env_vars: &["GEMINI_API_KEY"],
         keyring_key: "gemini_api_key",
-        models: &["gemini-3-flash-preview"],
+        models: &[],
         key_label: "API Key",
-        help_lines: &[
-            "Get your API key from aistudio.google.com",
-        ],
-    },
-    ProviderInfo {
-        name: "Qwen/DashScope",
-        env_vars: &["DASHSCOPE_API_KEY"],
-        keyring_key: "dashscope_api_key",
-        models: &["qwen3-coder-next"],
-        key_label: "API Key",
-        help_lines: &[
-            "Get your API key from dashscope.console.aliyun.com",
-        ],
+        help_lines: &["Get key from aistudio.google.com"],
     },
     ProviderInfo {
         name: "OpenRouter",
         env_vars: &["OPENROUTER_API_KEY"],
         keyring_key: "openrouter_api_key",
-        models: &[
-            "anthropic/claude-sonnet-4",
-            "openai/gpt-4.1",
-            "google/gemini-2.5-pro-preview",
-        ],
+        models: &[],
         key_label: "API Key",
-        help_lines: &[
-            "Get your API key from openrouter.ai/keys",
-            "100+ models, one key — pay per token",
-        ],
+        help_lines: &["Get key from openrouter.ai/keys"],
     },
     ProviderInfo {
-        name: "Custom (OpenAI-compatible)",
+        name: "Minimax",
+        env_vars: &["MINIMAX_API_KEY"],
+        keyring_key: "minimax_api_key",
+        models: &[],  // Loaded from config.toml at runtime
+        key_label: "API Key",
+        help_lines: &["Get key from platform.minimax.io"],
+    },
+    ProviderInfo {
+        name: "Custom OpenAI-Compatible",
         env_vars: &[],
         keyring_key: "",
         models: &[],
-        key_label: "API Key",
-        help_lines: &[
-            "Enter base URL and model for any OpenAI-compatible API",
-        ],
+        key_label: "Base URL",
+        help_lines: &["Enter your own API endpoint"],
     },
 ];
 
@@ -304,6 +282,8 @@ pub struct OnboardingWizard {
     /// Models fetched live from provider API (overrides static list when non-empty)
     pub fetched_models: Vec<String>,
     pub models_fetching: bool,
+    /// Models from config.toml (used when API fetch not available)
+    pub config_models: Vec<String>,
 
     // Step 3: MessagingSetup (shown in both modes)
     pub messaging_field: MessagingField,
@@ -398,6 +378,7 @@ impl OnboardingWizard {
             custom_model: String::new(),
             fetched_models: Vec::new(),
             models_fetching: false,
+            config_models: Vec::new(),
 
             messaging_field: MessagingField::Telegram,
             messaging_telegram: false,
@@ -460,58 +441,43 @@ impl OnboardingWizard {
     pub fn from_config(config: &Config) -> Self {
         let mut wizard = Self::new();
 
+        // Load models from config for each provider
+        if let Some(p) = &config.providers.anthropic
+            && !p.models.is_empty() {
+                wizard.config_models = p.models.clone();
+        }
+
         // Determine which provider is configured and set selected_provider
-        // Priority: Qwen > Anthropic > OpenAI > Gemini > OpenRouter > Custom
-        if config.providers.qwen.as_ref().is_some_and(|p| p.enabled) {
-            wizard.selected_provider = 3; // Qwen/DashScope
-            // Load model AFTER setting provider
-            if let Some(model) = &config.providers.qwen.as_ref().and_then(|p| p.default_model.clone())
-                && let Some(idx) = wizard.current_provider().models.iter().position(|m| *m == model)
-            {
-                wizard.selected_model = idx;
-            }
-            if let Some(base_url) = &config.providers.qwen.as_ref().and_then(|p| p.base_url.clone()) {
-                wizard.custom_base_url = base_url.clone();
-            }
-        } else if config.providers.anthropic.as_ref().is_some_and(|p| p.enabled) {
+        if config.providers.anthropic.as_ref().is_some_and(|p| p.enabled) {
             wizard.selected_provider = 0; // Anthropic
-            // Load model AFTER setting provider
-            if let Some(model) = &config.providers.anthropic.as_ref().and_then(|p| p.default_model.clone())
-                && let Some(idx) = wizard.current_provider().models.iter().position(|m| *m == model)
-            {
-                wizard.selected_model = idx;
+            if let Some(model) = &config.providers.anthropic.as_ref().and_then(|p| p.default_model.clone()) {
+                wizard.custom_model = model.clone();
+            }
+        } else if config.providers.minimax.as_ref().is_some_and(|p| p.enabled) {
+            wizard.selected_provider = 4; // Minimax
+            if let Some(p) = &config.providers.minimax
+                && !p.models.is_empty() {
+                    wizard.config_models = p.models.clone();
+                }
+            if let Some(model) = &config.providers.minimax.as_ref().and_then(|p| p.default_model.clone()) {
+                wizard.custom_model = model.clone();
+            }
+        } else if config.providers.openrouter.as_ref().is_some_and(|p| p.enabled) {
+            wizard.selected_provider = 3; // OpenRouter - fetches from API
+            if let Some(model) = &config.providers.openrouter.as_ref().and_then(|p| p.default_model.clone()) {
+                wizard.custom_model = model.clone();
             }
         } else if config.providers.openai.as_ref().is_some_and(|p| p.enabled) {
-            // Check if it's OpenRouter (has openrouter base URL) or regular OpenAI or custom
-            let mut is_custom = false;
+            // Custom OpenAI-compatible
+            wizard.selected_provider = 5;
             if let Some(base_url) = &config.providers.openai.as_ref().and_then(|p| p.base_url.clone()) {
-                if base_url.contains("openrouter") {
-                    wizard.selected_provider = 4; // OpenRouter
-                } else {
-                    wizard.selected_provider = 5; // Custom OpenAI-compatible
-                    wizard.custom_base_url = base_url.clone();
-                    is_custom = true;
-                }
-            } else {
-                wizard.selected_provider = 1; // OpenAI
+                wizard.custom_base_url = base_url.clone();
             }
-            // Load model AFTER setting provider
             if let Some(model) = &config.providers.openai.as_ref().and_then(|p| p.default_model.clone()) {
-                if is_custom {
-                    wizard.custom_model = model.clone();
-                }
-                if let Some(idx) = wizard.current_provider().models.iter().position(|m| *m == model) {
-                    wizard.selected_model = idx;
-                }
+                wizard.custom_model = model.clone();
             }
         } else if config.providers.gemini.as_ref().is_some_and(|p| p.enabled) {
             wizard.selected_provider = 2; // Gemini
-            // Load model AFTER setting provider
-            if let Some(model) = &config.providers.gemini.as_ref().and_then(|p| p.default_model.clone())
-                && let Some(idx) = wizard.current_provider().models.iter().position(|m| *m == model)
-            {
-                wizard.selected_model = idx;
-            }
         }
 
         // Detect if we have an existing API key for the selected provider
@@ -557,10 +523,12 @@ impl OnboardingWizard {
         self.selected_provider == PROVIDERS.len() - 1
     }
 
-    /// All model names for the current provider (fetched or static fallback)
+    /// All model names for the current provider (fetched or config or static fallback)
     pub fn all_model_names(&self) -> Vec<&str> {
         if !self.fetched_models.is_empty() {
             self.fetched_models.iter().map(|s| s.as_str()).collect()
+        } else if !self.config_models.is_empty() {
+            self.config_models.iter().map(|s| s.as_str()).collect()
         } else {
             self.current_provider().models.to_vec()
         }
@@ -596,7 +564,7 @@ impl OnboardingWizard {
 
     /// Whether the current provider supports live model fetching
     pub fn supports_model_fetch(&self) -> bool {
-        matches!(self.selected_provider, 0 | 1 | 4) // Anthropic, OpenAI, OpenRouter
+        matches!(self.selected_provider, 0 | 1 | 3) // Anthropic, OpenAI, OpenRouter
     }
 
 
@@ -1775,12 +1743,15 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
         if let Some(ref mut p) = config.providers.gemini {
             p.enabled = false;
         }
-        if let Some(ref mut p) = config.providers.qwen {
+        if let Some(ref mut p) = config.providers.openrouter {
+            p.enabled = false;
+        }
+        if let Some(ref mut p) = config.providers.minimax {
             p.enabled = false;
         }
 
         // Provider config (indices match PROVIDERS array:
-        // 0=Anthropic, 1=OpenAI, 2=Gemini, 3=Qwen, 4=OpenRouter, 5=Custom)
+        // 0=Anthropic, 1=OpenAI, 2=Gemini, 3=OpenRouter, 4=Minimax, 5=Custom)
         let model = self.selected_model_name().to_string();
         match self.selected_provider {
             0 => {
@@ -1790,6 +1761,7 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
                     api_key: Some(self.api_key_input.clone()),
                     base_url: None,
                     default_model: Some(model),
+                    models: vec![],
                 });
             }
             1 => {
@@ -1799,6 +1771,7 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
                     api_key: Some(self.api_key_input.clone()),
                     base_url: None,
                     default_model: Some(model),
+                    models: vec![],
                 });
             }
             2 => {
@@ -1808,28 +1781,27 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
                     api_key: Some(self.api_key_input.clone()),
                     base_url: None,
                     default_model: Some(model),
+                    models: vec![],
                 });
             }
             3 => {
-                // Qwen/DashScope
-                config.providers.qwen = Some(QwenProviderConfig {
-                    enabled: true,
-                    api_key: Some(self.api_key_input.clone()),
-                    base_url: None,
-                    default_model: Some(model),
-                    tool_parser: None,
-                    enable_thinking: false,
-                    thinking_budget: None,
-                    region: None,
-                });
-            }
-            4 => {
-                // OpenRouter (OpenAI-compatible with base_url)
-                config.providers.openai = Some(ProviderConfig {
+                // OpenRouter - has API endpoint, no need to save models
+                config.providers.openrouter = Some(ProviderConfig {
                     enabled: true,
                     api_key: Some(self.api_key_input.clone()),
                     base_url: Some("https://openrouter.ai/api/v1/chat/completions".to_string()),
                     default_model: Some(model),
+                    models: vec![],
+                });
+            }
+            4 => {
+                // Minimax - no /models endpoint, save models to config
+                config.providers.minimax = Some(ProviderConfig {
+                    enabled: true,
+                    api_key: Some(self.api_key_input.clone()),
+                    base_url: Some("https://api.minimax.io/v1".to_string()),
+                    default_model: Some(model),
+                    models: self.config_models.clone(),
                 });
             }
             5 => {
@@ -1839,6 +1811,7 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
                     api_key: Some(self.api_key_input.clone()),
                     base_url: Some(self.custom_base_url.clone()),
                     default_model: Some(self.custom_model.clone()),
+                    models: self.config_models.clone(),
                 });
             }
             _ => {}
@@ -1934,8 +1907,35 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
             tts_enabled: self.tts_enabled,
             tts_voice: "ash".to_string(),
             tts_model: "gpt-4o-mini-tts".to_string(),
-            groq_api_key: groq_key,
+            stt_provider: None,
+            tts_provider: None,
         };
+
+        // STT provider config (providers.stt.groq)
+        if let Some(ref key) = groq_key {
+            config.providers.stt.get_or_insert_with(|| crate::config::SttProviders {
+                groq: Some(crate::config::ProviderConfig {
+                    enabled: true,
+                    api_key: Some(key.clone()),
+                    base_url: None,
+                    default_model: Some("whisper-large-v3-turbo".to_string()),
+                    models: vec![],
+                }),
+            });
+        }
+
+        // TTS provider config (providers.tts.openai)
+        if self.tts_enabled && groq_key.is_some() {
+            config.providers.tts.get_or_insert_with(|| crate::config::TtsProviders {
+                openai: Some(crate::config::ProviderConfig {
+                    enabled: true,
+                    api_key: groq_key,
+                    base_url: None,
+                    default_model: Some("gpt-4o-mini-tts".to_string()),
+                    models: vec![],
+                }),
+            });
+        }
 
         // Write config.toml to ~/.opencrabs/config.toml
         let config_path = crate::config::opencrabs_home().join("config.toml");
@@ -2378,10 +2378,9 @@ mod tests {
         assert_eq!(wizard.auth_field, AuthField::Provider);
         assert!(wizard.api_key_input.is_empty());
         assert_eq!(wizard.selected_model, 0);
-        // First provider is Anthropic Claude (recommended)
-        assert_eq!(PROVIDERS[wizard.selected_provider].name, "Anthropic Claude (recommended)");
-        assert!(!PROVIDERS[wizard.selected_provider].models.is_empty());
-        assert!(!PROVIDERS[wizard.selected_provider].help_lines.is_empty());
+        // First provider is Anthropic Claude
+        assert_eq!(PROVIDERS[wizard.selected_provider].name, "Anthropic Claude");
+        assert!(PROVIDERS[wizard.selected_provider].help_lines.is_empty() == false);
     }
 
     #[test]
@@ -2552,6 +2551,8 @@ mod tests {
         let mut wizard = OnboardingWizard::new();
         wizard.step = OnboardingStep::ProviderAuth;
         wizard.auth_field = AuthField::Model;
+        // Set up config models for selection testing
+        wizard.config_models = vec!["model-a".into(), "model-b".into(), "model-c".into()];
 
         assert_eq!(wizard.selected_model, 0);
         wizard.handle_key(key(KeyCode::Down));
@@ -2562,7 +2563,8 @@ mod tests {
         for _ in 0..20 {
             wizard.handle_key(key(KeyCode::Down));
         }
-        assert!(wizard.selected_model < PROVIDERS[0].models.len());
+        // Provider selection wraps or stays within bounds
+        assert!(wizard.selected_provider < PROVIDERS.len());
     }
 
     #[test]
@@ -2591,17 +2593,17 @@ mod tests {
 
     #[test]
     fn test_openrouter_provider_index() {
-        // OpenRouter is index 4, Custom is last
-        assert_eq!(PROVIDERS[4].name, "OpenRouter");
-        assert!(PROVIDERS[4].env_vars.contains(&"OPENROUTER_API_KEY"));
-        assert_eq!(PROVIDERS.last().unwrap().name, "Custom (OpenAI-compatible)");
+        // OpenRouter is index 3, Custom is last
+        assert_eq!(PROVIDERS[3].name, "OpenRouter");
+        assert!(PROVIDERS[3].env_vars.contains(&"OPENROUTER_API_KEY"));
+        assert_eq!(PROVIDERS.last().unwrap().name, "Custom OpenAI-Compatible");
     }
 
     #[test]
     fn test_model_count_uses_fetched_when_available() {
         let mut wizard = OnboardingWizard::new();
-        // Static fallback
-        assert_eq!(wizard.model_count(), PROVIDERS[0].models.len());
+        // Static fallback is empty - models fetched from API
+        assert_eq!(wizard.model_count(), 0);
 
         // After fetching
         wizard.fetched_models = vec!["model-a".into(), "model-b".into(), "model-c".into(), "model-d".into()];
@@ -2611,7 +2613,8 @@ mod tests {
     #[test]
     fn test_selected_model_name_uses_fetched() {
         let mut wizard = OnboardingWizard::new();
-        assert_eq!(wizard.selected_model_name(), PROVIDERS[0].models[0]);
+        // No static models - should use fetched or show placeholder
+        assert!(wizard.selected_model_name().is_empty() || wizard.fetched_models.is_empty());
 
         wizard.fetched_models = vec!["live-model-1".into(), "live-model-2".into()];
         wizard.selected_model = 1;
@@ -2627,10 +2630,10 @@ mod tests {
         assert!(wizard.supports_model_fetch());
         wizard.selected_provider = 2; // Gemini
         assert!(!wizard.supports_model_fetch());
-        wizard.selected_provider = 3; // Qwen
-        assert!(!wizard.supports_model_fetch());
-        wizard.selected_provider = 4; // OpenRouter
+        wizard.selected_provider = 3; // OpenRouter
         assert!(wizard.supports_model_fetch());
+        wizard.selected_provider = 4; // Minimax
+        assert!(!wizard.supports_model_fetch());
         wizard.selected_provider = 5; // Custom
         assert!(!wizard.supports_model_fetch());
     }

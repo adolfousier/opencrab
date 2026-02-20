@@ -105,11 +105,12 @@ pub(crate) async fn handle_message(
 
     if let Some(audio) = audio_attachment
         && voice_config.stt_enabled
-        && let Some(ref groq_key) = voice_config.groq_api_key
+        && let Some(ref stt_provider) = voice_config.stt_provider
+        && let Some(ref stt_key) = stt_provider.api_key
         && let Ok(resp) = reqwest::get(&audio.url).await
         && let Ok(bytes) = resp.bytes().await
     {
-        match crate::channels::voice::transcribe_audio(bytes.to_vec(), groq_key).await {
+        match crate::channels::voice::transcribe_audio(bytes.to_vec(), stt_key).await {
             Ok(transcript) => {
                 tracing::info!(
                     "Discord: transcribed voice: {}",

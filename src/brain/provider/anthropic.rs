@@ -300,47 +300,49 @@ impl Provider for AnthropicProvider {
         let buffer = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
 
         let event_stream = byte_stream
-            .map(move |chunk_result| -> Vec<std::result::Result<StreamEvent, ProviderError>> {
-                match chunk_result {
-                    Err(e) => vec![Err(ProviderError::StreamError(e.to_string()))],
-                    Ok(chunk) => {
-                        let text = String::from_utf8_lossy(&chunk);
-                        let mut buf = buffer.lock().expect("SSE buffer lock poisoned");
-                        buf.push_str(&text);
+            .map(
+                move |chunk_result| -> Vec<std::result::Result<StreamEvent, ProviderError>> {
+                    match chunk_result {
+                        Err(e) => vec![Err(ProviderError::StreamError(e.to_string()))],
+                        Ok(chunk) => {
+                            let text = String::from_utf8_lossy(&chunk);
+                            let mut buf = buffer.lock().expect("SSE buffer lock poisoned");
+                            buf.push_str(&text);
 
-                        let mut events = Vec::new();
+                            let mut events = Vec::new();
 
-                        // Process complete lines (terminated by \n)
-                        while let Some(newline_pos) = buf.find('\n') {
-                            let line = buf[..newline_pos].trim().to_string();
-                            buf.drain(..=newline_pos);
+                            // Process complete lines (terminated by \n)
+                            while let Some(newline_pos) = buf.find('\n') {
+                                let line = buf[..newline_pos].trim().to_string();
+                                buf.drain(..=newline_pos);
 
-                            if let Some(json_str) = line.strip_prefix("data: ") {
-                                if json_str == "[DONE]" {
-                                    continue;
-                                }
-                                match serde_json::from_str::<StreamEvent>(json_str) {
-                                    Ok(event) => events.push(Ok(event)),
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Failed to parse SSE event JSON: {}. Data: {}",
-                                            e,
-                                            json_str.chars().take(200).collect::<String>()
-                                        );
-                                        // Don't propagate parse errors for individual events
+                                if let Some(json_str) = line.strip_prefix("data: ") {
+                                    if json_str == "[DONE]" {
+                                        continue;
+                                    }
+                                    match serde_json::from_str::<StreamEvent>(json_str) {
+                                        Ok(event) => events.push(Ok(event)),
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "Failed to parse SSE event JSON: {}. Data: {}",
+                                                e,
+                                                json_str.chars().take(200).collect::<String>()
+                                            );
+                                            // Don't propagate parse errors for individual events
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        if events.is_empty() {
-                            vec![Ok(StreamEvent::Ping)]
-                        } else {
-                            events
+                            if events.is_empty() {
+                                vec![Ok(StreamEvent::Ping)]
+                            } else {
+                                events
+                            }
                         }
                     }
-                }
-            })
+                },
+            )
             .flat_map(futures::stream::iter);
 
         Ok(Box::pin(event_stream))
@@ -365,7 +367,7 @@ impl Provider for AnthropicProvider {
     fn default_model(&self) -> &str {
         self.custom_default_model
             .as_deref()
-            .unwrap_or("claude-sonnet-4-5-20250929")
+            .unwrap_or("claude-sonnet-4-5")
     }
 
     fn supported_models(&self) -> Vec<String> {
@@ -387,11 +389,16 @@ impl Provider for AnthropicProvider {
 
     async fn fetch_models(&self) -> Vec<String> {
         #[derive(Deserialize)]
-        struct ModelEntry { id: String }
+        struct ModelEntry {
+            id: String,
+        }
         #[derive(Deserialize)]
-        struct ModelsResponse { data: Vec<ModelEntry> }
+        struct ModelsResponse {
+            data: Vec<ModelEntry>,
+        }
 
-        let mut req = self.client
+        let mut req = self
+            .client
             .get(ANTHROPIC_MODELS_URL)
             .header("anthropic-version", ANTHROPIC_VERSION);
 
@@ -404,22 +411,17 @@ impl Provider for AnthropicProvider {
         }
 
         match req.send().await {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.json::<ModelsResponse>().await {
-                    Ok(body) => {
-                        let mut models: Vec<String> = body.data
-                            .into_iter()
-                            .map(|m| m.id)
-                            .collect();
-                        models.sort();
-                        if models.is_empty() {
-                            return self.supported_models();
-                        }
-                        models
+            Ok(resp) if resp.status().is_success() => match resp.json::<ModelsResponse>().await {
+                Ok(body) => {
+                    let mut models: Vec<String> = body.data.into_iter().map(|m| m.id).collect();
+                    models.sort();
+                    if models.is_empty() {
+                        return self.supported_models();
                     }
-                    Err(_) => self.supported_models(),
+                    models
                 }
-            }
+                Err(_) => self.supported_models(),
+            },
             _ => self.supported_models(),
         }
     }
@@ -510,13 +512,13 @@ mod tests {
     fn test_anthropic_provider_creation() {
         let provider = AnthropicProvider::new("test-key".to_string());
         assert_eq!(provider.name(), "anthropic");
-        assert_eq!(provider.default_model(), "claude-sonnet-4-5-20250929");
+        assert_eq!(provider.default_model(), "claude-sonnet-4-5");
     }
 
     #[test]
     fn test_custom_default_model() {
-        let provider =
-            AnthropicProvider::new("test-key".to_string()).with_default_model("claude-opus-4-6".to_string());
+        let provider = AnthropicProvider::new("test-key".to_string())
+            .with_default_model("claude-opus-4-6".to_string());
         assert_eq!(provider.default_model(), "claude-opus-4-6");
     }
 
@@ -534,10 +536,7 @@ mod tests {
     #[test]
     fn test_context_window() {
         let provider = AnthropicProvider::new("test-key".to_string());
-        assert_eq!(
-            provider.context_window("claude-opus-4-6"),
-            Some(200_000)
-        );
+        assert_eq!(provider.context_window("claude-opus-4-6"), Some(200_000));
         assert_eq!(
             provider.context_window("claude-3-opus-20240229"),
             Some(200_000)

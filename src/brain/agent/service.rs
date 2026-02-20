@@ -91,6 +91,12 @@ pub struct AgentService {
     /// Whether to auto-approve tool execution
     auto_approve_tools: bool,
 
+    /// Context window limit in tokens from config
+    context_limit: u32,
+
+    /// Max output tokens for API calls from config
+    max_tokens: u32,
+
     /// Callback for requesting tool approval from user
     approval_callback: Option<ApprovalCallback>,
 
@@ -113,6 +119,8 @@ pub struct AgentService {
 impl AgentService {
     /// Create a new agent service
     pub fn new(provider: Arc<dyn Provider>, context: ServiceContext) -> Self {
+        let config = crate::config::Config::load().unwrap_or_default();
+        
         Self {
             provider,
             context,
@@ -120,6 +128,8 @@ impl AgentService {
             max_tool_iterations: 0, // 0 = unlimited (loop detection is the safety net)
             default_system_brain: None,
             auto_approve_tools: false,
+            context_limit: config.agent.context_limit,
+            max_tokens: config.agent.max_tokens,
             approval_callback: None,
             progress_callback: None,
             message_queue_callback: None,
@@ -132,6 +142,16 @@ impl AgentService {
     /// Get the service context
     pub fn context(&self) -> &ServiceContext {
         &self.context
+    }
+
+    /// Get context limit from config
+    pub fn context_limit(&self) -> u32 {
+        self.context_limit
+    }
+
+    /// Get max tokens from config
+    pub fn max_tokens(&self) -> u32 {
+        self.max_tokens
     }
 
     /// Get the tool registry
@@ -219,6 +239,11 @@ impl AgentService {
         self.provider.name()
     }
 
+    /// Get the system brain
+    pub fn system_brain(&self) -> Option<&String> {
+        self.default_system_brain.as_ref()
+    }
+
     /// Get the default model for this provider
     pub fn provider_model(&self) -> &str {
         self.provider.default_model()
@@ -240,8 +265,8 @@ impl AgentService {
     }
 
     /// Get context window size for a given model
-    pub fn context_window_for_model(&self, model: &str) -> u32 {
-        self.provider.context_window(model).unwrap_or(200_000)
+    pub fn context_window_for_model(&self, _model: &str) -> u32 {
+        self.context_limit
     }
 
     /// Send a message and get a response
@@ -384,7 +409,7 @@ impl AgentService {
             .map_err(|e| AgentError::Database(e.to_string()))?;
 
         let model_name = model.unwrap_or_else(|| self.provider.default_model().to_string());
-        let context_window = self.provider.context_window(&model_name).unwrap_or(4096);
+        let context_window = self.context_limit;
 
         let db_messages = Self::trim_messages_to_budget(
             all_db_messages,
@@ -566,7 +591,7 @@ impl AgentService {
 
             // Build LLM request with tools if available
             let mut request =
-                LLMRequest::new(model_name.clone(), context.messages.clone()).with_max_tokens(4096);
+                LLMRequest::new(model_name.clone(), context.messages.clone()).with_max_tokens(self.max_tokens);
 
             if let Some(system) = &context.system_brain {
                 request = request.with_system(system.clone());
@@ -610,7 +635,7 @@ impl AgentService {
 
                     // Rebuild request with compacted context
                     let mut retry_req = LLMRequest::new(model_name.clone(), context.messages.clone())
-                        .with_max_tokens(4096);
+                        .with_max_tokens(self.max_tokens);
                     if let Some(system) = &context.system_brain {
                         retry_req = retry_req.with_system(system.clone());
                     }
@@ -646,6 +671,7 @@ impl AgentService {
 
             // Separate text blocks and tool use blocks from the response
             tracing::debug!("Response has {} content blocks", response.content.len());
+            tracing::debug!("Response raw: {:?}", response);
             let mut iteration_text = String::new();
             let mut tool_uses: Vec<(String, String, Value)> = Vec::new();
 
@@ -665,7 +691,21 @@ impl AgentService {
                         }
                     }
                     ContentBlock::ToolUse { id, name, input } => {
-                        tracing::debug!("Block {}: ToolUse {{ name: {}, id: {} }}", i, name, id);
+                        // GRANULAR LOG: Tool call received from provider
+                        let input_keys: Vec<_> = input.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                        tracing::info!(
+                            "[TOOL_EXEC] 📥 Tool call received: name={}, id={}, input_keys={:?}",
+                            name, id, input_keys
+                        );
+                        
+                        // Check for empty/Invalid input
+                        if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                            tracing::error!(
+                                "[TOOL_EXEC] ⚠️ Tool '{}' received EMPTY input! This will fail. Full input: {:?}",
+                                name, input
+                            );
+                        }
+                        
                         tool_uses.push((id.clone(), name.clone(), input.clone()));
                     }
                     _ => {
@@ -963,6 +1003,22 @@ impl AgentService {
                                                 "Tool execution failed".to_string()
                                             })
                                         };
+                                        
+                                        // GRANULAR LOG: Tool execution result
+                                        if success {
+                                            tracing::info!(
+                                                "[TOOL_EXEC] ✅ Tool '{}' executed successfully, output_len={}",
+                                                tool_name,
+                                                content.len()
+                                            );
+                                        } else {
+                                            tracing::error!(
+                                                "[TOOL_EXEC] ❌ Tool '{}' failed: {}",
+                                                tool_name,
+                                                content.chars().take(200).collect::<String>()
+                                            );
+                                        }
+                                        
                                         let output_summary: String = content.chars().take(2000).collect();
                                         tool_outputs.push((success, output_summary.clone()));
                                         if let Some(ref cb) = self.progress_callback {
@@ -981,6 +1037,12 @@ impl AgentService {
                                     }
                                     Err(e) => {
                                         let err_msg = format!("Tool execution error: {}", e);
+                                        // GRANULAR LOG: Tool execution error
+                                        tracing::error!(
+                                            "[TOOL_EXEC] 💥 Tool '{}' error: {}",
+                                            tool_name,
+                                            err_msg
+                                        );
                                         let output_summary: String = err_msg.chars().take(2000).collect();
                                         tool_outputs.push((false, output_summary.clone()));
                                         if let Some(ref cb) = self.progress_callback {
@@ -1028,7 +1090,7 @@ impl AgentService {
                     }
                 }
 
-                // Execute the tool
+                // Execute the tool (no approval needed)
                 match self
                     .tool_registry
                     .execute(&tool_name, tool_input, &tool_context)
@@ -1043,6 +1105,22 @@ impl AgentService {
                                 .error
                                 .unwrap_or_else(|| "Tool execution failed".to_string())
                         };
+                        
+                        // GRANULAR LOG: Direct tool execution result
+                        if success {
+                            tracing::info!(
+                                "[TOOL_EXEC] ✅ Tool '{}' executed successfully, output_len={}",
+                                tool_name,
+                                content.len()
+                            );
+                        } else {
+                            tracing::error!(
+                                "[TOOL_EXEC] ❌ Tool '{}' failed: {}",
+                                tool_name,
+                                content.chars().take(200).collect::<String>()
+                            );
+                        }
+                        
                         let output_summary: String = content.chars().take(2000).collect();
                         tool_outputs.push((success, output_summary.clone()));
                         if let Some(ref cb) = self.progress_callback {
@@ -1061,6 +1139,12 @@ impl AgentService {
                     }
                     Err(e) => {
                         let err_msg = format!("Tool execution error: {}", e);
+                        // GRANULAR LOG: Direct tool execution error
+                        tracing::error!(
+                            "[TOOL_EXEC] 💥 Tool '{}' error: {}",
+                            tool_name,
+                            err_msg
+                        );
                         let output_summary: String = err_msg.chars().take(2000).collect();
                         tool_outputs.push((false, output_summary.clone()));
                         if let Some(ref cb) = self.progress_callback {
@@ -1252,7 +1336,7 @@ impl AgentService {
             .map_err(|e| AgentError::Database(e.to_string()))?;
 
         let model_name = model.unwrap_or_else(|| self.provider.default_model().to_string());
-        let context_window = self.provider.context_window(&model_name).unwrap_or(4096);
+        let context_window = self.context_limit;
 
         let db_messages = Self::trim_messages_to_budget(
             all_db_messages,
@@ -1281,7 +1365,7 @@ impl AgentService {
 
         // Build base LLM request
         let request =
-            LLMRequest::new(model_name.clone(), context.messages.clone()).with_max_tokens(4096);
+            LLMRequest::new(model_name.clone(), context.messages.clone()).with_max_tokens(self.max_tokens);
 
         let request = if let Some(system) = context.system_brain {
             request.with_system(system)
@@ -1527,7 +1611,7 @@ impl AgentService {
         summary_messages.push(Message::user(compaction_prompt));
 
         let request = LLMRequest::new(model_name.to_string(), summary_messages)
-            .with_max_tokens(4096)
+            .with_max_tokens(self.max_tokens)
             .with_system("You are a precise summarization assistant. Your job is to create a structured breakdown of the conversation that will serve as the complete context for an AI agent continuing this work after context compaction. Be thorough — include every file, decision, and pending task.".to_string());
 
         let response = self

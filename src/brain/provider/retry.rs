@@ -96,8 +96,8 @@ impl RetryConfig {
 ///
 /// # Example
 /// ```no_run
-/// use opencrabs::llm::provider::retry::{retry_with_backoff, RetryConfig};
-/// use opencrabs::llm::ProviderError;
+/// use opencrabs::brain::provider::retry::{retry_with_backoff, RetryConfig};
+/// use opencrabs::brain::provider::ProviderError;
 ///
 /// async fn example() {
 ///     async fn make_api_call() -> Result<String, ProviderError> {

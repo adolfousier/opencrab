@@ -103,18 +103,26 @@ pub(crate) async fn handle_message(
         }
         (t.to_string(), false)
     } else if let Some(voice) = msg.voice() {
-        // Voice note -- transcribe via Groq Whisper
+        // Voice note -- transcribe via STT provider
         if !voice_config.stt_enabled {
             bot.send_message(msg.chat.id, "Voice notes are not enabled.")
                 .await?;
             return Ok(());
         }
 
-        let groq_key = match &voice_config.groq_api_key {
-            Some(key) => key.clone(),
+        let stt_key = match &voice_config.stt_provider {
+            Some(provider) => match &provider.api_key {
+                Some(key) => key.clone(),
+                None => {
+                    tracing::warn!("Telegram: voice note received but no STT API key configured");
+                    bot.send_message(msg.chat.id, "Voice transcription not configured (missing API key).")
+                        .await?;
+                    return Ok(());
+                }
+            },
             None => {
-                tracing::warn!("Telegram: voice note received but no GROQ_API_KEY configured");
-                bot.send_message(msg.chat.id, "Voice transcription not configured (missing GROQ_API_KEY).")
+                tracing::warn!("Telegram: voice note received but no STT provider configured");
+                bot.send_message(msg.chat.id, "Voice transcription not configured.")
                     .await?;
                 return Ok(());
             }
@@ -153,8 +161,8 @@ pub(crate) async fn handle_message(
             }
         };
 
-        // Transcribe with Groq Whisper
-        match crate::channels::voice::transcribe_audio(audio_bytes, &groq_key).await {
+        // Transcribe with STT provider
+        match crate::channels::voice::transcribe_audio(audio_bytes, &stt_key).await {
             Ok(transcript) => {
                 tracing::info!(
                     "Telegram: transcribed voice: {}",

@@ -112,9 +112,11 @@ impl ProviderUpdater {
         let provider_config = match provider.id.as_str() {
             "anthropic" => &mut config.providers.anthropic,
             "openai" => &mut config.providers.openai,
+            "openrouter" => &mut config.providers.openrouter,
+            "minimax" => &mut config.providers.minimax,
+            "custom" => &mut config.providers.custom,
             "gemini" | "google" => &mut config.providers.gemini,
             "bedrock" | "aws-bedrock" => &mut config.providers.bedrock,
-            "azure" | "azure-openai" => &mut config.providers.azure,
             "vertex" | "vertexai" => &mut config.providers.vertex,
             _ => {
                 debug!("Unknown provider: {}, skipping", provider.id);
@@ -131,6 +133,7 @@ impl ProviderUpdater {
                 api_key: None,
                 base_url: None,
                 default_model: None,
+                models: vec![],
             }
         });
 

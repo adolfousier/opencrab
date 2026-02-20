@@ -15,13 +15,9 @@ pub use types::*;
 
 // Provider implementations
 pub mod anthropic;
-pub mod azure;
 pub mod factory;
 pub mod openai;
-pub mod qwen;
 
 pub use anthropic::AnthropicProvider;
-pub use azure::AzureOpenAIProvider;
 pub use factory::create_provider;
 pub use openai::OpenAIProvider;
-pub use qwen::{QwenProvider, ThinkingConfig, ToolCallParser};

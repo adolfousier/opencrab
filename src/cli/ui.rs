@@ -450,15 +450,21 @@ pub(crate) async fn cmd_chat(
         if tg.enabled || tg_token.is_some() {
             if let Some(ref token) = tg_token {
                 let tg_agent = channel_factory.create_agent_service();
-                // Extract OpenAI API key for TTS (from env or provider config)
-                // TTS uses gpt-4o-mini-tts, NOT a text generation model
-                let openai_key = std::env::var("OPENAI_API_KEY").ok()
-                    .or_else(|| config.providers.openai.as_ref().and_then(|p| p.api_key.clone()));
+                // Extract OpenAI API key for TTS (from providers.tts.openai)
+                let openai_key = config.providers.tts.as_ref()
+                    .and_then(|t| t.openai.as_ref())
+                    .and_then(|p| p.api_key.clone());
+                // Extract STT provider config from providers.stt.*
+                let mut voice_cfg = config.voice.clone();
+                voice_cfg.stt_provider = config.providers.stt.as_ref()
+                    .and_then(|s| s.groq.clone());
+                voice_cfg.tts_provider = config.providers.tts.as_ref()
+                    .and_then(|t| t.openai.clone());
                 let bot = crate::channels::telegram::TelegramAgent::new(
                     tg_agent,
                     service_context.clone(),
                     tg.allowed_users.clone(),
-                    config.voice.clone(),
+                    voice_cfg,
                     openai_key,
                     app.shared_session_id(),
                     telegram_state.clone(),

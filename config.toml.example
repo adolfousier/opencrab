@@ -74,6 +74,26 @@ default_model = "qwen2.5-coder-7b-instruct"
 # - QWEN_ENABLE_THINKING: Enable/disable thinking mode (true/false)
 
 # ========================================
+# OpenRouter Provider (100+ models via OpenAI-compatible API)
+# ========================================
+# [providers.openrouter]
+# enabled = true
+# api_key = "sk-or-v1-..."  # Get from openrouter.ai/keys
+# base_url = "https://openrouter.ai/api/v1/chat/completions"
+# default_model = "qwen/qwen3-coder-next"  # Many options at openrouter.ai/models
+
+# ========================================
+# Minimax Provider (Chinese AI, OpenAI-compatible)
+# ========================================
+# Note: Minimax does NOT have a /models endpoint, so add models manually
+# [providers.minimax]
+# enabled = true
+# api_key = "your-minimax-key"
+# base_url = "https://api.minimax.io/v1"
+# default_model = "MiniMax-M2.5"
+# models = ["MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-Text-01"]
+
+# ========================================
 # Agent Behaviour
 # ========================================
 # [agent]

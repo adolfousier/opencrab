@@ -152,11 +152,11 @@ pub struct ChannelConfig {
 /// Voice processing configuration (STT + TTS)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceConfig {
-    /// Enable speech-to-text transcription (Groq Whisper)
+    /// Enable speech-to-text transcription
     #[serde(default = "default_true")]
     pub stt_enabled: bool,
 
-    /// Enable text-to-speech replies (OpenAI TTS)
+    /// Enable text-to-speech replies
     #[serde(default)]
     pub tts_enabled: bool,
 
@@ -168,9 +168,15 @@ pub struct VoiceConfig {
     #[serde(default = "default_tts_model")]
     pub tts_model: String,
 
-    /// Groq API key for STT (loaded from GROQ_API_KEY env var)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub groq_api_key: Option<String>,
+    /// STT provider config (runtime - from providers.stt.*)
+    /// Not serialized to config file
+    #[serde(skip, default)]
+    pub stt_provider: Option<ProviderConfig>,
+
+    /// TTS provider config (runtime - from providers.tts.*)
+    /// Not serialized to config file
+    #[serde(skip, default)]
+    pub tts_provider: Option<ProviderConfig>,
 }
 
 fn default_true() -> bool { true }
@@ -184,7 +190,8 @@ impl Default for VoiceConfig {
             tts_enabled: false,
             tts_voice: default_tts_voice(),
             tts_model: default_tts_model(),
-            groq_api_key: None,
+            stt_provider: None,
+            tts_provider: None,
         }
     }
 }
@@ -199,6 +206,14 @@ pub struct AgentConfig {
     /// Maximum concurrent tool calls
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent: u32,
+
+    /// Context window limit in tokens (default: 200000)
+    #[serde(default = "default_context_limit")]
+    pub context_limit: u32,
+
+    /// Max output tokens for API calls (default: 65536)
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
 }
 
 fn default_approval_policy() -> String {
@@ -209,11 +224,21 @@ fn default_max_concurrent() -> u32 {
     4
 }
 
+fn default_context_limit() -> u32 {
+    200_000
+}
+
+fn default_max_tokens() -> u32 {
+    65536
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             approval_policy: default_approval_policy(),
             max_concurrent: default_max_concurrent(),
+            context_limit: default_context_limit(),
+            max_tokens: default_max_tokens(),
         }
     }
 }
@@ -237,13 +262,21 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub anthropic: Option<ProviderConfig>,
 
-    /// OpenAI configuration
+    /// OpenAI configuration (official API)
     #[serde(default)]
     pub openai: Option<ProviderConfig>,
 
-    /// Qwen/DashScope configuration
+    /// OpenRouter configuration
     #[serde(default)]
-    pub qwen: Option<QwenProviderConfig>,
+    pub openrouter: Option<ProviderConfig>,
+
+    /// Minimax configuration
+    #[serde(default)]
+    pub minimax: Option<ProviderConfig>,
+
+    /// Custom OpenAI-compatible configuration
+    #[serde(default)]
+    pub custom: Option<ProviderConfig>,
 
     /// Google Gemini configuration
     #[serde(default)]
@@ -253,13 +286,49 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub bedrock: Option<ProviderConfig>,
 
-    /// Azure OpenAI configuration
-    #[serde(default)]
-    pub azure: Option<ProviderConfig>,
-
     /// VertexAI configuration
     #[serde(default)]
     pub vertex: Option<ProviderConfig>,
+
+    /// STT (Speech-to-Text) provider configurations
+    #[serde(default)]
+    pub stt: Option<SttProviders>,
+
+    /// TTS (Text-to-Speech) provider configurations
+    #[serde(default)]
+    pub tts: Option<TtsProviders>,
+
+    /// Fallback provider configuration (under [providers.fallback] in config)
+    #[serde(default)]
+    pub fallback: Option<FallbackProviderConfig>,
+}
+
+/// Fallback provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FallbackProviderConfig {
+    /// Enable fallback
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Fallback provider type
+    #[serde(default)]
+    pub provider: Option<String>,
+}
+
+/// STT (Speech-to-Text) provider configurations
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SttProviders {
+    /// Groq STT configuration
+    #[serde(default)]
+    pub groq: Option<ProviderConfig>,
+}
+
+/// TTS (Text-to-Speech) provider configurations
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TtsProviders {
+    /// OpenAI TTS configuration
+    #[serde(default)]
+    pub openai: Option<ProviderConfig>,
 }
 
 /// Individual provider configuration
@@ -280,42 +349,10 @@ pub struct ProviderConfig {
     /// Default model to use
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
-}
 
-/// Qwen-specific provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QwenProviderConfig {
-    /// Provider enabled
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-
-    /// API key (for DashScope cloud)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
-
-    /// API base URL override
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_url: Option<String>,
-
-    /// Default model to use
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_model: Option<String>,
-
-    /// Tool call parser: "hermes" or "openai" (default: hermes for local, openai for cloud)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_parser: Option<String>,
-
-    /// Enable Qwen3 thinking mode
+    /// Available models for this provider (can be updated at runtime)
     #[serde(default)]
-    pub enable_thinking: bool,
-
-    /// Thinking budget tokens (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_budget: Option<u32>,
-
-    /// DashScope region: "intl" (Singapore) or "cn" (Beijing)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub region: Option<String>,
+    pub models: Vec<String>,
 }
 
 fn default_enabled() -> bool {
@@ -548,9 +585,16 @@ impl Config {
             config.crabrace.auto_update = auto_update.parse().unwrap_or(true);
         }
 
-        // Groq API key for voice STT
+        // Groq API key for voice STT - load from providers.stt.groq
         if let Ok(groq_key) = std::env::var("GROQ_API_KEY") {
-            config.voice.groq_api_key = Some(groq_key);
+            let stt = config.providers.stt.get_or_insert_with(SttProviders::default);
+            stt.groq.get_or_insert_with(|| ProviderConfig {
+                enabled: true,
+                api_key: Some(groq_key),
+                base_url: None,
+                default_model: None,
+                models: vec![],
+            });
         }
 
         // Provider API keys from environment (only for API keys, not models)
@@ -573,6 +617,7 @@ impl Config {
                 api_key: None,
                 base_url: None,
                 default_model: None,
+                models: vec![],
             });
             provider.api_key = Some(api_key);
         }
@@ -594,6 +639,7 @@ impl Config {
                 api_key: None,
                 base_url: None,
                 default_model: None,
+                models: vec![],
             });
             provider.base_url = Some(base_url);
         }
@@ -605,75 +651,9 @@ impl Config {
                 api_key: None,
                 base_url: None,
                 default_model: None,
+                models: vec![],
             });
             provider.api_key = Some(api_key);
-        }
-
-        // AWS credentials are typically loaded via AWS SDK default chain
-        // Azure uses AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT
-        if let Ok(api_key) = std::env::var("AZURE_OPENAI_KEY") {
-            let provider = config.providers.azure.get_or_insert(ProviderConfig {
-                enabled: true,
-                api_key: None,
-                base_url: None,
-                default_model: None,
-            });
-            provider.api_key = Some(api_key);
-        }
-
-        if let Ok(endpoint) = std::env::var("AZURE_OPENAI_ENDPOINT") {
-            let provider = config.providers.azure.get_or_insert(ProviderConfig {
-                enabled: true,
-                api_key: None,
-                base_url: None,
-                default_model: None,
-            });
-            provider.base_url = Some(endpoint);
-        }
-
-        // Qwen/DashScope
-        if let Ok(api_key) = std::env::var("DASHSCOPE_API_KEY") {
-            let provider = config.providers.qwen.get_or_insert(QwenProviderConfig {
-                enabled: true,
-                api_key: None,
-                base_url: None,
-                default_model: None,
-                tool_parser: None,
-                enable_thinking: false,
-                thinking_budget: None,
-                region: None,
-            });
-            provider.api_key = Some(api_key);
-        }
-
-        // Qwen base URL (for vLLM, LM Studio, etc.)
-        if let Ok(base_url) = std::env::var("QWEN_BASE_URL") {
-            let provider = config.providers.qwen.get_or_insert(QwenProviderConfig {
-                enabled: true,
-                api_key: None,
-                base_url: None,
-                default_model: None,
-                tool_parser: None,
-                enable_thinking: false,
-                thinking_budget: None,
-                region: None,
-            });
-            provider.base_url = Some(base_url);
-        }
-
-        // Qwen thinking mode
-        if let Ok(thinking) = std::env::var("QWEN_ENABLE_THINKING") {
-            let provider = config.providers.qwen.get_or_insert(QwenProviderConfig {
-                enabled: true,
-                api_key: None,
-                base_url: None,
-                default_model: None,
-                tool_parser: None,
-                enable_thinking: false,
-                thinking_budget: None,
-                region: None,
-            });
-            provider.enable_thinking = thinking.parse().unwrap_or(false);
         }
 
         Ok(())
@@ -814,10 +794,8 @@ impl Config {
             .is_some_and(|p| p.api_key.is_some());
         let has_gemini = self.providers.gemini.as_ref()
             .is_some_and(|p| p.api_key.is_some());
-        let has_qwen = self.providers.qwen.as_ref()
-            .is_some_and(|p| p.api_key.is_some());
 
-        has_anthropic || has_openai || has_gemini || has_qwen
+        has_anthropic || has_openai || has_gemini
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -1073,7 +1051,6 @@ api_key = "test-openai-key"
         assert!(providers.openai.is_none());
         assert!(providers.gemini.is_none());
         assert!(providers.bedrock.is_none());
-        assert!(providers.azure.is_none());
         assert!(providers.vertex.is_none());
     }
 
@@ -1175,12 +1152,18 @@ level = "info"
 
 /// Resolve provider name and model from config (for display purposes)
 pub fn resolve_provider_from_config(config: &Config) -> (&str, &str) {
-    // Priority: Qwen > Anthropic > OpenAI > Gemini
-    if config.providers.qwen.as_ref().is_some_and(|p| p.enabled) {
-        let model = config.providers.qwen.as_ref()
+    // Check new dedicated providers first
+    if config.providers.minimax.as_ref().is_some_and(|p| p.enabled) {
+        let model = config.providers.minimax.as_ref()
             .and_then(|p| p.default_model.as_deref())
             .unwrap_or("default");
-        return ("Qwen/DashScope", model);
+        return ("Minimax", model);
+    }
+    if config.providers.openrouter.as_ref().is_some_and(|p| p.enabled) {
+        let model = config.providers.openrouter.as_ref()
+            .and_then(|p| p.default_model.as_deref())
+            .unwrap_or("default");
+        return ("OpenRouter", model);
     }
     if config.providers.anthropic.as_ref().is_some_and(|p| p.enabled) {
         let model = config.providers.anthropic.as_ref()
@@ -1189,15 +1172,6 @@ pub fn resolve_provider_from_config(config: &Config) -> (&str, &str) {
         return ("Anthropic", model);
     }
     if config.providers.openai.as_ref().is_some_and(|p| p.enabled) {
-        // Check if OpenRouter
-        if let Some(base_url) = config.providers.openai.as_ref().and_then(|p| p.base_url.as_ref())
-            && base_url.contains("openrouter")
-        {
-            let model = config.providers.openai.as_ref()
-                .and_then(|p| p.default_model.as_deref())
-                .unwrap_or("default");
-            return ("OpenRouter", model);
-        }
         let model = config.providers.openai.as_ref()
             .and_then(|p| p.default_model.as_deref())
             .unwrap_or("default");

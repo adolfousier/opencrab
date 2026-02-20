@@ -532,6 +532,15 @@ impl App {
         let config = crate::config::Config::load()
             .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
         
+        let openai_model = config.providers.openai.as_ref()
+            .and_then(|p| p.default_model.as_ref())
+            .cloned();
+        let anthropic_model = config.providers.anthropic.as_ref()
+            .and_then(|p| p.default_model.as_ref())
+            .cloned();
+        tracing::debug!("rebuild_agent_service: openai.default_model = {:?}, anthropic.default_model = {:?}", 
+            openai_model, anthropic_model);
+        
         // Create new provider from config
         let provider = create_provider(&config)
             .map_err(|e| anyhow::anyhow!("Failed to create provider: {}", e))?;
@@ -542,11 +551,71 @@ impl App {
         // Get existing tool registry from current agent service
         let tool_registry = self.agent_service.tool_registry().clone();
         
-        // Create new agent service with new provider
-        let new_agent_service = Arc::new(AgentService::new(
-            provider,
-            context,
-        ).with_tool_registry(tool_registry));
+        // Get existing system brain from current agent service
+        let system_brain = self.agent_service.system_brain().cloned();
+        
+        // Get event sender for approval callback
+        let event_sender = self.event_sender();
+        
+        // Create approval callback that sends requests to TUI
+        let approval_callback: crate::brain::agent::ApprovalCallback = Arc::new(move |tool_info| {
+            let sender = event_sender.clone();
+            Box::pin(async move {
+                use crate::tui::events::{ToolApprovalRequest, TuiEvent};
+                use tokio::sync::mpsc;
+
+                let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+
+                let request = ToolApprovalRequest {
+                    request_id: uuid::Uuid::new_v4(),
+                    tool_name: tool_info.tool_name,
+                    tool_description: tool_info.tool_description,
+                    tool_input: tool_info.tool_input,
+                    capabilities: tool_info.capabilities,
+                    response_tx,
+                    requested_at: std::time::Instant::now(),
+                };
+
+                sender
+                    .send(TuiEvent::ToolApprovalRequested(request))
+                    .map_err(|e| {
+                        crate::brain::agent::AgentError::Internal(format!(
+                            "Failed to send approval request: {}",
+                            e
+                        ))
+                    })?;
+
+                let response = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    response_rx.recv(),
+                )
+                .await
+                .map_err(|_| {
+                    crate::brain::agent::AgentError::Internal(
+                        "Approval request timed out".to_string(),
+                    )
+                })?
+                .ok_or_else(|| {
+                    crate::brain::agent::AgentError::Internal(
+                        "Approval channel closed".to_string(),
+                    )
+                })?;
+
+                Ok(response.approved)
+            })
+        });
+        
+        // Create new agent service with new provider, system brain, and approval callback
+        let mut new_agent_service = AgentService::new(provider, context)
+            .with_tool_registry(tool_registry)
+            .with_approval_callback(Some(approval_callback));
+        
+        // Add system brain if it exists
+        if let Some(brain) = system_brain {
+            new_agent_service = new_agent_service.with_system_brain(brain);
+        }
+        
+        let new_agent_service = Arc::new(new_agent_service);
         
         // Update app state
         self.default_model_name = new_agent_service.provider_model().to_string();
@@ -2857,6 +2926,9 @@ impl App {
         // Track context usage from latest response
         self.last_input_tokens = Some(response.context_tokens);
 
+        // Debug: log response content length
+        tracing::debug!("Response complete: content_len={}, output_tokens={}", response.content.len(), response.usage.output_tokens);
+
         // Add assistant message to UI
         let assistant_msg = DisplayMessage {
             id: response.message_id,
@@ -3678,13 +3750,14 @@ impl App {
         let config = crate::config::Config::load().unwrap_or_default();
         
         // Determine which provider is enabled
-        let (provider_idx, api_key) = if config.providers.qwen.as_ref().is_some_and(|p| p.enabled) {
-            (3, config.providers.qwen.as_ref().and_then(|p| p.api_key.clone()))
-        } else if config.providers.anthropic.as_ref().is_some_and(|p| p.enabled) {
+        // Indices: 0=Anthropic, 1=OpenAI, 2=Gemini, 3=OpenRouter, 4=Minimax, 5=Custom
+        let (provider_idx, api_key) = if config.providers.anthropic.as_ref().is_some_and(|p| p.enabled) {
             (0, config.providers.anthropic.as_ref().and_then(|p| p.api_key.clone()))
         } else if config.providers.openai.as_ref().is_some_and(|p| p.enabled) {
             if let Some(base_url) = config.providers.openai.as_ref().and_then(|p| p.base_url.as_ref()) {
                 if base_url.contains("openrouter") {
+                    (3, config.providers.openai.as_ref().and_then(|p| p.api_key.clone()))
+                } else if base_url.contains("minimax") {
                     (4, config.providers.openai.as_ref().and_then(|p| p.api_key.clone()))
                 } else {
                     (5, config.providers.openai.as_ref().and_then(|p| p.api_key.clone()))
@@ -3694,6 +3767,10 @@ impl App {
             }
         } else if config.providers.gemini.as_ref().is_some_and(|p| p.enabled) {
             (2, config.providers.gemini.as_ref().and_then(|p| p.api_key.clone()))
+        } else if config.providers.openrouter.as_ref().is_some_and(|p| p.enabled) {
+            (3, config.providers.openrouter.as_ref().and_then(|p| p.api_key.clone()))
+        } else if config.providers.minimax.as_ref().is_some_and(|p| p.enabled) {
+            (4, config.providers.minimax.as_ref().and_then(|p| p.api_key.clone()))
         } else {
             (0, None) // Default
         };
@@ -3712,8 +3789,9 @@ impl App {
         let current = config.providers.openai.as_ref()
             .and_then(|p| p.default_model.as_deref())
             .or_else(|| config.providers.anthropic.as_ref().and_then(|p| p.default_model.as_deref()))
-            .or_else(|| config.providers.qwen.as_ref().and_then(|p| p.default_model.as_deref()))
             .or_else(|| config.providers.gemini.as_ref().and_then(|p| p.default_model.as_deref()))
+            .or_else(|| config.providers.openrouter.as_ref().and_then(|p| p.default_model.as_deref()))
+            .or_else(|| config.providers.minimax.as_ref().and_then(|p| p.default_model.as_deref()))
             .unwrap_or("default")
             .to_string();
 
@@ -3866,7 +3944,7 @@ impl App {
     /// Internal: save provider with option to close dialog
     async fn save_provider_selection_internal(&mut self, provider_idx: usize, close_dialog: bool) -> Result<()> {
         use super::onboarding::PROVIDERS;
-        use crate::config::{ProviderConfig, QwenProviderConfig};
+        use crate::config::ProviderConfig;
 
         let provider = &PROVIDERS[provider_idx];
         
@@ -3883,7 +3961,10 @@ impl App {
         if let Some(ref mut p) = config.providers.gemini {
             p.enabled = false;
         }
-        if let Some(ref mut p) = config.providers.qwen {
+        if let Some(ref mut p) = config.providers.openrouter {
+            p.enabled = false;
+        }
+        if let Some(ref mut p) = config.providers.minimax {
             p.enabled = false;
         }
         
@@ -3906,6 +3987,7 @@ impl App {
                     api_key: api_key.clone(),
                     base_url: None,
                     default_model: Some(default_model.to_string()),
+                    models: vec![],
                 });
             }
             1 => {
@@ -3915,6 +3997,7 @@ impl App {
                     api_key: api_key.clone(),
                     base_url: None,
                     default_model: Some(default_model.to_string()),
+                    models: vec![],
                 });
             }
             2 => {
@@ -3924,37 +4007,37 @@ impl App {
                     api_key: api_key.clone(),
                     base_url: None,
                     default_model: Some(default_model.to_string()),
+                    models: vec![],
                 });
             }
             3 => {
-                // Qwen
-                config.providers.qwen = Some(QwenProviderConfig {
-                    enabled: true,
-                    api_key: api_key.clone(),
-                    base_url: None,
-                    default_model: Some(default_model.to_string()),
-                    tool_parser: None,
-                    enable_thinking: false,
-                    thinking_budget: None,
-                    region: None,
-                });
-            }
-            4 => {
                 // OpenRouter
-                config.providers.openai = Some(ProviderConfig {
+                config.providers.openrouter = Some(ProviderConfig {
                     enabled: true,
                     api_key: api_key.clone(),
                     base_url: Some("https://openrouter.ai/api/v1/chat/completions".to_string()),
                     default_model: Some(default_model.to_string()),
+                    models: vec![],
+                });
+            }
+            4 => {
+                // Minimax
+                config.providers.minimax = Some(ProviderConfig {
+                    enabled: true,
+                    api_key: api_key.clone(),
+                    base_url: Some("https://api.minimax.io/v1".to_string()),
+                    default_model: Some(default_model.to_string()),
+                    models: vec![],
                 });
             }
             5 => {
-                // Custom
-                config.providers.openai = Some(ProviderConfig {
+                // Custom OpenAI-compatible
+                config.providers.custom = Some(ProviderConfig {
                     enabled: true,
                     api_key: api_key.clone(),
                     base_url: Some(self.model_selector_base_url.clone()),
                     default_model: Some(default_model.to_string()),
+                    models: vec![],
                 });
             }
             _ => {}
@@ -3972,7 +4055,7 @@ impl App {
                         p.api_key = Some(key.clone());
                     }
                 }
-                1 | 4 | 5 => {
+                1 => {
                     if let Some(ref mut p) = config.providers.openai {
                         p.api_key = Some(key.clone());
                     }
@@ -3983,7 +4066,17 @@ impl App {
                     }
                 }
                 3 => {
-                    if let Some(ref mut p) = config.providers.qwen {
+                    if let Some(ref mut p) = config.providers.openrouter {
+                        p.api_key = Some(key.clone());
+                    }
+                }
+                4 => {
+                    if let Some(ref mut p) = config.providers.minimax {
+                        p.api_key = Some(key.clone());
+                    }
+                }
+                5 => {
+                    if let Some(ref mut p) = config.providers.custom {
                         p.api_key = Some(key.clone());
                     }
                 }
@@ -4027,8 +4120,9 @@ impl App {
             0 => "providers.anthropic",
             1 => "providers.openai",
             2 => "providers.gemini",
-            3 => "providers.qwen",
-            4 | 5 => "providers.openai",
+            3 => "providers.openrouter",
+            4 => "providers.minimax",
+            5 => "providers.custom",
             _ => "providers.anthropic",
         };
         
