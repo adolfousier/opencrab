@@ -397,6 +397,11 @@ pub mod keys {
         event.code == KeyCode::PageDown
     }
 
+    /// Tab - Select/Navigate
+    pub fn is_tab(event: &KeyEvent) -> bool {
+        event.code == KeyCode::Tab && event.modifiers.is_empty()
+    }
+
     /// 'A' or 'Y' - Approve
     pub fn is_approve(event: &KeyEvent) -> bool {
         matches!(

@@ -593,13 +593,13 @@ impl Provider for OpenAIProvider {
                                         
                                         // Get content
                                         let content = chunk.choices.first()
-                                            .and_then(|c| c.delta.as_ref())
+                                            .and_then(|c| c.delta.as_ref().or(c.message.as_ref()))
                                             .and_then(|d| d.content.as_ref())
                                             .cloned();
                                         
-                                        // Get tool_calls from delta
+                                        // Get tool_calls from delta OR message (MiniMax sends final tool_calls in message)
                                         let tool_calls = chunk.choices.first()
-                                            .and_then(|c| c.delta.as_ref())
+                                            .and_then(|c| c.delta.as_ref().or(c.message.as_ref()))
                                             .and_then(|d| d.tool_calls.as_ref());
 
                                         if let Some(tc) = tool_calls
@@ -622,25 +622,16 @@ impl Provider for OpenAIProvider {
                                                     
                                                     // Check if arguments are empty or partial JSON
                                                     let args_trimmed = args.trim();
-                                                    if args_trimmed.is_empty() || args_trimmed == "{}" {
+                                                    let is_valid_json = !args_trimmed.is_empty() 
+                                                        && args_trimmed != "{}"
+                                                        && serde_json::from_str::<serde_json::Value>(args).is_ok();
+                                                    
+                                                    if !is_valid_json {
                                                         tracing::warn!(
-                                                            "[TOOL_PARSE] ⚠️ Tool '{}' has EMPTY arguments! id={}, this will cause execution failure",
+                                                            "[TOOL_PARSE] ⚠️ Tool '{}' args are INCOMPLETE (id={}), skipping emit in this chunk",
                                                             name, tc_id
                                                         );
-                                                    } else {
-                                                        // Try to parse to check if valid JSON
-                                                        match serde_json::from_str::<serde_json::Value>(args) {
-                                                            Ok(v) => {
-                                                                let keys: Vec<_> = v.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
-                                                                tracing::debug!("[TOOL_PARSE] ✓ Tool '{}' args parsed OK: {:?}", name, keys);
-                                                            }
-                                                            Err(e) => {
-                                                                tracing::warn!(
-                                                                    "[TOOL_PARSE] ⚠️ Tool '{}' args are INCOMPLETE JSON (will be retried in next chunk): {}",
-                                                                    name, e
-                                                                );
-                                                            }
-                                                        }
+                                                        continue; // Skip this tool_call, wait for next chunk with complete data
                                                     }
                                                     
                                                     let input = serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({}));
@@ -897,6 +888,7 @@ struct OpenAIStreamChunk {
 struct OpenAIStreamChoice {
     index: u32,
     delta: Option<OpenAIMessageDelta>,
+    message: Option<OpenAIMessageDelta>,
     finish_reason: Option<String>,
 }
 

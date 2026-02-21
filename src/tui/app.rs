@@ -750,8 +750,46 @@ impl App {
                 // now it becomes a permanent message in the chat history.
                 self.streaming_response = None;
 
-                // Agent sent text between tool call batches — flush current
-                // tool group first so tool calls appear above the text.
+                // Check if there was a queued message that was just processed
+                // If so, add it at the VERY END (after all assistant messages and tool calls)
+                if let Some(queued_content) = self.message_queue.lock().await.take() {
+                    let queued_msg = DisplayMessage {
+                        id: Uuid::new_v4(),
+                        role: "user".to_string(),
+                        content: Self::humanize_image_markers(&queued_content),
+                        timestamp: chrono::Utc::now(),
+                        token_count: None,
+                        cost: None,
+                        approval: None,
+                        approve_menu: None,
+                        details: Some("queued".to_string()), // Mark as queued
+                        expanded: false,
+                        tool_group: None,
+                        plan_approval: None,
+                    };
+                    // Push at the END so it appears below everything
+                    self.messages.push(queued_msg);
+                    tracing::info!("[TUI] Added queued message at end of conversation");
+                }
+
+                // Add the intermediate text as an assistant message FIRST
+                self.messages.push(DisplayMessage {
+                    id: Uuid::new_v4(),
+                    role: "assistant".to_string(),
+                    content: text,
+                    timestamp: chrono::Utc::now(),
+                    token_count: None,
+                    cost: None,
+                    approval: None,
+                    approve_menu: None,
+                    details: None,
+                    expanded: false,
+                    tool_group: None,
+                    plan_approval: None,
+                });
+
+                // THEN add tool group AFTER the text so it appears below
+                // (natural flow: text → tool call → text → tool call)
                 if let Some(group) = self.active_tool_group.take() {
                     let count = group.calls.len();
                     self.messages.push(DisplayMessage {
@@ -769,21 +807,6 @@ impl App {
                         plan_approval: None,
                     });
                 }
-                // Add the intermediate text as an assistant message
-                self.messages.push(DisplayMessage {
-                    id: Uuid::new_v4(),
-                    role: "assistant".to_string(),
-                    content: text,
-                    timestamp: chrono::Utc::now(),
-                    token_count: None,
-                    cost: None,
-                    approval: None,
-                    approve_menu: None,
-                    details: None,
-                    expanded: false,
-                    tool_group: None,
-                    plan_approval: None,
-                });
                 if self.auto_scroll {
                     self.scroll_offset = 0;
                 }
@@ -2748,24 +2771,9 @@ impl App {
 
         if self.is_processing {
             tracing::warn!("[send_message] QUEUED — agent still processing previous request");
-            // Show the queued message as a real user message immediately
-            let user_msg = DisplayMessage {
-                id: Uuid::new_v4(),
-                role: "user".to_string(),
-                content: Self::humanize_image_markers(&content),
-                timestamp: chrono::Utc::now(),
-                token_count: None,
-                cost: None,
-                approval: None,
-                approve_menu: None,
-                details: None,
-                expanded: false,
-                tool_group: None,
-                plan_approval: None,
-            };
-            self.messages.push(user_msg);
-            self.scroll_offset = 0;
-
+            // DON'T add to messages yet - wait until agent processes it
+            // It will be added at the end after all assistant messages
+            
             // Queue for injection between tool calls
             *self.message_queue.lock().await = Some(content);
             return Ok(());
@@ -2892,6 +2900,26 @@ impl App {
                 });
                 approval.state = ApprovalState::Denied("Agent completed without resolution".to_string());
             }
+        }
+
+        // Finalize any remaining queued message at the END (if agent didn't process it via IntermediateText)
+        if let Some(queued_content) = self.message_queue.lock().await.take() {
+            let queued_msg = DisplayMessage {
+                id: Uuid::new_v4(),
+                role: "user".to_string(),
+                content: Self::humanize_image_markers(&queued_content),
+                timestamp: chrono::Utc::now(),
+                token_count: None,
+                cost: None,
+                approval: None,
+                approve_menu: None,
+                details: Some("queued".to_string()),
+                expanded: false,
+                tool_group: None,
+                plan_approval: None,
+            };
+            self.messages.push(queued_msg);
+            tracing::info!("[TUI] Added queued message at response complete");
         }
 
         // Finalize active tool group into a display message
@@ -4373,7 +4401,7 @@ impl App {
                     self.file_picker_scroll_offset = self.file_picker_selected - visible_items + 1;
                 }
             }
-        } else if keys::is_enter(&event) || event.code == KeyCode::Char(' ') {
+        } else if keys::is_enter(&event) || event.code == KeyCode::Char(' ') || keys::is_tab(&event) {
             // Select file or navigate into directory
             if let Some(selected_path) = self.file_picker_files.get(self.file_picker_selected) {
                 if selected_path.is_dir() {
