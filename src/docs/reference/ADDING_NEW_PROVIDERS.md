@@ -228,3 +228,93 @@ Current provider indices in onboarding UI:
 - 3: OpenRouter
 - 4: Minimax
 - 5: Custom (local Ollama, etc.)
+
+---
+
+## Provider Requirements (Mandatory)
+
+All new providers MUST implement the following to ensure full functionality.
+
+> **Reference Implementation:** See `src/brain/provider/openai.rs` for the MiniMax implementation that handles streaming, tool calls, and token usage. Search for `minimax`, `stream_options`, `MessageDelta`, and `usage`.
+
+### 1. Streaming Support
+
+Use `stream_options: { include_usage: true }` in the request body:
+
+```rust
+openai_request.stream_options = Some(StreamOptions { include_usage: true });
+```
+
+Parse chunks and accumulate tool call arguments across chunks (may arrive partially).
+
+### 2. Tool Calls
+
+- Support tool call streaming (arguments may come in multiple chunks)
+- Accumulate arguments until valid JSON received
+- Log granular tool call events with `[TOOL_PARSE]` prefix
+- Handle both `delta` and `message` fields in chunks (some providers send final tool_calls in `message`)
+
+```rust
+// Example: accumulate arguments
+let args = &tc_item.function.arguments;
+let args_trimmed = args.trim();
+let is_valid_json = !args_trimmed.is_empty() 
+    && args_trimmed != "{}"
+    && serde_json::from_str::<serde_json::Value>(args).is_ok();
+
+if !is_valid_json {
+    tracing::warn!("[TOOL_PARSE] ⚠️ Tool '{}' args INCOMPLETE, skipping emit", name);
+    continue; // Wait for next chunk with complete data
+}
+```
+
+### 3. Token Usage (Critical)
+
+Extract `usage` field from the final chunk:
+
+```rust
+// Add usage field to stream chunk struct
+struct OpenAIStreamChunk {
+    id: String,
+    choices: Vec<OpenAIStreamChoice>,
+    usage: Option<OpenAIUsage>,  // MUST HAVE
+}
+
+// Extract and emit usage
+if let Some(ref usage) = chunk.usage {
+    let finish_reason = chunk.choices.first().and_then(|c| c.finish_reason.as_ref());
+    if finish_reason.is_some() {
+        let input_tokens = usage.prompt_tokens.unwrap_or(0);
+        let output_tokens = usage.completion_tokens.unwrap_or(0);
+        tracing::info!("[STREAM_USAGE] Final chunk usage: input={}, output={}", input_tokens, output_tokens);
+        
+        events.push(Ok(StreamEvent::MessageDelta {
+            delta: MessageDelta {
+                stop_reason: Some(StopReason::EndTurn),
+                stop_sequence: None,
+            },
+            usage: TokenUsage { input_tokens, output_tokens },
+        }));
+    }
+}
+```
+
+### 4. Error Handling
+
+- Graceful degradation on parse failures
+- Don't discard accumulated data on errors
+- Log parse errors with `[STREAM_PARSE]` prefix
+
+### 5. Provider Struct Requirements
+
+Ensure OpenAIUsage fields are optional to handle missing data:
+
+```rust
+#[derive(Debug, Clone, Deserialize)]
+struct OpenAIUsage {
+    #[serde(rename = "prompt_tokens")]
+    prompt_tokens: Option<u32>,
+    #[serde(rename = "completion_tokens")]
+    completion_tokens: Option<u32>,
+}
+```

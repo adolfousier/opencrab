@@ -82,7 +82,7 @@
 ### AI & Providers
 | Feature | Description |
 |---------|-------------|
-| **Multi-Provider** | Anthropic Claude (with OAuth), OpenAI, OpenRouter (400+ models), Qwen, Azure, and any OpenAI-compatible API. Model lists fetched live from provider APIs — new models available instantly |
+| **Multi-Provider** | Anthropic Claude, OpenAI, OpenRouter (400+ models), MiniMax, and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly |
 | **Real-time Streaming** | Character-by-character response streaming with animated spinner showing model name and live text |
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
 | **Cost Tracking** | Per-message token count and cost displayed in header |
@@ -105,6 +105,7 @@
 |---------|-------------|
 | **Telegram Bot** | Full-featured Telegram bot running alongside the TUI — shared session, photo/voice support, allowlisted user IDs |
 | **WhatsApp** | Connect via QR code pairing at runtime ("connect my WhatsApp") or from onboarding wizard. Text + image support, shared session with TUI, phone allowlist, session persists across restarts |
+| **Discord** | Full Discord bot — text + image + voice, allowlisted users/channels, shared session with TUI |
 | **Slack** | Coming soon |
 
 ### Terminal UI
@@ -175,28 +176,35 @@ Model list is **fetched live** from the OpenRouter API during onboarding and via
 
 **Models:** `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-Text-01`
 
-**Setup:** Get your API key from [platform.minimax.io](https://platform.minimax.io). Set `MINIMAX_API_KEY` environment variable or configure in `keys.toml`:
+**Setup:** Get your API key from [platform.minimax.io](https://platform.minimax.io). Add to `keys.toml`:
 
-```bash
-export MINIMAX_API_KEY="your-api-key"
+```toml
+[providers.minimax]
+api_key = "your-api-key"
 ```
 
 MiniMax is an OpenAI-compatible provider with competitive pricing. It does not expose a `/models` endpoint, so the model list comes from `config.toml` (pre-configured with available models).
 
-### Qwen (via OpenAI-compatible)
+### Custom (OpenAI-Compatible)
 
-**Setup:** Configure via `QWEN_API_KEY` and `QWEN_BASE_URL`.
+**Use for:** Ollama, LM Studio, LocalAI, Groq, or any OpenAI-compatible API.
 
-### OpenAI-Compatible Local / Cloud APIs
+**Setup:** Configure in `config.toml` and add API key to `keys.toml`:
 
-| Provider | Status | Setup |
-|----------|--------|-------|
-| **LM Studio** | Tested | `OPENAI_BASE_URL="http://localhost:1234/v1"` |
-| **Ollama** | Compatible | `OPENAI_BASE_URL="http://localhost:11434/v1"` |
-| **LocalAI** | Compatible | `OPENAI_BASE_URL="http://localhost:8080/v1"` |
-| Groq | Compatible | `OPENAI_BASE_URL="https://api.groq.com/openai/v1"` |
+```toml
+[providers.custom]
+enabled = true
+base_url = "http://localhost:11434/v1"  # or your endpoint
+default_model = "qwen2.5-coder-7b-instruct"
+```
 
-**Provider priority:** Qwen > Anthropic > OpenAI (fallback). The first provider with a configured API key is used. `OPENAI_API_KEY` is isolated to TTS only — it won't create a text provider unless explicitly configured.
+And in `keys.toml`:
+```toml
+[providers.custom]
+api_key = "your-api-key"  # not required for local Ollama
+```
+
+**Provider priority:** Anthropic > OpenAI > OpenRouter > MiniMax > Custom. The first provider with `enabled = true` in config.toml is used. Each provider has its own API key in `keys.toml` — no sharing or confusion.
 
 ---
 
@@ -231,10 +239,6 @@ Required for `/rebuild`, adding custom tools, or modifying the agent.
 git clone https://github.com/adolfousier/opencrabs.git
 cd opencrabs
 
-# Set up credentials
-cp .env.example .env
-# Edit .env with your API key(s)
-
 # Build & run (development)
 cargo run --bin opencrabs
 
@@ -243,7 +247,7 @@ cargo build --release
 ./target/release/opencrabs
 ```
 
-OpenCrabs auto-loads `.env` via `dotenvy` at startup — no need to manually export variables.
+> **API Keys:** OpenCrabs uses `keys.toml` instead of `.env` for API keys. The onboarding wizard will help you set it up, or edit `~/.opencrabs/keys.toml` directly. Keys are handled at runtime — no OS environment pollution.
 
 > **First run?** The onboarding wizard will guide you through provider setup, workspace, and more. See [Onboarding Wizard](#-onboarding-wizard).
 
@@ -256,15 +260,12 @@ Run OpenCrabs in an isolated container. Build takes ~15min (Rust release + LTO).
 git clone https://github.com/adolfousier/opencrabs.git
 cd opencrabs
 
-# Option A: With .env file (auto-loaded)
-cp .env.example .env   # add your API keys
+# Run with docker compose
+# API keys are mounted from keys.toml on host
 docker compose -f src/docker/compose.yml up --build
-
-# Option B: No .env — onboarding wizard handles setup interactively
-docker compose -f src/docker/compose.yml run opencrabs
 ```
 
-Config, workspace, and memory DB persist in a Docker volume across restarts. Keys are passed via environment — never baked into the image.
+Config, workspace, and memory DB persist in a Docker volume across restarts. API keys in `keys.toml` are mounted into the container at runtime — never baked into the image.
 
 ### CLI Commands
 
@@ -374,22 +375,30 @@ First-time users are guided through an 8-step setup wizard that appears automati
 
 ## 🔑 Authentication Methods
 
+OpenCrabs uses `keys.toml` for API keys — no `.env` files, no OS environment pollution. All keys are handled at runtime.
+
 ### Option A: OAuth / Claude Max (Recommended for Claude)
 
-```bash
-# In .env file:
-ANTHROPIC_MAX_SETUP_TOKEN=sk-ant-oat01-YOUR_OAUTH_TOKEN
-ANTHROPIC_MAX_MODEL=claude-opus-4-6
+Add to `keys.toml`:
+
+```toml
+[providers.anthropic]
+api_key = "sk-ant-oat01-YOUR_OAUTH_TOKEN"
+model = "claude-opus-4-6"
 ```
 
 The `sk-ant-oat` prefix is auto-detected. OpenCrabs will use `Authorization: Bearer` with the `anthropic-beta: oauth-2025-04-20` header.
 
 ### Option B: Standard API Key
 
-```bash
-# In .env or exported:
-ANTHROPIC_API_KEY=sk-ant-api03-YOUR_KEY
-OPENAI_API_KEY=sk-YOUR_KEY
+In `keys.toml`:
+
+```toml
+[providers.anthropic]
+api_key = "sk-ant-api03-YOUR_KEY"
+
+[providers.openai]
+api_key = "sk-YOUR_KEY"
 ```
 
 ### Option C: OS Keyring (Secure Storage)
@@ -400,7 +409,7 @@ cargo run -- keyring set anthropic YOUR_API_KEY
 # Automatically loaded on startup, no plaintext files
 ```
 
-**Priority:** Keyring > `ANTHROPIC_MAX_SETUP_TOKEN` > `ANTHROPIC_API_KEY` > config file
+**Priority:** Keyring > keys.toml > config file
 
 ---
 
@@ -413,11 +422,12 @@ OpenCrabs works with any OpenAI-compatible local inference server for **100% pri
 1. Download and install [LM Studio](https://lmstudio.ai/)
 2. Download a model (e.g., `qwen2.5-coder-7b-instruct`, `Mistral-7B-Instruct`, `Llama-3-8B`)
 3. Start the local server (default port 1234)
-4. Configure OpenCrabs:
+4. Configure OpenCrabs in `keys.toml`:
 
-```bash
-# .env or environment
-OPENAI_API_KEY="lm-studio"
+```toml
+[providers.custom]
+api_key = "not-required"  # LM Studio doesn't need a key
+```
 OPENAI_BASE_URL="http://localhost:1234/v1"
 ```
 
