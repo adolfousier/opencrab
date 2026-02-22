@@ -450,6 +450,15 @@ pub fn save_keys(keys: &ProviderConfigs) -> Result<()> {
 /// // results in keys.toml: [channels.telegram] token = "123456:ABC..."
 /// ```
 pub fn write_secret_key(section: &str, key: &str, value: &str) -> Result<()> {
+    // Sanitize: strip carriage returns, take only first token (reject pasted URLs/junk after key)
+    let value = value.split(['\r', '\n'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    if value.is_empty() {
+        return Ok(()); // Don't write empty values
+    }
+
     let path = keys_path();
 
     let mut doc: toml::Value = if path.exists() {
@@ -810,6 +819,9 @@ impl Config {
     /// `key` is the field name inside that section.
     /// `value` is the TOML-serialisable value.
     pub fn write_key(section: &str, key: &str, value: &str) -> Result<()> {
+        // Sanitize: trim whitespace/newlines that may leak from TUI input
+        let value = value.trim();
+
         let path = Self::system_config_path()
             .unwrap_or_else(|| opencrabs_home().join("config.toml"));
 

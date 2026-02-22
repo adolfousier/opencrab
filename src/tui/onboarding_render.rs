@@ -427,10 +427,10 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         ]));
 
         // API Key field (optional for custom providers)
-        let key_display = if wizard.custom_api_key.is_empty() {
+        let key_display = if wizard.api_key_input.is_empty() {
             "optional".to_string()
         } else {
-            "*".repeat(wizard.custom_api_key.len().min(30))
+            "*".repeat(wizard.api_key_input.len().min(30))
         };
         let cursor = if api_key_focused { "█" } else { "" };
         lines.push(Line::from(vec![

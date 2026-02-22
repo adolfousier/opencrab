@@ -4157,72 +4157,43 @@ impl App {
             _ => {}
         }
 
-        // Save config (without API keys)
-        let config_path = crate::config::opencrabs_home().join("config.toml");
-        
-        // Strip API keys before saving to config.toml
-        let mut config_for_save = config.clone();
-        if let Some(ref mut p) = config_for_save.providers.anthropic { p.api_key = None; }
-        if let Some(ref mut p) = config_for_save.providers.openai { p.api_key = None; }
-        if let Some(ref mut p) = config_for_save.providers.gemini { p.api_key = None; }
-        if let Some(ref mut p) = config_for_save.providers.openrouter { p.api_key = None; }
-        if let Some(ref mut p) = config_for_save.providers.minimax { p.api_key = None; }
-        if let Some(ref mut p) = config_for_save.providers.custom { p.api_key = None; }
-        
-        config_for_save.save(&config_path).map_err(|e| anyhow::anyhow!("Failed to save config: {}", e))?;
+        // Save provider config via merge (write_key) — never overwrite entire config.toml
+        let section = match provider_idx {
+            0 => "providers.anthropic",
+            1 => "providers.openai",
+            2 => "providers.gemini",
+            3 => "providers.openrouter",
+            4 => "providers.minimax",
+            5 => "providers.custom",
+            _ => "providers.custom",
+        };
 
-        // Save API key to keys.toml
-        if let Some(ref key) = api_key {
-            let mut keys = crate::config::ProviderConfigs::default();
-            match provider_idx {
-                0 => {
-                    keys.anthropic = Some(crate::config::ProviderConfig {
-                        enabled: true,
-                        api_key: Some(key.clone()),
-                        ..Default::default()
-                    });
-                }
-                1 => {
-                    keys.openai = Some(crate::config::ProviderConfig {
-                        enabled: true,
-                        api_key: Some(key.clone()),
-                        ..Default::default()
-                    });
-                }
-                2 => {
-                    keys.gemini = Some(crate::config::ProviderConfig {
-                        enabled: true,
-                        api_key: Some(key.clone()),
-                        ..Default::default()
-                    });
-                }
-                3 => {
-                    keys.openrouter = Some(crate::config::ProviderConfig {
-                        enabled: true,
-                        api_key: Some(key.clone()),
-                        ..Default::default()
-                    });
-                }
-                4 => {
-                    keys.minimax = Some(crate::config::ProviderConfig {
-                        enabled: true,
-                        api_key: Some(key.clone()),
-                        ..Default::default()
-                    });
-                }
-                5 => {
-                    keys.custom = Some(crate::config::ProviderConfig {
-                        enabled: true,
-                        api_key: Some(key.clone()),
-                        ..Default::default()
-                    });
-                }
-                _ => {}
-            }
-            if let Err(e) = crate::config::save_keys(&keys) {
-                tracing::warn!("Failed to save API key to keys.toml: {}", e);
-            }
+        if let Err(e) = crate::config::Config::write_key(section, "enabled", "true") {
+            tracing::warn!("Failed to write {}.enabled: {}", section, e);
         }
+
+        // Write base_url if applicable
+        match provider_idx {
+            3 => {
+                let _ = crate::config::Config::write_key(section, "base_url", "https://openrouter.ai/api/v1/chat/completions");
+            }
+            4 => {
+                let _ = crate::config::Config::write_key(section, "base_url", "https://api.minimax.io/v1");
+            }
+            5 => {
+                if !self.model_selector_base_url.is_empty() {
+                    let _ = crate::config::Config::write_key(section, "base_url", &self.model_selector_base_url);
+                }
+            }
+            _ => {}
+        }
+
+        // Save API key to keys.toml via merge
+        if let Some(ref key) = api_key
+            && !key.is_empty()
+                && let Err(e) = crate::config::write_secret_key(section, "api_key", key) {
+                    tracing::warn!("Failed to save API key to keys.toml: {}", e);
+                }
 
         // Rebuild agent service with new provider
         if let Err(e) = self.rebuild_agent_service().await {
@@ -4297,10 +4268,12 @@ impl App {
                     if let Some(ref wizard) = self.onboarding {
                         match wizard.apply_config() {
                             Ok(()) => {
-                                self.push_system_message(
-                                    "Setup complete! OpenCrabs is configured and ready."
-                                        .to_string(),
-                                );
+                                let provider_name = super::onboarding::PROVIDERS[wizard.selected_provider].name;
+                                let model_name = wizard.selected_model_name().to_string();
+                                self.push_system_message(format!(
+                                    "Setup complete! Provider: {} | Model: {}",
+                                    provider_name, model_name
+                                ));
                                 // Rebuild agent service with new provider
                                 if let Err(e) = self.rebuild_agent_service().await {
                                     tracing::warn!("Failed to rebuild agent service: {}", e);

@@ -102,17 +102,20 @@ impl OpenAIProvider {
     }
 
     /// Build request headers
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    fn headers(&self) -> std::result::Result<reqwest::header::HeaderMap, ProviderError> {
         let mut headers = reqwest::header::HeaderMap::new();
 
         // Only add authorization if not using local
         if self.api_key != "not-needed" {
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", self.api_key)
-                    .parse()
-                    .expect("Invalid API key format"),
-            );
+            // Sanitize API key: trim whitespace/newlines that may have leaked from input
+            let clean_key = self.api_key.trim();
+            let header_value: reqwest::header::HeaderValue = format!("Bearer {}", clean_key)
+                .parse()
+                .map_err(|_| {
+                    tracing::error!("API key contains invalid characters (length={}). Check keys.toml.", clean_key.len());
+                    ProviderError::InvalidApiKey
+                })?;
+            headers.insert(reqwest::header::AUTHORIZATION, header_value);
         }
 
         headers.insert(
@@ -120,7 +123,7 @@ impl OpenAIProvider {
             "application/json".parse().expect("valid content-type"),
         );
 
-        headers
+        Ok(headers)
     }
 
     /// Convert our generic request to OpenAI-specific format
@@ -433,7 +436,7 @@ impl Provider for OpenAIProvider {
                 let response = self
                     .client
                     .post(&self.base_url)
-                    .headers(self.headers())
+                    .headers(self.headers()?)
                     .json(&openai_request)
                     .send()
                     .await?;
@@ -496,7 +499,7 @@ impl Provider for OpenAIProvider {
                 let response = self
                     .client
                     .post(&self.base_url)
-                    .headers(self.headers())
+                    .headers(self.headers()?)
                     .json(&openai_request)
                     .send()
                     .await?;
@@ -621,17 +624,15 @@ impl Provider for OpenAIProvider {
                                                 let accum = st.tool_calls.entry(idx).or_default();
 
                                                 // First chunk for this index carries id + name
-                                                if let Some(ref id) = tc_item.id {
-                                                    if !id.is_empty() {
+                                                if let Some(ref id) = tc_item.id
+                                                    && !id.is_empty() {
                                                         accum.id = id.clone();
                                                     }
-                                                }
                                                 if let Some(ref func) = tc_item.function {
-                                                    if let Some(ref name) = func.name {
-                                                        if !name.is_empty() {
+                                                    if let Some(ref name) = func.name
+                                                        && !name.is_empty() {
                                                             accum.name = name.clone();
                                                         }
-                                                    }
                                                     // Append argument fragment
                                                     if let Some(ref args) = func.arguments {
                                                         accum.arguments.push_str(args);
@@ -650,8 +651,8 @@ impl Provider for OpenAIProvider {
                                         let finish_reason_str = chunk.choices.first()
                                             .and_then(|c| c.finish_reason.as_ref());
 
-                                        if let Some(reason) = finish_reason_str {
-                                            if reason == "tool_calls" || reason == "function_call" {
+                                        if let Some(reason) = finish_reason_str
+                                            && (reason == "tool_calls" || reason == "function_call") {
                                                 // Emit all accumulated tool calls
                                                 for (idx, accum) in st.tool_calls.drain() {
                                                     let input = serde_json::from_str(&accum.arguments)
@@ -676,7 +677,6 @@ impl Provider for OpenAIProvider {
                                                     }));
                                                 }
                                             }
-                                        }
 
                                         // Emit text content
                                         if let Some(ref c) = content {
@@ -699,8 +699,8 @@ impl Provider for OpenAIProvider {
                                         }
 
                                         // Extract usage from final chunk
-                                        if let Some(ref usage) = chunk.usage {
-                                            if finish_reason_str.is_some() {
+                                        if let Some(ref usage) = chunk.usage
+                                            && finish_reason_str.is_some() {
                                                 let input_tokens = usage.prompt_tokens.unwrap_or(0);
                                                 let output_tokens = usage.completion_tokens.unwrap_or(0);
                                                 tracing::info!("[STREAM_USAGE] Final usage: input={}, output={}", input_tokens, output_tokens);
@@ -723,7 +723,6 @@ impl Provider for OpenAIProvider {
                                                     },
                                                 }));
                                             }
-                                        }
                                     }
                                     Err(e) => {
                                         let json_preview = json_str.chars().take(300).collect::<String>();
@@ -793,9 +792,13 @@ impl Provider for OpenAIProvider {
         #[derive(Deserialize)]
         struct ModelsResponse { data: Vec<ModelEntry> }
 
+        let headers = match self.headers() {
+            Ok(h) => h,
+            Err(_) => return self.supported_models(),
+        };
         match self.client
             .get(&models_url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .headers(headers)
             .send()
             .await
         {
@@ -961,8 +964,6 @@ struct StreamingToolCall {
     index: usize,
     #[serde(default)]
     id: Option<String>,
-    #[serde(default)]
-    r#type: Option<String>,
     #[serde(default)]
     function: Option<StreamingFunctionCall>,
 }

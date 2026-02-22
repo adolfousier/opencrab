@@ -5,6 +5,28 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.26] - 2026-02-22
+
+### Added
+- **Streaming Tool Call Accumulation** — OpenRouter and Custom providers now correctly handle streaming tool calls. Added `StreamingToolCall`/`StreamingFunctionCall` structs with optional fields for incremental SSE deserialization, plus `ToolCallAccum` state machine that accumulates `id`, `name`, and `arguments` across chunks and emits on `finish_reason: "tool_calls"` or `[DONE]`
+- **Input Sanitization** — Paste handler strips `\r\n`, takes first line only, trims whitespace. Storage layer (`write_secret_key`, `write_key`) also sanitizes before writing to TOML files
+- **Auto-append `/chat/completions`** — Custom provider factory auto-appends `/chat/completions` to base URLs that don't include it, preventing silent 404s
+- **Provider + Model in Completion** — Onboarding completion message now shows which provider and model were selected
+
+### Fixed
+- **Streaming Tool Calls Failing on OpenRouter/Custom** — Root cause: `StreamingToolCall` struct required `id` and `type` fields but SSE continuation chunks only send `index` + `function.arguments`. Made all fields optional except `index`. Removed unused `type` field
+- **API Key Header Panic** — `headers()` used `.expect()` which panicked on invalid key characters (e.g. `\r` from paste). Now returns `Result<HeaderMap, ProviderError>` with descriptive error
+- **Log Directory Path** — Logs were stored in `cwd/.opencrabs/logs/` (inside the repo) instead of `~/.opencrabs/logs/` (user workspace). Fixed `LogConfig`, `get_log_path()`, and `cleanup_old_logs()` to use home directory
+- **Config/Keys Overwrite** — `Config::save()` was called in `app.rs` and `onboarding.rs`, destructively overwriting the entire TOML file. Replaced all instances with individual `write_key()`/`write_secret_key()` calls that read-modify-write without losing unrelated sections
+- **Custom Provider Using Wrong Field** — Custom provider used `custom_api_key` while all other providers used `api_key_input`. Unified to `api_key_input` across all providers
+- **Sentinel Prepended to Key** — `__EXISTING_KEY__` sentinel was prepended to actual API key on paste. Fixed `CustomApiKey` handlers to clear sentinel before appending new input
+- **URL Appended to Key** — Pasting from clipboard could include `\r` and trailing URL text in API key field. Added paste sanitization at input handler and storage layer
+
+### Changed
+- **Renamed `openai.rs` → `custom_openai_compatible.rs`** — Reflects that this module handles all OpenAI-compatible APIs (OpenRouter, Minimax, Custom, LM Studio, Ollama), not just official OpenAI
+- **Onboarding Simplified** — Removed ~300 lines of dead in-memory config construction from `apply_config()`; all config writes now use individual `write_key()`/`write_secret_key()` calls
+- **keys.toml is Single Secret Source** — All API keys, bot tokens, and search keys are stored in `~/.opencrabs/keys.toml`. No more env vars or OS keyring for secrets. `config.toml` holds non-sensitive settings only
+
 ## [0.2.25] - 2026-02-21
 
 ### Added

@@ -31,10 +31,10 @@ pub struct LogConfig {
 
 impl Default for LogConfig {
     fn default() -> Self {
-        let cwd = std::env::current_dir().unwrap_or_default();
+        let home = dirs::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         Self {
             debug_mode: false,
-            log_dir: cwd.join(".opencrabs").join("logs"),
+            log_dir: home.join(".opencrabs").join("logs"),
             log_level: Level::INFO,
             console_output: false,
             log_prefix: "opencrabs".to_string(),
@@ -213,8 +213,8 @@ pub fn setup_from_cli(debug: bool) -> Result<LoggerGuard, Box<dyn std::error::Er
 
 /// Get the path to the current log file (if debug mode is enabled)
 pub fn get_log_path() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    let log_dir = cwd.join(".opencrabs").join("logs");
+    let home = dirs::home_dir()?;
+    let log_dir = home.join(".opencrabs").join("logs");
 
     if log_dir.exists() {
         // Return the most recent log file
@@ -237,8 +237,8 @@ pub fn get_log_path() -> Option<PathBuf> {
 
 /// Clean up old log files based on max age
 pub fn cleanup_old_logs(max_age_days: u64) -> Result<usize, Box<dyn std::error::Error>> {
-    let cwd = std::env::current_dir()?;
-    let log_dir = cwd.join(".opencrabs").join("logs");
+    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
+    let log_dir = home.join(".opencrabs").join("logs");
 
     if !log_dir.exists() {
         return Ok(0);
@@ -297,10 +297,14 @@ mod tests {
     }
 
     #[test]
-    fn test_log_dir_in_opencrabs_folder() {
+    fn test_log_dir_in_home_opencrabs_folder() {
         let config = LogConfig::default();
         let log_dir_str = config.log_dir.to_string_lossy();
         assert!(log_dir_str.contains(".opencrabs"));
         assert!(log_dir_str.contains("logs"));
+        // Should be under home dir, not cwd
+        if let Some(home) = dirs::home_dir() {
+            assert!(config.log_dir.starts_with(&home));
+        }
     }
 }

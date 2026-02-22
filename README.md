@@ -36,7 +36,7 @@
 - [Supported AI Providers](#-supported-ai-providers)
 - [Quick Start](#-quick-start)
 - [Onboarding Wizard](#-onboarding-wizard)
-- [Authentication Methods](#-authentication-methods)
+- [API Keys (keys.toml)](#-api-keys-keystoml)
 - [Using Local LLMs](#-using-local-llms)
 - [Configuration](#-configuration)
 - [Tool System](#-tool-system)
@@ -96,7 +96,7 @@
 | **Image Attachments** | Paste image paths or URLs into the input — auto-detected and attached as vision content blocks for multimodal models |
 | **PDF Support** | Attach PDF files by path — native Anthropic PDF support; for other providers, text is extracted locally via `pdf-extract` |
 | **Document Parsing** | Built-in `parse_document` tool extracts text from PDF, DOCX, HTML, TXT, MD, JSON, XML |
-| **Voice (STT)** | Telegram voice notes transcribed via Groq Whisper (`whisper-large-v3-turbo`) and processed as text |
+| **Voice (STT)** | Telegram voice notes transcribed via Groq Whisper (`whisper-large-v3-turbo`) and processed as text. API key in `keys.toml` |
 | **Voice (TTS)** | Agent replies to voice notes with audio via OpenAI TTS (`gpt-4o-mini-tts`, `ash` voice); falls back to text if disabled |
 | **Attachment Indicator** | Attached images show as `[IMG1:filename.png]` in the input title bar |
 
@@ -132,7 +132,7 @@
 | **Self-Sustaining** | Agent can modify its own source, build, test, and hot-restart via Unix `exec()` |
 | **Natural Language Commands** | Tell OpenCrabs to create slash commands — it writes them to `commands.toml` autonomously via the `config_manager` tool |
 | **Live Settings** | Agent can read/write `config.toml` at runtime; Settings TUI screen (press `S`) shows current config; approval policy persists across restarts |
-| **Web Search** | EXA AI (neural, free via MCP) and Brave Search APIs |
+| **Web Search** | EXA AI (neural, free via MCP) and Brave Search APIs — keys in `keys.toml` |
 | **Debug Logging** | `--debug` flag enables file logging; `DEBUG_LOGS_LOCATION` env var for custom log directory |
 
 ---
@@ -143,16 +143,13 @@
 
 **Models:** `claude-opus-4-6`, `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`, plus legacy Claude 3.x models
 
-**Authentication:**
+**Setup** in `keys.toml`:
+```toml
+[providers.anthropic]
+api_key = "sk-ant-api03-YOUR_KEY"
+```
 
-| Method | Env Variable | Header |
-|--------|-------------|--------|
-| **OAuth / Claude Max** (recommended) | `ANTHROPIC_MAX_SETUP_TOKEN` | `Authorization: Bearer` + `anthropic-beta: oauth-2025-04-20` |
-| Standard API Key | `ANTHROPIC_API_KEY` | `x-api-key` |
-
-OAuth tokens are auto-detected by the `sk-ant-oat` prefix. When `ANTHROPIC_MAX_SETUP_TOKEN` is set, it takes priority over `ANTHROPIC_API_KEY`.
-
-Set a custom model with `ANTHROPIC_MAX_MODEL` (e.g., `claude-opus-4-6`).
+OAuth tokens (`sk-ant-oat` prefix) are auto-detected — uses `Authorization: Bearer` with `anthropic-beta: oauth-2025-04-20` header automatically.
 
 **Features:** Streaming, tools, cost tracking, automatic retry with backoff
 
@@ -160,13 +157,19 @@ Set a custom model with `ANTHROPIC_MAX_MODEL` (e.g., `claude-opus-4-6`).
 
 **Models:** GPT-4 Turbo, GPT-4, GPT-3.5 Turbo
 
-**Setup:** `export OPENAI_API_KEY="sk-YOUR_KEY"`
-
-Compatible with any OpenAI-compatible API endpoint via `OPENAI_BASE_URL`.
+**Setup** in `keys.toml`:
+```toml
+[providers.openai]
+api_key = "sk-YOUR_KEY"
+```
 
 ### OpenRouter — 400+ Models, One Key
 
-**Setup:** `export OPENROUTER_API_KEY="sk-or-YOUR_KEY"` — get one at [openrouter.ai/keys](https://openrouter.ai/keys)
+**Setup** in `keys.toml` — get a key at [openrouter.ai/keys](https://openrouter.ai/keys):
+```toml
+[providers.openrouter]
+api_key = "sk-or-YOUR_KEY"
+```
 
 Access 400+ models from every major provider through a single API key — Anthropic, OpenAI, Google, Meta, Mistral, DeepSeek, Qwen, and many more. Includes **free models** (DeepSeek-R1, Llama 3.3, Gemma 2, Mistral 7B) and stealth/preview models as they drop.
 
@@ -176,7 +179,7 @@ Model list is **fetched live** from the OpenRouter API during onboarding and via
 
 **Models:** `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-Text-01`
 
-**Setup:** Get your API key from [platform.minimax.io](https://platform.minimax.io). Add to `keys.toml`:
+**Setup** — get your API key from [platform.minimax.io](https://platform.minimax.io). Add to `keys.toml`:
 
 ```toml
 [providers.minimax]
@@ -189,7 +192,7 @@ MiniMax is an OpenAI-compatible provider with competitive pricing. It does not e
 
 **Use for:** Ollama, LM Studio, LocalAI, Groq, or any OpenAI-compatible API.
 
-**Setup:** Configure in `config.toml` and add API key to `keys.toml`:
+**Setup** in `config.toml`:
 
 ```toml
 [providers.custom]
@@ -204,7 +207,9 @@ And in `keys.toml`:
 api_key = "your-api-key"  # not required for local Ollama
 ```
 
-**Provider priority:** Anthropic > OpenAI > OpenRouter > MiniMax > Custom. The first provider with `enabled = true` in config.toml is used. Each provider has its own API key in `keys.toml` — no sharing or confusion.
+> **Note:** `/chat/completions` is auto-appended to base URLs that don't include it.
+
+**Provider priority:** MiniMax > OpenRouter > Anthropic > OpenAI > Custom. The first provider with `enabled = true` in config.toml is used. Each provider has its own API key in `keys.toml` — no sharing or confusion.
 
 ---
 
@@ -220,7 +225,7 @@ tar xzf opencrabs-linux-amd64.tar.gz
 ./opencrabs
 ```
 
-The onboarding wizard handles everything on first run. Set your API key via environment variable or the wizard will prompt you.
+The onboarding wizard handles everything on first run.
 
 > **Note:** `/rebuild` works even with pre-built binaries — it auto-clones the source to `~/.opencrabs/source/` on first use, then builds and hot-restarts. For active development or adding custom tools, Option 2 gives you the source tree directly.
 
@@ -292,11 +297,6 @@ cargo run --bin opencrabs -- config --show-secrets
 cargo run --bin opencrabs -- db init           # Initialize database
 cargo run --bin opencrabs -- db stats          # Show statistics
 
-# Keyring (secure OS credential storage)
-cargo run --bin opencrabs -- keyring set anthropic YOUR_KEY
-cargo run --bin opencrabs -- keyring get anthropic
-cargo run --bin opencrabs -- keyring list
-
 # Debug mode
 cargo run --bin opencrabs -- -d                # Enable file logging
 cargo run --bin opencrabs -- -d run "analyze this"
@@ -341,7 +341,7 @@ First-time users are guided through an 8-step setup wizard that appears automati
 
 ### How It Triggers
 
-- **Automatic:** When no `~/.config/opencrabs/config.toml` exists and no API keys are set in env/keyring
+- **Automatic:** When no `~/.opencrabs/config.toml` exists and no API keys are set in `keys.toml`
 - **CLI:** `cargo run --bin opencrabs -- onboard` (or `opencrabs onboard` after install)
 - **Chat flag:** `cargo run --bin opencrabs -- chat --onboard` to force the wizard before chat
 - **Slash command:** Type `/onboard` in the chat to re-run it anytime
@@ -351,7 +351,7 @@ First-time users are guided through an 8-step setup wizard that appears automati
 | Step | Title | What It Does |
 |------|-------|-------------|
 | 1 | **Mode Selection** | QuickStart (sensible defaults) vs Advanced (full control) |
-| 2 | **Model & Auth** | Pick provider (Anthropic, OpenAI, Gemini, Qwen, OpenRouter, Custom) → enter token/key → model list fetched live from API → select model. Auto-detects existing keys from env/keyring |
+| 2 | **Model & Auth** | Pick provider (Anthropic, OpenAI, Gemini, OpenRouter, Minimax, Custom) → enter token/key → model list fetched live from API → select model. Auto-detects existing keys from `keys.toml` |
 | 3 | **Workspace** | Set brain workspace path (default `~/.opencrabs/`) → seed template files (SOUL.md, IDENTITY.md, etc.) |
 | 4 | **Gateway** | Configure HTTP API gateway: port, bind address, auth mode |
 | 5 | **Channels** | Toggle messaging integrations (Telegram, Discord, WhatsApp, Signal, Google Chat, iMessage) |
@@ -373,43 +373,58 @@ First-time users are guided through an 8-step setup wizard that appears automati
 
 ---
 
-## 🔑 Authentication Methods
+## 🔑 API Keys (keys.toml)
 
-OpenCrabs uses `keys.toml` for API keys — no `.env` files, no OS environment pollution. All keys are handled at runtime.
-
-### Option A: OAuth / Claude Max (Recommended for Claude)
-
-Add to `keys.toml`:
+OpenCrabs uses `~/.opencrabs/keys.toml` as the **single source** for all API keys, bot tokens, and search keys. No `.env` files, no OS keyring, no environment variables for secrets. Keys are loaded at runtime and can be modified by the agent.
 
 ```toml
+# ~/.opencrabs/keys.toml — chmod 600!
+
+# LLM Providers
 [providers.anthropic]
-api_key = "sk-ant-oat01-YOUR_OAUTH_TOKEN"
-model = "claude-opus-4-6"
-```
-
-The `sk-ant-oat` prefix is auto-detected. OpenCrabs will use `Authorization: Bearer` with the `anthropic-beta: oauth-2025-04-20` header.
-
-### Option B: Standard API Key
-
-In `keys.toml`:
-
-```toml
-[providers.anthropic]
-api_key = "sk-ant-api03-YOUR_KEY"
+api_key = "sk-ant-api03-YOUR_KEY"    # or OAuth: "sk-ant-oat01-..."
 
 [providers.openai]
 api_key = "sk-YOUR_KEY"
+
+[providers.openrouter]
+api_key = "sk-or-YOUR_KEY"
+
+[providers.minimax]
+api_key = "your-minimax-key"
+
+[providers.custom]
+api_key = "your-key"                 # not required for local LLMs
+
+# Messaging Channels
+[channels.telegram]
+token = "123456789:ABCdef..."
+
+[channels.discord]
+token = "your-discord-bot-token"
+
+[channels.slack]
+token = "xoxb-your-bot-token"
+app_token = "xapp-your-app-token"
+
+# Web Search
+[providers.web_search.exa]
+api_key = "your-exa-key"
+
+[providers.web_search.brave]
+api_key = "your-brave-key"
+
+# Voice (STT/TTS)
+[providers.stt.groq]
+api_key = "your-groq-key"
+
+[providers.tts.openai]
+api_key = "your-openai-key"
 ```
 
-### Option C: OS Keyring (Secure Storage)
+OAuth tokens (`sk-ant-oat` prefix) are auto-detected — OpenCrabs uses `Authorization: Bearer` with the `anthropic-beta: oauth-2025-04-20` header automatically.
 
-```bash
-cargo run -- keyring set anthropic YOUR_API_KEY
-# Encrypted by OS (Windows Credential Manager / macOS Keychain / Linux Secret Service)
-# Automatically loaded on startup, no plaintext files
-```
-
-**Priority:** Keyring > keys.toml > config file
+> **Security:** Always `chmod 600 ~/.opencrabs/keys.toml` and add `keys.toml` to `.gitignore`.
 
 ---
 
@@ -422,23 +437,16 @@ OpenCrabs works with any OpenAI-compatible local inference server for **100% pri
 1. Download and install [LM Studio](https://lmstudio.ai/)
 2. Download a model (e.g., `qwen2.5-coder-7b-instruct`, `Mistral-7B-Instruct`, `Llama-3-8B`)
 3. Start the local server (default port 1234)
-4. Configure OpenCrabs in `keys.toml`:
+4. Configure OpenCrabs in `config.toml`:
 
 ```toml
 [providers.custom]
-api_key = "not-required"  # LM Studio doesn't need a key
-```
-OPENAI_BASE_URL="http://localhost:1234/v1"
-```
-
-Or via `opencrabs.toml`:
-
-```toml
-[providers.openai]
 enabled = true
-base_url = "http://localhost:1234/v1/chat/completions"
+base_url = "http://localhost:1234/v1"
 default_model = "qwen2.5-coder-7b-instruct"   # Must EXACTLY match LM Studio model name
 ```
+
+No API key needed for local LLMs — just set the base URL and model name.
 
 > **Critical:** The `default_model` value must exactly match the model name shown in LM Studio's Local Server tab (case-sensitive).
 
@@ -446,9 +454,14 @@ default_model = "qwen2.5-coder-7b-instruct"   # Must EXACTLY match LM Studio mod
 
 ```bash
 ollama pull mistral
-# Configure:
-OPENAI_BASE_URL="http://localhost:11434/v1"
-OPENAI_API_KEY="ollama"
+```
+
+Configure in `config.toml`:
+```toml
+[providers.custom]
+enabled = true
+base_url = "http://localhost:11434/v1"
+default_model = "mistral"
 ```
 
 ### Recommended Models
@@ -506,41 +519,37 @@ chmod 600 ~/.opencrabs/keys.toml  # IMPORTANT: Secure the keys file!
 
 ### Example: Hybrid Setup (Local + Cloud)
 
+In `config.toml`:
 ```toml
 [database]
 path = "~/.opencrabs/opencrabs.db"
 
 # Local LLM for daily development
-[providers.openai]
+[providers.custom]
 enabled = true
-base_url = "http://localhost:1234/v1/chat/completions"
+base_url = "http://localhost:1234/v1"
 default_model = "qwen2.5-coder-7b-instruct"
 
 # Cloud API for complex tasks
 [providers.anthropic]
 enabled = true
 default_model = "claude-opus-4-6"
-# API key via env var or keyring
 ```
 
-### Environment Variables
+In `keys.toml`:
+```toml
+[providers.anthropic]
+api_key = "sk-ant-api03-YOUR_KEY"
+```
 
-| Variable | Provider | Description |
-|----------|----------|-------------|
-| `ANTHROPIC_MAX_SETUP_TOKEN` | Anthropic (OAuth) | OAuth Bearer token (takes priority) |
-| `ANTHROPIC_MAX_MODEL` | Anthropic | Custom default model |
-| `ANTHROPIC_API_KEY` | Anthropic | Standard API key |
-| `OPENAI_API_KEY` | OpenAI / Compatible | API key |
-| `OPENAI_BASE_URL` | OpenAI / Compatible | Custom endpoint URL |
-| `OPENROUTER_API_KEY` | OpenRouter | API key — 400+ models, one key ([openrouter.ai/keys](https://openrouter.ai/keys)) |
-| `QWEN_API_KEY` | Qwen | API key |
-| `QWEN_BASE_URL` | Qwen | Custom endpoint URL |
-| `EXA_API_KEY` | EXA AI Search | Neural web search — free via MCP by default; set key for direct API with higher rate limits |
-| `BRAVE_API_KEY` | Brave Search | Web search (free $5/mo credits at brave.com/search/api) |
-| `GROQ_API_KEY` | Groq (STT) | Voice transcription via Whisper (`whisper-large-v3-turbo`) |
-| `DEBUG_LOGS_LOCATION` | Logging | Custom log directory path (default: `.opencrabs/logs/`) |
-| `TELEGRAM_BOT_TOKEN` | Telegram | Bot token from @BotFather |
-| `TELEGRAM_ALLOWED_USERS` | Telegram | Comma-separated allowlisted Telegram user IDs |
+### Operational Environment Variables
+
+All API keys and secrets are stored in `keys.toml` — **not** in environment variables. The only env vars OpenCrabs uses are operational:
+
+| Variable | Description |
+|----------|-------------|
+| `DEBUG_LOGS_LOCATION` | Custom log directory path (default: `.opencrabs/logs/`) |
+| `OPENCRABS_BRAIN_PATH` | Custom brain workspace path (default: `~/.opencrabs/`) |
 
 ---
 
@@ -558,8 +567,8 @@ OpenCrabs includes a built-in tool execution system. The AI can use these tools 
 | `glob` | Find files matching patterns |
 | `grep` | Search file contents with regex |
 | `web_search` | Search the web (DuckDuckGo, always available, no key needed) |
-| `exa_search` | Neural web search via EXA AI (free via MCP, no API key needed) |
-| `brave_search` | Web search via Brave Search (set `BRAVE_API_KEY` — free $5/mo credits) |
+| `exa_search` | Neural web search via EXA AI (free via MCP, no API key needed; set key in `keys.toml` for higher rate limits) |
+| `brave_search` | Web search via Brave Search (set key in `keys.toml` — free $5/mo credits at brave.com/search/api) |
 | `execute_code` | Run code in various languages |
 | `notebook_edit` | Edit Jupyter notebooks |
 | `parse_document` | Extract text from PDF, DOCX, HTML |
@@ -724,7 +733,7 @@ OpenCrabs uses a **conditional logging system** — no log files by default.
 opencrabs -d
 cargo run -- -d
 
-# Logs stored in .opencrabs/logs/ (auto-gitignored)
+# Logs stored in ~/.opencrabs/logs/ (user workspace, not in repo)
 # Daily rolling rotation, auto-cleanup after 7 days
 
 # Management
@@ -735,7 +744,7 @@ opencrabs logs clean -d 3  # Clean logs older than 3 days
 ```
 
 **When debug mode is enabled:**
-- Log files created in `.opencrabs/logs/`
+- Log files created in `~/.opencrabs/logs/`
 - DEBUG level with thread IDs, file names, line numbers
 - Daily rolling rotation
 
@@ -752,7 +761,7 @@ OpenCrabs's brain is **dynamic and self-sustaining**. Instead of a hardcoded sys
 
 ### Brain Workspace
 
-The brain reads markdown files from `~/.opencrabs/` (or `OPENCRABS_BRAIN_PATH` env var):
+The brain reads markdown files from `~/.opencrabs/`:
 
 ```
 ~/.opencrabs/                  # Home — everything lives here
@@ -929,9 +938,9 @@ Integration Layer (LLM Providers, LSP)
 | LSP Client | Tower-LSP |
 | Provider Registry | Crabrace |
 | Memory Search | qmd (FTS5 + vector embeddings) |
-| Error Handling | anyhow + thiserror + color-eyre |
+| Error Handling | anyhow + thiserror |
 | Logging | tracing + tracing-subscriber |
-| Security | zeroize + keyring |
+| Security | zeroize |
 
 ---
 
@@ -947,7 +956,7 @@ opencrabs/
 │   ├── app/              # Application lifecycle
 │   ├── brain/            # Intelligence layer — LLM providers, agent, tools, brain system
 │   │   ├── agent/        # Agent service + context management
-│   │   ├── provider/     # Provider implementations (Anthropic, OpenAI, OpenRouter, Qwen)
+│   │   ├── provider/     # Provider implementations (Anthropic, OpenAI-Compatible: OpenRouter, Minimax, Custom)
 │   │   ├── tools/        # Tool system (read, write, bash, glob, grep, memory_search, etc.)
 │   │   ├── tokenizer.rs  # Token counting (tiktoken-based)
 │   │   ├── prompt_builder.rs  # BrainLoader — assembles system brain from workspace files
@@ -961,7 +970,7 @@ opencrabs/
 │   │   ├── slack/        # Slack bot via Socket Mode (agent, handler)
 │   │   └── voice/        # STT (Groq Whisper) + TTS (OpenAI)
 │   ├── cli/              # Command-line interface (Clap)
-│   ├── config/           # Configuration (TOML + env + keyring)
+│   ├── config/           # Configuration (config.toml + keys.toml)
 │   ├── db/               # Database layer (SQLx + SQLite)
 │   ├── services/         # Business logic (Session, Message, File, Plan)
 │   ├── memory/           # Memory search (FTS5 + vector embeddings via qmd)
@@ -979,7 +988,7 @@ opencrabs/
 │   └── docs/             # Documentation + screenshots
 ├── Cargo.toml
 ├── config.toml.example
-├── .env.example
+├── keys.toml.example
 └── LICENSE.md
 ```
 
@@ -1014,9 +1023,10 @@ cargo clippy -- -D warnings
 
 | Feature | Description |
 |---------|-------------|
-| `openai` | Enable async-openai integration |
-| `aws-bedrock` | Enable AWS Bedrock runtime |
-| `all-llm` | Enable all LLM provider features |
+| `telegram` | Telegram bot integration (default: enabled) |
+| `whatsapp` | WhatsApp Web integration (default: enabled) |
+| `discord` | Discord bot integration (default: enabled) |
+| `slack` | Slack bot integration (default: enabled) |
 | `profiling` | Enable pprof flamegraph profiling (Unix only) |
 
 ### Performance

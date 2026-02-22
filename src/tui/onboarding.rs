@@ -5,7 +5,7 @@
 //! channels, daemon installation, and health check.
 
 use crate::config::{
-    ChannelConfig, ChannelsConfig, Config, GatewayConfig, ProviderConfig,
+    Config, ProviderConfig,
 };
 use chrono::Local;
 
@@ -264,7 +264,6 @@ pub struct OnboardingWizard {
     pub selected_model: usize,
     pub auth_field: AuthField,
     pub custom_base_url: String,
-    pub custom_api_key: String,
     pub custom_model: String,
     /// Models fetched live from provider API (overrides static list when non-empty)
     pub fetched_models: Vec<String>,
@@ -360,28 +359,28 @@ impl OnboardingWizard {
         let existing_config = crate::config::Config::load().ok();
         
         // Detect existing enabled provider
-        let (selected_provider, api_key_input, custom_base_url, custom_api_key, custom_model) = 
+        let (selected_provider, api_key_input, custom_base_url, custom_model) =
             if let Some(ref config) = existing_config {
             // Find first enabled provider
             if config.providers.anthropic.as_ref().is_some_and(|p| p.enabled) {
-                (0, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new(), String::new())
+                (0, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new())
             } else if config.providers.openai.as_ref().is_some_and(|p| p.enabled) {
-                (1, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new(), String::new())
+                (1, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new())
             } else if config.providers.gemini.as_ref().is_some_and(|p| p.enabled) {
-                (2, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new(), String::new())
+                (2, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new())
             } else if config.providers.openrouter.as_ref().is_some_and(|p| p.enabled) {
-                (3, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new(), String::new())
+                (3, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new())
             } else if config.providers.minimax.as_ref().is_some_and(|p| p.enabled) {
-                (4, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new(), String::new())
+                (4, EXISTING_KEY_SENTINEL.to_string(), String::new(), String::new())
             } else if let Some(c) = config.providers.custom.as_ref().filter(|p| p.enabled) {
                 let base = c.base_url.clone().unwrap_or_default();
                 let model = c.default_model.clone().unwrap_or_default();
-                (5, String::new(), base, EXISTING_KEY_SENTINEL.to_string(), model)
+                (5, EXISTING_KEY_SENTINEL.to_string(), base, model)
             } else {
-                (0, String::new(), String::new(), String::new(), String::new())
+                (0, String::new(), String::new(), String::new())
             }
         } else {
-            (0, String::new(), String::new(), String::new(), String::new())
+            (0, String::new(), String::new(), String::new())
         };
         
         // Pre-fill gateway settings from existing config
@@ -402,7 +401,6 @@ impl OnboardingWizard {
             selected_model: 0,
             auth_field: AuthField::Provider,
             custom_base_url,
-            custom_api_key,
             custom_model,
             fetched_models: Vec::new(),
             models_fetching: false,
@@ -602,30 +600,26 @@ impl OnboardingWizard {
         let mut models = Vec::new();
         
         // Parse MiniMax models
-        if let Ok(config) = config_content.parse::<toml::Value>() {
-            if let Some(providers) = config.get("providers") {
-                if let Some(minimax) = providers.get("minimax") {
-                    if let Some(models_arr) = minimax.get("models").and_then(|m| m.as_array()) {
+        if let Ok(config) = config_content.parse::<toml::Value>()
+            && let Some(providers) = config.get("providers") {
+                if let Some(minimax) = providers.get("minimax")
+                    && let Some(models_arr) = minimax.get("models").and_then(|m| m.as_array()) {
                         for model in models_arr {
                             if let Some(model_str) = model.as_str() {
                                 models.push(model_str.to_string());
                             }
                         }
                     }
-                }
-                if let Some(custom) = providers.get("custom") {
-                    if let Some(models_arr) = custom.get("models").and_then(|m| m.as_array()) {
+                if let Some(custom) = providers.get("custom")
+                    && let Some(models_arr) = custom.get("models").and_then(|m| m.as_array()) {
                         for model in models_arr {
-                            if let Some(model_str) = model.as_str() {
-                                if !models.contains(&model_str.to_string()) {
+                            if let Some(model_str) = model.as_str()
+                                && !models.contains(&model_str.to_string()) {
                                     models.push(model_str.to_string());
                                 }
-                            }
                         }
                     }
-                }
             }
-        }
         
         tracing::debug!("Loaded {} default models from config.toml.example", models.len());
         models
@@ -658,7 +652,7 @@ impl OnboardingWizard {
                         if c.api_key.as_ref().is_some_and(|k| !k.is_empty()) {
                             self.custom_base_url = c.base_url.clone().unwrap_or_default();
                             self.custom_model = c.default_model.clone().unwrap_or_default();
-                            self.custom_api_key = EXISTING_KEY_SENTINEL.to_string();
+                            self.api_key_input = EXISTING_KEY_SENTINEL.to_string();
                         }
                         c.base_url.as_ref().is_some_and(|u| !u.is_empty())
                     } else {
@@ -943,16 +937,14 @@ impl OnboardingWizard {
 
         // Load models from the newly created config.toml for MiniMax and Custom providers
         if let Ok(config) = crate::config::Config::load() {
-            if let Some(p) = &config.providers.minimax {
-                if !p.models.is_empty() {
+            if let Some(p) = &config.providers.minimax
+                && !p.models.is_empty() {
                     self.config_models = p.models.clone();
                 }
-            }
-            if let Some(p) = &config.providers.custom {
-                if !p.models.is_empty() {
+            if let Some(p) = &config.providers.custom
+                && !p.models.is_empty() {
                     self.config_models = p.models.clone();
                 }
-            }
         }
 
         Ok(())
@@ -1053,22 +1045,28 @@ impl OnboardingWizard {
 
     /// Handle paste event - inserts text at current cursor position
     pub fn handle_paste(&mut self, text: &str) {
+        // Sanitize pasted text: take first line only, strip \r\n and whitespace
+        let clean = text.split(['\r', '\n'])
+            .next()
+            .unwrap_or("")
+            .trim();
+        if clean.is_empty() {
+            return;
+        }
+
         match self.auth_field {
-            AuthField::ApiKey => {
+            AuthField::ApiKey | AuthField::CustomApiKey => {
                 if self.has_existing_key() {
                     self.api_key_input.clear();
                 }
-                self.api_key_input.push_str(text);
+                self.api_key_input.push_str(clean);
                 self.api_key_cursor = self.api_key_input.len();
             }
             AuthField::CustomBaseUrl => {
-                self.custom_base_url.push_str(text);
-            }
-            AuthField::CustomApiKey => {
-                self.custom_api_key.push_str(text);
+                self.custom_base_url.push_str(clean);
             }
             AuthField::CustomModel => {
-                self.custom_model.push_str(text);
+                self.custom_model.push_str(clean);
             }
             _ => {}
         }
@@ -1221,10 +1219,17 @@ impl OnboardingWizard {
             },
             AuthField::CustomApiKey => match event.code {
                 KeyCode::Char(c) => {
-                    self.custom_api_key.push(c);
+                    if self.has_existing_key() {
+                        self.api_key_input.clear();
+                    }
+                    self.api_key_input.push(c);
                 }
                 KeyCode::Backspace => {
-                    self.custom_api_key.pop();
+                    if self.has_existing_key() {
+                        self.api_key_input.clear();
+                    } else {
+                        self.api_key_input.pop();
+                    }
                 }
                 KeyCode::Enter | KeyCode::Tab => {
                     self.auth_field = AuthField::CustomModel;
@@ -1448,11 +1453,10 @@ impl OnboardingWizard {
 
     /// Detect existing Discord bot token from keys.toml
     fn detect_existing_discord_token(&mut self) {
-        if let Ok(config) = crate::config::Config::load() {
-            if config.channels.discord.token.as_ref().is_some_and(|t| !t.is_empty()) {
+        if let Ok(config) = crate::config::Config::load()
+            && config.channels.discord.token.as_ref().is_some_and(|t| !t.is_empty()) {
                 self.discord_token_input = EXISTING_KEY_SENTINEL.to_string();
             }
-        }
     }
 
     /// Check if discord token holds a pre-existing value
@@ -1484,11 +1488,10 @@ impl OnboardingWizard {
 
     /// Detect existing Telegram bot token from keys.toml
     fn detect_existing_telegram_token(&mut self) {
-        if let Ok(config) = crate::config::Config::load() {
-            if config.channels.telegram.token.as_ref().is_some_and(|t| !t.is_empty()) {
+        if let Ok(config) = crate::config::Config::load()
+            && config.channels.telegram.token.as_ref().is_some_and(|t| !t.is_empty()) {
                 self.telegram_token_input = EXISTING_KEY_SENTINEL.to_string();
             }
-        }
     }
 
     /// Check if telegram token holds a pre-existing value
@@ -1498,15 +1501,14 @@ impl OnboardingWizard {
 
     /// Detect existing Groq API key from keys.toml
     fn detect_existing_groq_key(&mut self) {
-        if let Ok(config) = crate::config::Config::load() {
-            if config.providers.stt.as_ref()
+        if let Ok(config) = crate::config::Config::load()
+            && config.providers.stt.as_ref()
                 .and_then(|s| s.groq.as_ref())
                 .and_then(|p| p.api_key.as_ref())
                 .is_some_and(|k| !k.is_empty())
             {
                 self.groq_api_key_input = EXISTING_KEY_SENTINEL.to_string();
             }
-        }
     }
 
     /// Check if groq key holds a pre-existing value
@@ -1867,171 +1869,7 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
     /// Apply wizard configuration — creates config.toml, stores API key, seeds workspace
     /// Merges with existing config to preserve settings not modified in wizard
     pub fn apply_config(&self) -> Result<(), String> {
-        // Load existing config first to preserve other settings
-        let mut config = Config::load().unwrap_or_default();
-
-        // Disable all providers first - we'll enable only the selected one
-        if let Some(ref mut p) = config.providers.anthropic {
-            p.enabled = false;
-        }
-        if let Some(ref mut p) = config.providers.openai {
-            p.enabled = false;
-        }
-        if let Some(ref mut p) = config.providers.gemini {
-            p.enabled = false;
-        }
-        if let Some(ref mut p) = config.providers.openrouter {
-            p.enabled = false;
-        }
-        if let Some(ref mut p) = config.providers.minimax {
-            p.enabled = false;
-        }
-
-        // Provider config (indices match PROVIDERS array:
-        // 0=Anthropic, 1=OpenAI, 2=Gemini, 3=OpenRouter, 4=Minimax, 5=Custom)
-        let model = self.selected_model_name().to_string();
-        match self.selected_provider {
-            0 => {
-                // Anthropic Claude
-                config.providers.anthropic = Some(ProviderConfig {
-                    enabled: true,
-                    api_key: Some(self.api_key_input.clone()),
-                    base_url: None,
-                    default_model: Some(model),
-                    models: vec![],
-                });
-            }
-            1 => {
-                // OpenAI
-                config.providers.openai = Some(ProviderConfig {
-                    enabled: true,
-                    api_key: Some(self.api_key_input.clone()),
-                    base_url: None,
-                    default_model: Some(model),
-                    models: vec![],
-                });
-            }
-            2 => {
-                // Gemini
-                config.providers.gemini = Some(ProviderConfig {
-                    enabled: true,
-                    api_key: Some(self.api_key_input.clone()),
-                    base_url: None,
-                    default_model: Some(model),
-                    models: vec![],
-                });
-            }
-            3 => {
-                // OpenRouter - has API endpoint, no need to save models
-                config.providers.openrouter = Some(ProviderConfig {
-                    enabled: true,
-                    api_key: Some(self.api_key_input.clone()),
-                    base_url: Some("https://openrouter.ai/api/v1/chat/completions".to_string()),
-                    default_model: Some(model),
-                    models: vec![],
-                });
-            }
-            4 => {
-                // Minimax - no /models endpoint, save models to config
-                config.providers.minimax = Some(ProviderConfig {
-                    enabled: true,
-                    api_key: Some(self.api_key_input.clone()),
-                    base_url: Some("https://api.minimax.io/v1".to_string()),
-                    default_model: Some(model),
-                    models: self.config_models.clone(),
-                });
-            }
-            5 => {
-                // Custom OpenAI-compatible
-                config.providers.custom = Some(ProviderConfig {
-                    enabled: true,
-                    api_key: Some(self.custom_api_key.clone()),
-                    base_url: Some(self.custom_base_url.clone()),
-                    default_model: Some(self.custom_model.clone()),
-                    models: self.config_models.clone(),
-                });
-            }
-            _ => {}
-        }
-
-        // Gateway config
-        config.gateway = GatewayConfig {
-            port: self.gateway_port.parse().unwrap_or(18789),
-            bind: self.gateway_bind.clone(),
-            auth_mode: if self.gateway_auth == 0 {
-                "token".to_string()
-            } else {
-                "none".to_string()
-            },
-            enabled: false,
-        };
-
-        // Channels config — tokens from wizard setup sub-steps
-        let telegram_token = if !self.telegram_token_input.is_empty()
-            && !self.has_existing_telegram_token()
-        {
-            Some(self.telegram_token_input.clone())
-        } else {
-            None
-        };
-        let discord_token = if !self.discord_token_input.is_empty()
-            && !self.has_existing_discord_token()
-        {
-            Some(self.discord_token_input.clone())
-        } else {
-            None
-        };
-        let slack_bot_token = if !self.slack_bot_token_input.is_empty()
-            && !self.has_existing_slack_bot_token()
-        {
-            Some(self.slack_bot_token_input.clone())
-        } else {
-            None
-        };
-        let slack_app_token = if !self.slack_app_token_input.is_empty()
-            && !self.has_existing_slack_app_token()
-        {
-            Some(self.slack_app_token_input.clone())
-        } else {
-            None
-        };
-        config.channels = ChannelsConfig {
-            telegram: ChannelConfig {
-                enabled: self.is_telegram_enabled(),
-                token: telegram_token,
-                allowed_users: Vec::new(), // user adds via /start after setup
-                ..Default::default()
-            },
-            discord: ChannelConfig {
-                enabled: self.is_discord_enabled(),
-                token: discord_token,
-                ..Default::default()
-            },
-            whatsapp: ChannelConfig {
-                enabled: self.channel_toggles.get(2).is_some_and(|t| t.1),
-                ..Default::default()
-            },
-            slack: ChannelConfig {
-                enabled: self.is_slack_enabled(),
-                token: slack_bot_token,
-                app_token: slack_app_token,
-                ..Default::default()
-            },
-            signal: ChannelConfig {
-                enabled: self.channel_toggles.get(3).is_some_and(|t| t.1),
-                ..Default::default()
-            },
-            google_chat: ChannelConfig {
-                enabled: self.channel_toggles.get(4).is_some_and(|t| t.1),
-                ..Default::default()
-            },
-            imessage: ChannelConfig {
-                enabled: self.channel_toggles.get(5).is_some_and(|t| t.1),
-                ..Default::default()
-            },
-        };
-
-        // Voice config
+        // Groq key for STT/TTS
         let groq_key = if !self.groq_api_key_input.is_empty()
             && !self.has_existing_groq_key()
         {
@@ -2039,181 +1877,112 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
         } else {
             None
         };
-        config.voice = crate::config::VoiceConfig {
-            stt_enabled: groq_key.is_some() || self.has_existing_groq_key(),
-            tts_enabled: self.tts_enabled,
-            tts_voice: "ash".to_string(),
-            tts_model: "gpt-4o-mini-tts".to_string(),
-            stt_provider: None,
-            tts_provider: None,
+
+        // Write config.toml via merge (write_key) — never overwrite entire file
+        // Disable all providers first, then enable selected one
+        let all_provider_sections = ["providers.anthropic", "providers.openai", "providers.gemini",
+            "providers.openrouter", "providers.minimax", "providers.custom"];
+        for section in &all_provider_sections {
+            let _ = Config::write_key(section, "enabled", "false");
+        }
+
+        // Enable + configure the selected provider
+        let section = match self.selected_provider {
+            0 => "providers.anthropic",
+            1 => "providers.openai",
+            2 => "providers.gemini",
+            3 => "providers.openrouter",
+            4 => "providers.minimax",
+            5 => "providers.custom",
+            _ => "providers.custom",
         };
-
-        // STT provider config (providers.stt.groq)
-        if let Some(ref key) = groq_key {
-            config.providers.stt.get_or_insert_with(|| crate::config::SttProviders {
-                groq: Some(crate::config::ProviderConfig {
-                    enabled: true,
-                    api_key: Some(key.clone()),
-                    base_url: None,
-                    default_model: Some("whisper-large-v3-turbo".to_string()),
-                    models: vec![],
-                }),
-            });
+        let _ = Config::write_key(section, "enabled", "true");
+        let model = self.selected_model_name().to_string();
+        if !model.is_empty() {
+            let _ = Config::write_key(section, "default_model", &model);
         }
 
-        // TTS provider config (providers.tts.openai)
-        if self.tts_enabled && groq_key.is_some() {
-            let tts_key = groq_key.clone();
-            config.providers.tts.get_or_insert_with(|| crate::config::TtsProviders {
-                openai: Some(crate::config::ProviderConfig {
-                    enabled: true,
-                    api_key: tts_key,
-                    base_url: None,
-                    default_model: Some("gpt-4o-mini-tts".to_string()),
-                    models: vec![],
-                }),
-            });
-        }
-
-        // Write config.toml to ~/.opencrabs/config.toml (without API keys)
-        let config_path = crate::config::opencrabs_home().join("config.toml");
-
-        // Strip API keys from config before saving to config.toml
-        // Keys will be saved to keys.toml instead
-        if let Some(ref mut p) = config.providers.anthropic {
-            p.api_key = None;
-        }
-        if let Some(ref mut p) = config.providers.openai {
-            p.api_key = None;
-        }
-        if let Some(ref mut p) = config.providers.gemini {
-            p.api_key = None;
-        }
-        if let Some(ref mut p) = config.providers.openrouter {
-            p.api_key = None;
-        }
-        if let Some(ref mut p) = config.providers.minimax {
-            p.api_key = None;
-        }
-        if let Some(ref mut p) = config.providers.custom {
-            p.api_key = None;
-        }
-        if let Some(ref mut p) = config.providers.stt
-            && let Some(ref mut groq) = p.groq {
-                groq.api_key = None;
-            }
-        if let Some(ref mut p) = config.providers.tts
-            && let Some(ref mut openai) = p.openai {
-                openai.api_key = None;
-            }
-
-        config
-            .save(&config_path)
-            .map_err(|e| format!("Failed to write config: {}", e))?;
-
-        // Save API keys to keys.toml instead of config.toml
-        let mut keys = crate::config::ProviderConfigs::default();
-        
-        // Handle Custom provider separately - uses custom_api_key field
-        if self.is_custom_provider() {
-            if !self.custom_api_key.is_empty() && !self.has_existing_key() {
-                keys.custom = Some(crate::config::ProviderConfig {
-                    enabled: true,
-                    api_key: Some(self.custom_api_key.clone()),
-                    ..Default::default()
-                });
-            }
-        } else {
-            // Handle other providers that use api_key_input
-            let api_key = &self.api_key_input;
-            if !api_key.is_empty() && !self.has_existing_key() {
-                match self.selected_provider {
-                    0 => {
-                        keys.anthropic = Some(crate::config::ProviderConfig {
-                            enabled: true,
-                            api_key: Some(api_key.clone()),
-                            ..Default::default()
-                        });
-                    }
-                    1 => {
-                        keys.openai = Some(crate::config::ProviderConfig {
-                            enabled: true,
-                            api_key: Some(api_key.clone()),
-                            ..Default::default()
-                        });
-                    }
-                    2 => {
-                        keys.gemini = Some(crate::config::ProviderConfig {
-                            enabled: true,
-                            api_key: Some(api_key.clone()),
-                            ..Default::default()
-                        });
-                    }
-                    3 => {
-                        keys.openrouter = Some(crate::config::ProviderConfig {
-                            enabled: true,
-                            api_key: Some(api_key.clone()),
-                            ..Default::default()
-                        });
-                    }
-                    4 => {
-                        keys.minimax = Some(crate::config::ProviderConfig {
-                            enabled: true,
-                            api_key: Some(api_key.clone()),
-                            ..Default::default()
-                        });
-                    }
-                    _ => {}
+        // Write base_url for providers that need it
+        match self.selected_provider {
+            3 => { let _ = Config::write_key(section, "base_url", "https://openrouter.ai/api/v1/chat/completions"); }
+            4 => { let _ = Config::write_key(section, "base_url", "https://api.minimax.io/v1"); }
+            5 => {
+                if !self.custom_base_url.is_empty() {
+                    let _ = Config::write_key(section, "base_url", &self.custom_base_url);
+                }
+                if !self.custom_model.is_empty() {
+                    let _ = Config::write_key(section, "default_model", &self.custom_model);
                 }
             }
-        }
-        
-        // Also save STT/TTS keys to keys.toml
-        if let Some(ref groq_key) = groq_key {
-            keys.stt.get_or_insert_with(|| crate::config::SttProviders {
-                groq: Some(crate::config::ProviderConfig {
-                    enabled: true,
-                    api_key: Some(groq_key.clone()),
-                    ..Default::default()
-                }),
-            });
-        }
-        if self.tts_enabled && groq_key.is_some() {
-            keys.tts.get_or_insert_with(|| crate::config::TtsProviders {
-                openai: Some(crate::config::ProviderConfig {
-                    enabled: true,
-                    api_key: groq_key.clone(),
-                    ..Default::default()
-                }),
-            });
+            _ => {}
         }
 
-        // Save keys to keys.toml
-        if let Err(e) = crate::config::save_keys(&keys) {
-            tracing::warn!("Failed to save API keys to keys.toml: {}", e);
+        // Write models array for providers that have static model lists
+        if !self.config_models.is_empty() && matches!(self.selected_provider, 4 | 5) {
+            let _ = Config::write_array(section, "models", &self.config_models);
         }
+
+        // Gateway config
+        let _ = Config::write_key("gateway", "port", &self.gateway_port);
+        let _ = Config::write_key("gateway", "bind", &self.gateway_bind);
+        let _ = Config::write_key("gateway", "auth_mode", if self.gateway_auth == 0 { "token" } else { "none" });
+
+        // Channel enabled flags
+        let _ = Config::write_key("channels.telegram", "enabled", &self.is_telegram_enabled().to_string());
+        let _ = Config::write_key("channels.discord", "enabled", &self.is_discord_enabled().to_string());
+        let _ = Config::write_key("channels.slack", "enabled", &self.is_slack_enabled().to_string());
+
+        // Voice config
+        let groq_key_exists = !self.groq_api_key_input.is_empty() || self.has_existing_groq_key();
+        let _ = Config::write_key("voice", "stt_enabled", &groq_key_exists.to_string());
+        let _ = Config::write_key("voice", "tts_enabled", &self.tts_enabled.to_string());
+
+        // STT provider
+        if !self.groq_api_key_input.is_empty() || self.has_existing_groq_key() {
+            let _ = Config::write_key("providers.stt.groq", "enabled", "true");
+            let _ = Config::write_key("providers.stt.groq", "default_model", "whisper-large-v3-turbo");
+        }
+
+        // TTS provider
+        if self.tts_enabled && groq_key_exists {
+            let _ = Config::write_key("providers.tts.openai", "enabled", "true");
+            let _ = Config::write_key("providers.tts.openai", "default_model", "gpt-4o-mini-tts");
+        }
+
+        // Save API key to keys.toml via merge — never overwrite
+        if !self.has_existing_key() && !self.api_key_input.is_empty()
+            && let Err(e) = crate::config::write_secret_key(section, "api_key", &self.api_key_input) {
+                tracing::warn!("Failed to save API key to keys.toml: {}", e);
+            }
+
+        // Save STT/TTS keys to keys.toml
+        if let Some(ref groq_key) = groq_key
+            && let Err(e) = crate::config::write_secret_key("providers.stt.groq", "api_key", groq_key) {
+                tracing::warn!("Failed to save Groq key to keys.toml: {}", e);
+            }
+        if self.tts_enabled
+            && let Some(ref groq_key) = groq_key
+                && let Err(e) = crate::config::write_secret_key("providers.tts.openai", "api_key", groq_key) {
+                    tracing::warn!("Failed to save TTS key to keys.toml: {}", e);
+                }
 
         // Persist channel tokens to keys.toml (if new)
-        if !self.telegram_token_input.is_empty() && !self.has_existing_telegram_token() {
-            if let Err(e) = crate::config::write_secret_key("channels.telegram", "token", &self.telegram_token_input) {
+        if !self.telegram_token_input.is_empty() && !self.has_existing_telegram_token()
+            && let Err(e) = crate::config::write_secret_key("channels.telegram", "token", &self.telegram_token_input) {
                 tracing::warn!("Failed to save Telegram token to keys.toml: {}", e);
             }
-        }
-        if !self.discord_token_input.is_empty() && !self.has_existing_discord_token() {
-            if let Err(e) = crate::config::write_secret_key("channels.discord", "token", &self.discord_token_input) {
+        if !self.discord_token_input.is_empty() && !self.has_existing_discord_token()
+            && let Err(e) = crate::config::write_secret_key("channels.discord", "token", &self.discord_token_input) {
                 tracing::warn!("Failed to save Discord token to keys.toml: {}", e);
             }
-        }
-        if !self.slack_bot_token_input.is_empty() && !self.has_existing_slack_bot_token() {
-            if let Err(e) = crate::config::write_secret_key("channels.slack", "token", &self.slack_bot_token_input) {
+        if !self.slack_bot_token_input.is_empty() && !self.has_existing_slack_bot_token()
+            && let Err(e) = crate::config::write_secret_key("channels.slack", "token", &self.slack_bot_token_input) {
                 tracing::warn!("Failed to save Slack bot token to keys.toml: {}", e);
             }
-        }
-        if !self.slack_app_token_input.is_empty() && !self.has_existing_slack_app_token() {
-            if let Err(e) = crate::config::write_secret_key("channels.slack", "app_token", &self.slack_app_token_input) {
+        if !self.slack_app_token_input.is_empty() && !self.has_existing_slack_app_token()
+            && let Err(e) = crate::config::write_secret_key("channels.slack", "app_token", &self.slack_app_token_input) {
                 tracing::warn!("Failed to save Slack app token to keys.toml: {}", e);
             }
-        }
 
         // Seed workspace templates (use AI-generated content when available)
         if self.seed_templates {

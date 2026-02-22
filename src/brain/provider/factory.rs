@@ -162,8 +162,13 @@ fn try_create_custom(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         return Ok(None);
     };
 
-    let base_url = custom_config.base_url.clone()
-        .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+    let mut base_url = custom_config.base_url.clone()
+        .unwrap_or_else(|| "http://localhost:1234/v1/chat/completions".to_string());
+
+    // Auto-append /chat/completions if missing — all OpenAI-compatible APIs need it
+    if !base_url.contains("/chat/completions") {
+        base_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    }
 
     tracing::info!("Using Custom OpenAI-compatible at: {}", base_url);
     let provider = configure_openai_compatible(
