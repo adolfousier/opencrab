@@ -3008,19 +3008,25 @@ mod tests {
 
     #[test]
     fn test_channels_telegram_goes_to_telegram_setup() {
-        let mut wizard = OnboardingWizard::new();
+        let mut wizard = clean_wizard();
         wizard.mode = WizardMode::Advanced;
-        wizard.api_key_input = "test-key".to_string();
-
-        wizard.next_step(); // ModeSelect -> Workspace
-        wizard.next_step(); // Workspace -> ProviderAuth
-        wizard.next_step(); // ProviderAuth -> Channels
+        wizard.step = OnboardingStep::Channels;
 
         // Enable Telegram in channel toggles
         wizard.channel_toggles[0].1 = true;
-        wizard.next_step(); // Channels -> TelegramSetup (Telegram enabled)
+
+        // Enter Telegram setup (focus on Telegram, press Enter)
+        wizard.focused_field = 0;
+        wizard.handle_key(key(KeyCode::Enter));
         assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
-        wizard.next_step(); // TelegramSetup -> Gateway
+
+        // Complete Telegram → back to Channels
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::Channels);
+
+        // Continue to Gateway
+        wizard.focused_field = wizard.channel_toggles.len();
+        wizard.handle_key(key(KeyCode::Enter));
         assert_eq!(wizard.step, OnboardingStep::Gateway);
     }
 
@@ -3044,7 +3050,7 @@ mod tests {
 
     #[test]
     fn test_channels_full_chain_telegram_discord_slack() {
-        let mut wizard = OnboardingWizard::new();
+        let mut wizard = clean_wizard();
         wizard.mode = WizardMode::Advanced;
         wizard.step = OnboardingStep::Channels;
 
@@ -3053,13 +3059,36 @@ mod tests {
         wizard.channel_toggles[1].1 = true; // Discord
         wizard.channel_toggles[3].1 = true; // Slack
 
-        wizard.next_step(); // Channels -> TelegramSetup
+        // Enter Telegram setup
+        wizard.focused_field = 0;
+        wizard.handle_key(key(KeyCode::Enter));
         assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
-        wizard.next_step(); // TelegramSetup -> DiscordSetup
+
+        // Complete Telegram → back to Channels
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::Channels);
+
+        // Enter Discord setup
+        wizard.focused_field = 1;
+        wizard.handle_key(key(KeyCode::Enter));
         assert_eq!(wizard.step, OnboardingStep::DiscordSetup);
-        wizard.next_step(); // DiscordSetup -> SlackSetup
+
+        // Complete Discord → back to Channels
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::Channels);
+
+        // Enter Slack setup
+        wizard.focused_field = 3;
+        wizard.handle_key(key(KeyCode::Enter));
         assert_eq!(wizard.step, OnboardingStep::SlackSetup);
-        wizard.next_step(); // SlackSetup -> Gateway
+
+        // Complete Slack → back to Channels
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::Channels);
+
+        // Continue to Gateway
+        wizard.focused_field = wizard.channel_toggles.len();
+        wizard.handle_key(key(KeyCode::Enter));
         assert_eq!(wizard.step, OnboardingStep::Gateway);
     }
 
@@ -3092,7 +3121,7 @@ mod tests {
 
     #[test]
     fn test_provider_auth_defaults() {
-        let wizard = OnboardingWizard::new();
+        let wizard = clean_wizard();
         assert_eq!(wizard.selected_provider, 0);
         assert_eq!(wizard.auth_field, AuthField::Provider);
         assert!(wizard.api_key_input.is_empty());
@@ -3115,6 +3144,22 @@ mod tests {
         assert!(toggle_names.contains(&"Telegram"));
         assert!(toggle_names.contains(&"Discord"));
         assert!(toggle_names.contains(&"iMessage"));
+    }
+
+    /// Create a wizard with clean defaults (no config auto-detection).
+    /// `OnboardingWizard::new()` loads existing config from disk, which
+    /// pollutes provider/brain fields when a real config exists.
+    fn clean_wizard() -> OnboardingWizard {
+        let mut w = OnboardingWizard::new();
+        w.selected_provider = 0;
+        w.api_key_input = String::new();
+        w.custom_base_url = String::new();
+        w.custom_model = String::new();
+        w.about_me = String::new();
+        w.about_opencrabs = String::new();
+        w.original_about_me = String::new();
+        w.original_about_opencrabs = String::new();
+        w
     }
 
     // ── handle_key tests ──
@@ -3174,7 +3219,7 @@ mod tests {
 
     #[test]
     fn test_handle_key_provider_navigation() {
-        let mut wizard = OnboardingWizard::new();
+        let mut wizard = clean_wizard();
         wizard.step = OnboardingStep::ProviderAuth;
         wizard.auth_field = AuthField::Provider;
         assert_eq!(wizard.selected_provider, 0);
@@ -3260,7 +3305,7 @@ mod tests {
 
     #[test]
     fn test_provider_auth_validation_empty_key() {
-        let mut wizard = OnboardingWizard::new();
+        let mut wizard = clean_wizard();
         wizard.step = OnboardingStep::ProviderAuth;
         // api_key_input is empty
         wizard.next_step();
@@ -3307,7 +3352,7 @@ mod tests {
 
     #[test]
     fn test_brain_setup_defaults() {
-        let wizard = OnboardingWizard::new();
+        let wizard = clean_wizard();
         assert!(wizard.about_me.is_empty());
         assert!(wizard.about_opencrabs.is_empty());
         assert_eq!(wizard.brain_field, BrainField::AboutMe);

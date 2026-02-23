@@ -325,7 +325,8 @@ mod tests {
             ..Default::default()
         };
 
+        // No credentials → PlaceholderProvider (app starts, shows onboarding)
         let result = create_provider(&config);
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 }
