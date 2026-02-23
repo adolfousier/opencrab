@@ -27,13 +27,17 @@ api_key = ""
 # Get from: platform.minimax.io
 api_key = ""
 
-[providers.custom.lm_studio]
-# For LM Studio (local LLMs — api_key not required)
+[providers.custom]
+# For local LLMs (LM Studio, Ollama) — api_key not required, leave empty
+# For remote OpenAI-compatible APIs (Groq, Together, etc.) — set your key here
 api_key = ""
 
-[providers.custom.ollama]
-# For Ollama (local LLMs — api_key not required)
-api_key = ""
+# Advanced: If using named custom providers in config.toml, use matching names:
+# [providers.custom.lm_studio]
+# api_key = ""
+#
+# [providers.custom.ollama]
+# api_key = ""
 
 # ========================================
 # STT (Speech-to-Text) API Keys

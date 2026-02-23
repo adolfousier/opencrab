@@ -192,33 +192,45 @@ MiniMax is an OpenAI-compatible provider with competitive pricing. It does not e
 
 **Use for:** Ollama, LM Studio, LocalAI, Groq, or any OpenAI-compatible API.
 
-Define **named** custom providers — as many as you need. The first one with `enabled = true` is used.
-
 **Setup** in `config.toml`:
+
+```toml
+[providers.custom]
+enabled = true
+base_url = "http://localhost:1234/v1"  # or your endpoint
+default_model = "qwen2.5-coder-7b-instruct"
+# Optional: list your available models — shows up in /models and /onboard
+# so you can switch between them without editing config
+models = ["qwen2.5-coder-7b-instruct", "llama-3-8B", "mistral-7B-instruct"]
+```
+
+> **Local LLMs (Ollama, LM Studio):** No API key needed — just set `base_url` and `default_model`.
+>
+> **Remote APIs (Groq, Together, etc.):** Add the key in `keys.toml`:
+> ```toml
+> [providers.custom]
+> api_key = "your-api-key"
+> ```
+
+> **Note:** `/chat/completions` is auto-appended to base URLs that don't include it.
+
+**Want multiple custom providers?** Use named sections to define as many as you need and switch between them via `/models`:
 
 ```toml
 [providers.custom.lm_studio]
 enabled = true
-base_url = "http://localhost:1234/v1/chat/completions"
-models = ["qwen3-coder", "llama-4-70B", "mistral-Large-3"]
+base_url = "http://localhost:1234/v1"
 default_model = "qwen2.5-coder-7b-instruct"
 
 [providers.custom.ollama]
 enabled = false
-base_url = "http://localhost:11434/v1/chat/completions"
-models = ["mistral", "llama3", "codellama"]
+base_url = "http://localhost:11434/v1"
 default_model = "mistral"
 ```
 
-And in `keys.toml`:
-```toml
-[providers.custom.lm_studio]
-api_key = "your-api-key"  # not required for local LLMs
-```
+The name after `custom.` is just a label you choose. The first one with `enabled = true` is used. Keys go in `keys.toml` using the same label (e.g. `[providers.custom.lm_studio]`).
 
-> **Note:** `/chat/completions` is auto-appended to base URLs that don't include it. The legacy flat `[providers.custom]` format still works (treated as a single "default" provider).
-
-**Provider priority:** MiniMax > OpenRouter > Anthropic > OpenAI > Custom. The first provider with `enabled = true` in config.toml is used. Each provider has its own API key in `keys.toml` — no sharing or confusion.
+**Provider priority:** MiniMax > OpenRouter > Anthropic > OpenAI > Custom. The first provider with `enabled = true` is used. Each provider has its own API key in `keys.toml` — no sharing or confusion.
 
 ---
 
@@ -402,7 +414,7 @@ api_key = "sk-or-YOUR_KEY"
 [providers.minimax]
 api_key = "your-minimax-key"
 
-[providers.custom.lm_studio]
+[providers.custom]
 api_key = "your-key"                 # not required for local LLMs
 
 # Messaging Channels
@@ -446,16 +458,15 @@ OpenCrabs works with any OpenAI-compatible local inference server for **100% pri
 1. Download and install [LM Studio](https://lmstudio.ai/)
 2. Download a model (e.g., `qwen2.5-coder-7b-instruct`, `Mistral-7B-Instruct`, `Llama-3-8B`)
 3. Start the local server (default port 1234)
-4. Configure OpenCrabs in `config.toml`:
+4. Add to `config.toml` — no API key needed:
 
 ```toml
-[providers.custom.lm_studio]
+[providers.custom]
 enabled = true
 base_url = "http://localhost:1234/v1"
 default_model = "qwen2.5-coder-7b-instruct"   # Must EXACTLY match LM Studio model name
+models = ["qwen2.5-coder-7b-instruct", "llama-3-8B", "mistral-7B-instruct"]
 ```
-
-No API key needed for local LLMs — just set the base URL and model name.
 
 > **Critical:** The `default_model` value must exactly match the model name shown in LM Studio's Local Server tab (case-sensitive).
 
@@ -465,12 +476,13 @@ No API key needed for local LLMs — just set the base URL and model name.
 ollama pull mistral
 ```
 
-Configure in `config.toml`:
+Add to `config.toml` — no API key needed:
 ```toml
-[providers.custom.ollama]
+[providers.custom]
 enabled = true
 base_url = "http://localhost:11434/v1"
 default_model = "mistral"
+models = ["mistral", "llama3", "codellama"]
 ```
 
 ### Recommended Models
@@ -528,20 +540,21 @@ chmod 600 ~/.opencrabs/keys.toml  # IMPORTANT: Secure the keys file!
 
 ### Example: Hybrid Setup (Local + Cloud)
 
+Keep multiple providers configured — enable the one you want to use, disable the rest.
+Switch anytime by toggling `enabled` or using `/onboard`.
+
 In `config.toml`:
 ```toml
-[database]
-path = "~/.opencrabs/opencrabs.db"
-
-# Local LLM for daily development
-[providers.custom.lm_studio]
+# Local LLM — currently active
+[providers.custom]
 enabled = true
 base_url = "http://localhost:1234/v1"
 default_model = "qwen2.5-coder-7b-instruct"
+models = ["qwen2.5-coder-7b-instruct", "llama-3-8B"]
 
-# Cloud API for complex tasks
+# Cloud API — disabled, enable when you need it
 [providers.anthropic]
-enabled = true
+enabled = false
 default_model = "claude-opus-4-6"
 ```
 
