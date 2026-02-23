@@ -192,22 +192,31 @@ MiniMax is an OpenAI-compatible provider with competitive pricing. It does not e
 
 **Use for:** Ollama, LM Studio, LocalAI, Groq, or any OpenAI-compatible API.
 
+Define **named** custom providers — as many as you need. The first one with `enabled = true` is used.
+
 **Setup** in `config.toml`:
 
 ```toml
-[providers.custom]
+[providers.custom.lm_studio]
 enabled = true
-base_url = "http://localhost:11434/v1"  # or your endpoint
+base_url = "http://localhost:1234/v1/chat/completions"
+models = ["qwen3-coder", "llama-4-70B", "mistral-Large-3"]
 default_model = "qwen2.5-coder-7b-instruct"
+
+[providers.custom.ollama]
+enabled = false
+base_url = "http://localhost:11434/v1/chat/completions"
+models = ["mistral", "llama3", "codellama"]
+default_model = "mistral"
 ```
 
 And in `keys.toml`:
 ```toml
-[providers.custom]
-api_key = "your-api-key"  # not required for local Ollama
+[providers.custom.lm_studio]
+api_key = "your-api-key"  # not required for local LLMs
 ```
 
-> **Note:** `/chat/completions` is auto-appended to base URLs that don't include it.
+> **Note:** `/chat/completions` is auto-appended to base URLs that don't include it. The legacy flat `[providers.custom]` format still works (treated as a single "default" provider).
 
 **Provider priority:** MiniMax > OpenRouter > Anthropic > OpenAI > Custom. The first provider with `enabled = true` in config.toml is used. Each provider has its own API key in `keys.toml` — no sharing or confusion.
 
@@ -393,7 +402,7 @@ api_key = "sk-or-YOUR_KEY"
 [providers.minimax]
 api_key = "your-minimax-key"
 
-[providers.custom]
+[providers.custom.lm_studio]
 api_key = "your-key"                 # not required for local LLMs
 
 # Messaging Channels
@@ -440,7 +449,7 @@ OpenCrabs works with any OpenAI-compatible local inference server for **100% pri
 4. Configure OpenCrabs in `config.toml`:
 
 ```toml
-[providers.custom]
+[providers.custom.lm_studio]
 enabled = true
 base_url = "http://localhost:1234/v1"
 default_model = "qwen2.5-coder-7b-instruct"   # Must EXACTLY match LM Studio model name
@@ -458,7 +467,7 @@ ollama pull mistral
 
 Configure in `config.toml`:
 ```toml
-[providers.custom]
+[providers.custom.ollama]
 enabled = true
 base_url = "http://localhost:11434/v1"
 default_model = "mistral"
@@ -525,7 +534,7 @@ In `config.toml`:
 path = "~/.opencrabs/opencrabs.db"
 
 # Local LLM for daily development
-[providers.custom]
+[providers.custom.lm_studio]
 enabled = true
 base_url = "http://localhost:1234/v1"
 default_model = "qwen2.5-coder-7b-instruct"

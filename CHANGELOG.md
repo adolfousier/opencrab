@@ -5,6 +5,21 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.27] - 2026-02-23
+
+### Added
+- **Named Custom Providers** — Define multiple named OpenAI-compatible providers via `[providers.custom.<name>]` (e.g. `lm_studio`, `ollama`). First enabled one is used. Legacy flat `[providers.custom]` format still supported
+
+### Fixed
+- **Stream Deduplication** — Fixed duplicated agent messages in chat when using LM Studio and other custom providers. Some providers send the full response in the final chunk's `message` field — falling back to `message` after receiving delta content duplicated everything
+- **Database Path Tilde Expansion** — `~` in database path config was treated literally, creating a `~/` directory inside the repo. Added `expand_tilde()` to resolve to actual home directory
+- **WhatsApp Onboarding** — Fixed WhatsApp channel setup to include QR code pairing step with auto-advance, skip and retry
+- **Channel Onboarding Allowed Lists** — Fixed missing allowed users/channels/phones input fields on Telegram, Discord, WhatsApp and Slack setup screens
+
+### Changed
+- **README** — Provider examples updated to named custom provider format (`[providers.custom.lm_studio]`)
+- **config.toml.example** — Database path uses smart default, custom providers use named format
+
 ## [0.2.26] - 2026-02-22
 
 ### Added
