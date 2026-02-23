@@ -109,12 +109,16 @@ impl ProviderUpdater {
     fn update_provider_config(&self, config: &mut Config, provider: &Provider) -> bool {
         debug!("Updating provider config for: {}", provider.id);
 
+        // Custom providers are a named BTreeMap — handle separately
+        if provider.id == "custom" {
+            return self.update_custom_provider_config(config, provider);
+        }
+
         let provider_config = match provider.id.as_str() {
             "anthropic" => &mut config.providers.anthropic,
             "openai" => &mut config.providers.openai,
             "openrouter" => &mut config.providers.openrouter,
             "minimax" => &mut config.providers.minimax,
-            "custom" => &mut config.providers.custom,
             "gemini" | "google" => &mut config.providers.gemini,
             "bedrock" | "aws-bedrock" => &mut config.providers.bedrock,
             "vertex" | "vertexai" => &mut config.providers.vertex,
@@ -124,6 +128,30 @@ impl ProviderUpdater {
             }
         };
 
+        Self::apply_provider_update(provider_config, provider)
+    }
+
+    /// Update a named custom provider (stored in BTreeMap)
+    fn update_custom_provider_config(&self, config: &mut Config, provider: &Provider) -> bool {
+        let customs = config.providers.custom.get_or_insert_with(std::collections::BTreeMap::new);
+        let entry = customs.entry("default".to_string())
+            .or_insert_with(|| ProviderConfig {
+                enabled: true,
+                api_key: None,
+                base_url: None,
+                default_model: None,
+                models: vec![],
+            });
+        let mut provider_opt = Some(entry.clone());
+        let updated = Self::apply_provider_update(&mut provider_opt, provider);
+        if let Some(cfg) = provider_opt {
+            *entry = cfg;
+        }
+        updated
+    }
+
+    /// Apply a provider update to an Option<ProviderConfig>
+    fn apply_provider_update(provider_config: &mut Option<ProviderConfig>, provider: &Provider) -> bool {
         // Create or update provider config
         let mut updated = false;
         let new_config = provider_config.get_or_insert_with(|| {

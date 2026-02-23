@@ -44,8 +44,8 @@ pub fn create_provider(config: &Config) -> Result<Arc<dyn Provider>> {
             .ok_or_else(|| anyhow::anyhow!("OpenAI enabled but failed to create"));
     }
 
-    // Try Custom OpenAI-compatible
-    if config.providers.custom.as_ref().is_some_and(|p| p.enabled) {
+    // Try Custom OpenAI-compatible (first enabled named provider)
+    if config.providers.active_custom().is_some() {
         tracing::info!("Using enabled provider: Custom OpenAI-Compatible");
         return try_create_custom(config)?
             .ok_or_else(|| anyhow::anyhow!("Custom provider enabled but failed to create"));
@@ -94,6 +94,11 @@ fn create_fallback(config: &Config, fallback_type: &str) -> Result<Arc<dyn Provi
             tracing::info!("Using fallback: OpenAI");
             try_create_openai(config)?
                 .ok_or_else(|| anyhow::anyhow!("OpenAI not configured"))
+        }
+        "custom" => {
+            tracing::info!("Using fallback: Custom OpenAI-Compatible");
+            try_create_custom(config)?
+                .ok_or_else(|| anyhow::anyhow!("Custom provider not configured"))
         }
         _ => Err(anyhow::anyhow!("Unknown fallback provider: {}", fallback_type)),
     }
@@ -151,10 +156,11 @@ fn try_create_minimax(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     Ok(Some(Arc::new(provider)))
 }
 
-/// Try to create Custom OpenAI-compatible provider if configured
+/// Try to create Custom OpenAI-compatible provider if configured.
+/// Picks the first enabled named custom provider from the map.
 fn try_create_custom(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
-    let custom_config = match &config.providers.custom {
-        Some(cfg) => cfg,
+    let (name, custom_config) = match config.providers.active_custom() {
+        Some((n, c)) => (n.to_string(), c.clone()),
         None => return Ok(None),
     };
 
@@ -170,10 +176,10 @@ fn try_create_custom(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         base_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     }
 
-    tracing::info!("Using Custom OpenAI-compatible at: {}", base_url);
+    tracing::info!("Using Custom OpenAI-compatible '{}' at: {}", name, base_url);
     let provider = configure_openai_compatible(
-        OpenAIProvider::with_base_url(api_key.clone(), base_url),
-        custom_config,
+        OpenAIProvider::with_base_url(api_key.clone(), base_url).with_name(&name),
+        &custom_config,
     );
     Ok(Some(Arc::new(provider)))
 }

@@ -14,25 +14,22 @@ path = "~/.opencrabs/opencrabs.db"
 
 [providers]
 # ========================================
-# Custom: OpenAI-Compatible Provider (Local LLMs, and any OpenAI Compatible model)
+# Custom: OpenAI-Compatible Providers (Local LLMs, remote APIs)
 # ========================================
-# Use this for LM Studio, Ollama, LocalAI, etc.
-[providers.custom]
-enabled = true
-base_url = "http://localhost:1234/v1/chat/completions"  # LM Studio default
-models = ["kimi-k2.5", "glm-5", "MiniMax-M2.5", "qwen3-coder", "gpt-oss-120b", "llama-4-70B", "mistral-Large-3", "qwen3-coder-next"]
+# Define as many named custom providers as you need.
+# First one with enabled = true is used.
 
-# ⭐ IMPORTANT: Set this to match the model name loaded in LM Studio!
-# Common examples:
-#   - qwen2.5-coder-7b-instruct
-#   - codellama-7b-instruct
-#   - deepseek-coder-6.7b-instruct
-#   - llama-3.2-1b-instruct
+[providers.custom.lm_studio]
+enabled = true
+base_url = "http://localhost:1234/v1/chat/completions"
+models = ["kimi-k2.5", "glm-5", "MiniMax-M2.5", "qwen3-coder", "gpt-oss-120b", "llama-4-70B", "mistral-Large-3", "qwen3-coder-next"]
 default_model = "qwen2.5-coder-7b-instruct"
 
-# Other local LLM servers:
-# Ollama: base_url = "http://localhost:11434/v1/chat/completions"
-# LocalAI: base_url = "http://localhost:8080/v1/chat/completions"
+[providers.custom.ollama]
+enabled = false
+base_url = "http://localhost:11434/v1/chat/completions"
+models = ["mistral", "llama3", "codellama"]
+default_model = "mistral"
 
 # ========================================
 # Official OpenAI Provider
@@ -100,23 +97,19 @@ model = "gpt-4o-mini-tts" # TTS model
 
 [channels.whatsapp]
 enabled = false
-allowed_list = ["user19802389679", "user2890797897"]
-channel_id = ["channel1890779", "channel289792323"]
+allowed_phones = ["+15551234567"]
 
 [channels.discord]
 enabled = false
-allowed_list = ["user19802389679", "user2890797897"]
-channel_id = ["channel1890779", "channel289792323"]
+allowed_channels = ["channel_id"]
 
 [channels.telegram]
 enabled = false
-allowed_list = ["user19802389679", "user2890797897"]
-channel_id = ["channel1890779", "channel289792323"]
+allowed_users = [123456789]
 
 [channels.slack]
 enabled = false
-allowed_list = ["user19802389679", "user2890797897"]
-channel_id = ["channel1890779", "channel289792323"]
+allowed_channels = ["C12345678"]
 
 # ========================================
 # Web Search Providers

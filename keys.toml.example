@@ -27,8 +27,12 @@ api_key = ""
 # Get from: platform.minimax.io
 api_key = ""
 
-[providers.custom]
-# For custom OpenAI-compatible endpoints
+[providers.custom.lm_studio]
+# For LM Studio (local LLMs — api_key not required)
+api_key = ""
+
+[providers.custom.ollama]
+# For Ollama (local LLMs — api_key not required)
 api_key = ""
 
 # ========================================

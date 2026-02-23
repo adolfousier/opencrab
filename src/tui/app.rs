@@ -946,6 +946,17 @@ impl App {
                     wizard.set_whatsapp_error(err);
                 }
             }
+            TuiEvent::ChannelTestResult { success, error, .. } => {
+                if let Some(ref mut wizard) = self.onboarding {
+                    wizard.channel_test_status = if success {
+                        super::onboarding::ChannelTestStatus::Success
+                    } else {
+                        super::onboarding::ChannelTestStatus::Failed(
+                            error.unwrap_or_else(|| "Unknown error".to_string())
+                        )
+                    };
+                }
+            }
             TuiEvent::SudoPasswordRequested(request) => {
                 self.sudo_pending = Some(request);
                 self.sudo_input.clear();
@@ -4389,6 +4400,85 @@ impl App {
                         }
                     });
                 }
+                WizardAction::TestTelegram => {
+                    wizard.channel_test_status = super::onboarding::ChannelTestStatus::Testing;
+                    let token = if wizard.has_existing_telegram_token() {
+                        crate::config::Config::load().ok()
+                            .and_then(|c| c.channels.telegram.token.clone())
+                            .unwrap_or_default()
+                    } else {
+                        wizard.telegram_token_input.clone()
+                    };
+                    let user_id_str = if wizard.has_existing_telegram_user_id() {
+                        crate::config::Config::load().ok()
+                            .and_then(|c| c.channels.telegram.allowed_users.first().copied())
+                            .map(|id| id.to_string())
+                            .unwrap_or_default()
+                    } else {
+                        wizard.telegram_user_id_input.clone()
+                    };
+                    let sender = self.event_sender();
+                    tokio::spawn(async move {
+                        let result = test_telegram_connection(&token, &user_id_str).await;
+                        let _ = sender.send(TuiEvent::ChannelTestResult {
+                            channel: "telegram".to_string(),
+                            success: result.is_ok(),
+                            error: result.err(),
+                        });
+                    });
+                }
+                WizardAction::TestDiscord => {
+                    wizard.channel_test_status = super::onboarding::ChannelTestStatus::Testing;
+                    let token = if wizard.has_existing_discord_token() {
+                        crate::config::Config::load().ok()
+                            .and_then(|c| c.channels.discord.token.clone())
+                            .unwrap_or_default()
+                    } else {
+                        wizard.discord_token_input.clone()
+                    };
+                    let channel_id = if wizard.has_existing_discord_channel_id() {
+                        crate::config::Config::load().ok()
+                            .and_then(|c| c.channels.discord.allowed_channels.first().cloned())
+                            .unwrap_or_default()
+                    } else {
+                        wizard.discord_channel_id_input.clone()
+                    };
+                    let sender = self.event_sender();
+                    tokio::spawn(async move {
+                        let result = test_discord_connection(&token, &channel_id).await;
+                        let _ = sender.send(TuiEvent::ChannelTestResult {
+                            channel: "discord".to_string(),
+                            success: result.is_ok(),
+                            error: result.err(),
+                        });
+                    });
+                }
+                WizardAction::TestSlack => {
+                    wizard.channel_test_status = super::onboarding::ChannelTestStatus::Testing;
+                    let token = if wizard.has_existing_slack_bot_token() {
+                        crate::config::Config::load().ok()
+                            .and_then(|c| c.channels.slack.token.clone())
+                            .unwrap_or_default()
+                    } else {
+                        wizard.slack_bot_token_input.clone()
+                    };
+                    let channel_id = if wizard.has_existing_slack_channel_id() {
+                        crate::config::Config::load().ok()
+                            .and_then(|c| c.channels.slack.allowed_channels.first().cloned())
+                            .unwrap_or_default()
+                    } else {
+                        wizard.slack_channel_id_input.clone()
+                    };
+                    let sender = self.event_sender();
+                    tokio::spawn(async move {
+                        let result = test_slack_connection(&token, &channel_id).await;
+                        let _ = sender.send(TuiEvent::ChannelTestResult {
+                            channel: "slack".to_string(),
+                            success: result.is_ok(),
+                            error: result.err(),
+                        });
+                    });
+                }
                 WizardAction::GenerateBrain => {
                     self.generate_brain_files().await;
                 }
@@ -4744,6 +4834,71 @@ async fn ensure_whispercrabs() -> Result<PathBuf> {
     }
 
     Ok(binary_path)
+}
+
+/// Test Telegram connection by sending a message via the bot API.
+#[cfg(feature = "telegram")]
+async fn test_telegram_connection(token: &str, user_id_str: &str) -> Result<(), String> {
+    use teloxide::prelude::Requester;
+
+    let user_id: i64 = user_id_str.parse()
+        .map_err(|_| format!("Invalid user ID: {}", user_id_str))?;
+    let bot = teloxide::Bot::new(token);
+    bot.send_message(
+        teloxide::types::ChatId(user_id),
+        "OpenCrabs connected! Your Telegram bot is ready.",
+    )
+    .await
+    .map_err(|e| format!("Telegram API error: {}", e))?;
+    Ok(())
+}
+
+#[cfg(not(feature = "telegram"))]
+async fn test_telegram_connection(_token: &str, _user_id_str: &str) -> Result<(), String> {
+    Err("Telegram feature not enabled".to_string())
+}
+
+/// Test Discord connection by sending a message to a channel.
+#[cfg(feature = "discord")]
+async fn test_discord_connection(token: &str, channel_id_str: &str) -> Result<(), String> {
+    let channel_id: u64 = channel_id_str.parse()
+        .map_err(|_| format!("Invalid channel ID: {}", channel_id_str))?;
+    let http = serenity::http::Http::new(token);
+    let channel = serenity::model::id::ChannelId::new(channel_id);
+    channel.say(&http, "OpenCrabs connected! Your Discord bot is ready.")
+        .await
+        .map_err(|e| format!("Discord API error: {}", e))?;
+    Ok(())
+}
+
+#[cfg(not(feature = "discord"))]
+async fn test_discord_connection(_token: &str, _channel_id_str: &str) -> Result<(), String> {
+    Err("Discord feature not enabled".to_string())
+}
+
+/// Test Slack connection by posting a message to a channel.
+#[cfg(feature = "slack")]
+async fn test_slack_connection(token: &str, channel_id: &str) -> Result<(), String> {
+    use slack_morphism::prelude::*;
+
+    let client = SlackClient::new(SlackClientHyperConnector::new()
+        .map_err(|e| format!("Slack client error: {}", e))?);
+    let api_token = SlackApiToken::new(SlackApiTokenValue::from(token.to_string()));
+    let session = client.open_session(&api_token);
+    let request = SlackApiChatPostMessageRequest::new(
+        SlackChannelId::new(channel_id.to_string()),
+        SlackMessageContent::new()
+            .with_text("OpenCrabs connected! Your Slack bot is ready.".to_string()),
+    );
+    session.chat_post_message(&request)
+        .await
+        .map_err(|e| format!("Slack API error: {}", e))?;
+    Ok(())
+}
+
+#[cfg(not(feature = "slack"))]
+async fn test_slack_connection(_token: &str, _channel_id: &str) -> Result<(), String> {
+    Err("Slack feature not enabled".to_string())
 }
 
 #[cfg(test)]

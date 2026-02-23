@@ -63,5 +63,5 @@ fn test_keys_toml_has_all_provider_sections() {
     assert!(keys.gemini.is_none());
     assert!(keys.openrouter.is_none());
     assert!(keys.minimax.is_none());
-    assert!(keys.custom.is_none());
+    assert!(keys.custom.is_none()); // BTreeMap<String, ProviderConfig> — still None by default
 }

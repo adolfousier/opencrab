@@ -3,7 +3,7 @@
 //! Render functions for each step of the onboarding wizard.
 
 use super::onboarding::{
-    AuthField, BrainField, DiscordField, HealthStatus, OnboardingStep,
+    AuthField, BrainField, ChannelTestStatus, DiscordField, HealthStatus, OnboardingStep,
     OnboardingWizard, SlackField, TelegramField, VoiceField, WizardMode, PROVIDERS,
     CHANNEL_NAMES,
 };
@@ -894,9 +894,24 @@ fn render_channels(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
         )));
     }
 
+    // "Continue" button at the bottom
+    let continue_focused = wizard.focused_field >= wizard.channel_toggles.len();
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            if continue_focused { " > " } else { "   " },
+            Style::default().fg(ACCENT_GOLD),
+        ),
+        Span::styled(
+            "Continue →",
+            Style::default()
+                .fg(if continue_focused { Color::White } else { Color::DarkGray })
+                .add_modifier(if continue_focused { Modifier::BOLD } else { Modifier::empty() }),
+        ),
+    ]));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Skip all with Enter if you're not into it",
+        "  Space toggle | Enter setup channel | Tab skip",
         Style::default().fg(Color::DarkGray),
     )));
 }
@@ -939,7 +954,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         )
     };
     let cursor = if token_focused && !wizard.has_existing_telegram_token() {
-        "█"
+        "\u{2588}"
     } else {
         ""
     };
@@ -974,19 +989,65 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         )));
     }
 
+    // User ID input
+    let uid_focused = wizard.telegram_field == TelegramField::UserID;
+    let (uid_display, uid_hint) = if wizard.has_existing_telegram_user_id() {
+        (
+            "**********".to_string(),
+            " (already configured)".to_string(),
+        )
+    } else if wizard.telegram_user_id_input.is_empty() {
+        ("your numeric user ID".to_string(), String::new())
+    } else {
+        (wizard.telegram_user_id_input.clone(), String::new())
+    };
+    let uid_cursor = if uid_focused && !wizard.has_existing_telegram_user_id() {
+        "\u{2588}"
+    } else {
+        ""
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  User ID:   ",
+            Style::default().fg(if uid_focused {
+                BRAND_BLUE
+            } else {
+                Color::DarkGray
+            }),
+        ),
+        Span::styled(
+            format!("{}{}", uid_display, uid_cursor),
+            Style::default().fg(if wizard.has_existing_telegram_user_id() {
+                Color::Green
+            } else if uid_focused {
+                Color::White
+            } else {
+                Color::DarkGray
+            }),
+        ),
+    ]));
+
+    if !uid_hint.is_empty() && uid_focused {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", uid_hint.trim()),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )));
+    }
+
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  After setup, send /start to your bot",
+        "  Send /start to your bot to get your user ID",
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC),
     )));
-    lines.push(Line::from(Span::styled(
-        "  to get your user ID for the allowlist",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )));
+
+    // Test status
+    render_channel_test_status(lines, wizard);
+
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Skip with Enter if you'll add it later",
@@ -1039,7 +1100,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
 
     lines.push(Line::from(vec![
         Span::styled(
-            "  Bot Token: ",
+            "  Bot Token:   ",
             Style::default().fg(if token_focused {
                 BRAND_BLUE
             } else {
@@ -1066,6 +1127,57 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 .add_modifier(Modifier::ITALIC),
         )));
     }
+
+    // Channel ID input
+    let ch_focused = wizard.discord_field == DiscordField::ChannelID;
+    let (ch_display, ch_hint) = if wizard.has_existing_discord_channel_id() {
+        (
+            "**********".to_string(),
+            " (already configured)".to_string(),
+        )
+    } else if wizard.discord_channel_id_input.is_empty() {
+        ("right-click channel > Copy Channel ID".to_string(), String::new())
+    } else {
+        (wizard.discord_channel_id_input.clone(), String::new())
+    };
+    let ch_cursor = if ch_focused && !wizard.has_existing_discord_channel_id() {
+        "\u{2588}"
+    } else {
+        ""
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Channel ID:  ",
+            Style::default().fg(if ch_focused {
+                BRAND_BLUE
+            } else {
+                Color::DarkGray
+            }),
+        ),
+        Span::styled(
+            format!("{}{}", ch_display, ch_cursor),
+            Style::default().fg(if wizard.has_existing_discord_channel_id() {
+                Color::Green
+            } else if ch_focused {
+                Color::White
+            } else {
+                Color::DarkGray
+            }),
+        ),
+    ]));
+
+    if !ch_hint.is_empty() && ch_focused {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", ch_hint.trim()),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    // Test status
+    render_channel_test_status(lines, wizard);
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -1261,11 +1373,96 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         )));
     }
 
+    // Channel ID input
+    let ch_focused = wizard.slack_field == SlackField::ChannelID;
+    let (ch_display, ch_hint) = if wizard.has_existing_slack_channel_id() {
+        (
+            "**********".to_string(),
+            " (already configured)".to_string(),
+        )
+    } else if wizard.slack_channel_id_input.is_empty() {
+        ("C12345678".to_string(), String::new())
+    } else {
+        (wizard.slack_channel_id_input.clone(), String::new())
+    };
+    let ch_cursor = if ch_focused && !wizard.has_existing_slack_channel_id() {
+        "\u{2588}"
+    } else {
+        ""
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Channel ID: ",
+            Style::default().fg(if ch_focused {
+                BRAND_BLUE
+            } else {
+                Color::DarkGray
+            }),
+        ),
+        Span::styled(
+            format!("{}{}", ch_display, ch_cursor),
+            Style::default().fg(if wizard.has_existing_slack_channel_id() {
+                Color::Green
+            } else if ch_focused {
+                Color::White
+            } else {
+                Color::DarkGray
+            }),
+        ),
+    ]));
+
+    if !ch_hint.is_empty() && ch_focused {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", ch_hint.trim()),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    // Test status
+    render_channel_test_status(lines, wizard);
+
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Skip with Enter if you'll add tokens later",
         Style::default().fg(Color::DarkGray),
     )));
+}
+
+/// Render the channel test connection status line (shared by Telegram/Discord/Slack)
+fn render_channel_test_status(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
+    match &wizard.channel_test_status {
+        ChannelTestStatus::Idle => {}
+        ChannelTestStatus::Testing => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  Testing connection...",
+                Style::default().fg(BRAND_GOLD),
+            )));
+        }
+        ChannelTestStatus::Success => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  Connected! Press Enter to continue",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
+        ChannelTestStatus::Failed(err) => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("  Error: {}", err),
+                Style::default().fg(Color::Red),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  Enter to retry | S to skip",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
 }
 
 fn render_voice_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {

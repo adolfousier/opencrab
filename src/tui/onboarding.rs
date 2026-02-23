@@ -217,6 +217,7 @@ pub enum AuthField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscordField {
     BotToken,
+    ChannelID,
 }
 
 /// Which field is focused in SlackSetup step
@@ -224,12 +225,23 @@ pub enum DiscordField {
 pub enum SlackField {
     BotToken,
     AppToken,
+    ChannelID,
 }
 
 /// Which field is focused in TelegramSetup step
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TelegramField {
     BotToken,
+    UserID,
+}
+
+/// Channel test connection status
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelTestStatus {
+    Idle,
+    Testing,
+    Success,
+    Failed(String),
 }
 
 /// Which field is focused in VoiceSetup step
@@ -281,10 +293,12 @@ pub struct OnboardingWizard {
     // Step 5b: Telegram Setup (shown when Telegram is enabled)
     pub telegram_field: TelegramField,
     pub telegram_token_input: String,
+    pub telegram_user_id_input: String,
 
     // Discord Setup (shown when Discord is enabled)
     pub discord_field: DiscordField,
     pub discord_token_input: String,
+    pub discord_channel_id_input: String,
 
     // WhatsApp Setup (shown when WhatsApp is enabled)
     pub whatsapp_qr_text: Option<String>,
@@ -296,6 +310,10 @@ pub struct OnboardingWizard {
     pub slack_field: SlackField,
     pub slack_bot_token_input: String,
     pub slack_app_token_input: String,
+    pub slack_channel_id_input: String,
+
+    // Channel test connection status
+    pub channel_test_status: ChannelTestStatus,
 
     // Step 6: Voice Setup
     pub voice_field: VoiceField,
@@ -415,9 +433,11 @@ impl OnboardingWizard {
 
             telegram_field: TelegramField::BotToken,
             telegram_token_input: String::new(),
+            telegram_user_id_input: String::new(),
 
             discord_field: DiscordField::BotToken,
             discord_token_input: String::new(),
+            discord_channel_id_input: String::new(),
 
             whatsapp_qr_text: None,
             whatsapp_connecting: false,
@@ -427,6 +447,9 @@ impl OnboardingWizard {
             slack_field: SlackField::BotToken,
             slack_bot_token_input: String::new(),
             slack_app_token_input: String::new(),
+            slack_channel_id_input: String::new(),
+
+            channel_test_status: ChannelTestStatus::Idle,
 
             voice_field: VoiceField::GroqApiKey,
             groq_api_key_input: String::new(),
@@ -706,70 +729,15 @@ impl OnboardingWizard {
                 }
             }
             OnboardingStep::Channels => {
-                tracing::debug!("[next_step] Channels → checking enabled channels: telegram={}, discord={}, whatsapp={}, slack={}",
-                    self.is_telegram_enabled(), self.is_discord_enabled(), self.is_whatsapp_enabled(), self.is_slack_enabled());
-                // Chain: Telegram → Discord → WhatsApp → Slack → Gateway
-                if self.is_telegram_enabled() {
-                    self.step = OnboardingStep::TelegramSetup;
-                    self.telegram_field = TelegramField::BotToken;
-                    self.detect_existing_telegram_token();
-                } else if self.is_discord_enabled() {
-                    self.step = OnboardingStep::DiscordSetup;
-                    self.discord_field = DiscordField::BotToken;
-                    self.detect_existing_discord_token();
-                } else if self.is_whatsapp_enabled() {
-                    self.step = OnboardingStep::WhatsAppSetup;
-                    self.reset_whatsapp_state();
-                } else if self.is_slack_enabled() {
-                    self.step = OnboardingStep::SlackSetup;
-                    self.slack_field = SlackField::BotToken;
-                    self.detect_existing_slack_tokens();
-                } else {
-                    self.step = OnboardingStep::Gateway;
-                }
-            }
-            OnboardingStep::TelegramSetup => {
-                // Chain continues: Discord → WhatsApp → Slack → Gateway
-                if self.is_discord_enabled() {
-                    self.step = OnboardingStep::DiscordSetup;
-                    self.discord_field = DiscordField::BotToken;
-                    self.detect_existing_discord_token();
-                } else if self.is_whatsapp_enabled() {
-                    self.step = OnboardingStep::WhatsAppSetup;
-                    self.reset_whatsapp_state();
-                } else if self.is_slack_enabled() {
-                    self.step = OnboardingStep::SlackSetup;
-                    self.slack_field = SlackField::BotToken;
-                    self.detect_existing_slack_tokens();
-                } else {
-                    self.step = OnboardingStep::Gateway;
-                }
-            }
-            OnboardingStep::DiscordSetup => {
-                // Chain continues: WhatsApp → Slack → Gateway
-                if self.is_whatsapp_enabled() {
-                    self.step = OnboardingStep::WhatsAppSetup;
-                    self.reset_whatsapp_state();
-                } else if self.is_slack_enabled() {
-                    self.step = OnboardingStep::SlackSetup;
-                    self.slack_field = SlackField::BotToken;
-                    self.detect_existing_slack_tokens();
-                } else {
-                    self.step = OnboardingStep::Gateway;
-                }
-            }
-            OnboardingStep::WhatsAppSetup => {
-                // Chain continues: Slack → Gateway
-                if self.is_slack_enabled() {
-                    self.step = OnboardingStep::SlackSetup;
-                    self.slack_field = SlackField::BotToken;
-                    self.detect_existing_slack_tokens();
-                } else {
-                    self.step = OnboardingStep::Gateway;
-                }
-            }
-            OnboardingStep::SlackSetup => {
+                // Handled by handle_channels_key — Enter on focused channel or Continue
                 self.step = OnboardingStep::Gateway;
+            }
+            OnboardingStep::TelegramSetup
+            | OnboardingStep::DiscordSetup
+            | OnboardingStep::WhatsAppSetup
+            | OnboardingStep::SlackSetup => {
+                // Return to channel list after completing a channel setup
+                self.step = OnboardingStep::Channels;
             }
             OnboardingStep::Gateway => {
                 // QuickStart: skip voice, go straight to daemon
@@ -827,56 +795,15 @@ impl OnboardingWizard {
             OnboardingStep::TelegramSetup => {
                 self.step = OnboardingStep::Channels;
             }
-            OnboardingStep::DiscordSetup => {
-                if self.is_telegram_enabled() {
-                    self.step = OnboardingStep::TelegramSetup;
-                    self.telegram_field = TelegramField::BotToken;
-                } else {
-                    self.step = OnboardingStep::Channels;
-                }
-            }
-            OnboardingStep::WhatsAppSetup => {
-                if self.is_discord_enabled() {
-                    self.step = OnboardingStep::DiscordSetup;
-                    self.discord_field = DiscordField::BotToken;
-                } else if self.is_telegram_enabled() {
-                    self.step = OnboardingStep::TelegramSetup;
-                    self.telegram_field = TelegramField::BotToken;
-                } else {
-                    self.step = OnboardingStep::Channels;
-                }
-            }
-            OnboardingStep::SlackSetup => {
-                if self.is_whatsapp_enabled() {
-                    self.step = OnboardingStep::WhatsAppSetup;
-                    self.reset_whatsapp_state();
-                } else if self.is_discord_enabled() {
-                    self.step = OnboardingStep::DiscordSetup;
-                    self.discord_field = DiscordField::BotToken;
-                } else if self.is_telegram_enabled() {
-                    self.step = OnboardingStep::TelegramSetup;
-                    self.telegram_field = TelegramField::BotToken;
-                } else {
-                    self.step = OnboardingStep::Channels;
-                }
+            OnboardingStep::DiscordSetup
+            | OnboardingStep::WhatsAppSetup
+            | OnboardingStep::SlackSetup => {
+                self.step = OnboardingStep::Channels;
             }
             OnboardingStep::Gateway => {
-                // QuickStart: go back to ProviderAuth, Advanced: go back to channel sub-steps or Channels
                 if self.mode == WizardMode::QuickStart {
                     self.step = OnboardingStep::ProviderAuth;
                     self.auth_field = AuthField::Provider;
-                } else if self.is_slack_enabled() {
-                    self.step = OnboardingStep::SlackSetup;
-                    self.slack_field = SlackField::BotToken;
-                } else if self.is_whatsapp_enabled() {
-                    self.step = OnboardingStep::WhatsAppSetup;
-                    self.reset_whatsapp_state();
-                } else if self.is_discord_enabled() {
-                    self.step = OnboardingStep::DiscordSetup;
-                    self.discord_field = DiscordField::BotToken;
-                } else if self.is_telegram_enabled() {
-                    self.step = OnboardingStep::TelegramSetup;
-                    self.telegram_field = TelegramField::BotToken;
                 } else {
                     self.step = OnboardingStep::Channels;
                 }
@@ -955,12 +882,31 @@ impl OnboardingWizard {
 
     /// Initialize health check results
     fn start_health_check(&mut self) {
-        self.health_results = vec![
+        let mut checks = vec![
             ("API Key Present".to_string(), HealthStatus::Pending),
             ("Config File".to_string(), HealthStatus::Pending),
             ("Workspace Directory".to_string(), HealthStatus::Pending),
             ("Template Files".to_string(), HealthStatus::Pending),
         ];
+
+        // Add channel-specific checks for enabled channels
+        if self.is_telegram_enabled() {
+            checks.push(("Telegram Token".to_string(), HealthStatus::Pending));
+            checks.push(("Telegram User ID".to_string(), HealthStatus::Pending));
+        }
+        if self.is_discord_enabled() {
+            checks.push(("Discord Token".to_string(), HealthStatus::Pending));
+            checks.push(("Discord Channel ID".to_string(), HealthStatus::Pending));
+        }
+        if self.is_slack_enabled() {
+            checks.push(("Slack Bot Token".to_string(), HealthStatus::Pending));
+            checks.push(("Slack Channel ID".to_string(), HealthStatus::Pending));
+        }
+        if self.is_whatsapp_enabled() {
+            checks.push(("WhatsApp Connected".to_string(), HealthStatus::Pending));
+        }
+
+        self.health_results = checks;
         self.health_running = true;
         self.health_complete = false;
 
@@ -1001,6 +947,63 @@ impl OnboardingWizard {
 
         // Check 4: Template files available (they're compiled in, always present)
         self.health_results[3].1 = HealthStatus::Pass;
+
+        // Channel checks (by name, since indices depend on which channels are enabled)
+        for i in 0..self.health_results.len() {
+            let name = self.health_results[i].0.clone();
+            self.health_results[i].1 = match name.as_str() {
+                "Telegram Token" => {
+                    if !self.telegram_token_input.is_empty() {
+                        HealthStatus::Pass
+                    } else {
+                        HealthStatus::Fail("No token provided".to_string())
+                    }
+                }
+                "Telegram User ID" => {
+                    if !self.telegram_user_id_input.is_empty() {
+                        HealthStatus::Pass
+                    } else {
+                        HealthStatus::Fail("No user ID — bot won't know who to talk to".to_string())
+                    }
+                }
+                "Discord Token" => {
+                    if !self.discord_token_input.is_empty() {
+                        HealthStatus::Pass
+                    } else {
+                        HealthStatus::Fail("No token provided".to_string())
+                    }
+                }
+                "Discord Channel ID" => {
+                    if !self.discord_channel_id_input.is_empty() {
+                        HealthStatus::Pass
+                    } else {
+                        HealthStatus::Fail("No channel ID — bot won't know where to post".to_string())
+                    }
+                }
+                "Slack Bot Token" => {
+                    if !self.slack_bot_token_input.is_empty() {
+                        HealthStatus::Pass
+                    } else {
+                        HealthStatus::Fail("No bot token provided".to_string())
+                    }
+                }
+                "Slack Channel ID" => {
+                    if !self.slack_channel_id_input.is_empty() {
+                        HealthStatus::Pass
+                    } else {
+                        HealthStatus::Fail("No channel ID — bot won't know where to post".to_string())
+                    }
+                }
+                "WhatsApp Connected" => {
+                    if self.whatsapp_connected {
+                        HealthStatus::Pass
+                    } else {
+                        HealthStatus::Fail("Not paired — scan QR code to connect".to_string())
+                    }
+                }
+                _ => continue, // Already set above
+            };
+        }
 
         self.health_running = false;
         self.health_complete = true;
@@ -1060,21 +1063,45 @@ impl OnboardingWizard {
         // Dispatch paste based on current step first, then auth_field
         match self.step {
             OnboardingStep::TelegramSetup => {
-                tracing::debug!("[paste] Telegram token pasted ({} chars)", clean.len());
-                if self.has_existing_telegram_token() {
-                    self.telegram_token_input.clear();
+                tracing::debug!("[paste] Telegram pasted ({} chars) field={:?}", clean.len(), self.telegram_field);
+                match self.telegram_field {
+                    TelegramField::BotToken => {
+                        if self.has_existing_telegram_token() {
+                            self.telegram_token_input.clear();
+                        }
+                        self.telegram_token_input.push_str(clean);
+                    }
+                    TelegramField::UserID => {
+                        // Only accept digits for user ID paste
+                        let digits: String = clean.chars().filter(|c| c.is_ascii_digit()).collect();
+                        if !digits.is_empty() {
+                            if self.has_existing_telegram_user_id() {
+                                self.telegram_user_id_input.clear();
+                            }
+                            self.telegram_user_id_input.push_str(&digits);
+                        }
+                    }
                 }
-                self.telegram_token_input.push_str(clean);
             }
             OnboardingStep::DiscordSetup => {
-                tracing::debug!("[paste] Discord token pasted ({} chars)", clean.len());
-                if self.has_existing_discord_token() {
-                    self.discord_token_input.clear();
+                tracing::debug!("[paste] Discord pasted ({} chars) field={:?}", clean.len(), self.discord_field);
+                match self.discord_field {
+                    DiscordField::BotToken => {
+                        if self.has_existing_discord_token() {
+                            self.discord_token_input.clear();
+                        }
+                        self.discord_token_input.push_str(clean);
+                    }
+                    DiscordField::ChannelID => {
+                        if self.has_existing_discord_channel_id() {
+                            self.discord_channel_id_input.clear();
+                        }
+                        self.discord_channel_id_input.push_str(clean);
+                    }
                 }
-                self.discord_token_input.push_str(clean);
             }
             OnboardingStep::SlackSetup => {
-                tracing::debug!("[paste] Slack token pasted ({} chars)", clean.len());
+                tracing::debug!("[paste] Slack pasted ({} chars) field={:?}", clean.len(), self.slack_field);
                 match self.slack_field {
                     SlackField::BotToken => {
                         if self.has_existing_slack_bot_token() {
@@ -1087,6 +1114,12 @@ impl OnboardingWizard {
                             self.slack_app_token_input.clear();
                         }
                         self.slack_app_token_input.push_str(clean);
+                    }
+                    SlackField::ChannelID => {
+                        if self.has_existing_slack_channel_id() {
+                            self.slack_channel_id_input.clear();
+                        }
+                        self.slack_channel_id_input.push_str(clean);
                     }
                 }
             }
@@ -1455,13 +1488,15 @@ impl OnboardingWizard {
     }
 
     fn handle_channels_key(&mut self, event: KeyEvent) -> WizardAction {
+        // Extra item at the bottom: "Continue" (index == channel count)
         let count = self.channel_toggles.len();
+        let total = count + 1; // channels + Continue button
         match event.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.focused_field = self.focused_field.saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.focused_field = (self.focused_field + 1).min(count.saturating_sub(1));
+                self.focused_field = (self.focused_field + 1).min(total.saturating_sub(1));
             }
             KeyCode::Char(' ') => {
                 if self.focused_field < count {
@@ -1472,8 +1507,47 @@ impl OnboardingWizard {
                 }
             }
             KeyCode::Enter => {
-                tracing::debug!("[channels] Enter pressed, advancing to next step");
-                self.next_step();
+                if self.focused_field >= count {
+                    // "Continue" button — advance past channels
+                    tracing::debug!("[channels] Continue pressed, advancing to Gateway");
+                    self.step = OnboardingStep::Gateway;
+                } else if self.focused_field < count && self.channel_toggles[self.focused_field].1 {
+                    // Enter on an enabled channel — open its setup screen
+                    let idx = self.focused_field;
+                    tracing::debug!("[channels] Enter on enabled channel idx={}", idx);
+                    match idx {
+                        0 => {
+                            self.step = OnboardingStep::TelegramSetup;
+                            self.telegram_field = TelegramField::BotToken;
+                            self.channel_test_status = ChannelTestStatus::Idle;
+                            self.detect_existing_telegram_token();
+                            self.detect_existing_telegram_user_id();
+                        }
+                        1 => {
+                            self.step = OnboardingStep::DiscordSetup;
+                            self.discord_field = DiscordField::BotToken;
+                            self.channel_test_status = ChannelTestStatus::Idle;
+                            self.detect_existing_discord_token();
+                            self.detect_existing_discord_channel_id();
+                        }
+                        2 => {
+                            self.step = OnboardingStep::WhatsAppSetup;
+                            self.reset_whatsapp_state();
+                        }
+                        3 => {
+                            self.step = OnboardingStep::SlackSetup;
+                            self.slack_field = SlackField::BotToken;
+                            self.channel_test_status = ChannelTestStatus::Idle;
+                            self.detect_existing_slack_tokens();
+                            self.detect_existing_slack_channel_id();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            KeyCode::Tab => {
+                // Tab also advances past channels
+                self.step = OnboardingStep::Gateway;
             }
             _ => {}
         }
@@ -1513,6 +1587,19 @@ impl OnboardingWizard {
         self.discord_token_input == EXISTING_KEY_SENTINEL
     }
 
+    /// Detect existing Discord channel ID from config.toml
+    fn detect_existing_discord_channel_id(&mut self) {
+        if let Ok(config) = crate::config::Config::load()
+            && !config.channels.discord.allowed_channels.is_empty() {
+                self.discord_channel_id_input = EXISTING_KEY_SENTINEL.to_string();
+            }
+    }
+
+    /// Check if discord channel ID holds a pre-existing value
+    pub fn has_existing_discord_channel_id(&self) -> bool {
+        self.discord_channel_id_input == EXISTING_KEY_SENTINEL
+    }
+
     /// Detect existing Slack tokens from keys.toml
     fn detect_existing_slack_tokens(&mut self) {
         if let Ok(config) = crate::config::Config::load() {
@@ -1535,6 +1622,19 @@ impl OnboardingWizard {
         self.slack_app_token_input == EXISTING_KEY_SENTINEL
     }
 
+    /// Detect existing Slack channel ID from config.toml
+    fn detect_existing_slack_channel_id(&mut self) {
+        if let Ok(config) = crate::config::Config::load()
+            && !config.channels.slack.allowed_channels.is_empty() {
+                self.slack_channel_id_input = EXISTING_KEY_SENTINEL.to_string();
+            }
+    }
+
+    /// Check if slack channel ID holds a pre-existing value
+    pub fn has_existing_slack_channel_id(&self) -> bool {
+        self.slack_channel_id_input == EXISTING_KEY_SENTINEL
+    }
+
     /// Detect existing Telegram bot token from keys.toml
     fn detect_existing_telegram_token(&mut self) {
         if let Ok(config) = crate::config::Config::load()
@@ -1546,6 +1646,19 @@ impl OnboardingWizard {
     /// Check if telegram token holds a pre-existing value
     pub fn has_existing_telegram_token(&self) -> bool {
         self.telegram_token_input == EXISTING_KEY_SENTINEL
+    }
+
+    /// Detect existing Telegram user ID from config.toml
+    fn detect_existing_telegram_user_id(&mut self) {
+        if let Ok(config) = crate::config::Config::load()
+            && !config.channels.telegram.allowed_users.is_empty() {
+                self.telegram_user_id_input = EXISTING_KEY_SENTINEL.to_string();
+            }
+    }
+
+    /// Check if telegram user ID holds a pre-existing value
+    pub fn has_existing_telegram_user_id(&self) -> bool {
+        self.telegram_user_id_input == EXISTING_KEY_SENTINEL
     }
 
     /// Detect existing Groq API key from keys.toml
@@ -1566,6 +1679,30 @@ impl OnboardingWizard {
     }
 
     fn handle_telegram_setup_key(&mut self, event: KeyEvent) -> WizardAction {
+        // Handle test status interactions first
+        match &self.channel_test_status {
+            ChannelTestStatus::Success => {
+                if event.code == KeyCode::Enter {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    self.next_step();
+                    return WizardAction::None;
+                }
+            }
+            ChannelTestStatus::Failed(_) => {
+                if event.code == KeyCode::Enter {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    return WizardAction::TestTelegram;
+                }
+                if matches!(event.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    self.next_step();
+                    return WizardAction::None;
+                }
+            }
+            ChannelTestStatus::Testing => return WizardAction::None,
+            ChannelTestStatus::Idle => {}
+        }
+
         match self.telegram_field {
             TelegramField::BotToken => match event.code {
                 KeyCode::Char(c) => {
@@ -1581,7 +1718,35 @@ impl OnboardingWizard {
                         self.telegram_token_input.pop();
                     }
                 }
+                KeyCode::Tab | KeyCode::Enter => {
+                    self.telegram_field = TelegramField::UserID;
+                }
+                _ => {}
+            },
+            TelegramField::UserID => match event.code {
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    if self.has_existing_telegram_user_id() {
+                        self.telegram_user_id_input.clear();
+                    }
+                    self.telegram_user_id_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    if self.has_existing_telegram_user_id() {
+                        self.telegram_user_id_input.clear();
+                    } else {
+                        self.telegram_user_id_input.pop();
+                    }
+                }
+                KeyCode::BackTab => {
+                    self.telegram_field = TelegramField::BotToken;
+                }
                 KeyCode::Enter => {
+                    // If both token and user ID are provided, test the connection
+                    let has_token = !self.telegram_token_input.is_empty();
+                    let has_user_id = !self.telegram_user_id_input.is_empty();
+                    if has_token && has_user_id {
+                        return WizardAction::TestTelegram;
+                    }
                     self.next_step();
                 }
                 _ => {}
@@ -1591,6 +1756,30 @@ impl OnboardingWizard {
     }
 
     fn handle_discord_setup_key(&mut self, event: KeyEvent) -> WizardAction {
+        // Handle test status interactions first
+        match &self.channel_test_status {
+            ChannelTestStatus::Success => {
+                if event.code == KeyCode::Enter {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    self.next_step();
+                    return WizardAction::None;
+                }
+            }
+            ChannelTestStatus::Failed(_) => {
+                if event.code == KeyCode::Enter {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    return WizardAction::TestDiscord;
+                }
+                if matches!(event.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    self.next_step();
+                    return WizardAction::None;
+                }
+            }
+            ChannelTestStatus::Testing => return WizardAction::None,
+            ChannelTestStatus::Idle => {}
+        }
+
         match self.discord_field {
             DiscordField::BotToken => match event.code {
                 KeyCode::Char(c) => {
@@ -1606,7 +1795,34 @@ impl OnboardingWizard {
                         self.discord_token_input.pop();
                     }
                 }
+                KeyCode::Tab | KeyCode::Enter => {
+                    self.discord_field = DiscordField::ChannelID;
+                }
+                _ => {}
+            },
+            DiscordField::ChannelID => match event.code {
+                KeyCode::Char(c) => {
+                    if self.has_existing_discord_channel_id() {
+                        self.discord_channel_id_input.clear();
+                    }
+                    self.discord_channel_id_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    if self.has_existing_discord_channel_id() {
+                        self.discord_channel_id_input.clear();
+                    } else {
+                        self.discord_channel_id_input.pop();
+                    }
+                }
+                KeyCode::BackTab => {
+                    self.discord_field = DiscordField::BotToken;
+                }
                 KeyCode::Enter => {
+                    let has_token = !self.discord_token_input.is_empty();
+                    let has_channel = !self.discord_channel_id_input.is_empty();
+                    if has_token && has_channel {
+                        return WizardAction::TestDiscord;
+                    }
                     self.next_step();
                 }
                 _ => {}
@@ -1668,6 +1884,30 @@ impl OnboardingWizard {
     }
 
     fn handle_slack_setup_key(&mut self, event: KeyEvent) -> WizardAction {
+        // Handle test status interactions first
+        match &self.channel_test_status {
+            ChannelTestStatus::Success => {
+                if event.code == KeyCode::Enter {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    self.next_step();
+                    return WizardAction::None;
+                }
+            }
+            ChannelTestStatus::Failed(_) => {
+                if event.code == KeyCode::Enter {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    return WizardAction::TestSlack;
+                }
+                if matches!(event.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                    self.channel_test_status = ChannelTestStatus::Idle;
+                    self.next_step();
+                    return WizardAction::None;
+                }
+            }
+            ChannelTestStatus::Testing => return WizardAction::None,
+            ChannelTestStatus::Idle => {}
+        }
+
         match self.slack_field {
             SlackField::BotToken => match event.code {
                 KeyCode::Char(c) => {
@@ -1702,10 +1942,37 @@ impl OnboardingWizard {
                         self.slack_app_token_input.pop();
                     }
                 }
+                KeyCode::Tab | KeyCode::Enter => {
+                    self.slack_field = SlackField::ChannelID;
+                }
                 KeyCode::BackTab => {
                     self.slack_field = SlackField::BotToken;
                 }
+                _ => {}
+            },
+            SlackField::ChannelID => match event.code {
+                KeyCode::Char(c) => {
+                    if self.has_existing_slack_channel_id() {
+                        self.slack_channel_id_input.clear();
+                    }
+                    self.slack_channel_id_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    if self.has_existing_slack_channel_id() {
+                        self.slack_channel_id_input.clear();
+                    } else {
+                        self.slack_channel_id_input.pop();
+                    }
+                }
+                KeyCode::BackTab => {
+                    self.slack_field = SlackField::AppToken;
+                }
                 KeyCode::Enter => {
+                    let has_token = !self.slack_bot_token_input.is_empty();
+                    let has_channel = !self.slack_channel_id_input.is_empty();
+                    if has_token && has_channel {
+                        return WizardAction::TestSlack;
+                    }
                     self.next_step();
                 }
                 _ => {}
@@ -2101,6 +2368,20 @@ Respond with EXACTLY six sections using these delimiters. No extra text before t
                 tracing::warn!("Failed to save Slack app token to keys.toml: {}", e);
             }
 
+        // Persist channel IDs/user IDs to config.toml (if new)
+        if !self.telegram_user_id_input.is_empty() && !self.has_existing_telegram_user_id()
+            && let Ok(uid) = self.telegram_user_id_input.parse::<i64>() {
+                let _ = Config::write_i64_array("channels.telegram", "allowed_users", &[uid]);
+            }
+        if !self.discord_channel_id_input.is_empty() && !self.has_existing_discord_channel_id() {
+            let _ = Config::write_array("channels.discord", "allowed_channels",
+                std::slice::from_ref(&self.discord_channel_id_input));
+        }
+        if !self.slack_channel_id_input.is_empty() && !self.has_existing_slack_channel_id() {
+            let _ = Config::write_array("channels.slack", "allowed_channels",
+                std::slice::from_ref(&self.slack_channel_id_input));
+        }
+
         // Seed workspace templates (use AI-generated content when available)
         if self.seed_templates {
             let workspace = PathBuf::from(&self.workspace_path);
@@ -2152,6 +2433,12 @@ pub enum WizardAction {
     FetchModels,
     /// Trigger async WhatsApp QR code pairing
     WhatsAppConnect,
+    /// Trigger async Telegram test message
+    TestTelegram,
+    /// Trigger async Discord test message
+    TestDiscord,
+    /// Trigger async Slack test message
+    TestSlack,
 }
 
 /// First-time detection: no config file AND no API keys in environment.

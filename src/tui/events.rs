@@ -96,6 +96,9 @@ pub enum TuiEvent {
     /// A system message to display in chat
     SystemMessage(String),
 
+    /// Channel test message result during onboarding
+    ChannelTestResult { channel: String, success: bool, error: Option<String> },
+
     /// Sudo password requested by bash tool
     SudoPasswordRequested(SudoPasswordRequest),
 }

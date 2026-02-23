@@ -3,6 +3,7 @@
 use super::crabrace::CrabraceConfig;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -274,9 +275,9 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub minimax: Option<ProviderConfig>,
 
-    /// Custom OpenAI-compatible configuration
-    #[serde(default)]
-    pub custom: Option<ProviderConfig>,
+    /// Named custom OpenAI-compatible providers (e.g. [providers.custom.ollama])
+    #[serde(default, deserialize_with = "deserialize_custom_providers")]
+    pub custom: Option<BTreeMap<String, ProviderConfig>>,
 
     /// Google Gemini configuration
     #[serde(default)]
@@ -305,6 +306,54 @@ pub struct ProviderConfigs {
     /// Fallback provider configuration (under [providers.fallback] in config)
     #[serde(default)]
     pub fallback: Option<FallbackProviderConfig>,
+}
+
+impl ProviderConfigs {
+    /// Get the first enabled custom provider (name + config)
+    pub fn active_custom(&self) -> Option<(&str, &ProviderConfig)> {
+        self.custom.as_ref()?.iter()
+            .find(|(_, cfg)| cfg.enabled)
+            .map(|(name, cfg)| (name.as_str(), cfg))
+    }
+
+    /// Get a specific custom provider by name
+    pub fn custom_by_name(&self, name: &str) -> Option<&ProviderConfig> {
+        self.custom.as_ref()?.get(name)
+    }
+}
+
+/// Custom deserializer that handles both old flat format `[providers.custom]`
+/// and new named map format `[providers.custom.<name>]`.
+fn deserialize_custom_providers<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<BTreeMap<String, ProviderConfig>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    let value: Option<toml::Value> = Option::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    // If it has "enabled", "api_key", "base_url", "default_model", or "models" at top level,
+    // it's old flat format — wrap as "default"
+    if value.get("enabled").is_some()
+        || value.get("api_key").is_some()
+        || value.get("base_url").is_some()
+        || value.get("default_model").is_some()
+        || value.get("models").is_some()
+    {
+        let config: ProviderConfig = value.try_into().map_err(de::Error::custom)?;
+        let mut map = BTreeMap::new();
+        map.insert("default".to_string(), config);
+        return Ok(Some(map));
+    }
+
+    // Otherwise parse as named map
+    let map: BTreeMap<String, ProviderConfig> = value.try_into().map_err(de::Error::custom)?;
+    Ok(if map.is_empty() { None } else { Some(map) })
 }
 
 /// Fallback provider configuration
@@ -422,7 +471,6 @@ pub fn save_keys(keys: &ProviderConfigs) -> Result<()> {
         ("providers.openai", keys.openai.as_ref()),
         ("providers.openrouter", keys.openrouter.as_ref()),
         ("providers.minimax", keys.minimax.as_ref()),
-        ("providers.custom", keys.custom.as_ref()),
         ("providers.gemini", keys.gemini.as_ref()),
     ];
 
@@ -432,6 +480,17 @@ pub fn save_keys(keys: &ProviderConfigs) -> Result<()> {
             && !key.is_empty()
         {
             write_secret_key(section, "api_key", key)?;
+        }
+    }
+
+    // Handle named custom providers
+    if let Some(customs) = &keys.custom {
+        for (name, p) in customs {
+            if let Some(key) = &p.api_key
+                && !key.is_empty()
+            {
+                write_secret_key(&format!("providers.custom.{}", name), "api_key", key)?;
+            }
         }
     }
 
@@ -544,11 +603,15 @@ fn merge_provider_keys(mut base: ProviderConfigs, keys: ProviderConfigs) -> Prov
             let entry = base.gemini.get_or_insert_with(ProviderConfig::default);
             entry.api_key = Some(key);
         }
-    if let Some(k) = keys.custom
-        && let Some(key) = k.api_key {
-            let entry = base.custom.get_or_insert_with(ProviderConfig::default);
-            entry.api_key = Some(key);
+    if let Some(custom_keys) = keys.custom {
+        let base_customs = base.custom.get_or_insert_with(BTreeMap::new);
+        for (name, key_cfg) in custom_keys {
+            if let Some(key) = key_cfg.api_key {
+                let entry = base_customs.entry(name).or_default();
+                entry.api_key = Some(key);
+            }
         }
+    }
     // Also handle STT/TTS keys
     if let Some(stt) = keys.stt
         && let Some(groq) = stt.groq
@@ -933,6 +996,52 @@ impl Config {
         let toml_str = toml::to_string_pretty(&doc)?;
         fs::write(&path, toml_str)?;
         tracing::info!("Wrote config array [{section}].{key} ({} items)", values.len());
+        Ok(())
+    }
+
+    /// Write an array of integers to config.toml under `[section]`, creating
+    /// intermediate tables as needed.
+    ///
+    /// e.g. `write_i64_array("channels.telegram", "allowed_users", &[123456])` →
+    /// `[channels.telegram] allowed_users = [123456]`
+    pub fn write_i64_array(section: &str, key: &str, values: &[i64]) -> Result<()> {
+        let path = Self::system_config_path()
+            .unwrap_or_else(|| opencrabs_home().join("config.toml"));
+
+        let mut doc: toml::Value = if path.exists() {
+            let content = fs::read_to_string(&path)?;
+            toml::from_str(&content).unwrap_or(toml::Value::Table(toml::map::Map::new()))
+        } else {
+            toml::Value::Table(toml::map::Map::new())
+        };
+
+        // Navigate/create nested section
+        let parts: Vec<&str> = section.split('.').collect();
+        let mut current = doc.as_table_mut()
+            .context("config root is not a table")?;
+
+        for part in &parts {
+            if !current.contains_key(*part) {
+                current.insert(part.to_string(), toml::Value::Table(toml::map::Map::new()));
+            }
+            current = current.get_mut(*part)
+                .context("section not found after insert")?
+                .as_table_mut()
+                .with_context(|| format!("'{}' is not a table", part))?;
+        }
+
+        let arr = values.iter()
+            .map(|v| toml::Value::Integer(*v))
+            .collect();
+        current.insert(key.to_string(), toml::Value::Array(arr));
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        Self::backup_config(&path, 5);
+        let toml_str = toml::to_string_pretty(&doc)?;
+        fs::write(&path, toml_str)?;
+        tracing::info!("Wrote config i64 array [{section}].{key} ({} items)", values.len());
         Ok(())
     }
 
@@ -1333,6 +1442,13 @@ pub fn resolve_provider_from_config(config: &Config) -> (&str, &str) {
             .and_then(|p| p.default_model.as_deref())
             .unwrap_or("default");
         return ("Google Gemini", model);
+    }
+    if let Some((name, cfg)) = config.providers.active_custom() {
+        let model = cfg.default_model.as_deref().unwrap_or("default");
+        // Return a static string for the provider name; we can't return the dynamic name
+        // from a borrowed reference easily, so we use "Custom" with the model
+        let _ = name; // name is available but we return a static str
+        return ("Custom", model);
     }
     // Default - nothing configured
     ("Not configured", "N/A")
