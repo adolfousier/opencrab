@@ -6,6 +6,7 @@
 //! - `tasks/cancel` → cancel a running task
 
 mod send;
+pub mod stream;
 mod tasks;
 
 use crate::a2a::types::*;

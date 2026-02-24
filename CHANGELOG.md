@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **A2A Bearer token authentication** -- JSON-RPC endpoint (`/a2a/v1`) now supports `Authorization: Bearer <key>` when `api_key` is configured. Agent card and health endpoints remain public for discovery. Key can be set in `config.toml` or `keys.toml` under `[a2a]`
 - **A2A task persistence** -- Tasks are persisted to SQLite (`a2a_tasks` table, auto-migration) on create, complete, fail, and cancel. Active tasks are restored from DB on server startup so in-flight work survives restarts
+- **A2A SSE streaming (`message/stream`)** -- Real-time task updates via Server-Sent Events per A2A spec. Each SSE `data:` line is a JSON-RPC 2.0 response containing a `Task`, `TaskStatusUpdateEvent` (with `final: true` on completion), or `TaskArtifactUpdateEvent`. Agent card now advertises `streaming: true`
 
 ## [0.2.31] - 2026-02-24
 

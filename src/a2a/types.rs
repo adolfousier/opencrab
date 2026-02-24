@@ -260,6 +260,47 @@ impl JsonRpcResponse {
     }
 }
 
+// ─── Streaming Events (§4.2) ─────────────────────────────────
+
+/// TaskStatusUpdateEvent per §4.2.1 -- sent during message/stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStatusUpdateEvent {
+    pub kind: String, // "status-update"
+    pub task_id: String,
+    pub context_id: String,
+    pub status: TaskStatus,
+    #[serde(rename = "final")]
+    pub is_final: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// TaskArtifactUpdateEvent per §4.2.2 -- sent during message/stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskArtifactUpdateEvent {
+    pub kind: String, // "artifact-update"
+    pub task_id: String,
+    pub context_id: String,
+    pub artifact: Artifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub append: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_chunk: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Union type for SSE event payloads in message/stream responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StreamEvent {
+    Task(Task),
+    StatusUpdate(TaskStatusUpdateEvent),
+    ArtifactUpdate(TaskArtifactUpdateEvent),
+}
+
 // ─── Request Parameters ──────────────────────────────────────
 
 /// SendMessageRequest params per §3.2.1.

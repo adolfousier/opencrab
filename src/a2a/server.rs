@@ -13,10 +13,11 @@ use axum::{
     extract::State,
     http::StatusCode,
     middleware,
-    response::{IntoResponse, Json},
+    response::{sse, IntoResponse, Json, Sse},
     routing::{get, post},
     Router,
 };
+use futures::stream;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -145,11 +146,12 @@ async fn get_agent_card(State(state): State<A2aState>) -> Json<AgentCard> {
     Json(card)
 }
 
-/// POST /a2a/v1 — JSON-RPC 2.0 endpoint.
+/// POST /a2a/v1 -- JSON-RPC 2.0 endpoint.
+/// Returns JSON for most methods, SSE stream for `message/stream`.
 async fn handle_jsonrpc(
     State(state): State<A2aState>,
     Json(req): Json<JsonRpcRequest>,
-) -> (StatusCode, Json<JsonRpcResponse>) {
+) -> axum::response::Response {
     if req.jsonrpc != "2.0" {
         return (
             StatusCode::OK,
@@ -158,7 +160,13 @@ async fn handle_jsonrpc(
                 error_codes::INVALID_REQUEST,
                 "Invalid JSON-RPC version, expected 2.0",
             )),
-        );
+        )
+            .into_response();
+    }
+
+    // message/stream returns SSE instead of JSON
+    if req.method == "message/stream" {
+        return handle_stream(state, req).await;
     }
 
     let response = handler::dispatch(
@@ -169,7 +177,36 @@ async fn handle_jsonrpc(
         state.service_context.clone(),
     )
     .await;
-    (StatusCode::OK, Json(response))
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+/// Handle `message/stream` -- returns an SSE stream of task updates.
+async fn handle_stream(state: A2aState, req: JsonRpcRequest) -> axum::response::Response {
+    match handler::stream::handle_stream_message(
+        req.id,
+        req.params,
+        state.task_store,
+        state.cancel_store,
+        state.agent_service,
+        state.service_context,
+    )
+    .await
+    {
+        Ok((id, rx)) => {
+            let stream = stream::unfold((id, rx), |(id, mut rx)| async move {
+                let event = rx.recv().await?;
+                let result = serde_json::to_value(&event).unwrap_or_default();
+                let rpc_response = JsonRpcResponse::success(id.clone(), result);
+                let data = serde_json::to_string(&rpc_response).unwrap_or_default();
+                let sse_event = Ok::<_, std::convert::Infallible>(sse::Event::default().data(data));
+                Some((sse_event, (id, rx)))
+            });
+            Sse::new(stream).into_response()
+        }
+        Err(error_response) => {
+            (StatusCode::OK, Json(error_response)).into_response()
+        }
+    }
 }
 
 /// GET /a2a/health — Health check.

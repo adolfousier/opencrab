@@ -92,7 +92,7 @@ pub fn build_agent_card(host: &str, port: u16, tool_registry: Option<&ToolRegist
             url: Some("https://github.com/adolfousier/opencrabs".to_string()),
         }),
         capabilities: Some(AgentCapabilities {
-            streaming: false,
+            streaming: true,
             push_notifications: false,
             state_transition_history: true,
         }),
