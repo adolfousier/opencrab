@@ -116,9 +116,12 @@ jobs:
           body=$(awk "/^## \\[${version}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
           # Write to file to preserve newlines
           echo "$body" > /tmp/release_notes.md
-          # Add full changelog link
+          # Add full changelog link (extract previous version from CHANGELOG.md)
           echo "" >> /tmp/release_notes.md
-          echo "**Full Changelog:** https://github.com/${{ github.repository }}/compare/v$(awk "/^## \\[/{if(found) exit; found=1; next} END{}" CHANGELOG.md | head -1 | grep -oP '\\[\\K[^]]+')...v${version}" >> /tmp/release_notes.md
+          prev_version=$(awk "/^## \\[${version}\\]/{found=1; next} found && /^## \\[/{match(\$0, /\\[([^]]+)\\]/, m); print m[1]; exit}" CHANGELOG.md)
+          if [ -n "$prev_version" ]; then
+            echo "**Full Changelog:** https://github.com/${{ github.repository }}/compare/v${prev_version}...v${version}" >> /tmp/release_notes.md
+          fi
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -132,10 +135,10 @@ jobs:
           ls -la release-assets/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: v${{ steps.version.outputs.version }}
-          body_path: /tmp/release_notes.md
-          files: release-assets/*
-          draft: false
-          prerelease: false
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --notes-file /tmp/release_notes.md \
+            release-assets/*
