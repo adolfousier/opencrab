@@ -136,9 +136,17 @@ jobs:
 
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --notes-file /tmp/release_notes.md \
-            release-assets/*
+          # Use --clobber so the workflow can attach binaries to a release
+          # that was already created manually (e.g. via `gh release create`)
+          if gh release view "v${{ steps.version.outputs.version }}" &>/dev/null; then
+            # Release exists -- upload assets to it
+            gh release upload "v${{ steps.version.outputs.version }}" \
+              release-assets/* --clobber
+          else
+            gh release create "v${{ steps.version.outputs.version }}" \
+              --title "v${{ steps.version.outputs.version }}" \
+              --notes-file /tmp/release_notes.md \
+              release-assets/*
+          fi
