@@ -137,9 +137,6 @@ impl App {
                 crossterm::event::KeyCode::Backspace => {
                     self.model_selector_base_url.pop();
                 }
-                crossterm::event::KeyCode::Paste(text) => {
-                    self.model_selector_base_url.push_str(&text);
-                }
                 _ => {}
             }
         } else if (self.model_selector_focused_field == 1 && self.model_selector_provider_selected != 5)
@@ -151,9 +148,6 @@ impl App {
                 }
                 crossterm::event::KeyCode::Backspace => {
                     self.model_selector_api_key.pop();
-                }
-                crossterm::event::KeyCode::Paste(text) => {
-                    self.model_selector_api_key.push_str(&text);
                 }
                 _ => {}
             }

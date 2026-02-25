@@ -974,15 +974,13 @@ impl App {
                 }
             }
             TuiEvent::ModelSelectorModelsFetched(models) => {
-                if self.mode == AppMode::ModelSelector {
-                    if !models.is_empty() {
-                        self.model_selector_models = models;
-                        self.model_selector_selected = 0;
-                        self.model_selector_filter.clear();
-                        // Advance to model selection field
-                        let is_custom = self.model_selector_provider_selected == 5;
-                        self.model_selector_focused_field = if is_custom { 3 } else { 2 };
-                    }
+                if self.mode == AppMode::ModelSelector && !models.is_empty() {
+                    self.model_selector_models = models;
+                    self.model_selector_selected = 0;
+                    self.model_selector_filter.clear();
+                    // Advance to model selection field
+                    let is_custom = self.model_selector_provider_selected == 5;
+                    self.model_selector_focused_field = if is_custom { 3 } else { 2 };
                 }
             }
             TuiEvent::WhatsAppQrCode(qr_data) => {

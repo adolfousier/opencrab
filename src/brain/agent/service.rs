@@ -1597,11 +1597,17 @@ impl AgentService {
             .unwrap_or(context.messages.len());
 
         // Cap the messages sent to the summarizer so the compaction request itself
-        // never exceeds the provider's context window. Reserve 8k tokens for the
-        // compaction prompt + system prompt + output budget, leaving the rest for
-        // conversation history. Take the LAST N messages (most recent = most useful).
-        let compaction_overhead = 8_000usize;
-        let summary_budget = context.max_tokens.saturating_sub(compaction_overhead);
+        // never exceeds the provider's context window. Reserve enough tokens for:
+        // - compaction prompt (~1k tokens)
+        // - system prompt (~1k tokens)
+        // - output budget (8k tokens)
+        // - safety margin (6k tokens)
+        // Total overhead: 16k tokens. Take the LAST N messages (most recent = most useful).
+        let compaction_overhead = 16_000usize;
+        // Also cap at 75% of context window to leave headroom — compaction request
+        // must itself fit within the provider limit.
+        let max_budget = (context.max_tokens as f64 * 0.75) as usize;
+        let summary_budget = context.max_tokens.saturating_sub(compaction_overhead).min(max_budget);
         let mut running_tokens = 0usize;
         let all_msgs = &context.messages[start..];
         // Walk backwards from most-recent until we hit the budget
@@ -1663,7 +1669,7 @@ impl AgentService {
         summary_messages.push(Message::user(compaction_prompt));
 
         // Output budget: cap at 8k tokens for the summary itself (plenty for structured output)
-        let summary_max_tokens = 8_000usize.min(self.max_tokens);
+        let summary_max_tokens = 8_000u32.min(self.max_tokens);
 
         let request = LLMRequest::new(model_name.to_string(), summary_messages)
             .with_max_tokens(summary_max_tokens)
