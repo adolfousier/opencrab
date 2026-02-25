@@ -1688,9 +1688,10 @@ impl AgentService {
             .with_max_tokens(summary_max_tokens)
             .with_system("You are a precise summarization assistant. Your job is to create a structured breakdown of the conversation that will serve as the complete context for an AI agent continuing this work after context compaction. Be thorough — include every file, decision, and pending task.".to_string());
 
+        // Use streaming so the TUI shows the summary being written in real-time
+        // instead of freezing silently for 2-5 minutes on large contexts
         let response = self
-            .provider
-            .complete(request)
+            .stream_complete(request, None)
             .await
             .map_err(AgentError::Provider)?;
 
