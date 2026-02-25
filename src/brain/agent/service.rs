@@ -889,8 +889,18 @@ impl AgentService {
                             format!("http_request:{}:{}", method, url)
                         }
 
-                        // Other tools: just use name
-                        _ => name.to_string(),
+                        // All other tools: include a hash of the full input so different
+                        // arguments produce different signatures. This prevents false loop
+                        // detection when an agent legitimately calls the same tool with
+                        // different parameters across iterations.
+                        _ => {
+                            let input_str = serde_json::to_string(input).unwrap_or_default();
+                            // Use a simple hash to keep signatures compact
+                            let hash: u64 = input_str.bytes().fold(0u64, |acc, b| {
+                                acc.wrapping_mul(31).wrapping_add(b as u64)
+                            });
+                            format!("{}:{:x}", name, hash)
+                        }
                     }
                 })
                 .collect::<Vec<_>>()
@@ -1319,6 +1329,31 @@ impl AgentService {
                         .await;
                 }
 
+        }
+
+        // === GRACEFUL SAVE ON CANCEL/LOOP-BREAK ===
+        // If we broke out of the loop without a final_response (cancellation, error, etc.)
+        // but we have accumulated text/tool results, save them to DB so history isn't lost.
+        if final_response.is_none() && !accumulated_text.is_empty() {
+            tracing::info!(
+                "Saving accumulated text ({} chars) to DB despite no final response (cancelled/loop-break)",
+                accumulated_text.len()
+            );
+            let _ = message_service
+                .create_message(session_id, "assistant".to_string(), accumulated_text.clone())
+                .await;
+            // Also save token usage for what we consumed
+            let partial_tokens = total_input_tokens + total_output_tokens;
+            if partial_tokens > 0 {
+                let partial_cost = self.provider.calculate_cost(
+                    &model_name,
+                    total_input_tokens,
+                    total_output_tokens,
+                );
+                let _ = session_service
+                    .update_session_usage(session_id, partial_tokens as i32, partial_cost)
+                    .await;
+            }
         }
 
         let response = final_response.ok_or_else(|| {
