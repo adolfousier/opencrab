@@ -63,10 +63,10 @@ impl PricingConfig {
     /// Returns compiled-in defaults if file is missing or unreadable.
     pub fn load() -> Self {
         let path = crate::config::opencrabs_home().join("usage_pricing.toml");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(cfg) = toml::from_str::<PricingConfig>(&content) {
-                return cfg;
-            }
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(cfg) = toml::from_str::<PricingConfig>(&content)
+        {
+            return cfg;
         }
         Self::defaults()
     }
@@ -99,7 +99,7 @@ pub fn pricing() -> &'static PricingConfig {
 // Default pricing table (compiled in as fallback)
 // Rates verified via OpenRouter API 2026-02-25
 // ─────────────────────────────────────────────────────────────────────────────
-const DEFAULT_PRICING_TOML: &str = r#"
+pub const DEFAULT_PRICING_TOML: &str = r#"
 # OpenCrabs Usage Pricing Table
 # Edit this file to customize pricing or add new models.
 # Changes take effect immediately — no restart needed.

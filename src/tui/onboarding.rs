@@ -929,6 +929,15 @@ impl OnboardingWizard {
             tracing::info!("Created keys.toml at {:?}", keys_path);
         }
 
+        // Create usage_pricing.toml if it doesn't exist
+        let pricing_path = workspace_path.join("usage_pricing.toml");
+        if !pricing_path.exists() {
+            let pricing_content = include_str!("../../usage_pricing.toml.example");
+            std::fs::write(&pricing_path, pricing_content)
+                .map_err(|e| format!("Failed to write usage_pricing.toml: {}", e))?;
+            tracing::info!("Created usage_pricing.toml at {:?}", pricing_path);
+        }
+
         // Reload models for the selected provider from the newly created config
         self.reload_config_models();
 

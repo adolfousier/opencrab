@@ -66,15 +66,14 @@ impl Tool for RebuildTool {
             .build_streaming(move |line| {
                 let trimmed = line.trim();
                 // Forward meaningful cargo lines as intermediate text
-                if trimmed.starts_with("Compiling")
+                if (trimmed.starts_with("Compiling")
                     || trimmed.starts_with("Finished")
                     || trimmed.starts_with("error")
                     || trimmed.starts_with("warning[")
-                    || trimmed.starts_with("-->")
+                    || trimmed.starts_with("-->"))
+                    && let Some(ref cb) = cb
                 {
-                    if let Some(ref cb) = cb {
-                        cb(ProgressEvent::IntermediateText { text: line });
-                    }
+                    cb(ProgressEvent::IntermediateText { text: line });
                 }
             })
             .await;
