@@ -1,8 +1,10 @@
 //! Rebuild Tool
 //!
-//! Lets the agent build OpenCrabs from source and signal the TUI to restart.
-//! The build runs via `SelfUpdater`; on success a `ProgressEvent::RestartReady`
-//! is emitted so the TUI can offer `exec()` hot-restart to the user.
+//! Lets the agent build OpenCrabs from source and exec() restart automatically.
+//! The build runs via `SelfUpdater::build_streaming` — progress lines are forwarded
+//! through the ProgressCallback so the TUI shows them live.  On success, a
+//! `ProgressEvent::RestartReady` is emitted which triggers an automatic exec() restart
+//! (no user prompt needed).
 
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
@@ -11,7 +13,7 @@ use crate::brain::agent::{ProgressCallback, ProgressEvent};
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// Agent-callable tool that builds the project and signals restart readiness.
+/// Agent-callable tool that builds the project and auto-restarts via exec().
 pub struct RebuildTool {
     progress: Option<ProgressCallback>,
 }
@@ -30,8 +32,8 @@ impl Tool for RebuildTool {
 
     fn description(&self) -> &str {
         "Build OpenCrabs from source (cargo build --release) and signal the TUI to hot-restart. \
-         Call this after editing source code to apply your changes. \
-         On success the user will be prompted to restart; on failure the compiler output is returned."
+         Call this after editing source code to apply your changes. On success the binary is \
+         exec()-replaced automatically (no prompt). On failure the compiler output is returned."
     }
 
     fn input_schema(&self) -> Value {
@@ -57,15 +59,36 @@ impl Tool for RebuildTool {
             }
         };
 
-        match updater.build().await {
+        let cb = self.progress.clone();
+
+        // Stream build progress lines through the progress callback
+        let result = updater
+            .build_streaming(move |line| {
+                let trimmed = line.trim();
+                // Forward meaningful cargo lines as intermediate text
+                if trimmed.starts_with("Compiling")
+                    || trimmed.starts_with("Finished")
+                    || trimmed.starts_with("error")
+                    || trimmed.starts_with("warning[")
+                    || trimmed.starts_with("-->")
+                {
+                    if let Some(ref cb) = cb {
+                        cb(ProgressEvent::IntermediateText { text: line });
+                    }
+                }
+            })
+            .await;
+
+        match result {
             Ok(path) => {
+                // Signal auto-restart — TuiEvent::RestartReady triggers exec() with no prompt
                 if let Some(ref cb) = self.progress {
                     cb(ProgressEvent::RestartReady {
-                        status: "Build successful".into(),
+                        status: format!("Build successful: {}", path.display()),
                     });
                 }
                 Ok(ToolResult::success(format!(
-                    "Build successful: {}. The user has been prompted to restart.",
+                    "Build successful: {}. Restarting now.",
                     path.display()
                 )))
             }

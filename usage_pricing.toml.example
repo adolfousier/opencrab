@@ -1,0 +1,84 @@
+# OpenCrabs Usage Pricing Table — usage_pricing.toml.example
+#
+# Copy this file to ~/.opencrabs/usage_pricing.toml to customize pricing.
+# OpenCrabs writes a default copy there automatically on first run.
+#
+# Rules:
+#   - `prefix` is matched as a case-insensitive substring of the model name
+#   - First match within each provider wins — put specific prefixes before general ones
+#   - Costs are per 1 million tokens (USD)
+#   - Changes take effect immediately on next /usage open — no restart needed
+#   - Add any model from any provider — if it's not here, cost shows as $0.00
+
+[providers.anthropic]
+entries = [
+  # Claude Opus 4.x — $5/$25 per M tokens
+  { prefix = "claude-opus-4",      input_per_m = 5.0,  output_per_m = 25.0 },
+  # Claude Opus 3 (legacy) — $15/$75
+  { prefix = "claude-3-opus",      input_per_m = 15.0, output_per_m = 75.0 },
+  # Claude Sonnet 4.x — $3/$15
+  { prefix = "claude-sonnet-4",    input_per_m = 3.0,  output_per_m = 15.0 },
+  # Claude 3.7 Sonnet — $3/$15
+  { prefix = "claude-3-7-sonnet",  input_per_m = 3.0,  output_per_m = 15.0 },
+  # Claude 3.5 Sonnet — $3/$15
+  { prefix = "claude-3-5-sonnet",  input_per_m = 3.0,  output_per_m = 15.0 },
+  # Claude 3 Sonnet (legacy) — $3/$15
+  { prefix = "claude-3-sonnet",    input_per_m = 3.0,  output_per_m = 15.0 },
+  # Claude Haiku 4.x — $1/$5
+  { prefix = "claude-haiku-4",     input_per_m = 1.0,  output_per_m = 5.0  },
+  # Claude 3.5 Haiku — $0.80/$4
+  { prefix = "claude-3-5-haiku",   input_per_m = 0.80, output_per_m = 4.0  },
+  # Claude 3 Haiku (legacy) — $0.25/$1.25
+  { prefix = "claude-3-haiku",     input_per_m = 0.25, output_per_m = 1.25 },
+]
+
+[providers.openai]
+entries = [
+  { prefix = "gpt-4o-mini",        input_per_m = 0.15,  output_per_m = 0.60  },
+  { prefix = "gpt-4o",             input_per_m = 2.50,  output_per_m = 10.0  },
+  { prefix = "gpt-4-turbo",        input_per_m = 10.0,  output_per_m = 30.0  },
+  { prefix = "gpt-4-32k",          input_per_m = 60.0,  output_per_m = 120.0 },
+  { prefix = "gpt-4",              input_per_m = 30.0,  output_per_m = 60.0  },
+  { prefix = "gpt-3.5-turbo-16k",  input_per_m = 3.0,   output_per_m = 4.0   },
+  { prefix = "gpt-3.5-turbo",      input_per_m = 0.50,  output_per_m = 1.50  },
+  { prefix = "o3-mini",            input_per_m = 1.10,  output_per_m = 4.40  },
+  { prefix = "o3",                 input_per_m = 10.0,  output_per_m = 40.0  },
+  { prefix = "o1-mini",            input_per_m = 1.10,  output_per_m = 4.40  },
+  { prefix = "o1",                 input_per_m = 15.0,  output_per_m = 60.0  },
+]
+
+[providers.minimax]
+entries = [
+  # MiniMax-M2.5 highspeed — $0.60/$2.40
+  { prefix = "minimax-m2.5-high",  input_per_m = 0.60, output_per_m = 2.40  },
+  # MiniMax-M2.5 standard — $0.30/$1.20
+  { prefix = "minimax-m2.5",       input_per_m = 0.30, output_per_m = 1.20  },
+  # MiniMax-M2.1 — $0.30/$1.20
+  { prefix = "minimax-m2.1",       input_per_m = 0.30, output_per_m = 1.20  },
+  # MiniMax-Text-01 — $0.20/$1.10
+  { prefix = "minimax-text-01",    input_per_m = 0.20, output_per_m = 1.10  },
+  # MiniMax generic fallback
+  { prefix = "minimax",            input_per_m = 0.30, output_per_m = 1.20  },
+]
+
+[providers.google]
+entries = [
+  { prefix = "gemini-2.0-flash",   input_per_m = 0.10,  output_per_m = 0.40 },
+  { prefix = "gemini-1.5-pro",     input_per_m = 1.25,  output_per_m = 5.0  },
+  { prefix = "gemini-1.5-flash",   input_per_m = 0.075, output_per_m = 0.30 },
+]
+
+[providers.deepseek]
+entries = [
+  { prefix = "deepseek-r1",        input_per_m = 0.55, output_per_m = 2.19 },
+  { prefix = "deepseek-v3",        input_per_m = 0.27, output_per_m = 1.10 },
+  { prefix = "deepseek",           input_per_m = 0.27, output_per_m = 1.10 },
+]
+
+[providers.meta]
+entries = [
+  { prefix = "llama-3.3-70b",      input_per_m = 0.59, output_per_m = 0.79 },
+  { prefix = "llama-3.1-405b",     input_per_m = 2.70, output_per_m = 2.70 },
+  { prefix = "llama-3.1-70b",      input_per_m = 0.52, output_per_m = 0.75 },
+  { prefix = "llama-3.1-8b",       input_per_m = 0.07, output_per_m = 0.07 },
+]

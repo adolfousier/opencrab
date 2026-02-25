@@ -86,7 +86,7 @@
 | **Multi-Provider** | Anthropic Claude, OpenAI, OpenRouter (400+ models), MiniMax, and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly |
 | **Real-time Streaming** | Character-by-character response streaming with animated spinner showing model name and live text |
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
-| **Cost Tracking** | Per-message token count and cost displayed in header |
+| **Cost Tracking** | Per-message token count and cost displayed in header; `/usage` shows all-time breakdown grouped by model with real costs + estimates for historical sessions |
 | **Context Awareness** | Live context usage indicator showing actual token counts (e.g. `ctx: 45K/200K (23%)`); auto-compaction at 70% with tool overhead budgeting; accurate tiktoken-based counting calibrated against API actuals |
 | **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory loaded every turn, (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Hybrid Memory Search** — FTS5 keyword search + local vector embeddings (embeddinggemma-300M, 768-dim) combined via Reciprocal Rank Fusion. Runs entirely local — no API key, no cost, works offline |
 | **Dynamic Brain System** | System brain assembled from workspace MD files (SOUL, IDENTITY, USER, AGENTS, TOOLS, MEMORY) — all editable live between turns |
@@ -677,6 +677,44 @@ All API keys and secrets are stored in `keys.toml` — **not** in environment va
 
 ---
 
+## 💰 Pricing Customization (usage_pricing.toml)
+
+OpenCrabs tracks real token costs per model using a centralized pricing table at `~/.opencrabs/usage_pricing.toml`. It's written automatically on first run with sensible defaults.
+
+**Why it matters:**
+- `/usage` shows real costs grouped by model across all sessions
+- Old sessions with stored tokens but zero cost get estimated costs (shown as `~$X.XX` in yellow)
+- Unknown models show `$0.00` instead of silently ignoring them
+
+**Customizing prices:**
+
+```toml
+# ~/.opencrabs/usage_pricing.toml
+# Edit live — changes take effect on next /usage open, no restart needed.
+
+[providers.anthropic]
+entries = [
+  { prefix = "claude-sonnet-4",  input_per_m = 3.0,  output_per_m = 15.0 },
+  { prefix = "claude-opus-4",    input_per_m = 5.0,  output_per_m = 25.0 },
+  { prefix = "claude-haiku-4",   input_per_m = 1.0,  output_per_m = 5.0  },
+]
+
+[providers.minimax]
+entries = [
+  { prefix = "minimax-m2.5",     input_per_m = 0.30, output_per_m = 1.20 },
+]
+
+# Add any provider — prefix is matched case-insensitively as a substring
+[providers.my_custom_model]
+entries = [
+  { prefix = "my-model-v1",      input_per_m = 1.00, output_per_m = 3.00 },
+]
+```
+
+A full example with all built-in providers (Anthropic, OpenAI, MiniMax, Google, DeepSeek, Meta) is available at [`usage_pricing.toml.example`](./usage_pricing.toml.example) in the repo root.
+
+---
+
 ## 🔧 Tool System
 
 OpenCrabs includes a built-in tool execution system. The AI can use these tools during conversation:
@@ -790,12 +828,12 @@ See [Plan Mode User Guide](src/docs/PLAN_MODE_USER_GUIDE.md) for full documentat
 | `/help` | Open help dialog |
 | `/model` | Show current model |
 | `/models` | Switch model (fetches live from provider API) |
-| `/usage` | Token/cost stats |
+| `/usage` | Token/cost stats — shows current session + all-time breakdown grouped by model with estimated costs for historical sessions |
 | `/onboard` | Run setup wizard |
 | `/sessions` | Open session manager |
 | `/approve` | Tool approval policy selector (approve-only / session / yolo) |
 | `/compact` | Compact context (summarize + trim for long sessions) |
-| `/rebuild` | Build from source & hot-restart — auto-clones repo if no source tree found |
+| `/rebuild` | Build from source & hot-restart — streams live compiler output to chat, auto exec() restarts on success (no prompt), auto-clones repo if no source tree found |
 | `/cd` | Change working directory (directory picker) |
 | `/settings` or `S` | Open Settings screen (provider, approval, commands, paths) |
 
