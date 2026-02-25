@@ -462,13 +462,13 @@ impl AgentService {
                     if let Some(ref cb) = self.progress_callback {
                         cb(ProgressEvent::CompactionSummary { summary });
                     }
-                    let continuation = Message::user(
-                        "[SYSTEM: Context was auto-compacted. The summary above has full context. \
+                    let mut cont_text = "[SYSTEM: Context was auto-compacted. The summary above has full context. \
                          Continue the task immediately using tools. Do NOT repeat completed work. \
-                         Do NOT ask for instructions.]"
-                        .to_string()
-                    );
-                    context.add_message(continuation);
+                         Do NOT ask for instructions.]".to_string();
+                    if !self.auto_approve_tools {
+                        cont_text.push_str("\n\nCRITICAL: Tool approval is REQUIRED. You MUST wait for user approval before EVERY tool execution. Do NOT batch tool calls without approval.");
+                    }
+                    context.add_message(Message::user(cont_text));
                 }
                 Err(e) => {
                     tracing::error!("Pre-loop compaction failed: {}", e);
@@ -564,13 +564,13 @@ impl AgentService {
                             cb(ProgressEvent::CompactionSummary { summary });
                         }
                         // Inject continuation — no "acknowledge first", go straight to tools
-                        let continuation = Message::user(
-                            "[SYSTEM: Context was auto-compacted. The summary above has full context. \
+                        let mut cont_text = "[SYSTEM: Context was auto-compacted. The summary above has full context. \
                              Continue the task immediately using tools. Do NOT repeat completed work. \
-                             Do NOT ask for instructions.]"
-                            .to_string()
-                        );
-                        context.add_message(continuation);
+                             Do NOT ask for instructions.]".to_string();
+                        if !self.auto_approve_tools {
+                            cont_text.push_str("\n\nCRITICAL: Tool approval is REQUIRED. You MUST wait for user approval before EVERY tool execution. Do NOT batch tool calls without approval.");
+                        }
+                        context.add_message(Message::user(cont_text));
                     }
                     Err(e) => {
                         tracing::error!("Pre-API-call compaction failed: {}", e);
@@ -622,14 +622,14 @@ impl AgentService {
                     let err_msg = e.to_string();
                     match self.compact_context(&mut context, &model_name).await {
                         Ok(_) => {
-                            let continuation = Message::user(
-                                "[SYSTEM: Emergency compaction — provider rejected the prompt as \
+                            let mut cont_text = "[SYSTEM: Emergency compaction — provider rejected the prompt as \
                                  too large. Context has been compacted. Acknowledge the compaction \
                                  briefly with a fun/cheeky remark, then resume the task from where \
-                                 you left off. Do NOT repeat completed work.]"
-                                .to_string()
-                            );
-                            context.add_message(continuation);
+                                 you left off. Do NOT repeat completed work.]".to_string();
+                            if !self.auto_approve_tools {
+                                cont_text.push_str("\n\nCRITICAL: Tool approval is REQUIRED. You MUST wait for user approval before EVERY tool execution. Do NOT batch tool calls without approval.");
+                            }
+                            context.add_message(Message::user(cont_text));
                         }
                         Err(compact_err) => {
                             tracing::error!("Emergency compaction also failed: {}", compact_err);
@@ -1277,15 +1277,15 @@ impl AgentService {
                             context.token_count, summary.len()
                         );
                         // Inject continuation prompt so the LLM resumes the task
-                        let continuation = Message::user(
-                            "[SYSTEM: Mid-loop context compaction complete. The summary above has \
+                        let mut cont_text = "[SYSTEM: Mid-loop context compaction complete. The summary above has \
                              full context of everything done so far. Briefly acknowledge the \
                              compaction to the user with a fun/cheeky remark (be creative, surprise \
                              them — cursing allowed), then pick up where you left off. Do NOT re-do \
-                             completed work.]"
-                            .to_string()
-                        );
-                        context.add_message(continuation);
+                             completed work.]".to_string();
+                        if !self.auto_approve_tools {
+                            cont_text.push_str("\n\nCRITICAL: Tool approval is REQUIRED. You MUST wait for user approval before EVERY tool execution. Do NOT batch tool calls without approval.");
+                        }
+                        context.add_message(Message::user(cont_text));
                     }
                     Err(e) => {
                         tracing::error!("Mid-loop compaction failed: {}", e);
@@ -1721,11 +1721,16 @@ impl AgentService {
              Any critical details, constraints, preferences, or gotchas the agent must remember.\n\n\
              ## Errors & Solutions\n\
              Any errors encountered and how they were resolved.\n\n\
-             Be concise but complete — this summary is the ONLY context the agent will have after compaction.",
+             ## Tool Approval Policy\n\
+             State whether tool approval is required (auto-approve OFF) or tools run freely (auto-approve ON). \
+             This is CRITICAL for the agent to know post-compaction.\n\n\
+             Be concise but complete — this summary is the ONLY context the agent will have after compaction.\n\n\
+             Tool approval status for this session: {}",
             context.usage_percentage(),
             context.token_count,
             context.max_tokens,
             remaining_budget,
+            if self.auto_approve_tools { "AUTO-APPROVE ON (tools run freely)" } else { "AUTO-APPROVE OFF — tool approval is REQUIRED for every tool call" },
         );
 
         summary_messages.push(Message::user(compaction_prompt));
