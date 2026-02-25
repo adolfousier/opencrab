@@ -5,6 +5,28 @@ All notable changes to OpenCrab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.33] - 2026-02-25
+
+### Added
+- **Streaming `/rebuild`** — Live compiler output streamed to chat during build. On success, binary is `exec()`-replaced automatically (no prompt, no restart). Auto-clones repo for binary-only users if no source tree found
+- **Centralized `usage_pricing.toml`** — Runtime-editable pricing table for all providers (Anthropic, OpenAI, MiniMax, Google, DeepSeek, Meta). Edit live, changes take effect on next `/usage` open without restart. Written automatically on first run during onboarding
+- **All-time `/usage` breakdown** — Shows cost grouped by model across all sessions. Historical sessions with stored tokens but zero cost get estimated costs (yellow `~$X.XX` prefix). Unknown models shown as `$0.00` instead of silently ignored
+- **`/cd` context injection** — When user changes working directory via `/cd`, a context hint is queued and prepended to the next message so the LLM knows about the directory change without the user having to explain. Uses new `pending_context` vec on App state
+- **Tool approval policy preservation across compaction** — Compaction summary prompt now includes `## Tool Approval Policy` section. All 4 continuation messages (pre-loop, mid-tool-loop, emergency, mid-loop) inject `CRITICAL: Tool approval is REQUIRED` when auto-approve is off. Agent can no longer "forget" approval policy after context resets
+- **Dropped stream detection + retry** — Detects when provider streams end without `[DONE]`/`MessageStop` (stop_reason is None). Retries up to 2 times transparently, discarding partial responses. After 2 failures, proceeds gracefully with partial response
+
+### Fixed
+- **Context compaction streamed, not frozen** — `compact_context` uses `stream_complete` so the TUI event loop stays alive during compaction. Previously froze the UI for 2-5 minutes on large contexts
+- **Compaction summary visible in chat** — Summary fires via `CompactionSummary` progress event after streaming, rendered in chat so user can see what was preserved
+- **TUI state reset post-compaction** — Resets `streaming_response` + `active_tool_group` on compaction so the UI is clean for continuation
+- **Compaction request budget cap** — Capped at 75% of context window with 16k token overhead (was 8k). Prevents the compaction request itself from exceeding the provider limit (was sending 359k tokens)
+- **Real-time context counter** — Live token count updates in header during streaming
+- **`/models` paste support** — API keys can be pasted into the model selection dialog
+- **Pricing: $0 cost for all sessions** — `PricingConfig` struct used `HashMap<String, Vec<PricingEntry>>` but TOML has `entries = [...]` wrapper. Added `ProviderBlock` to match schema correctly
+- **Pricing: MiniMax $0** — Stream chunks don't include model name. Falls back to request model
+- **Pricing: legacy format migration** — Auto-migrates `[[usage.pricing.X]]` on-disk format to current schema
+- **Clippy: collapsible_if** — Fixed in `rebuild.rs` and `pricing.rs`
+
 ## [0.2.32] - 2026-02-24
 
 ### Added
