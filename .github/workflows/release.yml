@@ -75,14 +75,16 @@ jobs:
         run: |
           sudo apt-get update
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            # Install cross-compile tools from default (amd64) repos first
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            # Now add arm64 arch and ports sources for arm64 libs
             sudo dpkg --add-architecture arm64
-            # Add arm64 sources from ports (the only Ubuntu mirror with arm64)
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main universe" | sudo tee /etc/apt/sources.list.d/arm64-ports.list
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs)-updates main universe" | sudo tee -a /etc/apt/sources.list.d/arm64-ports.list
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs)-security main universe" | sudo tee -a /etc/apt/sources.list.d/arm64-ports.list
-            # Update — ignore 404s from default sources that don't carry arm64
-            sudo apt-get update || true
-            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libasound2-dev:arm64
+            # Only update the arm64 ports sources, not default ones
+            sudo apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/arm64-ports.list -o Dir::Etc::sourceparts=/dev/null
+            sudo apt-get install -y libasound2-dev:arm64
           else
             sudo apt-get install -y libasound2-dev
           fi
