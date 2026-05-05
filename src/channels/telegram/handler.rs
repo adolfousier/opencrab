@@ -1185,6 +1185,21 @@ pub(crate) async fn handle_message(
                                     let text =
                                         crate::utils::sanitize::strip_llm_artifacts(text);
                                     let text = redact_secrets(&text);
+                                    // Strip <<IMG:path>> markers from
+                                    // intermediates. The final-response handler
+                                    // already does this and sends the image via
+                                    // send_photo; if the LLM emits the marker
+                                    // mid-stream it leaks raw into the chat
+                                    // (2026-05-05 18:45 incident: a generated-
+                                    // image turn shipped two intermediates,
+                                    // one clean "There it is..." and one
+                                    // prefixed with <<IMG:/Users/.../...png>>
+                                    // + the same body — the marker prefix
+                                    // broke exact-equality dedup, both
+                                    // landed, and the user saw the duplicate
+                                    // along with the raw marker token).
+                                    let (text, _img_paths) =
+                                        crate::utils::extract_img_markers(&text);
 
                                     // Pre-send dedup: if this exact text was
                                     // already delivered as an intermediate in
@@ -1630,6 +1645,8 @@ pub(crate) async fn handle_message(
             DisplayItem::Intermediate(text) => {
                 let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                 let text = redact_secrets(&text);
+                // Strip <<IMG:path>> markers — see edit-loop site above.
+                let (text, _img_paths) = crate::utils::extract_img_markers(&text);
                 // Pre-send dedup — see matching block in edit-loop above.
                 {
                     let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -2017,6 +2034,9 @@ pub(crate) async fn resume_session(
                                 DisplayItem::Intermediate(text) => {
                                     let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                                     let text = redact_secrets(&text);
+                                    // Strip <<IMG:path>> markers — see handle_message.
+                                    let (text, _img_paths) =
+                                        crate::utils::extract_img_markers(&text);
                                     // Pre-send dedup — see handle_message.
                                     {
                                         let s = st.lock().unwrap_or_else(|e| e.into_inner());
@@ -2261,6 +2281,8 @@ pub(crate) async fn resume_session(
             DisplayItem::Intermediate(text) => {
                 let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                 let text = redact_secrets(&text);
+                // Strip <<IMG:path>> markers — see handle_message.
+                let (text, _img_paths) = crate::utils::extract_img_markers(&text);
                 // Pre-send dedup — see handle_message.
                 {
                     let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
