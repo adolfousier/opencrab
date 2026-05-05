@@ -1371,7 +1371,15 @@ async fn handle_message(
                 ProgressEvent::IntermediateText { text, .. } => {
                     let thread_ts_resp = thread_ts_inner.clone();
                     let ts_ref = sent_intermediate_ts.clone();
-                    let text_clone = text.clone();
+                    // Strip <<IMG:path>> markers — the final-response handler
+                    // extracts these and uploads via files_upload, but if the
+                    // LLM emits the marker mid-stream the intermediate path
+                    // would post the raw token verbatim AND the prefixed body
+                    // would no longer hash-match a prior clean intermediate,
+                    // breaking dedup against the final post (same root cause
+                    // as the Telegram fix at 37d9f69a).
+                    let (text_clean, _img_paths) = crate::utils::extract_img_markers(&text);
+                    let text_clone = text_clean;
                     let state_for_dedup = state_inner.clone();
                     let channel_for_dedup = channel_id_inner.clone();
                     tokio::spawn(async move {
