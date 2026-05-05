@@ -3,34 +3,9 @@ use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::builder::AgentService;
-
-/// Tracks one in-flight asynchronous compaction.
-///
-/// The compaction LLM call runs in a `tokio::spawn`-ed task; the agent keeps
-/// processing turns while it works. When the task finishes, the next visit to
-/// `enforce_context_budget` removes this entry, awaits `handle`, and applies
-/// the resulting summary to the live `AgentContext`. If the 90% hard-truncate
-/// path fires first, `cancel.cancel()` aborts the in-flight call so a stale
-/// snapshot summary can never be swapped over a freshly-truncated message list.
-pub(super) struct PendingCompaction {
-    /// `JoinHandle` for the spawned summarization task. The error variant is
-    /// boxed because `AgentError` is large and the join result is rarely read
-    /// (only on the swap path).
-    pub(super) handle:
-        JoinHandle<std::result::Result<String, crate::brain::agent::error::AgentError>>,
-    /// Cancellation hook. Trigger to abort the in-flight LLM request when the
-    /// hard-truncate path fires or the session is being torn down.
-    pub(super) cancel: CancellationToken,
-    /// Wall-clock instant the spawn was registered. Used for diagnostic logging
-    /// (so a stuck compaction is visible in the trace) — not for cancellation.
-    pub(super) started_at: Instant,
-}
 
 /// Result type alias used by approval/sudo callbacks
 pub(super) type Result<T> = super::super::error::Result<T>;

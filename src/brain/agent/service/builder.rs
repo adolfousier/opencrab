@@ -93,17 +93,6 @@ pub struct AgentService {
     /// When the primary provider hits a rate/account limit mid-stream, these are
     /// tried in order.
     pub(super) fallback_providers: Vec<Arc<dyn Provider>>,
-
-    /// In-flight async compactions, keyed by session id.
-    ///
-    /// `enforce_context_budget` registers a `PendingCompaction` here when a
-    /// session crosses the soft (65%) trigger, then returns immediately so
-    /// the tool loop keeps making progress. Subsequent visits to the budget
-    /// check try to swap the pending result in. The 90% hard-truncate path
-    /// cancels any pending entry to avoid swapping a stale snapshot over a
-    /// freshly-truncated message list.
-    pub(super) pending_compactions:
-        Arc<std::sync::Mutex<HashMap<Uuid, super::types::PendingCompaction>>>,
 }
 
 impl AgentService {
@@ -135,7 +124,6 @@ impl AgentService {
             brain_path: None,
             session_updated_tx: None,
             fallback_providers: Self::build_fallback_providers(config).await,
-            pending_compactions: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
