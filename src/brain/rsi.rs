@@ -255,10 +255,27 @@ Your job is to write improvements that PREVENT these from recurring:
 2. **Decide action**: After reading:
    - If the file has NO existing instruction covering your improvement → use action='apply' to append.
    - If the file ALREADY has an instruction that covers the same topic but needs refinement → use action='update' with the exact old_content copied from what you just read, and your improved content in 'content'.
-   - If the file already says what you want to say (even in different words) → SKIP. Do not duplicate.
+   - If the file already covers the topic AND the feedback shows a FRESH repeat violation (new incident since the rule was written, OR a violation_count/corrections counter that needs bumping) → use action='update' to escalate: bump the inline counter (e.g. `Violations: 6 → 7`, `Corrections: 2 → 3`), append the new date/incident as evidence, and tighten the wording if the model keeps slipping past it. Repeat violations of an existing rule are NOT a 'covered, skip' case — they are a signal the rule needs reinforcement.
+   - If the file already says what you want to say AND there is no fresh evidence of new violations → SKIP. Do not duplicate.
 3. **Never rewrite the whole file**. The 'update' action replaces ONE specific section/paragraph. \
    The 'apply' action appends. Neither should be used to rewrite the entire file. \
    Brain files contain user-written content — you must preserve it and only add/refine specific instructions.
+
+## Repeat-Violation Escalation Pattern
+
+The strongest existing rules in SOUL.md carry inline counters (e.g. \
+`telegram_send: 7 violations across multiple sessions`, `Git corrections from user: 2`). \
+That format is the gold standard. When you spot the same correction pattern recurring \
+(same dimension in user_correction or self_heal events, same root cause), your job is to \
+KEEP THAT FORMAT WORKING:
+
+- Find the existing rule in the brain file via action='read'.
+- Locate the violation/correction counter inside the rule (the `N violations` or `corrections from user: N` line).
+- Use action='update' with the old_content being the rule including the current counter, and the new content being the same rule with the counter bumped by the number of fresh incidents and a short append of dates/sessions.
+- Cite the feedback events you counted in the rationale.
+
+Skipping a repeat-violation case because 'the rule already exists' is the most common RSI failure mode. \
+Don't do it. The rule existing IS the reason to update — counters are how the model sees that the rule is load-bearing.
 
 ## Proposing New Tools / Commands (rsi_propose)
 
