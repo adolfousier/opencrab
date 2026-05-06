@@ -1309,8 +1309,14 @@ async fn handle_message(
                         let session = client.open_session(&token);
                         // Delete the "thinking..." placeholder on first tool call
                         if let Some(ts) = thinking_ts.lock().await.take() {
-                            let del = SlackApiChatDeleteRequest::new(channel.clone(), ts);
-                            let _ = session.chat_delete(&del).await;
+                            let del = SlackApiChatDeleteRequest::new(channel.clone(), ts.clone());
+                            if let Err(e) = session.chat_delete(&del).await {
+                                tracing::warn!(
+                                    "Slack: chat_delete failed (thinking placeholder on tool start, ts={}): {}",
+                                    ts,
+                                    e
+                                );
+                            }
                         }
                         let text = format!("⚙️ *{}*{}", tool_name, ctx);
                         let mut req = SlackApiChatPostMessageRequest::new(
@@ -1347,9 +1353,16 @@ async fn handle_message(
                                 let upd = SlackApiChatUpdateRequest::new(
                                     channel,
                                     SlackMessageContent::new().with_text(text),
-                                    ts,
+                                    ts.clone(),
                                 );
-                                let _ = session.chat_update(&upd).await;
+                                if let Err(e) = session.chat_update(&upd).await {
+                                    tracing::warn!(
+                                        "Slack: chat_update failed (tool {} status, ts={}): {}",
+                                        entry.name,
+                                        ts,
+                                        e
+                                    );
+                                }
                             }
                         }
                     });
@@ -1444,8 +1457,15 @@ async fn handle_message(
         let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
         let session = client.open_session(&token);
         if let Some(ts) = thinking_ts.lock().await.take() {
-            let del = SlackApiChatDeleteRequest::new(SlackChannelId::new(channel_id.clone()), ts);
-            let _ = session.chat_delete(&del).await;
+            let del =
+                SlackApiChatDeleteRequest::new(SlackChannelId::new(channel_id.clone()), ts.clone());
+            if let Err(e) = session.chat_delete(&del).await {
+                tracing::warn!(
+                    "Slack: chat_delete failed (thinking placeholder, ts={}): {}",
+                    ts,
+                    e
+                );
+            }
         }
     }
 
@@ -1526,7 +1546,13 @@ async fn handle_message(
                         SlackChannelId::new(channel_id.clone()),
                         ts.clone(),
                     );
-                    let _ = session.chat_delete(&del).await;
+                    if let Err(e) = session.chat_delete(&del).await {
+                        tracing::warn!(
+                            "Slack: chat_delete failed (non-matching intermediate, ts={}): {}",
+                            ts,
+                            e
+                        );
+                    }
                 }
             }
             if !matching_keep.is_empty() {
@@ -1832,9 +1858,15 @@ pub(crate) fn make_approval_callback(
                     let update = SlackApiChatUpdateRequest::new(
                         SlackChannelId::new(channel_id),
                         SlackMessageContent::new().with_text(label.to_string()),
-                        msg_ts,
+                        msg_ts.clone(),
                     );
-                    let _ = session.chat_update(&update).await;
+                    if let Err(e) = session.chat_update(&update).await {
+                        tracing::warn!(
+                            "Slack: chat_update failed (approval result, ts={}): {}",
+                            msg_ts,
+                            e
+                        );
+                    }
                     Ok((approved, always))
                 }
                 Ok(Err(_)) => {
@@ -1853,9 +1885,15 @@ pub(crate) fn make_approval_callback(
                         SlackChannelId::new(channel_id),
                         SlackMessageContent::new()
                             .with_text("⏱️ Approval timed out — denied".to_string()),
-                        msg_ts,
+                        msg_ts.clone(),
                     );
-                    let _ = session.chat_update(&update).await;
+                    if let Err(e) = session.chat_update(&update).await {
+                        tracing::warn!(
+                            "Slack: chat_update failed (approval timeout, ts={}): {}",
+                            msg_ts,
+                            e
+                        );
+                    }
                     Ok((false, false))
                 }
             }
