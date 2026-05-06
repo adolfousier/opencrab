@@ -3728,6 +3728,44 @@ impl AgentService {
             };
             context.add_message(assistant_msg);
 
+            // Cap oversized tool_result bodies BEFORE they enter context.
+            // A single 1 MB read_file output (e.g., an HTML file with an
+            // embedded base64 PNG) dumps ~256k tokens into context in one
+            // push — exceeding the model's window AND the compaction
+            // summarizer's window, triggering a hard-truncate-to-zero
+            // cascade observed today on session 5ed9ff25 (read of
+            // opencrabs-retro-release.html, 1,025,562 bytes → ctx jumps
+            // 8k → 738k → 0 messages after truncate). Truncate generously
+            // (50 KB chars ≈ 12k tokens, ~6% of a 200k window) and
+            // instruct the agent to re-call with offsets / grep / line
+            // ranges for the part it actually needs.
+            const MAX_TOOL_RESULT_CHARS: usize = 50_000;
+            for block in tool_results.iter_mut() {
+                if let ContentBlock::ToolResult { content, .. } = block
+                    && content.len() > MAX_TOOL_RESULT_CHARS
+                {
+                    let original_len = content.len();
+                    let mut cut = MAX_TOOL_RESULT_CHARS;
+                    while cut > 0 && !content.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    content.truncate(cut);
+                    content.push_str(&format!(
+                        "\n\n[Output truncated: {} → {} bytes. Re-call with \
+                         start_line/line_count (read_file), head/tail, \
+                         grep --max-count, or similar to fetch specific \
+                         portions instead of the whole blob.]",
+                        original_len, cut,
+                    ));
+                    tracing::warn!(
+                        "Tool result content capped: {} → {} bytes (max {} chars)",
+                        original_len,
+                        cut,
+                        MAX_TOOL_RESULT_CHARS,
+                    );
+                }
+            }
+
             // Add user message with tool results to context
             let tool_result_msg = Message {
                 role: crate::brain::provider::Role::User,
