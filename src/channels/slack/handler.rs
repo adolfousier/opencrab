@@ -345,10 +345,6 @@ pub struct HandlerState {
     /// Uses VecDeque for FIFO eviction — oldest entries are dropped when limit
     /// is reached, preserving the rest so retries never slip through a full clear.
     pub seen_ts: Mutex<VecDeque<String>>,
-    /// Dedup: recently sent message content hashes per channel.
-    /// Prevents the bot from posting identical responses to the same channel.
-    /// Key: "channel_id:hash", Value: message timestamp (for deletion).
-    pub seen_responses: Mutex<HashMap<String, (SlackTs, std::time::Instant)>>,
 }
 
 impl HandlerState {
@@ -1259,7 +1255,21 @@ async fn handle_message(
 
     // Track sent intermediate message timestamps so we can delete them before
     // sending the final response (prevents duplicate content on Slack).
-    let sent_intermediate_ts: Arc<Mutex<Vec<SlackTs>>> = Arc::new(Mutex::new(Vec::new()));
+    // Per-turn record of intermediate posts: (slack_ts, content_hash). Both
+    // are needed at final-response time:
+    //   * `slack_ts` to delete the intermediate from the channel.
+    //   * `content_hash` to detect when the final's body matches an
+    //     intermediate verbatim — in which case the intermediate IS the
+    //     answer and we keep it instead of delete+repost.
+    // Per-TURN scope, not global. Earlier I used `state.seen_responses` (a
+    // 5-minute window keyed by channel + hash on HandlerState) and it
+    // suppressed legitimate final posts whenever the same body recurred
+    // across separate user prompts — observed at 01:18 / 01:32 / 01:39+
+    // today, same hash dropping five different turns. The eviction window
+    // doesn't matter when the hash gets re-inserted on every turn that
+    // happens to produce the same answer; the only correct scope is one
+    // turn.
+    let sent_intermediate_ts: Arc<Mutex<Vec<(SlackTs, u64)>>> = Arc::new(Mutex::new(Vec::new()));
     let sent_intermediate_ts_final = sent_intermediate_ts.clone();
 
     // Build progress callback — sends tool call status as Slack messages
@@ -1279,13 +1289,6 @@ async fn handle_message(
         let client_cb = client.clone();
         let thinking_ts_cb = thinking_ts.clone();
         let thread_ts_cb = thread_ts.clone();
-        // Captured for IntermediateText: lets the intermediate post populate
-        // the same `seen_responses` map the final-response path checks. Without
-        // this, the intermediate path bypassed dedup entirely — when the model
-        // emitted its full final answer as the last streaming chunk, both the
-        // intermediate and the final ended up posting the same content.
-        let state_cb = state.clone();
-        let channel_id_cb = channel_id.clone();
 
         Arc::new(move |_session_id, event| {
             let tools = tools.clone();
@@ -1294,8 +1297,6 @@ async fn handle_message(
             let channel = channel_cb.clone();
             let client = client_cb.clone();
             let thread_ts_inner = thread_ts_cb.clone();
-            let state_inner = state_cb.clone();
-            let channel_id_inner = channel_id_cb.clone();
 
             match event {
                 ProgressEvent::ToolStarted {
@@ -1380,8 +1381,6 @@ async fn handle_message(
                     // as the Telegram fix at 37d9f69a).
                     let (text_clean, _img_paths) = crate::utils::extract_img_markers(&text);
                     let text_clone = text_clean;
-                    let state_for_dedup = state_inner.clone();
-                    let channel_for_dedup = channel_id_inner.clone();
                     tokio::spawn(async move {
                         let session = client.open_session(&token);
                         let text_fmt = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_clone);
@@ -1394,28 +1393,12 @@ async fn handle_message(
                         }
                         match session.chat_post_message(&req).await {
                             Ok(resp) => {
-                                let resp_ts = resp.ts.clone();
-                                ts_ref.lock().await.push(resp_ts.clone());
-                                // Populate the content-dedup map with the
-                                // intermediate's content + real ts. The
-                                // final-response path checks this map; if the
-                                // model's final answer matches this content
-                                // (typical when the model emits its full
-                                // response in the last streaming chunk before
-                                // tool_loop finishes), the final post is
-                                // skipped instead of posting a duplicate.
                                 use std::collections::hash_map::DefaultHasher;
                                 use std::hash::{Hash, Hasher};
                                 let mut hasher = DefaultHasher::new();
                                 text_fmt.hash(&mut hasher);
-                                let content_hash =
-                                    format!("{}:{}", channel_for_dedup, hasher.finish());
-                                let now = std::time::Instant::now();
-                                let mut seen = state_for_dedup.seen_responses.lock().await;
-                                seen.retain(|_, (_, instant)| {
-                                    instant.elapsed() < std::time::Duration::from_secs(300)
-                                });
-                                seen.insert(content_hash, (resp_ts, now));
+                                let content_hash = hasher.finish();
+                                ts_ref.lock().await.push((resp.ts, content_hash));
                             }
                             Err(e) => {
                                 tracing::debug!("Slack: failed to send intermediate text: {}", e);
@@ -1455,27 +1438,6 @@ async fn handle_message(
         }
     }
 
-    // Delete all intermediate messages before sending the final response
-    // to prevent duplicate content on Slack.
-    {
-        let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
-        let session = client.open_session(&token);
-        let intermediates = sent_intermediate_ts_final.lock().await.clone();
-        if !intermediates.is_empty() {
-            tracing::info!(
-                "Slack: deleting {} intermediate messages before final response",
-                intermediates.len()
-            );
-            for ts in &intermediates {
-                let del = SlackApiChatDeleteRequest::new(
-                    SlackChannelId::new(channel_id.clone()),
-                    ts.clone(),
-                );
-                let _ = session.chat_delete(&del).await;
-            }
-        }
-    }
-
     match result {
         Ok(response) => {
             // Extract <<IMG:path>> markers — upload each as a Slack file.
@@ -1488,40 +1450,81 @@ async fn handle_message(
             let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
             let session = client.open_session(&token);
 
-            // Content-level dedup: hash the rendered text and check if a post
-            // with this exact content already exists on the channel. The map
-            // is populated by BOTH this final-path (line below) AND the
-            // intermediate-text path (in the progress callback above), so when
-            // the model's last streaming chunk carries the full final answer
-            // and the agent loop then returns the same text, we skip the
-            // redundant repost instead of relying on `chat_delete` to clean up
-            // the intermediate (which silently failed and produced visible
-            // duplicates — every prior fix focused on the final-path map but
-            // never noticed the intermediate-path bypassed it).
+            // Resolve intermediate-vs-final overlap PER TURN.
+            //
+            // Three outcomes possible after this block:
+            //   1. An intermediate already posted the same body as the final →
+            //      keep it as the visible answer, delete only the OTHER
+            //      intermediates, and skip the final post entirely. Avoids
+            //      delete+repost, which previously produced visible duplicates
+            //      when chat_delete silently failed.
+            //   2. No intermediate matched the final → delete all intermediates
+            //      (they were partial chunks), then post the final.
+            //   3. There were no intermediates → just post the final.
+            //
+            // The dedup is strictly intra-turn. The earlier global
+            // `state.seen_responses` map (5-minute window) caused legit final
+            // posts to be suppressed across separate user prompts whenever
+            // the same body recurred — observed at 01:18/01:32/01:39+ today,
+            // five turns dropped on the same hash.
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
             let mut hasher = DefaultHasher::new();
             text_only.hash(&mut hasher);
-            let content_hash = format!("{}:{}", channel_id, hasher.finish());
-            let mut seen = state.seen_responses.lock().await;
-            // Evict entries older than 5 minutes
-            seen.retain(|_, (_, instant)| instant.elapsed() < std::time::Duration::from_secs(300));
-            if seen.contains_key(&content_hash) {
+            let final_hash = hasher.finish();
+
+            let intermediates = sent_intermediate_ts_final.lock().await.clone();
+            let mut matching_keep: Vec<SlackTs> = Vec::new();
+            let mut to_delete: Vec<SlackTs> = Vec::new();
+            for (ts, hash) in &intermediates {
+                if *hash == final_hash {
+                    matching_keep.push(ts.clone());
+                } else {
+                    to_delete.push(ts.clone());
+                }
+            }
+            if !to_delete.is_empty() {
                 tracing::info!(
-                    "Slack: skipping final post — content already on channel (hash={})",
-                    content_hash
+                    "Slack: deleting {} non-matching intermediate(s) before final response",
+                    to_delete.len()
                 );
-                drop(seen);
+                for ts in &to_delete {
+                    let del = SlackApiChatDeleteRequest::new(
+                        SlackChannelId::new(channel_id.clone()),
+                        ts.clone(),
+                    );
+                    let _ = session.chat_delete(&del).await;
+                }
+            }
+            if !matching_keep.is_empty() {
+                tracing::info!(
+                    "Slack: skipping final post — {} intermediate(s) already carry this content (hash={})",
+                    matching_keep.len(),
+                    final_hash,
+                );
+                // The matching intermediate(s) stay visible as the answer.
+                // Channel-messages DB record still gets written below for
+                // future context queries.
+                if !text_only.trim().is_empty() {
+                    let cm = DbChannelMessage::new(
+                        "slack".into(),
+                        channel_id.clone(),
+                        Some(channel_name.clone()),
+                        "bot:opencrabs".to_string(),
+                        "OpenCrabs".to_string(),
+                        text_only.clone(),
+                        "text".into(),
+                        None,
+                    );
+                    if let Err(e) = state.channel_msg_repo.insert(&cm).await {
+                        tracing::warn!(
+                            "Slack: failed to record bot reply in channel_messages: {}",
+                            e
+                        );
+                    }
+                }
                 return;
             }
-            // Reserve the slot before posting so concurrent paths see the entry.
-            // The real `ts` is stamped onto the entry after `chat_post_message`
-            // returns successfully (see below); meanwhile the placeholder at
-            // least guarantees the dedup HashMap recognises this content as
-            // in-flight.
-            let now = std::time::Instant::now();
-            seen.insert(content_hash.clone(), (SlackTs::new("0".to_string()), now));
-            drop(seen);
 
             for img_path in img_paths {
                 match tokio::fs::read(&img_path).await {
@@ -1554,7 +1557,6 @@ async fn handle_message(
                 }
             }
 
-            let mut first_chunk_ts: Option<SlackTs> = None;
             for chunk in split_message(&text_only, 3000) {
                 if chunk.is_empty() {
                     continue;
@@ -1566,25 +1568,8 @@ async fn handle_message(
                 if let Some(ref ts) = thread_ts {
                     request = request.with_thread_ts(ts.clone());
                 }
-                match session.chat_post_message(&request).await {
-                    Ok(resp) => {
-                        if first_chunk_ts.is_none() {
-                            first_chunk_ts = Some(resp.ts);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Slack: failed to send reply: {}", e);
-                    }
-                }
-            }
-            // Update the seen_responses entry with the real `ts` (it was
-            // inserted with a placeholder before posting). Anyone later
-            // inspecting the map for moderation/cleanup gets the actual
-            // message id instead of "0".
-            if let Some(real_ts) = first_chunk_ts {
-                let mut seen = state.seen_responses.lock().await;
-                if let Some(entry) = seen.get_mut(&content_hash) {
-                    entry.0 = real_ts;
+                if let Err(e) = session.chat_post_message(&request).await {
+                    tracing::error!("Slack: failed to send reply: {}", e);
                 }
             }
 
