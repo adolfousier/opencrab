@@ -384,7 +384,11 @@ pub(crate) async fn handle_message(
             .await;
 
         // Download the voice file from Telegram
-        let file = bot.get_file(&voice.file.id).await?;
+        let Some(file) =
+            fetch_file_or_notify(&bot, &voice.file.id, msg.chat.id, "voice note").await
+        else {
+            return Ok(());
+        };
         let download_url = format!(
             "https://api.telegram.org/file/bot{}/{}",
             bot_token.as_str(),
@@ -438,7 +442,10 @@ pub(crate) async fn handle_message(
             photo.height,
         );
 
-        let file = bot.get_file(&photo.file.id).await?;
+        let Some(file) = fetch_file_or_notify(&bot, &photo.file.id, msg.chat.id, "photo").await
+        else {
+            return Ok(());
+        };
         let download_url = format!(
             "https://api.telegram.org/file/bot{}/{}",
             bot_token.as_str(),
@@ -492,7 +499,10 @@ pub(crate) async fn handle_message(
             vid.duration
         );
 
-        let file = bot.get_file(&vid.file.id).await?;
+        let Some(file) = fetch_file_or_notify(&bot, &vid.file.id, msg.chat.id, "video").await
+        else {
+            return Ok(());
+        };
         let download_url = format!(
             "https://api.telegram.org/file/bot{}/{}",
             bot_token.as_str(),
@@ -544,7 +554,10 @@ pub(crate) async fn handle_message(
             anim.duration
         );
 
-        let file = bot.get_file(&anim.file.id).await?;
+        let Some(file) = fetch_file_or_notify(&bot, &anim.file.id, msg.chat.id, "animation").await
+        else {
+            return Ok(());
+        };
         let download_url = format!(
             "https://api.telegram.org/file/bot{}/{}",
             bot_token.as_str(),
@@ -588,7 +601,11 @@ pub(crate) async fn handle_message(
             vnote.length
         );
 
-        let file = bot.get_file(&vnote.file.id).await?;
+        let Some(file) =
+            fetch_file_or_notify(&bot, &vnote.file.id, msg.chat.id, "video note").await
+        else {
+            return Ok(());
+        };
         let download_url = format!(
             "https://api.telegram.org/file/bot{}/{}",
             bot_token.as_str(),
@@ -640,7 +657,10 @@ pub(crate) async fn handle_message(
             mime
         );
 
-        let file = bot.get_file(&doc.file.id).await?;
+        let Some(file) = fetch_file_or_notify(&bot, &doc.file.id, msg.chat.id, "document").await
+        else {
+            return Ok(());
+        };
         let download_url = format!(
             "https://api.telegram.org/file/bot{}/{}",
             bot_token.as_str(),
@@ -2604,6 +2624,53 @@ pub(crate) fn md_to_html(s: &str) -> String {
 /// Shorthand — delegates to the shared utility in `crate::utils`.
 fn tool_context(name: &str, input: &serde_json::Value) -> String {
     crate::utils::tool_context_hint(name, input)
+}
+
+/// Wrap `bot.get_file(...)` so size-limit failures (and other errors) become
+/// a user-visible reply instead of a silent error in the bot logs.
+///
+/// Telegram's Bot API enforces a hard 20 MB cap on `getFile` even though chat
+/// uploads may be much larger. When a user sends a video, animation, document,
+/// or video_note that exceeds this cap the API returns
+/// `Bad Request: file is too big`. Without this helper the `?` operator
+/// bubbled the error up and the user heard nothing back.
+///
+/// Returns `Some(File)` on success, or `None` after notifying the user (caller
+/// should `return Ok(())`).
+async fn fetch_file_or_notify(
+    bot: &Bot,
+    file_id: &str,
+    chat_id: ChatId,
+    kind: &str,
+) -> Option<teloxide::types::File> {
+    use teloxide::payloads::SendMessageSetters;
+    match bot.get_file(file_id).await {
+        Ok(f) => Some(f),
+        Err(e) => {
+            let s = e.to_string();
+            let reply = if s.contains("file is too big") {
+                format!(
+                    "📎 That {kind} exceeds Telegram's 20 MB Bot API download limit. \
+                     The chat itself accepts larger files but bots cannot fetch them. \
+                     Please trim or compress the {kind} to under 20 MB and resend."
+                )
+            } else {
+                format!("Failed to fetch {kind}: {s}")
+            };
+            tracing::warn!("Telegram: get_file failed for {}: {}", kind, s);
+            if let Err(send_err) = bot
+                .send_message(chat_id, reply)
+                .disable_notification(true)
+                .await
+            {
+                tracing::warn!(
+                    "Telegram: failed to send size-limit reply to user: {}",
+                    send_err
+                );
+            }
+            None
+        }
+    }
 }
 
 /// Send an HTML message, falling back to plain text if Telegram rejects the HTML.
