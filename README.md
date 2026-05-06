@@ -409,7 +409,7 @@ default_model = "gemini-2.5-flash"
 
 **Features:** Streaming, tool use, vision, 1M+ token context window, live model list from `/models` endpoint
 
-> **Image generation & vision:** Gemini also powers the separate `[image]` section for `generate_image` and `analyze_image` agent tools. See [Image Generation & Vision](#-image-generation--vision) below.
+> **Image & video generation & vision:** Gemini also powers the separate `[image]` section for `generate_image`, `analyze_image`, and `analyze_video` agent tools. See [Image Generation & Vision](#-image-generation--vision) below.
 
 ### MiniMax
 
@@ -669,16 +669,18 @@ model = "gemini-3.1-flash-image-preview"
 
 ### Agent Tools
 
-When enabled, two tools become available to the agent automatically:
+When enabled, three tools become available to the agent automatically:
 
 | Tool | Description |
 |------|-------------|
 | `generate_image` | Generate an image from a text prompt — saves to `~/.opencrabs/images/` and returns the file path |
 | `analyze_image` | Analyze an image file or URL via Gemini vision — works even when your main model doesn't support vision |
+| `analyze_video` | Analyze a video file via Gemini's multimodal video API — inline ≤18 MB, resumable Files API for larger (up to 2 GB / ~1 hour). Requires Gemini config; frame-extraction fallback for non-Gemini providers not yet wired |
 
 **Example prompts:**
 - _"Generate a pixel art crab logo"_ → agent calls `generate_image`, returns file path
 - _"What's in this image: /tmp/screenshot.png"_ → agent calls `analyze_image` via Gemini
+- _"Summarize what happens in /tmp/clip.mp4"_ → agent calls `analyze_video` via Gemini
 
 ### Model
 
@@ -1701,11 +1703,12 @@ OpenCrabs includes 30+ built-in tools. The AI can use these during conversation:
 | `http_request` | Make HTTP requests |
 | `memory_search` | Hybrid semantic search across past memory logs — FTS5 keyword + vector embeddings (768-dim, local GGUF model) combined via RRF. No API key needed, runs offline |
 
-#### Image
+#### Image & Video
 | Tool | Description |
 |------|-------------|
 | `generate_image` | Generate images via Google Gemini — auto-sent as native images on all channels |
 | `analyze_image` | Analyze images (local files or URLs) via vision model — uses Gemini vision or provider's `vision_model` |
+| `analyze_video` | Analyze video files via Gemini's multimodal video API — inline ≤18 MB or resumable Files API for larger uploads (up to 2 GB / ~1 hour). Auto-routed when channels receive a video attachment |
 
 #### Channel Tools
 | Tool | Description |
