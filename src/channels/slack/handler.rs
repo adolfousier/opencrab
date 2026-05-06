@@ -1474,6 +1474,28 @@ async fn handle_message(
             let final_hash = hasher.finish();
 
             let intermediates = sent_intermediate_ts_final.lock().await.clone();
+
+            // Empty-final guard: when `text_only` is empty/whitespace (model
+            // emitted its real answer mid-stream as IntermediateText and the
+            // final response.content was just a wrap-up with no content), the
+            // intermediates ARE the answer. Don't delete them, don't post
+            // anything else — leave them as the visible reply. Without this
+            // guard, hash("") never matches any real intermediate's hash, so
+            // every intermediate gets classified "non-matching" and deleted,
+            // and the empty post loop emits nothing → user sees zero messages.
+            // Observed at 01:53 today: bot's only response was a streaming
+            // intermediate, the final was empty, my dedup deleted the
+            // intermediate and posted nothing.
+            if text_only.trim().is_empty() {
+                if !intermediates.is_empty() {
+                    tracing::info!(
+                        "Slack: final response is empty — keeping {} intermediate(s) as the visible answer",
+                        intermediates.len(),
+                    );
+                }
+                return;
+            }
+
             let mut matching_keep: Vec<SlackTs> = Vec::new();
             let mut to_delete: Vec<SlackTs> = Vec::new();
             for (ts, hash) in &intermediates {
