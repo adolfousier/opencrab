@@ -442,9 +442,10 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
             .attachments
             .iter()
             .enumerate()
-            .flat_map(|(i, _att)| {
+            .flat_map(|(i, att)| {
                 let focused = app.focused_attachment == Some(i);
-                let label = format!("Image #{}", i + 1);
+                let kind = if att.is_video { "Video" } else { "Image" };
+                let label = format!("{} #{}", kind, i + 1);
                 let style = if focused {
                     // Highlight focused attachment — inverted colors
                     Style::default()

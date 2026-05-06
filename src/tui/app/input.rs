@@ -1209,13 +1209,16 @@ impl App {
             self.dismiss_emoji_picker();
 
             // Build message content with attachment markers for the agent.
-            // Format: <<IMG:/path/to/file.png>> — handles spaces in paths.
+            // Format: `<<IMG:/path>>` for images, `<<VID:/path>>` for videos —
+            // handles spaces in paths. The marker tells the agent which tool
+            // to call (`analyze_image` vs `analyze_video`).
             let send_content = if all_attachments.is_empty() {
                 final_content
             } else {
                 let mut msg = final_content.clone();
                 for att in &all_attachments {
-                    msg.push_str(&format!(" <<IMG:{}>>", att.path));
+                    let prefix = if att.is_video { "VID" } else { "IMG" };
+                    msg.push_str(&format!(" <<{}:{}>>", prefix, att.path));
                 }
                 msg
             };

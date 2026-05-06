@@ -167,18 +167,31 @@ pub struct ApproveMenu {
     pub state: ApproveMenuState,
 }
 
-/// An image file attached to the input (detected from pasted paths)
+/// A file attached to the input (detected from pasted paths). Despite the
+/// historical name, this now also covers videos — `is_video` selects which
+/// marker the input pipeline emits (`<<VID:>>` vs `<<IMG:>>`).
 #[derive(Debug, Clone)]
 pub struct ImageAttachment {
     /// Display name (file name)
     pub name: String,
-    /// Full path to the image
+    /// Full path to the image or video
     pub path: String,
+    /// True when the attachment is a video — tells the send pipeline to
+    /// emit `<<VID:>>` so the agent calls `analyze_video` instead of
+    /// `analyze_image`.
+    pub is_video: bool,
 }
 
 /// Image file extensions for auto-detection
 pub(crate) const IMAGE_EXTENSIONS: &[&str] =
     &[".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"];
+
+/// Video file extensions for auto-detection — must match the MIME table in
+/// `utils::file_extract::mime_from_ext` so channels and TUI agree on what
+/// counts as a video.
+pub(crate) const VIDEO_EXTENSIONS: &[&str] = &[
+    ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".3gp", ".flv",
+];
 
 /// Text file extensions for auto-detection (paste a path → inline content)
 pub(crate) const TEXT_EXTENSIONS: &[&str] = &[

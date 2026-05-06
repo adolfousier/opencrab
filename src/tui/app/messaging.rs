@@ -1538,8 +1538,11 @@ impl App {
         let trimmed = text.trim();
         let lower = trimmed.to_lowercase();
 
-        // Case 1: Entire pasted text is a single image path (handles spaces in path)
-        if IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
+        // Case 1: Entire pasted text is a single image OR video path
+        // (handles spaces in path)
+        let is_image_single = IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
+        let is_video_single = VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
+        if is_image_single || is_video_single {
             // Local path
             let path = std::path::Path::new(trimmed);
             if path.exists() {
@@ -1552,6 +1555,7 @@ impl App {
                     vec![ImageAttachment {
                         name,
                         path: trimmed.to_string(),
+                        is_video: is_video_single,
                     }],
                 );
             }
@@ -1563,6 +1567,7 @@ impl App {
                     vec![ImageAttachment {
                         name,
                         path: trimmed.to_string(),
+                        is_video: is_video_single,
                     }],
                 );
             }
@@ -1598,8 +1603,9 @@ impl App {
         for word in text.split_whitespace() {
             let word_lower = word.to_lowercase();
             let is_image = IMAGE_EXTENSIONS.iter().any(|ext| word_lower.ends_with(ext));
+            let is_video = VIDEO_EXTENSIONS.iter().any(|ext| word_lower.ends_with(ext));
 
-            if is_image {
+            if is_image || is_video {
                 let path = std::path::Path::new(word);
                 if path.exists() {
                     let name = path
@@ -1609,6 +1615,7 @@ impl App {
                     attachments.push(ImageAttachment {
                         name,
                         path: word.to_string(),
+                        is_video,
                     });
                     continue;
                 }
@@ -1617,6 +1624,7 @@ impl App {
                     attachments.push(ImageAttachment {
                         name,
                         path: word.to_string(),
+                        is_video,
                     });
                     continue;
                 }
@@ -1658,17 +1666,29 @@ impl App {
         (result, attachments)
     }
 
-    /// Replace `<<IMG:/path/to/file.png>>` markers with readable `[IMG: file.png]` for display.
+    /// Replace `<<IMG:/path>>` and `<<VID:/path>>` markers with readable
+    /// `[IMG: file.png]` / `[VID: clip.mp4]` for display.
     pub(crate) fn humanize_image_markers(text: &str) -> String {
+        Self::humanize_marker(
+            &Self::humanize_marker(text, "<<IMG:", "IMG"),
+            "<<VID:",
+            "VID",
+        )
+    }
+
+    /// Generic marker humanizer used by `humanize_image_markers` for both
+    /// image and video markers — same behaviour, different prefix/label.
+    fn humanize_marker(text: &str, marker_open: &str, label: &str) -> String {
         let mut result = text.to_string();
-        while let Some(start) = result.find("<<IMG:") {
+        let prefix_len = marker_open.len();
+        while let Some(start) = result.find(marker_open) {
             if let Some(end) = result[start..].find(">>") {
-                let path = &result[start + 6..start + end];
+                let path = &result[start + prefix_len..start + end];
                 let name = std::path::Path::new(path)
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| path.to_string());
-                let replacement = format!("[IMG: {}]", name);
+                let replacement = format!("[{}: {}]", label, name);
                 result = format!(
                     "{}{}{}",
                     &result[..start],
