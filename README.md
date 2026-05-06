@@ -129,6 +129,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 | Feature | Description |
 |---------|-------------|
 | **Image Attachments** | Paste image paths or URLs into the input — auto-detected and attached as vision content blocks for multimodal models |
+| **Video Attachments** | Send a video on any channel (mp4, m4v, mov, webm, mkv, avi, 3gp, flv) or paste a video path in the TUI — the agent calls the `analyze_video` tool, which routes through Google Gemini's multimodal video API (inline ≤18 MB, resumable Files API for larger). Requires `image.vision.enabled = true` with a Gemini API key in `config.toml`. Phase 1 is Gemini-native; a frame-extraction fallback for non-Gemini providers (ffmpeg → analyze_image per frame) is on the roadmap |
 | **PDF Support** | Attach PDF files by path — native Anthropic PDF support; for other providers, text is extracted locally via `pdf-extract` |
 | **Document Parsing** | Built-in `parse_document` tool extracts text from PDF, DOCX, HTML, TXT, MD, JSON, XML |
 | **Voice (STT)** | Voice notes transcribed via **Groq Whisper API** (`whisper-large-v3-turbo`), any **OpenAI-compatible STT endpoint** (set `stt_base_url` + `stt_model` — works with self-hosted Whisper, Deepgram-compatible proxies, etc.), **Voicebox STT** (self-hosted open-source voice stack — point `voicebox_stt_base_url` at your instance), or **Local** whisper.cpp via `whisper-rs` (runs on-device, Tiny 75 MB / Base 142 MB / Small 466 MB / Medium 1.5 GB, zero API cost). All dispatched through a single entry point so every channel gets the same provider priority chain. Choose mode in `/onboard:voice`. Included by default |
@@ -159,6 +160,8 @@ When users send files, images, or documents across any channel, the agent receiv
 | **TUI** | ✅ paste path → vision | ✅ paste path → inline | — | ✅ STT | — (terminal has no native audio) | ✅ `[IMG: name]` display |
 
 Images are passed to the active model's vision pipeline if it supports multimodal input, or routed to the `analyze_image` tool (Google Gemini vision) otherwise. Text files (`.txt`, `.md`, `.json`, `.csv`, source code, etc.) are extracted as UTF-8 and included inline up to 8 000 characters — in the TUI simply paste or type the file path.
+
+Videos uploaded on any channel (mp4, m4v, mov, webm, mkv, avi, 3gp, flv) auto-route to `analyze_video` when `image.vision.enabled = true` with a Gemini API key. The TUI also detects pasted video paths and labels them `Video #N` in the attachment indicator. Provider-side limits to keep in mind: Gemini's inline-bytes mode caps at ~20 MB (we use ≤18 MB), and the resumable Files API supports up to 2 GB / ~1 hour videos. Channel-side limits are tighter — Telegram's Bot API hard-caps `getFile` downloads at **20 MB** even though chats accept larger uploads, so videos over that size will get a friendly "compress to under 20 MB and resend" reply. Slack file downloads use the bot token (`files:read` scope) and inherit the workspace's per-file upload cap. Frame-extraction fallback for non-Gemini providers is not yet wired — without a Gemini key, video uploads return an "unsupported" notice.
 
 ### Terminal UI
 | Feature | Description |
