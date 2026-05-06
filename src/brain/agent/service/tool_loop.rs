@@ -160,108 +160,173 @@ impl AgentService {
         cancel_token: Option<&tokio_util::sync::CancellationToken>,
         progress_callback: &Option<ProgressCallback>,
     ) -> Option<String> {
+        // Restored to the pre-0f052250 shape (the version that ran fine for
+        // months before the async-compaction refactor). Logic, in order:
+        //
+        //   Tier 2 (90% hard floor): truncate to 80% first, then FALL THROUGH
+        //     to Tier 1. Doing the truncation first means the compaction
+        //     summarizer below sees ≤80% of the window — well within tokenizer
+        //     headroom — so it doesn't hit `400 Prompt exceeds max length`
+        //     and there's no failed-summarizer-then-truncate cascade.
+        //
+        //   Tier 1 (65% soft trigger): up to 3 sync compact_context attempts.
+        //     If any succeed, summary lands and the marker gets persisted by
+        //     the caller. If still over 65% target after success, re-compact
+        //     once more with the now-tighter budget.
+        //
+        //   Safety net: only if all 3 attempts totally failed AND we're still
+        //     above 80%, hard-truncate to 80%. This is the LAST RESORT — it
+        //     drops messages without a summary marker, but only fires when
+        //     the LLM compaction path is entirely unavailable.
+        //
+        // No async spawn/swap, no cancel-pending-on-90%, no per-call hard-
+        // truncate fallback in the error arm — those were the additions that
+        // produced the cascade-and-loop behaviour.
         let effective_max = context.max_tokens;
-        let usage_pct = |ctx: &AgentContext| -> f64 {
-            if effective_max > 0 {
-                (ctx.token_count as f64 / effective_max as f64) * 100.0
-            } else {
-                100.0
-            }
+        let usage_pct = if effective_max > 0 {
+            (context.token_count as f64 / effective_max as f64) * 100.0
+        } else {
+            100.0
         };
 
         tracing::debug!(
             "Context budget: {} tokens / {} max = {:.1}%",
             context.token_count,
             effective_max,
-            usage_pct(context),
+            usage_pct,
         );
 
-        // Reverted to pre-0f052250 SYNCHRONOUS compaction. The async-spawn +
-        // swap-on-next-turn architecture had a fatal interaction with the 90%
-        // hard-truncate fallback: when context grew past 90% before the
-        // background summary landed, the budget guard cancelled the in-flight
-        // compaction AND dropped messages without persisting any marker —
-        // leaving the in-memory context at 0 messages (drop_leading_orphan_-
-        // tool_results stripped both surviving messages when they were
-        // tool_result-only) AND the DB still holding the entire pre-truncate
-        // history. Next turn re-loaded the same massive history, exploded
-        // again, hard-truncated again — confirmed in today's logs at 22:38
-        // (793k tokens / 397% → 0 messages) and 22:53 (744k / 372% → 0 msgs).
-        //
-        // Synchronous compaction avoids the loop because the turn waits for
-        // the summary to land BEFORE the request goes out. The cost is a
-        // one-time pause when compaction triggers (~30-60s on a slow model),
-        // accepted as a worthwhile trade for guaranteed history preservation.
-        // The structural compute_compaction_summary / apply_compaction_summary
-        // split from the original async refactor stays — only the spawn-then-
-        // swap orchestration is removed.
-
-        if usage_pct(context) > 65.0 {
-            tracing::info!(
-                "Context at {:.0}% ({} tokens / {} max) — running synchronous compaction",
-                usage_pct(context),
+        // ── Tier 2: 90% hard floor — truncate to 80%, then fall through to Tier 1 compaction ──
+        if usage_pct >= 90.0 {
+            tracing::warn!(
+                "Context at {:.0}% ({} tokens) — hard truncating to 80%",
+                usage_pct,
                 context.token_count,
-                effective_max,
-            );
-            self.record_provider_feedback(
-                session_id,
-                "context_compaction",
-                model_name,
-                Some(&format!("sync_65pct tokens={}", context.token_count)),
             );
 
+            let target = (effective_max as f64 * 0.80) as usize;
+            context.hard_truncate_to(target);
+            context.trim_to_fit(0);
+
+            if let Some(cb) = progress_callback {
+                cb(session_id, ProgressEvent::TokenCount(context.token_count));
+            }
+
+            tracing::info!(
+                "Hard truncation complete: {} messages, {} tokens ({:.0}%)",
+                context.messages.len(),
+                context.token_count,
+                context.token_count as f64 / effective_max as f64 * 100.0,
+            );
+
+            let usage_pct_now = if effective_max > 0 {
+                (context.token_count as f64 / effective_max as f64) * 100.0
+            } else {
+                100.0
+            };
+            tracing::debug!(
+                "Post-truncation: {:.0}% — falling through to auto-compaction",
+                usage_pct_now,
+            );
+        }
+
+        // ── Tier 1: soft trigger at 65% — LLM compaction ──
+        let usage_pct = if effective_max > 0 {
+            (context.token_count as f64 / effective_max as f64) * 100.0
+        } else {
+            100.0
+        };
+        if usage_pct <= 65.0 {
+            return None;
+        }
+
+        tracing::warn!(
+            "Context at {:.0}% (>65%) — triggering LLM compaction",
+            usage_pct
+        );
+        self.record_provider_feedback(
+            session_id,
+            "context_compaction",
+            model_name,
+            Some(&format!("proactive_65pct tokens={}", context.token_count)),
+        );
+
+        // Up to 3 attempts — transient summarizer errors (network blip,
+        // tokenizer-edge 400) usually self-resolve on retry.
+        let mut summary_result = None;
+        const MAX_ATTEMPTS: u32 = 3;
+        for attempt in 1..=MAX_ATTEMPTS {
             match self
                 .compact_context(session_id, context, model_name, cancel_token)
                 .await
             {
                 Ok(summary) => {
-                    tracing::info!(
-                        "Sync compaction complete: now at {:.0}% ({} tokens)",
-                        usage_pct(context),
-                        context.token_count,
-                    );
-                    if let Some(cb) = progress_callback {
-                        let marker_tokens = AgentContext::estimate_tokens(&summary) + 100;
-                        let brain_tokens = self
-                            .default_system_brain
-                            .as_deref()
-                            .map(AgentContext::estimate_tokens)
-                            .unwrap_or(0);
-                        cb(
-                            session_id,
-                            ProgressEvent::TokenCount(marker_tokens + brain_tokens),
-                        );
-                    }
-                    return Some(summary);
+                    summary_result = Some(summary);
+                    break;
                 }
                 Err(e) => {
                     tracing::error!(
-                        "Sync compaction failed at {:.0}%: {} — falling back to hard-truncate",
-                        usage_pct(context),
-                        e,
-                    );
-                    // LLM-based compaction failed (provider error, cancel,
-                    // etc.). Fall back to hard-truncate so we don't ship a
-                    // 200%+ context to the next request. NOT catastrophic:
-                    // hard_truncate_to keeps recent messages and the next
-                    // turn will retry compaction.
-                    let target = (effective_max as f64 * 0.80) as usize;
-                    context.hard_truncate_to(target);
-                    context.trim_to_fit(0);
-                    if let Some(cb) = progress_callback {
-                        cb(session_id, ProgressEvent::TokenCount(context.token_count));
-                    }
-                    tracing::info!(
-                        "Hard-truncate fallback complete: {} messages, {} tokens ({:.0}%)",
-                        context.messages.len(),
-                        context.token_count,
-                        usage_pct(context),
+                        "LLM compaction failed (attempt {}/{}): {}",
+                        attempt,
+                        MAX_ATTEMPTS,
+                        e
                     );
                 }
             }
         }
 
-        None
+        // If still over the 65% target after a successful compaction, run one
+        // more pass with the tighter post-summary budget.
+        let target_tokens = (effective_max as f64 * 0.65) as usize;
+        if context.token_count > target_tokens && summary_result.is_some() {
+            tracing::warn!(
+                "Still at {} tokens after compaction (target {}), re-compacting",
+                context.token_count,
+                target_tokens,
+            );
+            if let Ok(summary) = self
+                .compact_context(session_id, context, model_name, cancel_token)
+                .await
+            {
+                summary_result = Some(summary);
+            }
+        }
+
+        // Last resort: every compaction attempt failed AND we're still over
+        // 80%. Truncate to keep the next request from going out at 200%+. No
+        // marker is persisted in this branch; the caller sees None back.
+        if summary_result.is_none() {
+            let safety_target = (effective_max as f64 * 0.80) as usize;
+            if context.token_count > safety_target {
+                tracing::warn!(
+                    "Compaction exhausted, context at {} tokens (>{:.0}%) — safety truncation to 80%",
+                    context.token_count,
+                    usage_pct,
+                );
+                context.hard_truncate_to(safety_target);
+                context.trim_to_fit(0);
+            }
+        }
+
+        // Emit the token count the NEXT request will start with.
+        if let Some(cb) = progress_callback {
+            if let Some(ref summary) = summary_result {
+                let marker_tokens = AgentContext::estimate_tokens(summary) + 100;
+                let brain_tokens = self
+                    .default_system_brain
+                    .as_deref()
+                    .map(AgentContext::estimate_tokens)
+                    .unwrap_or(0);
+                cb(
+                    session_id,
+                    ProgressEvent::TokenCount(marker_tokens + brain_tokens),
+                );
+            } else {
+                cb(session_id, ProgressEvent::TokenCount(context.token_count));
+            }
+        }
+
+        summary_result
     }
 
     /// Fire-and-forget recording of a tool execution to the feedback ledger.
