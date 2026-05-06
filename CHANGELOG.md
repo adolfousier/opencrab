@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Video vision support (Phase 1, Gemini-native)** — new `analyze_video` tool routes video attachments through Gemini's multimodal API. Inline-bytes path for files ≤18 MB; resumable Files API upload + ACTIVE-state polling for larger uploads. `FileContent::Video(PathBuf)` variant + `<<VID:path>>` marker (analogous to `<<IMG:>>`). MIME table covers mp4/m4v/mov/webm/mkv/avi/3gp/flv. Frame-extraction fallback for non-Gemini providers deferred.
+- **Video uploads supported across all channels** — Slack, Telegram, Discord, WhatsApp, and Trello automatically route video attachments to `analyze_video` when `image.vision.enabled` with a non-empty API key.
+- **TUI video attachments** — pasting a video path emits `<<VID:path>>` on send; top-right indicator labels each as `Video #N`; chat display rewrites `<<VID:...>>` → `[VID: clip.mp4]`.
 - **Partial JSON repair** — new `json_repair` module closes unterminated strings, balances brackets, strips trailing commas, and drops trailing keys-without-value. Wired into 5 drop sites across OpenAI-compatible providers and the ContentBlockStop finalizer. Unrecoverable input returns a `{"_partial": ..., "_repair_failed": true}` envelope instead of crashing the turn.
 - **TCP keepalive on all HTTP clients** — 15s keepalive on Anthropic, Gemini, and custom OpenAI-compatible providers. Detects silent TCP drops at the OS level in ~15-45s instead of waiting for the 300s idle timeout.
 - **Health-aware sticky fallback persistence** — `FallbackProvider::new_with_health()` checks `provider_health.json` on creation and advances the active index if the primary has 2+ consecutive failures and a fallback has more recent success. Sticky fallbacks now survive restarts.
@@ -34,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Compaction restored to synchronous** — reverted async spawn-then-swap (was causing race conditions); restored pre-regression `enforce_context_budget` logic.
 
 #### Channels
+- **Telegram dropped video / animation / video_note silently** — handler only branched on text/voice/photo/document, so every other media type returned `Ok(())` with no response. iPhone `.mov` uploads (auto-converted by Telegram to MP4-backed Animation) were the most visible casualty. Now downloads + routes through `process_file_with_vision`, including handling Telegram's occasional `image/gif` MIME on MP4 animations.
 - **Clean display text in TUI** — Telegram/Discord/Slack/WhatsApp/Trello all persist clean text to DB and TUI instead of LLM metadata brackets. Each handler builds appropriate display: bare text for owner DMs, `Sender: text` for groups/non-owner.
 - **Slack duplicate-completion gap closed** — dedup map now shared across the handler to prevent double responses.
 - **Slack intermediate text cleaned** — `<<IMG:path>>` and `<antThinking>` markers stripped from intermediate text.
