@@ -1272,6 +1272,21 @@ async fn handle_message(
     let sent_intermediate_ts: Arc<Mutex<Vec<(SlackTs, u64)>>> = Arc::new(Mutex::new(Vec::new()));
     let sent_intermediate_ts_final = sent_intermediate_ts.clone();
 
+    // Track every IntermediateText `tokio::spawn` handle so the
+    // final-response branch can await ALL of them before reading the
+    // `sent_intermediate_ts` list. Without this, the spawn-then-push race
+    // produced visible duplicates: stream emits IntermediateText, spawn
+    // fires `chat_post_message` + push (~200-500ms), stream ends, final
+    // handler reads list while it's still empty, classifies the
+    // intermediate as not-yet-posted, and posts the same body a second
+    // time. Sync `std::sync::Mutex` because the progress callback closure
+    // is synchronous and we only ever drain (no contention across
+    // .await).
+    let intermediate_handles: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let intermediate_handles_cb = intermediate_handles.clone();
+    let intermediate_handles_final = intermediate_handles.clone();
+
     // Build progress callback — sends tool call status as Slack messages
     #[allow(clippy::type_complexity)]
     let progress_cb: crate::brain::agent::ProgressCallback = {
@@ -1404,8 +1419,12 @@ async fn handle_message(
                     // breaking dedup against the final post (same root cause
                     // as the Telegram fix at 37d9f69a).
                     let (text_clean, _img_paths) = crate::utils::extract_img_markers(&text);
+                    // Same reasoning for <<VID:>> markers — strip so a
+                    // mid-stream emit doesn't leak the raw token AND
+                    // doesn't break hash-match against the final.
+                    let (text_clean, _vid_paths) = crate::utils::extract_vid_markers(&text_clean);
                     let text_clone = text_clean;
-                    tokio::spawn(async move {
+                    let handle = tokio::spawn(async move {
                         let session = client.open_session(&token);
                         let text_fmt = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_clone);
                         let mut req = SlackApiChatPostMessageRequest::new(
@@ -1429,6 +1448,9 @@ async fn handle_message(
                             }
                         }
                     });
+                    if let Ok(mut g) = intermediate_handles_cb.lock() {
+                        g.push(handle);
+                    }
                 }
                 _ => {}
             }
@@ -1471,8 +1493,14 @@ async fn handle_message(
 
     match result {
         Ok(response) => {
-            // Extract <<IMG:path>> markers — upload each as a Slack file.
+            // Extract <<IMG:path>> and <<VID:path>> markers. IMG paths are
+            // uploaded via files_upload below; VID paths are only stripped
+            // (the agent already analyzed them via analyze_video — we don't
+            // re-attach the source video to Slack). Stripping VID here so
+            // the final hash matches the intermediate hash (which also
+            // strips VID), preserving dedup.
             let (text_only, img_paths) = crate::utils::extract_img_markers(&response.content);
+            let (text_only, _vid_paths) = crate::utils::extract_vid_markers(&text_only);
             let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
             let text_only = redact_secrets(&text_only);
 
@@ -1480,6 +1508,27 @@ async fn handle_message(
 
             let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
             let session = client.open_session(&token);
+
+            // Await every IntermediateText spawn before reading the
+            // intermediates list. This closes the spawn-then-push race
+            // that produced visible duplicates: stream emits IntermediateText,
+            // spawn fires `chat_post_message` (~hundreds of ms), stream ends
+            // ~immediately, final handler used to read `sent_intermediate_ts`
+            // while it was still empty, classify the in-flight intermediate as
+            // not-yet-posted, and post the same body a second time.
+            let pending = {
+                let mut g = intermediate_handles_final.lock().expect("poisoned");
+                std::mem::take(&mut *g)
+            };
+            if !pending.is_empty() {
+                tracing::debug!(
+                    "Slack: awaiting {} in-flight intermediate post(s) before dedup",
+                    pending.len()
+                );
+                for h in pending {
+                    let _ = h.await;
+                }
+            }
 
             // Resolve intermediate-vs-final overlap PER TURN.
             //
@@ -1629,6 +1678,45 @@ async fn handle_message(
                 }
                 if let Err(e) = session.chat_post_message(&request).await {
                     tracing::error!("Slack: failed to send reply: {}", e);
+                }
+            }
+
+            // Post-completion sweep: defense-in-depth for any IntermediateText
+            // spawn that pushed AFTER the dedup check above (e.g. a stream
+            // chunk delivered post-stream-end, or any future progress source
+            // that races with the final post). Drain remaining handles, await
+            // them, re-read the list, and delete any late entry that matches
+            // `final_hash` and wasn't already classified.
+            let late_pending = {
+                let mut g = intermediate_handles_final.lock().expect("poisoned");
+                std::mem::take(&mut *g)
+            };
+            for h in late_pending {
+                let _ = h.await;
+            }
+            let final_intermediates = sent_intermediate_ts_final.lock().await.clone();
+            let already_seen: std::collections::HashSet<String> = matching_keep
+                .iter()
+                .chain(to_delete.iter())
+                .map(|t| t.to_string())
+                .collect();
+            for (ts, hash) in &final_intermediates {
+                if *hash == final_hash && !already_seen.contains(&ts.to_string()) {
+                    tracing::info!(
+                        "Slack: post-completion sweep — deleting late intermediate ts={} (hash matches final)",
+                        ts
+                    );
+                    let del = SlackApiChatDeleteRequest::new(
+                        SlackChannelId::new(channel_id.clone()),
+                        ts.clone(),
+                    );
+                    if let Err(e) = session.chat_delete(&del).await {
+                        tracing::warn!(
+                            "Slack: chat_delete failed (post-completion sweep, ts={}): {}",
+                            ts,
+                            e
+                        );
+                    }
                 }
             }
 
