@@ -211,6 +211,7 @@ fn classify_pdf_file_invalid() {
         FileContent::PdfPages { .. } => {
             panic!("PDF with invalid bytes should not produce PdfPages")
         }
+        FileContent::Video(_) => panic!("PDF should not be classified as Video"),
     }
 }
 

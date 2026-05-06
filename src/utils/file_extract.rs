@@ -34,6 +34,11 @@ pub enum FileContent {
     Image(PathBuf),
     /// PDF rendered to page images (vision path)
     PdfPages { paths: Vec<PathBuf>, label: String },
+    /// Video attachment — caller should write bytes to the returned temp path.
+    /// The agent gets a `<<VID:path>>` marker and is told to call
+    /// `analyze_video` (Gemini-native video support; future fallback path
+    /// handles non-video-capable providers via frame extraction).
+    Video(PathBuf),
     /// Unsupported format or failed extraction
     Unsupported(String),
 }
@@ -87,8 +92,33 @@ pub fn mime_from_ext(filename: &str) -> &'static str {
         "webp" => "image/webp",
         "bmp" => "image/bmp",
         "pdf" => "application/pdf",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "avi" => "video/x-msvideo",
+        "3gp" => "video/3gpp",
+        "flv" => "video/x-flv",
         _ => "application/octet-stream",
     }
+}
+
+/// Returns true for video MIME types we route to `analyze_video`.
+pub fn is_video_mime(mime: &str) -> bool {
+    mime.to_lowercase().starts_with("video/")
+}
+
+/// Returns true if a video-capable analysis backend is configured. Phase 1
+/// only recognises Gemini-native video — provider-vision fallback (frame
+/// extraction with ffmpeg) is wired in a follow-up phase.
+fn is_video_vision_available(config: &Config) -> bool {
+    config.image.vision.enabled
+        && config
+            .image
+            .vision
+            .api_key
+            .as_ref()
+            .is_some_and(|k| !k.is_empty())
 }
 
 /// Write file bytes to a temp path under `~/.opencrabs/tmp/files/` and return the path.
@@ -174,6 +204,23 @@ pub fn process_file_with_vision(
         ));
     }
 
+    // ── Videos ──
+    if is_video_mime(effective) {
+        if is_video_vision_available(config) {
+            return match save_to_temp(bytes, filename) {
+                Ok(path) => FileContent::Video(path),
+                Err(e) => FileContent::Unsupported(format!(
+                    "[Video attachment: {filename} — failed to save for vision: {e}]"
+                )),
+            };
+        }
+        return FileContent::Unsupported(format!(
+            "[Video attachment: {filename} — no video-capable vision model configured. \
+             Set `image.vision.enabled = true` with a Gemini API key in config.toml. \
+             (Frame-fallback for non-Gemini providers is not yet wired.)]"
+        ));
+    }
+
     // ── PDFs ──
     if effective == "application/pdf" {
         if has_vision {
@@ -241,7 +288,8 @@ fn process_pdf_vision(bytes: &[u8], filename: &str) -> FileContent {
 /// Format `FileContent` into an injectable string for the agent prompt.
 ///
 /// Returns `(text, needs_vision)` where `needs_vision` is true when the
-/// result contains `<<IMG:...>>` markers that should trigger image attachments.
+/// result contains `<<IMG:...>>` or `<<VID:...>>` markers that should
+/// trigger attachment-aware tool calls.
 pub fn inject_file_content(content: &FileContent) -> (String, bool) {
     match content {
         FileContent::Image(path) => {
@@ -261,6 +309,18 @@ pub fn inject_file_content(content: &FileContent) -> (String, bool) {
             (
                 format!(
                     "[User attached a {label}. Call analyze_image for EACH page path below, then combine the results.]\n{markers}"
+                ),
+                true,
+            )
+        }
+        FileContent::Video(path) => {
+            let path_str = path.to_string_lossy();
+            (
+                format!(
+                    "[User attached a video. Call analyze_video with this path to view it. \
+                     analyze_video accepts an optional `question` arg — pass the user's actual \
+                     question if they asked something specific, otherwise it defaults to a \
+                     general description.]\n<<VID:{path_str}>>"
                 ),
                 true,
             )

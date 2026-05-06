@@ -29,16 +29,16 @@ async fn cmd_chat_inner(
         brain::{
             agent::AgentService,
             tools::{
-                analyze_image::AnalyzeImageTool, bash::BashTool, brave_search::BraveSearchTool,
-                code_exec::CodeExecTool, config_tool::ConfigTool, context::ContextTool,
-                doc_parser::DocParserTool, edit::EditTool, exa_search::ExaSearchTool,
-                generate_image::GenerateImageTool, glob::GlobTool, grep::GrepTool,
-                http::HttpClientTool, load_brain_file::LoadBrainFileTool, ls::LsTool,
-                memory_search::MemorySearchTool, notebook::NotebookEditTool, plan_tool::PlanTool,
-                provider_vision::ProviderVisionTool, read::ReadTool, registry::ToolRegistry,
-                session_search::SessionSearchTool, slash_command::SlashCommandTool, task::TaskTool,
-                web_search::WebSearchTool, write::WriteTool,
-                write_opencrabs_file::WriteOpenCrabsFileTool,
+                analyze_image::AnalyzeImageTool, analyze_video::AnalyzeVideoTool, bash::BashTool,
+                brave_search::BraveSearchTool, code_exec::CodeExecTool, config_tool::ConfigTool,
+                context::ContextTool, doc_parser::DocParserTool, edit::EditTool,
+                exa_search::ExaSearchTool, generate_image::GenerateImageTool, glob::GlobTool,
+                grep::GrepTool, http::HttpClientTool, load_brain_file::LoadBrainFileTool,
+                ls::LsTool, memory_search::MemorySearchTool, notebook::NotebookEditTool,
+                plan_tool::PlanTool, provider_vision::ProviderVisionTool, read::ReadTool,
+                registry::ToolRegistry, session_search::SessionSearchTool,
+                slash_command::SlashCommandTool, task::TaskTool, web_search::WebSearchTool,
+                write::WriteTool, write_opencrabs_file::WriteOpenCrabsFileTool,
             },
         },
         db::Database,
@@ -185,6 +185,21 @@ async fn cmd_chat_inner(
             config.image.vision.model.clone(),
         )));
         tracing::info!("Registered analyze_image tool (Gemini)");
+    }
+
+    // Video vision tool — Gemini-native multimodal video understanding.
+    // Phase 1 only registers when image.vision is configured with Gemini;
+    // Phase 2 will add a frame-extraction fallback for non-Gemini providers
+    // (ffmpeg → N frames at 1 fps → analyze_image per frame).
+    if config.image.vision.enabled
+        && let Some(ref key) = config.image.vision.api_key
+        && !key.is_empty()
+    {
+        tool_registry.register(Arc::new(AnalyzeVideoTool::new(
+            key.clone(),
+            config.image.vision.model.clone(),
+        )));
+        tracing::info!("Registered analyze_video tool (Gemini)");
     }
 
     // Phase 5: Multi-agent orchestration
