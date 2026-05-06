@@ -241,6 +241,12 @@ pub(crate) async fn handle_message(
             "voice"
         } else if msg.photo().is_some() {
             "photo"
+        } else if msg.video().is_some() {
+            "video"
+        } else if msg.animation().is_some() {
+            "animation"
+        } else if msg.video_note().is_some() {
+            "video_note"
         } else if msg.document().is_some() {
             "document"
         } else {
@@ -469,9 +475,162 @@ pub(crate) async fn handle_message(
             format!("{caption}\n\n{injected}")
         };
         (result, false)
+    } else if let Some(vid) = msg.video() {
+        let fname = vid.file_name.as_deref().unwrap_or("video.mp4").to_string();
+        let mime = vid
+            .mime_type
+            .as_ref()
+            .map(|m| m.as_ref().to_string())
+            .unwrap_or_else(|| "video/mp4".to_string());
+        let caption = msg.caption().unwrap_or("").to_string();
+
+        tracing::info!(
+            "Telegram: video from user {} — name={} mime={} duration={}s",
+            user_id,
+            fname,
+            mime,
+            vid.duration
+        );
+
+        let file = bot.get_file(&vid.file.id).await?;
+        let download_url = format!(
+            "https://api.telegram.org/file/bot{}/{}",
+            bot_token.as_str(),
+            file.path
+        );
+
+        let bytes = match reqwest::get(&download_url).await {
+            Ok(resp) => match resp.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(e) => {
+                    tracing::error!("Telegram: failed to read video bytes: {}", e);
+                    bot.send_message(msg.chat.id, "Failed to download video.")
+                        .await?;
+                    return Ok(());
+                }
+            },
+            Err(e) => {
+                tracing::error!("Telegram: failed to download video: {}", e);
+                bot.send_message(msg.chat.id, "Failed to download video.")
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        use crate::utils::{inject_file_content, process_file_with_vision};
+        let content = process_file_with_vision(&bytes, &mime, &fname, &cfg);
+        let injected = inject_file_content(&content).0;
+        let result = if caption.is_empty() || injected.contains("<<VID:") {
+            injected
+        } else {
+            format!("{caption}\n\n{injected}")
+        };
+        (result, false)
+    } else if let Some(anim) = msg.animation() {
+        // Animations are Telegram's auto-converted short videos (iPhone .mov →
+        // GIF-style preview). Bytes are always MP4 internally even when
+        // `mime_type` is reported as `image/gif`, so force `video/mp4`.
+        let fname = anim
+            .file_name
+            .as_deref()
+            .unwrap_or("animation.mp4")
+            .to_string();
+        let caption = msg.caption().unwrap_or("").to_string();
+
+        tracing::info!(
+            "Telegram: animation from user {} — name={} duration={}s",
+            user_id,
+            fname,
+            anim.duration
+        );
+
+        let file = bot.get_file(&anim.file.id).await?;
+        let download_url = format!(
+            "https://api.telegram.org/file/bot{}/{}",
+            bot_token.as_str(),
+            file.path
+        );
+
+        let bytes = match reqwest::get(&download_url).await {
+            Ok(resp) => match resp.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(e) => {
+                    tracing::error!("Telegram: failed to read animation bytes: {}", e);
+                    bot.send_message(msg.chat.id, "Failed to download animation.")
+                        .await?;
+                    return Ok(());
+                }
+            },
+            Err(e) => {
+                tracing::error!("Telegram: failed to download animation: {}", e);
+                bot.send_message(msg.chat.id, "Failed to download animation.")
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        use crate::utils::{inject_file_content, process_file_with_vision};
+        let content = process_file_with_vision(&bytes, "video/mp4", &fname, &cfg);
+        let injected = inject_file_content(&content).0;
+        let result = if caption.is_empty() || injected.contains("<<VID:") {
+            injected
+        } else {
+            format!("{caption}\n\n{injected}")
+        };
+        (result, false)
+    } else if let Some(vnote) = msg.video_note() {
+        let fname = "video_note.mp4".to_string();
+
+        tracing::info!(
+            "Telegram: video_note from user {} — duration={}s length={}px",
+            user_id,
+            vnote.duration,
+            vnote.length
+        );
+
+        let file = bot.get_file(&vnote.file.id).await?;
+        let download_url = format!(
+            "https://api.telegram.org/file/bot{}/{}",
+            bot_token.as_str(),
+            file.path
+        );
+
+        let bytes = match reqwest::get(&download_url).await {
+            Ok(resp) => match resp.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(e) => {
+                    tracing::error!("Telegram: failed to read video_note bytes: {}", e);
+                    bot.send_message(msg.chat.id, "Failed to download video note.")
+                        .await?;
+                    return Ok(());
+                }
+            },
+            Err(e) => {
+                tracing::error!("Telegram: failed to download video_note: {}", e);
+                bot.send_message(msg.chat.id, "Failed to download video note.")
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        use crate::utils::{inject_file_content, process_file_with_vision};
+        let content = process_file_with_vision(&bytes, "video/mp4", &fname, &cfg);
+        let injected = inject_file_content(&content).0;
+        (injected, false)
     } else if let Some(doc) = msg.document() {
         let fname = doc.file_name.as_deref().unwrap_or("file");
-        let mime = doc.mime_type.as_ref().map(|m| m.as_ref()).unwrap_or("");
+        let raw_mime = doc.mime_type.as_ref().map(|m| m.as_ref()).unwrap_or("");
+        // Telegram sometimes labels MP4-backed animations as `image/gif` when
+        // delivered via the document path. Detect by extension and rewrite so
+        // `process_file_with_vision` routes to the video branch.
+        let lower_name = fname.to_lowercase();
+        let mime: &str = if raw_mime == "image/gif"
+            && (lower_name.ends_with(".mp4") || lower_name.ends_with(".mov"))
+        {
+            "video/mp4"
+        } else {
+            raw_mime
+        };
         let caption = msg.caption().unwrap_or("");
 
         tracing::info!(
@@ -528,6 +687,12 @@ pub(crate) async fn handle_message(
             format!("[voice] {}", truncate_str(&text, 500))
         } else if msg.photo().is_some() {
             format!("[photo] {}", msg.caption().unwrap_or(""))
+        } else if msg.video().is_some() {
+            format!("[video] {}", msg.caption().unwrap_or(""))
+        } else if msg.animation().is_some() {
+            format!("[animation] {}", msg.caption().unwrap_or(""))
+        } else if msg.video_note().is_some() {
+            "[video_note]".to_string()
         } else if msg.document().is_some() {
             format!("[document] {}", msg.caption().unwrap_or(""))
         } else {
