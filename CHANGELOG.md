@@ -5,6 +5,50 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.17] - 2026-05-06
+
+### Added
+
+- **Partial JSON repair** — new `json_repair` module closes unterminated strings, balances brackets, strips trailing commas, and drops trailing keys-without-value. Wired into 5 drop sites across OpenAI-compatible providers and the ContentBlockStop finalizer. Unrecoverable input returns a `{"_partial": ..., "_repair_failed": true}` envelope instead of crashing the turn.
+- **TCP keepalive on all HTTP clients** — 15s keepalive on Anthropic, Gemini, and custom OpenAI-compatible providers. Detects silent TCP drops at the OS level in ~15-45s instead of waiting for the 300s idle timeout.
+- **Health-aware sticky fallback persistence** — `FallbackProvider::new_with_health()` checks `provider_health.json` on creation and advances the active index if the primary has 2+ consecutive failures and a fallback has more recent success. Sticky fallbacks now survive restarts.
+- **RetryAttempt progress event** — new `ProgressEvent::RetryAttempt { attempt, max, reason }` emitted on stream-drop retries, translated to TUI system messages ("⏳ Retry 2/3 — stream dropped") so the user sees transient recovery in progress.
+- **Self-heal phantom detection expanded** — catches "Now <file-op gerund>" phantoms (creating/writing/editing/...) and build/deploy intent + past-tense completion claims. Gaslighting and phantom detectors extracted into their own module.
+- **RSI escalation for repeat violations** — RSI now bumps a violation counter on existing rules instead of deduping repeat violations away. Rules that keep getting broken get louder, not silenced.
+- **OpenRouter response caching** — zero cost for identical requests.
+- **4 safe built-in skills** — opencli, browser-cdp, a2a-gateway, dynamic-tools. SKILLS section added to help screen and splash integration.
+- **Thinking content persisted to DB** — captured on both ResponseComplete and IntermediateText events.
+- **Approval policy read at runtime** — loaded from config on every tool request instead of cached at startup.
+
+### Fixed
+
+#### Providers & Context
+- **Claude CLI context leak** — `cli_manages_context()` defaulted to `cli_handles_tools()`, causing Claude CLI to silently opt out of compaction. Context grew unbounded (484k/200k = 242%). Override returns `false` so OpenCrabs owns compaction for Claude CLI sessions.
+- **Sticky fallback not sticking** — stream error path dropped the restore guard without nulling `original`, so Drop always reverted to primary. Both stream error and 5xx paths were missing `ProviderSwitched` event emission. Fixed guard pattern and added events.
+- **ProviderSwitched handler incomplete** — handler updated DB and `current_session` but not `session_providers` Arc, causing stale footer on pane switch. Now creates new provider via `create_provider_by_name` and calls `swap_provider_for_session` + updates `provider_cache`.
+- **Per-session provider isolation** — `save_provider` invalidation loop nuked ALL sessions matching provider name, breaking other panes' pins. Now only invalidates the current session's stale entry. Footer reads live `session_providers` instead of stale DB data.
+- **Per-session swap persistence** — per-session swap now sticks in both DB and memory; live-fetched models are honored; `/models` save sources model from session provider, not global; locked {provider, model} pair enforced on every response write.
+- **Sticky-fallback pair persisted independently** — fallback pair now written to DB without depending on the progress callback firing.
+- **Per-session context window isolation** — prevents cross-session contamination of context budgets.
+- **Oversized tool_result bodies capped at 50 KB** before entering context.
+- **Compaction restored to synchronous** — reverted async spawn-then-swap (was causing race conditions); restored pre-regression `enforce_context_budget` logic.
+
+#### Channels
+- **Clean display text in TUI** — Telegram/Discord/Slack/WhatsApp/Trello all persist clean text to DB and TUI instead of LLM metadata brackets. Each handler builds appropriate display: bare text for owner DMs, `Sender: text` for groups/non-owner.
+- **Slack duplicate-completion gap closed** — dedup map now shared across the handler to prevent double responses.
+- **Slack intermediate text cleaned** — `<<IMG:path>>` and `<antThinking>` markers stripped from intermediate text.
+- **Slack dedup scoped to one turn** — global window was dropping legitimate responses.
+- **Slack empty-final guard** — keeps intermediates as visible answer when final is empty.
+
+#### UI & Other
+- **Scroll offset capped** and first-render inflation explosion prevented.
+- **Streaming scroll compensation removed** — was inflating offset by 1000+ lines during thinking model streaming.
+- **Exit/start splash updated** — skills section added, `/models` command corrected (was `/model`).
+- **Brain directory path exposed** in core prompt context index.
+- **Session working directory survives crash recovery.**
+- **TOOLS.md and CODE.md moved** from core to contextual brain files.
+- **Session IDs no longer dumped in assert messages** (CodeQL #62, CWE-312).
+
 ## [0.3.16] - 2026-05-02
 
 ### Added
@@ -529,6 +573,7 @@ provider and context budget.
 - **Raise think-tag safety valve** — long Qwen reasoning blocks no longer
   get partially stripped by the tag filter.
 
+[0.3.17]: https://github.com/adolfousier/opencrabs/compare/v0.3.16...v0.3.17
 [0.3.16]: https://github.com/adolfousier/opencrabs/compare/v0.3.15...v0.3.16
 [0.3.15]: https://github.com/adolfousier/opencrabs/compare/v0.3.14...v0.3.15
 [0.3.14]: https://github.com/adolfousier/opencrabs/compare/v0.3.13...v0.3.14
@@ -3525,4 +3570,3 @@ fixes.
 [0.1.2]: https://github.com/adolfousier/opencrabs/releases/tag/v0.1.2
 [0.1.1]: https://github.com/adolfousier/opencrabs/releases/tag/v0.1.1
 [0.1.0]: https://github.com/adolfousier/opencrabs/releases/tag/v0.1.0
-
