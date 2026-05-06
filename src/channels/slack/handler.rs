@@ -1372,6 +1372,17 @@ async fn handle_message(
                 ProgressEvent::IntermediateText { text, .. } => {
                     let thread_ts_resp = thread_ts_inner.clone();
                     let ts_ref = sent_intermediate_ts.clone();
+                    // Strip LLM-hallucinated artifacts (<!-- tools-v2: ... -->,
+                    // <tool_call> XML blocks, etc.) BEFORE posting. The
+                    // final-response handler does this on text_only; this is
+                    // the intermediate-path mirror so the same content
+                    // doesn't leak the raw `<!-- tools-v2: [...] -->`
+                    // comment into the channel as visible text. Observed
+                    // in a turn with multiple bash steps where one tool's
+                    // tools-v2 wrapper rendered as raw HTML in Slack
+                    // because the streaming chunk never hit the final
+                    // response cleanup path.
+                    let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                     // Strip <<IMG:path>> markers — the final-response handler
                     // extracts these and uploads via files_upload, but if the
                     // LLM emits the marker mid-stream the intermediate path
