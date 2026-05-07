@@ -2,6 +2,7 @@
 //! Gated behind the `browser` feature flag.
 
 mod click;
+mod close;
 mod content;
 mod eval;
 mod find;
@@ -12,6 +13,7 @@ mod type_text;
 mod wait;
 
 pub use click::BrowserClickTool;
+pub use close::BrowserCloseTool;
 pub use content::BrowserContentTool;
 pub use eval::BrowserEvalTool;
 pub use find::BrowserFindTool;

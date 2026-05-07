@@ -430,9 +430,37 @@ impl BrowserManager {
     }
 
     /// Close a named page session.
+    ///
+    /// Removes the Page handle from the HashMap AND issues
+    /// `Target.closeTarget` over CDP so the actual Chrome tab closes —
+    /// dropping the Arc-wrapped Page alone may not trigger the close on
+    /// chromiumoxide's side. Returns true if a session by that name
+    /// existed; the CDP close itself is best-effort and logged on
+    /// failure (the tab may have already been closed externally).
     pub async fn close_page(&self, name: &str) -> bool {
-        let mut inner = self.inner.lock().await;
-        inner.pages.remove(name).is_some()
+        // Take the page out of the HashMap while holding the lock briefly.
+        let removed = {
+            let mut inner = self.inner.lock().await;
+            inner.pages.remove(name)
+        };
+        match removed {
+            Some(page) => {
+                if let Err(e) = page.close().await {
+                    tracing::warn!(
+                        "browser: CDP close_target failed for page '{name}' \
+                         (tab may already be closed externally): {e}"
+                    );
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Close the page for a given agent session.
+    pub async fn close_page_for_session(&self, session_id: uuid::Uuid) -> bool {
+        self.close_page(&Self::page_name_for_session(session_id))
+            .await
     }
 
     /// List active page session names.
