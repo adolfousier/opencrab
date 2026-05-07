@@ -4,6 +4,7 @@
 //! LLM providers, context management, and data persistence.
 
 mod builder;
+mod compaction;
 mod context;
 mod gaslighting;
 pub(crate) mod helpers;
