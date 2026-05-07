@@ -131,55 +131,6 @@ pub fn is_user_correction(msg: &str) -> bool {
 }
 
 impl AgentService {
-    /// Fire-and-forget recording of a tool execution to the feedback ledger.
-    /// Never blocks, never fails visibly — if the DB is unavailable or the
-    /// write fails we just log and move on.
-    fn record_tool_feedback(
-        &self,
-        session_id: Uuid,
-        tool_name: &str,
-        success: bool,
-        error_snippet: Option<&str>,
-    ) {
-        let pool = self.context.pool();
-        let sid = session_id.to_string();
-        let tname = tool_name.to_string();
-        let meta = error_snippet.map(|s| s.chars().take(500).collect::<String>());
-        tokio::spawn(async move {
-            let repo = crate::db::repository::FeedbackLedgerRepository::new(pool);
-            let event = if success {
-                "tool_success"
-            } else {
-                "tool_failure"
-            };
-            let val = if success { 1.0 } else { 0.0 };
-            if let Err(e) = repo.record(&sid, event, &tname, val, meta.as_deref()).await {
-                tracing::debug!("feedback ledger write failed: {e}");
-            }
-        });
-    }
-
-    /// Fire-and-forget recording of a provider error to the feedback ledger.
-    pub(super) fn record_provider_feedback(
-        &self,
-        session_id: Uuid,
-        event_type: &str,
-        dimension: &str,
-        metadata: Option<&str>,
-    ) {
-        let pool = self.context.pool();
-        let sid = session_id.to_string();
-        let et = event_type.to_string();
-        let dim = dimension.to_string();
-        let meta = metadata.map(|s| s.chars().take(500).collect::<String>());
-        tokio::spawn(async move {
-            let repo = crate::db::repository::FeedbackLedgerRepository::new(pool);
-            if let Err(e) = repo.record(&sid, &et, &dim, 0.0, meta.as_deref()).await {
-                tracing::debug!("feedback ledger write failed: {e}");
-            }
-        });
-    }
-
     /// Core tool-execution loop — called by all public shims.
     /// `override_approval_callback` and `override_progress_callback` take
     /// precedence over the service-level callbacks (used by Telegram, etc.)
