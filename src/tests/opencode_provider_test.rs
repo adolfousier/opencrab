@@ -231,6 +231,11 @@ async fn factory_creates_opencode_by_alt_names() {
 // ── End-to-end: actual CLI calls ──
 
 #[tokio::test]
+#[ignore = "needs `opencode` CLI installed AND a working upstream model — \
+            opt-in via `cargo test -- --ignored e2e_opencode`. \
+            Upstream model availability changes regularly (e.g. \
+            opencode/gpt-5-nano was deprecated 2026-05-07), so this \
+            shouldn't fail CI."]
 async fn e2e_opencode_simple_completion() {
     use tokio::time::{Duration, timeout};
 
@@ -270,6 +275,8 @@ async fn e2e_opencode_simple_completion() {
 }
 
 #[tokio::test]
+#[ignore = "needs `opencode` CLI installed AND a working upstream model — \
+            opt-in via `cargo test -- --ignored e2e_opencode`."]
 async fn e2e_opencode_streaming() {
     use futures::StreamExt;
     use tokio::time::{Duration, timeout};
@@ -326,6 +333,8 @@ async fn e2e_opencode_streaming() {
 // ── End-to-end: tools alongside provider ──
 
 #[tokio::test]
+#[ignore = "needs `opencode` CLI installed AND a working upstream model — \
+            opt-in via `cargo test -- --ignored e2e_opencode`."]
 async fn e2e_opencode_with_bash_tool() {
     use tokio::time::{Duration, timeout};
 
@@ -373,6 +382,8 @@ async fn e2e_opencode_with_bash_tool() {
 }
 
 #[tokio::test]
+#[ignore = "needs `opencode` CLI installed AND a working upstream model — \
+            opt-in via `cargo test -- --ignored e2e_opencode`."]
 async fn e2e_opencode_with_write_and_read_tools() {
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let test_file = tmp_dir.path().join("opencode_test.txt");
@@ -445,6 +456,8 @@ async fn e2e_opencode_with_write_and_read_tools() {
 }
 
 #[tokio::test]
+#[ignore = "needs `opencode` CLI installed AND a working upstream model — \
+            opt-in via `cargo test -- --ignored e2e_opencode`."]
 async fn e2e_opencode_with_glob_and_grep_tools() {
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let ctx = ToolExecutionContext::new(Uuid::new_v4())
@@ -548,6 +561,8 @@ async fn e2e_opencode_with_glob_and_grep_tools() {
 // ── Multi-turn conversation test ──
 
 #[tokio::test]
+#[ignore = "needs `opencode` CLI installed AND a working upstream model — \
+            opt-in via `cargo test -- --ignored e2e_opencode`."]
 async fn e2e_opencode_multi_turn() {
     use tokio::time::{Duration, timeout};
 
