@@ -239,8 +239,27 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
             // renders as a space so the layout engine can reflow. Treating
             // it as a hard break baked the LLM's 72-col source wrap into
             // chat history, making replies appear narrow on wide terminals.
+            //
+            // Exception: pipe-row content. When pulldown-cmark fails to
+            // recognise text as a markdown table (no `|---|---|` separator
+            // after the header), pipe-delimited rows fall through here and
+            // the soft-break-as-space turns multiple rows into one giant
+            // wrapping line. Detect "current line ended with `|`" and emit
+            // a hard break instead so each pseudo-table row stays on its
+            // own visual line. Heuristic, but `|` at line boundaries is
+            // almost always table syntax — false positives would require
+            // legit prose ending one line and starting the next with `|`,
+            // which is vanishingly rare.
             Event::SoftBreak if !current_line.is_empty() => {
-                current_line.push(Span::raw(" "));
+                let last_ends_with_pipe = current_line
+                    .last()
+                    .map(|span| span.content.trim_end().ends_with('|'))
+                    .unwrap_or(false);
+                if last_ends_with_pipe {
+                    lines.push(Line::from(std::mem::take(&mut current_line)));
+                } else {
+                    current_line.push(Span::raw(" "));
+                }
             }
 
             Event::Rule => {
