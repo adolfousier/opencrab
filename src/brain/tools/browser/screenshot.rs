@@ -61,6 +61,21 @@ impl Tool for BrowserScreenshotTool {
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
 
+        // Pre-flight health check. `page.url()` is a cheap CDP call that
+        // round-trips the underlying connection — if it fails the page is
+        // not responding (CDP handler task exited, browser process died,
+        // tab was closed externally, etc.). Without this the screenshot
+        // call below would either hang or return a generic
+        // "Screenshot failed: {e}" with no signal whether the page was
+        // dead or the capture itself failed.
+        if let Err(e) = page.url().await {
+            return Ok(ToolResult::error(format!(
+                "Screenshot failed: page is not responding (CDP connection may be dead). \
+                 Underlying error: {e}. Try `browser_navigate` to reset the page or \
+                 `browser_close` if the session is stuck."
+            )));
+        }
+
         let bytes = if let Some(sel) = selector {
             // Screenshot a specific element
             let element = match page.find_element(sel).await {
