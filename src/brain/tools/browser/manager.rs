@@ -377,8 +377,18 @@ impl BrowserManager {
         session_id: uuid::Uuid,
     ) -> Option<(String, String)> {
         let key = Self::page_name_for_session(session_id);
-        let inner = self.inner.lock().await;
-        let page = inner.pages.get(&key)?;
+        // Clone the Page handle while holding the lock briefly, then drop
+        // the guard BEFORE awaiting the CDP screenshot call. Holding the
+        // mutex across `.screenshot().await` blocks every other task that
+        // needs the same mutex (handler events, page creation, page
+        // close) for the entire round-trip — a deadlock hazard whenever
+        // the CDP handler task wants to acquire the lock during the
+        // screenshot. Page is an Arc-wrapped handle so the clone is
+        // cheap.
+        let page = {
+            let inner = self.inner.lock().await;
+            inner.pages.get(&key)?.clone()
+        };
         let bytes = page
             .screenshot(
                 chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams::builder()
@@ -398,8 +408,13 @@ impl BrowserManager {
     /// should use `take_screenshot_for_session`.
     #[allow(dead_code)]
     pub async fn take_screenshot(&self) -> Option<(String, String)> {
-        let inner = self.inner.lock().await;
-        let page = inner.pages.get("default")?;
+        // Same clone-then-drop-lock pattern as
+        // `take_screenshot_for_session` to avoid holding the mutex across
+        // the awaited CDP call.
+        let page = {
+            let inner = self.inner.lock().await;
+            inner.pages.get("default")?.clone()
+        };
         let bytes = page
             .screenshot(
                 chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams::builder()
