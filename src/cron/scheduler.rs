@@ -400,7 +400,26 @@ async fn deliver_http(url: &str, job_name: &str, content: &str) {
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
-    match client.post(url).json(&body).send().await {
+    let mut request = client.post(url).json(&body);
+
+    // If targeting an agentverse/A2A endpoint, attach the API key from keys.toml.
+    if url.contains("/agents/") && url.contains("/tasks") {
+        let brain_path = crate::brain::BrainLoader::resolve_path();
+        let keys_path = brain_path.join("keys.toml");
+        if let Ok(keys_content) = std::fs::read_to_string(&keys_path)
+            && let Some(api_key) = keys_content.parse::<toml::Table>().ok().and_then(|t| {
+                t.get("agentverse")?
+                    .as_table()?
+                    .get("api_key")?
+                    .as_str()
+                    .map(String::from)
+            })
+        {
+            request = request.header("Authorization", format!("Bearer {api_key}"));
+        }
+    }
+
+    match request.send().await {
         Ok(resp) if resp.status().is_success() => {
             tracing::info!("Cron result for '{job_name}' delivered to {url}");
         }

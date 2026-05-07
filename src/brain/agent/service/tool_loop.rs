@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 /// Strip ANSI escape codes from raw tool output before persisting to DB.
 /// Prevents garbled artifacts in session history.
-fn strip_ansi_output(raw: &str) -> String {
+pub(crate) fn strip_ansi_output(raw: &str) -> String {
     strip_ansi::strip_ansi(raw)
 }
 
@@ -29,7 +29,7 @@ fn strip_ansi_output(raw: &str) -> String {
 ///
 /// The returned path is resolved against `working_directory` so we
 /// always store an absolute, then-collapsed `~/...` form.
-fn extract_path_for_recent_buffer(
+pub(crate) fn extract_path_for_recent_buffer(
     tool_name: &str,
     input: &Value,
     working_directory: &std::path::Path,
