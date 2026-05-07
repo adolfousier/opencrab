@@ -79,6 +79,10 @@ impl Tool for CronManageTool {
                     "type": "string",
                     "description": "Where to deliver results. Format: 'telegram:chat_id', 'discord:channel_id', 'slack:channel_id', or an HTTP(S) URL for webhook delivery"
                 },
+                "deliver_api_key": {
+                    "type": "string",
+                    "description": "Optional Bearer token for HTTP webhook delivery. Added as Authorization: Bearer <key> header when delivering to an HTTP(S) URL."
+                },
                 "job_id": {
                     "type": "string",
                     "description": "Job ID (required for delete/enable/disable)"
@@ -194,6 +198,10 @@ impl CronManageTool {
             .get("deliver_to")
             .and_then(|v| v.as_str())
             .map(String::from);
+        let deliver_api_key = input
+            .get("deliver_api_key")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let job = CronJob::new(
             name.to_string(),
@@ -205,6 +213,7 @@ impl CronManageTool {
             thinking,
             auto_approve,
             deliver_to.clone(),
+            deliver_api_key,
         );
 
         let job_id = job.id.to_string();

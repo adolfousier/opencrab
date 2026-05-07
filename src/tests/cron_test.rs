@@ -299,6 +299,7 @@ mod repository {
             "off".to_string(),
             true,
             None,
+            None,
         )
     }
 
@@ -437,6 +438,7 @@ mod repository {
             "on".to_string(),
             false,
             Some("telegram:123456".to_string()),
+            None,
         );
         repo.insert(&job).await.unwrap();
 
@@ -796,6 +798,7 @@ mod scheduler {
             "off".to_string(),
             true,
             None,
+            None,
         );
         // Set next_run_at to 1 hour ago — should be due
         job.next_run_at = Some(Utc::now() - Duration::hours(1));
@@ -814,6 +817,7 @@ mod scheduler {
             None,
             "off".to_string(),
             true,
+            None,
             None,
         );
         // Set next_run_at to 1 hour from now — should NOT be due
@@ -850,6 +854,7 @@ mod scheduler {
             None,
             "off".to_string(),
             true,
+            None,
             None,
         );
         repo.insert(&job).await.unwrap();

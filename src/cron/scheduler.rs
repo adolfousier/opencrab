@@ -300,7 +300,7 @@ async fn execute_job(
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    deliver_result(target, &job.name, &clean).await;
+                    deliver_result(target, &job.name, &clean, job.deliver_api_key.as_deref()).await;
                 }
             }
         }
@@ -321,7 +321,7 @@ async fn execute_job(
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    deliver_result(target, &job.name, &msg).await;
+                    deliver_result(target, &job.name, &msg, job.deliver_api_key.as_deref()).await;
                 }
             }
         }
@@ -333,10 +333,10 @@ async fn execute_job(
 /// Deliver a cron job result to the specified channel.
 /// Format: "telegram:chat_id", "discord:channel_id", "slack:channel_id",
 /// or an HTTP(S) URL for generic webhook delivery.
-async fn deliver_result(deliver_to: &str, job_name: &str, content: &str) {
+async fn deliver_result(deliver_to: &str, job_name: &str, content: &str, api_key: Option<&str>) {
     // HTTP(S) URL — generic webhook delivery
     if deliver_to.starts_with("http://") || deliver_to.starts_with("https://") {
-        deliver_http(deliver_to, job_name, content).await;
+        deliver_http(deliver_to, job_name, content, api_key).await;
         return;
     }
 
@@ -392,7 +392,7 @@ async fn deliver_result(deliver_to: &str, job_name: &str, content: &str) {
 }
 
 /// Deliver cron result via HTTP POST to a generic webhook URL.
-async fn deliver_http(url: &str, job_name: &str, content: &str) {
+async fn deliver_http(url: &str, job_name: &str, content: &str, api_key: Option<&str>) {
     let client = reqwest::Client::new();
     let body = serde_json::json!({
         "job_name": job_name,
@@ -400,7 +400,14 @@ async fn deliver_http(url: &str, job_name: &str, content: &str) {
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
-    match client.post(url).json(&body).send().await {
+    let mut request = client.post(url).json(&body);
+
+    // Attach Bearer token if the job has one configured.
+    if let Some(key) = api_key {
+        request = request.header("Authorization", format!("Bearer {key}"));
+    }
+
+    match request.send().await {
         Ok(resp) if resp.status().is_success() => {
             tracing::info!("Cron result for '{job_name}' delivered to {url}");
         }

@@ -442,6 +442,7 @@ pub struct CronJob {
     pub thinking: String,
     pub auto_approve: bool,
     pub deliver_to: Option<String>,
+    pub deliver_api_key: Option<String>,
     pub enabled: bool,
     pub last_run_at: Option<DateTime<Utc>>,
     pub next_run_at: Option<DateTime<Utc>>,
@@ -462,6 +463,7 @@ impl CronJob {
             thinking: row.get("thinking")?,
             auto_approve: row.get::<_, i32>("auto_approve")? != 0,
             deliver_to: row.get("deliver_to")?,
+            deliver_api_key: row.get("deliver_api_key")?,
             enabled: row.get::<_, i32>("enabled")? != 0,
             last_run_at: opt_rfc3339_col(row, "last_run_at")?,
             next_run_at: opt_rfc3339_col(row, "next_run_at")?,
@@ -481,6 +483,7 @@ impl CronJob {
         thinking: String,
         auto_approve: bool,
         deliver_to: Option<String>,
+        deliver_api_key: Option<String>,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -494,6 +497,7 @@ impl CronJob {
             thinking,
             auto_approve,
             deliver_to,
+            deliver_api_key,
             enabled: true,
             last_run_at: None,
             next_run_at: None,

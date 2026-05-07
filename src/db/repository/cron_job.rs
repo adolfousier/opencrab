@@ -37,8 +37,8 @@ impl CronJobRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.execute(
-                    "INSERT INTO cron_jobs (id, name, cron_expr, timezone, prompt, provider, model, thinking, auto_approve, deliver_to, enabled, next_run_at, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    "INSERT INTO cron_jobs (id, name, cron_expr, timezone, prompt, provider, model, thinking, auto_approve, deliver_to, deliver_api_key, enabled, next_run_at, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                     params![
                         j.id.to_string(),
                         j.name,
@@ -50,6 +50,7 @@ impl CronJobRepository {
                         j.thinking,
                         j.auto_approve as i32,
                         j.deliver_to,
+                        j.deliver_api_key,
                         j.enabled as i32,
                         j.next_run_at.map(|d| d.to_rfc3339()),
                         j.created_at.to_rfc3339(),

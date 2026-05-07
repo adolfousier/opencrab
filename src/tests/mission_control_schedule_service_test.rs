@@ -26,6 +26,7 @@ fn make_job(name: &str, cron: &str, timezone: &str, enabled: bool) -> CronJob {
         "off".to_string(),
         true,
         None,
+        None,
     );
     job.enabled = enabled;
     job

@@ -83,6 +83,7 @@ async fn cmd_add(
         thinking,
         auto_approve,
         deliver_to.clone(),
+        None, // CLI doesn't support deliver_api_key yet
     );
 
     let id = job.id.to_string();
