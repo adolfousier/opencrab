@@ -87,12 +87,29 @@ impl Tool for BrowserNavigateTool {
         // (already proven in click.rs:87) waits until network requests
         // settle, which correlates much more reliably with "page is
         // interactable". 3s timeout matches the existing click flow.
-        let _ = page
+        if let Err(e) = page
             .wait_for_network_almost_idle_with_timeout(std::time::Duration::from_secs(3))
-            .await;
+            .await
+        {
+            tracing::debug!(
+                "browser_navigate: network-idle wait timed out after goto({url}) (proceeding anyway): {e}"
+            );
+        }
 
-        let title = page.get_title().await.ok().flatten().unwrap_or_default();
-        let final_url = page.url().await.ok().flatten().unwrap_or_default();
+        let title = match page.get_title().await {
+            Ok(t) => t.unwrap_or_default(),
+            Err(e) => {
+                tracing::warn!("browser_navigate: get_title failed after goto({url}): {e}");
+                String::new()
+            }
+        };
+        let final_url = match page.url().await {
+            Ok(u) => u.unwrap_or_default(),
+            Err(e) => {
+                tracing::warn!("browser_navigate: page.url() failed after goto({url}): {e}");
+                String::new()
+            }
+        };
 
         let mut result = ToolResult::success(format!("Navigated to: {final_url}\nTitle: {title}"));
 
