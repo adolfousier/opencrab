@@ -826,6 +826,16 @@ impl AgentService {
         // but the visible text ends mid-word ("Standard Get I"). One-shot
         // nudge to continue from where they left off.
         let mut truncated_mid_sentence_retry_used: bool = false;
+        // Tracks whether the CURRENT iteration is a same-provider continuation
+        // requested after a truncated-mid-sentence detection. Reset at the top
+        // of every iteration; set true just before `continue;` from the
+        // truncation-continue branch. When true, the stream-error fallback
+        // path skips cross-provider fallback — switching providers mid-table
+        // (e.g. qwen vertical-label format → glm pipe-table format) produces
+        // garbled output stitched at the seam. Better to abort the continue
+        // and leave the visibly truncated response than fabricate a Frankenstein
+        // continuation in a different format.
+        let mut current_iter_is_truncation_continue: bool = false;
         let mut rotation_retry_used = false; // Single retry when Qwen rotation yields 0 tools
 
         // Ordered content segments for CLI providers — tracks text and tool markers
@@ -887,6 +897,12 @@ impl AgentService {
         };
 
         loop {
+            // Snapshot + reset the truncation-continue marker at the top of
+            // every iteration. The branch that sets it does so just before
+            // `continue;`, so it's always one-shot — true for exactly the
+            // iteration that follows a truncated response, false otherwise.
+            let iter_is_truncation_continue = current_iter_is_truncation_continue;
+            current_iter_is_truncation_continue = false;
             // Safety: warn every 50 iterations but never hard-stop
             // Loop detection (below) is the real safety net
             if self.max_tool_iterations > 0 && iteration >= self.max_tool_iterations {
@@ -1598,6 +1614,37 @@ impl AgentService {
 
                     if let Some(resp) = succeeded {
                         resp
+                    } else if iter_is_truncation_continue {
+                        // This iteration is the same-provider continuation we
+                        // asked for after a truncated-mid-sentence response.
+                        // Falling back to a different provider here produces
+                        // garbled output: providers don't share format style,
+                        // so the continuation gets stitched in a different
+                        // shape (e.g. qwen vertical-label labels → glm pipe-
+                        // table syntax) and the result is unreadable. Better
+                        // to abort the continue and leave the visibly cut-off
+                        // response than fabricate a Frankenstein answer.
+                        tracing::warn!(
+                            "All 3 stream retries failed during a truncation-continue — \
+                             aborting continuation rather than falling back to a different \
+                             provider (would cause format drift)."
+                        );
+                        if let Some(ref cb) = progress_callback {
+                            let active_name = self.provider_name_for_session(session_id);
+                            let err_snippet: String =
+                                last_err.to_string().chars().take(120).collect();
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "Continuation request to '{}/{}' failed after 3 retries: {}. \
+                                         Leaving the previous response truncated.",
+                                        active_name, model_name, err_snippet,
+                                    ),
+                                },
+                            );
+                        }
+                        return Err(AgentError::Provider(last_err));
                     } else {
                         // All retries failed — try fallback provider
                         tracing::warn!(
@@ -3059,6 +3106,9 @@ impl AgentService {
                          Just keep writing.]"
                             .to_string(),
                     ));
+                    // Mark the next iteration so the stream-error path skips
+                    // cross-provider fallback for the continuation request.
+                    current_iter_is_truncation_continue = true;
                     continue;
                 }
 
