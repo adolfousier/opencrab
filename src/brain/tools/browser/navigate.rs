@@ -78,8 +78,18 @@ impl Tool for BrowserNavigateTool {
             return Ok(ToolResult::error(format!("Navigation failed: {e}")));
         }
 
-        // Wait for navigation to settle
-        let _ = page.wait_for_navigation().await;
+        // Wait for the navigation to settle. `wait_for_navigation()` only
+        // resolves on the CDP `load` event, which fires before paint and
+        // before any JS hydration completes — screenshots and clicks issued
+        // immediately after would land on a blank/half-rendered page (the
+        // observed "stuck on initial window" symptom). The
+        // `wait_for_network_almost_idle_with_timeout` helper from chromey
+        // (already proven in click.rs:87) waits until network requests
+        // settle, which correlates much more reliably with "page is
+        // interactable". 3s timeout matches the existing click flow.
+        let _ = page
+            .wait_for_network_almost_idle_with_timeout(std::time::Duration::from_secs(3))
+            .await;
 
         let title = page.get_title().await.ok().flatten().unwrap_or_default();
         let final_url = page.url().await.ok().flatten().unwrap_or_default();
