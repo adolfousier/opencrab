@@ -1606,13 +1606,20 @@ impl AgentService {
 
                         if let Some(ref cb) = progress_callback {
                             let active_name = self.provider_name_for_session(session_id);
+                            // Surface the underlying error so users (and the
+                            // maintainer when users report) can tell whether
+                            // it was a timeout, TLS issue, 5xx, etc., instead
+                            // of a generic "Stream error" banner.
+                            let err_snippet: String =
+                                last_err.to_string().chars().take(120).collect();
                             cb(
                                 session_id,
                                 ProgressEvent::SelfHealingAlert {
                                     message: format!(
-                                        "Stream error on '{}/{}' after 3 retries. {}",
+                                        "Stream error on '{}/{}' after 3 retries: {}. {}",
                                         active_name,
                                         model_name,
+                                        err_snippet,
                                         if self.has_fallback_provider() {
                                             "Switching to fallback provider..."
                                         } else {
