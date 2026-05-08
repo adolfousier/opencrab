@@ -2,8 +2,10 @@
 //!
 //! Locks in the 2026-04-25 fix where NVIDIA's wedged
 //! `integrate.api.nvidia.com` ate ~3 minutes (3 × 90s) of retry budget
-//! before falling back. Cloud HTTP now bails after 30s, while local
-//! HTTP keeps the longer 90s window for cold-loading models.
+//! before falling back. Cloud HTTP now bails after 60s (bumped from 30s
+//! on 2026-05-07 because routing proxies like dialagram legitimately
+//! need 20-45s when upstream is slow), while local HTTP keeps the longer
+//! 90s window for cold-loading models.
 
 use crate::brain::agent::service::helpers::handshake_timeout_for;
 use std::time::Duration;
@@ -46,10 +48,11 @@ fn local_http_gets_ninety_seconds() {
 }
 
 #[test]
-fn cloud_http_gets_thirty_seconds() {
-    // The user-visible win: NVIDIA's wedged gateway no longer eats 3
-    // minutes of retry budget. Healthy cloud providers return headers
-    // in well under 5s, so 30s is plenty of margin.
+fn cloud_http_gets_sixty_seconds() {
+    // Routing proxies (dialagram, openrouter) can take 20-45s when
+    // upstream is slow. Wedged servers are >120s, so 60s still catches
+    // real hangs in under 3 min via the retry chain. Previous 30s killed
+    // legitimate requests to slower-but-healthy providers.
     for url in [
         "https://integrate.api.nvidia.com/v1/chat/completions",
         "https://api.openai.com/v1/chat/completions",
@@ -62,8 +65,8 @@ fn cloud_http_gets_thirty_seconds() {
     ] {
         assert_eq!(
             handshake_timeout_for(false, Some(url)),
-            Duration::from_secs(30),
-            "expected 30s for cloud URL: {}",
+            Duration::from_secs(60),
+            "expected 60s for cloud URL: {}",
             url,
         );
     }
@@ -74,5 +77,5 @@ fn missing_base_url_defaults_to_cloud_timeout() {
     // Providers without a base_url (built-in Anthropic/Gemini that
     // hardcode their endpoints internally) are always cloud — they
     // can't be a local LM server.
-    assert_eq!(handshake_timeout_for(false, None), Duration::from_secs(30));
+    assert_eq!(handshake_timeout_for(false, None), Duration::from_secs(60));
 }

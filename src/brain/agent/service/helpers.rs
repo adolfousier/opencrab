@@ -20,17 +20,18 @@ use uuid::Uuid;
 ///     gguf loading KV cache succeeded at +38s); 90s still fails an
 ///     unrecoverable wedge in under 2 min via the retry chain.
 ///   - Cloud HTTP (OpenAI, Anthropic, Zhipu, opencode.ai, NVIDIA NIM,
-///     etc.): **30s**. Healthy cloud gateways return headers in <5s;
-///     past 30s their LB is wedged. The previous blanket 90s let
-///     NVIDIA's wedged integrate.api eat ~3 min (3 × 90s) of retry
-///     budget before falling back.
+///     etc.): **60s**. Healthy cloud gateways return headers in <5s,
+///     but routing proxies (dialagram, openrouter) can take 20-45s
+///     when upstream is slow. Wedged servers are >120s, so 60s still
+///     catches real hangs in under 3 min via the retry chain. Previous
+///     30s killed legitimate requests to slower-but-healthy providers.
 pub(crate) fn handshake_timeout_for(cli_handles_tools: bool, base_url: Option<&str>) -> Duration {
     if cli_handles_tools {
         Duration::from_secs(600)
     } else if base_url.is_some_and(crate::brain::provider::factory::is_local_base_url) {
         Duration::from_secs(90)
     } else {
-        Duration::from_secs(30)
+        Duration::from_secs(60)
     }
 }
 
