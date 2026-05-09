@@ -13,6 +13,35 @@ pub fn truncate_str(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+/// Returns true if `s` looks like a file path rather than a slash command.
+///
+/// Slash commands are `/` followed by a single word with no additional slashes
+/// and no file extension (e.g. `/help`, `/models`, `/deploy`).
+///
+/// File paths have additional `/` segments (e.g. `/Users/alice/file.pdf`)
+/// or a recognizable file extension on the first word (e.g. `/report.pdf check this`).
+///
+/// This prevents drag-and-dropped file paths from triggering "Unknown command" errors.
+pub fn looks_like_file_path(s: &str) -> bool {
+    if !s.starts_with('/') {
+        return false;
+    }
+    // If it contains another `/` after the leading slash, it's a path
+    // (e.g. `/Users/...`, `/tmp/...`, `./` resolved to absolute)
+    if s[1..].contains('/') {
+        return true;
+    }
+    // If the first word (before any space) has a file extension, treat as path
+    // e.g. `/report.pdf check this` → the `/report.pdf` part is a file
+    let first_word = s.split_whitespace().next().unwrap_or(s);
+    if let Some(ext) = std::path::Path::new(first_word).extension()
+        && !ext.is_empty()
+    {
+        return true;
+    }
+    false
+}
+
 /// Collapse the current user's `$HOME` prefix to `~` in paths/commands.
 /// `/Users/alice/srv/foo/bar.rs` → `~/srv/foo/bar.rs`. Keeps absolute
 /// paths OUTSIDE home untouched so `/tmp/...` or `/etc/...` still render
@@ -163,4 +192,35 @@ mod tests {
             assert_eq!(tilde_home(&cmd), "cp ~/a ~/b");
         }
     }
+
+    // ── looks_like_file_path ───────────────────────────────────────────────
+
+    #[test]
+    fn test_looks_like_file_path_absolute_with_segments() {
+        assert!(looks_like_file_path("/Users/alice/Downloads/report.pdf"));
+        assert!(looks_like_file_path("/tmp/foo.txt"));
+        assert!(looks_like_file_path("/etc/hosts"));
+    }
+
+    #[test]
+    fn test_looks_like_file_path_with_extension_and_text() {
+        // Drag-and-drop pattern: path followed by a message
+        assert!(looks_like_file_path("/report.pdf check this"));
+        assert!(looks_like_file_path("/data.csv analyze"));
+    }
+
+    #[test]
+    fn test_looks_like_file_path_slash_commands_are_not_paths() {
+        assert!(!looks_like_file_path("/help"));
+        assert!(!looks_like_file_path("/models"));
+        assert!(!looks_like_file_path("/deploy staging"));
+        assert!(!looks_like_file_path("/credits"));
+    }
+
+    #[test]
+    fn test_looks_like_file_path_no_slash_prefix() {
+        assert!(!looks_like_file_path("hello world"));
+        assert!(!looks_like_file_path("report.pdf"));
+    }
 }
+
