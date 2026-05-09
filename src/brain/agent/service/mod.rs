@@ -12,6 +12,7 @@ pub(crate) mod helpers;
 mod messaging;
 mod phantom;
 pub(crate) mod tool_loop;
+mod truncation;
 mod types;
 
 pub use builder::AgentService;

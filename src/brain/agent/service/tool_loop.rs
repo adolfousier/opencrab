@@ -2812,53 +2812,15 @@ impl AgentService {
                         response.stop_reason,
                         Some(crate::brain::provider::StopReason::EndTurn)
                     )
-                    && super::phantom::looks_truncated_mid_sentence(iteration_text.trim_end())
+                    && super::truncation::try_emit_truncation_continue(
+                        &iteration_text,
+                        reasoning_text.as_ref(),
+                        &mut context,
+                        session_id,
+                        &progress_callback,
+                    )
                 {
                     truncated_mid_sentence_retry_used = true;
-                    let preview: String = iteration_text
-                        .chars()
-                        .rev()
-                        .take(60)
-                        .collect::<String>()
-                        .chars()
-                        .rev()
-                        .collect();
-                    tracing::warn!(
-                        "Response ended with finish_reason=stop but last chars look \
-                         mid-sentence (tail={:?}) — asking model to continue once.",
-                        preview,
-                    );
-                    if let Some(ref cb) = progress_callback {
-                        cb(
-                            session_id,
-                            ProgressEvent::SelfHealingAlert {
-                                message:
-                                    "Response was cut off mid-sentence — asking model to continue"
-                                        .into(),
-                            },
-                        );
-                    }
-                    // Keep the partial as a real intermediate message so the
-                    // user sees what DID arrive, then nudge continuation.
-                    if !iteration_text.is_empty()
-                        && let Some(ref cb) = progress_callback
-                    {
-                        cb(
-                            session_id,
-                            ProgressEvent::IntermediateText {
-                                text: iteration_text.clone(),
-                                reasoning: reasoning_text.clone(),
-                            },
-                        );
-                    }
-                    context.add_message(Message::assistant(iteration_text));
-                    context.add_message(Message::user(
-                        "[System: Your previous reply was cut off mid-sentence (no terminal \
-                         punctuation). Continue from exactly where you left off — do NOT repeat \
-                         what you already wrote, do NOT restart the answer, do NOT re-plan. \
-                         Just keep writing.]"
-                            .to_string(),
-                    ));
                     // Mark the next iteration so the stream-error path skips
                     // cross-provider fallback for the continuation request.
                     current_iter_is_truncation_continue = true;
