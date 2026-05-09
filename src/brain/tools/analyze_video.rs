@@ -191,7 +191,8 @@ impl AnalyzeVideoTool {
             "file": { "display_name": display_name }
         });
         let init_resp = client
-            .post(format!("{}?key={}", GEMINI_UPLOAD_URL, self.api_key))
+            .post(GEMINI_UPLOAD_URL)
+            .header("x-goog-api-key", &self.api_key)
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
             .header("X-Goog-Upload-Header-Content-Length", size.to_string())
@@ -282,10 +283,8 @@ impl AnalyzeVideoTool {
                 )));
             }
             let status_resp = client
-                .get(format!(
-                    "{}/{}?key={}",
-                    GEMINI_BASE_URL, file_name, self.api_key
-                ))
+                .get(format!("{}/{}", GEMINI_BASE_URL, file_name))
+                .header("x-goog-api-key", &self.api_key)
                 .send()
                 .await
                 .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;

@@ -223,4 +223,3 @@ mod tests {
         assert!(!looks_like_file_path("report.pdf"));
     }
 }
-

@@ -730,9 +730,7 @@ impl App {
                 let _ = self.open_directory_picker().await;
                 true
             }
-            _ if input.starts_with('/')
-                && !crate::utils::string::looks_like_file_path(input) =>
-            {
+            _ if input.starts_with('/') && !crate::utils::string::looks_like_file_path(input) => {
                 // Check user-defined commands first — explicit user definitions
                 // win over auto-registered skills of the same `/<name>`.
                 if let Some(user_cmd) = self.user_commands.iter().find(|c| c.name == cmd) {

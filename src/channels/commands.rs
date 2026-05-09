@@ -230,9 +230,7 @@ pub async fn handle_command(
         "/sessions" => ChannelCommand::Sessions(format_sessions(session_id, session_svc).await),
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
-        _ if trimmed.starts_with('/')
-            && !crate::utils::string::looks_like_file_path(trimmed) =>
-        {
+        _ if trimmed.starts_with('/') && !crate::utils::string::looks_like_file_path(trimmed) => {
             match_user_command(trimmed)
         }
         _ => ChannelCommand::NotACommand,
