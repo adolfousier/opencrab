@@ -392,10 +392,7 @@ impl Provider for CodexCliProvider {
                     continue;
                 }
 
-                tracing::debug!(
-                    "codex CLI raw: {}",
-                    &line[..line.floor_char_boundary(300)]
-                );
+                tracing::debug!("codex CLI raw: {}", &line[..line.floor_char_boundary(300)]);
 
                 let event: CliEvent = match serde_json::from_str(&line) {
                     Ok(e) => e,
@@ -512,9 +509,7 @@ impl Provider for CodexCliProvider {
                                     }))
                                     .await;
                                 let _ = tx
-                                    .send(Ok(StreamEvent::ContentBlockStop {
-                                        index: block_index,
-                                    }))
+                                    .send(Ok(StreamEvent::ContentBlockStop { index: block_index }))
                                     .await;
                                 block_index += 1;
                             }
@@ -544,9 +539,7 @@ impl Provider for CodexCliProvider {
                                     }))
                                     .await;
                                 let _ = tx
-                                    .send(Ok(StreamEvent::ContentBlockStop {
-                                        index: block_index,
-                                    }))
+                                    .send(Ok(StreamEvent::ContentBlockStop { index: block_index }))
                                     .await;
                                 block_index += 1;
                             }
