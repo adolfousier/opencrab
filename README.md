@@ -113,7 +113,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 ### AI & Providers
 | Feature | Description |
 |---------|-------------|
-| **Multi-Provider** | Anthropic Claude, OpenAI, GitHub Copilot (uses your Copilot subscription), OpenRouter (400+ models), MiniMax, Google Gemini, z.ai GLM (General API + Coding API), Claude CLI, OpenCode CLI, Qwen Native (free OAuth with multi-account rotation), Qwen Code CLI (1k free req/day), and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly. Each session remembers its provider + model and restores it on switch |
+| **Multi-Provider** | Anthropic Claude, OpenAI, GitHub Copilot (uses your Copilot subscription), OpenRouter (400+ models), MiniMax, Google Gemini, z.ai GLM (General API + Coding API), Claude CLI, OpenCode CLI, Codex CLI (uses your ChatGPT/Codex subscription), Qwen Native (free OAuth with multi-account rotation), Qwen Code CLI (1k free req/day), and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly. Each session remembers its provider + model and restores it on switch |
 | **Fallback Providers** | Configure a chain of fallback providers — if the primary fails, each fallback is tried in sequence automatically. Any configured provider can be a fallback. Config: `[providers.fallback] providers = ["openrouter", "anthropic"]` |
 | **Per-Provider Vision** | Set `vision_model` per provider — the LLM calls `analyze_image` as a tool, which uses the vision model on the same provider API to describe images. The chat model stays the same and gets vision capability via tool call. Gemini vision takes priority when configured. Auto-configured for known providers (e.g. MiniMax) on first run |
 | **Real-time Streaming** | Character-by-character response streaming with animated spinner showing model name and live text |
@@ -312,6 +312,7 @@ Multiple profiles can run as simultaneous daemon services with full isolation.
 | [z.ai GLM](#zai-glm) | API key | GLM-4.5 through GLM-5 Turbo | ✅ | ✅ | General API + Coding API endpoints |
 | [Claude CLI](#claude-code-cli) | CLI auth | Via `claude` binary | ✅ | ✅ | Uses your Claude Code subscription |
 | [OpenCode CLI](#opencode-cli) | None | Free models (Mimo, etc.) | ✅ | ✅ | Free — no API key or subscription needed |
+| [Codex CLI](#codex-cli) | CLI auth | GPT-5.5, 5.4, 5.4-mini, 5.3-codex | ✅ | ✅ | Uses your ChatGPT/Codex subscription |
 | [Qwen (Native)](#qwen-native) | OAuth | Qwen3.6-Plus, Qwen3.5-Plus, Qwen3-Max | ✅ | ✅ | Free tier (60 req/min, 1k/day). Multi-account rotation multiplies quota |
 | [Qwen Code CLI](#qwen-code-cli) | OAuth / API key | Qwen3-Coder-Plus, Qwen3.5-Plus, Qwen3.6-Plus | ✅ | ✅ | 1k free req/day via Qwen OAuth — no API key needed |
 | [Ollama](#ollama) | Optional | Any pulled model | ✅ | ✅ | Local-first, zero API cost. Auto-detects localhost:11434 |
@@ -468,6 +469,32 @@ Models are fetched live from `opencode models`. Free models like `mimo-v2-pro-fr
 
 **Features:** Streaming, tools, extended thinking support, NDJSON event protocol
 
+### Codex CLI
+
+Use your **ChatGPT/Codex subscription** — no API key, no API charges. OpenCrabs spawns the local `codex` binary for completions and piggybacks on the auth stored in `~/.codex/auth.json`.
+
+**Setup:**
+1. Install [Codex CLI](https://github.com/openai/codex): `npm install -g @openai/codex`
+2. Run `codex` once and sign in with your ChatGPT account (or paste an API key).
+3. Enable in `config.toml`:
+```toml
+[providers.codex_cli]
+enabled = true
+default_model = "gpt-5.5"   # falls back to gpt-5.4 if 5.5 isn't in your account yet
+```
+
+**Models** (per [developers.openai.com/codex/models](https://developers.openai.com/codex/models)):
+- `gpt-5.5` — newest frontier model (ChatGPT-auth only during rollout)
+- `gpt-5.4` — recommended fallback when 5.5 isn't available; supports API access
+- `gpt-5.4-mini` — fast, lower-cost option for lighter coding work
+- `gpt-5.3-codex` — coding-optimized model that powers GPT-5.4 underneath
+- `gpt-5.3-codex-spark` — research preview for ChatGPT Pro (real-time iteration)
+- `gpt-5.2` — alternative tier for hard debugging
+
+OpenCrabs handles all tools, memory, and context locally; codex is just the LLM backend. The CLI runs `codex exec --json --ephemeral --dangerously-bypass-approvals-and-sandbox` so each turn is a fresh session driven by OpenCrabs' conversation state.
+
+**Features:** Streaming, tools (codex executes its own shell commands and they're surfaced to the TUI for display), JSONL event protocol
+
 ### Qwen (Native)
 
 Direct integration with Qwen's API via OAuth device flow — **no API key needed**. Free tier gives 60 req/min and 1,000 req/day per account.
@@ -611,7 +638,7 @@ default_model = "moonshotai/kimi-k2.5"
 api_key = "nvapi-..."
 ```
 
-**Provider priority:** MiniMax > OpenRouter > Anthropic > OpenAI > GitHub Copilot > Gemini > z.ai GLM > Claude CLI > OpenCode CLI > Custom. The first provider with `enabled = true` is used on new sessions. Each provider has its own API key in `keys.toml` — no sharing or confusion.
+**Provider priority:** Claude CLI > OpenCode CLI > Codex CLI > OpenCode > Qwen > Anthropic > OpenAI > GitHub Copilot > Gemini > OpenRouter > MiniMax > z.ai GLM > Ollama > Custom. The first provider with `enabled = true` is used on new sessions. Each provider has its own API key in `keys.toml` — no sharing or confusion.
 
 **Per-session provider:** Each session remembers which provider and model it was using. Switch to Claude in one session, Kimi in another — when you `/sessions` switch between them, the provider restores automatically. No need to `/models` every time. New sessions inherit the current provider.
 
@@ -2481,6 +2508,7 @@ flowchart TD
     CUSTOM[Custom OpenAI compat] --> FB
     CCLI[Claude CLI] --> FB
     OCLI[OpenCode CLI] --> FB
+    XCLI[Codex CLI] --> FB
     QCLI[Qwen Code CLI] --> FB
 ```
 
