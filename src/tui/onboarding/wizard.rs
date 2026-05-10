@@ -482,14 +482,18 @@ impl OnboardingWizard {
     pub fn from_config(config: &crate::config::Config) -> Self {
         let mut wizard = Self::new();
 
-        // Determine which provider is configured and set selected_provider
+        // Determine which provider is configured and set selected_provider.
+        // Routes by id via `index_of_provider` so reordering PROVIDERS never
+        // requires bumping numeric literals in this block.
+        use crate::tui::provider_selector::index_of_provider;
+        let resolve = |id: &str| index_of_provider(id).unwrap_or(0);
         if config
             .providers
             .anthropic
             .as_ref()
             .is_some_and(|p| p.enabled)
         {
-            wizard.ps.selected_provider = 0; // Anthropic
+            wizard.ps.selected_provider = resolve("anthropic");
             if let Some(model) = &config
                 .providers
                 .anthropic
@@ -499,7 +503,7 @@ impl OnboardingWizard {
                 wizard.ps.custom_model = model.clone();
             }
         } else if config.providers.openai.as_ref().is_some_and(|p| p.enabled) {
-            wizard.ps.selected_provider = 1; // OpenAI
+            wizard.ps.selected_provider = resolve("openai");
             if let Some(base_url) = &config
                 .providers
                 .openai
@@ -517,7 +521,7 @@ impl OnboardingWizard {
                 wizard.ps.custom_model = model.clone();
             }
         } else if config.providers.github.as_ref().is_some_and(|p| p.enabled) {
-            wizard.ps.selected_provider = 2; // GitHub Copilot
+            wizard.ps.selected_provider = resolve("github");
             if let Some(model) = &config
                 .providers
                 .github
@@ -527,14 +531,14 @@ impl OnboardingWizard {
                 wizard.ps.custom_model = model.clone();
             }
         } else if config.providers.gemini.as_ref().is_some_and(|p| p.enabled) {
-            wizard.ps.selected_provider = 3; // Gemini
+            wizard.ps.selected_provider = resolve("gemini");
         } else if config
             .providers
             .openrouter
             .as_ref()
             .is_some_and(|p| p.enabled)
         {
-            wizard.ps.selected_provider = 4; // OpenRouter
+            wizard.ps.selected_provider = resolve("openrouter");
             if let Some(model) = &config
                 .providers
                 .openrouter
@@ -544,7 +548,7 @@ impl OnboardingWizard {
                 wizard.ps.custom_model = model.clone();
             }
         } else if config.providers.minimax.as_ref().is_some_and(|p| p.enabled) {
-            wizard.ps.selected_provider = 5; // Minimax
+            wizard.ps.selected_provider = resolve("minimax");
             if let Some(model) = &config
                 .providers
                 .minimax
@@ -554,7 +558,7 @@ impl OnboardingWizard {
                 wizard.ps.custom_model = model.clone();
             }
         } else if config.providers.zhipu.as_ref().is_some_and(|p| p.enabled) {
-            wizard.ps.selected_provider = 6; // z.ai GLM
+            wizard.ps.selected_provider = resolve("zhipu");
             if let Some(model) = &config
                 .providers
                 .zhipu
@@ -569,7 +573,7 @@ impl OnboardingWizard {
             .as_ref()
             .is_some_and(|p| p.enabled)
         {
-            wizard.ps.selected_provider = 7; // Claude CLI
+            wizard.ps.selected_provider = resolve("claude-cli");
             if let Some(model) = &config
                 .providers
                 .claude_cli
@@ -584,7 +588,7 @@ impl OnboardingWizard {
             .as_ref()
             .is_some_and(|p| p.enabled)
         {
-            wizard.ps.selected_provider = 8; // OpenCode CLI
+            wizard.ps.selected_provider = resolve("opencode-cli");
             if let Some(model) = &config
                 .providers
                 .opencode_cli
@@ -599,8 +603,7 @@ impl OnboardingWizard {
             .as_ref()
             .is_some_and(|p| p.enabled)
         {
-            wizard.ps.selected_provider =
-                crate::tui::provider_selector::index_of_provider("codex-cli").unwrap_or(9);
+            wizard.ps.selected_provider = resolve("codex-cli");
             if let Some(model) = &config
                 .providers
                 .codex_cli

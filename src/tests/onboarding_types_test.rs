@@ -79,21 +79,36 @@ fn anthropic_is_first_provider() {
 
 #[test]
 fn custom_provider_is_last() {
-    assert_eq!(PROVIDERS[13].name, "Custom OpenAI-Compatible");
+    let last = PROVIDERS.last().expect("PROVIDERS must not be empty");
+    assert_eq!(last.name, "Custom OpenAI-Compatible");
 }
 
 #[test]
 fn all_providers_have_key_label_and_help() {
-    for (i, p) in PROVIDERS.iter().enumerate() {
-        // CLI / no-key providers: Claude CLI (7), OpenCode CLI (8),
-        // Codex CLI (9), OpenCode (10), Ollama (12).
-        if !matches!(i, 7 | 8 | 9 | 10 | 12) {
-            assert!(!p.key_label.is_empty(), "provider {} missing key_label", i);
+    // No-key providers route auth through their CLI binary or local server;
+    // skip the key_label assertion for them. Filter by id, not by index, so
+    // reordering PROVIDERS doesn't require bumping numeric literals.
+    const NO_KEY_IDS: &[&str] = &[
+        "claude-cli",
+        "opencode-cli",
+        "codex-cli",
+        "opencode",
+        "ollama",
+    ];
+
+    for p in PROVIDERS.iter() {
+        // The dynamic Custom entry has an empty id but does take a key.
+        if !NO_KEY_IDS.contains(&p.id) {
+            assert!(
+                !p.key_label.is_empty(),
+                "provider {} missing key_label",
+                p.id
+            );
         }
         assert!(
             !p.help_lines.is_empty(),
             "provider {} missing help_lines",
-            i
+            p.id
         );
     }
 }

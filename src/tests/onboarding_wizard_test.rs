@@ -447,32 +447,38 @@ fn test_selected_model_name_uses_fetched() {
 
 #[test]
 fn test_supports_model_fetch() {
+    use crate::tui::provider_selector::{CUSTOM_PROVIDER_IDX, index_of_provider};
     let mut wizard = OnboardingWizard::new();
-    wizard.ps.selected_provider = 0; // Anthropic
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 1; // OpenAI
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 2; // GitHub Copilot (has /models endpoint)
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 3; // Gemini
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 4; // OpenRouter
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 5; // Minimax
-    assert!(!wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 6; // z.ai GLM (supports fetch)
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 7; // Claude CLI
-    assert!(!wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 8; // OpenCode CLI (supports fetch)
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 9; // OpenCode API (supports fetch)
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 10; // Qwen — DashScope has no /v1/models
-    assert!(!wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 11; // Ollama (supports fetch via /api/tags)
-    assert!(wizard.ps.supports_model_fetch());
-    wizard.ps.selected_provider = 12; // Custom — no base_url = no fetch
+
+    // (provider id, expected supports_model_fetch). Routes by id so reordering
+    // PROVIDERS doesn't require touching this table.
+    let cases: &[(&str, bool)] = &[
+        ("anthropic", true),
+        ("openai", true),
+        ("github", true),
+        ("gemini", true),
+        ("openrouter", true),
+        ("minimax", false),
+        ("zhipu", true),
+        ("claude-cli", false),
+        ("opencode-cli", true),
+        ("codex-cli", true),
+        ("opencode", true),
+        ("qwen", false), // DashScope has no /v1/models
+        ("ollama", true),
+    ];
+    for (id, expected) in cases {
+        let idx = index_of_provider(id).unwrap_or_else(|| panic!("missing PROVIDERS entry: {id}"));
+        wizard.ps.selected_provider = idx;
+        assert_eq!(
+            wizard.ps.supports_model_fetch(),
+            *expected,
+            "supports_model_fetch mismatch for provider id '{id}' (idx {idx})"
+        );
+    }
+
+    // Custom — no base_url = no fetch.
+    wizard.ps.selected_provider = CUSTOM_PROVIDER_IDX;
     wizard.ps.base_url.clear();
     assert!(!wizard.ps.supports_model_fetch());
     // Custom with base_url set = supports fetch
@@ -957,88 +963,123 @@ fn test_discord_cursor_movement_in_field() {
 
 #[test]
 fn test_provider_display_order_no_customs() {
+    use crate::tui::provider_selector::{CUSTOM_PROVIDER_IDX, index_of_provider};
     let mut wizard = clean_wizard();
     wizard.ps.custom_names.clear();
     let order = wizard.ps.provider_display_order();
-    // Named providers sorted alphabetically, then 13 ("+ New Custom") last.
-    // Anthropic(0), Claude CLI(7), Codex CLI(9), GitHub(2), Gemini(3), Minimax(5),
-    // Ollama(12), OpenAI(1), OpenCode(10), OpenCode CLI(8), OpenRouter(4),
-    // Qwen(11), z.ai GLM(6)
-    assert_eq!(order, vec![0, 7, 9, 2, 3, 5, 12, 1, 10, 8, 4, 11, 6, 13]);
+    let expected = vec![
+        index_of_provider("anthropic").unwrap(),
+        index_of_provider("claude-cli").unwrap(),
+        index_of_provider("codex-cli").unwrap(),
+        index_of_provider("github").unwrap(),
+        index_of_provider("gemini").unwrap(),
+        index_of_provider("minimax").unwrap(),
+        index_of_provider("ollama").unwrap(),
+        index_of_provider("openai").unwrap(),
+        index_of_provider("opencode").unwrap(),
+        index_of_provider("opencode-cli").unwrap(),
+        index_of_provider("openrouter").unwrap(),
+        index_of_provider("qwen").unwrap(),
+        index_of_provider("zhipu").unwrap(),
+        CUSTOM_PROVIDER_IDX,
+    ];
+    assert_eq!(order, expected);
 }
 
 #[test]
 fn test_provider_display_order_with_customs() {
+    use crate::tui::provider_selector::{
+        CUSTOM_INSTANCES_START, CUSTOM_PROVIDER_IDX, index_of_provider,
+    };
     let mut wizard = clean_wizard();
     wizard.ps.custom_names = vec!["nvidia".into(), "opus".into(), "opusdistil".into()];
     let order = wizard.ps.provider_display_order();
-    // Named providers sorted alphabetically, then 14,15,16 existing customs,
-    // 13 ("+ New Custom") last.
-    assert_eq!(
-        order,
-        vec![0, 7, 9, 2, 3, 5, 12, 1, 10, 8, 4, 11, 6, 14, 15, 16, 13]
-    );
+    let expected = vec![
+        index_of_provider("anthropic").unwrap(),
+        index_of_provider("claude-cli").unwrap(),
+        index_of_provider("codex-cli").unwrap(),
+        index_of_provider("github").unwrap(),
+        index_of_provider("gemini").unwrap(),
+        index_of_provider("minimax").unwrap(),
+        index_of_provider("ollama").unwrap(),
+        index_of_provider("openai").unwrap(),
+        index_of_provider("opencode").unwrap(),
+        index_of_provider("opencode-cli").unwrap(),
+        index_of_provider("openrouter").unwrap(),
+        index_of_provider("qwen").unwrap(),
+        index_of_provider("zhipu").unwrap(),
+        CUSTOM_INSTANCES_START,
+        CUSTOM_INSTANCES_START + 1,
+        CUSTOM_INSTANCES_START + 2,
+        CUSTOM_PROVIDER_IDX,
+    ];
+    assert_eq!(order, expected);
 }
 
 #[test]
 fn test_provider_nav_down_from_last_static_goes_to_first_custom() {
+    use crate::tui::provider_selector::{CUSTOM_INSTANCES_START, index_of_provider};
     let mut wizard = clean_wizard();
     wizard.step = OnboardingStep::ProviderAuth;
     wizard.auth_field = AuthField::Provider;
     wizard.ps.custom_names = vec!["nvidia".into(), "opus".into()];
-    wizard.ps.selected_provider = 6; // z.ai GLM (last named alphabetically)
+    // z.ai GLM is the last named provider alphabetically.
+    wizard.ps.selected_provider = index_of_provider("zhipu").expect("zhipu in PROVIDERS");
 
     wizard.handle_key(key(KeyCode::Down));
-    // Should go to nvidia (index 14 = CUSTOM_INSTANCES_START), not "+ New Custom" (index 13)
     assert_eq!(
-        wizard.ps.selected_provider, 14,
+        wizard.ps.selected_provider, CUSTOM_INSTANCES_START,
         "Down from z.ai GLM should go to first custom provider, not +New Custom"
     );
 }
 
 #[test]
 fn test_provider_nav_down_through_customs_to_new() {
+    use crate::tui::provider_selector::{CUSTOM_INSTANCES_START, CUSTOM_PROVIDER_IDX};
     let mut wizard = clean_wizard();
     wizard.step = OnboardingStep::ProviderAuth;
     wizard.auth_field = AuthField::Provider;
     wizard.ps.custom_names = vec!["nvidia".into()];
-    wizard.ps.selected_provider = 14; // nvidia
+    wizard.ps.selected_provider = CUSTOM_INSTANCES_START; // nvidia
 
     wizard.handle_key(key(KeyCode::Down));
-    // Should go to "+ New Custom" (index 13) which is visually last
     assert_eq!(
-        wizard.ps.selected_provider, 13,
+        wizard.ps.selected_provider, CUSTOM_PROVIDER_IDX,
         "Down from last custom should go to +New Custom"
     );
 }
 
 #[test]
 fn test_provider_nav_up_from_new_custom_goes_to_last_custom() {
+    use crate::tui::provider_selector::{CUSTOM_INSTANCES_START, CUSTOM_PROVIDER_IDX};
     let mut wizard = clean_wizard();
     wizard.step = OnboardingStep::ProviderAuth;
     wizard.auth_field = AuthField::Provider;
     wizard.ps.custom_names = vec!["nvidia".into(), "opus".into()];
-    wizard.ps.selected_provider = 13; // "+ New Custom"
+    wizard.ps.selected_provider = CUSTOM_PROVIDER_IDX; // "+ New Custom"
 
     wizard.handle_key(key(KeyCode::Up));
-    // Should go to opus (index 15), not Ollama (index 12)
+    // Should land on the last existing custom (opus = first slot + 1).
     assert_eq!(
-        wizard.ps.selected_provider, 15,
+        wizard.ps.selected_provider,
+        CUSTOM_INSTANCES_START + 1,
         "Up from +New Custom should go to last custom provider"
     );
 }
 
 #[test]
 fn test_provider_nav_up_from_first_custom_goes_to_last_static() {
+    use crate::tui::provider_selector::{CUSTOM_INSTANCES_START, index_of_provider};
     let mut wizard = clean_wizard();
     wizard.step = OnboardingStep::ProviderAuth;
     wizard.auth_field = AuthField::Provider;
     wizard.ps.custom_names = vec!["nvidia".into(), "opus".into()];
-    wizard.ps.selected_provider = 14; // nvidia (first custom — CUSTOM_INSTANCES_START=14)
+    wizard.ps.selected_provider = CUSTOM_INSTANCES_START; // nvidia (first custom)
 
     wizard.handle_key(key(KeyCode::Up));
     assert_eq!(
-        wizard.ps.selected_provider, 6,
+        wizard.ps.selected_provider,
+        index_of_provider("zhipu").expect("zhipu in PROVIDERS"),
         "Up from first custom should go to z.ai GLM (last named alphabetically)"
     );
 }
@@ -1055,10 +1096,11 @@ fn test_provider_nav_clamps_at_top_and_bottom() {
     wizard.handle_key(key(KeyCode::Up));
     assert_eq!(wizard.ps.selected_provider, 0);
 
-    // At bottom ("+ New Custom" = CUSTOM_PROVIDER_IDX = 13), Down stays
-    wizard.ps.selected_provider = 13;
+    // At bottom ("+ New Custom" = CUSTOM_PROVIDER_IDX), Down stays.
+    use crate::tui::provider_selector::CUSTOM_PROVIDER_IDX;
+    wizard.ps.selected_provider = CUSTOM_PROVIDER_IDX;
     wizard.handle_key(key(KeyCode::Down));
-    assert_eq!(wizard.ps.selected_provider, 13);
+    assert_eq!(wizard.ps.selected_provider, CUSTOM_PROVIDER_IDX);
 }
 
 #[test]

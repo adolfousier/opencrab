@@ -29,21 +29,21 @@ fn test_provider_count_matches() {
 
 #[test]
 fn test_is_custom_provider() {
+    use crate::tui::provider_selector::CUSTOM_PROVIDER_IDX;
     let mut wizard = OnboardingWizard::new();
 
-    // Index 13 is Custom (last)
-    wizard.ps.selected_provider = 13;
+    wizard.ps.selected_provider = CUSTOM_PROVIDER_IDX;
     assert!(wizard.ps.is_custom());
 
-    // Other indices are not Custom
-    wizard.ps.selected_provider = 0;
-    assert!(!wizard.ps.is_custom());
-    wizard.ps.selected_provider = 1;
-    assert!(!wizard.ps.is_custom());
-    wizard.ps.selected_provider = 2;
-    assert!(!wizard.ps.is_custom());
-    wizard.ps.selected_provider = 9;
-    assert!(!wizard.ps.is_custom());
+    // Any other static index is not Custom.
+    for idx in 0..CUSTOM_PROVIDER_IDX {
+        wizard.ps.selected_provider = idx;
+        assert!(
+            !wizard.ps.is_custom(),
+            "index {} should not be custom",
+            idx
+        );
+    }
 }
 
 #[test]
