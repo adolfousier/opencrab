@@ -38,11 +38,7 @@ fn test_is_custom_provider() {
     // Any other static index is not Custom.
     for idx in 0..CUSTOM_PROVIDER_IDX {
         wizard.ps.selected_provider = idx;
-        assert!(
-            !wizard.ps.is_custom(),
-            "index {} should not be custom",
-            idx
-        );
+        assert!(!wizard.ps.is_custom(), "index {} should not be custom", idx);
     }
 }
 
