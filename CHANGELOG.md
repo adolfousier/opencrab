@@ -5,6 +5,40 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.18] - 2026-05-10
+
+### Added
+
+- **Codex CLI built-in provider** — full subprocess-based integration with OpenAI's `@openai/codex` CLI. User authenticates once via `codex` CLI; OpenCrabs piggybacks on cached credentials (zero API key handling). Non-interactive mode via `codex exec --json` with JSONL streaming. Models: GPT-5.5, GPT-5.4, GPT-5.3-Codex. Wired into `/models` picker, `/onboard` wizard, factory registry, and config (`[providers.codex_cli]`).
+- **Repo-audit skill** — language-agnostic repository health checks. 5-phase pipeline: language detection → native tool execution → git metrics → language-specific AST analysis → scoring + recommendations. Covers Rust, JS/TS, Python, Go with per-language metrics for error handling, dependencies, naming conventions, module structure, and god-file detection.
+- **Generic `deliver_api_key` for cron jobs** — HTTP webhook Bearer token auth configurable per-job via `cron_manage` tool. Replaces hardcoded provider-specific auth in `deliver_http`. New `deliver_api_key` column on `cron_jobs` table (migration 21).
+- **`browser_close` tool** — close browser tabs and free CDP sessions. Prevents stale page reuse across browser actions. Includes opt-in e2e regression suite.
+
+### Fixed
+
+#### Providers & Security
+- **Gemini API key leaked in URL query string** — `analyze_video` passed the API key as `?key=...` in two call sites (resumable upload init + file-state polling), triggering CodeQL #64 (HIGH). Moved to `x-goog-api-key` header, matching `analyze_image` and `generate_image`.
+- **Cloud handshake timeout killing slow-but-healthy providers** — bumped from 30s to 60s. Routing proxies like dialagram legitimately take 20-45s; 30s was murdering mid-request.
+
+#### Browser
+- **Network idle wait after navigate** — was only waiting for CDP `load` event, missing async fetches. Now waits for `networkIdle`.
+- **CDP manager lock held across await** — lock was held during screenshot await, blocking concurrent browser operations. Dropped before await.
+- **Missing CDP pre-flight health check** — screenshot could fail on stale CDP connection. Added health check before capture.
+- **Silently dropped browser errors** — navigate errors were swallowed with `let _ =`. Now logged at WARN.
+
+#### Stream & TUI
+- **File paths starting with `/` treated as slash command typos** — `/Users/.../file.pdf yo crabs check this` triggered "Unknown command". Added `looks_like_file_path()` helper gating both TUI and channel slash-command handlers.
+- **Truncation continuations triggered provider fallback** — mid-sentence continuations should stay on the same provider. Fallback now skipped for truncation paths.
+- **Fallback error reason hidden from TUI** — when fallback fired, the underlying error was swallowed. Now surfaced as a system message.
+- **Pipe-delimited rows not hard-broken** — when not recognized as a table, pipe rows ran together. Added hard-break between rows.
+
+### Refactored
+
+- **Extracted `truncation.rs`** — truncation-mid-sentence continuation path pulled out of the main service module.
+- **Extracted `feedback.rs`** — feedback ledger writes isolated into their own module.
+- **Extracted `compaction.rs`** — `enforce_context_budget` logic separated from service.
+- **Replaced magic provider indices** — hardcoded index lookups replaced with `index_of_provider()` helper across TUI and onboarding.
+
 ## [0.3.17] - 2026-05-06
 
 ### Added
@@ -580,6 +614,7 @@ provider and context budget.
 - **Raise think-tag safety valve** — long Qwen reasoning blocks no longer
   get partially stripped by the tag filter.
 
+[0.3.18]: https://github.com/adolfousier/opencrabs/compare/v0.3.17...v0.3.18
 [0.3.17]: https://github.com/adolfousier/opencrabs/compare/v0.3.16...v0.3.17
 [0.3.16]: https://github.com/adolfousier/opencrabs/compare/v0.3.15...v0.3.16
 [0.3.15]: https://github.com/adolfousier/opencrabs/compare/v0.3.14...v0.3.15

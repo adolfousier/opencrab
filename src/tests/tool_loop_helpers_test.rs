@@ -78,7 +78,7 @@ fn strip_ansi_output_strips_24bit_truecolor() {
 // ── extract_path_for_recent_buffer ────────────────────────────────
 
 fn cwd() -> PathBuf {
-    PathBuf::from("/tmp/opencrabs-tool-loop-test")
+    std::env::temp_dir().join("opencrabs-tool-loop-test")
 }
 
 #[test]
@@ -134,6 +134,7 @@ fn extract_path_resolves_relative_against_cwd() {
 }
 
 #[test]
+#[cfg(unix)]
 fn extract_path_passes_through_absolute_path() {
     // Already-absolute paths must round-trip unchanged.
     let result =
@@ -142,6 +143,16 @@ fn extract_path_passes_through_absolute_path() {
 }
 
 #[test]
+#[cfg(windows)]
+fn extract_path_passes_through_absolute_path() {
+    // On Windows, absolute paths require a drive letter.
+    let result =
+        extract_path_for_recent_buffer("read_file", &json!({ "path": "C:\\Windows\\System32\\drivers\\etc\\hosts" }), &cwd());
+    assert_eq!(result, Some(PathBuf::from("C:\\Windows\\System32\\drivers\\etc\\hosts")));
+}
+
+#[test]
+#[cfg(unix)]
 fn extract_path_covers_all_documented_tools() {
     // Pin the documented set of path-bearing tools (read_file, edit_file,
     // write_file, ls, grep). If any are removed silently the recent-
@@ -152,6 +163,20 @@ fn extract_path_covers_all_documented_tools() {
         assert_eq!(
             result,
             Some(PathBuf::from("/abs/file")),
+            "tool '{tool}' must contribute to recent_paths"
+        );
+    }
+}
+
+#[test]
+#[cfg(windows)]
+fn extract_path_covers_all_documented_tools() {
+    // On Windows, absolute paths require a drive letter.
+    for tool in &["read_file", "edit_file", "write_file", "ls", "grep"] {
+        let result = extract_path_for_recent_buffer(tool, &json!({ "path": "C:\\abs\\file" }), &cwd());
+        assert_eq!(
+            result,
+            Some(PathBuf::from("C:\\abs\\file")),
             "tool '{tool}' must contribute to recent_paths"
         );
     }
