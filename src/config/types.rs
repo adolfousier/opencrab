@@ -631,6 +631,10 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub opencode_cli: Option<ProviderConfig>,
 
+    /// Codex CLI (ChatGPT/Codex subscription) — direct subprocess, no API key needed
+    #[serde(default)]
+    pub codex_cli: Option<ProviderConfig>,
+
     /// OpenCode API — native provider for Go and Zen plans (opencode.ai)
     #[serde(default)]
     pub opencode: Option<ProviderConfig>,
@@ -709,6 +713,15 @@ impl ProviderConfigs {
                 .clone()
                 .unwrap_or_else(|| "opencode/gpt-5-nano".to_string());
             return ("opencode".to_string(), model);
+        }
+        if let Some(c) = self.codex_cli.as_ref()
+            && c.enabled
+        {
+            let model = c
+                .default_model
+                .clone()
+                .unwrap_or_else(|| "gpt-5".to_string());
+            return ("codex-cli".to_string(), model);
         }
         let candidates: &[(&str, Option<&ProviderConfig>)] = &[
             ("qwen", self.qwen.as_ref()),
@@ -3203,6 +3216,20 @@ pub fn resolve_provider_from_config(config: &Config) -> (&str, &str) {
             .and_then(|p| p.default_model.as_deref())
             .unwrap_or("opencode/gpt-5-nano");
         return ("OpenCode CLI", model);
+    }
+    if config
+        .providers
+        .codex_cli
+        .as_ref()
+        .is_some_and(|p| p.enabled)
+    {
+        let model = config
+            .providers
+            .codex_cli
+            .as_ref()
+            .and_then(|p| p.default_model.as_deref())
+            .unwrap_or("gpt-5");
+        return ("Codex CLI", model);
     }
     if config.providers.qwen.as_ref().is_some_and(|p| p.enabled) {
         let model = config
