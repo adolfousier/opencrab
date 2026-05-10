@@ -19,6 +19,7 @@ use super::{
     Provider,
     anthropic::AnthropicProvider,
     claude_cli::ClaudeCliProvider,
+    codex_cli::CodexCliProvider,
     custom_openai_compatible::{BodyTransformFn, OpenAIProvider},
     gemini::GeminiProvider,
     opencode_cli::OpenCodeCliProvider,
@@ -83,6 +84,14 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
             is_enabled: |c| c.providers.opencode_cli.as_ref().is_some_and(|p| p.enabled),
             factory: sync_factory(try_create_opencode_cli),
             config_field: |c| c.providers.opencode_cli.as_ref(),
+        },
+        ProviderRegistration {
+            display_name: "Codex CLI",
+            session_id: "codex-cli",
+            aliases: &["codex_cli"],
+            is_enabled: |c| c.providers.codex_cli.as_ref().is_some_and(|p| p.enabled),
+            factory: sync_factory(try_create_codex_cli),
+            config_field: |c| c.providers.codex_cli.as_ref(),
         },
         ProviderRegistration {
             display_name: "OpenCode",
@@ -179,6 +188,7 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
 pub const PROVIDER_NAMES: &[&str] = &[
     "Claude CLI",
     "OpenCode CLI",
+    "Codex CLI",
     "OpenCode",
     "Qwen",
     "Anthropic",
@@ -1097,6 +1107,30 @@ fn try_create_opencode_cli(config: &Config) -> Result<Option<Arc<dyn Provider>>>
         }
         Err(e) => {
             tracing::warn!("OpenCode CLI enabled but binary not found: {}", e);
+            Ok(None)
+        }
+    }
+}
+
+/// Try to create Codex CLI provider if configured and binary is available.
+fn try_create_codex_cli(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
+    let cli_config = match &config.providers.codex_cli {
+        Some(cfg) if cfg.enabled => cfg,
+        _ => return Ok(None),
+    };
+
+    match CodexCliProvider::new() {
+        Ok(mut provider) => {
+            if let Some(model) = &cli_config.default_model {
+                provider = provider.with_default_model(model.clone());
+            }
+            tracing::info!(
+                "Using Codex CLI provider (ChatGPT/Codex subscription, no API key needed)"
+            );
+            Ok(Some(Arc::new(provider)))
+        }
+        Err(e) => {
+            tracing::warn!("Codex CLI enabled but binary not found: {}", e);
             Ok(None)
         }
     }
