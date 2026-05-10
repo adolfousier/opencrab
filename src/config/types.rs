@@ -720,7 +720,7 @@ impl ProviderConfigs {
             let model = c
                 .default_model
                 .clone()
-                .unwrap_or_else(|| "gpt-5".to_string());
+                .unwrap_or_else(|| "gpt-5.5".to_string());
             return ("codex-cli".to_string(), model);
         }
         let candidates: &[(&str, Option<&ProviderConfig>)] = &[
@@ -3228,7 +3228,7 @@ pub fn resolve_provider_from_config(config: &Config) -> (&str, &str) {
             .codex_cli
             .as_ref()
             .and_then(|p| p.default_model.as_deref())
-            .unwrap_or("gpt-5");
+            .unwrap_or("gpt-5.5");
         return ("Codex CLI", model);
     }
     if config.providers.qwen.as_ref().is_some_and(|p| p.enabled) {

@@ -125,10 +125,19 @@ default_model = "sonnet"  # "sonnet", "opus", or "haiku"
 # Spawns the local 'codex' CLI directly — piggybacks on the auth stored in
 # ~/.codex/auth.json by `codex login`. No proxy, no API key.
 # Install: npm install -g @openai/codex   (then run `codex` once to sign in)
+# Models per developers.openai.com/codex/models. gpt-5.5 is ChatGPT-auth only;
+# fall back to gpt-5.4 if your account doesn't have 5.5 yet.
 [providers.codex_cli]
 enabled = false
-default_model = "gpt-5"
-models = ["gpt-5", "gpt-5-codex", "gpt-5-mini", "gpt-5-nano"]
+default_model = "gpt-5.5"
+models = [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
+]
 
 # ========================================
 # Minimax Provider (Chinese AI, OpenAI-compatible)

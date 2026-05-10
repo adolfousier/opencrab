@@ -8,12 +8,12 @@ use crate::brain::provider::CodexCliProvider;
 use crate::brain::provider::Provider;
 
 #[test]
-fn default_model_is_gpt5() {
+fn default_model_is_gpt55() {
     // Skip on CI: provider construction needs the binary, which isn't on CI.
     let Ok(p) = CodexCliProvider::new() else {
         return;
     };
-    assert_eq!(p.default_model(), "gpt-5");
+    assert_eq!(p.default_model(), "gpt-5.5");
 }
 
 #[test]
@@ -21,18 +21,21 @@ fn with_default_model_overrides() {
     let Ok(p) = CodexCliProvider::new() else {
         return;
     };
-    let p = p.with_default_model("gpt-5-codex".to_string());
-    assert_eq!(p.default_model(), "gpt-5-codex");
+    let p = p.with_default_model("gpt-5.3-codex".to_string());
+    assert_eq!(p.default_model(), "gpt-5.3-codex");
 }
 
 #[test]
-fn supported_models_includes_gpt5_family() {
+fn supported_models_includes_recommended_set() {
     let Ok(p) = CodexCliProvider::new() else {
         return;
     };
     let models = p.supported_models();
-    assert!(models.iter().any(|m| m == "gpt-5"));
-    assert!(models.iter().any(|m| m == "gpt-5-codex"));
+    // Recommended (per developers.openai.com/codex/models)
+    assert!(models.iter().any(|m| m == "gpt-5.5"));
+    assert!(models.iter().any(|m| m == "gpt-5.4"));
+    assert!(models.iter().any(|m| m == "gpt-5.4-mini"));
+    assert!(models.iter().any(|m| m == "gpt-5.3-codex"));
 }
 
 #[test]

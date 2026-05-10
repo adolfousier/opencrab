@@ -220,7 +220,14 @@ pub const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
         id: "codex-cli",
         name: "Codex CLI",
-        models: &["gpt-5", "gpt-5-codex", "gpt-5-mini", "gpt-5-nano"],
+        models: &[
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-spark",
+            "gpt-5.2",
+        ],
         key_label: "",
         help_lines: &[
             "Uses local 'codex' CLI subprocess — ChatGPT/Codex auth, no API key needed",

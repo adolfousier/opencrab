@@ -30,11 +30,11 @@ impl CodexCliProvider {
         let path = resolve_codex_path()?;
         Ok(Self {
             codex_path: path,
-            default_model: "gpt-5".to_string(),
+            default_model: "gpt-5.5".to_string(),
         })
     }
 
-    /// Override the default model (e.g. "gpt-5", "gpt-5-codex").
+    /// Override the default model (e.g. "gpt-5.5", "gpt-5.4", "gpt-5.3-codex").
     pub fn with_default_model(mut self, model: String) -> Self {
         self.default_model = model;
         self
@@ -704,15 +704,18 @@ impl Provider for CodexCliProvider {
 
     fn supported_models(&self) -> Vec<String> {
         // Codex resolves whatever the user has access to via their
-        // ChatGPT/Codex auth — we list a few common ids so the picker
-        // shows something reasonable. The CLI itself validates the model.
+        // ChatGPT/Codex auth — we list the recommended set so the picker
+        // shows sensible defaults. The CLI itself validates the model.
+        // Source: developers.openai.com/codex/models (recommended +
+        // alternatives). gpt-5.5 is ChatGPT-auth only; gpt-5.4 is the
+        // recommended fallback when 5.5 isn't available in the account.
         vec![
-            "gpt-5".to_string(),
-            "gpt-5-codex".to_string(),
-            "gpt-5-mini".to_string(),
-            "gpt-5-nano".to_string(),
-            "o3".to_string(),
-            "o3-mini".to_string(),
+            "gpt-5.5".to_string(),
+            "gpt-5.4".to_string(),
+            "gpt-5.4-mini".to_string(),
+            "gpt-5.3-codex".to_string(),
+            "gpt-5.3-codex-spark".to_string(),
+            "gpt-5.2".to_string(),
         ]
     }
 
