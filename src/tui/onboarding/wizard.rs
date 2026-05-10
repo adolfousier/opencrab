@@ -267,6 +267,18 @@ impl OnboardingWizard {
                         String::new(),
                         String::new(),
                     )
+                } else if config
+                    .providers
+                    .codex_cli
+                    .as_ref()
+                    .is_some_and(|p| p.enabled)
+                {
+                    (
+                        crate::tui::provider_selector::index_of_provider("codex-cli").unwrap_or(0),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    )
                 } else if config.providers.qwen.as_ref().is_some_and(|p| p.enabled) {
                     (
                         crate::tui::provider_selector::index_of_provider("qwen").unwrap_or(0),
@@ -576,6 +588,22 @@ impl OnboardingWizard {
             if let Some(model) = &config
                 .providers
                 .opencode_cli
+                .as_ref()
+                .and_then(|p| p.default_model.clone())
+            {
+                wizard.ps.custom_model = model.clone();
+            }
+        } else if config
+            .providers
+            .codex_cli
+            .as_ref()
+            .is_some_and(|p| p.enabled)
+        {
+            wizard.ps.selected_provider =
+                crate::tui::provider_selector::index_of_provider("codex-cli").unwrap_or(9);
+            if let Some(model) = &config
+                .providers
+                .codex_cli
                 .as_ref()
                 .and_then(|p| p.default_model.clone())
             {

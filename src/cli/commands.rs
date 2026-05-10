@@ -405,6 +405,7 @@ pub(crate) async fn cmd_doctor(config: &crate::config::Config) -> Result<()> {
     for (name, desc) in [
         ("claude", "Claude CLI provider"),
         ("opencode", "OpenCode CLI provider"),
+        ("codex", "Codex CLI provider"),
         ("docker", "container runtime"),
         ("ffmpeg", "media processing"),
         ("gh", "GitHub CLI"),

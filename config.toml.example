@@ -120,6 +120,17 @@ enabled = false
 default_model = "sonnet"  # "sonnet", "opus", or "haiku"
 
 # ========================================
+# Codex CLI (ChatGPT/Codex Subscription — no API key needed)
+# ========================================
+# Spawns the local 'codex' CLI directly — piggybacks on the auth stored in
+# ~/.codex/auth.json by `codex login`. No proxy, no API key.
+# Install: npm install -g @openai/codex   (then run `codex` once to sign in)
+[providers.codex_cli]
+enabled = false
+default_model = "gpt-5"
+models = ["gpt-5", "gpt-5-codex", "gpt-5-mini", "gpt-5-nano"]
+
+# ========================================
 # Minimax Provider (Chinese AI, OpenAI-compatible)
 # ========================================
 # Note: Minimax does NOT have a /models endpoint, so add models manually

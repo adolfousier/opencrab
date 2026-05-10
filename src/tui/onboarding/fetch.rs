@@ -146,6 +146,11 @@ pub fn is_first_time() -> bool {
             .opencode_cli
             .as_ref()
             .is_some_and(|p| p.enabled)
+        || config
+            .providers
+            .codex_cli
+            .as_ref()
+            .is_some_and(|p| p.enabled)
         || config.providers.qwen.as_ref().is_some_and(|p| p.enabled)
         || config.providers.ollama.as_ref().is_some_and(|p| p.enabled)
         || config
@@ -204,6 +209,20 @@ pub async fn fetch_provider_models(
     // OpenCode CLI — fetch models via `opencode models` command
     if provider_id == "opencode-cli" {
         return fetch_opencode_models().await;
+    }
+
+    // Codex CLI — model list is curated; codex itself has no models endpoint.
+    if provider_id == "codex-cli" {
+        let models = crate::tui::provider_selector::load_default_models("codex-cli");
+        if !models.is_empty() {
+            return models;
+        }
+        return vec![
+            "gpt-5".to_string(),
+            "gpt-5-codex".to_string(),
+            "gpt-5-mini".to_string(),
+            "gpt-5-nano".to_string(),
+        ];
     }
 
     // Qwen (DashScope): no /v1/models endpoint on the OpenAI-compat path,

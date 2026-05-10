@@ -773,6 +773,9 @@ impl App {
         if let Some(ref mut p) = config.providers.opencode_cli {
             p.enabled = false;
         }
+        if let Some(ref mut p) = config.providers.codex_cli {
+            p.enabled = false;
+        }
         if let Some(ref mut p) = config.providers.opencode {
             p.enabled = false;
         }
@@ -975,6 +978,17 @@ impl App {
                     ..Default::default()
                 });
             }
+            "codex-cli" => {
+                config.providers.codex_cli = Some(ProviderConfig {
+                    enabled: true,
+                    api_key: None,
+                    base_url: None,
+                    default_model: Some(default_model.to_string()),
+                    models: vec![],
+                    vision_model: None,
+                    ..Default::default()
+                });
+            }
             "opencode" => {
                 // OpenCode native API provider
                 config.providers.opencode = Some(ProviderConfig {
@@ -1053,6 +1067,7 @@ impl App {
             "zhipu" => "providers.zhipu",
             "claude-cli" => "providers.claude_cli",
             "opencode-cli" => "providers.opencode_cli",
+            "codex-cli" => "providers.codex_cli",
             "opencode" => "providers.opencode",
             "qwen" => "providers.qwen",
             "ollama" => "providers.ollama",
@@ -1099,6 +1114,7 @@ impl App {
             "providers.zhipu",
             "providers.claude_cli",
             "providers.opencode_cli",
+            "providers.codex_cli",
             "providers.opencode",
             "providers.qwen",
             "providers.ollama",
@@ -1185,6 +1201,7 @@ impl App {
                 "providers.zhipu" => cfg.providers.zhipu.map(|p| p.enabled),
                 "providers.claude_cli" => cfg.providers.claude_cli.map(|p| p.enabled),
                 "providers.opencode_cli" => cfg.providers.opencode_cli.map(|p| p.enabled),
+                "providers.codex_cli" => cfg.providers.codex_cli.map(|p| p.enabled),
                 "providers.opencode" => cfg.providers.opencode.map(|p| p.enabled),
                 "providers.qwen" => cfg.providers.qwen.map(|p| p.enabled),
                 "providers.ollama" => cfg.providers.ollama.map(|p| p.enabled),

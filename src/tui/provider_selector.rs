@@ -84,7 +84,7 @@ impl ProviderSelectorState {
 
     pub fn is_cli(&self) -> bool {
         let id = self.provider_id();
-        id == "claude-cli" || id == "opencode-cli"
+        id == "claude-cli" || id == "opencode-cli" || id == "codex-cli"
     }
 
     pub fn is_zhipu(&self) -> bool {
@@ -124,6 +124,7 @@ impl ProviderSelectorState {
                 | "openrouter"
                 | "zhipu"
                 | "opencode-cli"
+                | "codex-cli"
                 | "opencode"
                 | "ollama"
         )
@@ -172,11 +173,11 @@ impl ProviderSelectorState {
             let id = PROVIDERS[idx].id;
             match id {
                 // CLI providers — always "configured" if binary exists
-                "claude-cli" | "opencode-cli" => {
-                    let bin = if id == "claude-cli" {
-                        "claude"
-                    } else {
-                        "opencode"
+                "claude-cli" | "opencode-cli" | "codex-cli" => {
+                    let bin = match id {
+                        "claude-cli" => "claude",
+                        "opencode-cli" => "opencode",
+                        _ => "codex",
                     };
                     which::which(bin).is_ok()
                 }
@@ -521,6 +522,7 @@ pub fn load_default_models(provider_id: &str) -> Vec<String> {
         let section_key = match provider_id {
             "claude-cli" => "claude_cli",
             "opencode-cli" => "opencode_cli",
+            "codex-cli" => "codex_cli",
             "" => "custom", // empty id = custom providers
             other => other,
         };

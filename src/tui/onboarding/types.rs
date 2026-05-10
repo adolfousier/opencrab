@@ -218,6 +218,16 @@ pub const PROVIDERS: &[ProviderInfo] = &[
         ],
     },
     ProviderInfo {
+        id: "codex-cli",
+        name: "Codex CLI",
+        models: &["gpt-5", "gpt-5-codex", "gpt-5-mini", "gpt-5-nano"],
+        key_label: "",
+        help_lines: &[
+            "Uses local 'codex' CLI subprocess — ChatGPT/Codex auth, no API key needed",
+            "Requires: npm install -g @openai/codex (then run 'codex' once to sign in)",
+        ],
+    },
+    ProviderInfo {
         id: "opencode",
         name: "OpenCode",
         models: &[], // Fetched from opencode.ai API

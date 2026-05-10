@@ -32,6 +32,12 @@ pub const KNOWN_PROVIDERS: &[ProviderMeta] = &[
         needs_api_key: false,
     },
     ProviderMeta {
+        id: "codex-cli",
+        display_name: "Codex CLI",
+        config_section: "providers.codex_cli",
+        needs_api_key: false,
+    },
+    ProviderMeta {
         id: "gemini",
         display_name: "Gemini",
         config_section: "providers.gemini",
@@ -104,6 +110,7 @@ pub fn find_provider_meta(name: &str) -> Option<&'static ProviderMeta> {
                 "gemini" => n == "google" || n == "google gemini",
                 "zhipu" => n == "z.ai glm",
                 "claude-cli" => n == "claude_cli",
+                "codex-cli" => n == "codex_cli",
                 // Only `opencode-cli` / `opencode_cli` — never bare "opencode".
                 // A custom provider named "opencode" (which users do create,
                 // pointing at opencode.ai HTTP) must never collide with this
@@ -170,6 +177,7 @@ pub fn config_for<'a>(providers: &'a ProviderConfigs, name: &str) -> Option<&'a 
         Some("minimax") => providers.minimax.as_ref(),
         Some("zhipu") => providers.zhipu.as_ref(),
         Some("claude-cli") => providers.claude_cli.as_ref(),
+        Some("codex-cli") => providers.codex_cli.as_ref(),
         Some("opencode-cli") => providers.opencode_cli.as_ref(),
         Some("opencode") => providers.opencode.as_ref(),
         Some("ollama") => providers.ollama.as_ref(),
