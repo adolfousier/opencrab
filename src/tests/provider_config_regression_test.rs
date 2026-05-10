@@ -75,6 +75,13 @@ fn known_provider_opencode_cli_section() {
 }
 
 #[test]
+fn known_provider_codex_cli_section() {
+    let meta = find_provider_meta("codex_cli").expect("codex_cli must exist");
+    assert_eq!(meta.config_section, "providers.codex_cli");
+    assert!(!meta.needs_api_key);
+}
+
+#[test]
 fn known_provider_opencode_section() {
     let meta = find_provider_meta("opencode").expect("opencode must exist");
     assert_eq!(meta.config_section, "providers.opencode");
@@ -143,6 +150,8 @@ fn normalize_builtin_returns_canonical_id() {
     assert_eq!(normalize_provider_name("Anthropic"), "anthropic");
     assert_eq!(normalize_provider_name("claude_cli"), "claude-cli");
     assert_eq!(normalize_provider_name("opencode_cli"), "opencode-cli");
+    assert_eq!(normalize_provider_name("codex_cli"), "codex-cli");
+    assert_eq!(normalize_provider_name("Codex CLI"), "codex-cli");
     assert_eq!(normalize_provider_name("Ollama"), "ollama");
 }
 
@@ -193,7 +202,7 @@ fn all_known_providers_have_non_empty_display_names() {
 fn known_provider_count_matches_expected() {
     // If this fails, a provider was added/removed.
     // Update this count AND verify all section mappings above.
-    assert_eq!(KNOWN_PROVIDERS.len(), 12);
+    assert_eq!(KNOWN_PROVIDERS.len(), 13);
 }
 
 // ── TUI PROVIDERS sync with KNOWN_PROVIDERS ─────────────────────────
@@ -262,6 +271,7 @@ fn is_first_time_checks_all_known_providers() {
         ("zhipu", "providers.zhipu"),
         ("claude_cli", "providers.claude_cli"),
         ("opencode_cli", "providers.opencode_cli"),
+        ("codex_cli", "providers.codex_cli"),
         ("opencode", "providers.opencode"),
         ("qwen", "providers.qwen"),
         ("ollama", "providers.ollama"),
@@ -298,6 +308,7 @@ fn save_provider_section_routing_covers_all_providers() {
         "zhipu",
         "claude-cli",
         "opencode-cli",
+        "codex-cli",
         "opencode",
         "qwen",
         "ollama",
@@ -336,6 +347,7 @@ fn save_provider_disables_all_known_sections() {
         "providers.zhipu",
         "providers.claude_cli",
         "providers.opencode_cli",
+        "providers.codex_cli",
         "providers.opencode",
         "providers.qwen",
         "providers.ollama",

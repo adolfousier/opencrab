@@ -69,7 +69,7 @@ fn all_steps_have_titles() {
 
 #[test]
 fn provider_count_matches_expected() {
-    assert_eq!(PROVIDERS.len(), 13);
+    assert_eq!(PROVIDERS.len(), 14);
 }
 
 #[test]
@@ -79,14 +79,15 @@ fn anthropic_is_first_provider() {
 
 #[test]
 fn custom_provider_is_last() {
-    assert_eq!(PROVIDERS[12].name, "Custom OpenAI-Compatible");
+    assert_eq!(PROVIDERS[13].name, "Custom OpenAI-Compatible");
 }
 
 #[test]
 fn all_providers_have_key_label_and_help() {
     for (i, p) in PROVIDERS.iter().enumerate() {
-        // Claude CLI (7), OpenCode CLI (8), OpenCode (9), Ollama (11) have no required API key
-        if i != 7 && i != 8 && i != 9 && i != 11 {
+        // CLI / no-key providers: Claude CLI (7), OpenCode CLI (8),
+        // Codex CLI (9), OpenCode (10), Ollama (12).
+        if !matches!(i, 7 | 8 | 9 | 10 | 12) {
             assert!(!p.key_label.is_empty(), "provider {} missing key_label", i);
         }
         assert!(

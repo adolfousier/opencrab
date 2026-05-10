@@ -1,4 +1,4 @@
-use super::*;
+use crate::tui::onboarding::*;
 use crossterm::event::{KeyCode, KeyEvent};
 
 #[test]
@@ -583,7 +583,7 @@ fn test_fetch_models_bad_key_returns_empty() {
 
 // ── handle_text_input / handle_text_paste tests ──
 
-use super::helpers::{handle_text_input, handle_text_paste};
+use crate::tui::onboarding::helpers::{handle_text_input, handle_text_paste};
 
 fn key_mod(code: KeyCode, modifiers: crossterm::event::KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, modifiers)
@@ -960,10 +960,11 @@ fn test_provider_display_order_no_customs() {
     let mut wizard = clean_wizard();
     wizard.ps.custom_names.clear();
     let order = wizard.ps.provider_display_order();
-    // Named providers sorted alphabetically, then 12 ("+ New Custom") last
-    // Anthropic(0), Claude CLI(7), GitHub(2), Gemini(3), Minimax(5), Ollama(11),
-    // OpenAI(1), OpenCode CLI(8), OpenCode(9), OpenRouter(4), Qwen(10), z.ai GLM(6)
-    assert_eq!(order, vec![0, 7, 2, 3, 5, 11, 1, 9, 8, 4, 10, 6, 12]);
+    // Named providers sorted alphabetically, then 13 ("+ New Custom") last.
+    // Anthropic(0), Claude CLI(7), Codex CLI(9), GitHub(2), Gemini(3), Minimax(5),
+    // Ollama(12), OpenAI(1), OpenCode(10), OpenCode CLI(8), OpenRouter(4),
+    // Qwen(11), z.ai GLM(6)
+    assert_eq!(order, vec![0, 7, 9, 2, 3, 5, 12, 1, 10, 8, 4, 11, 6, 13]);
 }
 
 #[test]
@@ -971,10 +972,11 @@ fn test_provider_display_order_with_customs() {
     let mut wizard = clean_wizard();
     wizard.ps.custom_names = vec!["nvidia".into(), "opus".into(), "opusdistil".into()];
     let order = wizard.ps.provider_display_order();
-    // Named providers sorted alphabetically, then 13,14,15 existing customs, 12 ("+ New Custom") last
+    // Named providers sorted alphabetically, then 14,15,16 existing customs,
+    // 13 ("+ New Custom") last.
     assert_eq!(
         order,
-        vec![0, 7, 2, 3, 5, 11, 1, 9, 8, 4, 10, 6, 13, 14, 15, 12]
+        vec![0, 7, 9, 2, 3, 5, 12, 1, 10, 8, 4, 11, 6, 14, 15, 16, 13]
     );
 }
 
@@ -987,9 +989,9 @@ fn test_provider_nav_down_from_last_static_goes_to_first_custom() {
     wizard.ps.selected_provider = 6; // z.ai GLM (last named alphabetically)
 
     wizard.handle_key(key(KeyCode::Down));
-    // Should go to nvidia (index 13 = CUSTOM_INSTANCES_START), not "+ New Custom" (index 12)
+    // Should go to nvidia (index 14 = CUSTOM_INSTANCES_START), not "+ New Custom" (index 13)
     assert_eq!(
-        wizard.ps.selected_provider, 13,
+        wizard.ps.selected_provider, 14,
         "Down from z.ai GLM should go to first custom provider, not +New Custom"
     );
 }
@@ -1000,12 +1002,12 @@ fn test_provider_nav_down_through_customs_to_new() {
     wizard.step = OnboardingStep::ProviderAuth;
     wizard.auth_field = AuthField::Provider;
     wizard.ps.custom_names = vec!["nvidia".into()];
-    wizard.ps.selected_provider = 13; // nvidia
+    wizard.ps.selected_provider = 14; // nvidia
 
     wizard.handle_key(key(KeyCode::Down));
-    // Should go to "+ New Custom" (index 12) which is visually last
+    // Should go to "+ New Custom" (index 13) which is visually last
     assert_eq!(
-        wizard.ps.selected_provider, 12,
+        wizard.ps.selected_provider, 13,
         "Down from last custom should go to +New Custom"
     );
 }
@@ -1016,12 +1018,12 @@ fn test_provider_nav_up_from_new_custom_goes_to_last_custom() {
     wizard.step = OnboardingStep::ProviderAuth;
     wizard.auth_field = AuthField::Provider;
     wizard.ps.custom_names = vec!["nvidia".into(), "opus".into()];
-    wizard.ps.selected_provider = 12; // "+ New Custom"
+    wizard.ps.selected_provider = 13; // "+ New Custom"
 
     wizard.handle_key(key(KeyCode::Up));
-    // Should go to opus (index 14), not Ollama (index 11)
+    // Should go to opus (index 15), not Ollama (index 12)
     assert_eq!(
-        wizard.ps.selected_provider, 14,
+        wizard.ps.selected_provider, 15,
         "Up from +New Custom should go to last custom provider"
     );
 }
@@ -1032,8 +1034,7 @@ fn test_provider_nav_up_from_first_custom_goes_to_last_static() {
     wizard.step = OnboardingStep::ProviderAuth;
     wizard.auth_field = AuthField::Provider;
     wizard.ps.custom_names = vec!["nvidia".into(), "opus".into()];
-    wizard.ps.selected_provider = 13; // nvidia (first custom)
-    // CUSTOM_INSTANCES_START is now 13, not 12
+    wizard.ps.selected_provider = 14; // nvidia (first custom — CUSTOM_INSTANCES_START=14)
 
     wizard.handle_key(key(KeyCode::Up));
     assert_eq!(
@@ -1054,10 +1055,10 @@ fn test_provider_nav_clamps_at_top_and_bottom() {
     wizard.handle_key(key(KeyCode::Up));
     assert_eq!(wizard.ps.selected_provider, 0);
 
-    // At bottom ("+ New Custom" = CUSTOM_PROVIDER_IDX = 12), Down stays
-    wizard.ps.selected_provider = 12;
+    // At bottom ("+ New Custom" = CUSTOM_PROVIDER_IDX = 13), Down stays
+    wizard.ps.selected_provider = 13;
     wizard.handle_key(key(KeyCode::Down));
-    assert_eq!(wizard.ps.selected_provider, 12);
+    assert_eq!(wizard.ps.selected_provider, 13);
 }
 
 #[test]

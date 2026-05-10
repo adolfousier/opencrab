@@ -27,6 +27,7 @@ fn config_with_provider(name: &str) -> Config {
     match name {
         "claude_cli" => providers.claude_cli = Some(cfg),
         "opencode_cli" => providers.opencode_cli = Some(cfg),
+        "codex_cli" => providers.codex_cli = Some(cfg),
         "qwen" => providers.qwen = Some(cfg),
         "anthropic" => providers.anthropic = Some(cfg),
         "openai" => providers.openai = Some(cfg),
@@ -180,6 +181,40 @@ async fn by_name_opencode_cli_underscore() {
             assert!(
                 err.contains("binary") || err.contains("configured") || err.contains("not found"),
                 "Expected opencode_cli resolution error, got: {}",
+                err
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn by_name_codex_cli_hyphen() {
+    let config = Config::default();
+    let result = create_provider_by_name(&config, "codex-cli").await;
+    match &result {
+        Ok(p) => assert_eq!(p.name(), "codex-cli"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("binary") || err.contains("configured") || err.contains("not found"),
+                "Expected codex-cli resolution error, got: {}",
+                err
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn by_name_codex_cli_underscore() {
+    let config = Config::default();
+    let result = create_provider_by_name(&config, "codex_cli").await;
+    match &result {
+        Ok(p) => assert_eq!(p.name(), "codex-cli"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("binary") || err.contains("configured") || err.contains("not found"),
+                "Expected codex_cli resolution error, got: {}",
                 err
             );
         }

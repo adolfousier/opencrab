@@ -8,7 +8,7 @@ mod brain;
 mod channels;
 mod config;
 mod fetch;
-mod helpers;
+pub(crate) mod helpers;
 mod input;
 mod keys;
 mod models;
@@ -16,9 +16,6 @@ mod navigation;
 mod types;
 pub mod voice;
 mod wizard;
-
-#[cfg(test)]
-mod tests;
 
 // Re-export all public types
 pub use types::{

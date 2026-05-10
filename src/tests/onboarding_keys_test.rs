@@ -7,8 +7,8 @@ use crate::tui::onboarding::{OnboardingWizard, PROVIDERS};
 
 #[test]
 fn test_provider_count_matches() {
-    // Verify PROVIDERS array has 13 entries
-    assert_eq!(PROVIDERS.len(), 13);
+    // Verify PROVIDERS array has 14 entries
+    assert_eq!(PROVIDERS.len(), 14);
 
     // Verify provider names
     assert_eq!(PROVIDERS[0].name, "Anthropic Claude");
@@ -20,18 +20,19 @@ fn test_provider_count_matches() {
     assert_eq!(PROVIDERS[6].name, "z.ai GLM");
     assert_eq!(PROVIDERS[7].name, "Claude CLI");
     assert_eq!(PROVIDERS[8].name, "OpenCode CLI");
-    assert_eq!(PROVIDERS[9].name, "OpenCode");
-    assert_eq!(PROVIDERS[10].name, "Qwen");
-    assert_eq!(PROVIDERS[11].name, "Ollama");
-    assert_eq!(PROVIDERS[12].name, "Custom OpenAI-Compatible");
+    assert_eq!(PROVIDERS[9].name, "Codex CLI");
+    assert_eq!(PROVIDERS[10].name, "OpenCode");
+    assert_eq!(PROVIDERS[11].name, "Qwen");
+    assert_eq!(PROVIDERS[12].name, "Ollama");
+    assert_eq!(PROVIDERS[13].name, "Custom OpenAI-Compatible");
 }
 
 #[test]
 fn test_is_custom_provider() {
     let mut wizard = OnboardingWizard::new();
 
-    // Index 12 is Custom (last)
-    wizard.ps.selected_provider = 12;
+    // Index 13 is Custom (last)
+    wizard.ps.selected_provider = 13;
     assert!(wizard.ps.is_custom());
 
     // Other indices are not Custom
