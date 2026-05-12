@@ -635,6 +635,10 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub codex_cli: Option<ProviderConfig>,
 
+    /// Codex OAuth — native device-code flow, stores tokens in ~/.opencrabs/auth/codex.json
+    #[serde(default)]
+    pub codex: Option<ProviderConfig>,
+
     /// OpenCode API — native provider for Go and Zen plans (opencode.ai)
     #[serde(default)]
     pub opencode: Option<ProviderConfig>,

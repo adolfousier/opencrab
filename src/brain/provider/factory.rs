@@ -20,6 +20,7 @@ use super::{
     anthropic::AnthropicProvider,
     claude_cli::ClaudeCliProvider,
     codex_cli::CodexCliProvider,
+    codex_oauth::CodexOAuthProvider,
     custom_openai_compatible::{BodyTransformFn, OpenAIProvider},
     gemini::GeminiProvider,
     opencode_cli::OpenCodeCliProvider,
@@ -92,6 +93,14 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
             is_enabled: |c| c.providers.codex_cli.as_ref().is_some_and(|p| p.enabled),
             factory: sync_factory(try_create_codex_cli),
             config_field: |c| c.providers.codex_cli.as_ref(),
+        },
+        ProviderRegistration {
+            display_name: "Codex",
+            session_id: "codex",
+            aliases: &["codex_oauth"],
+            is_enabled: |c| c.providers.codex.as_ref().is_some_and(|p| p.enabled),
+            factory: sync_factory(try_create_codex_oauth),
+            config_field: |c| c.providers.codex.as_ref(),
         },
         ProviderRegistration {
             display_name: "OpenCode",
@@ -189,6 +198,7 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "Claude CLI",
     "OpenCode CLI",
     "Codex CLI",
+    "Codex",
     "OpenCode",
     "Qwen",
     "Anthropic",
@@ -1131,6 +1141,28 @@ fn try_create_codex_cli(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         }
         Err(e) => {
             tracing::warn!("Codex CLI enabled but binary not found: {}", e);
+            Ok(None)
+        }
+    }
+}
+
+/// Try to create Codex OAuth provider if configured and tokens are available.
+fn try_create_codex_oauth(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
+    let codex_config = match &config.providers.codex {
+        Some(cfg) if cfg.enabled => cfg,
+        _ => return Ok(None),
+    };
+
+    match CodexOAuthProvider::new() {
+        Ok(mut provider) => {
+            if let Some(model) = &codex_config.default_model {
+                provider = provider.with_default_model(model.clone());
+            }
+            tracing::info!("Using Codex provider (OAuth authenticated, no API key needed)");
+            Ok(Some(Arc::new(provider)))
+        }
+        Err(e) => {
+            tracing::warn!("Codex OAuth enabled but not authenticated: {}", e);
             Ok(None)
         }
     }
