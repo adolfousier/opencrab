@@ -211,9 +211,10 @@ pub async fn fetch_provider_models(
         return fetch_opencode_models().await;
     }
 
-    // Codex CLI — model list is curated; codex itself has no models endpoint.
-    if provider_id == "codex-cli" {
-        let models = crate::tui::provider_selector::load_default_models("codex-cli");
+    // Codex CLI & Codex OAuth — model list is curated; no /v1/models endpoint.
+    if provider_id == "codex-cli" || provider_id == "codex" {
+        let config_key = if provider_id == "codex" { "codex" } else { "codex-cli" };
+        let models = crate::tui::provider_selector::load_default_models(config_key);
         if !models.is_empty() {
             return models;
         }

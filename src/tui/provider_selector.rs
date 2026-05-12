@@ -554,6 +554,7 @@ pub fn load_default_models(provider_id: &str) -> Vec<String> {
             "claude-cli" => "claude_cli",
             "opencode-cli" => "opencode_cli",
             "codex-cli" => "codex_cli",
+            "codex" => "codex", // Codex OAuth
             "" => "custom", // empty id = custom providers
             other => other,
         };
