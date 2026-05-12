@@ -585,14 +585,87 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
         )));
         lines.push(Line::from(""));
     } else if is_oauth_provider {
-        // OAuth provider: show hint pointing to onboarding
+        use crate::tui::onboarding::CodexDeviceFlowStatus;
+
         let oauth_name = if app.ps.provider_id() == "github" {
             "GitHub Copilot"
         } else {
             "OpenAI Codex"
         };
         let already_auth = app.ps.has_existing_key;
-        if already_auth {
+
+        if app.ps.provider_id() == "codex" {
+            // Codex OAuth — interactive device-code flow (matches /onboard:provider UX)
+            if already_auth {
+                lines.push(Line::from(Span::styled(
+                    "  ● Authenticated with Codex (OpenAI)",
+                    Style::default().fg(Color::Green),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "  Press Enter to continue, or re-authenticate below",
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+            } else {
+                match &app.ps.codex_device_flow_status {
+                    CodexDeviceFlowStatus::Idle => {
+                        lines.push(Line::from(Span::styled(
+                            "  Uses your OpenAI Codex subscription (no API charges)",
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(Span::styled(
+                            "  Press Enter to sign in with OpenAI",
+                            Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                        )));
+                    }
+                    CodexDeviceFlowStatus::WaitingForUser => {
+                        lines.push(Line::from(Span::styled(
+                            "  1. Go to: https://auth.openai.com/codex/device",
+                            Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                        )));
+                        if let Some(ref code) = app.ps.codex_user_code {
+                            lines.push(Line::from(Span::styled(
+                                format!("  2. Enter code: {}", code),
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            )));
+                        }
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(Span::styled(
+                            "  Waiting for authorization...",
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                    }
+                    CodexDeviceFlowStatus::Complete => {
+                        lines.push(Line::from(Span::styled(
+                            "  ● Authenticated successfully!",
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        )));
+                    }
+                    CodexDeviceFlowStatus::Failed(err) => {
+                        lines.push(Line::from(Span::styled(
+                            format!("  ✗ {}", err),
+                            Style::default().fg(Color::Red),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  Press Enter to try again",
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                    }
+                }
+            }
+        } else if already_auth {
             lines.push(Line::from(Span::styled(
                 format!("  ● Authenticated with {oauth_name}"),
                 Style::default().fg(Color::Green),

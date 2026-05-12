@@ -65,6 +65,10 @@ pub struct ProviderSelectorState {
     pub focused_field: usize,
     /// Whether the provider list is expanded/visible
     pub showing_providers: bool,
+    /// Codex OAuth device flow: user code to display
+    pub codex_user_code: Option<String>,
+    /// Codex OAuth device flow: current status
+    pub codex_device_flow_status: crate::tui::onboarding::CodexDeviceFlowStatus,
 }
 
 impl ProviderSelectorState {
@@ -555,7 +559,7 @@ pub fn load_default_models(provider_id: &str) -> Vec<String> {
             "opencode-cli" => "opencode_cli",
             "codex-cli" => "codex_cli",
             "codex" => "codex", // Codex OAuth
-            "" => "custom", // empty id = custom providers
+            "" => "custom",     // empty id = custom providers
             other => other,
         };
 

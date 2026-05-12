@@ -584,9 +584,10 @@ pub enum GitHubDeviceFlowStatus {
 }
 
 /// Codex OAuth device flow status
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum CodexDeviceFlowStatus {
     /// Not started
+    #[default]
     Idle,
     /// Waiting for user to enter code at verification URL
     WaitingForUser,

@@ -240,12 +240,15 @@ impl App {
             // - Custom provider: provider(0) -> base_url(1) -> api_key(2) -> model(3) -> provider(0)
             let is_custom = self.ps.selected_provider >= CUSTOM_PROVIDER_IDX; // Custom provider index
             let is_oauth = self.ps.is_oauth();
+            let is_codex_oauth = is_oauth && self.ps.provider_id() == "codex";
             let max_field = if is_custom {
                 5
             } else if is_zhipu {
                 4
+            } else if is_codex_oauth && !self.ps.has_existing_key {
+                3 // Codex OAuth not yet authenticated: provider(0) -> oauth(1) -> model(2)
             } else if is_oauth {
-                2 // OAuth: provider(0) -> model(2), skip key field
+                2 // Other OAuth or already authenticated: provider(0) -> model(2), skip key field
             } else {
                 3
             };
@@ -582,8 +585,13 @@ impl App {
                     self.push_system_message(format!("Error: {}", e));
                 } else {
                     // CLI and OAuth providers have no API key — skip straight to model field
-                    self.ps.focused_field = if is_cli_provider || is_oauth_provider {
+                    // Exception: Codex OAuth uses field 1 for device flow
+                    self.ps.focused_field = if is_cli_provider {
                         2
+                    } else if is_oauth_provider && self.ps.provider_id() == "codex" && !self.ps.has_existing_key {
+                        1 // Go to device flow field
+                    } else if is_oauth_provider {
+                        2 // Already authenticated or non-codex OAuth
                     } else {
                         1
                     };
@@ -606,7 +614,100 @@ impl App {
                     .await;
                 }
                 self.ps.focused_field = 2;
-            } else if (self.ps.focused_field == 1 && !is_custom && !is_zhipu)
+            } else if self.ps.focused_field == 1
+                && is_oauth_provider
+                && self.ps.provider_id() == "codex"
+            {
+                // Codex OAuth: field 1 is the device flow trigger
+                use crate::tui::onboarding::CodexDeviceFlowStatus;
+                match &self.ps.codex_device_flow_status {
+                    CodexDeviceFlowStatus::Complete => {
+                        // Already done — move to model field
+                        self.ps.focused_field = 2;
+                    }
+                    CodexDeviceFlowStatus::WaitingForUser => {
+                        // Still waiting — ignore
+                    }
+                    _ => {
+                        // Idle or Failed — start the device flow
+                        self.ps.codex_device_flow_status = CodexDeviceFlowStatus::WaitingForUser;
+                        let sender = self.event_sender();
+                        tokio::spawn(async move {
+                            // Step 1: Request device code
+                            let device =
+                                match crate::brain::provider::codex_oauth::start_device_flow()
+                                    .await
+                                {
+                                    Ok(d) => d,
+                                    Err(e) => {
+                                        let _ =
+                                            sender.send(TuiEvent::CodexOAuthError(e.to_string()));
+                                        return;
+                                    }
+                                };
+
+                            // Send user code for display
+                            let _ =
+                                sender.send(TuiEvent::CodexDeviceCode(device.user_code.clone()));
+
+                            // Step 2: Poll until user authorizes (returns intermediate PKCE code)
+                            let device_code =
+                                match crate::brain::provider::codex_oauth::poll_for_device_code(
+                                    &device.device_auth_id,
+                                    &device.user_code,
+                                    device.interval,
+                                )
+                                .await
+                                {
+                                    Ok(dc) => dc,
+                                    Err(e) => {
+                                        let _ =
+                                            sender.send(TuiEvent::CodexOAuthError(e.to_string()));
+                                        return;
+                                    }
+                                };
+
+                            // Step 3: Exchange PKCE code for final tokens
+                            match crate::brain::provider::codex_oauth::exchange_device_code_for_tokens(
+                                &device_code,
+                            )
+                            .await
+                            {
+                                Ok(token_resp) => {
+                                    let expires_at = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_secs()
+                                        + token_resp.expires_in;
+                                    let tokens =
+                                        crate::brain::provider::codex_oauth::CodexTokens {
+                                            access_token: token_resp.access_token,
+                                            refresh_token: token_resp.refresh_token,
+                                            id_token: token_resp.id_token,
+                                            account_id: token_resp.account_id,
+                                            expires_at,
+                                        };
+                                    if let Err(e) = tokens.save() {
+                                        let _ = sender.send(TuiEvent::CodexOAuthError(format!(
+                                            "Failed to save tokens: {}",
+                                            e
+                                        )));
+                                        return;
+                                    }
+                                    let _ = sender.send(TuiEvent::CodexOAuthComplete);
+                                }
+                                Err(e) => {
+                                    let _ =
+                                        sender.send(TuiEvent::CodexOAuthError(e.to_string()));
+                                }
+                            }
+                        });
+                    }
+                }
+            } else if (self.ps.focused_field == 1
+                && !is_custom
+                && !is_zhipu
+                && !is_oauth_provider)
                 || (self.ps.focused_field == 2 && (is_custom || is_zhipu))
             {
                 // On API key field (field 1 for non-Custom non-zhipu, field 2 for zhipu/Custom)
@@ -1884,7 +1985,7 @@ impl App {
                     });
                 }
                 WizardAction::CodexDeviceFlow => {
-                    wizard.codex_device_flow_status =
+                    wizard.ps.codex_device_flow_status =
                         super::onboarding::CodexDeviceFlowStatus::WaitingForUser;
                     let sender = self.event_sender();
                     tokio::spawn(async move {

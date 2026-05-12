@@ -865,7 +865,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     .add_modifier(Modifier::ITALIC),
             )));
         } else {
-            match &wizard.codex_device_flow_status {
+            match &wizard.ps.codex_device_flow_status {
                 CodexDeviceFlowStatus::Idle => {
                     lines.push(Line::from(Span::styled(
                         "  Uses your OpenAI Codex subscription (no API charges)",
@@ -884,7 +884,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                         "  1. Go to: https://auth.openai.com/codex/device",
                         Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
                     )));
-                    if let Some(ref code) = wizard.codex_user_code {
+                    if let Some(ref code) = wizard.ps.codex_user_code {
                         lines.push(Line::from(Span::styled(
                             format!("  2. Enter code: {}", code),
                             Style::default()
