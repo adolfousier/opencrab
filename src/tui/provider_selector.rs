@@ -87,6 +87,11 @@ impl ProviderSelectorState {
         id == "claude-cli" || id == "opencode-cli" || id == "codex-cli"
     }
 
+    pub fn is_oauth(&self) -> bool {
+        let id = self.provider_id();
+        id == "github" || id == "codex"
+    }
+
     pub fn is_zhipu(&self) -> bool {
         self.provider_id() == "zhipu"
     }
@@ -125,6 +130,7 @@ impl ProviderSelectorState {
                 | "zhipu"
                 | "opencode-cli"
                 | "codex-cli"
+                | "codex"
                 | "opencode"
                 | "ollama"
         )
@@ -188,6 +194,13 @@ impl ProviderSelectorState {
                     .as_ref()
                     .and_then(|p| p.api_key.as_ref())
                     .is_some_and(|k| !k.is_empty()),
+                "codex" => {
+                    // Check for OAuth tokens at ~/.opencrabs/auth/codex.json
+                    let token_path = crate::config::opencrabs_home()
+                        .join("auth")
+                        .join("codex.json");
+                    token_path.exists()
+                }
                 "qwen" => config
                     .providers
                     .qwen
@@ -228,6 +241,24 @@ impl ProviderSelectorState {
                 let id = PROVIDERS[self.selected_provider].id;
                 if self.is_cli() {
                     false // CLI providers — no API key
+                } else if self.is_oauth() {
+                    // OAuth providers — check for token file, not API key
+                    let id = PROVIDERS[self.selected_provider].id;
+                    if id == "codex" {
+                        let token_path = crate::config::opencrabs_home()
+                            .join("auth")
+                            .join("codex.json");
+                        token_path.exists()
+                    } else if id == "github" {
+                        config
+                            .providers
+                            .github
+                            .as_ref()
+                            .and_then(|p| p.api_key.as_ref())
+                            .is_some_and(|k| !k.is_empty())
+                    } else {
+                        false
+                    }
                 } else {
                     has_nonempty_key(crate::utils::providers::config_for(&config.providers, id))
                 }

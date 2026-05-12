@@ -239,10 +239,13 @@ impl App {
             // - Zhipu: provider(0) -> endpoint_type(1) -> api_key(2) -> model(3) -> provider(0)
             // - Custom provider: provider(0) -> base_url(1) -> api_key(2) -> model(3) -> provider(0)
             let is_custom = self.ps.selected_provider >= CUSTOM_PROVIDER_IDX; // Custom provider index
+            let is_oauth = self.ps.is_oauth();
             let max_field = if is_custom {
                 5
             } else if is_zhipu {
                 4
+            } else if is_oauth {
+                2 // OAuth: provider(0) -> model(2), skip key field
             } else {
                 3
             };
@@ -565,6 +568,7 @@ impl App {
             );
 
             let is_cli_provider = self.ps.is_cli();
+            let is_oauth_provider = self.ps.is_oauth();
 
             if self.ps.focused_field == 0 {
                 // On provider field - save config, DON'T close dialog.
@@ -577,8 +581,12 @@ impl App {
                 {
                     self.push_system_message(format!("Error: {}", e));
                 } else {
-                    // CLI providers have no API key — skip straight to model field
-                    self.ps.focused_field = if is_cli_provider { 2 } else { 1 };
+                    // CLI and OAuth providers have no API key — skip straight to model field
+                    self.ps.focused_field = if is_cli_provider || is_oauth_provider {
+                        2
+                    } else {
+                        1
+                    };
                 }
             } else if self.ps.focused_field == 1 && is_zhipu {
                 // z.ai GLM: field 1 is endpoint type, move to field 2 (api_key)
@@ -1878,7 +1886,8 @@ impl App {
 
                         // Step 2-3: Poll until user authorizes
                         match crate::brain::provider::codex_oauth::poll_for_tokens(
-                            &device.device_code,
+                            &device.device_auth_id,
+                            &device.user_code,
                             device.interval,
                         )
                         .await

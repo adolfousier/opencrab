@@ -116,15 +116,39 @@ impl CodexTokens {
 // ─── Device Flow (used during onboarding) ────────────────────────────────────
 
 /// Response from the device code request.
+/// OpenAI's actual field names differ from the OAuth 2.0 device flow spec.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviceFlowResponse {
-    pub device_code: String,
+    /// OpenAI calls this `device_auth_id` (not `device_code`)
+    #[serde(alias = "device_code")]
+    pub device_auth_id: String,
     pub user_code: String,
-    pub verification_uri: String,
+    /// OpenAI doesn't return this — we hardcode the verification URL
+    #[serde(default)]
+    pub verification_uri: Option<String>,
+    /// OpenAI returns `expires_at` (ISO datetime), not `expires_in`
+    #[serde(default)]
+    pub expires_at: Option<String>,
     #[serde(default)]
     pub expires_in: u64,
-    #[serde(default)]
+    /// OpenAI returns interval as a string ("5"), not a number
+    #[serde(default, deserialize_with = "deserialize_string_or_u64")]
     pub interval: u64,
+}
+
+fn deserialize_string_or_u64<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| D::Error::custom("expected u64")),
+        serde_json::Value::String(s) => s
+            .parse::<u64>()
+            .map_err(|e| D::Error::custom(e.to_string())),
+        _ => Err(D::Error::custom("expected string or number")),
+    }
 }
 
 /// Response from the token endpoint.
@@ -172,7 +196,11 @@ pub async fn start_device_flow() -> anyhow::Result<DeviceFlowResponse> {
 }
 
 /// Poll until the user authorizes the device. Returns the token response.
-pub async fn poll_for_tokens(device_code: &str, interval: u64) -> anyhow::Result<TokenResponse> {
+pub async fn poll_for_tokens(
+    device_auth_id: &str,
+    user_code: &str,
+    interval: u64,
+) -> anyhow::Result<TokenResponse> {
     let client = reqwest::Client::new();
     let mut poll_interval = Duration::from_secs(interval.max(5));
 
@@ -185,8 +213,8 @@ pub async fn poll_for_tokens(device_code: &str, interval: u64) -> anyhow::Result
             .header("accept", "application/json")
             .json(&serde_json::json!({
                 "client_id": CODEX_CLIENT_ID,
-                "device_code": device_code,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "device_auth_id": device_auth_id,
+                "user_code": user_code,
             }))
             .send()
             .await?;
@@ -454,11 +482,7 @@ impl CodexOAuthProvider {
 
         // Build a placeholder OpenAIProvider — we'll override the token via token_fn
         let mgr_clone = token_manager.clone();
-        let token_fn: TokenFn = Arc::new(move || {
-            mgr_clone
-                .get_cached_token()
-                .unwrap_or_default()
-        });
+        let token_fn: TokenFn = Arc::new(move || mgr_clone.get_cached_token().unwrap_or_default());
 
         let mgr_clone2 = token_manager.clone();
         let account_id = mgr_clone2.get_account_id();

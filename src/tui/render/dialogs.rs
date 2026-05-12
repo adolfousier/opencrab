@@ -511,8 +511,10 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
 
     // API Key field (field 1 for non-Custom, field 2 for Custom; field 2 for zhipu since field 1 = endpoint type)
     // CLI providers have no API key — skip entirely.
+    // OAuth providers (github, codex) — no text input, auth via /onboard:provider
     let is_cli_provider = app.ps.is_cli();
-    if !is_cli_provider {
+    let is_oauth_provider = app.ps.is_oauth();
+    if !is_cli_provider && !is_oauth_provider {
         let is_zhipu = selected_provider.id == "zhipu";
         let key_focused = (focused_field == 1 && !is_custom && !is_zhipu)
             || (focused_field == 2 && (is_custom || is_zhipu));
@@ -581,6 +583,30 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
         )));
+        lines.push(Line::from(""));
+    } else if is_oauth_provider {
+        // OAuth provider: show hint pointing to onboarding
+        let oauth_name = if app.ps.provider_id() == "github" {
+            "GitHub Copilot"
+        } else {
+            "OpenAI Codex"
+        };
+        let already_auth = app.ps.has_existing_key;
+        if already_auth {
+            lines.push(Line::from(Span::styled(
+                format!("  ● Authenticated with {oauth_name}"),
+                Style::default().fg(Color::Green),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  OAuth required — use /onboard:provider to authenticate with {oauth_name}"
+                ),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        }
         lines.push(Line::from(""));
     }
 

@@ -146,9 +146,15 @@ fn extract_path_passes_through_absolute_path() {
 #[cfg(windows)]
 fn extract_path_passes_through_absolute_path() {
     // On Windows, absolute paths require a drive letter.
-    let result =
-        extract_path_for_recent_buffer("read_file", &json!({ "path": "C:\\Windows\\System32\\drivers\\etc\\hosts" }), &cwd());
-    assert_eq!(result, Some(PathBuf::from("C:\\Windows\\System32\\drivers\\etc\\hosts")));
+    let result = extract_path_for_recent_buffer(
+        "read_file",
+        &json!({ "path": "C:\\Windows\\System32\\drivers\\etc\\hosts" }),
+        &cwd(),
+    );
+    assert_eq!(
+        result,
+        Some(PathBuf::from("C:\\Windows\\System32\\drivers\\etc\\hosts"))
+    );
 }
 
 #[test]
@@ -173,7 +179,8 @@ fn extract_path_covers_all_documented_tools() {
 fn extract_path_covers_all_documented_tools() {
     // On Windows, absolute paths require a drive letter.
     for tool in &["read_file", "edit_file", "write_file", "ls", "grep"] {
-        let result = extract_path_for_recent_buffer(tool, &json!({ "path": "C:\\abs\\file" }), &cwd());
+        let result =
+            extract_path_for_recent_buffer(tool, &json!({ "path": "C:\\abs\\file" }), &cwd());
         assert_eq!(
             result,
             Some(PathBuf::from("C:\\abs\\file")),
