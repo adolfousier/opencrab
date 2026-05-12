@@ -82,6 +82,13 @@ fn known_provider_codex_cli_section() {
 }
 
 #[test]
+fn known_provider_codex_oauth_section() {
+    let meta = find_provider_meta("codex").expect("codex must exist");
+    assert_eq!(meta.config_section, "providers.codex");
+    assert!(!meta.needs_api_key);
+}
+
+#[test]
 fn known_provider_opencode_section() {
     let meta = find_provider_meta("opencode").expect("opencode must exist");
     assert_eq!(meta.config_section, "providers.opencode");
@@ -151,7 +158,9 @@ fn normalize_builtin_returns_canonical_id() {
     assert_eq!(normalize_provider_name("claude_cli"), "claude-cli");
     assert_eq!(normalize_provider_name("opencode_cli"), "opencode-cli");
     assert_eq!(normalize_provider_name("codex_cli"), "codex-cli");
+    assert_eq!(normalize_provider_name("codex_oauth"), "codex");
     assert_eq!(normalize_provider_name("Codex CLI"), "codex-cli");
+    assert_eq!(normalize_provider_name("Codex"), "codex");
     assert_eq!(normalize_provider_name("Ollama"), "ollama");
 }
 
@@ -202,7 +211,7 @@ fn all_known_providers_have_non_empty_display_names() {
 fn known_provider_count_matches_expected() {
     // If this fails, a provider was added/removed.
     // Update this count AND verify all section mappings above.
-    assert_eq!(KNOWN_PROVIDERS.len(), 13);
+    assert_eq!(KNOWN_PROVIDERS.len(), 14);
 }
 
 // ── TUI PROVIDERS sync with KNOWN_PROVIDERS ─────────────────────────
@@ -272,6 +281,7 @@ fn is_first_time_checks_all_known_providers() {
         ("claude_cli", "providers.claude_cli"),
         ("opencode_cli", "providers.opencode_cli"),
         ("codex_cli", "providers.codex_cli"),
+        ("codex", "providers.codex"),
         ("opencode", "providers.opencode"),
         ("qwen", "providers.qwen"),
         ("ollama", "providers.ollama"),
@@ -309,6 +319,7 @@ fn save_provider_section_routing_covers_all_providers() {
         "claude-cli",
         "opencode-cli",
         "codex-cli",
+        "codex",
         "opencode",
         "qwen",
         "ollama",
@@ -348,6 +359,7 @@ fn save_provider_disables_all_known_sections() {
         "providers.claude_cli",
         "providers.opencode_cli",
         "providers.codex_cli",
+        "providers.codex",
         "providers.opencode",
         "providers.qwen",
         "providers.ollama",

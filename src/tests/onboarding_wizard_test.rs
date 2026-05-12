@@ -463,6 +463,7 @@ fn test_supports_model_fetch() {
         ("claude-cli", false),
         ("opencode-cli", true),
         ("codex-cli", true),
+        ("codex", true),
         ("opencode", true),
         ("qwen", false), // DashScope has no /v1/models
         ("ollama", true),
@@ -970,6 +971,7 @@ fn test_provider_display_order_no_customs() {
     let expected = vec![
         index_of_provider("anthropic").unwrap(),
         index_of_provider("claude-cli").unwrap(),
+        index_of_provider("codex").unwrap(),
         index_of_provider("codex-cli").unwrap(),
         index_of_provider("github").unwrap(),
         index_of_provider("gemini").unwrap(),
@@ -997,6 +999,7 @@ fn test_provider_display_order_with_customs() {
     let expected = vec![
         index_of_provider("anthropic").unwrap(),
         index_of_provider("claude-cli").unwrap(),
+        index_of_provider("codex").unwrap(),
         index_of_provider("codex-cli").unwrap(),
         index_of_provider("github").unwrap(),
         index_of_provider("gemini").unwrap(),

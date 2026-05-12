@@ -151,6 +151,7 @@ pub fn is_first_time() -> bool {
             .codex_cli
             .as_ref()
             .is_some_and(|p| p.enabled)
+        || config.providers.codex.as_ref().is_some_and(|p| p.enabled)
         || config.providers.qwen.as_ref().is_some_and(|p| p.enabled)
         || config.providers.ollama.as_ref().is_some_and(|p| p.enabled)
         || config
