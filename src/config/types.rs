@@ -727,6 +727,15 @@ impl ProviderConfigs {
                 .unwrap_or_else(|| "gpt-5.5".to_string());
             return ("codex-cli".to_string(), model);
         }
+        if let Some(c) = self.codex.as_ref()
+            && c.enabled
+        {
+            let model = c
+                .default_model
+                .clone()
+                .unwrap_or_else(|| "gpt-5.5".to_string());
+            return ("codex".to_string(), model);
+        }
         let candidates: &[(&str, Option<&ProviderConfig>)] = &[
             ("qwen", self.qwen.as_ref()),
             ("minimax", self.minimax.as_ref()),

@@ -140,6 +140,29 @@ models = [
 ]
 
 # ========================================
+# Codex (OAuth — no CLI needed)
+# ========================================
+# Authenticates directly with OpenAI Codex subscription via device-code
+# OAuth flow. Tokens stored in ~/.opencrabs/auth/codex.json with automatic
+# refresh. No `codex` CLI binary required — authenticate through the
+# onboarding wizard (/onboard:provider).
+# Uses the same public client ID as Codex CLI: app_EMoamEEZ73f0CkXaXp7hrann
+[providers.codex]
+enabled = false
+default_model = "gpt-5.5"
+models = [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
+    "gpt-4o",
+    "o3",
+    "o4-mini",
+]
+
+# ========================================
 # Minimax Provider (Chinese AI, OpenAI-compatible)
 # ========================================
 # Note: Minimax does NOT have a /models endpoint, so add models manually

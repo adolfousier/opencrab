@@ -235,6 +235,26 @@ pub const PROVIDERS: &[ProviderInfo] = &[
         ],
     },
     ProviderInfo {
+        id: "codex",
+        name: "Codex",
+        models: &[
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-spark",
+            "gpt-5.2",
+            "gpt-4o",
+            "o3",
+            "o4-mini",
+        ],
+        key_label: "OAuth",
+        help_lines: &[
+            "Authenticate with OpenAI Codex subscription via device-code flow",
+            "No CLI needed — sign in through OpenCrabs onboarding",
+        ],
+    },
+    ProviderInfo {
         id: "opencode",
         name: "OpenCode",
         models: &[], // Fetched from opencode.ai API
