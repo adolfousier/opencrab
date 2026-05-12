@@ -1885,19 +1885,20 @@ impl App {
                         let _ = sender.send(TuiEvent::CodexDeviceCode(device.user_code.clone()));
 
                         // Step 2: Poll until user authorizes (returns intermediate PKCE code)
-                        let device_code = match crate::brain::provider::codex_oauth::poll_for_device_code(
-                            &device.device_auth_id,
-                            &device.user_code,
-                            device.interval,
-                        )
-                        .await
-                        {
-                            Ok(dc) => dc,
-                            Err(e) => {
-                                let _ = sender.send(TuiEvent::CodexOAuthError(e.to_string()));
-                                return;
-                            }
-                        };
+                        let device_code =
+                            match crate::brain::provider::codex_oauth::poll_for_device_code(
+                                &device.device_auth_id,
+                                &device.user_code,
+                                device.interval,
+                            )
+                            .await
+                            {
+                                Ok(dc) => dc,
+                                Err(e) => {
+                                    let _ = sender.send(TuiEvent::CodexOAuthError(e.to_string()));
+                                    return;
+                                }
+                            };
 
                         // Step 3: Exchange PKCE code for final tokens at /oauth/token
                         match crate::brain::provider::codex_oauth::exchange_device_code_for_tokens(

@@ -249,7 +249,11 @@ pub async fn poll_for_device_code(
 
         // Other error
         let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Device auth failed ({}): {}", status, &body[..body.len().min(200)]);
+        anyhow::bail!(
+            "Device auth failed ({}): {}",
+            status,
+            &body[..body.len().min(200)]
+        );
     }
 }
 
@@ -278,7 +282,11 @@ pub async fn exchange_device_code_for_tokens(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("PKCE token exchange failed ({}): {}", status, &body[..body.len().min(300)]);
+        anyhow::bail!(
+            "PKCE token exchange failed ({}): {}",
+            status,
+            &body[..body.len().min(300)]
+        );
     }
 
     #[derive(Deserialize)]
@@ -321,16 +329,22 @@ fn decode_jwt_claims(id_token: &str) -> (Option<String>, u64) {
     };
 
     let account_id = claims.get("https://api.openai.com/profile").and_then(|p| {
-        p.get("account_id").and_then(|v| v.as_str()).map(String::from)
+        p.get("account_id")
+            .and_then(|v| v.as_str())
+            .map(String::from)
     });
 
-    let expires_in = claims.get("exp").and_then(|v| v.as_u64()).map(|exp| {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        exp.saturating_sub(now)
-    }).unwrap_or(864_000);
+    let expires_in = claims
+        .get("exp")
+        .and_then(|v| v.as_u64())
+        .map(|exp| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            exp.saturating_sub(now)
+        })
+        .unwrap_or(864_000);
 
     (account_id, expires_in)
 }

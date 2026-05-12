@@ -881,7 +881,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 }
                 CodexDeviceFlowStatus::WaitingForUser => {
                     lines.push(Line::from(Span::styled(
-                        "  1. Go to: auth.openai.com/verify",
+                        "  1. Go to: https://auth.openai.com/codex/device",
                         Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
                     )));
                     if let Some(ref code) = wizard.codex_user_code {
