@@ -19,10 +19,10 @@ mod wizard;
 
 // Re-export all public types
 pub use types::{
-    AuthField, BrainField, CHANNEL_NAMES, ChannelTestStatus, DiscordField, EXISTING_KEY_SENTINEL,
-    GitHubDeviceFlowStatus, HealthStatus, ImageField, OnboardingStep, PROVIDERS, ProviderInfo,
-    SlackField, SttProvider, TEMPLATE_FILES, TelegramField, TrelloField, TtsProvider, VoiceField,
-    WhatsAppField, WizardAction, WizardMode,
+    AuthField, BrainField, CHANNEL_NAMES, ChannelTestStatus, CodexDeviceFlowStatus, DiscordField,
+    EXISTING_KEY_SENTINEL, GitHubDeviceFlowStatus, HealthStatus, ImageField, OnboardingStep,
+    PROVIDERS, ProviderInfo, SlackField, SttProvider, TEMPLATE_FILES, TelegramField, TrelloField,
+    TtsProvider, VoiceField, WhatsAppField, WizardAction, WizardMode,
 };
 
 pub use wizard::OnboardingWizard;

@@ -144,6 +144,10 @@ pub struct OnboardingWizard {
     pub github_user_code: Option<String>,
     pub github_device_flow_status: GitHubDeviceFlowStatus,
 
+    /// Codex OAuth device flow state
+    pub codex_user_code: Option<String>,
+    pub codex_device_flow_status: CodexDeviceFlowStatus,
+
     /// Navigation
     pub focused_field: usize,
     pub error_message: Option<String>,
@@ -454,6 +458,9 @@ impl OnboardingWizard {
 
             github_user_code: None,
             github_device_flow_status: GitHubDeviceFlowStatus::Idle,
+
+            codex_user_code: None,
+            codex_device_flow_status: CodexDeviceFlowStatus::Idle,
 
             focused_field: 0,
             error_message: None,

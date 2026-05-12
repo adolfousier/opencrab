@@ -152,6 +152,13 @@ pub enum TuiEvent {
     /// GitHub Copilot device flow: failed
     GitHubOAuthError(String),
 
+    /// Codex OAuth device flow: display this code to the user
+    CodexDeviceCode(String),
+    /// Codex OAuth device flow: authentication complete
+    CodexOAuthComplete,
+    /// Codex OAuth device flow: failed
+    CodexOAuthError(String),
+
     /// A system message to display in chat. Carries the originating session
     /// id so the TUI only renders the message inside that session and other
     /// open panes don't see leaked self-healing alerts from sessions they

@@ -2359,6 +2359,40 @@ impl App {
                     wizard.github_user_code = None;
                 }
             }
+            TuiEvent::CodexDeviceCode(code) => {
+                if let Some(ref mut wizard) = self.onboarding {
+                    wizard.codex_user_code = Some(code);
+                    wizard.codex_device_flow_status =
+                        super::onboarding::CodexDeviceFlowStatus::WaitingForUser;
+                }
+            }
+            TuiEvent::CodexOAuthComplete => {
+                if let Some(ref mut wizard) = self.onboarding {
+                    wizard.codex_device_flow_status =
+                        super::onboarding::CodexDeviceFlowStatus::Complete;
+                    // Mark as authenticated (no API key needed, tokens stored separately)
+                    wizard.ps.api_key_input = super::onboarding::EXISTING_KEY_SENTINEL.to_string();
+                    wizard.auth_field = super::onboarding::AuthField::Model;
+                    wizard.ps.models.clear();
+                    wizard.ps.selected_model = 0;
+                    // Enable the provider in config
+                    let _ = crate::config::Config::write_key("providers.codex", "enabled", "true");
+                    // Trigger model fetch
+                    let sender = self.event_sender();
+                    tokio::spawn(async move {
+                        let models =
+                            super::onboarding::fetch_provider_models(2, None, None, None).await;
+                        let _ = sender.send(TuiEvent::OnboardingModelsFetched(models));
+                    });
+                }
+            }
+            TuiEvent::CodexOAuthError(err) => {
+                if let Some(ref mut wizard) = self.onboarding {
+                    wizard.codex_device_flow_status =
+                        super::onboarding::CodexDeviceFlowStatus::Failed(err);
+                    wizard.codex_user_code = None;
+                }
+            }
             TuiEvent::WhatsAppQrCode(qr_data) => {
                 if let Some(ref mut wizard) = self.onboarding {
                     wizard.set_whatsapp_qr(&qr_data);

@@ -465,6 +465,16 @@ impl OnboardingWizard {
                         }
                         // Not yet authenticated — start device flow
                         return WizardAction::GitHubDeviceFlow;
+                    } else if self.ps.provider_id() == "codex" {
+                        // Codex OAuth: if already authenticated, go to model select
+                        if self.ps.has_existing_key_sentinel() {
+                            self.auth_field = AuthField::Model;
+                            self.ps.models.clear();
+                            self.ps.selected_model = 0;
+                            return WizardAction::FetchModels;
+                        }
+                        // Not yet authenticated — start device flow
+                        return WizardAction::CodexDeviceFlow;
                     } else if self.ps.is_custom() {
                         self.auth_field = AuthField::CustomName;
                     } else if self.ps.is_cli() {

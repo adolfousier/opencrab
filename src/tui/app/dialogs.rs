@@ -1858,6 +1858,60 @@ impl App {
                         }
                     });
                 }
+                WizardAction::CodexDeviceFlow => {
+                    wizard.codex_device_flow_status =
+                        super::onboarding::CodexDeviceFlowStatus::WaitingForUser;
+                    let sender = self.event_sender();
+                    tokio::spawn(async move {
+                        // Step 1: Request device code
+                        let device =
+                            match crate::brain::provider::codex_oauth::start_device_flow().await {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    let _ = sender.send(TuiEvent::CodexOAuthError(e.to_string()));
+                                    return;
+                                }
+                            };
+
+                        // Send the user code for display
+                        let _ = sender.send(TuiEvent::CodexDeviceCode(device.user_code.clone()));
+
+                        // Step 2-3: Poll until user authorizes
+                        match crate::brain::provider::codex_oauth::poll_for_tokens(
+                            &device.device_code,
+                            device.interval,
+                        )
+                        .await
+                        {
+                            Ok(token_resp) => {
+                                // Save tokens to disk
+                                let expires_at = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs()
+                                    + token_resp.expires_in;
+                                let tokens = crate::brain::provider::codex_oauth::CodexTokens {
+                                    access_token: token_resp.access_token,
+                                    refresh_token: token_resp.refresh_token,
+                                    id_token: token_resp.id_token,
+                                    account_id: token_resp.account_id,
+                                    expires_at,
+                                };
+                                if let Err(e) = tokens.save() {
+                                    let _ = sender.send(TuiEvent::CodexOAuthError(format!(
+                                        "Failed to save tokens: {}",
+                                        e
+                                    )));
+                                    return;
+                                }
+                                let _ = sender.send(TuiEvent::CodexOAuthComplete);
+                            }
+                            Err(e) => {
+                                let _ = sender.send(TuiEvent::CodexOAuthError(e.to_string()));
+                            }
+                        }
+                    });
+                }
                 WizardAction::WhatsAppConnect => {
                     // Wipe session so agent shows fresh QR, then enable so
                     // ChannelManager (re)starts the single agent bot.

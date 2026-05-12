@@ -583,6 +583,19 @@ pub enum GitHubDeviceFlowStatus {
     Failed(String),
 }
 
+/// Codex OAuth device flow status
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodexDeviceFlowStatus {
+    /// Not started
+    Idle,
+    /// Waiting for user to enter code at verification URL
+    WaitingForUser,
+    /// User authorized, tokens saved
+    Complete,
+    /// Flow failed
+    Failed(String),
+}
+
 /// Which text area is focused in BrainSetup step
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrainField {
@@ -621,6 +634,8 @@ pub enum WizardAction {
     DownloadPiperVoice,
     /// Trigger GitHub Copilot OAuth device flow
     GitHubDeviceFlow,
+    /// Trigger Codex OAuth device flow
+    CodexDeviceFlow,
     /// Quick-jump step completed — save config and close wizard
     QuickJumpDone,
 }

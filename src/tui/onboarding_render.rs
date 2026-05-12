@@ -848,6 +848,80 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 }
             }
         }
+    } else if wizard.ps.provider_id() == "codex" {
+        // Codex OAuth — device-code flow
+        use crate::tui::onboarding::CodexDeviceFlowStatus;
+
+        if wizard.ps.has_existing_key_sentinel() {
+            // Already authenticated
+            lines.push(Line::from(Span::styled(
+                "  ● Authenticated with Codex (OpenAI)",
+                Style::default().fg(Color::Green),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  Press Enter to continue, or re-authenticate below",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        } else {
+            match &wizard.codex_device_flow_status {
+                CodexDeviceFlowStatus::Idle => {
+                    lines.push(Line::from(Span::styled(
+                        "  Uses your OpenAI Codex subscription (no API charges)",
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "  Press Enter to sign in with OpenAI",
+                        Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                    )));
+                }
+                CodexDeviceFlowStatus::WaitingForUser => {
+                    lines.push(Line::from(Span::styled(
+                        "  1. Go to: auth.openai.com/verify",
+                        Style::default().fg(BRAND_BLUE).add_modifier(Modifier::BOLD),
+                    )));
+                    if let Some(ref code) = wizard.codex_user_code {
+                        lines.push(Line::from(Span::styled(
+                            format!("  2. Enter code: {}", code),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        )));
+                    }
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "  Waiting for authorization...",
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                }
+                CodexDeviceFlowStatus::Complete => {
+                    lines.push(Line::from(Span::styled(
+                        "  ● Authenticated successfully!",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                }
+                CodexDeviceFlowStatus::Failed(err) => {
+                    lines.push(Line::from(Span::styled(
+                        format!("  ✗ {}", err),
+                        Style::default().fg(Color::Red),
+                    )));
+                    lines.push(Line::from(Span::styled(
+                        "  Press Enter to try again",
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                }
+            }
+        }
     } else {
         // Show help text for selected provider
         let provider = wizard.ps.current_provider();
