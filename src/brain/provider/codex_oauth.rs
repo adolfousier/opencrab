@@ -151,7 +151,17 @@ where
     }
 }
 
-/// Response from the token endpoint.
+/// Intermediate response from deviceauth/token — NOT final tokens.
+/// OpenAI's device flow returns a PKCE authorization code, which must
+/// then be exchanged at /oauth/token with the code_verifier.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceAuthCodeResponse {
+    pub authorization_code: String,
+    pub code_challenge: String,
+    pub code_verifier: String,
+}
+
+/// Final response from /oauth/token after PKCE exchange.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
@@ -195,24 +205,30 @@ pub async fn start_device_flow() -> anyhow::Result<DeviceFlowResponse> {
     Ok(resp.json::<DeviceFlowResponse>().await?)
 }
 
-/// Poll until the user authorizes the device. Returns the token response.
-pub async fn poll_for_tokens(
+/// Poll until the user authorizes the device. Returns an intermediate PKCE authorization code.
+/// This does NOT return final tokens — you must call `exchange_device_code_for_tokens` next.
+pub async fn poll_for_device_code(
     device_auth_id: &str,
     user_code: &str,
     interval: u64,
-) -> anyhow::Result<TokenResponse> {
+) -> anyhow::Result<DeviceAuthCodeResponse> {
     let client = reqwest::Client::new();
-    let mut poll_interval = Duration::from_secs(interval.max(5));
+    let poll_interval = Duration::from_secs(interval.max(5));
+    let max_wait = Duration::from_secs(15 * 60);
+    let start = Instant::now();
 
     loop {
         tokio::time::sleep(poll_interval).await;
+
+        if start.elapsed() >= max_wait {
+            anyhow::bail!("Device auth timed out after 15 minutes");
+        }
 
         let resp = client
             .post(DEVICE_TOKEN_URL)
             .header("content-type", "application/json")
             .header("accept", "application/json")
             .json(&serde_json::json!({
-                "client_id": CODEX_CLIENT_ID,
                 "device_auth_id": device_auth_id,
                 "user_code": user_code,
             }))
@@ -221,35 +237,102 @@ pub async fn poll_for_tokens(
 
         let status = resp.status();
 
-        // Success — parse the token response
+        // Success — returns { authorization_code, code_challenge, code_verifier }
         if status.is_success() {
-            return Ok(resp.json::<TokenResponse>().await?);
+            return Ok(resp.json::<DeviceAuthCodeResponse>().await?);
         }
 
-        // Error — check if it's a known polling state
-        let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        let error = body.get("error").and_then(|e| e.as_str());
-
-        match error {
-            Some("authorization_pending") => continue,
-            Some("slow_down") => {
-                poll_interval += Duration::from_secs(5);
-                continue;
-            }
-            Some("expired_token") => anyhow::bail!("Device code expired. Please try again."),
-            Some("access_denied") => anyhow::bail!("Authorization denied by user."),
-            Some(other) => anyhow::bail!("OAuth error: {}", other),
-            None => {
-                // Non-JSON or unexpected error
-                let text = body.to_string();
-                anyhow::bail!(
-                    "Token poll failed ({}): {}",
-                    status,
-                    &text[..text.len().min(200)]
-                );
-            }
+        // 403/404 = still waiting for user to authorize
+        if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND {
+            continue;
         }
+
+        // Other error
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Device auth failed ({}): {}", status, &body[..body.len().min(200)]);
     }
+}
+
+/// Exchange the device authorization code for final tokens via PKCE at /oauth/token.
+/// This is step 2 of the Codex device flow.
+pub async fn exchange_device_code_for_tokens(
+    device_code: &DeviceAuthCodeResponse,
+) -> anyhow::Result<TokenResponse> {
+    let client = reqwest::Client::new();
+    let redirect_uri = "https://auth.openai.com/deviceauth/callback";
+
+    let resp = client
+        .post(OAUTH_TOKEN_URL)
+        .header("content-type", "application/json")
+        .header("accept", "application/json")
+        .json(&serde_json::json!({
+            "client_id": CODEX_CLIENT_ID,
+            "grant_type": "authorization_code",
+            "code": device_code.authorization_code,
+            "code_verifier": device_code.code_verifier,
+            "redirect_uri": redirect_uri,
+        }))
+        .send()
+        .await?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("PKCE token exchange failed ({}): {}", status, &body[..body.len().min(300)]);
+    }
+
+    #[derive(Deserialize)]
+    struct RawTokenResponse {
+        id_token: String,
+        access_token: String,
+        refresh_token: String,
+    }
+
+    let raw: RawTokenResponse = resp.json().await?;
+
+    // Decode id_token JWT to extract account_id and expiry
+    let (account_id, expires_in) = decode_jwt_claims(&raw.id_token);
+
+    Ok(TokenResponse {
+        access_token: raw.access_token,
+        refresh_token: raw.refresh_token,
+        id_token: Some(raw.id_token),
+        account_id,
+        expires_in,
+    })
+}
+
+/// Extract account_id and expires_in from a JWT id_token (minimal decode, no verification).
+fn decode_jwt_claims(id_token: &str) -> (Option<String>, u64) {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+    let parts: Vec<&str> = id_token.split('.').collect();
+    if parts.len() < 2 {
+        return (None, 864_000);
+    }
+
+    let claims_bytes = match URL_SAFE_NO_PAD.decode(parts[1]) {
+        Ok(b) => b,
+        Err(_) => return (None, 864_000),
+    };
+    let claims: serde_json::Value = match serde_json::from_slice(&claims_bytes) {
+        Ok(v) => v,
+        Err(_) => return (None, 864_000),
+    };
+
+    let account_id = claims.get("https://api.openai.com/profile").and_then(|p| {
+        p.get("account_id").and_then(|v| v.as_str()).map(String::from)
+    });
+
+    let expires_in = claims.get("exp").and_then(|v| v.as_u64()).map(|exp| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        exp.saturating_sub(now)
+    }).unwrap_or(864_000);
+
+    (account_id, expires_in)
 }
 
 /// Exchange tokens for an OpenAI API key (optional — gives longer-lived access).
