@@ -120,7 +120,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
 | **Usage Dashboard** | Per-message token count and cost displayed in header; `/usage` opens an interactive dashboard with daily activity charts, cost breakdowns by project/model/activity, core tool usage stats, and period filtering (Today/Week/Month/All-Time). Sessions are auto-categorized on startup (Development, Bug Fixes, Features, Refactoring, Testing, Documentation, CI/Deploy, etc.). Estimated costs for historical sessions shown as `~$X.XX` |
 | **Context Awareness** | Live context usage indicator showing actual token counts (e.g. `ctx: 45K/200K (23%)`); auto-compaction at 70% with tool overhead budgeting; accurate tiktoken-based counting calibrated against API actuals |
-| **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory loaded every turn, (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Hybrid Memory Search** — FTS5 keyword search + local vector embeddings (embeddinggemma-300M, 768-dim) combined via Reciprocal Rank Fusion. Runs entirely local — no API key, no cost, works offline |
+| **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory loaded every turn, (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Hybrid Memory Search** — FTS5 keyword search + vector embeddings combined via Reciprocal Rank Fusion. Three modes: **Local** (embeddinggemma-300M, 768-dim, no API key, works offline), **API** (any OpenAI-compatible `/v1/embeddings` endpoint: OpenAI, Ollama, Jina, etc.), or **FTS5-only** (no embeddings, VPS-friendly, ~0 RAM overhead). Auto-detects VPS environments and disables local embeddings |
 | **Dynamic Brain System** | System brain assembled from workspace MD files (SOUL, IDENTITY, USER, AGENTS, TOOLS, MEMORY) — all editable live between turns |
 | **Multi-Agent Orchestration** | Spawn typed child agents (General, Explore, Plan, Code, Research) for parallel task execution. Five tools: `spawn_agent`, `wait_agent`, `send_input`, `close_agent`, `resume_agent`. Each type gets a role-specific system prompt and filtered tool registry. Configurable subagent provider/model. Children run in isolated sessions with auto-approve — no recursive spawning |
 | **Recursive Self-Improvement** | ⚠️ Experimental. Automatic feedback ledger tracks every tool execution, user correction, and provider error. Three tools: `feedback_record` (log observations), `feedback_analyze` (query patterns), `self_improve` (autonomously apply brain file changes — no human approval). Changes logged to `~/.opencrabs/rsi/improvements.md` with daily archives. Startup digest injects performance summary into system prompt. **Upstream template sync** — automatically detects new releases, fetches updated brain file templates from the repo, diffs against local files, and appends only new sections (never overwrites user customizations). Backups created before every merge. Zero tokens spent when version unchanged. Zero setup — works out of the box via auto-migration |
@@ -1728,7 +1728,7 @@ OpenCrabs includes 30+ built-in tools. The AI can use these during conversation:
 | `exa_search` | Neural web search via EXA AI (free via MCP, no API key needed; set key in `keys.toml` for higher rate limits) |
 | `brave_search` | Web search via Brave Search (set key in `keys.toml` — free $5/mo credits at brave.com/search/api) |
 | `http_request` | Make HTTP requests |
-| `memory_search` | Hybrid semantic search across past memory logs — FTS5 keyword + vector embeddings (768-dim, local GGUF model) combined via RRF. No API key needed, runs offline |
+| `memory_search` | Hybrid semantic search across past memory logs — FTS5 keyword + vector embeddings combined via RRF. Local GGUF, OpenAI-compatible API, or FTS5-only mode |
 
 #### Image & Video
 | Tool | Description |
@@ -2033,7 +2033,7 @@ Brain files are re-read **every turn** — edit them between messages and the ag
 |------|----------|---------|------------|
 | **1. Brain MEMORY.md** | `~/.opencrabs/MEMORY.md` | Durable, curated knowledge loaded into system brain every turn | You (the user) |
 | **2. Daily Memory Logs** | `~/.opencrabs/memory/YYYY-MM-DD.md` | Auto-compaction summaries with structured breakdowns of each session | Auto (on compaction) |
-| **3. Hybrid Memory Search** | `memory_search` tool (FTS5 + vector) | Hybrid semantic search — BM25 keyword + vector embeddings (768-dim, local GGUF) combined via Reciprocal Rank Fusion. No API key, zero cost, runs offline | Agent (via tool call) |
+| **3. Hybrid Memory Search** | `memory_search` tool (FTS5 + vector) | Hybrid semantic search — BM25 keyword + vector embeddings combined via Reciprocal Rank Fusion. Local GGUF, OpenAI-compatible API, or FTS5-only mode | Agent (via tool call) |
 
 **How it works:**
 1. When context hits 70%, auto-compaction summarizes the conversation into a structured breakdown (current task, decisions, files modified, errors, next steps)
@@ -2047,9 +2047,17 @@ Brain files are re-read **every turn** — edit them between messages and the ag
 Memory search combines two strategies via **Reciprocal Rank Fusion (RRF)** for best-of-both-worlds recall:
 
 1. **FTS5 keyword search** — BM25-ranked full-text matching with porter stemming
-2. **Vector semantic search** — 768-dimensional embeddings via a local GGUF model (embeddinggemma-300M, ~300 MB)
+2. **Vector semantic search** — embeddings via local GGUF model or any OpenAI-compatible API
 
-The embedding model downloads automatically on first TUI launch (~300 MB, one-time) and runs entirely on CPU. **No API key, no cloud service, no per-query cost, works offline.** If the model isn't available yet (first launch, still downloading), search gracefully falls back to FTS-only.
+**Three embedding modes** (configured in `[memory]` section of `config.toml`):
+
+| Mode | How | RAM | Setup |
+|---|---|---|---|
+| **Local** (default) | embeddinggemma-300M GGUF (~300 MB, auto-downloaded) | ~2.9 GB | Zero config, works offline |
+| **API** | Any `/v1/embeddings` endpoint (OpenAI, Ollama, Jina, etc.) | ~0 MB | Set `url`, `model`, `api_key` in `[memory.embedding]` |
+| **FTS5-only** | No embeddings, keyword search only | ~0 MB | Set `vector_enabled = false` in `[memory]` |
+
+Auto-detects VPS environments and disables local embeddings automatically.
 
 ```
 ┌─────────────────────────────────────┐
@@ -2065,7 +2073,7 @@ The embedding model downloads automatically on first TUI launch (~300 MB, one-ti
 │  memory.db  (SQLite WAL mode)                   │
 │  ┌───────────────────────┐ ┌──────────────────┐ │
 │  │ documents + FTS5      │ │ vector embeddings│ │
-│  │ (BM25, porter stem)   │ │ (768-dim, cosine)│ │
+│  │ (BM25, porter stem)   │ │ (cosine sim)    │ │
 │  └───────────┬───────────┘ └────────┬─────────┘ │
 └──────────────┼──────────────────────┼───────────┘
                │ MATCH query          │ cosine similarity
@@ -2080,17 +2088,18 @@ The embedding model downloads automatically on first TUI launch (~300 MB, one-ti
 └─────────────────────────────────────────────────┘
 ```
 
-**Why local embeddings instead of OpenAI/cloud?**
+**Embedding mode comparison:**
 
-| | Local (embeddinggemma-300M) | Cloud API (e.g. OpenAI) |
-|---|---|---|
-| **Cost** | Free forever | ~$0.0001/query, adds up |
-| **Privacy** | 100% local, nothing leaves your machine | Data sent to third party |
-| **Latency** | ~2ms (in-process, no network) | 100-500ms (HTTP round-trip) |
-| **Offline** | Works without internet | Requires internet |
-| **Setup** | Automatic, no API key needed | Requires API key + billing |
-| **Quality** | Excellent for code/session recall (768-dim) | Slightly better for general-purpose |
-| **Size** | ~300 MB one-time download | N/A |
+| | Local (embeddinggemma) | API (OpenAI, Ollama, etc.) | FTS5-only |
+|---|---|---|---|
+| **Cost** | Free forever | Varies by provider | Free |
+| **Privacy** | 100% local | Data sent to API endpoint | 100% local |
+| **Latency** | ~2ms (in-process) | 100-500ms (HTTP) | N/A |
+| **Offline** | Works without internet | Requires internet | Works offline |
+| **Setup** | Automatic, no API key | Set `[memory.embedding]` config | Set `vector_enabled = false` |
+| **Quality** | Excellent for code/session recall | Depends on model | Keyword-only |
+| **RAM** | ~2.9 GB | ~0 MB | ~0 MB |
+| **VPS-friendly** | No (needs RAM) | Yes | Yes |
 
 ### User-Defined Slash Commands
 
@@ -2167,7 +2176,7 @@ The agent writes important knowledge to `~/.opencrabs/` brain files as it works:
 - Custom files (e.g., `DEPLOY.md`) — domain-specific knowledge
 
 **3. Cross-session recall — hybrid search**
-The `memory_search` and `session_search` tools use hybrid FTS5 + vector semantic search (Reciprocal Rank Fusion) to find relevant context from past sessions and memory files. Local embeddings via `embeddinggemma-300M` — no API calls needed.
+The `memory_search` and `session_search` tools use hybrid FTS5 + vector semantic search (Reciprocal Rank Fusion) to find relevant context from past sessions and memory files. Supports local embeddings (embeddinggemma-300M), OpenAI-compatible API embeddings, or FTS5-only mode.
 
 **Key difference from cloud-based "self-improving" agents:** Your memory files, commands, and brain files are 100% local and belong to you. With local models (LM Studio, Ollama), everything stays on your machine. With cloud providers (Anthropic, MiniMax, OpenRouter), conversations go through their APIs — but these providers are privacy-first by default per their ToS, and you can opt out of logging and training data in their settings. Either way, your self-improvement data (skills, memory, commands) never leaves your machine.
 
@@ -2825,11 +2834,11 @@ cargo clippy -- -D warnings
 | RAM active (100 msgs) | ~20 MB |
 | Startup time | < 50 ms |
 | Database ops | < 10 ms (session), < 5 ms (message) |
-| Embedding engine | embeddinggemma-300M (~300 MB, local GGUF, auto-downloaded) |
+| Embedding engine | embeddinggemma-300M (~300 MB, local GGUF, auto-downloaded) or any OpenAI-compatible `/v1/embeddings` API |
 
 #### Memory Search (qmd — FTS5 + Vector Embeddings)
 
-Hybrid semantic search: FTS5 BM25 keyword matching + 768-dim vector embeddings combined via Reciprocal Rank Fusion. Embedding model runs locally — **no API key, zero cost, works offline**.
+Hybrid semantic search: FTS5 BM25 keyword matching + vector embeddings combined via Reciprocal Rank Fusion. Three modes: local GGUF (default, no API key), OpenAI-compatible API, or FTS5-only (VPS-friendly).
 
 
 Benchmarked with `cargo bench --bench memory` on release builds:
@@ -2895,7 +2904,7 @@ The default release binary requires AVX2 (Haswell 2013+). If you have an older C
 RUSTFLAGS="-C target-cpu=native" cargo build --release
 ```
 
-Pre-built `*-compat` binaries are also available on the [releases page](https://github.com/adolfousier/opencrabs/releases) for AVX-only CPUs. If your CPU lacks AVX entirely (pre-2011), vector embeddings are disabled and search falls back to FTS-only keyword matching.
+Pre-built `*-compat` binaries are also available on the [releases page](https://github.com/adolfousier/opencrabs/releases) for AVX-only CPUs. If your CPU lacks AVX entirely (pre-2011), or you're on a low-RAM VPS, set `vector_enabled = false` in `[memory]` to disable vector embeddings and use FTS5-only keyword search.
 
 ### macOS
 
