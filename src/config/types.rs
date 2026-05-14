@@ -702,15 +702,13 @@ impl MemoryConfig {
                     }
                 }
             }
-
             // Check for container environment
-            if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
-                if cgroup.contains("docker")
+            if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup")
+                && (cgroup.contains("docker")
                     || cgroup.contains("containerd")
-                    || cgroup.contains("kubepods")
-                {
-                    return true;
-                }
+                    || cgroup.contains("kubepods"))
+            {
+                return true;
             }
 
             // Check system RAM — if less than 2GB, likely a small VPS
@@ -718,13 +716,14 @@ impl MemoryConfig {
                 for line in meminfo.lines() {
                     if line.starts_with("MemTotal:") {
                         // MemTotal is in kB
-                        if let Some(kb_str) = line.split_whitespace().nth(1) {
-                            if let Ok(kb) = kb_str.parse::<u64>() {
+                        if let Some(kb_str) = line.split_whitespace().nth(1)
+                            && let Ok(kb) = kb_str.parse::<u64>()
+                            && {
                                 let gb = kb / 1_048_576; // kB to GB
-                                if gb < 2 {
-                                    return true;
-                                }
+                                gb < 2
                             }
+                        {
+                            return true;
                         }
                         break;
                     }
