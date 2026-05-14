@@ -4,8 +4,8 @@ use qmd::Store;
 use std::path::Path;
 use std::sync::Mutex;
 
-use super::embedding::{backfill_embeddings, embed_content};
-use super::{COLLECTION_BRAIN, COLLECTION_MEMORY};
+use super::embedding::{backfill_embeddings, embed_content, embed_content_api, embed_via_api};
+use super::{COLLECTION_BRAIN, COLLECTION_MEMORY, embedding_api_config, embedding_api_configured};
 
 /// Brain files loaded from the workspace root (`~/.opencrabs/`).
 pub const BRAIN_FILES: &[&str] = &[
@@ -32,22 +32,41 @@ pub async fn index_file(store: &'static Mutex<Store>, path: &Path) -> Result<(),
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
 
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    let body_clone = body.clone();
+
+    // Phase 1: synchronous FTS indexing (blocking)
+    let indexed = tokio::task::spawn_blocking(move || {
         let indexed = {
             let s = store
                 .lock()
                 .map_err(|e| format!("Store lock poisoned: {e}"))?;
             index_file_sync(&s, COLLECTION_MEMORY, &path, &body)?
         };
-
-        if indexed && let Err(e) = embed_content(store, &body) {
-            tracing::warn!("Embedding skipped during index: {e}");
-        }
-
-        Ok(())
+        Ok::<bool, String>(indexed)
     })
     .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+    .map_err(|e| format!("spawn_blocking failed: {e}"))??;
+
+    // Phase 2: embedding (async for API, blocking for local)
+    if indexed {
+        if embedding_api_configured() {
+            if let Err(e) = embed_content_api(store, &body_clone).await {
+                tracing::warn!("API embedding skipped during index: {e}");
+            }
+        } else {
+            let store_ref = store;
+            let body_for_embed = body_clone;
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = embed_content(store_ref, &body_for_embed) {
+                    tracing::warn!("Embedding skipped during index: {e}");
+                }
+            })
+            .await
+            .map_err(|e| format!("spawn_blocking failed: {e}"))?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Synchronous inner implementation for indexing a single file into a given collection.
@@ -191,9 +210,85 @@ pub async fn reindex(store: &'static Mutex<Store>) -> Result<usize, String> {
     }
 
     // --- Backfill embeddings for documents missing them ---
-    tokio::task::spawn_blocking(move || backfill_embeddings(store))
+    if embedding_api_configured() {
+        // API path: backfill one-by-one via HTTP (async)
+        let store_ref = store;
+        tokio::task::spawn_blocking(move || {
+            let needing = match store_ref.lock() {
+                Ok(s) => s.get_hashes_needing_embedding().unwrap_or_default(),
+                Err(_) => return,
+            };
+            if needing.is_empty() {
+                return;
+            }
+            tracing::info!("API backfill: {} documents need embeddings", needing.len());
+            // Note: actual API calls happen in the next spawn_blocking cycle
+            // to avoid blocking the tokio runtime. For now, just log.
+            drop(needing);
+        })
         .await
         .map_err(|e| format!("spawn_blocking failed: {e}"))?;
+
+        // Async backfill: spawn as a background task
+        let home = crate::config::opencrabs_home();
+        tokio::spawn(async move {
+            let store_ref = store;
+            // Get hashes needing embedding
+            let needing = tokio::task::spawn_blocking(move || {
+                store_ref
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.get_hashes_needing_embedding().ok())
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+
+            if needing.is_empty() {
+                return;
+            }
+
+            let count = needing.len();
+            tracing::info!("API backfill: embedding {count} documents");
+            let mut stored = 0usize;
+
+            for (hash, path, body) in &needing {
+                if body.len() > 32_000 {
+                    tracing::warn!("Skipping embedding for '{path}' — body too large");
+                    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+                    if let Ok(s) = store_ref.lock() {
+                        let _ = s.insert_embedding(hash, 0, 0, &[], "skipped-too-large", &now);
+                    }
+                    continue;
+                }
+
+                match embed_via_api(body).await {
+                    Ok(embedding) => {
+                        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+                        let model_name = embedding_api_config()
+                            .and_then(|c| c.model)
+                            .unwrap_or_else(|| "api-embedding".to_string());
+                        if let Ok(s) = store_ref.lock()
+                            && s.insert_embedding(hash, 0, 0, &embedding, &model_name, &now)
+                                .is_ok()
+                        {
+                            stored += 1;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("API embed failed for '{path}': {e}");
+                    }
+                }
+            }
+            tracing::info!("API backfilled {stored}/{count} embeddings");
+            drop(home);
+        });
+    } else {
+        // Local path: use GGUF engine (blocking)
+        tokio::task::spawn_blocking(move || backfill_embeddings(store))
+            .await
+            .map_err(|e| format!("spawn_blocking failed: {e}"))?;
+    }
 
     tracing::info!("Memory reindex complete: {} files", indexed);
     Ok(indexed)

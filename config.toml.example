@@ -411,14 +411,40 @@ enabled = false
 # ========================================
 # Memory / Embeddings
 # ========================================
-# Controls local vector embeddings for semantic memory search.
+# Controls vector embeddings for semantic memory search.
 # When disabled, only FTS5 (keyword) search is used — no model download,
 # no llama.cpp init, zero GPU/CPU overhead.
 #
 # Automatically set to false on VPS/cloud (detected at startup).
 # You can also set it manually here.
 #
-# WIP: OpenAI-compatible embedding through API (or local) coming soon.
-#
 # [memory]
 # vector_enabled = false
+
+# --------------------------------------------
+# OpenAI-compatible Embedding API
+# --------------------------------------------
+# When configured, embeddings are generated via API instead of the local
+# GGUF model (embeddinggemma-300M). This eliminates the ~300MB model
+# download and ~2.9GB RAM overhead of llama.cpp.
+#
+# Supports any OpenAI-compatible /v1/embeddings endpoint:
+# OpenAI, Ollama, LM Studio, localai, Jina, etc.
+#
+# Example: OpenAI
+# [memory.embedding]
+# url = "https://api.openai.com/v1"
+# model = "text-embedding-3-small"
+# # api_key goes in keys.toml: [providers.memory_embedding] api_key = "sk-..."
+# # dimensions = 1536   # auto-detected from first API response if unset
+#
+# Example: Ollama (local, free)
+# [memory.embedding]
+# url = "http://localhost:11434/v1"
+# model = "nomic-embed-text"
+#
+# Example: Jina
+# [memory.embedding]
+# url = "https://api.jina.ai/v1"
+# model = "jina-embeddings-v3"
+# # api_key goes in keys.toml

@@ -12,7 +12,9 @@ mod index;
 mod search;
 mod store;
 
-pub use embedding::{embed_content, engine_if_ready, get_engine};
+pub use embedding::{
+    embed_content, embed_content_api, embed_query_api, embed_via_api, engine_if_ready, get_engine,
+};
 pub use index::{BRAIN_FILES, index_file, reindex};
 pub use search::search;
 pub use store::get_store;
@@ -21,17 +23,48 @@ pub use store::get_store;
 /// Reads `[memory].vector_enabled` from config.toml (default: true).
 /// VPS/cloud auto-detection may set this to false.
 fn vector_enabled() -> bool {
-    // Can't easily access the live Config here without passing it through
-    // every call site, so read the raw config.toml directly.
+    let config = read_memory_config();
+    config.vector_enabled
+}
+
+/// Read the `[memory]` section from config.toml.
+fn read_memory_config() -> crate::config::MemoryConfig {
     let config_path = crate::config::opencrabs_home().join("config.toml");
     if let Ok(content) = std::fs::read_to_string(&config_path)
         && let Ok(table) = content.parse::<toml::Table>()
-        && let Some(memory) = table.get("memory").and_then(|m| m.as_table())
-        && let Some(enabled) = memory.get("vector_enabled").and_then(|v| v.as_bool())
+        && let Some(memory) = table.get("memory")
+        && let Ok(cfg) = toml::from_str::<crate::config::MemoryConfig>(
+            &toml::to_string(memory).unwrap_or_default(),
+        )
     {
-        return enabled;
+        return cfg;
     }
-    true // default: enabled
+    crate::config::MemoryConfig::default()
+}
+
+/// Whether an external embedding API is configured under `[memory.embedding]`.
+fn embedding_api_configured() -> bool {
+    let cfg = read_memory_config();
+    cfg.embedding
+        .as_ref()
+        .is_some_and(|e| e.url.is_some() && e.model.is_some())
+}
+
+/// Get the embedding API config if configured.
+fn embedding_api_config() -> Option<crate::config::EmbeddingConfig> {
+    read_memory_config().embedding
+}
+
+/// Get the expected embedding dimensions.
+/// Returns configured value, or 768 (local GGUF default).
+fn embedding_dimensions() -> usize {
+    let cfg = read_memory_config();
+    if let Some(ref emb) = cfg.embedding
+        && let Some(dims) = emb.dimensions
+    {
+        return dims;
+    }
+    768 // local GGUF embeddinggemma-300M default
 }
 
 /// A single search result from the memory index.

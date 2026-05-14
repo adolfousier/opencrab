@@ -580,27 +580,77 @@ pub struct CronConfig {
     pub default_model: Option<String>,
 }
 
+/// OpenAI-compatible embedding provider configuration.
+///
+/// When set, embeddings are generated via an HTTP API call instead of the
+/// local GGUF model (embeddinggemma-300M). This eliminates the ~300MB model
+/// download and ~2.9GB RAM overhead of llama.cpp.
+///
+/// Supports any OpenAI-compatible `/v1/embeddings` endpoint:
+/// OpenAI, Ollama, LM Studio, localai, etc.
+///
+/// Example in config.toml:
+/// ```toml
+/// [memory.embedding]
+/// url = "https://api.openai.com/v1"
+/// model = "text-embedding-3-small"
+/// # api_key loaded from keys.toml: [providers.memory_embedding] api_key = "sk-..."
+/// # dimensions = 1536   # auto-detected from first API response if unset
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmbeddingConfig {
+    /// OpenAI-compatible API base URL (e.g. "https://api.openai.com/v1").
+    /// The `/embeddings` path is appended automatically.
+    #[serde(default)]
+    pub url: Option<String>,
+
+    /// Embedding model name (e.g. "text-embedding-3-small", "nomic-embed-text").
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// API key for the embedding endpoint.
+    /// Also loaded from keys.toml under `[providers.memory_embedding]`.
+    #[serde(default)]
+    pub api_key: Option<String>,
+
+    /// Embedding vector dimensions.
+    /// Auto-detected from the first API response if unset.
+    /// Local GGUF model always produces 768-dim vectors.
+    #[serde(default)]
+    pub dimensions: Option<usize>,
+}
+
 /// Memory / embedding configuration.
 ///
-/// Controls whether local vector embeddings are enabled for semantic memory search.
-/// When disabled, only FTS5 (keyword) search is used — no model download, no
-/// llama.cpp initialization, no GPU/CPU overhead.
+/// Controls whether vector embeddings are enabled for semantic memory search.
+/// When disabled, only FTS5 (keyword) search is used.
 ///
 /// Automatically set to `vector_enabled = false` when running on a VPS or
 /// system with < 2GB RAM.
 ///
-/// **WIP**: OpenAI-compatible embedding through API (or local) coming soon.
+/// When `vector_enabled = true`, embeddings can be generated either:
+/// - **Locally**: via embeddinggemma-300M GGUF model (default, no config needed)
+/// - **Via API**: by configuring `[memory.embedding]` with an OpenAI-compatible endpoint
 ///
 /// Example in config.toml:
 /// ```toml
 /// [memory]
-/// vector_enabled = false
+/// vector_enabled = true
+///
+/// [memory.embedding]
+/// url = "https://api.openai.com/v1"
+/// model = "text-embedding-3-small"
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
-    /// Whether local vector embeddings are enabled (default: true on desktop, false on VPS)
+    /// Whether vector embeddings are enabled (default: true on desktop, false on VPS)
     #[serde(default = "default_vector_enabled")]
     pub vector_enabled: bool,
+
+    /// OpenAI-compatible embedding provider. When set, embeddings are generated
+    /// via API instead of the local GGUF model. Eliminates ~300MB download + ~2.9GB RAM.
+    #[serde(default)]
+    pub embedding: Option<EmbeddingConfig>,
 }
 
 const fn default_vector_enabled() -> bool {
@@ -611,6 +661,7 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             vector_enabled: default_vector_enabled(),
+            embedding: None,
         }
     }
 }
@@ -654,7 +705,10 @@ impl MemoryConfig {
 
             // Check for container environment
             if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
-                if cgroup.contains("docker") || cgroup.contains("containerd") || cgroup.contains("kubepods") {
+                if cgroup.contains("docker")
+                    || cgroup.contains("containerd")
+                    || cgroup.contains("kubepods")
+                {
                     return true;
                 }
             }
@@ -678,8 +732,8 @@ impl MemoryConfig {
             }
 
             // No display server — likely headless server
-            let has_display = std::env::var("DISPLAY").is_ok()
-                || std::env::var("WAYLAND_DISPLAY").is_ok();
+            let has_display =
+                std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok();
             if !has_display {
                 return true;
             }
@@ -710,7 +764,9 @@ impl MemoryConfig {
         }
 
         // Append [memory] section to config.toml
-        tracing::info!("VPS/cloud detected — disabling vector embeddings for memory search (FTS-only mode)");
+        tracing::info!(
+            "VPS/cloud detected — disabling vector embeddings for memory search (FTS-only mode)"
+        );
 
         let append = "\n# Auto-configured: VPS/cloud detected\n\
                       # Local vector embeddings disabled to save RAM (~2.9GB).\n\

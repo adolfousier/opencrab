@@ -4,8 +4,8 @@ use qmd::{SearchResult, Store, hybrid_search_rrf};
 use std::path::Path;
 use std::sync::Mutex;
 
-use super::embedding::engine_if_ready;
-use super::{COLLECTION_BRAIN, MemoryResult};
+use super::embedding::{embed_query_api, engine_if_ready};
+use super::{COLLECTION_BRAIN, MemoryResult, embedding_api_configured};
 
 /// Hybrid search across memory logs: FTS5 (BM25) + vector (cosine) via RRF.
 ///
@@ -23,13 +23,30 @@ pub async fn search(
 
     let query_owned = query.to_string();
 
+    // API path: embed query via HTTP before entering spawn_blocking
+    let api_embedding = if embedding_api_configured() {
+        match embed_query_api(query).await {
+            Ok(emb) => Some(emb),
+            Err(e) => {
+                tracing::warn!("API embedding failed for query, falling back to FTS-only: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     tokio::task::spawn_blocking(move || {
-        // Engine lock → embed query → release (before store lock)
-        let query_embedding: Option<Vec<f32>> = engine_if_ready().and_then(|em| {
-            em.lock()
-                .ok()
-                .and_then(|mut e| e.embed_query(&query_owned).ok().map(|r| r.embedding))
-        });
+        // Local engine path: embed query via GGUF
+        let query_embedding: Option<Vec<f32>> = if !embedding_api_configured() {
+            engine_if_ready().and_then(|em| {
+                em.lock()
+                    .ok()
+                    .and_then(|mut e| e.embed_query(&query_owned).ok().map(|r| r.embedding))
+            })
+        } else {
+            api_embedding // Use the pre-fetched API embedding
+        };
 
         // Store lock → search
         let store = store

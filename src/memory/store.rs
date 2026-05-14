@@ -26,12 +26,22 @@ pub fn get_store() -> Result<&'static Mutex<Store>, String> {
 
         // Only create vector table when embeddings are enabled
         if super::vector_enabled() {
+            let dims = super::embedding_dimensions();
             store
-                .ensure_vector_table(768)
+                .ensure_vector_table(dims)
                 .map_err(|e| format!("Failed to create vector table: {e}"))?;
+            tracing::info!("Vector table created with {dims} dimensions");
         }
 
-        tracing::info!("Memory qmd store ready at {} (vector: {})", db_path.display(), if super::vector_enabled() { "enabled" } else { "disabled" });
+        tracing::info!(
+            "Memory qmd store ready at {} (vector: {})",
+            db_path.display(),
+            if super::vector_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
         Ok(Mutex::new(store))
     })
 }
