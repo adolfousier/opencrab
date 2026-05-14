@@ -5,6 +5,32 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.19] - 2026-05-14
+
+### Added
+
+- **Codex OAuth provider** — native OpenAI Codex subscription auth via device-code PKCE flow. No CLI dependency, no API key. User authenticates through browser once; tokens stored in `~/.opencrabs/auth/codex.json` with automatic refresh and background rotation. Appears as "Codex" in `/models` and `/onboard:provider` alongside existing "Codex CLI" option. Two-step PKCE exchange matching Codex CLI's exact protocol: deviceauth poll → authorization code → token exchange. Full TUI integration with verification URL + code display, waiting state, success/failure feedback.
+- **OpenAI-compatible embedding API** (discussion #78, 2/2) — users can now configure external embedding providers instead of downloading the 300MB GGUF model. Supports OpenAI (`text-embedding-3-small`), Ollama (`nomic-embed-text`), Jina, LM Studio, and any `/v1/embeddings` endpoint. Config via `[memory.embedding]` section with `url`, `model`, `api_key`, `dimensions`. Dynamic vector dimensions detected from API response.
+- **FTS5-only memory mode for VPS** (discussion #78, 1/2) — new `[memory]` config section with `vector_enabled` flag. When `false`, skips GGUF model download, llama.cpp engine init, embedding backfill, and vector search entirely. Pure FTS5 keyword search with zero RAM overhead. Auto-detects VPS environments and appends config automatically.
+
+### Fixed
+
+- **Codex OAuth device flow field names** — OpenAI's device auth API uses non-standard field names (`device_auth_id` instead of `device_code`, string `interval` instead of number, `expires_at` instead of `expires_in`). Fixed response struct with serde aliases and custom deserializer.
+- **Codex OAuth verification URL** — was hardcoded to non-existent `auth.openai.com/verify`, changed to `auth.openai.com/codex/device` matching Codex CLI.
+- **Codex OAuth model list** — `/models` dialog showed non-OpenAI models (Phi-4, Llama, Mistral) because the `codex` provider ID wasn't mapped to the curated GPT-5 model list.
+- **`/models` and `/onboard:provider` UX mismatch** — `/models` showed static "use /onboard:provider" hint for OAuth providers instead of triggering the device flow interactively. Now both dialogs have identical Codex OAuth device flow UX with shared state.
+- **Tool loop reasoning markers** — persisted reasoning content in non-CLI content column so thinking state survives across tool loop iterations.
+- **Windows CI test failures** — `tool_loop_helpers_test.rs` used hardcoded Unix `/tmp/` paths and `/etc/hosts` assertions that aren't valid on Windows. Added platform-specific test variants with `#[cfg(unix)]` / `#[cfg(windows)]`.
+- **CI Node 24 forced upgrade** — removed `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` env var that broke `actions/cache@v4` with `punycode` deprecation on Node 21+.
+
+### Changed
+
+- **README updated** with three embedding modes (Local GGUF, OpenAI-compatible API, FTS5-only) and auto VPS detection documentation.
+
+### Removed
+
+- **`examples/browser_test.rs`** — manual browser debug script replaced by `browser_e2e_test.rs` regression suite.
+
 ## [0.3.18] - 2026-05-10
 
 ### Added
@@ -614,6 +640,7 @@ provider and context budget.
 - **Raise think-tag safety valve** — long Qwen reasoning blocks no longer
   get partially stripped by the tag filter.
 
+[0.3.19]: https://github.com/adolfousier/opencrabs/compare/v0.3.18...v0.3.19
 [0.3.18]: https://github.com/adolfousier/opencrabs/compare/v0.3.17...v0.3.18
 [0.3.17]: https://github.com/adolfousier/opencrabs/compare/v0.3.16...v0.3.17
 [0.3.16]: https://github.com/adolfousier/opencrabs/compare/v0.3.15...v0.3.16
