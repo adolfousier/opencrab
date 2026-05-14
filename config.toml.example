@@ -407,3 +407,18 @@ enabled = true
 [providers.web_search.brave]
 enabled = false
 # Its free up to 1000 requests. API key goes in keys.toml: [providers.web_search.brave] api_key = "..."
+
+# ========================================
+# Memory / Embeddings
+# ========================================
+# Controls local vector embeddings for semantic memory search.
+# When disabled, only FTS5 (keyword) search is used — no model download,
+# no llama.cpp init, zero GPU/CPU overhead.
+#
+# Automatically set to false on VPS/cloud (detected at startup).
+# You can also set it manually here.
+#
+# WIP: OpenAI-compatible embedding through API (or local) coming soon.
+#
+# [memory]
+# vector_enabled = false

@@ -258,9 +258,13 @@ async fn cmd_chat_inner(
     tool_registry.register(Arc::new(SelfImproveTool));
     tracing::info!("Registered 3 recursive self-improvement tools");
 
+    // Auto-detect VPS/cloud and disable vector embeddings if needed.
+    crate::config::MemoryConfig::auto_apply_vps_defaults();
+
     // Index existing memory files and warm up embedding engine in the background.
     // Delay startup to avoid concurrent FFI access with resumed agent tasks
     // and channel connections — llama-cpp GGML can segfault under contention.
+    // When vector_enabled = false, only FTS reindex runs (no model download).
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         match crate::memory::get_store() {
@@ -271,11 +275,10 @@ async fn cmd_chat_inner(
             Err(e) => tracing::warn!("Memory store init failed at startup: {e}"),
         }
         // Warm up embedding engine so first search doesn't pay model download cost.
-        // reindex() already calls get_engine() during backfill, but if all docs were
-        // already embedded, this ensures the engine is ready for search.
+        // Skipped entirely when vector_enabled = false.
         match tokio::task::spawn_blocking(crate::memory::get_engine).await {
             Ok(Ok(_)) => tracing::info!("Embedding engine warmed up"),
-            Ok(Err(e)) => tracing::warn!("Embedding engine init skipped: {e}"),
+            Ok(Err(e)) => tracing::info!("Embedding engine init skipped: {e}"),
             Err(e) => tracing::warn!("Embedding engine warmup failed: {e}"),
         }
     });

@@ -10,7 +10,8 @@ static STORE: OnceCell<Mutex<Store>> = OnceCell::new();
 /// Get (or create) the shared memory qmd Store.
 ///
 /// The database lives at `~/.opencrabs/memory/memory.db`.
-/// First call initializes the schema via `Store::open` and creates the vector table.
+/// First call initializes the schema via `Store::open` and creates the vector table
+/// (only when vector embeddings are enabled in config).
 pub fn get_store() -> Result<&'static Mutex<Store>, String> {
     STORE.get_or_try_init(|| {
         let db_path = memory_dir().join("memory.db");
@@ -23,11 +24,14 @@ pub fn get_store() -> Result<&'static Mutex<Store>, String> {
         let store =
             Store::open(&db_path).map_err(|e| format!("Failed to open memory store: {e}"))?;
 
-        store
-            .ensure_vector_table(768)
-            .map_err(|e| format!("Failed to create vector table: {e}"))?;
+        // Only create vector table when embeddings are enabled
+        if super::vector_enabled() {
+            store
+                .ensure_vector_table(768)
+                .map_err(|e| format!("Failed to create vector table: {e}"))?;
+        }
 
-        tracing::info!("Memory qmd store ready at {}", db_path.display());
+        tracing::info!("Memory qmd store ready at {} (vector: {})", db_path.display(), if super::vector_enabled() { "enabled" } else { "disabled" });
         Ok(Mutex::new(store))
     })
 }

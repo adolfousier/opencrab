@@ -21,7 +21,13 @@ fn silence_llama_logs() {
 /// Downloads the embeddinggemma-300M model (~300MB) on first call.
 /// Returns Err if the download fails (e.g. no internet) or if the CPU lacks
 /// AVX (required by llama.cpp GGUF inference) — callers fall back to FTS-only.
+///
+/// Returns Err immediately when `config.memory.vector_enabled = false`.
 pub fn get_engine() -> Result<&'static Mutex<EmbeddingEngine>, String> {
+    if !super::vector_enabled() {
+        return Err("Vector embeddings disabled by config [memory].vector_enabled = false".to_string());
+    }
+
     ENGINE.get_or_try_init(|| {
         check_cpu_features()?;
         silence_llama_logs();
@@ -77,8 +83,13 @@ const MAX_EMBED_BYTES: usize = 32_000;
 /// Returns an error if the body is too large or the engine fails.
 /// Never panics or aborts — all llama.cpp failures are caught.
 ///
+/// No-op when `config.memory.vector_enabled = false`.
+///
 /// Lock ordering: engine first (embed), then store (insert). Never both at once.
 pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
+    if !super::vector_enabled() {
+        return Ok(());
+    }
     if body.is_empty() {
         return Ok(());
     }
@@ -120,7 +131,14 @@ pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
 ///
 /// Initializes the engine (downloading the model if needed) and batch-embeds
 /// any documents missing embeddings. Lock ordering: store → release → engine → release → store.
+///
+/// No-op when `config.memory.vector_enabled = false`.
 pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
+    if !super::vector_enabled() {
+        tracing::info!("Vector embeddings disabled — skipping backfill");
+        return;
+    }
+
     let engine_mutex = match get_engine() {
         Ok(e) => e,
         Err(e) => {

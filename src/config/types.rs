@@ -65,6 +65,10 @@ pub struct Config {
     /// Cron job defaults
     #[serde(default)]
     pub cron: CronConfig,
+
+    /// Memory / embedding configuration
+    #[serde(default)]
+    pub memory: MemoryConfig,
 }
 
 /// Daemon mode configuration (systemd / launchd service).
@@ -574,6 +578,154 @@ pub struct CronConfig {
     /// Default model for cron jobs without an explicit model
     #[serde(default)]
     pub default_model: Option<String>,
+}
+
+/// Memory / embedding configuration.
+///
+/// Controls whether local vector embeddings are enabled for semantic memory search.
+/// When disabled, only FTS5 (keyword) search is used — no model download, no
+/// llama.cpp initialization, no GPU/CPU overhead.
+///
+/// Automatically set to `vector_enabled = false` when running on a VPS or
+/// system with < 2GB RAM.
+///
+/// **WIP**: OpenAI-compatible embedding through API (or local) coming soon.
+///
+/// Example in config.toml:
+/// ```toml
+/// [memory]
+/// vector_enabled = false
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// Whether local vector embeddings are enabled (default: true on desktop, false on VPS)
+    #[serde(default = "default_vector_enabled")]
+    pub vector_enabled: bool,
+}
+
+const fn default_vector_enabled() -> bool {
+    true
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            vector_enabled: default_vector_enabled(),
+        }
+    }
+}
+
+impl MemoryConfig {
+    /// Detect whether we're running on a VPS/cloud instance.
+    ///
+    /// Heuristics:
+    /// - `/proc/1/cgroup` contains "container" or cloud provider strings
+    /// - `/sys/class/dmi/id/product_name` contains cloud vendor names
+    /// - Total system RAM is below 2GB
+    /// - No display server detected (no DISPLAY/WAYLAND_DISPLAY env vars)
+    fn is_vps() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            // Check /sys/class/dmi/id/product_name for cloud vendor strings
+            if let Ok(product) = std::fs::read_to_string("/sys/class/dmi/id/product_name") {
+                let product = product.to_lowercase();
+                let cloud_vendors = [
+                    "droplet",
+                    "digitalocean",
+                    "ec2",
+                    "amazon",
+                    "gce",
+                    "google compute",
+                    "kvm",
+                    "vultr",
+                    "linode",
+                    "akamai",
+                    "azure",
+                    "hyper-v",
+                    "oracle",
+                    "oci",
+                ];
+                for vendor in &cloud_vendors {
+                    if product.contains(vendor) {
+                        return true;
+                    }
+                }
+            }
+
+            // Check for container environment
+            if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
+                if cgroup.contains("docker") || cgroup.contains("containerd") || cgroup.contains("kubepods") {
+                    return true;
+                }
+            }
+
+            // Check system RAM — if less than 2GB, likely a small VPS
+            if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
+                for line in meminfo.lines() {
+                    if line.starts_with("MemTotal:") {
+                        // MemTotal is in kB
+                        if let Some(kb_str) = line.split_whitespace().nth(1) {
+                            if let Ok(kb) = kb_str.parse::<u64>() {
+                                let gb = kb / 1_048_576; // kB to GB
+                                if gb < 2 {
+                                    return true;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // No display server — likely headless server
+            let has_display = std::env::var("DISPLAY").is_ok()
+                || std::env::var("WAYLAND_DISPLAY").is_ok();
+            if !has_display {
+                return true;
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            // Non-Linux (macOS, Windows) — assume desktop, not VPS
+        }
+
+        false
+    }
+
+    /// Auto-apply VPS defaults if detected and config doesn't already have [memory] section.
+    /// Returns true if config was modified.
+    pub fn auto_apply_vps_defaults() -> bool {
+        if !Self::is_vps() {
+            return false;
+        }
+
+        // Check if [memory] section already exists in config.toml
+        let config_path = opencrabs_home().join("config.toml");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            // If user already has a [memory] section, don't override
+            if content.contains("[memory]") {
+                return false;
+            }
+        }
+
+        // Append [memory] section to config.toml
+        tracing::info!("VPS/cloud detected — disabling vector embeddings for memory search (FTS-only mode)");
+
+        let append = "\n# Auto-configured: VPS/cloud detected\n\
+                      # Local vector embeddings disabled to save RAM (~2.9GB).\n\
+                      # FTS5 keyword search still works. WIP: OpenAI-compatible\n\
+                      # embedding through API coming soon.\n\
+                      [memory]\n\
+                      vector_enabled = false\n";
+
+        let _ = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&config_path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, append.as_bytes()));
+
+        true
+    }
 }
 
 /// Debug configuration options
@@ -1774,6 +1926,7 @@ impl Default for Config {
             a2a: A2aConfig::default(),
             image: ImageConfig::default(),
             cron: CronConfig::default(),
+            memory: MemoryConfig::default(),
         }
     }
 }
@@ -2085,6 +2238,7 @@ impl Config {
         "gateway",
         "image",
         "cron",
+        "memory",
     ];
 
     /// Check for unknown top-level keys and log warnings.
@@ -2378,6 +2532,7 @@ impl Config {
             a2a: overlay.a2a,
             image: overlay.image,
             cron: overlay.cron,
+            memory: overlay.memory,
         }
     }
 
