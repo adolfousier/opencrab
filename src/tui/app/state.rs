@@ -1816,24 +1816,10 @@ impl App {
                         expanded: false,
                         tool_group: None,
                     });
-                    // Persist thinking to DB in background (non-blocking)
-                    if let Some(ref thinking) = reasoning_details
-                        && !thinking.trim().is_empty()
-                    {
-                        let msg_svc = self.message_service.clone();
-                        let thinking_clone = thinking.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) =
-                                msg_svc.set_thinking(assistant_id, &thinking_clone).await
-                            {
-                                tracing::warn!(
-                                    "Failed to persist IntermediateText thinking for {}: {}",
-                                    assistant_id,
-                                    e
-                                );
-                            }
-                        });
-                    }
+                    // DB persistence happens in tool_loop's per-iteration
+                    // append_content with `<!-- reasoning -->` markers — this
+                    // DisplayMessage.id is TUI-local and intentionally does NOT
+                    // match any DB row, so writing here would silently no-op.
                 } else if has_reasoning {
                     // Reasoning-only iteration (no visible text, no new
                     // tool_use blocks yet). Prefer MERGING with the
@@ -1848,8 +1834,7 @@ impl App {
                     // details, no tool_group — i.e. the exact shape
                     // THIS branch creates.
                     let reasoning_text = reasoning_details.unwrap_or_default();
-                    let msg_svc = self.message_service.clone();
-                    let merged_result = self
+                    let merged = self
                         .messages
                         .last_mut()
                         .filter(|m| {
@@ -1859,29 +1844,16 @@ impl App {
                                 && m.details.as_deref().is_some_and(|d| !d.trim().is_empty())
                         })
                         .map(|prev| {
-                            let prev_id = prev.id;
                             let mut combined = prev.details.take().unwrap_or_default();
                             if !combined.ends_with("\n\n") {
                                 combined.push_str("\n\n");
                             }
                             combined.push_str(&reasoning_text);
-                            prev.details = Some(combined.clone());
+                            prev.details = Some(combined);
                             prev.timestamp = chrono::Utc::now();
-                            (prev_id, combined)
-                        });
-                    if let Some((prev_id, combined_thinking)) = merged_result {
-                        // Merged into previous thinking message — append to DB
-                        let thinking_clone = combined_thinking;
-                        tokio::spawn(async move {
-                            if let Err(e) = msg_svc.set_thinking(prev_id, &thinking_clone).await {
-                                tracing::warn!(
-                                    "Failed to persist merged IntermediateText thinking for {}: {}",
-                                    prev_id,
-                                    e
-                                );
-                            }
-                        });
-                    } else {
+                        })
+                        .is_some();
+                    if !merged {
                         // CLI step boundary with reasoning only — push thinking msg
                         // BEFORE the tool group so order is: think → tools → next.
                         let thinking_id = Uuid::new_v4();
@@ -1894,27 +1866,13 @@ impl App {
                             cost: None,
                             approval: None,
                             approve_menu: None,
-                            details: Some(reasoning_text.clone()),
+                            details: Some(reasoning_text),
                             expanded: false,
                             tool_group: None,
                         });
-                        // Persist thinking to DB in background
-                        if !reasoning_text.trim().is_empty() {
-                            let thinking_clone = reasoning_text;
-                            let msg_svc2 = self.message_service.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) =
-                                    msg_svc2.set_thinking(thinking_id, &thinking_clone).await
-                                {
-                                    tracing::warn!(
-                                        "Failed to persist reasoning-only IntermediateText thinking for {}: {}",
-                                        thinking_id,
-                                        e
-                                    );
-                                }
-                            });
-                        }
                     }
+                    // DB persistence happens in tool_loop's per-iteration
+                    // append_content with `<!-- reasoning -->` markers.
                     if let Some(group) = self.active_tool_group.take() {
                         self.messages.push(make_tool_group(group));
                     }
@@ -2397,15 +2355,21 @@ impl App {
                     self.ps.selected_model = 0;
                     let _ = crate::config::Config::write_key("providers.codex", "enabled", "true");
                     // Fetch models for the model selector
-                    let provider_idx = self.ps.selected_provider.min(
-                        super::onboarding::PROVIDERS.len() - 1,
-                    );
+                    let provider_idx = self
+                        .ps
+                        .selected_provider
+                        .min(super::onboarding::PROVIDERS.len() - 1);
                     let sender = self.event_sender();
                     tokio::spawn(async move {
-                        let models =
-                            super::onboarding::fetch_provider_models(provider_idx, None, None, None)
-                                .await;
-                        let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
+                        let models = super::onboarding::fetch_provider_models(
+                            provider_idx,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await;
+                        let _ =
+                            sender.send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
                     });
                 }
             }

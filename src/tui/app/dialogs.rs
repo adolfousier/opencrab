@@ -588,7 +588,10 @@ impl App {
                     // Exception: Codex OAuth uses field 1 for device flow
                     self.ps.focused_field = if is_cli_provider {
                         2
-                    } else if is_oauth_provider && self.ps.provider_id() == "codex" && !self.ps.has_existing_key {
+                    } else if is_oauth_provider
+                        && self.ps.provider_id() == "codex"
+                        && !self.ps.has_existing_key
+                    {
                         1 // Go to device flow field
                     } else if is_oauth_provider {
                         2 // Already authenticated or non-codex OAuth
@@ -635,8 +638,7 @@ impl App {
                         tokio::spawn(async move {
                             // Step 1: Request device code
                             let device =
-                                match crate::brain::provider::codex_oauth::start_device_flow()
-                                    .await
+                                match crate::brain::provider::codex_oauth::start_device_flow().await
                                 {
                                     Ok(d) => d,
                                     Err(e) => {
@@ -704,10 +706,7 @@ impl App {
                         });
                     }
                 }
-            } else if (self.ps.focused_field == 1
-                && !is_custom
-                && !is_zhipu
-                && !is_oauth_provider)
+            } else if (self.ps.focused_field == 1 && !is_custom && !is_zhipu && !is_oauth_provider)
                 || (self.ps.focused_field == 2 && (is_custom || is_zhipu))
             {
                 // On API key field (field 1 for non-Custom non-zhipu, field 2 for zhipu/Custom)

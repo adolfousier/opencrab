@@ -2127,28 +2127,15 @@ impl App {
                 .insert(session.id, self.messages.clone());
         }
 
-        // Clone reasoning BEFORE it gets moved into DisplayMessage.details below
-        let thinking_for_bg = reasoning_details.clone();
-
         // Spawn slow post-completion work in the background so the render loop
         // can draw the next frame immediately (is_processing is already false).
         // DB writes and file reads here were causing 5+ second spinner delays.
         let session_service = self.session_service.clone();
-        let message_service = self.message_service.clone();
         let session_for_bg = self.current_session.clone();
         let response_model = response.model.clone();
         let response_provider = response.provider_name.clone();
         let plan_path = self.plan_file_path.clone();
         let is_processing = self.is_processing;
-        let assistant_msg_id_for_bg: Option<Uuid> = if self.intermediate_text_received {
-            self.messages
-                .iter()
-                .rev()
-                .find(|m| m.role == "assistant")
-                .map(|m| m.id)
-        } else {
-            Some(response.message_id)
-        };
 
         tokio::spawn(async move {
             // Persist the {provider, model} pair from the response onto the
@@ -2175,13 +2162,13 @@ impl App {
                 }
             }
 
-            // Persist thinking/reasoning to DB so it survives restarts
-            if let (Some(msg_id), Some(thinking)) = (assistant_msg_id_for_bg, thinking_for_bg)
-                && !thinking.trim().is_empty()
-                && let Err(e) = message_service.set_thinking(msg_id, &thinking).await
-            {
-                tracing::warn!("Failed to persist thinking for message {}: {}", msg_id, e);
-            }
+            // Thinking persistence is handled by tool_loop's per-iteration
+            // append_content with `<!-- reasoning -->` markers in `content`.
+            // No TUI-side write here — the prior fake-UUID `set_thinking` call
+            // silently no-op'd (UPDATE affected 0 rows) and corrupted the
+            // post-restart layout by losing the per-iteration chronological
+            // position. Reload now reconstructs the exact streamed view via
+            // `expand_message` + `extract_reasoning`.
 
             // Reload user commands (agent may have written new ones to commands.json)
             // This is synchronous but fast — just a file read + parse.

@@ -2155,7 +2155,19 @@ impl AgentService {
                             .await;
                     }
                 } else {
-                    // Non-CLI: persist partial text from response blocks
+                    // Non-CLI: persist partial reasoning + text from response blocks
+                    // as a single append so the `<!-- reasoning -->` marker stays
+                    // attached to its iteration's text (same chronological-layout
+                    // contract as the regular per-iteration persist below).
+                    let mut cancel_content = String::new();
+                    if let Some(ref reasoning) = reasoning_text
+                        && !reasoning.trim().is_empty()
+                    {
+                        cancel_content.push_str(&format!(
+                            "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
+                            reasoning
+                        ));
+                    }
                     for block in &response.content {
                         if let ContentBlock::Text { text } = block
                             && !text.trim().is_empty()
@@ -2164,10 +2176,13 @@ impl AgentService {
                                 accumulated_text.push_str("\n\n");
                             }
                             accumulated_text.push_str(text);
-                            let _ = message_service
-                                .append_content(assistant_db_msg.id, &format!("{}\n\n", text))
-                                .await;
+                            cancel_content.push_str(&format!("{}\n\n", text));
                         }
+                    }
+                    if !cancel_content.is_empty() {
+                        let _ = message_service
+                            .append_content(assistant_db_msg.id, &cancel_content)
+                            .await;
                     }
                 }
                 tracing::info!(
@@ -2520,30 +2535,34 @@ impl AgentService {
                         .await;
                 }
             } else {
-                // Non-CLI: separate writes (tool execution happens between iterations)
-                // NOTE: reasoning_text is intentionally NOT persisted to DB *content*.
-                // Writing <!-- reasoning --> markers teaches models (esp. qwen3.6-plus)
-                // to echo them back in the content field, causing reasoning leaks.
-                // Instead, reasoning is persisted to the separate `thinking` column
-                // so it survives restart without polluting the content sent back to
-                // the model or leaking to Telegram/Slack channels.
-
+                // Non-CLI: per-iteration write of `<!-- reasoning -->` marker +
+                // iteration text into the SAME `content` column the CLI path
+                // uses. Markers are stripped before the next turn's LLM
+                // context is built (see top of run_tool_loop:
+                // `strip_llm_artifacts` on db_messages when !is_cli_provider),
+                // so the model never sees them in its history and can't echo
+                // them back. Persisting per-iteration keeps the chronological
+                // layout (think → text → tools → think → text → …) intact on
+                // session reload, matching the live streamed view exactly.
+                let mut iter_content = String::new();
                 if let Some(ref reasoning) = reasoning_text
                     && !reasoning.trim().is_empty()
                 {
-                    let _ = message_service
-                        .set_thinking(assistant_db_msg.id, reasoning)
-                        .await;
+                    iter_content.push_str(&format!(
+                        "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
+                        reasoning
+                    ));
                 }
-
                 if !iteration_text.is_empty() {
                     if !accumulated_text.is_empty() {
                         accumulated_text.push_str("\n\n");
                     }
                     accumulated_text.push_str(&iteration_text);
-
+                    iter_content.push_str(&format!("{}\n\n", iteration_text));
+                }
+                if !iter_content.is_empty() {
                     let _ = message_service
-                        .append_content(assistant_db_msg.id, &format!("{}\n\n", iteration_text))
+                        .append_content(assistant_db_msg.id, &iter_content)
                         .await;
                 }
             }

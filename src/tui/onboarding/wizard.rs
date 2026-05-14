@@ -458,7 +458,6 @@ impl OnboardingWizard {
             github_device_flow_status: GitHubDeviceFlowStatus::Idle,
 
             // codex device flow state lives in ps (ProviderSelectorState)
-
             focused_field: 0,
             error_message: None,
             quick_jump: false,
