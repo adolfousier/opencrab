@@ -5,7 +5,7 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.19] - 2026-05-14
+## [0.3.19] - 2026-05-15
 
 ### Added
 
@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tool loop reasoning markers** — persisted reasoning content in non-CLI content column so thinking state survives across tool loop iterations.
 - **Windows CI test failures** — `tool_loop_helpers_test.rs` used hardcoded Unix `/tmp/` paths and `/etc/hosts` assertions that aren't valid on Windows. Added platform-specific test variants with `#[cfg(unix)]` / `#[cfg(windows)]`.
 - **CI Node 24 forced upgrade** — removed `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` env var that broke `actions/cache@v4` with `punycode` deprecation on Node 21+.
+- **Cron provider/model cross-contamination** — cron's `execute_job` called global `swap_provider()` instead of session-scoped `swap_provider_for_session()`, so concurrent cron jobs on the shared `Cron` session overwrote each other's provider. Now each job swaps on its own session ID, preventing cross-job pollution.
+- **Cron silently dispatching mismatched provider/model pairs** — reversed cron config (e.g. `default_model = "zhipu"` where `zhipu` is a provider name) produced impossible pairs like `dialagram/zhipu` that timed out with no diagnostics. Added validation: if `effective_model` is not in the provider's `supported_models()`, the job is skipped with a loud error logging the job name and the bad pair.
+- **RSI feedback recorded pre-remap provider/model pairs** — when `helpers.rs` remaps a mismatched model to the provider's `default_model()`, RSI still recorded the original impossible pair (e.g. `dialagram/zhipu`). All 3 recording sites in `tool_loop.rs` now resolve the actual model that will be sent before constructing the feedback dimension.
+- **`@` file picker swallowed results in large repos** — recursive walk with `.hidden(false)` traversed `.git/` before sibling source dirs, exhausting the 5000-result cap on pack/ref files alone. Added filter skipping `.git`/`.hg`/`.svn` and raised cap to 20k.
 
 ### Changed
 
