@@ -1065,7 +1065,22 @@ impl AgentService {
                     // per-session swaps).
                     let primary_from_name = self.provider_name_for_session(session_id);
                     let primary_from_model = model_name.clone();
-                    let provider_model_dim = format!("{}/{}", primary_from_name, model_name);
+                    // Record the ACTUAL provider/model pair that will be sent
+                    // (not the requested one). helpers.rs remaps mismatched
+                    // pairs silently — RSI must reflect what actually hit the
+                    // wire so entries like "dialagram/zhipu" (where "zhipu"
+                    // is a provider name that leaked into the model slot from
+                    // a reversed cron config) never appear in feedback.
+                    let actual_model = {
+                        let p = self.provider_for_session(session_id);
+                        let supported = p.supported_models();
+                        if !supported.is_empty() && !supported.iter().any(|m| m == &model_name) {
+                            p.default_model().to_string()
+                        } else {
+                            model_name.clone()
+                        }
+                    };
+                    let provider_model_dim = format!("{}/{}", primary_from_name, actual_model);
 
                     self.record_provider_feedback(
                         session_id,
@@ -1298,7 +1313,16 @@ impl AgentService {
                     let err_msg = e.to_string();
                     tracing::warn!("Mid-stream error: {} — retrying up to 3 times", err_msg);
                     let primary_from_name = self.provider_name_for_session(session_id);
-                    let provider_model_dim = format!("{}/{}", primary_from_name, model_name);
+                    let actual_model = {
+                        let p = self.provider_for_session(session_id);
+                        let supported = p.supported_models();
+                        if !supported.is_empty() && !supported.iter().any(|m| m == &model_name) {
+                            p.default_model().to_string()
+                        } else {
+                            model_name.clone()
+                        }
+                    };
+                    let provider_model_dim = format!("{}/{}", primary_from_name, actual_model);
                     self.record_provider_feedback(
                         session_id,
                         "provider_error",
@@ -1587,7 +1611,16 @@ impl AgentService {
                     let err_msg = e.to_string();
                     tracing::warn!("Upstream 5xx error: {} — retrying up to 3 times", err_msg);
                     let primary_from_name = self.provider_name_for_session(session_id);
-                    let provider_model_dim = format!("{}/{}", primary_from_name, model_name);
+                    let actual_model = {
+                        let p = self.provider_for_session(session_id);
+                        let supported = p.supported_models();
+                        if !supported.is_empty() && !supported.iter().any(|m| m == &model_name) {
+                            p.default_model().to_string()
+                        } else {
+                            model_name.clone()
+                        }
+                    };
+                    let provider_model_dim = format!("{}/{}", primary_from_name, actual_model);
                     self.record_provider_feedback(
                         session_id,
                         "provider_error",
