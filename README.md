@@ -1626,6 +1626,77 @@ required = true
 
 See [`tools.toml.example`](tools.toml.example) for a complete reference.
 
+### Connecting to Remote MCP Servers
+
+You can expose tools from any MCP server as dynamic tools in OpenCrabs. This lets the agent call MCP tools alongside built-in tools — enabling integration with services like Telegram, GitHub, Slack, or any custom MCP server you run.
+
+**How it works:** The [`fastmcp`](https://github.com/jlowin/fastmcp) CLI client calls a remote MCP server over HTTP, fetches the tool's JSON output, and returns it as plain text — which OpenCrabs parses and returns to the agent.
+
+**Prerequisites:**
+```bash
+pip install fastmcp
+```
+
+**Configuration in `tools.toml`:**
+
+```toml
+[[tools]]
+name = "tg_get_messages"
+description = "Read or search Telegram messages from a chat"
+executor = "shell"
+command = "fastmcp call \"https://tg-mcp.example.com/v1/mcp\" get_messages --transport http --auth \"YOUR_BEARER_TOKEN\" --input-json '{\"chat_id\":\"{{chat_id}}\",\"query\":\"{{query}}\",\"limit\":{{limit}}}' 2>&1"
+timeout_secs = 30
+requires_approval = false
+enabled = true
+
+[[tools.params]]
+name = "chat_id"
+type = "string"
+description = "Telegram chat ID, username without @, or 'me' for Saved Messages"
+required = true
+
+[[tools.params]]
+name = "query"
+type = "string"
+description = "Search query (omit to browse latest messages)"
+required = false
+
+[[tools.params]]
+name = "limit"
+type = "integer"
+description = "Maximum messages to return (default 50)"
+required = false
+```
+
+**Best practice for credentials:** Store bearer tokens in `keys.toml` rather than hardcoding them in `tools.toml`:
+
+```toml
+[tg_mcp]
+bearer = "YOUR_BEARER_TOKEN_HERE"
+```
+
+Then reference it via shell variable expansion in the command:
+```toml
+command = "fastmcp call \"https://tg-mcp.example.com/v1/mcp\" get_messages --transport http --auth \"$TG_MCP_BEARER\" ..."
+```
+
+You can also put the token directly in the command for testing, but be aware `tools.toml` may be committed to version control.
+
+**Key fields:**
+
+| Field | Value | Description |
+|-------|-------|-------------|
+| `executor` | `"shell"` | Use shell executor — HTTP executor body templating has known issues |
+| `command` | `fastmcp call ...` | fastmcp CLI invokes the MCP server |
+| `--transport http` | | HTTP transport (not SSE) |
+| `--auth` | bearer token | Passed as `Authorization: Bearer <token>` |
+| `--input-json` | JSON string | Tool parameters as JSON, use `{{param}}` template variables |
+
+**Notes:**
+- Template variables (`{{param}}`) are substituted by the shell executor before the command runs
+- Set `requires_approval = false` for tools that should run without prompting
+- Tools loaded via `tools.toml` work via Telegram/Discord channels; `run` and `agent` modes may require a separate fix (see [opencrabs#79](https://github.com/adolfousier/opencrabs/issues/79))
+
 ---
 
 ### Example: Hybrid Setup (Local + Cloud)
