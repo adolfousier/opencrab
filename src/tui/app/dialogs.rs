@@ -2631,7 +2631,7 @@ impl App {
     /// `ignore` walker (respects `.gitignore`, `.ignore`, hidden file rules).
     /// Caps the result at `MAX_RECURSIVE_RESULTS` to keep huge repos snappy.
     fn load_recursive_picker_files(&mut self) {
-        const MAX_RECURSIVE_RESULTS: usize = 5000;
+        const MAX_RECURSIVE_RESULTS: usize = 20_000;
 
         let mut files = Vec::with_capacity(256);
         let walker = ignore::WalkBuilder::new(&self.working_directory)
@@ -2640,6 +2640,11 @@ impl App {
             .git_ignore(true)
             .git_exclude(true)
             .max_depth(Some(20))
+            // `.hidden(false)` keeps dotfiles like `.env` visible, but without
+            // this filter we also descend into VCS metadata trees — `.git/`
+            // alone can hold thousands of pack/ref files and silently eat the
+            // result cap before legitimate source dirs are reached.
+            .filter_entry(|e| !matches!(e.file_name().to_str(), Some(".git" | ".hg" | ".svn")))
             .build();
 
         for entry in walker.flatten() {
