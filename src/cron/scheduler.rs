@@ -208,6 +208,61 @@ async fn execute_job(
         .clone()
         .or_else(|| config.cron.default_model.clone());
 
+    // Pre-validate the {provider, model} pair before spawning the agent.
+    // A reversed cron config (e.g. model="zhipu", provider="glm-5.1") or a
+    // typo would otherwise reach the tool loop and produce confusing RSI
+    // entries like "dialagram/zhipu" where a provider name leaked into the
+    // model slot. Catch it early, log loudly, skip the job.
+    if let Some(ref provider_name) = effective_provider
+        && let Some(ref model) = effective_model
+    {
+        match crate::brain::provider::create_provider_by_name(&config, provider_name).await {
+            Ok(provider) => {
+                let supported = provider.supported_models();
+                if !supported.is_empty() && !supported.iter().any(|m| m == model) {
+                    tracing::error!(
+                        "Cron job '{}' — model '{}' is NOT supported by provider '{}' \
+                         (supported: {}). SKIPPING job — fix cron config. \
+                         Either set a valid model or remove the model override to use \
+                         the provider's default ('{}').",
+                        job.name,
+                        model,
+                        provider_name,
+                        supported.join(", "),
+                        provider.default_model(),
+                    );
+                    // Record the failure so RSI surfaces it
+                    let run = CronJobRun::new_running(
+                        job.id,
+                        job.name.clone(),
+                        effective_provider.clone(),
+                        effective_model.clone(),
+                    );
+                    let run_id = run.id.to_string();
+                    if let Err(e) = run_repo.insert(&run).await {
+                        tracing::error!("Failed to insert cron run record: {e}");
+                    }
+                    let err_msg = format!(
+                        "model '{}' not supported by provider '{}' — cron config invalid",
+                        model, provider_name
+                    );
+                    if let Err(db_err) = run_repo.complete_error(&run_id, &err_msg).await {
+                        tracing::error!("Failed to save cron run error to DB: {db_err}");
+                    }
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Cron job '{}' — cannot pre-validate model (provider '{}' creation \
+                     failed: {e}) — proceeding with default validation",
+                    job.name,
+                    provider_name
+                );
+            }
+        }
+    }
+
     // Create a run record in the DB (status = "running")
     let run = CronJobRun::new_running(
         job.id,
@@ -239,7 +294,7 @@ async fn execute_job(
                     job.name,
                     provider_name
                 );
-                agent.swap_provider(provider);
+                agent.swap_provider_for_session(cron_session_id, provider);
             }
             Err(e) => {
                 tracing::warn!(
