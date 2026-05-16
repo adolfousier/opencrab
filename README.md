@@ -1701,8 +1701,6 @@ You can also put the token directly in the command for testing, but be aware `to
 | server name | e.g. `my-server` | Server name from `~/.config/mcp/servers.json` |
 | JSON arg | `'{\"key\":\"{{value}}\"}'` | Tool parameters as JSON, use `{{param}}` template variables |
 
-**Note:** Authentication/transport is configured in `~/.config/mcp/servers.json`, not in the command.
-
 **Optional parameters:** When a parameter is omitted, OpenCrabs sends an empty string unless `default` is set. For MCP tools that treat `null`/omitted differently, set `default = ""` (or the appropriate zero value) in the param definition so the JSON field is always present with a defined value.
 
 **Notes:**
