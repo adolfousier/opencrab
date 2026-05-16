@@ -292,6 +292,80 @@ fn strip_think_blocks(text: &str) -> String {
     result.trim().to_string()
 }
 
+/// Classification for the bare top-level array of OpenAI tool-call envelopes
+/// shape, e.g. `[{"id":"call_1","type":"function","function":{"name":...}}]`.
+/// Some Qwen-thinking models emit this as plain content text in parallel with
+/// the structured `delta.tool_calls` field (seen 2026-05-16 in logs), so the
+/// model's reply ends up showing raw JSON instead of just the prose intro.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum BareToolArrayMatch {
+    /// Confirmed: `[` + `{` + `"id"` + `:` + `"call_` are all present in order.
+    Full,
+    /// Still on the recognition path — more content could complete the match.
+    Prefix,
+    /// Diverged: this is not a tool-call array.
+    None,
+}
+
+/// Walk a string against the rigid envelope-opener pattern
+/// `[ws*{ws*"id"ws*:ws*"call_`, allowing arbitrary JSON-style whitespace
+/// between structural tokens. Returns whether the input is a Full match,
+/// a viable Prefix (continue buffering), or a definitive None.
+///
+/// The `"id":"call_` anchor is chosen because OpenAI-style tool-call IDs
+/// almost universally use the `call_` prefix; using it as the recognition
+/// anchor keeps false positives on legitimate JSON content (e.g. a code
+/// block showing `[{"id":1,"type":"x"}]`) to near zero.
+pub(crate) fn classify_bare_tool_array(s: &str) -> BareToolArrayMatch {
+    // Tries to consume `literal` from the start of `t` after trimming leading
+    // whitespace. Returns `Some(rest)` on full consumption, or `None` on
+    // short-circuit; the `state` out-param captures whether we hit a viable
+    // Prefix (more bytes could complete the match) or definite None.
+    fn step<'a>(t: &'a str, literal: &str, state: &mut BareToolArrayMatch) -> Option<&'a str> {
+        let t = t.trim_start();
+        if t.is_empty() {
+            *state = BareToolArrayMatch::Prefix;
+            return None;
+        }
+        if t.len() < literal.len() {
+            *state = if literal.starts_with(t) {
+                BareToolArrayMatch::Prefix
+            } else {
+                BareToolArrayMatch::None
+            };
+            return None;
+        }
+        if let Some(rest) = t.strip_prefix(literal) {
+            Some(rest)
+        } else {
+            *state = BareToolArrayMatch::None;
+            None
+        }
+    }
+
+    let t = s.trim_start();
+    if t.is_empty() {
+        return BareToolArrayMatch::Prefix;
+    }
+    let mut state = BareToolArrayMatch::None;
+    let Some(t) = step(t, "[", &mut state) else {
+        return state;
+    };
+    let Some(t) = step(t, "{", &mut state) else {
+        return state;
+    };
+    let Some(t) = step(t, "\"id\"", &mut state) else {
+        return state;
+    };
+    let Some(t) = step(t, ":", &mut state) else {
+        return state;
+    };
+    let Some(_) = step(t, "\"call_", &mut state) else {
+        return state;
+    };
+    BareToolArrayMatch::Full
+}
+
 /// Extract tool_call blocks emitted as text content.
 ///
 /// Local GGUF/MLX backends serving reasoning models will often put tool
@@ -322,12 +396,17 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
     let has_claude_style = KNOWN_TOOL_NAMES
         .iter()
         .any(|t| text.contains(&format!("<{}>", t)));
+    // Bare top-level array of OpenAI envelopes — no `"tool_calls"` wrapper.
+    // Cheap signal: `"id":"call_` is the OpenAI-envelope-with-call-prefix
+    // signature; combined with a top-level `[` this is the leaked-array shape.
+    let has_bare_array_signal = text.contains("\"id\":\"call_") || text.contains("\"id\": \"call_");
     if !text.contains("<tool_call>")
         && !text.contains("<function=")
         && !text.contains("tool_call:")
         && !text.contains("\"tool_calls\"")
         && !text.contains("\"tool_call\"")
         && !has_claude_style
+        && !has_bare_array_signal
     {
         return (Vec::new(), text.to_string());
     }
@@ -346,6 +425,78 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
         for (start, end, name, input) in extract_claude_style_tool_calls(text) {
             tool_calls.push((name, input));
             strip_ranges.push((start, end));
+        }
+    }
+
+    // Pass 1.5 — bare top-level array of OpenAI envelopes (no `tool_calls`
+    // wrapper). Seen 2026-05-16 with `qwen-3.6-max-preview-thinking`: the
+    // model double-emits, putting the entire `[{"id":"call_...","type":
+    // "function","function":{"name":..., "arguments":{...}}}]` array into
+    // `delta.content` AND firing the real `delta.tool_calls` chunk. The
+    // structured path drives the actual tool call; without this pass the
+    // text-content copy survives to the TUI as raw JSON.
+    //
+    // Locate every `"id":"call_` anchor, walk back to the nearest `[`
+    // within a short window, run balanced extraction, parse as a JSON
+    // array of envelopes. Anchor distance is bounded so prose like
+    // "the field `\"id\":\"call_1\"` is set" doesn't sweep in unrelated
+    // brackets earlier in the response.
+    if has_bare_array_signal {
+        let anchors = ["\"id\":\"call_", "\"id\": \"call_"];
+        let mut search_from = 0;
+        loop {
+            let next = anchors
+                .iter()
+                .filter_map(|a| text[search_from..].find(a).map(|p| (search_from + p, *a)))
+                .min_by_key(|(p, _)| *p);
+            let Some((anchor_pos, anchor_lit)) = next else {
+                break;
+            };
+
+            // Walk back up to 64 bytes to find the wrapping `[`.
+            let window_start = anchor_pos.saturating_sub(64);
+            let bracket_pos = text[window_start..anchor_pos]
+                .rfind('[')
+                .map(|r| window_start + r);
+            let Some(arr_pos) = bracket_pos else {
+                search_from = anchor_pos + anchor_lit.len();
+                continue;
+            };
+
+            // Skip if already covered by an earlier strip range.
+            if strip_ranges
+                .iter()
+                .any(|(s, e)| *s <= arr_pos && arr_pos < *e)
+            {
+                search_from = anchor_pos + anchor_lit.len();
+                continue;
+            }
+
+            match extract_balanced_json(&text[arr_pos..]) {
+                Some(consumed) => {
+                    let arr_slice = &text[arr_pos..arr_pos + consumed];
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(arr_slice)
+                        && let Some(items) = v.as_array()
+                    {
+                        let mut found_any = false;
+                        for item in items {
+                            if let Some(call) = parse_tool_call_value(item) {
+                                tool_calls.push(call);
+                                found_any = true;
+                            }
+                        }
+                        if found_any {
+                            strip_ranges.push((arr_pos, arr_pos + consumed));
+                            search_from = arr_pos + consumed;
+                            continue;
+                        }
+                    }
+                    search_from = anchor_pos + anchor_lit.len();
+                }
+                None => {
+                    search_from = anchor_pos + anchor_lit.len();
+                }
+            }
         }
     }
 
@@ -591,14 +742,25 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
         return (tool_calls, text.to_string());
     }
 
+    // Sort by start so the rebuild loop sees ranges in order. The Claude-style,
+    // bare-array, and main-loop passes can each add ranges out of order with
+    // respect to each other.
+    strip_ranges.sort_by_key(|(s, _)| *s);
+
     // Rebuild text with blocks removed, keeping everything outside them.
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
     for (s, e) in strip_ranges {
-        if s > cursor {
-            out.push_str(&text[cursor..s]);
+        if s >= cursor {
+            if s > cursor {
+                out.push_str(&text[cursor..s]);
+            }
+            cursor = e;
+        } else if e > cursor {
+            // Overlapping ranges (shouldn't happen with our passes, but be
+            // defensive): extend cursor without copying duplicate text.
+            cursor = e;
         }
-        cursor = e;
     }
     if cursor < text.len() {
         out.push_str(&text[cursor..]);
@@ -736,9 +898,11 @@ fn parse_xml_param_pairs(body: &str) -> Vec<(String, String)> {
 /// depth counter.
 pub(crate) fn extract_balanced_json(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
-    if bytes.first() != Some(&b'{') {
-        return None;
-    }
+    let (open, close) = match bytes.first()? {
+        b'{' => (b'{', b'}'),
+        b'[' => (b'[', b']'),
+        _ => return None,
+    };
     let mut depth: i32 = 0;
     let mut in_string = false;
     let mut escape = false;
@@ -755,16 +919,15 @@ pub(crate) fn extract_balanced_json(s: &str) -> Option<usize> {
             }
             continue;
         }
-        match b {
-            b'"' => in_string = true,
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(idx + 1);
-                }
+        if b == b'"' {
+            in_string = true;
+        } else if b == open {
+            depth += 1;
+        } else if b == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(idx + 1);
             }
-            _ => {}
         }
     }
     None
@@ -3199,10 +3362,19 @@ impl Provider for OpenAIProvider {
                                                 let full_match = LEAK_MARKERS
                                                     .iter()
                                                     .any(|m| probe_trimmed.starts_with(m));
-                                                if full_match {
+                                                // Bare top-level array of OpenAI envelopes
+                                                // (`[{"id":"call_..."}]`) — seen 2026-05-16 with
+                                                // qwen-3.6-max-preview-thinking double-emitting
+                                                // alongside structured delta.tool_calls.
+                                                let bare_array_state =
+                                                    classify_bare_tool_array(probe_trimmed);
+                                                if full_match
+                                                    || bare_array_state == BareToolArrayMatch::Full
+                                                {
                                                     tracing::warn!(
-                                                        "[STREAM_FILTER] Dropping hallucinated tool_calls JSON across accumulated content ({} chars buffered)",
-                                                        st.leak_probe.len()
+                                                        "[STREAM_FILTER] Dropping hallucinated tool-call JSON across accumulated content ({} chars buffered, bare_array={})",
+                                                        st.leak_probe.len(),
+                                                        bare_array_state == BareToolArrayMatch::Full
                                                     );
                                                     st.leak_active = true;
                                                     st.leak_probe.clear();
@@ -3214,13 +3386,16 @@ impl Provider for OpenAIProvider {
                                                     let still_prefix = probe_trimmed.is_empty()
                                                         || LEAK_MARKERS.iter().any(|m| {
                                                             m.starts_with(probe_trimmed)
-                                                        });
+                                                        })
+                                                        || bare_array_state == BareToolArrayMatch::Prefix;
                                                     if still_prefix {
                                                         // Keep withholding — bounded by marker len.
                                                         // Safety cap so a legitimate response that
-                                                        // happens to start with "{" doesn't get
-                                                        // buffered forever.
-                                                        if st.leak_probe.len() > 64 {
+                                                        // happens to start with "{" or "[" doesn't
+                                                        // get buffered forever. Bare-array prefixes
+                                                        // can reach ~50 bytes with pretty-printed
+                                                        // whitespace, so cap at 128.
+                                                        if st.leak_probe.len() > 128 {
                                                             to_emit = Some(std::mem::take(&mut st.leak_probe));
                                                         }
                                                     } else {
@@ -3475,7 +3650,9 @@ impl Provider for OpenAIProvider {
                                             let has_markers_in_accum = st.response_text_accum.contains("<tool_call>")
                                                 || st.response_text_accum.contains("<function=")
                                                 || st.response_text_accum.contains("tool_call:")
-                                                || st.response_text_accum.contains("\"tool_calls\"");
+                                                || st.response_text_accum.contains("\"tool_calls\"")
+                                                || st.response_text_accum.contains("\"id\":\"call_")
+                                                || st.response_text_accum.contains("\"id\": \"call_");
                                             let has_capture = !st.tool_capture_buffer.is_empty();
                                             if st.tool_calls.is_empty() && (has_markers_in_accum || has_capture)
                                             {

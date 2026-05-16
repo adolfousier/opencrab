@@ -9,7 +9,7 @@
 //! prose mentions, field aliases).
 
 use crate::brain::provider::custom_openai_compatible::{
-    extract_balanced_json, extract_text_tool_calls,
+    BareToolArrayMatch, classify_bare_tool_array, extract_balanced_json, extract_text_tool_calls,
 };
 
 #[test]
@@ -307,4 +307,124 @@ fn tool_calls_inside_prose_is_ignored() {
     let (calls, cleaned) = extract_text_tool_calls(text);
     assert_eq!(calls.len(), 0);
     assert_eq!(cleaned, text);
+}
+
+// --- Bare top-level array of OpenAI envelopes ---
+// Seen 2026-05-16 with qwen-3.6-max-preview-thinking: the model double-emits,
+// putting the full `[{"id":"call_...","type":"function",...}]` array into
+// `delta.content` while the real call still flows via `delta.tool_calls`. The
+// text copy used to bleed to the TUI as raw JSON. These tests pin the cleanup.
+
+#[test]
+fn balanced_json_accepts_arrays() {
+    // The balanced extractor must now handle `[...]` too, since the new
+    // bare-array pass uses it. Nested arrays and objects-inside-arrays
+    // remain correctly bracketed.
+    assert_eq!(extract_balanced_json(r#"[1,2,3]"#), Some(7));
+    assert_eq!(
+        extract_balanced_json(r#"[{"a":1},{"b":2}] trailing"#),
+        Some(17)
+    );
+    assert_eq!(extract_balanced_json(r#"[1,2"#), None);
+}
+
+#[test]
+fn extract_bare_array_single_call_compact() {
+    let text = r#"Sure! [{"id":"call_1","type":"function","function":{"name":"bash","arguments":{"command":"ls"}}}] done."#;
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "got {:?}", calls);
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(calls[0].1["command"], "ls");
+    assert!(!cleaned.contains("call_1"));
+    assert!(cleaned.contains("Sure!"));
+    assert!(cleaned.contains("done"));
+}
+
+#[test]
+fn extract_bare_array_pretty_printed_matches_log_shape() {
+    // Verbatim text shape from ~/.opencrabs/logs/opencrabs.2026-05-16
+    // (qwen-3.6-max-preview-thinking, ~20:16 UTC+1).
+    let text = "Good idea. I'll add automatic sitemap discovery.\n\n[\n  {\n    \"id\": \"call_1\",\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"edit_file\",\n      \"arguments\": {\n        \"path\": \"/x/scraper.rs\",\n        \"operation\": \"replace\",\n        \"old_text\": \"foo\",\n        \"new_text\": \"bar\"\n      }\n    }\n  }\n]";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "got {:?}", calls);
+    assert_eq!(calls[0].0, "edit_file");
+    assert_eq!(calls[0].1["operation"], "replace");
+    assert!(cleaned.contains("Good idea"));
+    assert!(!cleaned.contains("call_1"));
+    assert!(!cleaned.contains("edit_file"));
+}
+
+#[test]
+fn extract_bare_array_multiple_calls() {
+    let text = r#"[{"id":"call_a","type":"function","function":{"name":"bash","arguments":{"command":"git status"}}},{"id":"call_b","type":"function","function":{"name":"read_file","arguments":{"path":"/x"}}}]"#;
+    let (calls, _cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 2, "got {:?}", calls);
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(calls[1].0, "read_file");
+    assert_eq!(calls[1].1["path"], "/x");
+}
+
+#[test]
+fn extract_bare_array_with_stringified_arguments() {
+    // OpenAI envelope often serializes `arguments` as a string, not an object.
+    let text = r#"[{"id":"call_1","type":"function","function":{"name":"glob","arguments":"{\"pattern\":\"**/*.rs\"}"}}]"#;
+    let (calls, _) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "got {:?}", calls);
+    assert_eq!(calls[0].0, "glob");
+    assert_eq!(calls[0].1["pattern"], "**/*.rs");
+}
+
+#[test]
+fn bare_array_anchor_requires_call_prefix() {
+    // `"id":1` (numeric) or `"id":"x_1"` (non-call) must NOT trigger the
+    // bare-array pass — that would over-match arbitrary JSON content. The
+    // `"call_"` prefix is the OpenAI tool-call ID convention and is the
+    // anchor we use for cheap pre-rejection.
+    let text = r#"Here is JSON: [{"id":"banana_1","type":"function","function":{"name":"foo","arguments":{}}}] end."#;
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 0);
+    assert_eq!(cleaned, text);
+}
+
+#[test]
+fn bare_array_with_prose_id_call_mention_is_ignored() {
+    // Prose mentioning `"id":"call_xyz"` without a wrapping `[` shortly
+    // before must not match.
+    let text = r#"The field "id":"call_xyz" is what OpenAI returns."#;
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 0);
+    assert_eq!(cleaned, text);
+}
+
+#[test]
+fn classify_bare_tool_array_states() {
+    use BareToolArrayMatch::*;
+    // Empty / whitespace-only inputs are valid prefixes (no info yet).
+    assert_eq!(classify_bare_tool_array(""), Prefix);
+    assert_eq!(classify_bare_tool_array("   "), Prefix);
+    assert_eq!(classify_bare_tool_array("\n\n"), Prefix);
+
+    // Each step along the recognition path is still a Prefix.
+    assert_eq!(classify_bare_tool_array("["), Prefix);
+    assert_eq!(classify_bare_tool_array("[\n"), Prefix);
+    assert_eq!(classify_bare_tool_array("[ {"), Prefix);
+    assert_eq!(classify_bare_tool_array("[\n  {\n    \"id\""), Prefix);
+    assert_eq!(classify_bare_tool_array("[{\"id\":"), Prefix);
+    assert_eq!(classify_bare_tool_array("[{\"id\":\"cal"), Prefix);
+
+    // Complete recognition.
+    assert_eq!(classify_bare_tool_array("[{\"id\":\"call_"), Full);
+    assert_eq!(classify_bare_tool_array("[ {\"id\": \"call_1\"}]"), Full);
+    assert_eq!(
+        classify_bare_tool_array("[\n  {\n    \"id\": \"call_abc\"\n  }\n]"),
+        Full
+    );
+
+    // Definite divergences.
+    assert_eq!(classify_bare_tool_array("Hello"), None);
+    assert_eq!(classify_bare_tool_array("{not array"), None);
+    assert_eq!(classify_bare_tool_array("[1,2,3]"), None);
+    assert_eq!(classify_bare_tool_array("[{\"name\":\"x\"}]"), None);
+    assert_eq!(classify_bare_tool_array("[{\"id\":42}]"), None);
+    assert_eq!(classify_bare_tool_array("[{\"id\":\"banana_\""), None);
 }
