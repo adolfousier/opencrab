@@ -164,10 +164,46 @@ cargo test --all-features
 | Tests — Mission Control Input | 23 | `src/tests/mission_control_input_test.rs` |
 | Tests — Skills Dialog | 18 | `src/tests/skills_dialog_test.rs` |
 | Tests — merge_provider_keys (OpenCode persistence regression) | 4 | `src/tests/merge_provider_keys_test.rs` |
+| Tests — Onboarding Wizard | 67 | `src/tests/onboarding_wizard_test.rs` |
+| Tests — RSI (Recursive Self-Improvement) | 73 | `src/tests/rsi_test.rs` |
+| Tests — Self-Healing (Phantom Detection, expanded) | 76 | `src/tests/self_healing_test.rs` |
+| Tests — Bash Interactive Reject | 36 | `src/tests/bash_interactive_reject_test.rs` |
+| Tests — Qwen Tool-Call Extractor | 34 | `src/tests/qwen_tool_extractor_test.rs` |
+| Tests — Brain File Safety (append-only enforcement) | 32 | `src/tests/brain_file_safety_test.rs` |
+| Tests — Provider Config Regression | 28 | `src/tests/provider_config_regression_test.rs` |
+| Tests — Tool-Loop Helpers (Linor P0 hotspot) | 20 | `src/tests/tool_loop_helpers_test.rs` |
+| Tests — Recent Paths | 17 | `src/tests/recent_paths_test.rs` |
+| Tests — Provider Error Proxy | 16 | `src/tests/provider_error_proxy_test.rs` |
+| Tests — Mouse Fragment Filter | 13 | `src/tests/mouse_fragment_filter_test.rs` |
+| Tests — Agent Basic | 12 | `src/tests/agent_basic_test.rs` |
+| Tests — RSI Git History | 12 | `src/tests/rsi_git_history_test.rs` |
+| Tests — Bash Retry Loop | 10 | `src/tests/bash_retry_loop_test.rs` |
+| Tests — Agent Tool Normalization | 10 | `src/tests/agent_tool_normalization_test.rs` |
+| Tests — Kimi Reasoning Markers | 9 | `src/tests/kimi_reasoning_test.rs` |
+| Tests — Usage Activity Columns | 9 | `src/tests/usage_activity_columns_test.rs` |
+| Tests — Agent Context Tracking | 8 | `src/tests/agent_context_tracking_test.rs` |
+| Tests — Collapse `$HOME` to `~` | 8 | `src/tests/collapse_home_test.rs` |
+| Tests — Rate Limiter | 8 | `src/tests/rate_limiter_test.rs` |
+| Tests — Session Chat-ID Lookup | 8 | `src/tests/session_chat_id_lookup_test.rs` |
+| Tests — Agent Approval Policies | 7 | `src/tests/agent_approval_policies_test.rs` |
+| Tests — Agent Model Selection | 6 | `src/tests/agent_model_selection_test.rs` |
+| Tests — Browser Close Tool | 6 | `src/tests/browser_close_test.rs` |
+| Tests — Local-Provider Gate | 6 | `src/tests/local_provider_gate_test.rs` |
+| Tests — Agent Parallel Sessions | 5 | `src/tests/agent_parallel_sessions_test.rs` |
+| Tests — Agent Streaming Usage | 5 | `src/tests/agent_streaming_usage_test.rs` |
+| Tests — Claude CLI Model Selection | 5 | `src/tests/claude_cli_model_test.rs` |
+| Tests — Codex CLI Provider | 5 | `src/tests/codex_cli_test.rs` |
+| Tests — Non-stream Compatibility | 5 | `src/tests/nonstream_compat_test.rs` |
+| Tests — Runtime Info `$HOME` Anchor | 5 | `src/tests/runtime_info_home_anchor_test.rs` |
+| Tests — Handshake Timeout | 4 | `src/tests/handshake_timeout_test.rs` |
+| Tests — Usage Ledger | 4 | `src/tests/usage_ledger_test.rs` |
+| Tests — Browser E2E (opt-in, `#[ignore]`) | 3 | `src/tests/browser_e2e_test.rs` |
+| Tests — CLI Arg Length Cap | 2 | `src/tests/cli_arg_too_long_test.rs` |
+| Tests — Config Watcher (integration) | 2 | `src/tests/config_watcher_test.rs` |
 | **Usage — Categorizer** | 4 | `src/usage/categorizer.rs` |
 | **Usage — Dashboard** | 6 | `src/usage/dashboard.rs` |
 | **Usage — Data** | 7 | `src/usage/data.rs` |
-| **Total** | **2,522** | +176 since last update: Mission Control (49: layout, services, input, popup), Skills (39: loader, dispatch, dialog), Slash autocomplete responsive fix (12), Bash SSH + POSIX quote hardening (19), RSI proposals inbox (13), merge_provider_keys regression (4), and more |
+| **Total** | **2,583** | +61 since last update: bare-array tool-call extractor (10 new, lifting qwen_tool_extractor to 34); previously-unlisted suites surfaced — RSI (73), self-healing expanded to 76, onboarding wizard (67), bash interactive reject (36), brain-file safety (32), provider config regression (28), tool-loop helpers (20), recent paths (17), provider error proxy (16), mouse fragment filter (13), agent_* sub-suites (53 across 7 files), and more |
 
 ---
 
