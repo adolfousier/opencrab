@@ -1628,7 +1628,7 @@ See [`tools.toml.example`](tools.toml.example) for a complete reference.
 
 ### Connecting to Remote MCP Servers
 
-You can expose tools from any MCP server as dynamic tools in OpenCrabs. This lets the agent call MCP tools alongside built-in tools — enabling integration with services like Telegram, GitHub, Slack, or any custom MCP server you run.
+You can expose tools from any MCP server as dynamic tools in OpenCrabs. This lets the agent call MCP tools alongside built-in tools — enabling integration with services like GitHub, Slack, a filesystem MCP, or any custom MCP server you run.
 
 **How it works:** The [`fastmcp`](https://github.com/jlowin/fastmcp) CLI client calls a remote MCP server over HTTP, fetches the tool's JSON output, and returns it as plain text — which OpenCrabs parses and returns to the agent.
 
@@ -1641,43 +1641,38 @@ pip install fastmcp
 
 ```toml
 [[tools]]
-name = "tg_get_messages"
-description = "Read or search Telegram messages from a chat"
+name = "gh_search_repos"
+description = "Search GitHub repositories"
 executor = "shell"
-command = "fastmcp call \"https://tg-mcp.example.com/v1/mcp\" get_messages --transport http --auth \"YOUR_BEARER_TOKEN\" --input-json '{\"chat_id\":\"{{chat_id}}\",\"query\":\"{{query}}\",\"limit\":{{limit}}}' 2>&1"
+command = "fastmcp call \"https://mcp.example.com/v1/mcp\" search_repositories --transport http --auth \"YOUR_BEARER_TOKEN\" --input-json '{\"query\":\"{{query}}\",\"limit\":{{limit}}}' 2>&1"
 timeout_secs = 30
 requires_approval = false
 enabled = true
 
 [[tools.params]]
-name = "chat_id"
-type = "string"
-description = "Telegram chat ID, username without @, or 'me' for Saved Messages"
-required = true
-
-[[tools.params]]
 name = "query"
 type = "string"
-description = "Search query (omit to browse latest messages)"
-required = false
+description = "Search query (e.g. 'language:rust stars:>100')"
+required = true
 
 [[tools.params]]
 name = "limit"
 type = "integer"
-description = "Maximum messages to return (default 50)"
+description = "Maximum results to return"
 required = false
+default = 20
 ```
 
 **Best practice for credentials:** Store bearer tokens in `keys.toml` rather than hardcoding them in `tools.toml`:
 
 ```toml
-[tg_mcp]
+[github_mcp]
 bearer = "YOUR_BEARER_TOKEN_HERE"
 ```
 
 Then reference it via shell variable expansion in the command:
 ```toml
-command = "fastmcp call \"https://tg-mcp.example.com/v1/mcp\" get_messages --transport http --auth \"$TG_MCP_BEARER\" ..."
+command = "fastmcp call \"https://mcp.example.com/v1/mcp\" search_repositories --transport http --auth \"$GITHUB_MCP_BEARER\" ..."
 ```
 
 You can also put the token directly in the command for testing, but be aware `tools.toml` may be committed to version control.
@@ -1691,6 +1686,8 @@ You can also put the token directly in the command for testing, but be aware `to
 | `--transport http` | | HTTP transport (not SSE) |
 | `--auth` | bearer token | Passed as `Authorization: Bearer <token>` |
 | `--input-json` | JSON string | Tool parameters as JSON, use `{{param}}` template variables |
+
+**Optional parameters:** When a parameter is omitted, OpenCrabs sends an empty string unless `default` is set. For MCP tools that treat `null`/omitted differently, set `default = ""` (or the appropriate zero value) in the param definition so the JSON field is always present with a defined value.
 
 **Notes:**
 - Template variables (`{{param}}`) are substituted by the shell executor before the command runs
