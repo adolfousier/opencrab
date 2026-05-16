@@ -1630,11 +1630,26 @@ See [`tools.toml.example`](tools.toml.example) for a complete reference.
 
 You can expose tools from any MCP server as dynamic tools in OpenCrabs. This lets the agent call MCP tools alongside built-in tools — enabling integration with services like GitHub, Slack, a filesystem MCP, or any custom MCP server you run.
 
-**How it works:** The [`fastmcp`](https://github.com/jlowin/fastmcp) CLI client calls a remote MCP server over HTTP, fetches the tool's JSON output, and returns it as plain text — which OpenCrabs parses and returns to the agent.
+**How it works:** The [`mcp`](https://github.com/avelino/mcp) CLI client calls a remote MCP server over HTTP, fetches the tool's JSON output, and returns it as plain text — which OpenCrabs parses and returns to the agent.
 
 **Prerequisites:**
 ```bash
-pip install fastmcp
+curl -sSL https://raw.githubusercontent.com/avelino/mcp/main/install.sh | sh
+```
+
+The `mcp` CLI is a static Rust binary (~14MB) and works on Linux, macOS, and Windows. After installation, configure servers in `~/.config/mcp/servers.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "url": "https://mcp.example.com/v1/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN"
+      }
+    }
+  }
+}
 ```
 
 **Configuration in `tools.toml`:**
@@ -1644,7 +1659,7 @@ pip install fastmcp
 name = "gh_search_repos"
 description = "Search GitHub repositories"
 executor = "shell"
-command = "fastmcp call \"https://mcp.example.com/v1/mcp\" search_repositories --transport http --auth \"YOUR_BEARER_TOKEN\" --input-json '{\"query\":\"{{query}}\",\"limit\":{{limit}}}' 2>&1"
+command = "mcp my-server search_repositories '{\"query\":\"{{query}}\",\"limit\":{{limit}}}'"
 timeout_secs = 30
 requires_approval = false
 enabled = true
@@ -1672,7 +1687,7 @@ bearer = "YOUR_BEARER_TOKEN_HERE"
 
 Then reference it via shell variable expansion in the command:
 ```toml
-command = "fastmcp call \"https://mcp.example.com/v1/mcp\" search_repositories --transport http --auth \"$GITHUB_MCP_BEARER\" ..."
+command = "mcp my-server search_repositories '{\"query\":\"{{query}}\"}'"
 ```
 
 You can also put the token directly in the command for testing, but be aware `tools.toml` may be committed to version control.
@@ -1682,10 +1697,11 @@ You can also put the token directly in the command for testing, but be aware `to
 | Field | Value | Description |
 |-------|-------|-------------|
 | `executor` | `"shell"` | Use shell executor — HTTP executor body templating has known issues |
-| `command` | `fastmcp call ...` | fastmcp CLI invokes the MCP server |
-| `--transport http` | | HTTP transport (not SSE) |
-| `--auth` | bearer token | Passed as `Authorization: Bearer <token>` |
-| `--input-json` | JSON string | Tool parameters as JSON, use `{{param}}` template variables |
+| `command` | `mcp <server> <tool> '{\"key\":\"{{value}}\"}'` | mcp CLI invokes the MCP server |
+| server name | e.g. `my-server` | Server name from `~/.config/mcp/servers.json` |
+| JSON arg | `'{\"key\":\"{{value}}\"}'` | Tool parameters as JSON, use `{{param}}` template variables |
+
+**Note:** Authentication/transport is configured in `~/.config/mcp/servers.json`, not in the command.
 
 **Optional parameters:** When a parameter is omitted, OpenCrabs sends an empty string unless `default` is set. For MCP tools that treat `null`/omitted differently, set `default = ""` (or the appropriate zero value) in the param definition so the JSON field is always present with a defined value.
 
