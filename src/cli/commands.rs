@@ -820,6 +820,15 @@ pub(crate) async fn cmd_run(
         system_brain.push_str(&digest);
     }
 
+    // Load dynamic tools from ~/.opencrabs/tools.toml
+    let tools_toml_path = crate::brain::tools::dynamic::DynamicToolLoader::default_path()
+        .unwrap_or_else(|| std::path::PathBuf::from("tools.toml"));
+    let dynamic_count =
+        crate::brain::tools::dynamic::DynamicToolLoader::load(&tools_toml_path, &tool_registry);
+    if dynamic_count > 0 {
+        tracing::info!("Loaded {dynamic_count} dynamic tool(s) from tools.toml");
+    }
+
     // Create service context and agent service
     let service_context = ServiceContext::new(db.pool().clone());
     let agent_service = AgentService::new(provider.clone(), service_context.clone(), config)
@@ -1166,6 +1175,15 @@ pub(crate) async fn cmd_agent_interactive(
         crate::brain::prompt_builder::build_feedback_digest(db.pool().clone()).await
     {
         system_brain.push_str(&digest);
+    }
+
+    // Load dynamic tools from ~/.opencrabs/tools.toml
+    let tools_toml_path = crate::brain::tools::dynamic::DynamicToolLoader::default_path()
+        .unwrap_or_else(|| std::path::PathBuf::from("tools.toml"));
+    let dynamic_count =
+        crate::brain::tools::dynamic::DynamicToolLoader::load(&tools_toml_path, &tool_registry);
+    if dynamic_count > 0 {
+        tracing::info!("Loaded {dynamic_count} dynamic tool(s) from tools.toml");
     }
 
     let service_context = ServiceContext::new(db.pool().clone());
