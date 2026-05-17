@@ -574,10 +574,17 @@ async fn fetch_model_entries(pool: &Pool, since: Option<i64>) -> Result<Vec<Mode
 async fn fetch_tools(pool: &Pool, since: Option<i64>) -> Result<Vec<ToolStats>> {
     let conn = pool.get().await.context("pool")?;
     conn.interact(move |conn| {
+        // Exclude rows with empty tool_name. Historically 44+ such rows
+        // landed on 2026-04-28 when a model emitted tool_use blocks with
+        // missing names; they all errored at dispatch but the failure
+        // still got recorded with the empty name, producing a blank row
+        // in the dashboard. ToolRepo::record now refuses empty names at
+        // write time, but this filter keeps legacy rows from rendering.
         let (query, param): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) = since {
             (
                 "SELECT tool_name, COUNT(*) as cnt \
-                 FROM tool_executions WHERE created_at >= ?1 \
+                 FROM tool_executions \
+                 WHERE created_at >= ?1 AND tool_name <> '' \
                  GROUP BY tool_name ORDER BY cnt DESC",
                 vec![Box::new(s)],
             )
@@ -585,6 +592,7 @@ async fn fetch_tools(pool: &Pool, since: Option<i64>) -> Result<Vec<ToolStats>> 
             (
                 "SELECT tool_name, COUNT(*) as cnt \
                  FROM tool_executions \
+                 WHERE tool_name <> '' \
                  GROUP BY tool_name ORDER BY cnt DESC",
                 vec![],
             )

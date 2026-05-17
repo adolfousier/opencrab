@@ -109,6 +109,7 @@ pub mod split_pane_test;
 pub mod subagent_test;
 pub mod telegram_resume_test;
 pub mod token_tracking_test;
+pub mod tool_execution_repo_test;
 pub mod tool_loop_helpers_test;
 pub mod tui_error_test;
 pub mod tui_render_clear_test;

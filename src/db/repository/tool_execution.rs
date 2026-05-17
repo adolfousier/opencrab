@@ -26,7 +26,15 @@ impl ToolExecutionRepository {
         Self { pool }
     }
 
-    /// Record a tool execution
+    /// Record a tool execution.
+    ///
+    /// Refuses to write rows with an empty `tool_name`. Historically a model
+    /// occasionally emitted `tool_use` blocks with no name field — dispatch
+    /// errored, but the failure still got recorded with the empty name,
+    /// producing a blank row in the usage dashboard. There's nothing
+    /// meaningful to record for an unnamed tool; logging the refusal at warn
+    /// level is enough to surface upstream model misbehaviour without
+    /// polluting the stats.
     pub async fn record(
         &self,
         id: &str,
@@ -35,6 +43,15 @@ impl ToolExecutionRepository {
         tool_name: &str,
         status: &str,
     ) -> Result<()> {
+        if tool_name.trim().is_empty() {
+            tracing::warn!(
+                "ToolRepo::record skipped: empty tool_name (id={}, message_id={}, status={})",
+                id,
+                message_id,
+                status
+            );
+            return Ok(());
+        }
         let id = id.to_string();
         let message_id = message_id.to_string();
         let session_id = session_id.to_string();
@@ -64,12 +81,13 @@ impl ToolExecutionRepository {
             .await
             .context("Failed to get connection")?
             .interact(move |conn| {
+                // Skip rows with empty tool_name (see ToolRepo::record).
                 let (query, param): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
                     if let Some(since) = since_epoch {
                         (
                             "SELECT tool_name, COUNT(*) as cnt \
                              FROM tool_executions \
-                             WHERE created_at >= ?1 \
+                             WHERE created_at >= ?1 AND tool_name <> '' \
                              GROUP BY tool_name \
                              ORDER BY cnt DESC"
                                 .to_string(),
@@ -79,6 +97,7 @@ impl ToolExecutionRepository {
                         (
                             "SELECT tool_name, COUNT(*) as cnt \
                              FROM tool_executions \
+                             WHERE tool_name <> '' \
                              GROUP BY tool_name \
                              ORDER BY cnt DESC"
                                 .to_string(),
