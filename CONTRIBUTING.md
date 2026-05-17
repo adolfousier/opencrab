@@ -160,4 +160,4 @@ A well-written bug report or feature request is worth more than a stub PR. Serio
 
 ## License
 
-By contributing to OpenCrabs, you agree that your contributions will be licensed under the MIT License. See [LICENSE](LICENSE) for details.
+By contributing to OpenCrabs, you agree that your contributions will be licensed under the MIT License. See [LICENSE.md](LICENSE.md) for details.

@@ -3047,6 +3047,17 @@ node dist/cli.js linkedin engage --query="query"   # Full engagement session
 
 **Features:** Human-like behavior (randomized delays, natural typing), session persistence across restarts, built-in rate limiting, anti-detection, research-first workflow (scrape targets first, distribute engagement over time).
 
+### TweetClaw - OpenClaw X/Twitter Plugin
+
+[TweetClaw](https://github.com/Xquik-dev/tweetclaw) is an optional [OpenClaw](https://github.com/openclaw/openclaw) plugin for X/Twitter automation through [Xquik](https://xquik.com). Use it when an OpenClaw agent needs to scrape tweets, search tweets or replies, post tweets or replies, export followers, look up users, manage media, send direct messages, monitor tweets, receive webhooks, or run giveaway draws.
+
+**Install in OpenClaw:**
+```bash
+openclaw plugins install @xquik/tweetclaw
+```
+
+**Usage with OpenCrabs:** Keep OpenCrabs focused on local Rust sessions and channel orchestration. Pass tweet URLs, search summaries, or reviewed action decisions between OpenCrabs and an OpenClaw workspace that has TweetClaw configured.
+
 ---
 
 ## ⚠️ Disclaimers
