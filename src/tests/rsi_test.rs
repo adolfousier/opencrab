@@ -863,8 +863,7 @@ mod self_improve_tool {
         // Verify rsi/improvements.md was written to ~/.opencrabs/
         let home = crate::config::opencrabs_home();
         let improvements =
-            std::fs::read_to_string(home.join("rsi").join("improvements.md"))
-                .unwrap();
+            std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
         assert!(improvements.contains("Add retry logic"));
         assert!(improvements.contains("Frequent transient failures"));
     }
@@ -987,8 +986,7 @@ mod self_improve_tool {
 
         // Verify rsi/improvements.md logged the change
         let improvements =
-            std::fs::read_to_string(home.join("rsi").join("improvements.md"))
-                .unwrap();
+            std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
         assert!(improvements.contains("SOUL.md"));
     }
 
@@ -1064,8 +1062,7 @@ mod self_improve_tool {
         // Rationale defaults to "(none)"
         let home = crate::config::opencrabs_home();
         let improvements =
-            std::fs::read_to_string(home.join("rsi").join("improvements.md"))
-                .unwrap();
+            std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
         assert!(improvements.contains("(none)"));
     }
 }
