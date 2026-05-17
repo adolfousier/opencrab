@@ -860,9 +860,10 @@ mod self_improve_tool {
         assert!(result.output.contains("applied"));
         assert!(result.output.contains("Add retry logic"));
 
-        // Verify rsi/improvements.md was written to the temp working directory
+        // Verify rsi/improvements.md was written to ~/.opencrabs/
+        let home = crate::config::opencrabs_home();
         let improvements =
-            std::fs::read_to_string(ctx.working_directory.join("rsi").join("improvements.md"))
+            std::fs::read_to_string(home.join("rsi").join("improvements.md"))
                 .unwrap();
         assert!(improvements.contains("Add retry logic"));
         assert!(improvements.contains("Frequent transient failures"));
@@ -979,13 +980,14 @@ mod self_improve_tool {
         assert!(result.output.contains("applied"));
         assert!(result.output.contains("SOUL.md"));
 
-        // Verify content was appended to SOUL.md in temp working directory
-        let soul = std::fs::read_to_string(ctx.working_directory.join("SOUL.md")).unwrap();
+        // Verify content was appended to SOUL.md in ~/.opencrabs/
+        let home = crate::config::opencrabs_home();
+        let soul = std::fs::read_to_string(home.join("SOUL.md")).unwrap();
         assert!(soul.contains("Conciseness"));
 
-        // Verify rsi/improvements.md logged the change in temp working directory
+        // Verify rsi/improvements.md logged the change
         let improvements =
-            std::fs::read_to_string(ctx.working_directory.join("rsi").join("improvements.md"))
+            std::fs::read_to_string(home.join("rsi").join("improvements.md"))
                 .unwrap();
         assert!(improvements.contains("SOUL.md"));
     }
@@ -1060,8 +1062,9 @@ mod self_improve_tool {
             .unwrap();
         assert!(result.success);
         // Rationale defaults to "(none)"
+        let home = crate::config::opencrabs_home();
         let improvements =
-            std::fs::read_to_string(ctx.working_directory.join("rsi").join("improvements.md"))
+            std::fs::read_to_string(home.join("rsi").join("improvements.md"))
                 .unwrap();
         assert!(improvements.contains("(none)"));
     }
