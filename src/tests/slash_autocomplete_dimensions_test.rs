@@ -133,3 +133,92 @@ fn truncate_handles_multi_byte_unicode() {
     assert_eq!(s.chars().count(), 4);
     assert!(s.ends_with('…'));
 }
+
+// --- fit_dropdown: height clamping for short terminals ---
+// 2026-05-17: users on default macOS Terminal, Ghostty, and old Windows
+// Terminal (all default to 80x24) reported the TUI completely locking
+// with a blank screen after pressing `/`. Only Ctrl+C escaped. Root
+// cause: the slash autocomplete dropdown was sized at `count + 4` rows
+// (no height clamp), so the full SLASH_COMMANDS + skills list (30+
+// entries) produced a Rect that overflowed the terminal buffer.
+// Ratatui panicked writing past the buffer, catch_unwind cleared the
+// screen, the next frame panicked again, and the user was stuck in an
+// infinite blank-screen render loop. Alacritty users escaped because
+// their default window dimensions were large enough to fit the popup.
+//
+// `fit_dropdown` returns None instead of an oversized Rect so the
+// render path skips drawing rather than panicking.
+
+use crate::tui::render::{DropdownFit, fit_dropdown};
+
+#[test]
+fn fit_dropdown_fits_when_room_available() {
+    // 10 items, 20 rows above input, 4 chrome rows: easy fit.
+    let fit = fit_dropdown(10, 0, 20, 4).expect("must fit");
+    assert_eq!(
+        fit,
+        DropdownFit {
+            height: 14, // 10 items + 4 chrome
+            visible_items: 10,
+            scroll_offset: 0,
+        }
+    );
+}
+
+#[test]
+fn fit_dropdown_clamps_height_to_input_y() {
+    // 30 items but only 12 rows available above input → height clamped
+    // to 12, visible_items = 12 - 4 = 8. The 22 invisible items are
+    // reachable by scrolling.
+    let fit = fit_dropdown(30, 0, 12, 4).expect("must fit");
+    assert_eq!(fit.height, 12);
+    assert_eq!(fit.visible_items, 8);
+    assert_eq!(fit.scroll_offset, 0);
+}
+
+#[test]
+fn fit_dropdown_scrolls_to_keep_selected_visible() {
+    // Same 30 items + 12 rows scenario, but selected=15. The visible
+    // window (8 items) must include row 15, so scroll_offset = 15-7 = 8.
+    let fit = fit_dropdown(30, 15, 12, 4).expect("must fit");
+    assert_eq!(fit.visible_items, 8);
+    assert_eq!(fit.scroll_offset, 8);
+    assert!(
+        (fit.scroll_offset..fit.scroll_offset + fit.visible_items).contains(&15),
+        "selected row 15 must be inside the visible window"
+    );
+}
+
+#[test]
+fn fit_dropdown_clamps_scroll_at_list_end() {
+    // selected=29 (last item) with 8 visible items → scroll_offset = 22
+    // so the window ends exactly at row 29 without overshooting.
+    let fit = fit_dropdown(30, 29, 12, 4).expect("must fit");
+    assert_eq!(fit.scroll_offset, 22);
+    assert_eq!(fit.visible_items, 8);
+    assert_eq!(fit.scroll_offset + fit.visible_items, 30);
+}
+
+#[test]
+fn fit_dropdown_returns_none_when_no_room() {
+    // Need at least chrome + 1 rows for one item. 4 rows is just borders+padding.
+    assert_eq!(fit_dropdown(10, 0, 4, 4), None);
+    assert_eq!(fit_dropdown(10, 0, 0, 4), None);
+    // Empty list never renders either.
+    assert_eq!(fit_dropdown(0, 0, 20, 4), None);
+}
+
+#[test]
+fn fit_dropdown_macos_terminal_default_dimensions() {
+    // The exact scenario reported on 2026-05-17: macOS Terminal default
+    // 80x24, input at y=20 (chat + plan + queue + status above), 30
+    // total slash commands (SLASH_COMMANDS + skills). Pre-fix this
+    // produced a height=34 Rect that overflowed the 24-row terminal
+    // and panicked the render loop. Post-fix: height=20, scroll=0,
+    // visible=16 — fits, no panic.
+    let fit = fit_dropdown(30, 0, 20, 4).expect("must fit on macOS Terminal default");
+    assert_eq!(fit.height, 20);
+    assert_eq!(fit.visible_items, 16);
+    assert_eq!(fit.scroll_offset, 0);
+    assert!(fit.height <= 20, "height must not exceed rows above input");
+}

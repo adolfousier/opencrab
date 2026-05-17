@@ -589,6 +589,58 @@ pub(crate) fn truncate_to_chars(s: &str, max_chars: usize) -> std::borrow::Cow<'
     std::borrow::Cow::Owned(out)
 }
 
+/// Result of fitting the slash-autocomplete dropdown into the rows
+/// available above the input area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DropdownFit {
+    /// Final dropdown rect height (incl. borders + padding).
+    pub height: u16,
+    /// Number of items rendered this frame (after scroll window).
+    pub visible_items: u16,
+    /// Index into the full filtered list at which the visible window starts.
+    pub scroll_offset: u16,
+}
+
+/// Fit a popup of `total_items` rows into `rows_above_input` rows. If the
+/// popup would overflow (default macOS Terminal / Ghostty / old Windows
+/// Terminal sit at 80×24, while the full SLASH_COMMANDS + skills list
+/// regularly hits 30+ entries), clamp height and scroll the visible
+/// window so `selected` stays in view.
+///
+/// `chrome` is rows consumed by borders + padding (top + bottom).
+///
+/// Returns `None` when there's literally no room (need at least
+/// `chrome + 1` rows for one item) — caller should skip rendering rather
+/// than draw an oversized Rect that panics ratatui's buffer write. That
+/// panic is the root cause of the "complete empty window, only Ctrl+C
+/// escapes" lock-up seen on macOS Terminal / Ghostty.
+pub(crate) fn fit_dropdown(
+    total_items: u16,
+    selected: u16,
+    rows_above_input: u16,
+    chrome: u16,
+) -> Option<DropdownFit> {
+    if total_items == 0 || rows_above_input < chrome + 1 {
+        return None;
+    }
+    let desired = total_items.saturating_add(chrome);
+    let height = desired.min(rows_above_input);
+    let visible_items = height.saturating_sub(chrome);
+    // Scroll so the selected row stays inside the visible window.
+    let scroll_offset = if selected < visible_items {
+        0
+    } else {
+        selected.saturating_sub(visible_items - 1)
+    };
+    // Clamp so scroll_offset + visible_items never overshoots total_items.
+    let scroll_offset = scroll_offset.min(total_items.saturating_sub(visible_items));
+    Some(DropdownFit {
+        height,
+        visible_items,
+        scroll_offset,
+    })
+}
+
 /// Render slash command autocomplete dropdown above the input area
 pub(super) fn render_slash_autocomplete(f: &mut Frame, app: &App, input_area: Rect) {
     let count = app.slash_filtered.len() as u16;
@@ -596,19 +648,33 @@ pub(super) fn render_slash_autocomplete(f: &mut Frame, app: &App, input_area: Re
         return;
     }
 
-    // Position dropdown above the input box, auto-sized to fit content.
     // Padding: 1 char each side (left/right inside border), 1 empty line top/bottom.
     let pad_x: u16 = 1;
     let pad_y: u16 = 1;
-    let height = count + 2 + pad_y * 2; // +2 for borders, +2 for top/bottom padding
+    let chrome = 2 + pad_y * 2;
+
+    // Fit into the rows ABOVE the input area. Without this clamp,
+    // a long built-in + skills list produces a dropdown taller than
+    // the terminal (default Terminal.app / Ghostty / Windows Terminal
+    // sit at 24 rows), ratatui panics writing out of buffer bounds,
+    // catch_unwind clears the screen, the next frame panics again,
+    // and the user sees a totally blank TUI that only Ctrl+C escapes.
+    let selected = app.slash_selected_index as u16;
+    let Some(fit) = fit_dropdown(count, selected, input_area.y, chrome) else {
+        return;
+    };
+    let visible_items_count = fit.visible_items as usize;
+    let scroll_offset = fit.scroll_offset as usize;
 
     // Sizing math is in `dropdown_dimensions` so the regression (long
     // skill descriptions overflowing the buffer) is unit-testable without
     // a live App. The dropdown is responsive — width grows to fit the
     // longest row, capped at `input_area.width - 1`.
-    let mut name_lengths: Vec<usize> = Vec::with_capacity(app.slash_filtered.len());
-    let mut desc_lengths: Vec<usize> = Vec::with_capacity(app.slash_filtered.len());
-    for &idx in &app.slash_filtered {
+    let visible_end = (scroll_offset + visible_items_count).min(app.slash_filtered.len());
+    let visible_slice = &app.slash_filtered[scroll_offset..visible_end];
+    let mut name_lengths: Vec<usize> = Vec::with_capacity(visible_slice.len());
+    let mut desc_lengths: Vec<usize> = Vec::with_capacity(visible_slice.len());
+    for &idx in visible_slice {
         name_lengths.push(app.slash_command_name(idx).unwrap_or("").chars().count());
         desc_lengths.push(
             app.slash_command_description(idx)
@@ -626,21 +692,20 @@ pub(super) fn render_slash_autocomplete(f: &mut Frame, app: &App, input_area: Re
         dropdown_dimensions(name_col_chars, &desc_lengths, input_area.width, pad_x);
     let dropdown_area = Rect {
         x: input_area.x + 1,
-        y: input_area.y.saturating_sub(height),
+        y: input_area.y.saturating_sub(fit.height),
         width,
-        height,
+        height: fit.height,
     };
 
     // Build dropdown lines (supports built-in commands, user-defined commands, and skills)
-    let lines: Vec<Line> = app
-        .slash_filtered
+    let lines: Vec<Line> = visible_slice
         .iter()
         .enumerate()
         .map(|(i, &cmd_idx)| {
             let name = app.slash_command_name(cmd_idx).unwrap_or("???");
             let raw_desc = app.slash_command_description(cmd_idx).unwrap_or("");
             let desc = truncate_to_chars(raw_desc, desc_budget);
-            let is_selected = i == app.slash_selected_index;
+            let is_selected = (scroll_offset + i) == app.slash_selected_index;
 
             let style = if is_selected {
                 Style::default()
@@ -690,21 +755,32 @@ pub(super) fn render_emoji_picker(f: &mut Frame, app: &App, input_area: Rect) {
         return;
     }
 
-    let height = count + 2 + 2; // items + borders + padding
+    // Same fit-or-skip rule as the slash dropdown — an oversized popup
+    // (e.g. unfiltered emoji list = 100+ entries) on a 24-row terminal
+    // would write past the buffer and crash the render loop.
+    let chrome: u16 = 4; // borders + padding
+    let Some(fit) = fit_dropdown(count, app.emoji_selected_index as u16, input_area.y, chrome)
+    else {
+        return;
+    };
+    let visible_items_count = fit.visible_items as usize;
+    let scroll_offset = fit.scroll_offset as usize;
+    let visible_end = (scroll_offset + visible_items_count).min(app.emoji_filtered.len());
+    let visible_slice = &app.emoji_filtered[scroll_offset..visible_end];
+
     let width = 36u16.min(input_area.width);
     let dropdown_area = Rect {
         x: input_area.x + 1,
-        y: input_area.y.saturating_sub(height),
+        y: input_area.y.saturating_sub(fit.height),
         width,
-        height,
+        height: fit.height,
     };
 
-    let lines: Vec<Line> = app
-        .emoji_filtered
+    let lines: Vec<Line> = visible_slice
         .iter()
         .enumerate()
         .map(|(i, &(emoji, shortcode))| {
-            let is_selected = i == app.emoji_selected_index;
+            let is_selected = (scroll_offset + i) == app.emoji_selected_index;
             let style = if is_selected {
                 Style::default()
                     .fg(Color::Black)

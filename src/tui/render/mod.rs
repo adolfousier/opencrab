@@ -23,7 +23,7 @@ pub(in crate::tui) use utils::char_boundary_at_width;
 #[cfg(test)]
 pub(crate) use chat::reasoning_to_lines;
 #[cfg(test)]
-pub(crate) use input::{dropdown_dimensions, truncate_to_chars};
+pub(crate) use input::{DropdownFit, dropdown_dimensions, fit_dropdown, truncate_to_chars};
 #[cfg(test)]
 pub(crate) use tools::collapse_build_output;
 
