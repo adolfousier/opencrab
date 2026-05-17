@@ -308,16 +308,29 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
             });
 
         if has_real_variants {
+            // Tree prefix: 4 leading spaces + box-drawing + 1 trailing space
+            // = 7 display chars. The deeper indent (vs the previous 2-space
+            // version) makes the parent/child hierarchy unmistakable at a
+            // glance. Reserve those 7 chars from `name_width` so the child
+            // row's downstream columns (cost / tokens / calls) line up with
+            // the parent row's instead of getting shoved right.
+            const TREE_PREFIX_CHARS: usize = 7;
+            let max_child_name = name_width.saturating_sub(TREE_PREFIX_CHARS);
             for (vidx, v) in m.variants.iter().enumerate() {
                 let is_last = vidx == m.variants.len() - 1;
-                let prefix = if is_last { "  └─ " } else { "  ├─ " };
-                let v_display = crate::tui::provider_selector::model_display_label(&v.name).to_string();
-                let v_name = if v_display.len() > name_width.saturating_sub(4) {
+                let prefix = if is_last {
+                    "    └─ "
+                } else {
+                    "    ├─ "
+                };
+                let v_display =
+                    crate::tui::provider_selector::model_display_label(&v.name).to_string();
+                let v_name = if v_display.chars().count() > max_child_name {
                     format!(
-                        "{}...",
+                        "{}…",
                         v_display
                             .chars()
-                            .take(name_width.saturating_sub(7))
+                            .take(max_child_name.saturating_sub(1))
                             .collect::<String>()
                     )
                 } else {
@@ -325,7 +338,10 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
                 };
                 let v_name = format!("{prefix}{v_name}");
                 lines.push(Line::from(vec![
-                    Span::styled(format!(" {:<width$}", v_name, width = name_width + 4), DIM),
+                    // Same total span width as the parent row — leading space
+                    // + name padded to name_width — so cost/tokens/calls
+                    // start at the same column for both.
+                    Span::styled(format!(" {:<width$}", v_name, width = name_width), DIM),
                     Span::raw("  "),
                     Span::styled(
                         format!("{:>width$}", fmt_cost(v.cost), width = cost_width),
