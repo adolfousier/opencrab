@@ -1501,3 +1501,83 @@ fn phantom_no_tools_ignores_conversational_past_tense() {
         "Yes, that approach should work fine for the use case you described."
     ));
 }
+
+// --- Stuck-in-intent-loop detector (Phase 1 abort) ---
+// 2026-05-16 dialagram/qwen-3.6-max-preview-thinking emitted nine
+// `Let me fetch issue #81 …` paragraphs in one streamed response, zero
+// tool calls. Nudging produced more of the same. `is_stuck_in_intent_loop`
+// catches that pattern so the tool loop can abort without burning the
+// retry budget or leaking more text to the TUI.
+
+#[test]
+fn stuck_loop_catches_let_me_repetitions() {
+    use crate::brain::agent::service::{count_intent_line_starts, is_stuck_in_intent_loop};
+    let text = "\
+        Let me fetch issue #81 to understand what it's about.\n\n\
+        Let me pull up the issue to see what's really being reported.\n\n\
+        Let me fetch issue #81.\n\n\
+        OK, let me fetch issue #81 from GitHub.\n\n\
+        Let me pull up issue #81.";
+    assert_eq!(count_intent_line_starts(text), 5);
+    assert!(is_stuck_in_intent_loop(text));
+}
+
+#[test]
+fn stuck_loop_threshold_is_three() {
+    use crate::brain::agent::service::{count_intent_line_starts, is_stuck_in_intent_loop};
+
+    let two = "Let me check the logs.\nI'll look at the diff.";
+    assert_eq!(count_intent_line_starts(two), 2);
+    assert!(!is_stuck_in_intent_loop(two), "2 reps is normal narration");
+
+    let three = "Let me check the logs.\nI'll look at the diff.\nNow let me run the tests.";
+    assert_eq!(count_intent_line_starts(three), 3);
+    assert!(is_stuck_in_intent_loop(three), "3 reps is stuck");
+}
+
+#[test]
+fn stuck_loop_recognizes_mixed_openers() {
+    use crate::brain::agent::service::is_stuck_in_intent_loop;
+    // `let me`, `i'll`, `let's`, `now <verb>` all count.
+    let text = "Let me try one thing.\nI'll attempt the fetch.\nLet's pull the issue.\nNow check the issue.";
+    assert!(is_stuck_in_intent_loop(text));
+}
+
+#[test]
+fn stuck_loop_handles_curly_apostrophe() {
+    use crate::brain::agent::service::count_intent_line_starts;
+    // Markdown renderers sometimes round-trip ASCII `'` into `’`.
+    let text = "I’ll fetch the issue.\nI’ll look at the comments.\nI’ll summarize.";
+    assert_eq!(count_intent_line_starts(text), 3);
+}
+
+#[test]
+fn stuck_loop_ignores_intent_inside_paragraphs() {
+    use crate::brain::agent::service::{count_intent_line_starts, is_stuck_in_intent_loop};
+    // Intent phrases EMBEDDED in a paragraph (not at line start) don't count.
+    // A single paragraph with three intents inside is normal prose.
+    let text = "The plan is straightforward. Let me check the logs, then let me run the tests, and finally let me write up the results.";
+    assert_eq!(
+        count_intent_line_starts(text),
+        0,
+        "no leading intent — mid-paragraph occurrences don't count"
+    );
+    assert!(!is_stuck_in_intent_loop(text));
+}
+
+#[test]
+fn stuck_loop_ignores_list_items_with_one_intent() {
+    use crate::brain::agent::service::is_stuck_in_intent_loop;
+    // A bulleted list where ONE item happens to start with "Let me" is fine.
+    let text =
+        "- check the logs\n- review the diff\n- Let me know if anything's unclear\n- ship it";
+    assert!(!is_stuck_in_intent_loop(text));
+}
+
+#[test]
+fn stuck_loop_normal_prose_does_not_trip() {
+    use crate::brain::agent::service::is_stuck_in_intent_loop;
+    let text = "Sure, I can help with that. The fix lives in `src/lib.rs` and only \
+                needs a small adjustment to the parser. Want me to apply it?";
+    assert!(!is_stuck_in_intent_loop(text));
+}

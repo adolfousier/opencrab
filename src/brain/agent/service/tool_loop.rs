@@ -2706,7 +2706,54 @@ impl AgentService {
                 // really tried to call a tool it's already been promoted
                 // to a real tool_use. Zero tool_uses + no intent phrases
                 // = a legitimate text answer. Keep the gate narrow.
-                if phantom_retries_used < MAX_PHANTOM_RETRIES
+                // Early-abort: 3+ `Let me X` / `I'll X` line-starts in a
+                // single iteration = model is spinning in place. Nudging
+                // typically produces another batch of intent narration.
+                // Seen 2026-05-16 on dialagram/qwen-3.6-max-preview-thinking
+                // where the user got nine consecutive `Let me fetch issue
+                // #81 …` paragraphs with zero tool calls. Abort the turn
+                // without burning the retry budget, and replace the leaked
+                // narration with a self-heal notice so the TUI doesn't show
+                // the spam as the model's final answer.
+                if !is_cli_provider && super::phantom::is_stuck_in_intent_loop(&iteration_text) {
+                    let reps = super::phantom::count_intent_line_starts(&iteration_text);
+                    tracing::warn!(
+                        "Phantom intent-loop detected ({} line-start repetitions) — aborting \
+                         turn without retry. Model is stuck; nudges won't recover this.",
+                        reps
+                    );
+                    self.record_provider_feedback(
+                        session_id,
+                        "phantom_intent_loop",
+                        "self_heal",
+                        Some(&format!(
+                            "{} line-start repetitions in a single iteration",
+                            reps
+                        )),
+                    );
+                    if let Some(ref cb) = progress_callback {
+                        cb(
+                            session_id,
+                            ProgressEvent::SelfHealingAlert {
+                                message: format!(
+                                    "Model emitted {} consecutive intent phrases without a tool call — aborting turn",
+                                    reps
+                                ),
+                            },
+                        );
+                    }
+                    iteration_text = format!(
+                        "[self-heal] Aborted — the model emitted {} consecutive intent phrases \
+                         (`Let me…` / `I'll…`) without ever calling a tool. This usually means \
+                         the model can't reach the provider's tool-call channel for this \
+                         request. Try a different model, simplify the prompt, or check that the \
+                         provider exposes the function schemas correctly.",
+                        reps
+                    );
+                    // Fall through (no `continue`) so control hits the loop's
+                    // break path, which emits `iteration_text` as the final
+                    // assistant message.
+                } else if phantom_retries_used < MAX_PHANTOM_RETRIES
                     && !is_cli_provider
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {

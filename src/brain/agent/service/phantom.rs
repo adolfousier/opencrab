@@ -353,6 +353,51 @@ pub fn has_investigative_intent(text: &str) -> bool {
     INTENT_PHRASES.iter().any(|p| lower.contains(p))
 }
 
+/// Count line-start intent phrases — `Let me <verb>`, `I'll <verb>`,
+/// `Let's <verb>`, or `Now let me / Now I'll <verb>`. A high count in a
+/// single iteration's text means the model is spinning in place: emitting
+/// back-to-back narration instead of calling a tool.
+///
+/// Seen 2026-05-16 on `qwen-3.6-max-preview-thinking` via the `dialagram`
+/// custom provider: nine consecutive `Let me fetch issue #81 …` /
+/// `Let me pull up the issue …` paragraphs in one streamed response,
+/// zero tool calls. Nudging that pattern with the standard retry prompt
+/// just produced another batch of intent narration; the model is stuck.
+///
+/// Only line-starts (optionally preceded by list bullets) count. Intent
+/// phrases embedded mid-paragraph are normal prose, not narration spam.
+/// `Now <verb>` alone is intentionally excluded — `Now check the logs`
+/// is one signal among many, but `Now is the time` would false-match.
+pub fn count_intent_line_starts(text: &str) -> usize {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    // Line-start (after optional whitespace / list bullet) followed by an
+    // intent opener, whitespace, and the next verb's leading character.
+    // Both ASCII `'` and curly `’` apostrophes accepted — markdown
+    // round-trips frequently convert one to the other.
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?im)^[\s\-*•>]*(?:(?:ok|okay|sure|alright|right|hmm|well|actually|so)\s*,?\s+)?(?:now\s+)?(?:let\s+me|i['’]ll|let['’]s)\s+\w",
+        )
+        .unwrap()
+    });
+    RE.find_iter(text).count()
+}
+
+/// Threshold above which a single iteration's intent-phrase repetitions
+/// are treated as "model stuck in a phantom loop". 3+ separate `Let me X`
+/// / `I'll X` line-starts in one response is the signature: a working
+/// model would either call a tool or write prose, not narrate the same
+/// imminent action three times.
+pub const STUCK_INTENT_LOOP_THRESHOLD: usize = 3;
+
+/// Convenience predicate: does the text show 3+ line-start intent
+/// repetitions? Caller should treat true as "abort the turn" — retrying
+/// rarely recovers this pattern and just leaks more text to the TUI.
+pub fn is_stuck_in_intent_loop(text: &str) -> bool {
+    count_intent_line_starts(text) >= STUCK_INTENT_LOOP_THRESHOLD
+}
+
 /// Slice of the text before the first code fence, markdown table row,
 /// or list-item line — the "narration" portion. If the text starts
 /// directly with structural content, returns an empty string.
