@@ -166,7 +166,7 @@ cargo test --all-features
 | Tests — merge_provider_keys (OpenCode persistence regression) | 4 | `src/tests/merge_provider_keys_test.rs` |
 | Tests — Onboarding Wizard | 67 | `src/tests/onboarding_wizard_test.rs` |
 | Tests — RSI (Recursive Self-Improvement) | 73 | `src/tests/rsi_test.rs` |
-| Tests — Self-Healing (Phantom Detection, expanded) | 76 | `src/tests/self_healing_test.rs` |
+| Tests — Self-Healing (Phantom Detection + stuck-intent loop) | 83 | `src/tests/self_healing_test.rs` |
 | Tests — Bash Interactive Reject | 36 | `src/tests/bash_interactive_reject_test.rs` |
 | Tests — Qwen Tool-Call Extractor | 34 | `src/tests/qwen_tool_extractor_test.rs` |
 | Tests — Brain File Safety (append-only enforcement) | 32 | `src/tests/brain_file_safety_test.rs` |
@@ -200,10 +200,12 @@ cargo test --all-features
 | Tests — Browser E2E (opt-in, `#[ignore]`) | 3 | `src/tests/browser_e2e_test.rs` |
 | Tests — CLI Arg Length Cap | 2 | `src/tests/cli_arg_too_long_test.rs` |
 | Tests — Config Watcher (integration) | 2 | `src/tests/config_watcher_test.rs` |
+| Tests — Usage Model Grouping (`.gguf` + provider-prefix normalization) | 13 | `src/tests/usage_grouping_test.rs` |
+| Tests — Tool-Execution Repo (empty `tool_name` guard) | 4 | `src/tests/tool_execution_repo_test.rs` |
 | **Usage — Categorizer** | 4 | `src/usage/categorizer.rs` |
 | **Usage — Dashboard** | 6 | `src/usage/dashboard.rs` |
 | **Usage — Data** | 7 | `src/usage/data.rs` |
-| **Total** | **2,583** | +61 since last update: bare-array tool-call extractor (10 new, lifting qwen_tool_extractor to 34); previously-unlisted suites surfaced — RSI (73), self-healing expanded to 76, onboarding wizard (67), bash interactive reject (36), brain-file safety (32), provider config regression (28), tool-loop helpers (20), recent paths (17), provider error proxy (16), mouse fragment filter (13), agent_* sub-suites (53 across 7 files), and more |
+| **Total** | **2,607** | +24 since last update: stuck-intent-loop self-heal in `self_healing_test` (76 → 83, +7), usage model grouping (`.gguf` + `:` provider-prefix normalization, +13 new), tool-execution empty-`tool_name` repo guard (+4 new) |
 
 ---
 
