@@ -93,7 +93,7 @@ pub struct ModelStats {
 /// Grouped model usage with quantization variants
 #[derive(Debug, Clone, Default)]
 pub struct ModelEntry {
-    pub model: String,       // base model name (e.g. "qwen3.6-35b-a3b")
+    pub model: String, // base model name (e.g. "qwen3.6-35b-a3b")
     pub tokens: i64,
     pub cost: f64,
     pub calls: i64,
@@ -104,7 +104,7 @@ pub struct ModelEntry {
 /// A single quantization variant under a grouped model
 #[derive(Debug, Clone)]
 pub struct ModelVariant {
-    pub name: String,        // full name (e.g. "qwen3.6-35b-a3b-gguf")
+    pub name: String, // full name (e.g. "qwen3.6-35b-a3b-gguf")
     pub tokens: i64,
     pub cost: f64,
     pub calls: i64,
@@ -410,32 +410,32 @@ fn sql_normalize_model(raw: &str) -> String {
     } else {
         raw.to_lowercase()
     };
-    let m2 = if m1.ends_with(":free") {
-        &m1[..m1.len() - 5]
-    } else if m1.ends_with("-free") {
+    let m2 = if m1.ends_with(":free") || m1.ends_with("-free") {
         &m1[..m1.len() - 5]
     } else if m1.ends_with("-thinking") {
         &m1[..m1.len() - 9]
     } else {
         m1.as_str()
     };
-    let m3 = if m2.starts_with("claude-") {
-        &m2[7..]
-    } else {
-        m2
-    };
+    let m3 = m2.strip_prefix("claude-").unwrap_or(m2);
     match m3 {
         "opus" | "opus-4-6" => "opus-4-6".to_string(),
         "sonnet" | "sonnet-4-6" => "sonnet-4-6".to_string(),
         "haiku" | "haiku-4-5" | "haiku-4-5-20251001" => "haiku-4-5".to_string(),
-        "qwen-3.6-max-preview" | "qwen3.6-max-preview" | "qwen-3-6-max-preview" | "qwen3-6-max-preview" | "qwen-max-preview" => "qwen3.6-max-preview".to_string(),
+        "qwen-3.6-max-preview"
+        | "qwen3.6-max-preview"
+        | "qwen-3-6-max-preview"
+        | "qwen3-6-max-preview"
+        | "qwen-max-preview" => "qwen3.6-max-preview".to_string(),
         "coder-model" | "qwen3.6-plus" | "qwen-3.6-plus" => "qwen3.6-plus".to_string(),
         "qwen3.5-plus" | "qwen-3.5-plus" => "qwen3.5-plus".to_string(),
         "minimax-m2.5" => "minimax-m2.5".to_string(),
         "minimax-m2.7" => "minimax-m2.7".to_string(),
         "mimo-v2-omni" | "mimo-v2-omni-free" => "mimo-v2-omni".to_string(),
         "mimo-v2-pro" | "mimo-v2-pro-free" => "mimo-v2-pro".to_string(),
-        "kimi-k2.5" | "kimi-k2-5" | "kimi-k2.6" | "kimi-k2-6" | "kimik2.6" => "kimi-k2.6".to_string(),
+        "kimi-k2.5" | "kimi-k2-5" | "kimi-k2.6" | "kimi-k2-6" | "kimik2.6" => {
+            "kimi-k2.6".to_string()
+        }
         "glm-5.1" | "glm-5-1" | "glm-5" => "glm-5.1".to_string(),
         "glm-5-turbo" | "zhipu" => "glm-5-turbo".to_string(),
         _ => m3.to_string(),

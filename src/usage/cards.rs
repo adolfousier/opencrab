@@ -224,12 +224,7 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
                 vec![parent_cost]
             };
             for v in &m.variants {
-                let c = fmt_cost(v.cost);
-                if v.cost > 0.0 && v.cost < 0.01 {
-                    costs.push(c);
-                } else {
-                    costs.push(c);
-                }
+                costs.push(fmt_cost(v.cost));
             }
             costs.iter().map(|s| s.len()).collect::<Vec<_>>()
         })
@@ -270,12 +265,14 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
 
     let mut lines: Vec<Line> = Vec::new();
     for m in all_models.iter() {
-        let display =
-            crate::tui::provider_selector::model_display_label(&m.model).to_string();
+        let display = crate::tui::provider_selector::model_display_label(&m.model).to_string();
         let name = if display.len() > name_width {
             format!(
                 "{}...",
-                display.chars().take(name_width.saturating_sub(3)).collect::<String>()
+                display
+                    .chars()
+                    .take(name_width.saturating_sub(3))
+                    .collect::<String>()
             )
         } else {
             display
@@ -291,9 +288,15 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
         lines.push(Line::from(vec![
             Span::styled(format!(" {:<width$}", name, width = name_width), BOLD),
             Span::raw("  "),
-            Span::styled(format!("{:>width$}", cost_str, width = cost_width), cost_style),
+            Span::styled(
+                format!("{:>width$}", cost_str, width = cost_width),
+                cost_style,
+            ),
             Span::raw("  "),
-            Span::styled(format!("{:>width$}", fmt_tokens(m.tokens), width = tok_width), DIM),
+            Span::styled(
+                format!("{:>width$}", fmt_tokens(m.tokens), width = tok_width),
+                DIM,
+            ),
             Span::raw("  "),
             Span::styled(format!("{:>width$} req", m.calls, width = calls_width), DIM),
         ]));
@@ -302,12 +305,14 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
         for (vidx, v) in m.variants.iter().enumerate() {
             let is_last = vidx == m.variants.len() - 1;
             let prefix = if is_last { "  └─ " } else { "  ├─ " };
-            let v_display =
-                crate::tui::provider_selector::model_display_label(&v.name).to_string();
+            let v_display = crate::tui::provider_selector::model_display_label(&v.name).to_string();
             let v_name = if v_display.len() > name_width.saturating_sub(4) {
                 format!(
                     "{}...",
-                    v_display.chars().take(name_width.saturating_sub(7)).collect::<String>()
+                    v_display
+                        .chars()
+                        .take(name_width.saturating_sub(7))
+                        .collect::<String>()
                 )
             } else {
                 v_display
@@ -326,10 +331,7 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
                     DIM,
                 ),
                 Span::raw("  "),
-                Span::styled(
-                    format!("{:>width$} req", v.calls, width = calls_width),
-                    DIM,
-                ),
+                Span::styled(format!("{:>width$} req", v.calls, width = calls_width), DIM),
             ]));
         }
     }
