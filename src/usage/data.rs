@@ -80,7 +80,7 @@ pub struct ProjectStats {
     pub sessions: i64,
 }
 
-/// Per-model usage
+/// Per-model usage (flat, kept for backward compat)
 #[derive(Debug, Clone)]
 pub struct ModelStats {
     pub model: String,
@@ -88,6 +88,26 @@ pub struct ModelStats {
     pub cost: f64,
     pub calls: i64,
     pub estimated: bool,
+}
+
+/// Grouped model usage with quantization variants
+#[derive(Debug, Clone, Default)]
+pub struct ModelEntry {
+    pub model: String,       // base model name (e.g. "qwen3.6-35b-a3b")
+    pub tokens: i64,
+    pub cost: f64,
+    pub calls: i64,
+    pub estimated: bool,
+    pub variants: Vec<ModelVariant>,
+}
+
+/// A single quantization variant under a grouped model
+#[derive(Debug, Clone)]
+pub struct ModelVariant {
+    pub name: String,        // full name (e.g. "qwen3.6-35b-a3b-gguf")
+    pub tokens: i64,
+    pub cost: f64,
+    pub calls: i64,
 }
 
 /// Tool usage count
@@ -112,9 +132,61 @@ pub struct DashboardData {
     pub summary: SummaryStats,
     pub daily: Vec<DailyStats>,
     pub projects: Vec<ProjectStats>,
-    pub models: Vec<ModelStats>,
+    pub models: Vec<ModelEntry>,
     pub tools: Vec<ToolStats>,
     pub activities: Vec<ActivityStats>,
+}
+
+/// Normalize a model name for grouping by stripping quantization suffixes.
+///
+/// Handles GGUF-style quant tags like `-gguf`, `-oq2`, `-oq4`, `-q4_k_m`,
+/// `-iq4_xs`, `-ud-iq4_xs`, `-ud-oq2`, etc.
+///
+/// Examples:
+/// - `qwen3.6-35b-a3b-gguf` → `qwen3.6-35b-a3b`
+/// - `qwen3.6-35b-a3b-ud-oq2` → `qwen3.6-35b-a3b`
+/// - `qwen3.6-35b-a3b-q4_k_m` → `qwen3.6-35b-a3b`
+/// - `qwen3.6-35b-a3b` → `qwen3.6-35b-a3b` (no-op)
+pub fn normalize_model_for_grouping(name: &str) -> String {
+    let mut n = name.to_string();
+    // Strip common GGUF quantization suffixes (order matters: longer first)
+    let quant_patterns = [
+        "-ud-iq4_xs",
+        "-ud-oq2",
+        "-ud-oq4",
+        "-oq2",
+        "-oq4",
+        "-oq8",
+        "-iq4_xs",
+        "-q2_k",
+        "-q3_k_s",
+        "-q3_k_m",
+        "-q3_k_l",
+        "-q4_0",
+        "-q4_1",
+        "-q4_k_m",
+        "-q4_k_s",
+        "-q4_k",
+        "-q5_0",
+        "-q5_1",
+        "-q5_k_m",
+        "-q5_k_s",
+        "-q6_k",
+        "-q8_0",
+        "-q8_1",
+        "-qwen-3.6-max-preview",
+        "-qwen3.6-max-preview",
+        "-qwen-3-6-max-preview",
+        "-qwen3-6-max-preview",
+        "-qwen-max-preview",
+    ];
+    for pattern in &quant_patterns {
+        if n.ends_with(pattern) {
+            n.truncate(n.len() - pattern.len());
+            break; // only strip once
+        }
+    }
+    n
 }
 
 // ── Activity classifier ──────────────────────────────────────────────────────
@@ -159,14 +231,14 @@ impl DashboardData {
             fetch_summary(pool, since),
             fetch_daily(pool, since),
             fetch_projects(pool, since),
-            fetch_models(pool, since),
+            fetch_model_entries(pool, since),
             fetch_tools(pool, since),
             fetch_activities(pool, since),
         )?;
 
         // Override total_cost with sum of recalculated model costs.
         // The DB cost column is stale (old pricing or $0.00 for unknown models).
-        // fetch_models recalculates using current TOML pricing, so we trust that.
+        // fetch_model_entries recalculates using current TOML pricing, so we trust that.
         summary.total_cost = models.iter().map(|m| m.cost).sum();
 
         Ok(Self {
@@ -330,19 +402,57 @@ async fn fetch_projects(pool: &Pool, since: Option<i64>) -> Result<Vec<ProjectSt
     .context("Failed to fetch project stats")
 }
 
-async fn fetch_models(pool: &Pool, since: Option<i64>) -> Result<Vec<ModelStats>> {
-    // Load current pricing to recalculate costs at display time.
-    // Stored costs may be stale (old pricing or $0.00 for unknown models at record time).
+/// Normalize model name the same way the SQL query does, so we can
+/// apply the grouping step in Rust after the SQL normalization.
+fn sql_normalize_model(raw: &str) -> String {
+    let m1 = if raw.contains('/') {
+        raw.rsplit('/').next().unwrap_or(raw).to_lowercase()
+    } else {
+        raw.to_lowercase()
+    };
+    let m2 = if m1.ends_with(":free") {
+        &m1[..m1.len() - 5]
+    } else if m1.ends_with("-free") {
+        &m1[..m1.len() - 5]
+    } else if m1.ends_with("-thinking") {
+        &m1[..m1.len() - 9]
+    } else {
+        m1.as_str()
+    };
+    let m3 = if m2.starts_with("claude-") {
+        &m2[7..]
+    } else {
+        m2
+    };
+    match m3 {
+        "opus" | "opus-4-6" => "opus-4-6".to_string(),
+        "sonnet" | "sonnet-4-6" => "sonnet-4-6".to_string(),
+        "haiku" | "haiku-4-5" | "haiku-4-5-20251001" => "haiku-4-5".to_string(),
+        "qwen-3.6-max-preview" | "qwen3.6-max-preview" | "qwen-3-6-max-preview" | "qwen3-6-max-preview" | "qwen-max-preview" => "qwen3.6-max-preview".to_string(),
+        "coder-model" | "qwen3.6-plus" | "qwen-3.6-plus" => "qwen3.6-plus".to_string(),
+        "qwen3.5-plus" | "qwen-3.5-plus" => "qwen3.5-plus".to_string(),
+        "minimax-m2.5" => "minimax-m2.5".to_string(),
+        "minimax-m2.7" => "minimax-m2.7".to_string(),
+        "mimo-v2-omni" | "mimo-v2-omni-free" => "mimo-v2-omni".to_string(),
+        "mimo-v2-pro" | "mimo-v2-pro-free" => "mimo-v2-pro".to_string(),
+        "kimi-k2.5" | "kimi-k2-5" | "kimi-k2.6" | "kimi-k2-6" | "kimik2.6" => "kimi-k2.6".to_string(),
+        "glm-5.1" | "glm-5-1" | "glm-5" => "glm-5.1".to_string(),
+        "glm-5-turbo" | "zhipu" => "glm-5-turbo".to_string(),
+        _ => m3.to_string(),
+    }
+}
+
+async fn fetch_model_entries(pool: &Pool, since: Option<i64>) -> Result<Vec<ModelEntry>> {
     let pricing = crate::usage::pricing::PricingConfig::load().ok();
 
     let conn = pool.get().await.context("pool")?;
-    let models = conn.interact(move |conn| {
-        // Reuse the same SQL normalization as usage_ledger.rs stats_by_model
+    let raw = conn.interact(move |conn| {
         let base_where = if since.is_some() {
             "WHERE model != '' AND created_at >= ?1"
         } else {
             "WHERE model != ''"
         };
+        // Fetch raw model stats (grouped by SQL-normalized model, not quant-normalized)
         let query = format!(
             "WITH stripped AS ( \
                SELECT *, \
@@ -391,19 +501,14 @@ async fn fetch_models(pool: &Pool, since: Option<i64>) -> Result<Vec<ModelStats>
              ORDER BY SUM(token_count) DESC"
         );
         let mut stmt = conn.prepare(&query)?;
-        let map_row = |row: &rusqlite::Row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        };
         let rows: Vec<(String, i64, i64)> = if let Some(s) = since {
-            stmt.query_map(params![s], map_row)?
-                .collect::<std::result::Result<Vec<_>, _>>()?
+            stmt.query_map(params![s], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            })?.collect::<std::result::Result<Vec<_>, _>>()?
         } else {
-            stmt.query_map([], map_row)?
-                .collect::<std::result::Result<Vec<_>, _>>()?
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            })?.collect::<std::result::Result<Vec<_>, _>>()?
         };
         Ok::<_, rusqlite::Error>(rows)
     })
@@ -411,23 +516,63 @@ async fn fetch_models(pool: &Pool, since: Option<i64>) -> Result<Vec<ModelStats>
     .map_err(interact_err)?
     .context("Failed to fetch model stats")?;
 
-    // Recalculate costs using current TOML pricing (80/20 input/output split)
-    Ok(models
+    // Group by base model (normalize away quantization suffixes)
+    let mut groups: std::collections::HashMap<String, Vec<(String, i64, i64)>> =
+        std::collections::HashMap::new();
+    for (model, tokens, calls) in raw {
+        let base = normalize_model_for_grouping(&sql_normalize_model(&model));
+        groups.entry(base).or_default().push((model, tokens, calls));
+    }
+
+    // Build ModelEntry tree, sorted by total tokens descending
+    let mut entries: Vec<ModelEntry> = groups
         .into_iter()
-        .map(|(model, tokens, calls)| {
-            let cost = pricing
+        .map(|(base, mut variants)| {
+            let mut total_tokens: i64 = 0;
+            let mut total_calls: i64 = 0;
+            let mut has_estimate = false;
+            let mut child_rows: Vec<ModelVariant> = Vec::new();
+
+            variants.sort_by_key(|b| std::cmp::Reverse(b.1)); // sort by tokens desc
+            for (full_name, tokens, calls) in variants {
+                let cost = pricing
+                    .as_ref()
+                    .and_then(|p| p.estimate_cost(&full_name, tokens))
+                    .unwrap_or(0.0);
+                let estimated = cost == 0.0 && tokens > 0;
+                if estimated {
+                    has_estimate = true;
+                }
+                child_rows.push(ModelVariant {
+                    name: full_name,
+                    tokens,
+                    cost,
+                    calls,
+                });
+                total_tokens += tokens;
+                total_calls += calls;
+            }
+
+            // Recalculate base cost from totals using normalized base model name
+            let base_cost = pricing
                 .as_ref()
-                .and_then(|p| p.estimate_cost(&model, tokens))
+                .and_then(|p| p.estimate_cost(&base, total_tokens))
                 .unwrap_or(0.0);
-            ModelStats {
-                model,
-                tokens,
-                cost,
-                calls,
-                estimated: cost == 0.0 && tokens > 0,
+            let base_estimated = has_estimate;
+
+            ModelEntry {
+                model: base,
+                tokens: total_tokens,
+                cost: base_cost,
+                calls: total_calls,
+                estimated: base_estimated,
+                variants: child_rows,
             }
         })
-        .collect())
+        .collect();
+
+    entries.sort_by_key(|b| std::cmp::Reverse(b.tokens));
+    Ok(entries)
 }
 
 async fn fetch_tools(pool: &Pool, since: Option<i64>) -> Result<Vec<ToolStats>> {

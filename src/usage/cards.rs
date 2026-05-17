@@ -3,7 +3,7 @@
 //! Each card is a self-contained render function that takes data + area and draws into a Frame.
 
 use super::data::{
-    ActivityStats, DailyStats, DashboardData, ModelStats, ProjectStats, ToolStats, fmt_cost,
+    ActivityStats, DailyStats, DashboardData, ModelEntry, ProjectStats, ToolStats, fmt_cost,
     fmt_tokens,
 };
 use ratatui::{
@@ -199,7 +199,7 @@ pub fn render_projects(f: &mut Frame, projects: &[ProjectStats], area: Rect, foc
 
 // ── By Model ─────────────────────────────────────────────────────────────────
 
-pub fn render_models(f: &mut Frame, models: &[ModelStats], area: Rect, focused: bool) {
+pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: bool) {
     let block = card_block("By Model", focused);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -210,27 +210,53 @@ pub fn render_models(f: &mut Frame, models: &[ModelStats], area: Rect, focused: 
         return;
     }
 
-    // Compute column widths from actual data
+    // Compute column widths from ALL visible data (parent + child rows)
     let visible = (inner.height as usize).min(models.len());
-    let max_cost_len = models
+    let all_models: Vec<&ModelEntry> = models.iter().take(visible).collect();
+
+    let max_cost_len = all_models
         .iter()
-        .take(visible)
-        .map(|m| {
-            let c = fmt_cost(m.cost);
-            if m.estimated { c.len() + 1 } else { c.len() }
+        .flat_map(|m| {
+            let parent_cost = fmt_cost(m.cost);
+            let mut costs = if m.estimated {
+                vec![format!("~{}", parent_cost)]
+            } else {
+                vec![parent_cost]
+            };
+            for v in &m.variants {
+                let c = fmt_cost(v.cost);
+                if v.cost > 0.0 && v.cost < 0.01 {
+                    costs.push(c);
+                } else {
+                    costs.push(c);
+                }
+            }
+            costs.iter().map(|s| s.len()).collect::<Vec<_>>()
         })
         .max()
         .unwrap_or(6);
-    let max_tok_len = models
+
+    let max_tok_len = all_models
         .iter()
-        .take(visible)
-        .map(|m| fmt_tokens(m.tokens).len())
+        .flat_map(|m| {
+            let mut lens = vec![fmt_tokens(m.tokens).len()];
+            for v in &m.variants {
+                lens.push(fmt_tokens(v.tokens).len());
+            }
+            lens
+        })
         .max()
         .unwrap_or(6);
-    let max_calls_len = models
+
+    let max_calls_len = all_models
         .iter()
-        .take(visible)
-        .map(|m| m.calls.to_string().len())
+        .flat_map(|m| {
+            let mut lens = vec![m.calls.to_string().len()];
+            for v in &m.variants {
+                lens.push(v.calls.to_string().len());
+            }
+            lens
+        })
         .max()
         .unwrap_or(1);
 
@@ -239,24 +265,23 @@ pub fn render_models(f: &mut Frame, models: &[ModelStats], area: Rect, focused: 
     let cost_width = max_cost_len;
     let tok_width = max_tok_len;
     let calls_width = max_calls_len;
-    // +1 for leading space on name
     let fixed = cost_width + tok_width + calls_width + spacing * 3 + 1;
     let name_width = (inner.width as usize).saturating_sub(fixed).max(4);
 
     let mut lines: Vec<Line> = Vec::new();
-    for m in models.iter().take(visible) {
-        let display = crate::tui::provider_selector::model_display_label(&m.model).to_string();
+    for m in all_models.iter() {
+        let display =
+            crate::tui::provider_selector::model_display_label(&m.model).to_string();
         let name = if display.len() > name_width {
             format!(
                 "{}...",
-                display
-                    .chars()
-                    .take(name_width.saturating_sub(3))
-                    .collect::<String>()
+                display.chars().take(name_width.saturating_sub(3)).collect::<String>()
             )
         } else {
             display
         };
+
+        // Parent row (bold model name, no prefix)
         let cost_style = if m.estimated { ACCENT } else { LABEL };
         let cost_str = if m.estimated {
             format!("~{}", fmt_cost(m.cost))
@@ -266,18 +291,47 @@ pub fn render_models(f: &mut Frame, models: &[ModelStats], area: Rect, focused: 
         lines.push(Line::from(vec![
             Span::styled(format!(" {:<width$}", name, width = name_width), BOLD),
             Span::raw("  "),
-            Span::styled(
-                format!("{:>width$}", cost_str, width = cost_width),
-                cost_style,
-            ),
+            Span::styled(format!("{:>width$}", cost_str, width = cost_width), cost_style),
             Span::raw("  "),
-            Span::styled(
-                format!("{:>width$}", fmt_tokens(m.tokens), width = tok_width),
-                DIM,
-            ),
+            Span::styled(format!("{:>width$}", fmt_tokens(m.tokens), width = tok_width), DIM),
             Span::raw("  "),
             Span::styled(format!("{:>width$} req", m.calls, width = calls_width), DIM),
         ]));
+
+        // Child rows (variant breakdown)
+        for (vidx, v) in m.variants.iter().enumerate() {
+            let is_last = vidx == m.variants.len() - 1;
+            let prefix = if is_last { "  └─ " } else { "  ├─ " };
+            let v_display =
+                crate::tui::provider_selector::model_display_label(&v.name).to_string();
+            let v_name = if v_display.len() > name_width.saturating_sub(4) {
+                format!(
+                    "{}...",
+                    v_display.chars().take(name_width.saturating_sub(7)).collect::<String>()
+                )
+            } else {
+                v_display
+            };
+            let v_name = format!("{prefix}{v_name}");
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {:<width$}", v_name, width = name_width + 4), DIM),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:>width$}", fmt_cost(v.cost), width = cost_width),
+                    LABEL,
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:>width$}", fmt_tokens(v.tokens), width = tok_width),
+                    DIM,
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:>width$} req", v.calls, width = calls_width),
+                    DIM,
+                ),
+            ]));
+        }
     }
 
     let p = Paragraph::new(lines);
