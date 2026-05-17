@@ -142,13 +142,26 @@ pub struct DashboardData {
 /// Handles GGUF-style quant tags like `-gguf`, `-oq2`, `-oq4`, `-q4_k_m`,
 /// `-iq4_xs`, `-ud-iq4_xs`, `-ud-oq2`, etc.
 ///
+/// Also strips a trailing `.gguf` file extension first, so names that
+/// arrive as raw llama.cpp filenames (e.g. `qwen3.6-35b-a3b-ud-iq4_xs.gguf`)
+/// still match the quant patterns and group under the same parent as their
+/// non-`.gguf` siblings. Without this, the `.gguf`-suffixed variant
+/// rendered as its own top-level row in the /usage dashboard instead of
+/// folding under the base model.
+///
 /// Examples:
 /// - `qwen3.6-35b-a3b-gguf` → `qwen3.6-35b-a3b`
+/// - `qwen3.6-35b-a3b-ud-iq4_xs.gguf` → `qwen3.6-35b-a3b`
 /// - `qwen3.6-35b-a3b-ud-oq2` → `qwen3.6-35b-a3b`
 /// - `qwen3.6-35b-a3b-q4_k_m` → `qwen3.6-35b-a3b`
 /// - `qwen3.6-35b-a3b` → `qwen3.6-35b-a3b` (no-op)
 pub fn normalize_model_for_grouping(name: &str) -> String {
     let mut n = name.to_string();
+    // Strip trailing `.gguf` file extension before pattern matching. Local
+    // llama.cpp setups frequently report the on-disk filename verbatim.
+    if let Some(stripped) = n.strip_suffix(".gguf") {
+        n = stripped.to_string();
+    }
     // Strip common GGUF quantization suffixes (order matters: longer first)
     let quant_patterns = [
         "-ud-iq4_xs",
