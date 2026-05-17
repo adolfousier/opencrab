@@ -308,21 +308,18 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
             });
 
         if has_real_variants {
-            // Tree prefix: 4 leading spaces + box-drawing + 1 trailing space
-            // = 7 display chars. The deeper indent (vs the previous 2-space
-            // version) makes the parent/child hierarchy unmistakable at a
-            // glance. Reserve those 7 chars from `name_width` so the child
-            // row's downstream columns (cost / tokens / calls) line up with
-            // the parent row's instead of getting shoved right.
-            const TREE_PREFIX_CHARS: usize = 7;
+            // Tree prefix: box-drawing glyph + 1 trailing space = 3 display
+            // chars. The `├─` / `└─` glyphs are themselves the depth signal;
+            // adding leading whitespace just shoves the name off the natural
+            // alignment with the parent and wastes horizontal room without
+            // clarifying anything. Reserve those 3 chars from `name_width`
+            // so child cost / tokens / calls columns still share the parent
+            // row's right-hand column edges.
+            const TREE_PREFIX_CHARS: usize = 3;
             let max_child_name = name_width.saturating_sub(TREE_PREFIX_CHARS);
             for (vidx, v) in m.variants.iter().enumerate() {
                 let is_last = vidx == m.variants.len() - 1;
-                let prefix = if is_last {
-                    "    └─ "
-                } else {
-                    "    ├─ "
-                };
+                let prefix = if is_last { "└─ " } else { "├─ " };
                 let v_display =
                     crate::tui::provider_selector::model_display_label(&v.name).to_string();
                 let v_name = if v_display.chars().count() > max_child_name {
