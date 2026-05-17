@@ -1626,6 +1626,189 @@ required = true
 
 See [`tools.toml.example`](tools.toml.example) for a complete reference.
 
+### Connecting to Remote MCP Servers
+
+OpenCrabs can use tools from any [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server by wiring the [`mcp`](https://github.com/avelino/mcp) CLI as a shell executor tool. This gives your agent access to external tools — GitHub repos, Slack, file systems, databases, or any custom MCP server — alongside its built-in toolset.
+
+**What this is:** A shell-based bridge. OpenCrabs runs the `mcp` CLI binary as a shell command. The CLI handles the MCP protocol (HTTP/SSE, JSON-RPC, auth) and returns results as plain text. This is zero-maintenance for us and zero-new-dependency for OpenCrabs — users who need MCP support install the binary and configure `tools.toml`.
+
+**What this is not:** A native MCP client. OpenCrabs does not speak the MCP protocol directly. If you need native MCP support (e.g. to expose OpenCrabs tools TO other MCP clients), that would be a different feature.
+
+---
+
+**Step 1: Install the `mcp` CLI**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/avelino/mcp/main/install.sh | sh
+```
+
+The `mcp` CLI is a static Rust binary (~14MB) that works on Linux, macOS, and Windows. Verify it works:
+
+```bash
+mcp --help
+```
+
+For alternative install methods, see the [`mcp` README](https://github.com/avelino/mcp#installation).
+
+---
+
+**Step 2: Configure your MCP servers**
+
+Create `~/.config/mcp/servers.json` (the `mcp` CLI's standard config location):
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://api.mcp.github.com",
+      "headers": {
+        "Authorization": "Bearer ghp_YOUR_GITHUB_PAT"
+      }
+    }
+  }
+}
+```
+
+Common MCP servers:
+
+| Server | URL | Auth |
+|--------|-----|------|
+| GitHub | `https://api.mcp.github.com` | GitHub PAT |
+| Slack | `https://api.slack.com/mcp` | Slack bot token |
+| Filesystem | Local binary | N/A (runs locally) |
+| Custom | Your own URL | Whatever your server expects |
+
+For advanced options (custom CA certs, proxy, timeout), see the [mcp CLI config docs](https://github.com/avelino/mcp#configuration).
+
+---
+
+**Step 3: Wire tools in `tools.toml`**
+
+For each MCP tool you want to expose, add a `[[tool]]` entry with `executor = "shell"`:
+
+```toml
+[[tool]]
+name = "github_search_repos"
+description = "Search GitHub repositories"
+executor = "shell"
+command = "mcp github search_repositories '{\"query\":\"{{query}}\",\"limit\":{{limit}}}'"
+timeout_secs = 30
+requires_approval = false
+enabled = true
+
+[[tool.params]]
+name = "query"
+type = "string"
+description = "Search query (e.g. 'language:rust stars:>100')"
+required = true
+
+[[tool.params]]
+name = "limit"
+type = "integer"
+description = "Maximum results to return"
+required = false
+default = 10
+```
+
+The `{{param}}` template variables are substituted by OpenCrabs' shell executor before the command runs. Each `{{param}}` becomes the value passed by the agent (or the `default` if omitted).
+
+---
+
+**Step 4: Handle credentials**
+
+Store secrets in `keys.toml` — never in `tools.toml` (which may be version-controlled):
+
+```toml
+[github_mcp]
+token = "ghp_YOUR_GITHUB_PAT"
+```
+
+Reference them via shell variables in the `command`:
+
+```toml
+command = "GH_TOKEN={{env:github_mcp.token}} mcp github search_repositories '{\"query\":\"{{query}}\",\"limit\":{{limit}}}'"
+```
+
+For testing, you can put the token directly in the command — but don't commit that.
+
+---
+
+**Shell executor gotchas**
+
+- **Always use `executor = "shell"`** — the HTTP executor body templating has known issues with JSON arguments. Shell executor is the supported path for `mcp` CLI.
+- **Quoting matters** — the `mcp` CLI expects the JSON arguments as a single string. Wrap in single quotes and escape inner quotes with `\'`.
+- **Timeouts** — MCP tools can be slow. Set `timeout_secs` (default 30s) to avoid hanging. The shell executor kills the command and returns an error if it exceeds this.
+- **Error handling** — if the `mcp` CLI returns a non-zero exit code, OpenCrabs treats it as a tool failure. Check the CLI's stdout/stderr for details.
+- **Optional params** — when a parameter is omitted, the shell executor sends an empty string unless `default` is set. For MCP tools that treat `null`/omitted differently, set `default = ""` in the param definition so the JSON field is always present.
+
+---
+
+**Full example: GitHub MCP with multiple tools**
+
+Here's a complete setup for two GitHub tools:
+
+```toml
+# ~/.opencrabs/tools.toml
+
+[[tool]]
+name = "github_search_repos"
+description = "Search GitHub repositories"
+executor = "shell"
+command = "mcp github search_repositories '{\"query\":\"{{query}}\",\"limit\":{{limit}}}'"
+timeout_secs = 30
+requires_approval = false
+enabled = true
+
+[[tool.params]]
+name = "query"
+type = "string"
+description = "Search query"
+required = true
+
+[[tool.params]]
+name = "limit"
+type = "integer"
+description = "Max results"
+required = false
+default = 10
+
+[[tool]]
+name = "github_get_file"
+description = "Get a file from a GitHub repository"
+executor = "shell"
+command = "mcp github get_file '{\"repo\":\"{{repo}}\",\"path\":\"{{path}}\",\"branch\":\"{{branch}}\"}'"
+timeout_secs = 30
+requires_approval = false
+enabled = true
+
+[[tool.params]]
+name = "repo"
+type = "string"
+description = "Owner/repo (e.g. 'torvalds/linux')"
+required = true
+
+[[tool.params]]
+name = "path"
+type = "string"
+description = "File path in the repo"
+required = true
+
+[[tool.params]]
+name = "branch"
+type = "string"
+description = "Branch name"
+required = false
+default = "main"
+```
+
+After reloading `tools.toml`, these tools appear in the agent's toolset alongside built-in tools — the agent can call them in any mode (TUI, `run`, `agent`, or channels).
+
+---
+
+**Need more config options?**
+
+The `mcp` CLI supports custom transports, retry policies, and server-specific options. See its [README](https://github.com/avelino/mcp) for the full reference. OpenCrabs just invokes the binary — all protocol-level details are handled by the CLI.
+
 ---
 
 ### Example: Hybrid Setup (Local + Cloud)

@@ -104,18 +104,8 @@ impl Tool for SelfImproveTool {
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
         let action = input.get("action").and_then(|v| v.as_str()).unwrap_or("");
 
-        // Brain files MUST go to ~/.opencrabs/, never the repo working directory.
-        // Tests can override via working_directory pointing to a temp dir, but
-        // only if it looks like an opencrabs home (contains "opencrabs" or is a
-        // temp dir), NOT a git repo root.
-        let home = if !context.working_directory.as_os_str().is_empty()
-            && context.working_directory != std::path::Path::new(".")
-            && !context.working_directory.join(".git").exists()
-        {
-            context.working_directory.clone()
-        } else {
-            crate::config::opencrabs_home()
-        };
+        // Brain files always go to ~/.opencrabs/, never the working directory.
+        let home = crate::config::opencrabs_home();
 
         match action {
             "read" => {
