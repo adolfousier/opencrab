@@ -2807,6 +2807,56 @@ impl AgentService {
                     continue;
                 }
 
+                // ── Phantom-retry cap exhaustion ────────────────────────
+                // The standard phantom branch above only runs while
+                // `phantom_retries_used < MAX_PHANTOM_RETRIES`. Once we've
+                // burned all retries, the gate skips and any subsequent
+                // phantom response falls through to the loop's break path
+                // — leaking the model's intent narration to the TUI as the
+                // turn's "final" answer.
+                //
+                // Replace `iteration_text` with a self-heal notice so the
+                // persisted/displayed message reflects the abort instead
+                // of yet another `Let me X` / `Pushed.` claim. The early-
+                // abort branch above handles single-iteration intent loops;
+                // this one handles the slower case where each retry kept
+                // producing a fresh-but-still-phantom response.
+                if !is_cli_provider
+                    && phantom_retries_used >= MAX_PHANTOM_RETRIES
+                    && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
+                {
+                    tracing::warn!(
+                        "Phantom retry budget exhausted ({} retries used) and model is still \
+                         emitting phantom intent — replacing leaked text with abort notice.",
+                        phantom_retries_used
+                    );
+                    self.record_provider_feedback(
+                        session_id,
+                        "phantom_retry_exhausted",
+                        "self_heal",
+                        Some(&iteration_text.chars().take(300).collect::<String>()),
+                    );
+                    if let Some(ref cb) = progress_callback {
+                        cb(
+                            session_id,
+                            ProgressEvent::SelfHealingAlert {
+                                message: format!(
+                                    "Phantom retry budget exhausted after {} attempts — aborting turn",
+                                    phantom_retries_used
+                                ),
+                            },
+                        );
+                    }
+                    iteration_text = format!(
+                        "[self-heal] Aborted after {} retry attempts — the model kept describing \
+                         actions but never executed a tool call. Try a different model, rephrase \
+                         the prompt, or check that the provider exposes the function schemas \
+                         correctly.",
+                        phantom_retries_used
+                    );
+                    // Fall through to the break path with the replaced text.
+                }
+
                 // ── Rotation continuation ──────────────────────────────
                 // When Qwen OAuth rotation happens mid-task, the new account
                 // gets the same request but may respond with text-only (0 tools)
