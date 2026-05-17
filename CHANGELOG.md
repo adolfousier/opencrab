@@ -5,6 +5,51 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.20] - 2026-05-18
+
+20 commits since v0.3.19.
+
+BY-MODEL QUANTIZATION TREE VIEW (7 commits)
+
+The /usage dashboard now groups models with quantization variants (e.g. qwen3.6-35b-a3b-gguf,
+-oq2, -oq4, -iq4_xs) under a single parent row showing aggregated tokens/cost/calls.
+Tree-style prefixes (├─ / └─), column widths account for both parent and variant data.
+
+- 17eb336f refactor(usage): tighten By-Model tree prefix, drop 4-space lead
+- 1026f9d5 fix(usage): align child row columns with parent, deeper indent
+- 950b9a4b fix(usage): strip provider-namespace prefix from model names
+- 7d389404 fix(usage): strip .gguf extension before quant-pattern matching
+- ad027c3c fix(usage): skip blank tool_name entries
+- aaad2188 fix(usage): only draw tree connectors for models with variants
+- ee160d65 fix(usage): clear clippy lints
+
+FEATURE (1 commit)
+
+- 92d3f4f6 feat(tui): per-pane error and notification banners
+
+BUGFIXES (7 commits)
+
+- 3463676e fix(heal): abort on stuck intent loops instead of retrying
+- 10c8e99c fix(heal): replace phantom-exhaustion text with abort notice
+- 9557b6f5 fix(provider): catch bare top-level tool-call arrays leaking to TUI
+- 7955d5c1 fix(mc): restore cron jobs — tolerate BLOB-typed prompt rows
+- 7955d5c1 fix(tui): clamp slash/emoji popup height to fit short terminals
+- 7955d5c1 fix(rsi): resolve home directory instead of CWD-relative path
+- 92d3f4f6 feat(usage): tree view for 'By Model' card with quantization grouping
+
+DOCS (2 commits)
+
+- 7955d5c1 docs: fix LICENSE reference path (PR #82, @kriptoburak)
+- 7955d5c1 docs: refresh total to 2,614 passing tests
+
+EXTERNAL CONTRIBUTIONS (1 commit)
+
+- 7955d5c1 fix(cli): load dynamic tools from tools.toml in run and agent modes (issue #79, @leshchenko)
+
+TESTS (1 commit)
+
+- 7955d5c1 style(tests): rustfmt line-wraps in rsi_test
+
 ## [0.3.19] - 2026-05-15
 
 ### Added
@@ -644,6 +689,7 @@ provider and context budget.
 - **Raise think-tag safety valve** — long Qwen reasoning blocks no longer
   get partially stripped by the tag filter.
 
+[0.3.20]: https://github.com/adolfousier/opencrabs/compare/v0.3.19...v0.3.20
 [0.3.19]: https://github.com/adolfousier/opencrabs/compare/v0.3.18...v0.3.19
 [0.3.18]: https://github.com/adolfousier/opencrabs/compare/v0.3.17...v0.3.18
 [0.3.17]: https://github.com/adolfousier/opencrabs/compare/v0.3.16...v0.3.17
