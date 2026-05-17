@@ -174,11 +174,7 @@ pub fn normalize_model_for_grouping(name: &str) -> String {
         "-q6_k",
         "-q8_0",
         "-q8_1",
-        "-qwen-3.6-max-preview",
-        "-qwen3.6-max-preview",
-        "-qwen-3-6-max-preview",
-        "-qwen3-6-max-preview",
-        "-qwen-max-preview",
+        "-gguf",
     ];
     for pattern in &quant_patterns {
         if n.ends_with(pattern) {

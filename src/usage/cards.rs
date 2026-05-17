@@ -301,38 +301,45 @@ pub fn render_models(f: &mut Frame, models: &[ModelEntry], area: Rect, focused: 
             Span::styled(format!("{:>width$} req", m.calls, width = calls_width), DIM),
         ]));
 
-        // Child rows (variant breakdown)
-        for (vidx, v) in m.variants.iter().enumerate() {
-            let is_last = vidx == m.variants.len() - 1;
-            let prefix = if is_last { "  └─ " } else { "  ├─ " };
-            let v_display = crate::tui::provider_selector::model_display_label(&v.name).to_string();
-            let v_name = if v_display.len() > name_width.saturating_sub(4) {
-                format!(
-                    "{}...",
+        // Child rows (variant breakdown) — only show tree when there are actual quant variants
+        let has_real_variants = m.variants.len() > 1
+            || m.variants.first().is_some_and(|v| {
+                crate::usage::data::normalize_model_for_grouping(&v.name) != m.model
+            });
+
+        if has_real_variants {
+            for (vidx, v) in m.variants.iter().enumerate() {
+                let is_last = vidx == m.variants.len() - 1;
+                let prefix = if is_last { "  └─ " } else { "  ├─ " };
+                let v_display = crate::tui::provider_selector::model_display_label(&v.name).to_string();
+                let v_name = if v_display.len() > name_width.saturating_sub(4) {
+                    format!(
+                        "{}...",
+                        v_display
+                            .chars()
+                            .take(name_width.saturating_sub(7))
+                            .collect::<String>()
+                    )
+                } else {
                     v_display
-                        .chars()
-                        .take(name_width.saturating_sub(7))
-                        .collect::<String>()
-                )
-            } else {
-                v_display
-            };
-            let v_name = format!("{prefix}{v_name}");
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {:<width$}", v_name, width = name_width + 4), DIM),
-                Span::raw("  "),
-                Span::styled(
-                    format!("{:>width$}", fmt_cost(v.cost), width = cost_width),
-                    LABEL,
-                ),
-                Span::raw("  "),
-                Span::styled(
-                    format!("{:>width$}", fmt_tokens(v.tokens), width = tok_width),
-                    DIM,
-                ),
-                Span::raw("  "),
-                Span::styled(format!("{:>width$} req", v.calls, width = calls_width), DIM),
-            ]));
+                };
+                let v_name = format!("{prefix}{v_name}");
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" {:<width$}", v_name, width = name_width + 4), DIM),
+                    Span::raw("  "),
+                    Span::styled(
+                        format!("{:>width$}", fmt_cost(v.cost), width = cost_width),
+                        LABEL,
+                    ),
+                    Span::raw("  "),
+                    Span::styled(
+                        format!("{:>width$}", fmt_tokens(v.tokens), width = tok_width),
+                        DIM,
+                    ),
+                    Span::raw("  "),
+                    Span::styled(format!("{:>width$} req", v.calls, width = calls_width), DIM),
+                ]));
+            }
         }
     }
 
