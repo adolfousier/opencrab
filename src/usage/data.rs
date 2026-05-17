@@ -413,7 +413,10 @@ async fn fetch_projects(pool: &Pool, since: Option<i64>) -> Result<Vec<ProjectSt
 
 /// Normalize model name the same way the SQL query does, so we can
 /// apply the grouping step in Rust after the SQL normalization.
-fn sql_normalize_model(raw: &str) -> String {
+///
+/// MUST stay byte-for-byte equivalent to the SQL CTE chain inside
+/// `fetch_model_entries` — anything different and grouped rows split.
+pub(crate) fn sql_normalize_model(raw: &str) -> String {
     let m1 = if raw.contains('/') {
         raw.rsplit('/').next().unwrap_or(raw).to_lowercase()
     } else {
@@ -426,6 +429,14 @@ fn sql_normalize_model(raw: &str) -> String {
     } else {
         m1.as_str()
     };
+    // Strip provider-namespace prefix separated by `:`. Examples:
+    //   `dialagram:qwen-3.6-max-preview-thinking` → `qwen-3.6-max-preview`
+    //     (after the `-thinking` strip above runs first)
+    //   `opencodeiolo-qwen:qwen3.6-plus` → `qwen3.6-plus`
+    // Splits on the FIRST colon so a hypothetical `provider:family:variant`
+    // still keeps `family:variant` intact. `:free` suffix was already
+    // stripped above before reaching this step.
+    let m2 = m2.split_once(':').map(|(_, after)| after).unwrap_or(m2);
     let m3 = m2.strip_prefix("claude-").unwrap_or(m2);
     match m3 {
         "opus" | "opus-4-6" => "opus-4-6".to_string(),
@@ -478,13 +489,21 @@ async fn fetch_model_entries(pool: &Pool, since: Option<i64>) -> Result<Vec<Mode
                    WHEN m1 LIKE '%-free' THEN SUBSTR(m1, 1, LENGTH(m1) - 5) \
                    WHEN m1 LIKE '%-thinking' THEN SUBSTR(m1, 1, LENGTH(m1) - 9) \
                    ELSE m1 \
-                 END AS m2 \
+                 END AS m2_pre \
                FROM stripped \
+             ), \
+             namespaced AS ( \
+               SELECT *, \
+                 CASE WHEN INSTR(m2_pre, ':') > 0 \
+                   THEN SUBSTR(m2_pre, INSTR(m2_pre, ':') + 1) \
+                   ELSE m2_pre \
+                 END AS m2 \
+               FROM cleaned \
              ), \
              prefixed AS ( \
                SELECT *, \
                  CASE WHEN m2 LIKE 'claude-%' THEN SUBSTR(m2, 8) ELSE m2 END AS m3 \
-               FROM cleaned \
+               FROM namespaced \
              ) \
              SELECT \
                CASE \

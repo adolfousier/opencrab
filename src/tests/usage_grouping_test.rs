@@ -8,7 +8,7 @@
 //! (file extension with a dot), and the quant patterns only matched
 //! `-gguf` / `-ud-iq4_xs` / etc. so nothing stripped.
 
-use crate::usage::data::normalize_model_for_grouping;
+use crate::usage::data::{normalize_model_for_grouping, sql_normalize_model};
 
 #[test]
 fn strips_dot_gguf_then_quant_tag() {
@@ -86,5 +86,80 @@ fn does_not_strip_dot_gguf_in_middle_of_name() {
     assert_eq!(
         normalize_model_for_grouping("model.gguf-special"),
         "model.gguf-special"
+    );
+}
+
+// --- sql_normalize_model: provider-namespace prefix handling ---
+// 2026-05-17: `dialagram:qwen-3.6-max-preview` and
+// `opencodeiolo-qwen:qwen3.6-plus` rendered as their own dashboard
+// rows ($8.49 / $2.18) instead of folding under the canonical
+// `qwen3.6-max-preview` / `qwen3.6-plus` aggregations. Root cause:
+// the SQL+Rust normalizer split on `/` but not on `:`.
+
+#[test]
+fn sql_normalize_strips_dialagram_colon_prefix() {
+    assert_eq!(
+        sql_normalize_model("dialagram:qwen-3.6-max-preview-thinking"),
+        "qwen3.6-max-preview"
+    );
+    assert_eq!(
+        sql_normalize_model("dialagram:qwen-3.6-max-preview"),
+        "qwen3.6-max-preview"
+    );
+}
+
+#[test]
+fn sql_normalize_strips_opencodeiolo_colon_prefix() {
+    assert_eq!(
+        sql_normalize_model("opencodeiolo-qwen:qwen3.6-plus"),
+        "qwen3.6-plus"
+    );
+}
+
+#[test]
+fn sql_normalize_keeps_slash_handling() {
+    assert_eq!(sql_normalize_model("qwen/qwen3.6-plus"), "qwen3.6-plus");
+    assert_eq!(
+        sql_normalize_model("opencode/qwen3.6-plus-free"),
+        "qwen3.6-plus"
+    );
+    // The `/` strip runs first and the `:free` suffix strip kicks in
+    // BEFORE the colon-prefix split, so this stays canonical.
+    assert_eq!(
+        sql_normalize_model("qwen/qwen3.6-plus:free"),
+        "qwen3.6-plus"
+    );
+}
+
+#[test]
+fn sql_normalize_strips_thinking_then_colon_prefix() {
+    // Order matters: `-thinking` suffix strip must run before the colon
+    // split, otherwise `provider:model-thinking` would lose the prefix
+    // and still carry the suffix, breaking the canonical-match arms.
+    assert_eq!(
+        sql_normalize_model("dialagram:qwen-3.6-plus-thinking"),
+        "qwen3.6-plus"
+    );
+}
+
+#[test]
+fn sql_normalize_leaves_canonical_names_alone() {
+    assert_eq!(sql_normalize_model("qwen3.6-plus"), "qwen3.6-plus");
+    assert_eq!(
+        sql_normalize_model("qwen3.6-max-preview"),
+        "qwen3.6-max-preview"
+    );
+    assert_eq!(sql_normalize_model("opus-4-6"), "opus-4-6");
+    assert_eq!(sql_normalize_model("haiku-4-5-20251001"), "haiku-4-5");
+}
+
+#[test]
+fn sql_normalize_uses_first_colon_for_multi_colon_names() {
+    // Hypothetical `provider:family:variant` — strip only the first
+    // colon so `family:variant` stays intact rather than collapsing to
+    // just `variant`. `rsplit` would over-strip; we use `split_once`.
+    assert_eq!(
+        sql_normalize_model("provider:family:variant"),
+        "family:variant"
     );
 }
