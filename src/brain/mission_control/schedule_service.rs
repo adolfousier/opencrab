@@ -23,7 +23,13 @@ pub async fn list(pool: Pool) -> Vec<McScheduleItem> {
     let jobs = match repo.list_all().await {
         Ok(j) => j,
         Err(e) => {
-            tracing::warn!("schedule_service: failed to list cron jobs: {e}");
+            // `{e:#}` walks the full anyhow chain (top context →
+            // interact_err → underlying rusqlite::Error). Without this
+            // alternate flag we only see "Failed to list cron jobs"
+            // and lose the actual SQL-side cause — which is exactly the
+            // blind spot that hid the 2026-05-17 MC empty-schedule bug
+            // until it was investigated row-by-row.
+            tracing::warn!("schedule_service: failed to list cron jobs: {e:#}");
             return Vec::new();
         }
     };

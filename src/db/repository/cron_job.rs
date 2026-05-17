@@ -69,10 +69,28 @@ impl CronJobRepository {
             .get()
             .await
             .context("Failed to get connection")?
-            .interact(|conn| {
+            .interact(|conn| -> anyhow::Result<Vec<CronJob>> {
                 let mut stmt = conn.prepare_cached("SELECT * FROM cron_jobs ORDER BY name")?;
-                let rows = stmt.query_map([], CronJob::from_row)?;
-                rows.collect::<std::result::Result<Vec<_>, _>>()
+                let rows = stmt.query_map([], |row| {
+                    // Capture the id BEFORE from_row so a decode failure
+                    // points at a specific job rather than the anonymous
+                    // "row 0/0" rusqlite produces by default. Useful for
+                    // the 2026-05-17 class of bug where one bad row
+                    // silently empties an entire list query.
+                    let id: String = row.get::<_, String>("id").unwrap_or_default();
+                    CronJob::from_row(row).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            format!("cron_jobs row id={id}: {e}").into(),
+                        )
+                    })
+                })?;
+                let mut out = Vec::new();
+                for row in rows {
+                    out.push(row.context("cron_jobs row decode failed")?);
+                }
+                Ok(out)
             })
             .await
             .map_err(interact_err)?

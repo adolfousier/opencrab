@@ -8,6 +8,40 @@ use uuid::Uuid;
 
 // ─── Row helpers ─────────────────────────────────────────────────────────────
 
+/// Read a column declared `TEXT` but tolerate the row's storage class being
+/// `BLOB`. SQLite's flexible typing accepts byte-buffer inserts into TEXT
+/// columns, and an earlier sqlx-era binding for `cron_jobs.prompt` produced
+/// exactly this glitch: 4 of 7 rows lived as BLOB and broke the strict
+/// `String::column_result` decode used by `row.get::<String, _>` —
+/// `CronJobRepository::list_all` failed, Mission Control's schedule panel
+/// silently empties out (2026-05-17). Migration `20260517...` heals the
+/// stored rows; this helper covers any future row that slips through with
+/// the wrong storage class without bringing down whole list queries.
+pub fn text_or_blob_col(row: &rusqlite::Row, col: &str) -> rusqlite::Result<String> {
+    use rusqlite::types::ValueRef;
+    match row.get_ref(col)? {
+        ValueRef::Text(bytes) | ValueRef::Blob(bytes) => {
+            String::from_utf8(bytes.to_vec()).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })
+        }
+        ValueRef::Null => Err(rusqlite::Error::InvalidColumnType(
+            0,
+            col.to_string(),
+            rusqlite::types::Type::Null,
+        )),
+        _ => Err(rusqlite::Error::InvalidColumnType(
+            0,
+            col.to_string(),
+            rusqlite::types::Type::Text,
+        )),
+    }
+}
+
 /// Parse a UUID string column from a rusqlite row.
 pub fn uuid_col(row: &rusqlite::Row, col: &str) -> rusqlite::Result<Uuid> {
     let s: String = row.get(col)?;
@@ -454,13 +488,17 @@ impl CronJob {
     pub fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(CronJob {
             id: uuid_col(row, "id")?,
-            name: row.get("name")?,
-            cron_expr: row.get("cron_expr")?,
-            timezone: row.get("timezone")?,
-            prompt: row.get("prompt")?,
+            name: text_or_blob_col(row, "name")?,
+            cron_expr: text_or_blob_col(row, "cron_expr")?,
+            timezone: text_or_blob_col(row, "timezone")?,
+            // `prompt` was the column that surfaced the bug — earlier
+            // sqlx-era inserts stored it as BLOB on 4 of 7 rows.
+            // `text_or_blob_col` handles either storage class; covers
+            // the other free-form TEXT columns defensively.
+            prompt: text_or_blob_col(row, "prompt")?,
             provider: row.get("provider")?,
             model: row.get("model")?,
-            thinking: row.get("thinking")?,
+            thinking: text_or_blob_col(row, "thinking")?,
             auto_approve: row.get::<_, i32>("auto_approve")? != 0,
             deliver_to: row.get("deliver_to")?,
             deliver_api_key: row.get("deliver_api_key")?,

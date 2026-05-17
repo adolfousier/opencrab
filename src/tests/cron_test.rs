@@ -1021,3 +1021,137 @@ mod config_defaults {
         assert!(config.default_model.is_none());
     }
 }
+
+// --- BLOB-typed prompt regression (Mission Control empty-schedule bug) ---
+// 2026-05-17: 4 of 7 cron_jobs rows had `prompt` stored as BLOB instead
+// of TEXT (sqlx-era binding glitch — SQLite's flexible typing accepted
+// the byte-buffer insert despite the `TEXT NOT NULL` schema). The
+// `row.get::<String, _>("prompt")` decode then failed, list_all returned
+// Err, Mission Control silently swallowed the error and rendered "No
+// scheduled jobs." Defensive fix: `text_or_blob_col` reads either storage
+// class. Data heal: migration 20260517...cron_jobs_text_recast.
+#[cfg(test)]
+mod blob_prompt_regression {
+    use crate::db::repository::CronJobRepository;
+    use rusqlite::params;
+
+    async fn pool_with_cron_table() -> deadpool_sqlite::Pool {
+        let cfg = deadpool_sqlite::Config::new(":memory:");
+        let pool = cfg
+            .create_pool(deadpool_sqlite::Runtime::Tokio1)
+            .expect("create pool");
+        pool.get()
+            .await
+            .unwrap()
+            .interact(|conn| {
+                conn.execute_batch(
+                    "CREATE TABLE cron_jobs (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        cron_expr TEXT NOT NULL,
+                        timezone TEXT NOT NULL DEFAULT 'UTC',
+                        prompt TEXT NOT NULL,
+                        provider TEXT,
+                        model TEXT,
+                        thinking TEXT NOT NULL DEFAULT 'off',
+                        auto_approve INTEGER NOT NULL DEFAULT 1,
+                        deliver_to TEXT,
+                        deliver_api_key TEXT,
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        last_run_at TEXT,
+                        next_run_at TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );",
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn list_all_tolerates_blob_typed_prompt() {
+        let pool = pool_with_cron_table().await;
+        // Insert one row with prompt bound as BYTES (mimics the sqlx-era
+        // glitch) and one with prompt as a normal string. Both should
+        // come back as String through the tolerant reader.
+        pool.get()
+            .await
+            .unwrap()
+            .interact(|conn| {
+                let prompt_bytes: &[u8] = b"Check wacore crates.io update";
+                conn.execute(
+                    "INSERT INTO cron_jobs (id, name, cron_expr, timezone, prompt, thinking,
+                        auto_approve, enabled, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        "11111111-1111-1111-1111-111111111111",
+                        "blob row",
+                        "0 9 * * *",
+                        "UTC",
+                        prompt_bytes,
+                        "off",
+                        1,
+                        1,
+                        "2026-05-01T00:00:00Z",
+                        "2026-05-01T00:00:00Z",
+                    ],
+                )?;
+                conn.execute(
+                    "INSERT INTO cron_jobs (id, name, cron_expr, timezone, prompt, thinking,
+                        auto_approve, enabled, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        "22222222-2222-2222-2222-222222222222",
+                        "text row",
+                        "0 10 * * *",
+                        "UTC",
+                        "GitHub repo stats",
+                        "off",
+                        1,
+                        1,
+                        "2026-05-01T00:00:00Z",
+                        "2026-05-01T00:00:00Z",
+                    ],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Sanity-check the storage-class typeof — proves the test
+        // scenario actually reproduces the bug (without the tolerant
+        // reader, list_all would fail on the blob row).
+        let typeofs: Vec<String> = pool
+            .get()
+            .await
+            .unwrap()
+            .interact(|conn| {
+                let mut stmt =
+                    conn.prepare("SELECT typeof(prompt) FROM cron_jobs ORDER BY name")?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(typeofs, vec!["blob".to_string(), "text".to_string()]);
+
+        let repo = CronJobRepository::new(pool);
+        let jobs = repo.list_all().await.expect("list_all must tolerate BLOB");
+        assert_eq!(jobs.len(), 2);
+        let blob_job = jobs
+            .iter()
+            .find(|j| j.name == "blob row")
+            .expect("blob row found");
+        assert_eq!(blob_job.prompt, "Check wacore crates.io update");
+        let text_job = jobs
+            .iter()
+            .find(|j| j.name == "text row")
+            .expect("text row found");
+        assert_eq!(text_job.prompt, "GitHub repo stats");
+    }
+}

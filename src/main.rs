@@ -44,6 +44,16 @@ async fn main() -> Result<()> {
     // Run CLI application
     let result = cli::run().await;
 
+    // Print the error chain to stderr on failure. Without this, a CLI
+    // subcommand that returns Err (e.g. `opencrabs cron list` hitting a
+    // bad row) exits with status 1 and zero output, which makes
+    // diagnosis a guessing game. The TUI's own error surfacing
+    // (`tracing` + on-screen alerts) handles its lifecycle separately,
+    // so this only fires for non-TUI CLI subcommands.
+    if let Err(ref e) = result {
+        eprintln!("Error: {e:#}");
+    }
+
     // Use libc::_exit instead of std::process::exit — skips C atexit handlers
     // which avoids llama.cpp Metal device destructor crash on macOS ARM.
     // Still force-exits so background tokio tasks (embedding backfill) don't hang.
