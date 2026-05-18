@@ -163,7 +163,7 @@ async fn cmd_chat_inner(
     {
         tool_registry.register(Arc::new(GenerateImageTool::new(
             key.clone(),
-            config.image.generation.model.clone(),
+            crate::brain::provider::factory::effective_generation_model(config),
         )));
         tracing::info!("Registered generate_image tool");
     }

@@ -645,3 +645,71 @@ mod active_provider_vision {
         assert_eq!(vision_model, "MiniMax-Text-01");
     }
 }
+
+// --- Active provider generation discovery ---
+// Mirrors the vision-helper suite above. `generation_model` is the
+// 2026-05-18 follow-up so binary users can override the image-gen
+// model without leaving the TUI.
+mod active_provider_generation {
+    use crate::brain::provider::factory::{active_provider_generation, effective_generation_model};
+    use crate::config::{Config, ProviderConfig, ProviderConfigs};
+
+    #[test]
+    fn returns_none_when_no_generation_model_set() {
+        let config = Config::default();
+        assert!(active_provider_generation(&config).is_none());
+    }
+
+    #[test]
+    fn returns_override_from_active_provider() {
+        let config = Config {
+            providers: ProviderConfigs {
+                gemini: Some(ProviderConfig {
+                    enabled: true,
+                    api_key: Some("gemini-key".into()),
+                    base_url: Some("https://generativelanguage.googleapis.com/v1beta".into()),
+                    default_model: Some("gemini-3.6-flash".into()),
+                    generation_model: Some("imagen-4.0-generate-001".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (api_key, _, model) = active_provider_generation(&config).expect("must resolve");
+        assert_eq!(api_key, "gemini-key");
+        assert_eq!(model, "imagen-4.0-generate-001");
+    }
+
+    #[test]
+    fn effective_falls_back_to_global_when_no_override() {
+        // Provider has no `generation_model` → fall back to the global
+        // `image.generation.model` (whose default is the seeded Gemini
+        // value from /onboard).
+        let config = Config::default();
+        let fallback = effective_generation_model(&config);
+        assert_eq!(fallback, config.image.generation.model);
+    }
+
+    #[test]
+    fn effective_prefers_provider_override_over_global() {
+        let config = Config {
+            providers: ProviderConfigs {
+                gemini: Some(ProviderConfig {
+                    enabled: true,
+                    api_key: Some("gemini-key".into()),
+                    base_url: Some("https://generativelanguage.googleapis.com/v1beta".into()),
+                    default_model: Some("gemini-3.6-flash".into()),
+                    generation_model: Some("imagen-4.0-generate-001".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            effective_generation_model(&config),
+            "imagen-4.0-generate-001"
+        );
+    }
+}

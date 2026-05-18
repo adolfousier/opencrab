@@ -645,6 +645,78 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
     None
 }
 
+/// Returns `(api_key, base_url, generation_model)` for the active provider
+/// when it has `generation_model` set in its config. Used by cli/ui.rs to
+/// register `generate_image` against a non-Gemini, OpenAI-compatible images
+/// endpoint (`/v1/images/generations`) instead of the global Gemini default.
+///
+/// `base_url` is normalized so the caller can append the trailing
+/// `/images/generations` segment without worrying whether the user typed
+/// `https://openrouter.ai/api/v1` or `.../v1/chat/completions`.
+pub fn active_provider_generation(config: &Config) -> Option<(String, String, String)> {
+    let (name, _) = config.providers.active_provider_and_model();
+
+    let custom_cfg = if !name.starts_with("custom:")
+        && config
+            .providers
+            .custom
+            .as_ref()
+            .is_some_and(|m| m.contains_key(name.as_str()))
+    {
+        config
+            .providers
+            .custom
+            .as_ref()
+            .and_then(|m| m.get(&name))
+            .cloned()
+    } else if let Some(custom_name) = name.strip_prefix("custom:") {
+        config
+            .providers
+            .custom
+            .as_ref()
+            .and_then(|m| m.get(custom_name))
+            .cloned()
+    } else {
+        None
+    };
+
+    let native_cfg: Option<&ProviderConfig> = REGISTRATIONS
+        .iter()
+        .find(|reg| reg.session_id == name || reg.aliases.contains(&name.as_str()))
+        .and_then(|reg| (reg.config_field)(config));
+
+    let active_cfg = custom_cfg.as_ref().or(native_cfg);
+
+    if let Some(cfg) = active_cfg
+        && let (Some(api_key), Some(generation_model)) = (&cfg.api_key, &cfg.generation_model)
+    {
+        // Strip any chat-specific trailing segment so the caller can append
+        // `/images/generations` cleanly. Accepts the three URL shapes users
+        // typically paste into custom-provider config: `…/v1`,
+        // `…/v1/chat/completions`, or the bare host root.
+        let raw = cfg
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        let base_url = raw
+            .trim_end_matches("/chat/completions")
+            .trim_end_matches('/')
+            .to_string();
+        return Some((api_key.clone(), base_url, generation_model.clone()));
+    }
+    None
+}
+
+/// Final model name to hand to `GenerateImageTool` — active provider's
+/// `generation_model` override wins, otherwise fall back to the global
+/// `image.generation.model`. Keeps the resolution decision next to its
+/// vision counterpart so call sites stay plain wiring.
+pub fn effective_generation_model(config: &Config) -> String {
+    active_provider_generation(config)
+        .map(|(_, _, m)| m)
+        .unwrap_or_else(|| config.image.generation.model.clone())
+}
+
 // ── Individual provider factory functions ───────────────────────
 
 /// Try to create GitHub Copilot provider if configured.
