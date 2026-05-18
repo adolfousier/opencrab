@@ -803,6 +803,25 @@ pub(crate) async fn handle_message(
                     }
                 });
             }
+            ProgressEvent::Compacting => {
+                // No streaming during compaction — surface a one-shot
+                // post so WhatsApp users see the agent is still working.
+                let client = client_cb.clone();
+                let jid = jid_cb.clone();
+                let text = format!(
+                    "{}\n\n🗜️ Compacting context — this may take 30-60s on long sessions",
+                    MSG_HEADER,
+                );
+                tokio::spawn(async move {
+                    let msg = waproto::whatsapp::Message {
+                        conversation: Some(text),
+                        ..Default::default()
+                    };
+                    if let Err(e) = client.send_message(jid, msg).await {
+                        tracing::error!("WhatsApp: compacting alert send failed: {}", e);
+                    }
+                });
+            }
             _ => {}
         })
     };

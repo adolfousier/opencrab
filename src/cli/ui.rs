@@ -518,8 +518,16 @@ async fn cmd_chat_inner(
                     progress_sender.send(TuiEvent::ResponseChunk { session_id, text })
                 }
                 ProgressEvent::Thinking => return, // spinner handles this already
-                // Compaction is now fully silent — summary goes to memory log only
-                ProgressEvent::Compacting => return,
+                // Surface the "compacting context" window so the TUI status
+                // line shows something instead of an unexplained 10-60s
+                // freeze. The compaction summary itself stays internal —
+                // we don't show its body, just the fact that compaction is
+                // running.
+                ProgressEvent::Compacting => progress_sender.send(TuiEvent::SystemMessage {
+                    session_id,
+                    text: "🗜️ Compacting context — this may take 30-60s on long sessions"
+                        .to_string(),
+                }),
                 ProgressEvent::CompactionSummary { .. } => return,
                 ProgressEvent::BuildLine(line) => progress_sender.send(TuiEvent::BuildLine(line)),
                 ProgressEvent::RestartReady { status } => {

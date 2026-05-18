@@ -635,6 +635,13 @@ pub(crate) async fn handle_message(
                         let _ = channel.say(&http, &text).await;
                     });
                 }
+                ProgressEvent::Compacting => {
+                    let text =
+                        "🗜️ Compacting context — this may take 30-60s on long sessions".to_string();
+                    tokio::spawn(async move {
+                        let _ = channel.say(&http, &text).await;
+                    });
+                }
                 _ => {}
             }
         })
