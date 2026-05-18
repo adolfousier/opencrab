@@ -2778,11 +2778,12 @@ impl AgentService {
                             },
                         );
                     }
-                    // Add the narration as assistant context so the model sees
-                    // what it said, then inject a system correction. Local
+                    // Inject a system correction nudge. Local
                     // models respond better to Unsloth's blunter wording;
                     // cloud models get our existing, more-specific nudge.
-                    context.add_message(Message::assistant(iteration_text));
+                    // Do NOT add the phantom text as assistant message — it
+                    // pollutes context and causes the model to hallucinate
+                    // new responses from the correction feedback itself.
                     let nudge = if is_local_provider {
                         // Local models (Qwen/Kimi/DeepSeek) over-index on
                         // "STOP" and interpret it as "wait for further
