@@ -71,6 +71,7 @@ default_model = "gpt-4o"
 enabled = false
 default_model = "gpt-5-nano"  # Optional: override default model
 # vision_model = "gpt-5-nano"  # Optional: describes images for the chat model when it lacks vision
+# generation_model = "gpt-image-1"  # Optional: routes generate_image to OpenAI /v1/images/generations
 
 # ========================================
 # Anthropic Provider (Claude)
@@ -108,6 +109,8 @@ base_url = "https://opencode.ai/zen/go/v1/chat/completions"
 [providers.gemini]
 enabled = false
 default_model = "gemini-2.5-flash"
+# generation_model = "imagen-4.0-generate-001"  # Optional: per-provider override for generate_image
+# (Gemini host is detected automatically — call stays on the Gemini wire, not /v1/images/generations.)
 
 # ========================================
 # Claude CLI (Max Subscription — no API key needed)
@@ -299,6 +302,13 @@ profile_id = ""
 [image.generation]
 enabled = false
 model = "gemini-3.1-flash-image-preview"   # Gemini image-gen model ("Nano Banana")
+# Override the model per-provider by setting `generation_model` under
+# `[providers.<name>]` — e.g. `imagen-4.0-generate-001` on gemini, or
+# `gpt-image-1` / `black-forest-labs/flux-1.1-pro` on any OpenAI-
+# compatible provider (openai, openrouter, custom, …). When the active
+# provider has the field set, generate_image picks the right wire
+# backend automatically: Gemini host → Gemini API, anything else →
+# `/v1/images/generations` with Bearer auth.
 
 [image.vision]
 enabled = false

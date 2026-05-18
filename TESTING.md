@@ -202,10 +202,11 @@ cargo test --all-features
 | Tests — Config Watcher (integration) | 2 | `src/tests/config_watcher_test.rs` |
 | Tests — Usage Model Grouping (`.gguf` + provider-prefix normalization) | 13 | `src/tests/usage_grouping_test.rs` |
 | Tests — Tool-Execution Repo (empty `tool_name` guard) | 4 | `src/tests/tool_execution_repo_test.rs` |
+| Tests — Generate Image Backend Dispatch (Gemini vs OpenAI-compatible) | 5 | `src/tests/generate_image_backend_test.rs` |
 | **Usage — Categorizer** | 4 | `src/usage/categorizer.rs` |
 | **Usage — Dashboard** | 6 | `src/usage/dashboard.rs` |
 | **Usage — Data** | 7 | `src/usage/data.rs` |
-| **Total** | **2,607** | +24 since last update: stuck-intent-loop self-heal in `self_healing_test` (76 → 83, +7), usage model grouping (`.gguf` + `:` provider-prefix normalization, +13 new), tool-execution empty-`tool_name` repo guard (+4 new) |
+| **Total** | **2,626** | +19 since last update: Mission Control schedule fix — BLOB-typed `cron_jobs.prompt` regression + per-row error attribution (+7); `generation_model` 4-step rollout — 4 active_provider_generation resolver tests (`fallback_vision_test`), 3 image_setup wizard-nav tests for the new `GenerationModel` field (`onboarding_field_nav_test`), 5 generate_image backend-dispatch tests (Gemini vs OpenAI-compatible — new `generate_image_backend_test.rs`). |
 
 ---
 

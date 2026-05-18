@@ -670,7 +670,7 @@ MiniMax auto-configures this on first run. Works with any provider — just set 
 
 ## 🖼️ Image Generation & Vision
 
-OpenCrabs supports image generation and vision analysis via Google Gemini. These features are independent of the main chat provider — you can use Claude for chat and Gemini for images.
+OpenCrabs supports image generation and vision analysis via Google Gemini by default — independent of the main chat provider, so you can use Claude for chat and Gemini for images. The `generate_image` tool can also be routed at any OpenAI-compatible images endpoint (OpenAI, OpenRouter, Together, etc.) via the per-provider `generation_model` override; see [Picking a different generation model](#picking-a-different-generation-model) below.
 
 ### Setup
 
@@ -711,7 +711,23 @@ When enabled, three tools become available to the agent automatically:
 
 ### Model
 
-Both tools use `gemini-3.1-flash-image-preview` ("Nano Banana") — Gemini's dedicated image-generation model that supports both vision input and image output in a single request.
+Both tools use `gemini-3.1-flash-image-preview` ("Nano Banana") by default — Gemini's dedicated image-generation model that supports both vision input and image output in a single request.
+
+### Picking a different generation model
+
+The seeded Gemini default works out of the box, but you can override the model used by `generate_image` per-provider without leaving the TUI:
+
+- **From the wizard** — `/onboard:image` shows a "Generation model" input below the toggle. Empty keeps the seeded default; type any model name to override.
+- **From config.toml** — set `generation_model = "..."` under any `[providers.<name>]` block. The active session's provider wins over `image.generation.model`.
+
+Backend dispatch is automatic, based on the provider's `base_url`:
+
+| Provider URL | Wire backend | Example `generation_model` |
+|--------------|--------------|----------------------------|
+| `generativelanguage.googleapis.com` | Gemini `:generateContent` | `imagen-4.0-generate-001` |
+| Anything else (openai, openrouter, custom, …) | OpenAI `/v1/images/generations` (Bearer auth) | `gpt-image-1`, `black-forest-labs/flux-1.1-pro`, `stable-diffusion-3.5-large` |
+
+The OpenAI backend prefers `response_format=b64_json` and falls back to fetching the `url` field for providers that don't honour the format flag, so the saved file is always a local PNG.
 
 ---
 
@@ -2954,7 +2970,7 @@ opencrabs/
 │   │   └── runner.rs     # TUI event loop
 │   ├── utils/            # Utilities (retry, etc.)
 │   ├── migrations/       # SQLite migrations
-│   ├── tests/            # 2,607 tests (see TESTING.md)
+│   ├── tests/            # 2,626 tests (see TESTING.md)
 │   ├── benches/          # Criterion benchmarks
 │   ├── assets/           # Icons, screenshots, visual assets
 │   ├── scripts/          # Build and setup scripts
@@ -2981,7 +2997,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (2,607 tests across 70+ modules; 13 filesystem-touching
+# Run tests (2,626 tests across 70+ modules; 13 filesystem-touching
 # profile tests are #[ignore]d to keep the default run fast — opt in
 # with `cargo test --all-features -- --ignored` when needed)
 cargo test --all-features
