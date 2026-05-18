@@ -157,14 +157,12 @@ async fn cmd_chat_inner(
         tracing::info!("Registered Brave search tool");
     }
 
-    // Image generation tool (requires image.generation.enabled + api_key in config)
-    if config.image.generation.enabled
-        && let Some(ref key) = config.image.generation.api_key
-    {
-        tool_registry.register(Arc::new(GenerateImageTool::new(
-            key.clone(),
-            crate::brain::provider::factory::effective_generation_model(config),
-        )));
+    // Image generation tool — picks the wire backend based on the active
+    // provider's `generation_model` override (Gemini if URL hits the
+    // Google host, OpenAI `/v1/images/generations` otherwise), or falls
+    // back to the global `image.generation` Gemini config.
+    if let Some(tool) = GenerateImageTool::from_config(config) {
+        tool_registry.register(Arc::new(tool));
         tracing::info!("Registered generate_image tool");
     }
     // Image vision tool — provider.vision_model takes priority over image.vision (Gemini)
