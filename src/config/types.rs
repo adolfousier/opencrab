@@ -1281,6 +1281,18 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vision_model: Option<String>,
 
+    /// Image-generation model override for this provider.
+    ///
+    /// Wins over the global `image.generation.model` when the active
+    /// session's provider has it set. Lets users point `generate_image`
+    /// at an alternative without leaving the TUI — e.g.
+    /// `generation_model = "imagen-4.0-generate-001"` on the Gemini
+    /// provider, or `generation_model = "black-forest-labs/flux-1.1-pro"`
+    /// on an OpenRouter / OpenAI-compatible provider that exposes the
+    /// `/v1/images/generations` endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation_model: Option<String>,
+
     /// Context window size in tokens for this provider's model.
     /// Used by auto-compaction to know when to summarize history.
     /// Essential for custom/local providers whose models aren't recognized by name.
