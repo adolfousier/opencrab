@@ -87,7 +87,7 @@ impl Tool for ReadTool {
         let input: ReadInput = serde_json::from_value(input)?;
 
         // Validate path: safety check, existence, and file type
-        let path = match validate_file_path(&input.path, &context.working_directory) {
+        let path = match validate_file_path(&input.path, &context.working_dir()) {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };

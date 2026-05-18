@@ -194,7 +194,7 @@ impl Tool for CodeExecTool {
         // child processes don't consume TUI mouse-capture bytes and surface
         // them on stdout (same TUI-bleed issue as bash.rs).
         let mut cmd = Command::new(interpreter);
-        cmd.current_dir(&context.working_directory)
+        cmd.current_dir(context.working_dir())
             .stdin(std::process::Stdio::null());
 
         // Add extra args (like rustc --out-dir)

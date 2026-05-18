@@ -87,6 +87,18 @@ impl ToolExecutionContext {
         self.timeout_secs = timeout_secs;
         self
     }
+
+    /// Get the effective working directory.
+    ///
+    /// Reads from the shared lock if available (so `/cd` changes are visible
+    /// to tools in the same iteration), falling back to the plain field.
+    pub fn working_dir(&self) -> std::path::PathBuf {
+        if let Some(ref shared) = self.shared_working_directory {
+            shared.read().ok().map(|g| (*g).clone()).unwrap_or_else(|| self.working_directory.clone())
+        } else {
+            self.working_directory.clone()
+        }
+    }
 }
 
 /// Tool result

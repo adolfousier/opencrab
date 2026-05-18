@@ -93,9 +93,9 @@ impl Tool for GlobTool {
 
         // Resolve base directory (tilde expansion + absolute/relative resolution).
         let base_dir = if let Some(ref dir) = input.base_dir {
-            super::error::resolve_tool_path(dir, &context.working_directory)
+            super::error::resolve_tool_path(dir, &context.working_dir())
         } else {
-            context.working_directory.clone()
+            context.working_dir()
         };
 
         if !base_dir.exists() {

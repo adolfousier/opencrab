@@ -240,7 +240,7 @@ impl Tool for BashTool {
         let working_dir = if let Some(ref dir) = input.working_dir {
             std::path::PathBuf::from(dir)
         } else {
-            context.working_directory.clone()
+            context.working_dir()
         };
 
         // Verify working directory exists

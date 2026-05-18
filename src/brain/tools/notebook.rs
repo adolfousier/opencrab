@@ -161,7 +161,7 @@ impl Tool for NotebookEditTool {
         let input: NotebookInput = serde_json::from_value(input)?;
 
         // Resolve path (tilde expansion + absolute/relative resolution).
-        let path = super::error::resolve_tool_path(&input.path, &context.working_directory);
+        let path = super::error::resolve_tool_path(&input.path, &context.working_dir());
 
         // Check if file exists and is a notebook
         if !path.exists() {

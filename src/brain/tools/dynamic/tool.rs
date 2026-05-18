@@ -198,7 +198,7 @@ impl DynamicTool {
         let output = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(&cmd)
-            .current_dir(&context.working_directory)
+            .current_dir(context.working_dir())
             .stdin(std::process::Stdio::null())
             .output()
             .await;

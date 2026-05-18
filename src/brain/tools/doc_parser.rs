@@ -103,7 +103,7 @@ impl Tool for DocParserTool {
         let input: DocParserInput = serde_json::from_value(input)?;
 
         // Resolve path (tilde expansion + absolute/relative resolution).
-        let path = super::error::resolve_tool_path(&input.path, &context.working_directory);
+        let path = super::error::resolve_tool_path(&input.path, &context.working_dir());
 
         // Check if file exists
         if !path.exists() {

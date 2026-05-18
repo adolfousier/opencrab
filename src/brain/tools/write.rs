@@ -78,14 +78,14 @@ impl Tool for WriteTool {
         let input: WriteInput = serde_json::from_value(input)?;
 
         // Resolve path (tilde expansion + absolute/relative resolution).
-        let path = super::error::resolve_tool_path(&input.path, &context.working_directory);
+        let path = super::error::resolve_tool_path(&input.path, &context.working_dir());
 
         // Create parent directories if requested (before path validation)
         if input.create_dirs
             && let Some(parent) = path.parent()
         {
             // Validate parent path is within working directory
-            let canonical_wd = context.working_directory.canonicalize().map_err(|e| {
+            let canonical_wd = context.working_dir().canonicalize().map_err(|e| {
                 ToolError::Internal(format!("Failed to canonicalize working directory: {}", e))
             })?;
 
@@ -107,7 +107,7 @@ impl Tool for WriteTool {
         }
 
         // Resolve path (relative paths resolve against working directory)
-        let path = match validate_path_safety(&input.path, &context.working_directory) {
+        let path = match validate_path_safety(&input.path, &context.working_dir()) {
             Ok(p) => p,
             Err(ToolError::InvalidInput(msg))
                 if msg.contains("Parent directory does not exist") =>

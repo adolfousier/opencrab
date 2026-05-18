@@ -89,9 +89,9 @@ impl Tool for LsTool {
         // Resolve path (expands leading `~`, absolutes pass through,
         // relatives join to the session working directory).
         let path = if let Some(ref p) = input.path {
-            resolve_tool_path(p, &context.working_directory)
+            resolve_tool_path(p, &context.working_dir())
         } else {
-            context.working_directory.clone()
+            context.working_dir()
         };
 
         // Check if path exists

@@ -169,9 +169,9 @@ impl Tool for GrepTool {
 
         // Resolve search path (tilde expansion + absolute/relative resolution).
         let search_path = if let Some(ref p) = input.path {
-            super::error::resolve_tool_path(p, &context.working_directory)
+            super::error::resolve_tool_path(p, &context.working_dir())
         } else {
-            context.working_directory.clone()
+            context.working_dir()
         };
 
         if !search_path.exists() {

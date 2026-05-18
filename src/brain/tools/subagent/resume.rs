@@ -169,7 +169,7 @@ impl Tool for ResumeAgentTool {
                     .await
                     .with_tool_registry(Arc::new(child_registry))
                     .with_auto_approve_tools(true)
-                    .with_working_directory(context.working_directory.clone()),
+                    .with_working_directory(context.working_dir()),
             )
         };
 
