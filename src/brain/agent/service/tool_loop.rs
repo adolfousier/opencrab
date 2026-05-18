@@ -2577,26 +2577,56 @@ impl AgentService {
                 // them back. Persisting per-iteration keeps the chronological
                 // layout (think → text → tools → think → text → …) intact on
                 // session reload, matching the live streamed view exactly.
-                let mut iter_content = String::new();
-                if let Some(ref reasoning) = reasoning_text
-                    && !reasoning.trim().is_empty()
-                {
-                    iter_content.push_str(&format!(
-                        "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
-                        reasoning
-                    ));
-                }
-                if !iteration_text.is_empty() {
-                    if !accumulated_text.is_empty() {
-                        accumulated_text.push_str("\n\n");
+                //
+                // EXCEPTION: phantom iterations (narrated actions, zero
+                // tool_use blocks) are operational scaffolding for the
+                // self-heal retry loop, not turn history. Persisting them
+                // pollutes the DB row that gets reloaded as assistant
+                // context on the next turn (and on session reconnect —
+                // matches the 34-entry Telegram session reported in
+                // discussion #86 / gist 85cfdc26), so the model sees its
+                // own past phantoms and repeats the pattern. Skip the
+                // append on phantom iterations; the eventual successful
+                // iteration (or the `[self-heal] Aborted —…` notice the
+                // stuck-loop / cap-exhaustion branches install into
+                // `iteration_text` further down) gets persisted normally
+                // because by then the phantom signature has been replaced.
+                let iteration_is_phantom = !iteration_text.is_empty()
+                    && tool_uses.is_empty()
+                    && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text);
+
+                if iteration_is_phantom {
+                    tracing::debug!(
+                        "[phantom] Skipping DB persist for phantom iteration \
+                         (text_len={}, has_reasoning={})",
+                        iteration_text.len(),
+                        reasoning_text
+                            .as_deref()
+                            .map(|r| !r.trim().is_empty())
+                            .unwrap_or(false),
+                    );
+                } else {
+                    let mut iter_content = String::new();
+                    if let Some(ref reasoning) = reasoning_text
+                        && !reasoning.trim().is_empty()
+                    {
+                        iter_content.push_str(&format!(
+                            "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
+                            reasoning
+                        ));
                     }
-                    accumulated_text.push_str(&iteration_text);
-                    iter_content.push_str(&format!("{}\n\n", iteration_text));
-                }
-                if !iter_content.is_empty() {
-                    let _ = message_service
-                        .append_content(assistant_db_msg.id, &iter_content)
-                        .await;
+                    if !iteration_text.is_empty() {
+                        if !accumulated_text.is_empty() {
+                            accumulated_text.push_str("\n\n");
+                        }
+                        accumulated_text.push_str(&iteration_text);
+                        iter_content.push_str(&format!("{}\n\n", iteration_text));
+                    }
+                    if !iter_content.is_empty() {
+                        let _ = message_service
+                            .append_content(assistant_db_msg.id, &iter_content)
+                            .await;
+                    }
                 }
             }
 
@@ -2750,6 +2780,16 @@ impl AgentService {
                          provider exposes the function schemas correctly.",
                         reps
                     );
+                    // The per-iteration persist block above (~line 2589) saw
+                    // the ORIGINAL phantom text and intentionally skipped the
+                    // append. Persist the replacement abort notice here so
+                    // it lands on the assistant DB row as the turn's final
+                    // answer — otherwise the message reads as empty on
+                    // session reload.
+                    accumulated_text.push_str(&iteration_text);
+                    let _ = message_service
+                        .append_content(assistant_db_msg.id, &format!("{}\n\n", iteration_text))
+                        .await;
                     // Fall through (no `continue`) so control hits the loop's
                     // break path, which emits `iteration_text` as the final
                     // assistant message.
@@ -2855,6 +2895,14 @@ impl AgentService {
                          correctly.",
                         phantom_retries_used
                     );
+                    // Same rationale as the stuck-intent-loop branch above:
+                    // the iteration-level persist saw the phantom text and
+                    // skipped, so the replacement abort notice needs an
+                    // explicit append to survive session reload.
+                    accumulated_text.push_str(&iteration_text);
+                    let _ = message_service
+                        .append_content(assistant_db_msg.id, &format!("{}\n\n", iteration_text))
+                        .await;
                     // Fall through to the break path with the replaced text.
                 }
 
