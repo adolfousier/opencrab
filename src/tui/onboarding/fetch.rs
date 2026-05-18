@@ -29,11 +29,28 @@ impl OnboardingWizard {
                     self.image_field = ImageField::VisionToggle;
                 }
                 KeyCode::Tab | KeyCode::Enter => {
-                    if either_enabled {
+                    if self.image_generation_enabled {
+                        self.image_field = ImageField::GenerationModel;
+                    } else if either_enabled {
                         self.image_field = ImageField::ApiKey;
                     } else {
                         self.next_step();
                     }
+                }
+                _ => {}
+            },
+            ImageField::GenerationModel => match event.code {
+                KeyCode::Char(c) => {
+                    self.image_generation_model_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    self.image_generation_model_input.pop();
+                }
+                KeyCode::BackTab => {
+                    self.image_field = ImageField::GenerationToggle;
+                }
+                KeyCode::Tab | KeyCode::Enter => {
+                    self.image_field = ImageField::ApiKey;
                 }
                 _ => {}
             },
@@ -52,7 +69,13 @@ impl OnboardingWizard {
                     }
                 }
                 KeyCode::BackTab => {
-                    self.image_field = ImageField::GenerationToggle;
+                    // Skip back over GenerationModel only when generation
+                    // is enabled — otherwise it never got navigated to.
+                    self.image_field = if self.image_generation_enabled {
+                        ImageField::GenerationModel
+                    } else {
+                        ImageField::GenerationToggle
+                    };
                 }
                 KeyCode::Enter => {
                     self.next_step();

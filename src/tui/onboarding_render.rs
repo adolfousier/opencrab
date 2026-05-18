@@ -2122,6 +2122,9 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         ImageField::VisionToggle | ImageField::GenerationToggle => {
             "  Space / ↑↓ to toggle  ·  Tab / Enter to continue  ·  Esc to go back"
         }
+        ImageField::GenerationModel => {
+            "  Type to override model name  ·  Tab / Enter to continue  ·  Esc to go back"
+        }
         ImageField::ApiKey => "  Enter to continue  ·  BackTab to go back  ·  Esc to go back",
     };
     lines.push(Line::from(Span::styled(
@@ -2207,6 +2210,41 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             Style::default().fg(Color::DarkGray),
         ),
     ]));
+
+    // Generation model override input — only meaningful when generation
+    // is enabled. Empty input keeps the seeded
+    // `gemini-3.1-flash-image-preview` default; populated value writes
+    // through to `image.generation.model`.
+    if wizard.image_generation_enabled {
+        lines.push(Line::from(""));
+        let model_focused = wizard.image_field == ImageField::GenerationModel;
+        let (display, dim) = if wizard.image_generation_model_input.is_empty() {
+            ("gemini-3.1-flash-image-preview (default)".to_string(), true)
+        } else {
+            (wizard.image_generation_model_input.clone(), false)
+        };
+        let cursor = if model_focused { "█" } else { "" };
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  Generation model: ",
+                Style::default().fg(if model_focused {
+                    BRAND_BLUE
+                } else {
+                    Color::DarkGray
+                }),
+            ),
+            Span::styled(
+                format!("{}{}", display, cursor),
+                Style::default().fg(if dim {
+                    Color::DarkGray
+                } else if model_focused {
+                    Color::White
+                } else {
+                    Color::Cyan
+                }),
+            ),
+        ]));
+    }
 
     // API key field (only when either is enabled)
     if wizard.image_vision_enabled || wizard.image_generation_enabled {

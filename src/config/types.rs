@@ -471,7 +471,7 @@ impl Default for ImageVisionConfig {
     }
 }
 
-fn default_image_model() -> String {
+pub fn default_image_model() -> String {
     "gemini-3.1-flash-image-preview".to_string()
 }
 

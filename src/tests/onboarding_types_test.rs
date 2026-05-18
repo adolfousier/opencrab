@@ -182,7 +182,8 @@ fn voice_field_variants() {
 #[test]
 fn image_field_variants() {
     assert_ne!(ImageField::VisionToggle, ImageField::GenerationToggle);
-    assert_ne!(ImageField::GenerationToggle, ImageField::ApiKey);
+    assert_ne!(ImageField::GenerationToggle, ImageField::GenerationModel);
+    assert_ne!(ImageField::GenerationModel, ImageField::ApiKey);
 }
 
 #[test]

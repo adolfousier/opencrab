@@ -756,14 +756,21 @@ impl OnboardingWizard {
 
         if write_image {
             // Image config
-            let image_model = "gemini-3.1-flash-image-preview";
+            let default_model = "gemini-3.1-flash-image-preview";
+            // Wizard input wins; empty stays on the seeded default.
+            let trimmed = self.image_generation_model_input.trim();
+            let generation_model = if trimmed.is_empty() {
+                default_model
+            } else {
+                trimmed
+            };
             if self.image_generation_enabled {
                 try_write!(write_errors, "image.generation", "enabled", "true");
-                try_write!(write_errors, "image.generation", "model", image_model);
+                try_write!(write_errors, "image.generation", "model", generation_model);
             }
             if self.image_vision_enabled {
                 try_write!(write_errors, "image.vision", "enabled", "true");
-                try_write!(write_errors, "image.vision", "model", image_model);
+                try_write!(write_errors, "image.vision", "model", default_model);
             }
             // Save image API key to keys.toml (only if newly entered)
             if !self.image_api_key_input.is_empty()

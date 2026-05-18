@@ -570,3 +570,71 @@ fn arrow_up_goes_back_custom_provider_field() {
     w.handle_key(key(KeyCode::Up));
     assert_eq!(w.auth_field, AuthField::CustomName);
 }
+
+// ── ImageSetup: GenerationModel field (2026-05-18) ───────────────
+//
+// Pins the new ImageField::GenerationModel slot added so binary users
+// can override `image.generation.model` from the TUI instead of
+// editing config.toml. Only navigable when generation is enabled.
+
+#[test]
+fn image_setup_generation_model_field_appears_when_generation_enabled() {
+    use crate::tui::onboarding::ImageField;
+
+    let mut w = OnboardingWizard::new();
+    w.step = OnboardingStep::ImageSetup;
+    w.image_field = ImageField::GenerationToggle;
+    w.image_vision_enabled = false;
+    w.image_generation_enabled = true;
+
+    // Tab from GenerationToggle (gen enabled) lands on GenerationModel.
+    w.handle_key(key(KeyCode::Tab));
+    assert_eq!(w.image_field, ImageField::GenerationModel);
+
+    // Tab again skips to ApiKey.
+    w.handle_key(key(KeyCode::Tab));
+    assert_eq!(w.image_field, ImageField::ApiKey);
+
+    // BackTab from ApiKey returns to GenerationModel (since gen enabled).
+    w.handle_key(key(KeyCode::BackTab));
+    assert_eq!(w.image_field, ImageField::GenerationModel);
+}
+
+#[test]
+fn image_setup_skips_generation_model_when_generation_disabled() {
+    use crate::tui::onboarding::ImageField;
+
+    let mut w = OnboardingWizard::new();
+    w.step = OnboardingStep::ImageSetup;
+    w.image_field = ImageField::GenerationToggle;
+    w.image_vision_enabled = true; // vision on, gen off
+    w.image_generation_enabled = false;
+
+    // With generation OFF, Tab from GenerationToggle skips straight to
+    // ApiKey (no GenerationModel intermediate step).
+    w.handle_key(key(KeyCode::Tab));
+    assert_eq!(w.image_field, ImageField::ApiKey);
+
+    // BackTab from ApiKey also skips back over GenerationModel.
+    w.handle_key(key(KeyCode::BackTab));
+    assert_eq!(w.image_field, ImageField::GenerationToggle);
+}
+
+#[test]
+fn image_setup_generation_model_input_captures_typed_chars() {
+    use crate::tui::onboarding::ImageField;
+
+    let mut w = OnboardingWizard::new();
+    w.step = OnboardingStep::ImageSetup;
+    w.image_field = ImageField::GenerationModel;
+    w.image_generation_enabled = true;
+
+    for c in "imagen-4".chars() {
+        w.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(w.image_generation_model_input, "imagen-4");
+
+    // Backspace removes the last char.
+    w.handle_key(key(KeyCode::Backspace));
+    assert_eq!(w.image_generation_model_input, "imagen-");
+}

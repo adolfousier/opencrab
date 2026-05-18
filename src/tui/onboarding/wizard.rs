@@ -105,6 +105,10 @@ pub struct OnboardingWizard {
     pub image_field: ImageField,
     pub image_vision_enabled: bool,
     pub image_generation_enabled: bool,
+    /// Free-text override for the generation model name. Empty keeps the
+    /// hardcoded default (`gemini-3.1-flash-image-preview`); a populated
+    /// value writes through to `image.generation.model`.
+    pub image_generation_model_input: String,
     pub image_api_key_input: String,
 
     /// Step 8: Daemon
@@ -426,6 +430,7 @@ impl OnboardingWizard {
             image_field: ImageField::VisionToggle,
             image_vision_enabled: false,
             image_generation_enabled: false,
+            image_generation_model_input: String::new(),
             image_api_key_input: String::new(),
 
             install_daemon: false,
@@ -777,6 +782,15 @@ impl OnboardingWizard {
         // Load image settings
         wizard.image_vision_enabled = config.image.vision.enabled;
         wizard.image_generation_enabled = config.image.generation.enabled;
+        // Prefill the model input from existing config so re-entering
+        // the wizard shows what's actually wired today. Empty string =
+        // default sentinel; the write path leaves it untouched when blank.
+        wizard.image_generation_model_input =
+            if config.image.generation.model == crate::config::default_image_model() {
+                String::new()
+            } else {
+                config.image.generation.model.clone()
+            };
         wizard.detect_existing_image_key();
 
         // Mark existing channel data with sentinels so apply_config() won't overwrite.

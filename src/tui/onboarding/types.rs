@@ -567,6 +567,10 @@ pub enum VoiceField {
 pub enum ImageField {
     VisionToggle,
     GenerationToggle,
+    /// Free-text override for the image-generation model name.
+    /// Only navigable when `image_generation_enabled` is true; empty
+    /// input keeps the seeded `gemini-3.1-flash-image-preview` default.
+    GenerationModel,
     ApiKey,
 }
 
