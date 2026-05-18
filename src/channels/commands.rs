@@ -509,7 +509,7 @@ async fn format_usage(
                     a.category,
                     fmt_cost(a.cost),
                     a.turns,
-                    a.one_shot_pct * 100.0,
+                    a.one_shot_pct,
                 ));
             }
         }
