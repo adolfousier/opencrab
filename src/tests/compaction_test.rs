@@ -476,3 +476,64 @@ mod post_compaction_instruction {
         assert!(!mid_loop_instruction.contains("git status"));
     }
 }
+
+// --- Compaction banner stripping (echo-prevention) ---
+// 2026-05-18T22:51 (Telegram, qwen-3.7-max-preview-thinking, session
+// 1e35bab0): the model emitted a `[[CONTEXT COMPACTION — …]]` banner
+// followed by a structured "CONTEXT SUMMARY" block as its visible
+// response to a `continue crab` user message. The model was imitating
+// the format of the real compaction marker that lives in DB as a
+// user-role message. `strip_compaction_banner` removes the banner LINE
+// at LLM-context-load time so the model never sees the imitable
+// template — the summary body stays so task continuity isn't lost.
+#[cfg(test)]
+mod banner_strip {
+    use crate::brain::agent::service::AgentService;
+
+    #[test]
+    fn strips_banner_prefix_keeps_summary_body() {
+        let mut s = String::from(
+            "[CONTEXT COMPACTION — The conversation was automatically compacted. \
+             Below is a structured summary of everything before this point.]\n\
+             \n\
+             1. Chronological Analysis\n\
+             • User asked about real estate flow.\n",
+        );
+        AgentService::strip_compaction_banner(&mut s);
+        assert!(!s.starts_with("[CONTEXT COMPACTION"));
+        assert!(s.starts_with("1. Chronological Analysis"));
+        assert!(s.contains("real estate flow"));
+    }
+
+    #[test]
+    fn noop_when_no_banner() {
+        let original =
+            "Plain assistant or user text without the compaction marker prefix.".to_string();
+        let mut s = original.clone();
+        AgentService::strip_compaction_banner(&mut s);
+        assert_eq!(s, original);
+    }
+
+    #[test]
+    fn noop_when_banner_lacks_double_newline_separator() {
+        // Defensive: if the persisted marker somehow ends up on a single
+        // line with no blank-line break, the strip is a no-op rather
+        // than swallowing real content past a single `\n`.
+        let original = "[CONTEXT COMPACTION — broken format on one line]".to_string();
+        let mut s = original.clone();
+        AgentService::strip_compaction_banner(&mut s);
+        assert_eq!(s, original);
+    }
+
+    #[test]
+    fn imitation_double_bracket_is_left_alone() {
+        // The user's gist showed `[[CONTEXT COMPACTION` (double bracket)
+        // as the leaked imitation. That double-bracket form is a MODEL
+        // hallucination, not our marker — the strip must not touch it
+        // (we only strip OUR own canonical single-bracket prefix on
+        // DB-loaded messages; model output flows through other paths).
+        let mut s = "[[CONTEXT COMPACTION — fake from model]]\n\nbody from model".to_string();
+        AgentService::strip_compaction_banner(&mut s);
+        assert!(s.starts_with("[[CONTEXT COMPACTION"));
+    }
+}

@@ -1087,6 +1087,27 @@ impl AgentService {
         static MULTI_BLANK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
         MULTI_BLANK.replace_all(&trimmed, "\n\n").to_string()
     }
+
+    /// Strip the `[CONTEXT COMPACTION — …]` banner prefix from a stored
+    /// message. The marker exists in DB so `messages_from_last_compaction`
+    /// can find the load point, but once that scan has run we don't want
+    /// the model to see the literal banner — chatty models (notably
+    /// qwen-3.7-max-preview-thinking on long Telegram sessions, 2026-05-18)
+    /// imitate the format and emit their own `[[CONTEXT COMPACTION` +
+    /// structured summary as their visible response.
+    ///
+    /// Removes the banner LINE plus the blank line that follows it
+    /// (`…\n\n`). The summary body that follows stays intact so the model
+    /// still has the task snapshot it needs to continue. No-op when the
+    /// message doesn't start with the marker.
+    pub(crate) fn strip_compaction_banner(content: &mut String) {
+        if !content.starts_with("[CONTEXT COMPACTION") {
+            return;
+        }
+        if let Some(idx) = content.find("\n\n") {
+            *content = content[idx + 2..].to_string();
+        }
+    }
 }
 
 /// Walk a JSON array starting at `s[0] == '['` and return the byte offset

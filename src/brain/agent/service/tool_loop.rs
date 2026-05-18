@@ -316,6 +316,7 @@ impl AgentService {
                 if msg.content.contains("<!--") {
                     msg.content = crate::utils::sanitize::strip_llm_artifacts(&msg.content);
                 }
+                Self::strip_compaction_banner(&mut msg.content);
             }
         }
 
