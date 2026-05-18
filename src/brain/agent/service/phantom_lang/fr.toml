@@ -1,0 +1,117 @@
+# French phantom-detection configuration
+# Phrases are lower-case. Matched against lowercased response text.
+
+intent_phrases = [
+    "laissez-moi vérifier",
+    "laissez-moi examiner",
+    "laissez-moi inspecter",
+    "laissez-moi contrôler",
+    "laissez-moi mettre à jour",
+    "laissez-moi modifier",
+    "laissez-moi corriger",
+    "laissez-moi réparer",
+    "laissez-moi créer",
+    "laissez-moi ajouter",
+    "laissez-moi supprimer",
+    "laissez-moi effacer",
+    "laissez-moi exécuter",
+    "laissez-moi lire",
+    "laissez-moi chercher",
+    "laissez-moi trouver",
+    "je vais vérifier",
+    "je vais examiner",
+    "je vais mettre à jour",
+    "je vais modifier",
+    "je vais corriger",
+    "je vais réparer",
+    "je vais créer",
+    "je vais ajouter",
+    "je vais supprimer",
+    "je vais effacer",
+    "je vais exécuter",
+    "je vais lire",
+    "je vais chercher",
+    "maintenant je vais",
+    "je vérifie",
+    "je mets à jour",
+    "je corrige",
+    "je crée",
+    "j'ajoute",
+    "je supprime",
+    "j'exécute",
+    "je lis",
+    "je cherche",
+    "allons vérifier",
+    "allons mettre à jour",
+    "allons corriger",
+    "allons créer",
+    "allons ajouter",
+    "allons supprimer",
+    "allons exécuter",
+    "je procède à",
+    "maintenant je procède à",
+]
+
+action_verbs = [
+    "mis à jour",
+    "modifié",
+    "corrigé",
+    "réparé",
+    "créé",
+    "ajouté",
+    "supprimé",
+    "effacé",
+    "exécuté",
+    "lu",
+    "cherché",
+    "trouvé",
+    "vérifié",
+    "examiné",
+    "inspecté",
+    "contrôlé",
+    "actualisé",
+    "changé",
+    "remplacé",
+    "enregistré",
+    "sauvegardé",
+    "poussé",
+    "déployé",
+    "fusionné",
+    "committé",
+]
+
+completion_claims = [
+    "fichier mis à jour",
+    "fichier modifié",
+    "fichier corrigé",
+    "fichier créé",
+    "code mis à jour",
+    "code corrigé",
+    "erreur corrigée",
+    "changements appliqués",
+    "tout mis à jour",
+    "tout corrigé",
+    "prêt",
+    "fait",
+    "terminé",
+    "enregistré",
+    "sauvegardé",
+]
+
+line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|okay|bon|d'accord|bien|oui)\\s*,?\\s+)?(?:maintenant\\s+)?(?:laissez-moi|je vais|allons)\\s+\\w"
+
+gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:maintenant|déjà)\\s+(?:vérifiant|mettant à jour|modifiant|corrigeant|réparant|créant|ajoutant|supprimant|exécutant|lisant|cherchant)\\b"
+
+trailing_colon_re = "(?im)(?:^|\\n)\\s*(?:laissez-moi|je vais|maintenant je vais|allons)\\s+\\w[^:\\n]{0,80}:\\s*$"
+
+now_imperative_re = "(?m)^[\\s\\-*]*(?:maintenant\\s+)?(?:laissez-moi|je vais|allons)\\s+\\w"
+
+numbered_steps_re = "(?m)^\\s*\\d+\\.\\s+(?:mettre à jour|modifier|corriger|réparer|créer|ajouter|supprimer|effacer|exécuter|lire|chercher|vérifier)"
+
+past_tense_standalone_re = "(?m)^[\\s\\-*]*(?:mis à jour|modifié|corrigé|réparé|créé|ajouté|supprimé|effacé|exécuté|vérifié|examiné|enregistré|sauvegardé)[.!]"
+
+path_re = "(?:^|[\\s`(])(?:\\./)?[a-zA-Z_][\\w\\-]*/[\\w\\-/]*\\.\\w{1,6}(?:[\\s`),:;]|$)"
+
+ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|json|md)(?:[\\s`),:;]|$)"
+
+backtick_code_re = "`[a-zA-Z_]\\w+`"

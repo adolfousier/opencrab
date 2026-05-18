@@ -1,0 +1,123 @@
+# Spanish phantom-detection configuration
+# Phrases are lower-case. Matched against lowercased response text.
+
+intent_phrases = [
+    "déjame revisar",
+    "déjame verificar",
+    "déjame inspeccionar",
+    "déjame comprobar",
+    "déjame actualizar",
+    "déjame modificar",
+    "déjame corregir",
+    "déjame arreglar",
+    "déjame crear",
+    "déjame añadir",
+    "déjame agregar",
+    "déjame eliminar",
+    "déjame borrar",
+    "déjame ejecutar",
+    "déjame leer",
+    "déjame buscar",
+    "déjame encontrar",
+    "voy a revisar",
+    "voy a verificar",
+    "voy a actualizar",
+    "voy a modificar",
+    "voy a corregir",
+    "voy a arreglar",
+    "voy a crear",
+    "voy a añadir",
+    "voy a agregar",
+    "voy a eliminar",
+    "voy a borrar",
+    "voy a ejecutar",
+    "voy a leer",
+    "voy a buscar",
+    "ahora voy a",
+    "ahora reviso",
+    "ahora actualizo",
+    "ahora corrijo",
+    "ahora arreglo",
+    "ahora creo",
+    "ahora añado",
+    "ahora elimino",
+    "ahora ejecuto",
+    "ahora leo",
+    "ahora busco",
+    "vamos a revisar",
+    "vamos a actualizar",
+    "vamos a corregir",
+    "vamos a arreglar",
+    "vamos a crear",
+    "vamos a añadir",
+    "vamos a eliminar",
+    "vamos a ejecutar",
+    "procedo a",
+    "procederé a",
+    "ahora procedo a",
+]
+
+action_verbs = [
+    "actualicé",
+    "modifiqué",
+    "corregí",
+    "arreglé",
+    "creé",
+    "añadí",
+    "agregué",
+    "eliminé",
+    "borré",
+    "ejecuté",
+    "leí",
+    "busqué",
+    "encontré",
+    "revisé",
+    "verifiqué",
+    "inspeccioné",
+    "comprobé",
+    "actualizado",
+    "modificado",
+    "corregido",
+    "arreglado",
+    "creado",
+    "añadido",
+    "agregado",
+    "eliminado",
+    "borrado",
+    "ejecutado",
+]
+
+completion_claims = [
+    "archivo actualizado",
+    "archivo modificado",
+    "archivo corregido",
+    "archivo creado",
+    "código actualizado",
+    "código corregido",
+    "error corregido",
+    "cambios aplicados",
+    "todo actualizado",
+    "todo corregido",
+    "listo",
+    "hecho",
+    "completado",
+    "guardado",
+]
+
+line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:vale|bien|ok|okey|sí|claro)\\s*,?\\s+)?(?:ahora\\s+)?(?:déjame|voy a|vamos a)\\s+\\w"
+
+gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:ahora|ya)\\s+(?:actualizando|modificando|corrigiendo|arreglando|creando|añadiendo|agregando|eliminando|borrando|ejecutando|leyendo|buscando)\\b"
+
+trailing_colon_re = "(?im)(?:^|\\n)\\s*(?:déjame|voy a|ahora voy a|vamos a)\\s+\\w[^:\\n]{0,80}:\\s*$"
+
+now_imperative_re = "(?m)^[\\s\\-*]*(?:ahora\\s+)?(?:déjame|voy a|vamos a)\\s+\\w"
+
+numbered_steps_re = "(?m)^\\s*\\d+\\.\\s+(?:actualizar|modificar|corregir|arreglar|crear|añadir|agregar|eliminar|borrar|ejecutar|leer|buscar)"
+
+past_tense_standalone_re = "(?m)^[\\s\\-*]*(?:actualicé|modifiqué|corregí|arreglé|creé|añadí|agregué|eliminé|borré|ejecuté|revisé|verifiqué|actualizado|modificado|corregido|arreglado|creado)[.!]"
+
+path_re = "(?:^|[\\s`(])(?:\\./)?[a-zA-Z_][\\w\\-]*/[\\w\\-/]*\\.\\w{1,6}(?:[\\s`),:;]|$)"
+
+ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|json|md)(?:[\\s`),:;]|$)"
+
+backtick_code_re = "`[a-zA-Z_]\\w+`"

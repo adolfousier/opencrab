@@ -1,0 +1,117 @@
+# Portuguese phantom-detection configuration
+# Phrases are lower-case. Matched against lowercased response text.
+
+intent_phrases = [
+    "deixe-me verificar",
+    "deixe-me revisar",
+    "deixe-me inspecionar",
+    "deixe-me atualizar",
+    "deixe-me modificar",
+    "deixe-me corrigir",
+    "deixe-me consertar",
+    "deixe-me criar",
+    "deixe-me adicionar",
+    "deixe-me remover",
+    "deixe-me deletar",
+    "deixe-me executar",
+    "deixe-me ler",
+    "deixe-me buscar",
+    "deixe-me encontrar",
+    "vou verificar",
+    "vou revisar",
+    "vou atualizar",
+    "vou modificar",
+    "vou corrigir",
+    "vou consertar",
+    "vou criar",
+    "vou adicionar",
+    "vou remover",
+    "vou deletar",
+    "vou executar",
+    "vou ler",
+    "vou buscar",
+    "agora vou",
+    "agora verifico",
+    "agora atualizo",
+    "agora corrijo",
+    "agora conserto",
+    "agora crio",
+    "agora adiciono",
+    "agora removo",
+    "agora deleto",
+    "agora executo",
+    "agora leio",
+    "agora busco",
+    "vamos verificar",
+    "vamos atualizar",
+    "vamos corrigir",
+    "vamos consertar",
+    "vamos criar",
+    "vamos adicionar",
+    "vamos remover",
+    "vamos executar",
+    "procedo a",
+    "agora procedo a",
+]
+
+action_verbs = [
+    "atualizei",
+    "modifiquei",
+    "corrigi",
+    "consertei",
+    "criei",
+    "adicionei",
+    "removi",
+    "deletei",
+    "executei",
+    "li",
+    "busquei",
+    "encontrei",
+    "revisei",
+    "verifiquei",
+    "inspecionei",
+    "atualizado",
+    "modificado",
+    "corrigido",
+    "consertado",
+    "criado",
+    "adicionado",
+    "removido",
+    "deletado",
+    "executado",
+]
+
+completion_claims = [
+    "arquivo atualizado",
+    "arquivo modificado",
+    "arquivo corrigido",
+    "arquivo criado",
+    "código atualizado",
+    "código corrigido",
+    "erro corrigido",
+    "mudanças aplicadas",
+    "tudo atualizado",
+    "tudo corrigido",
+    "pronto",
+    "feito",
+    "concluído",
+    "salvo",
+]
+
+line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|okay|bem|certo|tá|ta)\\s*,?\\s+)?(?:agora\\s+)?(?:deixe-me|vou|vamos)\\s+\\w"
+
+gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:agora|já)\\s+(?:atualizando|modificando|corrigindo|consertando|criando|adicionando|removendo|deletando|executando|lendo|buscando)\\b"
+
+trailing_colon_re = "(?im)(?:^|\\n)\\s*(?:deixe-me|vou|agora vou|vamos)\\s+\\w[^:\\n]{0,80}:\\s*$"
+
+now_imperative_re = "(?m)^[\\s\\-*]*(?:agora\\s+)?(?:deixe-me|vou|vamos)\\s+\\w"
+
+numbered_steps_re = "(?m)^\\s*\\d+\\.\\s+(?:atualizar|modificar|corrigir|consertar|criar|adicionar|remover|deletar|executar|ler|buscar)"
+
+past_tense_standalone_re = "(?m)^[\\s\\-*]*(?:atualizei|modifiquei|corrigi|consertei|criei|adicionei|removi|deletei|executei|revisei|verifiquei|atualizado|modificado|corrigido|consertado|criado)[.!]"
+
+path_re = "(?:^|[\\s`(])(?:\\./)?[a-zA-Z_][\\w\\-]*/[\\w\\-/]*\\.\\w{1,6}(?:[\\s`),:;]|$)"
+
+ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|json|md)(?:[\\s`),:;]|$)"
+
+backtick_code_re = "`[a-zA-Z_]\\w+`"
