@@ -952,7 +952,34 @@ impl App {
                         .unwrap_or_default()
                 })
         } else if provider_idx >= CUSTOM_PROVIDER_IDX {
-            self.ps.custom_model.clone()
+            // Custom provider: prefer the LIVE filtered list when models
+            // were fetched. The list-picker (`focused_field == 3` branch
+            // in `handle_key`) only mutates `self.ps.selected_model` /
+            // `self.ps.model_filter` as the user navigates — it leaves
+            // `self.ps.custom_model` at whatever was loaded from config
+            // when the dialog opened, so saving from that text without
+            // syncing silently drops the new selection.
+            // Repro (2026-05-18 21:50 log): user picked
+            // `qwen-3.7-max-preview-thinking` from the dialagram live
+            // list, hit Enter, status bar reverted to
+            // `qwen-3.6-max-preview-thinking` because that was the old
+            // `custom_model` text. Fall back to the text only when the
+            // list is empty (no fetch / offline).
+            if !self.ps.models.is_empty() {
+                let filter = self.ps.model_filter.to_lowercase();
+                let filtered: Vec<_> = self
+                    .ps
+                    .models
+                    .iter()
+                    .filter(|m| m.to_lowercase().contains(&filter))
+                    .collect();
+                filtered
+                    .get(self.ps.selected_model)
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| self.ps.custom_model.clone())
+            } else {
+                self.ps.custom_model.clone()
+            }
         } else if !self.ps.models.is_empty() {
             let filter = self.ps.model_filter.to_lowercase();
             let filtered: Vec<_> = self
@@ -1154,12 +1181,27 @@ impl App {
                     .and_then(|k| customs.get(k).cloned())
                     .unwrap_or_default();
 
+                // Sync `models` with the live-fetched list when one is
+                // available — the dialog populates `self.ps.models` from
+                // the provider's `/models` endpoint when the user opens
+                // `/models`, so a save is the right moment to record what
+                // the endpoint actually has today. Without this, new
+                // models (e.g. qwen-3.7-max-preview-thinking appearing on
+                // dialagram 2026-05-18) showed in the list but never
+                // persisted, and old retired models stayed forever.
+                // Falls back to the existing list when the live fetch was
+                // empty (offline, endpoint down, free-text custom).
+                let models = if !self.ps.models.is_empty() {
+                    self.ps.models.clone()
+                } else {
+                    existing.models.clone()
+                };
                 let merged = ProviderConfig {
                     enabled: true,
                     api_key: api_key.clone().or(existing.api_key.clone()),
                     base_url: Some(self.ps.base_url.clone()),
                     default_model: Some(custom_model),
-                    models: existing.models.clone(),
+                    models,
                     vision_model: existing.vision_model.clone(),
                     context_window: context_window.or(existing.context_window),
                     ..existing
