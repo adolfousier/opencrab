@@ -377,6 +377,12 @@ impl TelegramAgent {
                                     state
                                         .register_session_chat(new_id, query.message.as_ref().map(|m| m.chat().id.0).unwrap_or(caller_id))
                                         .await;
+
+                                    // Touch updated_at so find_session_by_title_suffix returns this session on next message
+                                    if let Ok(Some(s)) = session_svc.get_session(new_id).await {
+                                        let _ = session_svc.update_session(&s).await;
+                                    }
+
                                     let _ = bot
                                         .answer_callback_query(&query.id)
                                         .text("Session switched")
