@@ -33,6 +33,21 @@ fn ensure_rsi_dirs() -> std::io::Result<PathBuf> {
     Ok(rsi_dir)
 }
 
+/// SHA-256 hex digest of the joined opportunity descriptions. Used to
+/// detect cycle-over-cycle telemetry stability so we don't re-emit the
+/// same top-N corrections / errors / tool-failure block when nothing
+/// meaningful has changed.
+///
+/// Joining with a sentinel that can't appear inside a single description
+/// (the leading `\n---\n` line marker) prevents two adjacent
+/// descriptions from collapsing into the same hash as one merged one.
+pub(crate) fn hash_opportunities(opps: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(opps.join("\n---\n").as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 /// Write the startup digest to `~/.opencrabs/rsi/digest.md`.
 /// Called once at boot after DB is ready.
 pub async fn write_startup_digest(pool: crate::db::Pool) {
@@ -471,6 +486,14 @@ pub fn spawn_rsi_engine(
         let last_cycle_path = dirs::home_dir()
             .unwrap_or_default()
             .join(".opencrabs/rsi/last_cycle");
+        // Hash of the previous cycle's `opportunities` Vec. When the new
+        // cycle's hash matches, the RSI engine skips re-emitting the same
+        // top-N corrections / errors / tool-failure descriptions to the
+        // TUI and channels, and skips the autonomous agent run (the LLM
+        // would just write "Converged. No improvements applied." again).
+        let opportunities_hash_path = dirs::home_dir()
+            .unwrap_or_default()
+            .join(".opencrabs/rsi/last_opportunities_hash");
         let initial_delay = if let Ok(meta) = std::fs::metadata(&last_cycle_path) {
             let elapsed = meta
                 .modified()
@@ -612,9 +635,6 @@ pub fn spawn_rsi_engine(
                         }
                     }
                     tracing::info!("RSI opportunity: {}", detail);
-                    let _ = notification_tx.send(RsiNotification::ImprovementOpportunity {
-                        description: detail.clone(),
-                    });
                     opportunities.push(detail);
                 }
             }
@@ -638,9 +658,6 @@ pub fn spawn_rsi_engine(
                     ));
                 }
                 tracing::info!("RSI opportunity: {}", desc);
-                let _ = notification_tx.send(RsiNotification::ImprovementOpportunity {
-                    description: desc.clone(),
-                });
                 opportunities.push(desc);
             }
 
@@ -661,32 +678,76 @@ pub fn spawn_rsi_engine(
                     ));
                 }
                 tracing::info!("RSI opportunity: {}", desc);
-                let _ = notification_tx.send(RsiNotification::ImprovementOpportunity {
-                    description: desc.clone(),
-                });
                 opportunities.push(desc);
             }
 
-            // 3. If opportunities detected, spawn autonomous agent
-            if !opportunities.is_empty() {
-                tracing::info!(
-                    "RSI cycle: {} opportunities found, spawning autonomous agent",
-                    opportunities.len()
-                );
+            // 3. Dedup: hash the assembled opportunity descriptions and
+            // compare against the previous cycle's hash. When identical,
+            // the autonomous agent would have nothing new to act on — its
+            // own summary on those cycles was literally "Converged. No
+            // improvements applied." (seen in the 2026-05-18 transcript
+            // where #426 just re-printed the top-5 corrections / errors
+            // from #425). Skip emission of every `ImprovementOpportunity`
+            // notification AND the agent run, keeping only a compact
+            // `AgentCycleComplete` so the user sees the cycle happened.
+            //
+            // The hash covers the full opportunity-description bodies
+            // (including the per-event session/timestamp lines), so any
+            // change — new entry, reordered top-5, even a single recent
+            // event that shifts the slice — counts as new and re-enables
+            // the full path. `tracing::info!` logs above stay regardless.
+            let current_hash = hash_opportunities(&opportunities);
+            let previous_hash = std::fs::read_to_string(&opportunities_hash_path)
+                .ok()
+                .map(|s| s.trim().to_string());
+            let is_duplicate = previous_hash.as_deref() == Some(current_hash.as_str());
+            let _ = std::fs::write(&opportunities_hash_path, &current_hash);
 
-                match run_rsi_agent_cycle(repo.pool().clone(), &config_clone, &opportunities).await
-                {
-                    Ok(summary) => {
-                        let short: String = summary.chars().take(200).collect();
-                        tracing::info!("RSI agent completed: {short}");
-                        let _ =
-                            notification_tx.send(RsiNotification::AgentCycleComplete { summary });
-                    }
-                    Err(e) => {
-                        tracing::warn!("RSI agent cycle failed: {e}");
-                        let _ = notification_tx.send(RsiNotification::AgentCycleFailed {
-                            error: e.to_string(),
-                        });
+            if is_duplicate {
+                if !opportunities.is_empty() {
+                    tracing::info!(
+                        "RSI cycle: {} opportunity/opportunities identical to previous cycle \
+                         (hash={}) — skipping emission and agent run",
+                        opportunities.len(),
+                        &current_hash[..12.min(current_hash.len())]
+                    );
+                    let _ = notification_tx.send(RsiNotification::AgentCycleComplete {
+                        summary: format!(
+                            "Converged — {} opportunity/opportunities identical to previous cycle; \
+                             no agent run.",
+                            opportunities.len()
+                        ),
+                    });
+                }
+                // empty + duplicate = baseline match, stay silent
+            } else {
+                // Surface every opportunity to the TUI / channels, then
+                // spawn the autonomous improvement agent.
+                for opp in &opportunities {
+                    let _ = notification_tx.send(RsiNotification::ImprovementOpportunity {
+                        description: opp.clone(),
+                    });
+                }
+                if !opportunities.is_empty() {
+                    tracing::info!(
+                        "RSI cycle: {} opportunities found, spawning autonomous agent",
+                        opportunities.len()
+                    );
+                    match run_rsi_agent_cycle(repo.pool().clone(), &config_clone, &opportunities)
+                        .await
+                    {
+                        Ok(summary) => {
+                            let short: String = summary.chars().take(200).collect();
+                            tracing::info!("RSI agent completed: {short}");
+                            let _ = notification_tx
+                                .send(RsiNotification::AgentCycleComplete { summary });
+                        }
+                        Err(e) => {
+                            tracing::warn!("RSI agent cycle failed: {e}");
+                            let _ = notification_tx.send(RsiNotification::AgentCycleFailed {
+                                error: e.to_string(),
+                            });
+                        }
                     }
                 }
             }

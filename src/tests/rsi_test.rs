@@ -1446,3 +1446,70 @@ mod feedback_digest {
         assert!(!digest.contains("notable failure rates"));
     }
 }
+
+// --- Opportunity hash dedup (cycle telemetry stability) ---
+// 2026-05-18: cycle #426 re-printed cycle #425's top-5 corrections /
+// errors verbatim in the TUI because the engine emitted
+// `ImprovementOpportunity` notifications inline, regardless of whether
+// the assembled list had changed. `hash_opportunities` is the dedup
+// anchor — same descriptions → same hex → cycle short-circuits.
+#[cfg(test)]
+mod hash_opportunities {
+    use crate::brain::rsi::hash_opportunities;
+
+    #[test]
+    fn identical_lists_hash_identically() {
+        let a = vec![
+            "50 user corrections recorded.\n  - session=abc, time=...".to_string(),
+            "20 provider errors recorded.\n  - session=def, time=...".to_string(),
+        ];
+        let b = a.clone();
+        assert_eq!(hash_opportunities(&a), hash_opportunities(&b));
+    }
+
+    #[test]
+    fn different_lists_hash_differently() {
+        let a = vec!["50 user corrections recorded.".to_string()];
+        let b = vec!["51 user corrections recorded.".to_string()];
+        assert_ne!(hash_opportunities(&a), hash_opportunities(&b));
+    }
+
+    #[test]
+    fn reordered_top_5_changes_hash() {
+        // Even a single recent event that shifts the top-5 slice must
+        // re-enable the full emission path. The mitigation the user
+        // asked for: don't collapse "same count, different events".
+        let a = vec!["recent:\n  - session=aaa\n  - session=bbb".to_string()];
+        let b = vec!["recent:\n  - session=bbb\n  - session=aaa".to_string()];
+        assert_ne!(hash_opportunities(&a), hash_opportunities(&b));
+    }
+
+    #[test]
+    fn merge_vs_two_entries_hash_differently() {
+        // Sentinel-joined hashing must not let two adjacent
+        // descriptions collide with one merged-content description.
+        let two = vec!["alpha".to_string(), "beta".to_string()];
+        let one_merged = vec!["alphabeta".to_string()];
+        assert_ne!(hash_opportunities(&two), hash_opportunities(&one_merged));
+    }
+
+    #[test]
+    fn empty_list_has_stable_hash() {
+        // Empty input must produce a deterministic baseline hash so
+        // back-to-back zero-opportunity cycles dedup cleanly.
+        let a: Vec<String> = Vec::new();
+        let b: Vec<String> = Vec::new();
+        assert_eq!(hash_opportunities(&a), hash_opportunities(&b));
+        assert!(!hash_opportunities(&a).is_empty());
+    }
+
+    #[test]
+    fn whitespace_change_breaks_dedup() {
+        // A single character delta is enough to trip the hash and
+        // re-enable emission — extra-conservative on the
+        // "don't miss anything" side.
+        let a = vec!["50 user corrections recorded.".to_string()];
+        let b = vec!["50  user corrections recorded.".to_string()];
+        assert_ne!(hash_opportunities(&a), hash_opportunities(&b));
+    }
+}
