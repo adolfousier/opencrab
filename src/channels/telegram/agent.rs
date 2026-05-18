@@ -283,7 +283,17 @@ impl TelegramAgent {
                                             };
                                             vec![InlineKeyboardButton::callback(
                                                 display,
-                                                format!("model:{}:{}", resp.provider_name, m),
+                                                // Pipe separator because BOTH provider_name and
+                                                // model can contain `:` — custom providers
+                                                // are `custom:<name>` (e.g. `custom:dialagram`)
+                                                // and OpenRouter models carry `:free`/`:thinking`
+                                                // suffixes. Splitting on `:` here put the
+                                                // provider's tail into the model name and the
+                                                // session got persisted with broken metadata
+                                                // (`provider=custom`, `model=dialagram:qwen-3.7-…`
+                                                // — seen 2026-05-18T23:39 sync_provider trace).
+                                                // Generator + parser MUST stay in lock-step.
+                                                format!("model:{}|{}", resp.provider_name, m),
                                             )]
                                         })
                                         .collect();
@@ -298,9 +308,13 @@ impl TelegramAgent {
                                 return ResponseResult::Ok(());
                             }
 
-                            // Model switch callback (format: model:<provider>:<model>)
+                            // Model switch callback (format: model:<provider>|<model>).
+                            // Pipe — not colon — between provider and model so a
+                            // custom-provider name (`custom:dialagram`) and an
+                            // OpenRouter-style model suffix (`:free`, `:thinking`)
+                            // don't fold into each other on parse.
                             if let Some(rest) = data.strip_prefix("model:") {
-                                let (provider_name, model_name) = if let Some((p, m)) = rest.split_once(':') {
+                                let (provider_name, model_name) = if let Some((p, m)) = rest.split_once('|') {
                                     (Some(p), m)
                                 } else {
                                     (None, rest)
