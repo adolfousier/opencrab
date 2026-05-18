@@ -94,7 +94,11 @@ impl ToolExecutionContext {
     /// to tools in the same iteration), falling back to the plain field.
     pub fn working_dir(&self) -> std::path::PathBuf {
         if let Some(ref shared) = self.shared_working_directory {
-            shared.read().ok().map(|g| (*g).clone()).unwrap_or_else(|| self.working_directory.clone())
+            shared
+                .read()
+                .ok()
+                .map(|g| (*g).clone())
+                .unwrap_or_else(|| self.working_directory.clone())
         } else {
             self.working_directory.clone()
         }
