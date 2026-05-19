@@ -150,8 +150,34 @@ async fn process_task(
         tokens.insert(task_id.clone(), cancel_token.clone());
     }
 
+    // Build approval callback that respects config-level approval policy.
+    // A2A has no interactive UI, so if policy is not auto-always/auto-session,
+    // tools are denied (no human to ask).
+    let approval_cb: crate::brain::agent::ApprovalCallback = Arc::new(move |_info| {
+        Box::pin(async move {
+            match crate::utils::check_approval_policy() {
+                Some(result) => Ok(result),
+                None => {
+                    tracing::warn!(
+                        "A2A: Tool requires approval but no interactive UI available and policy is not auto-always"
+                    );
+                    Ok((false, false))
+                }
+            }
+        })
+    });
+
     let result = agent_service
-        .send_message_with_tools_and_mode(session_id, user_text, None, Some(cancel_token))
+        .send_message_with_tools_and_callback(
+            session_id,
+            user_text,
+            None,
+            Some(cancel_token),
+            Some(approval_cb),
+            None,
+            "a2a",
+            None,
+        )
         .await;
 
     // Clean up cancel token
