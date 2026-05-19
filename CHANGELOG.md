@@ -7,11 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.23] - 2026-05-19
 
-4 commits since v0.3.22. Hotfix release. Restores phantom detection,
+7 commits since v0.3.22. Hotfix release. Restores phantom detection,
 fixes `/new` session switching across channels, adds a defense-in-depth
 guardrail so generic write/edit tools cannot clobber protected brain
-files, and wires the A2A gateway through the config-level approval
-policy.
+files, wires the A2A gateway through the config-level approval policy,
+removes every "[self-heal] Aborted" exit path so recovery always
+retries or falls back, and falls back to numeric version sort when an
+OpenAI-compatible model server returns unreliable `created` timestamps.
 
 PHANTOM DETECTION RESTORED (1 commit)
 
@@ -75,6 +77,48 @@ other policy A2A returns `(false, false)` and logs a warning, since
 A2A has no interactive UI to prompt.
 
 - 1dee77c3 fix(a2a): wire approval policy callback so auto-always works (closes #92)
+
+SELF-HEAL NEVER ABORTS (1 commit)
+
+The stuck-intent-loop branch added previously hard-aborted on the
+first detection of 3+ "Let me X" line-starts in a single iteration,
+with zero retry or fallback attempts. The cap-exhaustion branch also
+ended in an abort once the retry budget ran out. Both wrote
+"[self-heal] Aborted" into the assistant message and stranded the
+user with no result, even when the turn had already completed real
+work earlier.
+
+Rework so the self-heal pipeline never aborts:
+
+- Stuck-intent-loop is treated as a strong phantom signal, not a death
+  sentence. Fast-escalates to a sticky fallback provider when the
+  retry budget is at least half-burned; otherwise falls through to
+  the regular nudge-and-retry path.
+- Cap-exhaustion resets the retry counter to 0 and injects a hard
+  nudge ("STOP narrating, call the tool now"), then continues the
+  loop. The user presses Stop if they want out.
+- `phantom_retries_used` resets to 0 on every successful tool
+  execution. The counter is now "consecutive phantoms since the last
+  real tool", so a single late phantom burst after good work no
+  longer pushes us straight over the cap.
+
+- 894fc2f3 fix(self-heal): never abort, always retry or fallback
+
+VERSION-AWARE MODEL SORT (2 commits)
+
+OpenAI-compatible servers like vLLM and llama.cpp return all models
+with the same (or zero) `created` timestamp, so the existing sort by
+recency collapsed every list into stable but meaningless order.
+
+Add `version_sort_key()` that extracts numeric segments from model
+names and compares them numerically in descending order (newest
+version first). Apply it as a fallback in both the OpenAI and Ollama
+fetch paths whenever every `created` value is zero or identical, so
+the model list surfaces the newest version at the top regardless of
+how the server reports timestamps.
+
+- c1f51d6c fix: version-aware model sort when server timestamps are unreliable
+- fba263ee fix(model-fetch): wire version_sort_key into both OpenAI and Ollama sort paths
 
 ## [0.3.22] - 2026-05-19
 
