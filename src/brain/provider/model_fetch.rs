@@ -31,6 +31,45 @@ pub(crate) struct OllamaModelEntry {
     pub name: String,
 }
 
+/// Natural version sort: extracts numeric segments and compares numerically.
+/// So "3.7" > "3.6" > "3.5", "32B" > "14B" > "8B", "max" > "plus" by position.
+/// Returns newest-first ordering (descending).
+fn version_sort_key(name: &str) -> Vec<(isize, String)> {
+    let lower = name.to_lowercase();
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut in_number = false;
+
+    for ch in lower.chars() {
+        if ch.is_ascii_digit() {
+            if !in_number && !current.is_empty() {
+                segments.push((-1, std::mem::take(&mut current)));
+            }
+            in_number = true;
+            current.push(ch);
+        } else {
+            if in_number && !current.is_empty() {
+                let n: isize = current.parse().unwrap_or(0);
+                segments.push((n, String::new()));
+                current.clear();
+            }
+            in_number = false;
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        if in_number {
+            let n: isize = current.parse().unwrap_or(0);
+            segments.push((n, String::new()));
+        } else {
+            segments.push((-1, current));
+        }
+    }
+
+    // Negate numeric segments for descending order (newest first)
+    segments.into_iter().map(|(n, s)| if n >= 0 { (-n, s) } else { (n, s) }).collect()
+}
+
 /// Normalize a base URL by stripping trailing slashes and common API path suffixes.
 pub(crate) fn normalize_base_url(base_url: &str) -> String {
     let base = base_url.trim_end_matches('/');
