@@ -1581,3 +1581,79 @@ fn stuck_loop_normal_prose_does_not_trip() {
                 needs a small adjustment to the parser. Want me to apply it?";
     assert!(!is_stuck_in_intent_loop(text));
 }
+
+// --- Cross-language phantom regression (commit 53fe53cc follow-up) ---
+// `feat(phantom): multi-language detection via compile-time TOML loading`
+// added 5 language configs (en/ru/es/pt/fr) and char-set-based language
+// detection in `phantom_lang::detect_language`. The new RU/ES/PT/FR
+// paths had loader-level tests but no end-to-end assertion that
+// `has_phantom_tool_intent_no_tools` actually fires on non-English
+// phantom narration. These tests lock that contract in — a model
+// responding in Russian or French with `Let me check the logs` (in the
+// native phrase) must still phantom-detect.
+//
+// The char-set heuristic stays as-is per design: it's fast, has no
+// dependencies, and the worst case (mis-detection → English rules
+// applied to non-English text) silently misses phantoms rather than
+// producing false positives.
+
+#[test]
+fn phantom_detects_russian_intent_narration() {
+    use crate::brain::agent::service::has_phantom_tool_intent_no_tools;
+    // "Let me check the logs and find the issue" — Russian.
+    // Includes enough Cyrillic to push char-set detection over the 20%
+    // threshold so `detect_language` returns RU.
+    let text = "Давайте проверю логи и найдём ошибку в системе сейчас.";
+    assert!(
+        has_phantom_tool_intent_no_tools(text),
+        "Russian intent narration must phantom-detect: {text}"
+    );
+}
+
+#[test]
+fn phantom_detects_spanish_intent_narration() {
+    use crate::brain::agent::service::has_phantom_tool_intent_no_tools;
+    // "Let me check the logs and fix the configuration" — Spanish.
+    // The `ñ` and `¿` mark this as ES for char-set detection.
+    let text = "Déjame revisar los logs y arreglar la configuración ¿de acuerdo?";
+    assert!(
+        has_phantom_tool_intent_no_tools(text),
+        "Spanish intent narration must phantom-detect: {text}"
+    );
+}
+
+#[test]
+fn phantom_detects_portuguese_intent_narration() {
+    use crate::brain::agent::service::has_phantom_tool_intent_no_tools;
+    // "Let me check the file and fix the configuration" — Portuguese.
+    // `ã`/`ç` marks the text as PT for char-set detection.
+    let text = "Deixe-me verificar o arquivo e corrigir a configuração agora.";
+    assert!(
+        has_phantom_tool_intent_no_tools(text),
+        "Portuguese intent narration must phantom-detect: {text}"
+    );
+}
+
+#[test]
+fn phantom_detects_french_intent_narration() {
+    use crate::brain::agent::service::has_phantom_tool_intent_no_tools;
+    // "Let me check the file and fix the error" — French.
+    // `é`/`à`/`è` mark the text as FR for char-set detection.
+    let text = "Laissez-moi vérifier le fichier et corriger l'erreur à l'instant même.";
+    assert!(
+        has_phantom_tool_intent_no_tools(text),
+        "French intent narration must phantom-detect: {text}"
+    );
+}
+
+#[test]
+fn phantom_english_still_default_on_pure_ascii() {
+    use crate::brain::agent::service::has_phantom_tool_intent_no_tools;
+    // Pure ASCII → no diacritics → detect_language defaults to EN
+    // (which is the existing behaviour the older tests exercise).
+    let text = "Let me check the logs and find the issue in the system.";
+    assert!(
+        has_phantom_tool_intent_no_tools(text),
+        "Plain ASCII English must still detect via EN config: {text}"
+    );
+}
