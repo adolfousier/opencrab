@@ -5,6 +5,57 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.23] - 2026-05-19
+
+3 commits since v0.3.22. Hotfix release. Restores phantom detection,
+fixes `/new` session switching across channels, and adds a defense-in-depth
+guardrail so generic write/edit tools cannot clobber protected brain files.
+
+PHANTOM DETECTION RESTORED (1 commit)
+
+v0.3.21's turn-level `tools_executed_this_turn` gate was too aggressive:
+once any tool ran in a turn, the phantom detector went silent for the rest
+of the turn. That let fabricated wrap-up text (e.g. "Clippy clean, fmt
+clean, 2626 tests pass. Committing: Done. Commit `c4f7898b`") reach the
+TUI verbatim even when zero clippy/fmt/cargo/git tool calls had fired.
+Drop the gate from all three phantom branches. The favicon-style false
+positive comes back as a UI annoyance, but fabricated commit hashes
+reaching the user is the worse failure mode.
+
+- ebb0c9d5 fix(self-heal): restore phantom detection (drop turn-level tools_executed gate)
+
+CHANNEL SESSION SWITCHING (1 commit)
+
+Issue #89: `/new` and `/sessions` button clicks did not actually switch
+sessions on Telegram. Root cause: `/new` created sessions with the
+LEGACY title format (no `[chat:<id>]` suffix), but the per-message
+resolver looked up by suffix and never found the freshly-created row.
+Same shape on Discord DMs (`"Discord: <name>"` vs
+`"Discord: DM <name> (<id>)"`) and Slack DMs
+(`"Slack: <user_id>"` vs `"Slack: DM <user_id>"`).
+
+Align `/new` with the resolver's expected format everywhere. DB stays
+the single source of truth — `find_session_by_title*` returns the most
+recently touched non-archived row, so the freshly-created session
+naturally wins the next lookup. WhatsApp / Telegram groups / Discord
+channels / Slack channels were already aligned and unchanged.
+
+- caad22a2 fix(channels): /new uses the per-message resolver's title format (#89)
+
+BRAIN FILE GUARDRAIL (1 commit)
+
+Issue #91: `brain_file_safety` enforced append-only + dedup-aware shrink
++ `.bak` snapshots only inside `write_opencrabs_file` and the RSI loop.
+Generic `write_file` / `edit_file` could still clobber the 9 protected
+brain files (SOUL.md, USER.md, AGENTS.md, TOOLS.md, CODE.md, SECURITY.md,
+MEMORY.md, BOOT.md, IDENTITY.md). Add a single `is_protected_path`
+check at the top of both tools' `execute()` so they refuse and route
+the caller at `write_opencrabs_file`. The guard is name-based, not
+directory-based, so legitimate writes under `~/.opencrabs/` (memory
+logs, commands.toml, RSI proposals) keep working.
+
+- 5e3f0e6f fix(tools): generic write/edit refuse protected brain files (#91)
+
 ## [0.3.22] - 2026-05-19
 
 3 commits since v0.3.21. Hotfix for a v0.3.21 regression in compaction
@@ -780,6 +831,7 @@ provider and context budget.
 - **Raise think-tag safety valve** — long Qwen reasoning blocks no longer
   get partially stripped by the tag filter.
 
+[0.3.23]: https://github.com/adolfousier/opencrabs/compare/v0.3.22...v0.3.23
 [0.3.22]: https://github.com/adolfousier/opencrabs/compare/v0.3.21...v0.3.22
 [0.3.21]: https://github.com/adolfousier/opencrabs/compare/v0.3.20...v0.3.21
 [0.3.20]: https://github.com/adolfousier/opencrabs/compare/v0.3.19...v0.3.20
