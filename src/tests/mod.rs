@@ -12,6 +12,7 @@ pub mod bash_posix_quote_test;
 pub mod bash_retry_loop_test;
 pub mod bash_ssh_detection_test;
 pub mod brain_file_safety_test;
+pub mod brain_file_generic_guard_test;
 pub mod brain_templates_test;
 pub mod browser_close_test;
 pub mod browser_default_linux_test;

@@ -1,10 +1,12 @@
 //! Write OpenCrabs File Tool
 //!
-//! Writes or edits any file within `~/.opencrabs/` — brain files (MEMORY.md,
-//! USER.md, etc.), config files (commands.toml), memory logs, and any other
-//! app-owned files. The standard `edit_file`/`write_file` tools are restricted
-//! to the working directory and cannot reach `~/.opencrabs/`; use this tool
-//! instead.
+//! Writes or edits any file within `~/.opencrabs/` (brain files like
+//! MEMORY.md, USER.md, config files like commands.toml, memory logs, and
+//! any other app-owned files). The standard `edit_file`/`write_file`
+//! tools refuse to touch protected brain files (issue #91 guardrail)
+//! and route the caller here instead. This tool enforces append-only
+//! writes, dedup-aware shrinking, and saves a `.bak` snapshot before
+//! every change.
 
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};

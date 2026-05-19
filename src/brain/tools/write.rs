@@ -80,6 +80,22 @@ impl Tool for WriteTool {
         // Resolve path (tilde expansion + absolute/relative resolution).
         let path = super::error::resolve_tool_path(&input.path, &context.working_dir());
 
+        // Brain-file guardrail (issue #91): protected brain files
+        // (SOUL.md, MEMORY.md, USER.md, etc.) must go through
+        // `write_opencrabs_file`, which enforces append-only,
+        // dedup-aware shrink, and `.bak` snapshots. Generic write_file
+        // does none of those, so reject the call before any bytes hit
+        // disk and tell the agent to switch tools.
+        if super::brain_file_safety::is_protected_path(&path) {
+            return Ok(ToolResult::error(format!(
+                "Refusing to write protected brain file '{}' with generic write_file. \
+                 Use the `write_opencrabs_file` tool instead. It enforces append-only \
+                 writes, dedup-aware shrinking, and saves a `.bak` snapshot before every \
+                 change.",
+                path.display()
+            )));
+        }
+
         // Create parent directories if requested (before path validation)
         if input.create_dirs
             && let Some(parent) = path.parent()
