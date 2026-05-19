@@ -38,7 +38,10 @@ async fn write_file_rejects_protected_brain_file() {
         .await
         .unwrap();
 
-    assert!(!result.success, "write_file must refuse protected brain file");
+    assert!(
+        !result.success,
+        "write_file must refuse protected brain file"
+    );
     let err = result.error.unwrap_or_default();
     assert!(
         err.contains("write_opencrabs_file"),
@@ -75,7 +78,10 @@ async fn edit_file_rejects_protected_brain_file() {
         .await
         .unwrap();
 
-    assert!(!result.success, "edit_file must refuse protected brain file");
+    assert!(
+        !result.success,
+        "edit_file must refuse protected brain file"
+    );
     let err = result.error.unwrap_or_default();
     assert!(
         err.contains("write_opencrabs_file"),

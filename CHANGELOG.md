@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.23] - 2026-05-19
 
-3 commits since v0.3.22. Hotfix release. Restores phantom detection,
-fixes `/new` session switching across channels, and adds a defense-in-depth
-guardrail so generic write/edit tools cannot clobber protected brain files.
+4 commits since v0.3.22. Hotfix release. Restores phantom detection,
+fixes `/new` session switching across channels, adds a defense-in-depth
+guardrail so generic write/edit tools cannot clobber protected brain
+files, and wires the A2A gateway through the config-level approval
+policy.
 
 PHANTOM DETECTION RESTORED (1 commit)
 
@@ -55,6 +57,24 @@ directory-based, so legitimate writes under `~/.opencrabs/` (memory
 logs, commands.toml, RSI proposals) keep working.
 
 - 5e3f0e6f fix(tools): generic write/edit refuse protected brain files (#91)
+
+A2A APPROVAL POLICY (1 commit)
+
+Issue #92: A2A `message/send` tasks failed every tool that required
+approval with "Tool requires approval but no approval mechanism
+configured", even with `[agent] approval_policy = "auto-always"`. The
+A2A handler called `send_message_with_tools_and_mode` with no approval
+callback, so the tool-loop's approval gate had no policy resolver and
+fell through to the default-deny branch.
+
+`process_task()` now builds an approval callback that resolves through
+`check_approval_policy()` (the same path Telegram/Discord/Slack/WhatsApp
+use) and dispatches via `send_message_with_tools_and_callback`. With
+`auto-always` or `auto-session` set, tools are auto-approved; with any
+other policy A2A returns `(false, false)` and logs a warning, since
+A2A has no interactive UI to prompt.
+
+- 1dee77c3 fix(a2a): wire approval policy callback so auto-always works (closes #92)
 
 ## [0.3.22] - 2026-05-19
 
