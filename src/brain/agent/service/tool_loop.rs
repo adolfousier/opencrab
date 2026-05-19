@@ -569,16 +569,6 @@ impl AgentService {
         // fallback to a different provider rather than giving up.
         let mut phantom_retries_used: u32 = 0;
         const MAX_PHANTOM_RETRIES: u32 = 5;
-        // Set to true the first time any tool in this turn executes
-        // (successfully or otherwise). Used to suppress the phantom
-        // detector on the final text-only iteration that follows a turn
-        // of real tool work — without this, a clean confirmation like
-        // "Pushed (abc123). All done." mis-fires `has_past_tense_action_claim`
-        // and aborts a turn that already completed correctly. The
-        // phantom branch only matters when the turn produced ZERO tool
-        // calls; once at least one tool has run, trailing text is the
-        // model's wrap-up, not a phantom.
-        let mut tools_executed_this_turn: bool = false;
         // Set to true after we have forced a sticky fallback because
         // phantom retries exhausted. Guarantees we only swap once per
         // turn even if the fallback provider is also phantom-prone.
@@ -2762,10 +2752,7 @@ impl AgentService {
                 // without burning the retry budget, and replace the leaked
                 // narration with a self-heal notice so the TUI doesn't show
                 // the spam as the model's final answer.
-                if !is_cli_provider
-                    && !tools_executed_this_turn
-                    && super::phantom::is_stuck_in_intent_loop(&iteration_text)
-                {
+                if !is_cli_provider && super::phantom::is_stuck_in_intent_loop(&iteration_text) {
                     let reps = super::phantom::count_intent_line_starts(&iteration_text);
                     tracing::warn!(
                         "Phantom intent-loop detected ({} line-start repetitions) — aborting \
@@ -2815,7 +2802,6 @@ impl AgentService {
                     // assistant message.
                 } else if phantom_retries_used < MAX_PHANTOM_RETRIES
                     && !is_cli_provider
-                    && !tools_executed_this_turn
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
                     phantom_retries_used += 1;
@@ -2884,7 +2870,6 @@ impl AgentService {
                 // this one handles the slower case where each retry kept
                 // producing a fresh-but-still-phantom response.
                 if !is_cli_provider
-                    && !tools_executed_this_turn
                     && phantom_retries_used >= MAX_PHANTOM_RETRIES
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
@@ -3226,14 +3211,6 @@ impl AgentService {
             let mut tool_results = Vec::new();
             let mut tool_descriptions: Vec<String> = Vec::new(); // For DB persistence
             let mut tool_outputs: Vec<(bool, String)> = Vec::new(); // (success, output) parallel to descriptions
-
-            // Reached the executor with at least one tool to run — mark the
-            // turn as having tool activity so the phantom detector skips
-            // any text-only wrap-up iteration that follows (e.g. "Pushed
-            // (abc123). All done.").
-            if !tool_uses.is_empty() {
-                tools_executed_this_turn = true;
-            }
 
             for (tool_id, tool_name, tool_input) in tool_uses {
                 // Check for cancellation before each tool
