@@ -67,7 +67,10 @@ fn version_sort_key(name: &str) -> Vec<(isize, String)> {
     }
 
     // Negate numeric segments for descending order (newest first)
-    segments.into_iter().map(|(n, s)| if n >= 0 { (-n, s) } else { (n, s) }).collect()
+    segments
+        .into_iter()
+        .map(|(n, s)| if n >= 0 { (-n, s) } else { (n, s) })
+        .collect()
 }
 
 /// Normalize a base URL by stripping trailing slashes and common API path suffixes.
