@@ -375,13 +375,17 @@ pub(crate) async fn handle_message(
                 return;
             }
             ChannelCommand::NewSession => {
-                // Archive old channel session before creating new one
                 let session_title = if is_dm {
                     format!("Discord: {}", msg.author.name)
                 } else {
                     format!("Discord: #{}", msg.channel_id.get())
                 };
-                if let Ok(Some(old)) = session_svc.find_session_by_title(&session_title).await
+                // Archive the previous session on /new, except for the owner —
+                // owner sessions stay non-archived so they remain visible in
+                // /sessions for history review. Guest sessions get archived
+                // so the next title lookup resolves cleanly to the new row.
+                if !is_owner
+                    && let Ok(Some(old)) = session_svc.find_session_by_title(&session_title).await
                     && let Err(e) = session_svc.archive_session(old.id).await
                 {
                     tracing::error!("Discord: failed to archive old session {}: {}", old.id, e);

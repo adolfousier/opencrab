@@ -1001,6 +1001,10 @@ pub(crate) async fn handle_message(
                 } else {
                     format!("Telegram: {}", chat_title)
                 };
+                // Archive the previous session on /new, except for the owner —
+                // owner sessions stay non-archived so they remain visible in
+                // /sessions for history review. Guest sessions get archived
+                // so the next title lookup resolves cleanly to the new row.
                 if !is_owner
                     && let Ok(Some(old)) = session_svc.find_session_by_title(&session_title).await
                     && let Err(e) = session_svc.archive_session(old.id).await

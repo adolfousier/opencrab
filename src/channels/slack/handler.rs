@@ -1016,16 +1016,20 @@ async fn handle_message(
                 return;
             }
             ChannelCommand::NewSession => {
-                // Archive the current channel session before creating a new one
                 let session_title = if is_dm {
                     format!("Slack: {}", user_id)
                 } else {
                     format!("Slack: #{}", channel_id)
                 };
-                if let Ok(Some(old)) = state
-                    .session_svc
-                    .find_session_by_title(&session_title)
-                    .await
+                // Archive the previous session on /new, except for the owner —
+                // owner sessions stay non-archived so they remain visible in
+                // /sessions for history review. Guest sessions get archived
+                // so the next title lookup resolves cleanly to the new row.
+                if !is_owner
+                    && let Ok(Some(old)) = state
+                        .session_svc
+                        .find_session_by_title(&session_title)
+                        .await
                     && let Err(e) = state.session_svc.archive_session(old.id).await
                 {
                     tracing::error!("Slack: failed to archive old session {}: {}", old.id, e);
