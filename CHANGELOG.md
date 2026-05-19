@@ -5,6 +5,60 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.21] - 2026-05-19
+
+21 commits since v0.3.20.
+
+PHANTOM TOOL-CALL SELF-HEAL OVERHAUL (5 commits)
+
+Multi-language phantom tool-call detection via compile-time TOML character sets.
+Instead of regex patterns per language, each language defines char ranges in a TOML file
+that gets compiled into match arms at build time. New languages are added by editing the
+TOML — no Rust changes needed. Discussion #86, thanks @leshchenki1979.
+
+The self-heal pipeline was hardened: phantom detection is now gated on turn-level tool
+execution (not just text patterns), phantom iterations are no longer persisted to DB,
+phantom text is stripped from context before the next turn, and sticky fallback is
+applied on exhaust to prevent cascading failures.
+
+- 53fe53cc feat(phantom): multi-language detection via compile-time TOML loading
+- 77e4a8fa fix(self-heal): gate phantom on turn-level tool execution + sticky fallback on exhaust
+- 517e33ca fix(self-heal): skip persisting phantom iterations to DB
+- c7814618 fix(self-heal): stop injecting phantom text into context
+- c965e65b test(phantom): cross-language regression for char-set-based detection
+
+OPENAI-COMPATIBLE IMAGE GENERATION (4 commits)
+
+New image generation backend that calls any OpenAI-compatible /v1/images/generations
+endpoint. Providers can override the generation model independently of the chat model
+via a `generation_model` field in config, with an onboarding prompt in ImageSetup.
+
+- 30e8bdc6 feat(generate_image): add OpenAI-compatible images backend
+- e3581da1 feat(config): add generation_model override field on ProviderConfig
+- f7f72e11 feat(onboarding): prompt for generation_model override in ImageSetup
+- 35e4d8f6 feat(provider): resolve generation_model override via factory helpers
+
+SELF-HEAL & CONTEXT FIXES (4 commits)
+
+- d88fed89 fix(self-heal): make working directory visible across tools in same iteration
+- 684d5b6a fix(context): strip compaction banner from LLM context so models don't echo it
+- 66533b1a fix(compaction): wire ProgressEvent::Compacting so channels show activity
+- 82ea18ed fix(rsi): dedup cycle output by hashing assembled opportunities
+
+TELEGRAM & UX FIXES (4 commits)
+
+- 0c638138 fix(telegram): pipe-separate model callback so custom-provider colons survive parse
+- e42af3b4 fix(telegram): touch session updated_at on switch (#85)
+- 95e45e25 fix(dialogs): custom-provider model selection now persists + syncs live list
+- 1b3ae187 fix(usage): correct one_shot_pct display, remove spurious ×100 (#84)
+
+DOCS & STYLE (4 commits)
+
+- 51e32e64 docs: bump test count to 2,626 + document per-provider generation_model
+- cc8673a3 style: rustfmt line-wrap in tools/trait.rs
+- d8e94260 docs: remove typo
+- 39fffb0a fix(telegram): touch session updated_at on switch (duplicate of e42af3b4)
+
 ## [0.3.20] - 2026-05-18
 
 20 commits since v0.3.19.
@@ -689,6 +743,7 @@ provider and context budget.
 - **Raise think-tag safety valve** — long Qwen reasoning blocks no longer
   get partially stripped by the tag filter.
 
+[0.3.21]: https://github.com/adolfousier/opencrabs/compare/v0.3.20...v0.3.21
 [0.3.20]: https://github.com/adolfousier/opencrabs/compare/v0.3.19...v0.3.20
 [0.3.19]: https://github.com/adolfousier/opencrabs/compare/v0.3.18...v0.3.19
 [0.3.18]: https://github.com/adolfousier/opencrabs/compare/v0.3.17...v0.3.18
