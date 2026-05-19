@@ -563,10 +563,26 @@ impl AgentService {
         // Phantom-retry budget per turn. Single-shot proved insufficient —
         // when the model is stuck in a "Let me check…" narration loop, one
         // correction nudges it for one iteration and it drifts right back.
-        // Three retries per turn is enough to break the loop without
-        // letting pathological cases chew quota forever.
+        // Five retries per turn gives the model room to recover from a
+        // bumpy start while still capping pathological cases before they
+        // chew the whole quota; once the cap is hit we force a sticky
+        // fallback to a different provider rather than giving up.
         let mut phantom_retries_used: u32 = 0;
-        const MAX_PHANTOM_RETRIES: u32 = 3;
+        const MAX_PHANTOM_RETRIES: u32 = 5;
+        // Set to true the first time any tool in this turn executes
+        // (successfully or otherwise). Used to suppress the phantom
+        // detector on the final text-only iteration that follows a turn
+        // of real tool work — without this, a clean confirmation like
+        // "Pushed (abc123). All done." mis-fires `has_past_tense_action_claim`
+        // and aborts a turn that already completed correctly. The
+        // phantom branch only matters when the turn produced ZERO tool
+        // calls; once at least one tool has run, trailing text is the
+        // model's wrap-up, not a phantom.
+        let mut tools_executed_this_turn: bool = false;
+        // Set to true after we have forced a sticky fallback because
+        // phantom retries exhausted. Guarantees we only swap once per
+        // turn even if the fallback provider is also phantom-prone.
+        let mut phantom_sticky_swap_done: bool = false;
         // Bounded retry for the "reasoning-only, no answer" failure mode:
         // MLX Qwen models periodically emit finish_reason=stop after only
         // reasoning_content chunks — zero text, zero tool calls — so the
@@ -2746,7 +2762,10 @@ impl AgentService {
                 // without burning the retry budget, and replace the leaked
                 // narration with a self-heal notice so the TUI doesn't show
                 // the spam as the model's final answer.
-                if !is_cli_provider && super::phantom::is_stuck_in_intent_loop(&iteration_text) {
+                if !is_cli_provider
+                    && !tools_executed_this_turn
+                    && super::phantom::is_stuck_in_intent_loop(&iteration_text)
+                {
                     let reps = super::phantom::count_intent_line_starts(&iteration_text);
                     tracing::warn!(
                         "Phantom intent-loop detected ({} line-start repetitions) — aborting \
@@ -2796,6 +2815,7 @@ impl AgentService {
                     // assistant message.
                 } else if phantom_retries_used < MAX_PHANTOM_RETRIES
                     && !is_cli_provider
+                    && !tools_executed_this_turn
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
                     phantom_retries_used += 1;
@@ -2864,9 +2884,66 @@ impl AgentService {
                 // this one handles the slower case where each retry kept
                 // producing a fresh-but-still-phantom response.
                 if !is_cli_provider
+                    && !tools_executed_this_turn
                     && phantom_retries_used >= MAX_PHANTOM_RETRIES
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
+                    // Before giving up, try a sticky fallback to a
+                    // different provider. The current provider may have
+                    // a structural problem reaching its tool-call channel
+                    // for this request (auth scope, schema mismatch, model
+                    // quirk); a different provider/model often executes
+                    // the same prompt on the first try.
+                    let fb_provider = self.provider_for_session(session_id);
+                    if !phantom_sticky_swap_done
+                        && fb_provider.force_next_fallback("phantom_retry_exhausted")
+                    {
+                        phantom_sticky_swap_done = true;
+                        phantom_retries_used = 0; // give the new provider a fresh budget
+                        let new_name = fb_provider
+                            .active_subprovider_name()
+                            .unwrap_or_else(|| fb_provider.name().to_string());
+                        let new_model = fb_provider
+                            .active_subprovider_model()
+                            .unwrap_or_else(|| fb_provider.default_model().to_string());
+                        tracing::warn!(
+                            "Phantom retry exhausted on '{}' — forcing sticky fallback to \
+                             '{}/{}' and retrying.",
+                            self.provider_name_for_session(session_id),
+                            new_name,
+                            new_model
+                        );
+                        self.record_provider_feedback(
+                            session_id,
+                            "phantom_sticky_swap",
+                            "self_heal",
+                            Some(&format!("→ {}/{}", new_name, new_model)),
+                        );
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "Phantom retries exhausted — switching to {}/{}",
+                                        new_name, new_model
+                                    ),
+                                },
+                            );
+                        }
+                        // Persist immediately so a reconnect/reload sees the
+                        // new pair, matching the rate-limit fallback path.
+                        self.persist_sticky_pair(session_id, new_name.clone(), new_model.clone());
+                        model_name = new_model;
+                        // Inject a fresh nudge so the new provider sees the
+                        // user request again with no phantom-context bleed.
+                        context.add_message(Message::user(
+                            "[System: A different provider is now handling this turn. Invoke the \
+                             correct tool through the structured tool-call API now — do not \
+                             narrate.]"
+                                .to_string(),
+                        ));
+                        continue;
+                    }
                     tracing::warn!(
                         "Phantom retry budget exhausted ({} retries used) and model is still \
                          emitting phantom intent — replacing leaked text with abort notice.",
@@ -3149,6 +3226,14 @@ impl AgentService {
             let mut tool_results = Vec::new();
             let mut tool_descriptions: Vec<String> = Vec::new(); // For DB persistence
             let mut tool_outputs: Vec<(bool, String)> = Vec::new(); // (success, output) parallel to descriptions
+
+            // Reached the executor with at least one tool to run — mark the
+            // turn as having tool activity so the phantom detector skips
+            // any text-only wrap-up iteration that follows (e.g. "Pushed
+            // (abc123). All done.").
+            if !tool_uses.is_empty() {
+                tools_executed_this_turn = true;
+            }
 
             for (tool_id, tool_name, tool_input) in tool_uses {
                 // Check for cancellation before each tool
