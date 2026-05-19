@@ -1397,25 +1397,6 @@ async fn handle_message(
                         let _ = session.chat_post_message(&req).await;
                     });
                 }
-                ProgressEvent::Compacting => {
-                    // Compaction has no streaming signal — surface a
-                    // one-shot post so Slack users don't think the
-                    // request was dropped during the 10-60s window.
-                    let thread_ts_compact = thread_ts_inner.clone();
-                    tokio::spawn(async move {
-                        let session = client.open_session(&token);
-                        let text = "🗜️ Compacting context — this may take 30-60s on long sessions"
-                            .to_string();
-                        let mut req = SlackApiChatPostMessageRequest::new(
-                            channel,
-                            SlackMessageContent::new().with_text(text),
-                        );
-                        if let Some(ref ts) = thread_ts_compact {
-                            req = req.with_thread_ts(ts.clone());
-                        }
-                        let _ = session.chat_post_message(&req).await;
-                    });
-                }
                 ProgressEvent::IntermediateText { text, .. } => {
                     let thread_ts_resp = thread_ts_inner.clone();
                     let ts_ref = sent_intermediate_ts.clone();

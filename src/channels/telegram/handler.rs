@@ -1652,20 +1652,6 @@ pub(crate) async fn handle_message(
                             .push(DisplayItem::Intermediate(format!("🔧 {}", message)));
                     }
                 }
-                // Context compaction can run 10-60s with zero streaming
-                // chunks. Telegram has no continuous spinner — without
-                // a visible signal the user thinks the request was
-                // dropped (2026-05-19 report on a long heyiolo session).
-                // Surface a one-shot intermediate message so they know
-                // the agent is still working.
-                ProgressEvent::Compacting => {
-                    if let Ok(mut s) = st.lock() {
-                        s.display_queue.push(DisplayItem::Intermediate(
-                            "🗜️ Compacting context — this may take 30-60s on long sessions"
-                                .to_string(),
-                        ));
-                    }
-                }
                 _ => {}
             }
         })

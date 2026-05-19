@@ -138,17 +138,6 @@ impl AgentService {
             Some(&format!("proactive_65pct tokens={}", context.token_count)),
         );
 
-        // Signal channels (Telegram especially — no continuous typing
-        // indicator like the TUI spinner) that we're still working. The
-        // LLM compact_context call below can run 10-60s with zero
-        // streaming chunks; without this event the user sees nothing
-        // happening and assumes the request was dropped (2026-05-19
-        // Telegram report on a long heyiolo session — request finished
-        // fine, just no signal during the silent window).
-        if let Some(cb) = progress_callback {
-            cb(session_id, ProgressEvent::Compacting);
-        }
-
         // Up to 3 attempts — transient summarizer errors (network blip,
         // tokenizer-edge 400) usually self-resolve on retry.
         let mut summary_result = None;
