@@ -2594,10 +2594,10 @@ impl AgentService {
                 // discussion #86 / gist 85cfdc26), so the model sees its
                 // own past phantoms and repeats the pattern. Skip the
                 // append on phantom iterations; the eventual successful
-                // iteration (or the `[self-heal] Aborted —…` notice the
-                // stuck-loop / cap-exhaustion branches install into
-                // `iteration_text` further down) gets persisted normally
-                // because by then the phantom signature has been replaced.
+                // iteration (where a real tool runs after the self-heal
+                // nudge or after a sticky-fallback swap) gets persisted
+                // normally because by then the phantom signature has
+                // been replaced.
                 let iteration_is_phantom = !iteration_text.is_empty()
                     && tool_uses.is_empty()
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text);
@@ -2721,42 +2721,18 @@ impl AgentService {
                 }
 
                 // ── Phantom tool call detection ──────────────────────────
-                // The model narrated actions but never executed any tool
-                // calls this iteration. We're already inside
-                // `if tool_uses.is_empty()`, so the relaxed detector
-                // `has_phantom_tool_intent_no_tools` is the right gate:
-                // it looks for intent phrases ("Let me check…", "I'll
-                // run…", "Now I…") that indicate the model BELIEVED it
-                // was calling a tool but didn't. Up to MAX_PHANTOM_RETRIES
-                // corrections per turn.
-                //
-                // Earlier we broadened this for local providers to fire on
-                // ANY short response that produced zero tool_calls. That
-                // backfired: legitimate answers (tables, status rundowns,
-                // one-liner replies) from local models like MLX got
-                // flagged as phantom and replaced with a confused retry
-                // cycle — seen in logs 03:30:52 where a full status table
-                // triggered `intent_match=false, local=true` retry.
-                //
-                // Since the text-based tool-call extractor now recovers
-                // every Qwen/Kimi/DeepSeek leak format, if the model
-                // really tried to call a tool it's already been promoted
-                // to a real tool_use. Zero tool_uses + no intent phrases
-                // = a legitimate text answer. Keep the gate narrow.
-                // Early-abort: 3+ `Let me X` / `I'll X` line-starts in a
-                // single iteration = model is spinning in place. Nudging
-                // typically produces another batch of intent narration.
-                // Seen 2026-05-16 on dialagram/qwen-3.6-max-preview-thinking
-                // where the user got nine consecutive `Let me fetch issue
-                // #81 …` paragraphs with zero tool calls. Abort the turn
-                // without burning the retry budget, and replace the leaked
-                // narration with a self-heal notice so the TUI doesn't show
-                // the spam as the model's final answer.
-                if !is_cli_provider && super::phantom::is_stuck_in_intent_loop(&iteration_text) {
+                // We're inside `if tool_uses.is_empty()`. The narrow
+                // intent-phrase detector is the gate: extracting real
+                // tool calls from text-shaped leak formats already runs
+                // upstream, so zero tool_uses + no intent phrases is a
+                // legitimate text answer that must pass through.
+                let stuck_loop_now =
+                    !is_cli_provider && super::phantom::is_stuck_in_intent_loop(&iteration_text);
+                if stuck_loop_now {
                     let reps = super::phantom::count_intent_line_starts(&iteration_text);
                     tracing::warn!(
-                        "Phantom intent-loop detected ({} line-start repetitions) — aborting \
-                         turn without retry. Model is stuck; nudges won't recover this.",
+                        "Phantom intent-loop detected ({} line-start repetitions) — escalating \
+                         self-heal (nudge + fast-escalate to sticky fallback if budget half-burned).",
                         reps
                     );
                     self.record_provider_feedback(
@@ -2768,39 +2744,68 @@ impl AgentService {
                             reps
                         )),
                     );
-                    if let Some(ref cb) = progress_callback {
-                        cb(
-                            session_id,
-                            ProgressEvent::SelfHealingAlert {
-                                message: format!(
-                                    "Model emitted {} consecutive intent phrases without a tool call — aborting turn",
-                                    reps
-                                ),
-                            },
+                }
+
+                // Fast-escalate to sticky fallback when the budget is
+                // exhausted, or when the stuck-loop signal fires after
+                // we've already burned at least half the budget. Either
+                // condition means the current provider can't reach its
+                // tool-call channel for this prompt and another nudge
+                // won't help.
+                let should_force_fallback = !is_cli_provider
+                    && !phantom_sticky_swap_done
+                    && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
+                    && (phantom_retries_used >= MAX_PHANTOM_RETRIES
+                        || (stuck_loop_now && phantom_retries_used >= MAX_PHANTOM_RETRIES / 2));
+                if should_force_fallback {
+                    let fb_provider = self.provider_for_session(session_id);
+                    if fb_provider.force_next_fallback("phantom_intent_loop_or_exhausted") {
+                        phantom_sticky_swap_done = true;
+                        phantom_retries_used = 0;
+                        let new_name = fb_provider
+                            .active_subprovider_name()
+                            .unwrap_or_else(|| fb_provider.name().to_string());
+                        let new_model = fb_provider
+                            .active_subprovider_model()
+                            .unwrap_or_else(|| fb_provider.default_model().to_string());
+                        tracing::warn!(
+                            "Self-heal escalation: swapping from '{}' to '{}/{}' (stuck={}, retries={}).",
+                            self.provider_name_for_session(session_id),
+                            new_name,
+                            new_model,
+                            stuck_loop_now,
+                            phantom_retries_used
                         );
+                        self.record_provider_feedback(
+                            session_id,
+                            "phantom_sticky_swap",
+                            "self_heal",
+                            Some(&format!("→ {}/{}", new_name, new_model)),
+                        );
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "Self-heal switching to {}/{} (current provider can't reach \
+                                         its tool channel)",
+                                        new_name, new_model
+                                    ),
+                                },
+                            );
+                        }
+                        self.persist_sticky_pair(session_id, new_name.clone(), new_model.clone());
+                        model_name = new_model;
+                        context.add_message(Message::user(
+                            "[System: A different provider is now handling this turn. Invoke the \
+                             correct tool through the structured tool-call API now. Do not \
+                             narrate.]"
+                                .to_string(),
+                        ));
+                        continue;
                     }
-                    iteration_text = format!(
-                        "[self-heal] Aborted — the model emitted {} consecutive intent phrases \
-                         (`Let me…` / `I'll…`) without ever calling a tool. This usually means \
-                         the model can't reach the provider's tool-call channel for this \
-                         request. Try a different model, simplify the prompt, or check that the \
-                         provider exposes the function schemas correctly.",
-                        reps
-                    );
-                    // The per-iteration persist block above (~line 2589) saw
-                    // the ORIGINAL phantom text and intentionally skipped the
-                    // append. Persist the replacement abort notice here so
-                    // it lands on the assistant DB row as the turn's final
-                    // answer — otherwise the message reads as empty on
-                    // session reload.
-                    accumulated_text.push_str(&iteration_text);
-                    let _ = message_service
-                        .append_content(assistant_db_msg.id, &format!("{}\n\n", iteration_text))
-                        .await;
-                    // Fall through (no `continue`) so control hits the loop's
-                    // break path, which emits `iteration_text` as the final
-                    // assistant message.
-                } else if phantom_retries_used < MAX_PHANTOM_RETRIES
+                }
+                if phantom_retries_used < MAX_PHANTOM_RETRIES
                     && !is_cli_provider
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
@@ -2855,88 +2860,23 @@ impl AgentService {
                     continue;
                 }
 
-                // ── Phantom-retry cap exhaustion ────────────────────────
-                // The standard phantom branch above only runs while
-                // `phantom_retries_used < MAX_PHANTOM_RETRIES`. Once we've
-                // burned all retries, the gate skips and any subsequent
-                // phantom response falls through to the loop's break path
-                // — leaking the model's intent narration to the TUI as the
-                // turn's "final" answer.
-                //
-                // Replace `iteration_text` with a self-heal notice so the
-                // persisted/displayed message reflects the abort instead
-                // of yet another `Let me X` / `Pushed.` claim. The early-
-                // abort branch above handles single-iteration intent loops;
-                // this one handles the slower case where each retry kept
-                // producing a fresh-but-still-phantom response.
+                // Cap hit and the fast-escalate block above couldn't
+                // swap (no fallback left, or already swapped once).
+                // Reset the counter and keep nudging the active provider
+                // — user presses Stop if they want out.
                 if !is_cli_provider
                     && phantom_retries_used >= MAX_PHANTOM_RETRIES
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
-                    // Before giving up, try a sticky fallback to a
-                    // different provider. The current provider may have
-                    // a structural problem reaching its tool-call channel
-                    // for this request (auth scope, schema mismatch, model
-                    // quirk); a different provider/model often executes
-                    // the same prompt on the first try.
-                    let fb_provider = self.provider_for_session(session_id);
-                    if !phantom_sticky_swap_done
-                        && fb_provider.force_next_fallback("phantom_retry_exhausted")
-                    {
-                        phantom_sticky_swap_done = true;
-                        phantom_retries_used = 0; // give the new provider a fresh budget
-                        let new_name = fb_provider
-                            .active_subprovider_name()
-                            .unwrap_or_else(|| fb_provider.name().to_string());
-                        let new_model = fb_provider
-                            .active_subprovider_model()
-                            .unwrap_or_else(|| fb_provider.default_model().to_string());
-                        tracing::warn!(
-                            "Phantom retry exhausted on '{}' — forcing sticky fallback to \
-                             '{}/{}' and retrying.",
-                            self.provider_name_for_session(session_id),
-                            new_name,
-                            new_model
-                        );
-                        self.record_provider_feedback(
-                            session_id,
-                            "phantom_sticky_swap",
-                            "self_heal",
-                            Some(&format!("→ {}/{}", new_name, new_model)),
-                        );
-                        if let Some(ref cb) = progress_callback {
-                            cb(
-                                session_id,
-                                ProgressEvent::SelfHealingAlert {
-                                    message: format!(
-                                        "Phantom retries exhausted — switching to {}/{}",
-                                        new_name, new_model
-                                    ),
-                                },
-                            );
-                        }
-                        // Persist immediately so a reconnect/reload sees the
-                        // new pair, matching the rate-limit fallback path.
-                        self.persist_sticky_pair(session_id, new_name.clone(), new_model.clone());
-                        model_name = new_model;
-                        // Inject a fresh nudge so the new provider sees the
-                        // user request again with no phantom-context bleed.
-                        context.add_message(Message::user(
-                            "[System: A different provider is now handling this turn. Invoke the \
-                             correct tool through the structured tool-call API now — do not \
-                             narrate.]"
-                                .to_string(),
-                        ));
-                        continue;
-                    }
                     tracing::warn!(
-                        "Phantom retry budget exhausted ({} retries used) and model is still \
-                         emitting phantom intent — replacing leaked text with abort notice.",
-                        phantom_retries_used
+                        "Phantom retry cap rolling ({} retries used, sticky_swapped={}) — \
+                         resetting counter and re-nudging the active provider.",
+                        phantom_retries_used,
+                        phantom_sticky_swap_done
                     );
                     self.record_provider_feedback(
                         session_id,
-                        "phantom_retry_exhausted",
+                        "phantom_retry_rolling",
                         "self_heal",
                         Some(&iteration_text.chars().take(300).collect::<String>()),
                     );
@@ -2944,29 +2884,20 @@ impl AgentService {
                         cb(
                             session_id,
                             ProgressEvent::SelfHealingAlert {
-                                message: format!(
-                                    "Phantom retry budget exhausted after {} attempts — aborting turn",
-                                    phantom_retries_used
-                                ),
+                                message: "Self-heal retry budget rolled — forcing another retry"
+                                    .to_string(),
                             },
                         );
                     }
-                    iteration_text = format!(
-                        "[self-heal] Aborted after {} retry attempts — the model kept describing \
-                         actions but never executed a tool call. Try a different model, rephrase \
-                         the prompt, or check that the provider exposes the function schemas \
-                         correctly.",
-                        phantom_retries_used
-                    );
-                    // Same rationale as the stuck-intent-loop branch above:
-                    // the iteration-level persist saw the phantom text and
-                    // skipped, so the replacement abort notice needs an
-                    // explicit append to survive session reload.
-                    accumulated_text.push_str(&iteration_text);
-                    let _ = message_service
-                        .append_content(assistant_db_msg.id, &format!("{}\n\n", iteration_text))
-                        .await;
-                    // Fall through to the break path with the replaced text.
+                    phantom_retries_used = 0;
+                    context.add_message(Message::user(
+                        "[System: You have repeatedly described actions without invoking any \
+                         tool. STOP narrating. Pick the correct tool and call it now through the \
+                         structured tool-call API. No JSON, no markdown code blocks, only a real \
+                         tool_use block.]"
+                            .to_string(),
+                    ));
+                    continue;
                 }
 
                 // ── Rotation continuation ──────────────────────────────
@@ -3359,6 +3290,13 @@ impl AgentService {
                                                 tool_name,
                                                 content.len()
                                             );
+                                            // Mirror of the non-approval branch:
+                                            // a successful tool run wipes the
+                                            // phantom retry counter so a later
+                                            // isolated phantom burst is judged
+                                            // on its own merits, not on debt
+                                            // accumulated earlier in the turn.
+                                            phantom_retries_used = 0;
                                             // Persist the touched path so a later
                                             // session on this project can re-anchor
                                             // on real paths instead of guessing.
@@ -3566,6 +3504,13 @@ impl AgentService {
                                 tool_name,
                                 content.len()
                             );
+                            // Reset the phantom retry counter so accumulated
+                            // debt from earlier in the turn doesn't push a
+                            // later, isolated phantom burst over the cap. The
+                            // counter is now "consecutive phantoms since the
+                            // last real tool execution" rather than "phantom
+                            // count across the entire turn".
+                            phantom_retries_used = 0;
                             // Persist the touched path (same rationale as the
                             // approval-path branch above).
                             if let Some(p) = extract_path_for_recent_buffer(
