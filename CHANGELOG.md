@@ -5,6 +5,43 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.22] - 2026-05-19
+
+3 commits since v0.3.21. Hotfix for a v0.3.21 regression in compaction
+plus a `/new` archive-behavior unification across channels.
+
+COMPACTION TYPING WITHOUT BANNER (2 commits)
+
+v0.3.21's `66533b1a` wired `ProgressEvent::Compacting` end-to-end and surfaced a visible
+"🗜️ Compacting context — this may take 30-60s on long sessions" banner to every channel
+and the TUI. Compaction has always been transparent — the banner was unrequested. Reverted
+and replaced with a typing-only refresh that keeps the native "is typing" indicator alive
+during the silent 10-60s window without emitting any text:
+
+- Telegram: one immediate `send_chat_action(Typing)` on Compacting; the existing 4s pinger
+  loop covers the rest of the window.
+- Discord: spawn a bounded loop that calls `broadcast_typing` every 8s for up to 90s
+  (Discord has no continuous pinger like Telegram). Self-terminates; if compaction
+  finishes early, real streaming chunks resume the indicator naturally.
+- TUI: unchanged `return` no-op — the spinner already shows "is responding/thinking".
+- Slack / WhatsApp: no typing API, no handler — silent as they have always been during
+  compaction.
+
+- 6a9de7bb Revert "fix(compaction): wire ProgressEvent::Compacting so channels show activity"
+- bdf47bfc fix(compaction): refresh typing indicator on channels without banner text
+
+CHANNEL `/new` ARCHIVE CONSISTENCY (1 commit)
+
+Discussion #87 (thanks @leshchenko1979): the four channel handlers disagreed on `/new`.
+Telegram and WhatsApp archived the previous session only for non-owners; Discord and
+Slack archived for everyone unconditionally. Owner sessions on Discord and Slack were
+disappearing from `/sessions` even though the Telegram/WhatsApp design intent was to
+preserve them for history review. Now all four channels behave the same: non-owner
+sessions get archived on `/new` so the next title lookup resolves cleanly, owner
+sessions stay non-archived and remain visible in `/sessions`.
+
+- 19ec8193 fix(channels): unify /new archive behavior — keep owner sessions, archive guests
+
 ## [0.3.21] - 2026-05-19
 
 21 commits since v0.3.20.
@@ -743,6 +780,7 @@ provider and context budget.
 - **Raise think-tag safety valve** — long Qwen reasoning blocks no longer
   get partially stripped by the tag filter.
 
+[0.3.22]: https://github.com/adolfousier/opencrabs/compare/v0.3.21...v0.3.22
 [0.3.21]: https://github.com/adolfousier/opencrabs/compare/v0.3.20...v0.3.21
 [0.3.20]: https://github.com/adolfousier/opencrabs/compare/v0.3.19...v0.3.20
 [0.3.19]: https://github.com/adolfousier/opencrabs/compare/v0.3.18...v0.3.19
