@@ -1569,8 +1569,22 @@ pub(crate) async fn handle_message(
     // Progress callback: accumulates streaming chunks + tool status into shared state
     let progress_cb: ProgressCallback = {
         let st = streaming.clone();
+        let bot_typing = bot.clone();
+        let chat_typing = msg.chat.id;
         Arc::new(move |_sid, event| {
             match event {
+                // Auto-compaction produces zero streaming chunks for 10-60s.
+                // The 4s typing pinger upstream stays alive, but fire an
+                // immediate refresh on entry so the indicator visibly resets
+                // the moment compaction starts. No text — just the native
+                // "is typing" dots stay continuous through the silent window.
+                ProgressEvent::Compacting => {
+                    let bot = bot_typing.clone();
+                    let chat = chat_typing;
+                    tokio::spawn(async move {
+                        let _ = bot.send_chat_action(chat, ChatAction::Typing).await;
+                    });
+                }
                 ProgressEvent::ReasoningChunk { text } => {
                     if let Ok(mut s) = st.lock() {
                         s.thinking.push_str(&text);
@@ -2312,7 +2326,18 @@ pub(crate) async fn resume_session(
     // Progress callback — same as handle_message
     let progress_cb: ProgressCallback = {
         let st = streaming.clone();
+        let bot_typing = bot.clone();
+        let chat_typing = chat_id;
         Arc::new(move |_sid, event| match event {
+            // Auto-compaction silent window — immediate typing refresh.
+            // See handle_message for the full rationale.
+            ProgressEvent::Compacting => {
+                let bot = bot_typing.clone();
+                let chat = chat_typing;
+                tokio::spawn(async move {
+                    let _ = bot.send_chat_action(chat, ChatAction::Typing).await;
+                });
+            }
             ProgressEvent::ReasoningChunk { text } => {
                 if let Ok(mut s) = st.lock() {
                     s.thinking.push_str(&text);

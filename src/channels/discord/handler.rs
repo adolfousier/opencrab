@@ -596,6 +596,23 @@ pub(crate) async fn handle_message(
             let http = http.clone();
 
             match event {
+                // Auto-compaction produces zero streaming chunks for
+                // 10-60s and Discord has no continuous typing pinger
+                // like Telegram. Ping broadcast_typing every 8s for up
+                // to 90s so the channel shows the "is typing" dots
+                // through the silent window. No text — just the native
+                // indicator. The loop self-terminates after 90s; if
+                // compaction finishes earlier, real streaming chunks
+                // resume the indicator naturally.
+                ProgressEvent::Compacting => {
+                    let http = http.clone();
+                    tokio::spawn(async move {
+                        for _ in 0..12 {
+                            let _ = channel.broadcast_typing(&http).await;
+                            tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                        }
+                    });
+                }
                 ProgressEvent::ToolStarted {
                     tool_name,
                     tool_input,

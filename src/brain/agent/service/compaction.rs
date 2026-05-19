@@ -138,6 +138,14 @@ impl AgentService {
             Some(&format!("proactive_65pct tokens={}", context.token_count)),
         );
 
+        // Signal channels that the next 10-60s will produce zero
+        // streaming chunks so their typing-indicator pingers can keep
+        // firing. Carries no user-visible text — the event is consumed
+        // for typing/spinner refresh only.
+        if let Some(cb) = progress_callback {
+            cb(session_id, ProgressEvent::Compacting);
+        }
+
         // Up to 3 attempts — transient summarizer errors (network blip,
         // tokenizer-edge 400) usually self-resolve on retry.
         let mut summary_result = None;
