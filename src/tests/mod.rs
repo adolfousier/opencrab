@@ -80,6 +80,7 @@ pub mod provider_sync_test;
 pub mod qr_render_test;
 pub mod queued_message_test;
 pub mod qwen_tool_extractor_test;
+pub mod rename_session_test;
 pub mod reasoning_lines_test;
 //pub mod plan_mode_integration_test;
 pub mod session_working_dir_test;
