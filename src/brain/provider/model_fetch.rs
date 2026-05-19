@@ -117,8 +117,16 @@ pub async fn fetch_models_from_endpoint(base_url: &str, api_key: Option<&str>) -
         Ok(resp) if resp.status().is_success() => match resp.json::<OpenAIModelsResponse>().await {
             Ok(body) if !body.data.is_empty() => {
                 let mut entries = body.data;
-                entries.sort_by_key(|e| std::cmp::Reverse(e.created));
-                let models: Vec<String> = entries.into_iter().map(|m| m.id).collect();
+                // Use created timestamps if meaningful (not all zero/identical), else version sort
+                let timestamps_useful = entries.iter().any(|e| e.created > 0)
+                    && entries.windows(2).any(|w| w[0].created != w[1].created);
+                if timestamps_useful {
+                    entries.sort_by_key(|e| std::cmp::Reverse(e.created));
+                    let models: Vec<String> = entries.into_iter().map(|m| m.id).collect();
+                    return models;
+                }
+                let mut models: Vec<String> = entries.into_iter().map(|m| m.id).collect();
+                models.sort_by_key(|a| version_sort_key(a));
                 tracing::info!(
                     "[model_fetch] fetched {} models from {}",
                     models.len(),
@@ -162,7 +170,7 @@ pub async fn fetch_models_from_endpoint(base_url: &str, api_key: Option<&str>) -
         Ok(resp) if resp.status().is_success() => match resp.json::<OllamaModelsResponse>().await {
             Ok(body) if !body.models.is_empty() => {
                 let mut models: Vec<String> = body.models.into_iter().map(|m| m.name).collect();
-                models.sort();
+                models.sort_by_key(|a| version_sort_key(a));
                 tracing::info!(
                     "[model_fetch] fetched {} models from {}",
                     models.len(),
