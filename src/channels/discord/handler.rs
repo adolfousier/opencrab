@@ -375,8 +375,11 @@ pub(crate) async fn handle_message(
                 return;
             }
             ChannelCommand::NewSession => {
+                // MUST match the per-message resolver format above —
+                // DM titles include the author id so /new and the next
+                // typed message land on the same row (issue #89).
                 let session_title = if is_dm {
-                    format!("Discord: {}", msg.author.name)
+                    format!("Discord: DM {} ({})", msg.author.name, msg.author.id.get())
                 } else {
                     format!("Discord: #{}", msg.channel_id.get())
                 };

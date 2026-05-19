@@ -1016,8 +1016,11 @@ async fn handle_message(
                 return;
             }
             ChannelCommand::NewSession => {
+                // MUST match the per-message resolver format above —
+                // DM titles include the "DM" prefix so /new and the
+                // next typed message land on the same row (issue #89).
                 let session_title = if is_dm {
-                    format!("Slack: {}", user_id)
+                    format!("Slack: DM {}", user_id)
                 } else {
                     format!("Slack: #{}", channel_id)
                 };

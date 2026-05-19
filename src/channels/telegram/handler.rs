@@ -996,10 +996,20 @@ pub(crate) async fn handle_message(
                 return Ok(());
             }
             ChannelCommand::NewSession => {
+                // MUST match the title format used by the per-message
+                // session resolver above (see `session_title` at the
+                // top of `handle_message`). Without the `[chat:<id>]`
+                // suffix, the next typed message won't find this row
+                // via `find_session_by_title_suffix` and resolution
+                // reverts to the previously-bound session — i.e. /new
+                // appears to do nothing (issue #89).
                 let session_title = if is_dm {
-                    format!("Telegram: {}", user.first_name)
+                    format!(
+                        "Telegram: DM {} ({}) {}",
+                        user.first_name, user_id, chat_id_suffix
+                    )
                 } else {
-                    format!("Telegram: {}", chat_title)
+                    format!("Telegram: {} {}", chat_title, chat_id_suffix)
                 };
                 // Archive the previous session on /new, except for the owner —
                 // owner sessions stay non-archived so they remain visible in
