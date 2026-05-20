@@ -170,6 +170,8 @@ mod tests {
                 description: "".into(),
                 required: true,
                 default: None,
+                coerce_empty_to: Default::default(),
+                coerce_null_to: Default::default(),
             }],
         };
         DynamicToolLoader::add_tool(&path, def, &reg).unwrap();

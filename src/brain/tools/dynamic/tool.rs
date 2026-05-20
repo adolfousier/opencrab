@@ -18,6 +18,29 @@ pub enum ExecutorType {
     Shell,
 }
 
+/// What to do with a parameter value when it lands in one of the
+/// edge-case shapes (`null`, empty array, empty string). Configured
+/// per-param in `tools.toml` so the same call can hand off cleanly to
+/// servers that disagree on what "absent" means (issue #95).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CoerceAction {
+    /// Pass the value through as-is. Default; preserves the
+    /// pre-coercion behaviour for every existing tools.toml entry.
+    #[default]
+    Keep,
+    /// Drop the key entirely. For HTTP this means it does not appear
+    /// in the JSON body. For shell, the `{{#name}}…{{/name}}` block
+    /// that wraps the parameter is collapsed away.
+    Omit,
+    /// Replace the value with an explicit JSON `null`. Useful when the
+    /// downstream server expects `null` rather than an empty array.
+    Null,
+    /// Reject the call before it leaves the tool. Returns an error to
+    /// the agent so it can adjust.
+    Error,
+}
+
 /// Parameter definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParamDef {
@@ -30,6 +53,14 @@ pub struct ParamDef {
     pub required: bool,
     #[serde(default)]
     pub default: Option<Value>,
+    /// What to do when the resolved value is an empty container
+    /// (empty array, empty object, empty string). Default `Keep`.
+    #[serde(default)]
+    pub coerce_empty_to: CoerceAction,
+    /// What to do when the resolved value is JSON `null`. Default
+    /// `Keep`.
+    #[serde(default)]
+    pub coerce_null_to: CoerceAction,
 }
 
 /// A single dynamic tool definition as parsed from tools.toml.
@@ -94,9 +125,58 @@ impl DynamicToolDef {
         })
     }
 
+    /// Render `template` by substituting `{{name}}` placeholders with
+    /// the matching value from `params`. Also expands mustache-style
+    /// conditional sections `{{#name}}…{{/name}}`: when `name` is
+    /// present in `params` the section's body is rendered (with its
+    /// inner `{{name}}` substituted); when it's absent the entire
+    /// section, including its enclosing tags, is dropped. This lets
+    /// `coerce_empty_to = "omit"` cleanly remove a CLI flag like
+    /// `{{#ids}}--ids {{ids}}{{/ids}}` instead of leaving a dangling
+    /// `--ids ` with no value.
     pub fn render_template(template: &str, params: &Value) -> String {
-        let mut result = template.to_string();
-        if let Some(obj) = params.as_object() {
+        let obj = params.as_object();
+
+        // Section pass first. Single-pass left-to-right scan so nested
+        // tags collapse predictably even if a future caller writes
+        // overlapping sections (which we still reject by silently
+        // leaving the malformed bytes alone).
+        let mut after_sections = String::with_capacity(template.len());
+        let mut rest = template;
+        while let Some(open_at) = rest.find("{{#") {
+            after_sections.push_str(&rest[..open_at]);
+            let after_open = &rest[open_at + 3..];
+            let Some(name_end) = after_open.find("}}") else {
+                // Malformed: no closing `}}` for the open tag. Bail
+                // out and let the rest of the template pass through
+                // untouched so the error is at least visible.
+                after_sections.push_str(&rest[open_at..]);
+                rest = "";
+                break;
+            };
+            let name = &after_open[..name_end];
+            let body_start = name_end + 2;
+            let close_tag = format!("{{{{/{}}}}}", name);
+            let after_name = &after_open[body_start..];
+            let Some(close_at) = after_name.find(&close_tag) else {
+                // Malformed section. Emit as-is.
+                after_sections.push_str(&rest[open_at..]);
+                rest = "";
+                break;
+            };
+            let body = &after_name[..close_at];
+            let present = obj.is_some_and(|o| o.contains_key(name));
+            if present {
+                after_sections.push_str(body);
+            }
+            rest = &after_name[close_at + close_tag.len()..];
+        }
+        after_sections.push_str(rest);
+
+        // Then the standard `{{name}}` substitution pass over the
+        // section-resolved template.
+        let mut result = after_sections;
+        if let Some(obj) = obj {
             for (key, value) in obj {
                 let placeholder = format!("{{{{{}}}}}", key);
                 let replacement = match value {
@@ -140,6 +220,62 @@ impl DynamicTool {
             }
         }
         Value::Object(out)
+    }
+
+    /// Apply per-parameter `coerce_empty_to` / `coerce_null_to` rules
+    /// (issue #95) to the extracted params. Returns `Ok(params)` with
+    /// the coerced map, or `Err(message)` when any param had its
+    /// `Error` rule triggered. `Omit` removes the key; `Null` replaces
+    /// the value with `Value::Null`; `Keep` is the no-op default.
+    fn coerce_params(&self, params: Value) -> std::result::Result<Value, String> {
+        let mut map = match params {
+            Value::Object(m) => m,
+            other => return Ok(other),
+        };
+
+        // Drop the action enum into a small Vec of decisions so we
+        // mutate the map after walking the param defs.
+        for p in &self.def.params {
+            let Some(v) = map.get(&p.name) else { continue };
+
+            let is_null = matches!(v, Value::Null);
+            let is_empty = match v {
+                Value::String(s) => s.is_empty(),
+                Value::Array(a) => a.is_empty(),
+                Value::Object(o) => o.is_empty(),
+                _ => false,
+            };
+
+            let action = if is_null {
+                p.coerce_null_to
+            } else if is_empty {
+                p.coerce_empty_to
+            } else {
+                CoerceAction::Keep
+            };
+
+            match action {
+                CoerceAction::Keep => {}
+                CoerceAction::Omit => {
+                    map.remove(&p.name);
+                }
+                CoerceAction::Null => {
+                    map.insert(p.name.clone(), Value::Null);
+                }
+                CoerceAction::Error => {
+                    let shape = if is_null { "null" } else { "empty" };
+                    return Err(format!(
+                        "Parameter '{}' is {} and the tool config rejects this shape \
+                         (coerce_{}_to = \"error\"). Adjust the call or change the rule.",
+                        p.name,
+                        shape,
+                        if is_null { "null" } else { "empty" }
+                    ));
+                }
+            }
+        }
+
+        Ok(Value::Object(map))
     }
 
     async fn execute_http(&self, params: &Value) -> Result<ToolResult> {
@@ -252,7 +388,11 @@ impl Tool for DynamicTool {
         self.def.requires_approval
     }
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
-        let params = self.extract_params(&input);
+        let raw_params = self.extract_params(&input);
+        let params = match self.coerce_params(raw_params) {
+            Ok(p) => p,
+            Err(msg) => return Ok(ToolResult::error(msg)),
+        };
         tracing::info!(
             "Executing dynamic tool '{}' ({:?})",
             self.def.name,
@@ -314,6 +454,8 @@ mod tests {
                 description: "Msg".into(),
                 required: true,
                 default: None,
+                coerce_empty_to: Default::default(),
+                coerce_null_to: Default::default(),
             }],
         );
         let schema = tool.input_schema();
@@ -333,6 +475,8 @@ mod tests {
                     description: "".into(),
                     required: true,
                     default: None,
+                    coerce_empty_to: Default::default(),
+                    coerce_null_to: Default::default(),
                 },
                 ParamDef {
                     name: "count".into(),
@@ -340,6 +484,8 @@ mod tests {
                     description: "".into(),
                     required: false,
                     default: Some(serde_json::json!(3)),
+                    coerce_empty_to: Default::default(),
+                    coerce_null_to: Default::default(),
                 },
             ],
         );
@@ -394,6 +540,8 @@ url = "https://example.com/health"
                     description: "".into(),
                     required: true,
                     default: None,
+                    coerce_empty_to: Default::default(),
+                    coerce_null_to: Default::default(),
                 }],
             }],
         };

@@ -158,7 +158,9 @@ required = true
 # enabled          (optional)  true/false, default: true
 # requires_approval (optional) true/false, default: true
 # timeout_secs     (optional)  Execution timeout, default: 30
-# params           (optional)  Parameter definitions (name, type, description, required)
+# params           (optional)  Parameter definitions
+#                              (name, type, description, required, default,
+#                               coerce_empty_to, coerce_null_to)
 #
 # HTTP-specific:
 #   method         "GET", "POST", "PUT", "DELETE", etc.
@@ -166,4 +168,27 @@ required = true
 #   headers        Key-value map, supports {{param}} substitution
 #
 # Shell-specific:
-#   command         Shell command with {{param}} template variables
+#   command         Shell command with {{param}} template variables.
+#                   Supports `{{#name}}…{{/name}}` conditional blocks
+#                   that render only when `name` is present in the
+#                   coerced params — pair with `coerce_empty_to = "omit"`
+#                   so a flag like `{{#ids}}--ids {{ids}}{{/ids}}` is
+#                   dropped entirely when `ids` is an empty array.
+#
+# Per-parameter coercion (issue #95):
+#   coerce_empty_to  (optional) What to do when the value is an empty
+#                               array, empty object, or empty string.
+#                               One of: "keep" (default), "omit",
+#                               "null", "error".
+#   coerce_null_to   (optional) What to do when the value is JSON
+#                               `null`. Same enum as coerce_empty_to.
+#
+#   Example:
+#
+#     [[tools.params]]
+#     name = "ids"
+#     type = "array"
+#     coerce_empty_to = "omit"  # [] drops the key from the payload
+#     coerce_null_to  = "error" # null → tool returns an error
+#
+#   Existing tools without these fields keep the pre-coercion behavior.

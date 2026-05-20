@@ -209,6 +209,8 @@ impl ToolManageTool {
                         } else {
                             Some(p["default"].clone())
                         },
+                        coerce_empty_to: Default::default(),
+                        coerce_null_to: Default::default(),
                     })
                 })
                 .collect()

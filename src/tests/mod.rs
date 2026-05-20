@@ -43,6 +43,7 @@ pub mod context_window_test;
 pub mod cron_test;
 pub mod custom_provider_test;
 pub mod daemon_health_test;
+pub mod dynamic_tool_coerce_test;
 pub mod evolve_test;
 pub mod exa_search_test;
 pub mod gemini_fetch_test;
