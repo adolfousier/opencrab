@@ -890,11 +890,14 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
                 if app.ps.models.is_empty() {
                     vec![
                         ("[Type]", "Model name"),
-                        ("[Enter]", if app.ps.custom_model.is_empty() {
-                            "Load live models"
-                        } else {
-                            "Use this model"
-                        }),
+                        (
+                            "[Enter]",
+                            if app.ps.custom_model.is_empty() {
+                                "Load live models"
+                            } else {
+                                "Use this model"
+                            },
+                        ),
                     ]
                 } else {
                     vec![

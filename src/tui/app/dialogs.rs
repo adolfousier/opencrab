@@ -409,8 +409,8 @@ impl App {
                             None,
                         )
                         .await;
-                        let _ = sender
-                            .send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
+                        let _ =
+                            sender.send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
                     });
                 }
                 self.ps.models.clear();
@@ -829,8 +829,7 @@ impl App {
                 if self.ps.models.is_empty() {
                     if self.ps.custom_model.trim().is_empty() {
                         // Trigger live fetch — switches into LIST mode.
-                        let provider_idx =
-                            self.ps.selected_provider.min(CUSTOM_PROVIDER_IDX);
+                        let provider_idx = self.ps.selected_provider.min(CUSTOM_PROVIDER_IDX);
                         let api_key = crate::config::Config::load().ok().and_then(|c| {
                             c.providers
                                 .active_custom()

@@ -5,6 +5,128 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.24] - 2026-05-20
+
+13 commits since v0.3.23. Feature release. Adds two new built-in tools
+(`rename_session` and `follow_up_question`), per-parameter value coercion
+for dynamic tools, a polished custom-provider onboarding flow with
+paste-by-default and typed-not-in-list model acceptance, automatic session
+title generation from the first user message, a Gemini schema sanitizer
+that strips `additionalProperties` before send, per-session model override
+so the TUI surfaces match the wire, and CLI config/keys path corrections.
+
+NEW TOOLS (3 commits)
+
+`rename_session` lets the agent proactively rename the current session
+with a short, descriptive title. Useful for long-running conversations
+where the default title (e.g., "Telegram: <chat>") becomes unhelpful
+after 20 messages. The tool takes a single `title` parameter (3–8 words)
+and updates the session row in the database. Channels see the new title
+on the next message.
+
+`follow_up_question` lets the agent ask the user a discrete-choice
+question with up to 8 button options. Implemented across all four
+channels: Telegram (inline keyboard), Discord (button components),
+Slack (Block Kit actions), and WhatsApp (quick replies). Returns the
+chosen option string so the agent can branch on the answer. Closes #94.
+
+The Tool System catalog documentation was updated to reflect both new
+tools plus other long-missing built-ins.
+
+- c3af2f0d feat(tools): add rename_session for agent-driven session titles
+- 73c4f4f3 feat(tools): follow_up_question — agent asks user a multi-choice question via channel buttons (#94)
+- 8beef289 docs: update Tool System catalog for rename_session, follow_up_question, and other long-missing built-ins
+
+DYNAMIC TOOL ENHANCEMENTS (1 commit)
+
+Issue #95: dynamic tools defined in `tools.toml` had no way to handle
+empty-string or null parameters gracefully. A shell tool with an optional
+`--verbose` flag would either get an empty string (breaking the command)
+or require the agent to always pass a value.
+
+Add per-parameter `coerce_empty_to` and `coerce_null_to` fields. When a
+parameter arrives as `""` or `null`, the dynamic tool engine substitutes
+the configured value before rendering the command template. Example:
+`coerce_empty_to = "false"` turns an omitted boolean flag into a safe
+default. Closes #95.
+
+- ca12036a feat(tools/dynamic): per-param coerce_empty_to / coerce_null_to for tools.toml (closes #95)
+
+CUSTOM PROVIDER UX (3 commits)
+
+The `/models` dialog for adding custom OpenAI-compatible providers got
+three quality-of-life improvements:
+
+1. **Paste-by-default**: when the API key input is focused, `Ctrl+V` (or
+   `Cmd+V` on macOS) pastes from the clipboard immediately. No need to
+   tab into the field first.
+
+2. **Enter-to-load**: typing a model name that isn't in the fetched list
+   and pressing Enter now adds it to the list and selects it. Previously
+   the dialog rejected unknown models and forced the user to pick from
+   the (sometimes incomplete) auto-fetched list.
+
+3. **Field refresh**: after saving a new custom provider, the per-provider
+   fields (base URL, API key, model list) now refresh immediately so the
+   user sees their saved values without restarting the dialog.
+
+- 13abf59e feat(tui/models): paste-by-default + Enter-to-load for custom providers
+- fab13d28 feat(tui/models): accept typed-not-in-list custom model and merge with fetched list
+- 2838bb7c fix(tui/models): refresh per-provider fields after saving a new custom provider
+
+SESSION MANAGEMENT (1 commit)
+
+New sessions created via `/new` or `Ctrl+N` now get an auto-generated
+title based on the first user message. A lightweight non-streaming LLM
+call fires in the background (separate from the main context) and
+updates the session title in the database. The title never enters
+conversation context, so it doesn't pollute the message history. If the
+LLM call fails, the session keeps the default "New Chat" title.
+
+- 9b82cb6c feat(tui): auto-generate session title from first user message
+
+PROVIDER FIXES (2 commits)
+
+Issue #99: Gemini rejected tool definitions that included
+`additionalProperties` in their JSON schemas (a common pattern for
+open-ended object parameters). The Gemini provider now strips
+`additionalProperties` from all tool schemas before sending them to the
+API. Closes #99.
+
+Issue #97: the TUI's model display showed the global default model even
+when a per-session override was active. The override was being sent on
+the wire but not reflected in the status bar. The agent service now
+propagates the session-level override to all display surfaces so the
+user sees what's actually being used.
+
+- 006267cd fix(gemini): strip additionalProperties from tool schemas before send (closes #99)
+- 44fdd9b3 fix(agent): per-session model override so display surfaces match the wire (#97 fix)
+
+CLI FIXES (2 commits)
+
+Issue #96: `open crabs doctor`, `open crabs init`, and other CLI
+subcommands were using hardcoded paths (`~/.opencrabs/config.toml`,
+`~/.opencrabs/keys.toml`) instead of respecting the `--config` and
+`--keys` flags. This broke workflows where users kept their config in a
+non-default location.
+
+Correct all CLI entry points to resolve paths from the parsed args
+first, falling back to the default only when no flag is provided. Also
+fixed a type mismatch where `keys_path` was a `PathBuf` but the config
+struct expected `Option<PathBuf>`, and added the missing `Config` import
+in `cli/commands.rs`.
+
+- 9d0b34c2 fix(cli): use correct config/keys paths (doctor, init, args) (#96)
+- 9c440e8d fix(cli): type-correct fixup for #96 (keys_path PathBuf, system_config_path Option, missing Config import)
+
+STYLE (1 commit)
+
+Rustfmt auto-formatted the `version_sort_key` chain in `model_fetch.rs`
+for consistency with the rest of the codebase.
+
+- 7fdf5ae1 style: rustfmt version_sort_key chain in model_fetch.rs
+
+
 ## [0.3.23] - 2026-05-19
 
 7 commits since v0.3.22. Hotfix release. Restores phantom detection,
@@ -895,6 +1017,7 @@ provider and context budget.
 - **Raise think-tag safety valve** — long Qwen reasoning blocks no longer
   get partially stripped by the tag filter.
 
+[0.3.24]: https://github.com/adolfousier/opencrabs/compare/v0.3.23...v0.3.24
 [0.3.23]: https://github.com/adolfousier/opencrabs/compare/v0.3.22...v0.3.23
 [0.3.22]: https://github.com/adolfousier/opencrabs/compare/v0.3.21...v0.3.22
 [0.3.21]: https://github.com/adolfousier/opencrabs/compare/v0.3.20...v0.3.21
