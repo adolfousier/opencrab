@@ -2909,12 +2909,18 @@ impl AgentService {
                          was NOT executed. Do not write JSON, do not write markdown code blocks, \
                          do not describe what you would do. Invoke the tool through the \
                          provider's structured tool-call API (the same channel the function \
-                         schemas were registered on). Pick the correct tool and call it now.]"
+                         schemas were registered on). Pick the correct tool and call it now. \
+                         If the task is already completed and you've reported the results, \
+                         respond with a short confirmation (e.g., 'Done.', 'Fixed.', 'Committed.') \
+                         and stop — do not run additional tool calls to verify work you already did.]"
                     } else {
                         "[System: You described changes to files but did not execute any tool \
                          calls. Your response contained action language and file paths but zero \
                          tool_use blocks. Execute the actual tool calls NOW. Do not narrate — \
-                         call the tools.]"
+                         call the tools. If the task is already completed and you've reported \
+                         the results, respond with a short confirmation (e.g., 'Done.', 'Fixed.', \
+                         'Committed.') and stop — do not run additional tool calls to verify work \
+                         you already did.]"
                     };
                     context.add_message(Message::user(nudge.to_string()));
                     continue;
@@ -2954,7 +2960,10 @@ impl AgentService {
                         "[System: You have repeatedly described actions without invoking any \
                          tool. STOP narrating. Pick the correct tool and call it now through the \
                          structured tool-call API. No JSON, no markdown code blocks, only a real \
-                         tool_use block.]"
+                         tool_use block. If the task is already completed and you've reported the \
+                         results, respond with a short confirmation (e.g., 'Done.', 'Fixed.', \
+                         'Committed.') and stop — do not run additional tool calls to verify work \
+                         you already did.]"
                             .to_string(),
                     ));
                     continue;
