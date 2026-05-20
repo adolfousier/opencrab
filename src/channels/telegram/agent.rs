@@ -347,6 +347,17 @@ impl TelegramAgent {
                                         Err(e) => (false, format!("⚠️ {}", e)),
                                     }
                                 };
+                                // Persist full model (provider/model) if switch succeeded
+                                if switch_ok {
+                                    if let Some(p) = provider_name {
+                                        let full = format!("{}/{}", p, model_name);
+                                        if let Ok(mut cfg) = crate::config::Config::load() {
+                                            cfg.full_model = Some(full.clone());
+                                            let _ = cfg.save().await;
+                                            let _ = crate::config::CONFIG_RELOADER.reload().await;
+                                        }
+                                    }
+                                }
                                 let _ = bot.answer_callback_query(&query.id).await;
                                 if let Some(msg) = &query.message {
                                     use teloxide::payloads::EditMessageTextSetters;
