@@ -397,7 +397,7 @@ pub async fn run() -> Result<()> {
 
     // Auto-generate config.toml if API keys exist in env but no config file yet.
     // This prevents the onboarding wizard from triggering when .env is already set up.
-    let config_path = dirs::config_dir().map(|d| d.join("opencrabs").join("config.toml"));
+    let config_path = Config::system_config_path();
     if let Some(ref path) = config_path
         && !path.exists()
         && config.has_any_api_key()
