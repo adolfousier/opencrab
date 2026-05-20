@@ -1,7 +1,8 @@
 //! Issue #99: Gemini's `function_declarations[].parameters` validator
-//! rejects `additionalProperties`. The sanitizer in `gemini.rs` must
-//! strip that key from every nested object before the request goes on
-//! the wire, while leaving the rest of the schema intact.
+//! rejects `additionalProperties`, `default`, and `example` keys.
+//! The sanitizer in `gemini.rs` must strip those keys from every
+//! nested object before the request goes on the wire, while leaving
+//! the rest of the schema intact.
 
 use crate::brain::provider::gemini::sanitize_schema_for_gemini;
 use serde_json::json;
@@ -142,4 +143,80 @@ fn http_tool_schema_smoke_test() {
     );
     assert!(s.contains("\"url\""), "url field preserved");
     assert!(s.contains("\"headers\""), "headers field preserved");
+}
+
+#[test]
+fn strips_default_values() {
+    // Real-world case: grep.rs has `"default": false/true` on several fields.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "pattern": {
+                "type": "string",
+                "description": "Pattern to search for",
+                "default": "test"
+            },
+            "case_insensitive": {
+                "type": "boolean",
+                "default": false
+            },
+            "line_numbers": {
+                "type": "boolean",
+                "default": true
+            }
+        },
+        "required": ["pattern"]
+    });
+    let out = sanitize_schema_for_gemini(schema.clone());
+    // default values must be gone
+    assert!(out.get("default").is_none());
+    assert_eq!(out["properties"]["pattern"].get("default"), None);
+    assert_eq!(out["properties"]["case_insensitive"].get("default"), None);
+    assert_eq!(out["properties"]["line_numbers"].get("default"), None);
+    // But the rest of the schema must survive
+    assert_eq!(out["properties"]["pattern"]["type"], "string");
+    assert_eq!(out["properties"]["pattern"]["description"], "Pattern to search for");
+    assert_eq!(out["properties"]["case_insensitive"]["type"], "boolean");
+    assert_eq!(out["properties"]["line_numbers"]["type"], "boolean");
+}
+
+#[test]
+fn strips_example_values() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "example": "Alice"
+            },
+            "age": {
+                "type": "integer",
+                "example": 42
+            }
+        }
+    });
+    let out = sanitize_schema_for_gemini(schema);
+    assert!(out["properties"]["name"].get("example").is_none());
+    assert!(out["properties"]["age"].get("example").is_none());
+    assert_eq!(out["properties"]["name"]["type"], "string");
+    assert_eq!(out["properties"]["age"]["type"], "integer");
+}
+
+#[test]
+fn strips_default_and_additionalproperties_together() {
+    // Regression: ensure both keys are stripped when both are present
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "headers": {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "default": {}
+            }
+        }
+    });
+    let out = sanitize_schema_for_gemini(schema);
+    let s = serde_json::to_string(&out).unwrap();
+    assert!(!s.contains("additionalProperties"), "additionalProperties must be stripped");
+    assert!(!s.contains("\"default\""), "default must be stripped");
 }
