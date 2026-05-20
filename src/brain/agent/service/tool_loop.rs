@@ -267,9 +267,58 @@ impl AgentService {
         });
         let context_window = self.context_limit_for_session(session_id);
 
+        // Check emptiness before move for auto-title trigger
+        let is_first_message = all_db_messages.is_empty();
+
         // Load from last compaction point — find the last CONTEXT COMPACTION marker
         // and only load messages from there forward. No arbitrary trimming.
         let mut db_messages = Self::messages_from_last_compaction(all_db_messages);
+
+        // Auto-title: fire a one-shot background LLM call for fresh sessions.
+        // This request is completely separate from the main context — it never
+        // enters the conversation history or the LLM context for the real response.
+        if is_first_message
+            && session
+                .title
+                .as_deref()
+                .map(|t| t == "New Chat" || t.is_empty())
+                .unwrap_or(true)
+        {
+            let title_provider = self.provider_for_session(session_id);
+            let title_model = model_name.clone();
+            let title_msg = user_message.chars().take(500).collect::<String>();
+            let session_svc = SessionService::new(self.context.clone());
+            tokio::spawn(async move {
+                let title_request = LLMRequest::new(
+                    title_model,
+                    vec![Message::user(format!(
+                        "Generate a concise session title (3-7 words) based on this user message. \
+                         Return ONLY the title text, nothing else. No quotes, no punctuation at the end.\n\n\
+                         Message: {}",
+                        title_msg
+                    ))],
+                );
+                match title_provider.complete(title_request).await {
+                    Ok(response) => {
+                        let title_text = Self::extract_text_from_response(&response);
+                        let title = title_text.trim().trim_matches('"').trim_matches('\'');
+                        if !title.is_empty() {
+                            let final_title = if title.len() > 60 {
+                                title[..60].to_string()
+                            } else {
+                                title.to_string()
+                            };
+                            let _ = session_svc
+                                .update_session_title(session_id, Some(final_title))
+                                .await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("Auto-title generation failed: {}", e);
+                    }
+                }
+            });
+        }
 
         // Detect CLI + local provider once (neither changes during the loop).
         //
