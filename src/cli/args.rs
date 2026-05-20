@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use super::{commands, cron, ui};
+use crate::config::Config;
 
 /// OpenCrabs - High-Performance Terminal AI Orchestration Agent
 #[derive(Parser, Debug)]

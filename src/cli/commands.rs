@@ -208,10 +208,8 @@ pub(crate) async fn cmd_doctor(config: &crate::config::Config) -> Result<()> {
 
     // 2. Keys file
     let keys_path = crate::config::keys_path();
-    if let Some(ref p) = keys_path
-        && p.exists()
-    {
-        println!("  ✅ Keys file: {}", p.display());
+    if keys_path.exists() {
+        println!("  ✅ Keys file: {}", keys_path.display());
         pass += 1;
     } else {
         println!("  ⚠️  Keys file: not found (API keys stored in config.toml or env vars)");
@@ -467,7 +465,8 @@ pub(crate) async fn cmd_init(_config: &crate::config::Config, force: bool) -> Re
 
     println!("🦀 OpenCrabs Configuration Initialization\n");
 
-    let config_path = Config::system_config_path();
+    let config_path = Config::system_config_path()
+        .unwrap_or_else(|| crate::config::opencrabs_home().join("config.toml"));
 
     // Check if config already exists
     if config_path.exists() && !force {
