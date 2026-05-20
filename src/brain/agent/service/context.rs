@@ -535,10 +535,14 @@ The summary above is NOT sufficient for implementation work.
             )
         };
 
-        // Keep recent messages within 55% of max_tokens (below the 65% budget
-        // threshold so hard-truncation never fires immediately after compaction).
-        let keep_budget = (context.max_tokens as f64 * 0.55) as usize;
-        context.compact_with_summary(summary_with_context, keep_budget);
+        // After compaction, the summary IS the conversation — it's prepended
+        // as a single user message and the agent picks up from there. We do
+        // NOT preserve a raw pre-compaction tail: the summary already embeds
+        // the recent-snapshot prose, so keeping the raw tail on top would
+        // just duplicate ~half the window and defeat the whole purpose of
+        // compacting. Pass 0 so `compact_with_summary` clears everything
+        // and prepends just the summary.
+        context.compact_with_summary(summary_with_context, 0);
 
         tracing::info!(
             "Context compacted: now at {:.0}% ({} tokens)",
