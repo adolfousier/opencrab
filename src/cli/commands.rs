@@ -467,10 +467,7 @@ pub(crate) async fn cmd_init(_config: &crate::config::Config, force: bool) -> Re
 
     println!("🦀 OpenCrabs Configuration Initialization\n");
 
-    let config_path = dirs::config_dir()
-        .context("Could not determine config directory")?
-        .join("opencrabs")
-        .join("config.toml");
+    let config_path = Config::system_config_path();
 
     // Check if config already exists
     if config_path.exists() && !force {
