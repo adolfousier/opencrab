@@ -175,7 +175,10 @@ fn strips_default_values() {
     assert_eq!(out["properties"]["line_numbers"].get("default"), None);
     // But the rest of the schema must survive
     assert_eq!(out["properties"]["pattern"]["type"], "string");
-    assert_eq!(out["properties"]["pattern"]["description"], "Pattern to search for");
+    assert_eq!(
+        out["properties"]["pattern"]["description"],
+        "Pattern to search for"
+    );
     assert_eq!(out["properties"]["case_insensitive"]["type"], "boolean");
     assert_eq!(out["properties"]["line_numbers"]["type"], "boolean");
 }
@@ -217,6 +220,9 @@ fn strips_default_and_additionalproperties_together() {
     });
     let out = sanitize_schema_for_gemini(schema);
     let s = serde_json::to_string(&out).unwrap();
-    assert!(!s.contains("additionalProperties"), "additionalProperties must be stripped");
+    assert!(
+        !s.contains("additionalProperties"),
+        "additionalProperties must be stripped"
+    );
     assert!(!s.contains("\"default\""), "default must be stripped");
 }

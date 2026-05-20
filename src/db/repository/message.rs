@@ -80,6 +80,12 @@ impl MessageRepository {
                         m.cost,
                         m.thinking,
                     ],
+                )?;
+
+                // Touch session's updated_at so /sessions sorts by last interaction
+                conn.execute(
+                    "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+                    params![m.created_at.timestamp(), m.session_id.to_string()],
                 )
             })
             .await
