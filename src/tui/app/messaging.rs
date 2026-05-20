@@ -1717,7 +1717,10 @@ impl App {
             expanded: false,
             tool_group: None,
         });
-        self.scroll_offset = 0;
+        // Only scroll to bottom if user hasn't scrolled up manually
+        if self.auto_scroll {
+            self.scroll_offset = 0;
+        }
     }
 
     /// Send a message to the agent

@@ -692,11 +692,18 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         app.auto_scroll
     );
 
-    // Track rendered line count for future reference.
-    // Streaming compensation was REMOVED: it accumulated wrapped thinking lines
-    // on every render cycle, inflating scroll_offset by 1000+ in seconds.
-    // New content appends at the bottom, so scrolled-up viewports don't need
-    // compensation — the user's position in history stays stable naturally.
+    // Compensate for new content appended at the bottom while user is scrolled up.
+    // Only add the delta (new lines since last render), not the total, to avoid
+    // the accumulation bug that inflated scroll_offset by 1000+ in seconds.
+    if !app.auto_scroll && app.scroll_offset > 0 && total_lines > app.prev_rendered_lines {
+        let delta = total_lines - app.prev_rendered_lines;
+        app.scroll_offset += delta;
+        tracing::debug!(
+            "[SCROLL] compensated: scroll_offset += {} (delta), now {}",
+            delta,
+            app.scroll_offset
+        );
+    }
     app.prev_rendered_lines = total_lines;
 
     // Only 1 row of top padding (Borders::NONE + Padding::new(1,1,1,0)); no border rows
