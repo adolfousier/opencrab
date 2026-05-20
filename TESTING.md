@@ -221,7 +221,8 @@ cargo test --all-features
 | **Usage — Categorizer** | 4 | `src/usage/categorizer.rs` |
 | **Usage — Dashboard** | 6 | `src/usage/dashboard.rs` |
 | **Usage — Data** | 7 | `src/usage/data.rs` |
-| **Total** | **2,711** | +85 since last update: v0.3.24 release features — new tools (rename_session, follow_up_question), dynamic tool coercion params, custom provider paste-by-default, Gemini schema sanitization, Qwen provider expansion, brain file safety guards, phantom DB persistence. |
+| **Hashline Edit** | 51 | `src/tests/hashline_test.rs` (28 integration tests) + inline unit tests in `hash.rs` (9) and `types.rs` (14) — hash computation, HashRef parsing, edit operations (replace/append/prepend), hash mismatch detection, overlap detection, batch edits, prefix stripping, read_file hashline mode |
+| **Total** | **2,762** | +51 hashline tests: hash-anchored edit tool with FNV-1a content hashes, 3 operation types, stale-line rejection, and read_file hashline mode. |
 
 ---
 

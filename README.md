@@ -1920,9 +1920,10 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 #### File & Code
 | Tool | Description |
 |------|-------------|
-| `read_file` | Read file contents with syntax awareness |
+| `read_file` | Read file contents with syntax awareness. Supports `hashline=true` mode for hash-anchored editing |
 | `write_file` | Create or modify files |
 | `edit_file` | Precise text replacements in files |
+| `hashline_edit` | Hash-anchored file editing — reference lines by 2-char content hashes instead of reproducing text. Eliminates stale-line errors and reduces token usage, especially for weaker models. Use `read_file` with `hashline=true` to get line references |
 | `bash` | Execute shell commands — **any CLI tool on your system works** |
 | `ls` | List directory contents |
 | `glob` | Find files matching patterns |
@@ -2987,7 +2988,7 @@ opencrabs/
 │   │   └── runner.rs     # TUI event loop
 │   ├── utils/            # Utilities (retry, etc.)
 │   ├── migrations/       # SQLite migrations
-│   ├── tests/            # 2,711 tests (see TESTING.md)
+│   ├── tests/            # 2,762 tests (see TESTING.md)
 │   ├── benches/          # Criterion benchmarks
 │   ├── assets/           # Icons, screenshots, visual assets
 │   ├── scripts/          # Build and setup scripts
@@ -3014,7 +3015,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (2,711 tests across 70+ modules; 13 filesystem-touching
+# Run tests (2,762 tests across 70+ modules; 13 filesystem-touching
 # profile tests are #[ignore]d to keep the default run fast — opt in
 # with `cargo test --all-features -- --ignored` when needed)
 cargo test --all-features
