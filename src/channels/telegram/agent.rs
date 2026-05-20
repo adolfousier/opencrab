@@ -5,7 +5,7 @@
 use super::TelegramState;
 use super::handler::handle_message;
 use crate::brain::agent::AgentService;
-use crate::config::Config;
+use crate::config::{Config, CONFIG_RELOADER};
 use crate::db::ChannelMessageRepository;
 use crate::services::{ServiceContext, SessionService};
 use std::collections::HashMap;
