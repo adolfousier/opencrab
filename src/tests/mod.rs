@@ -130,3 +130,13 @@ pub mod voice_onboarding_test;
 pub mod voice_stt_dispatch_test;
 pub mod wait_agent_resolver_test;
 pub mod whatsapp_state_test;
+
+// Channel handler tests (moved from inline #[cfg(test)] modules)
+pub mod channel_commands_test;
+pub mod discord_handler_test;
+pub mod slack_handler_test;
+pub mod telegram_handler_test;
+pub mod voice_local_tts_test;
+pub mod voice_local_whisper_test;
+pub mod voice_service_test;
+pub mod whatsapp_handler_test;

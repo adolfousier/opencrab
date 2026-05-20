@@ -501,7 +501,7 @@ fn resample_i16(samples: &[i16], from_rate: u32, to_rate: u32) -> Result<Vec<i16
 }
 
 /// Encode i16 PCM samples at 48 kHz into an OGG/Opus byte stream (RFC 7845).
-fn encode_ogg_opus(samples: &[i16], sample_rate: u32) -> Result<Vec<u8>> {
+pub(crate) fn encode_ogg_opus(samples: &[i16], sample_rate: u32) -> Result<Vec<u8>> {
     use opusic_sys::*;
 
     const FRAME_MS: usize = 20; // 20 ms frames
@@ -606,7 +606,7 @@ fn encode_ogg_opus(samples: &[i16], sample_rate: u32) -> Result<Vec<u8>> {
 }
 
 /// Build a WAV file from i16 PCM (for local preview playback only, not Telegram).
-fn pcm_to_wav(samples: &[i16], sample_rate: u32) -> Result<Vec<u8>> {
+pub(crate) fn pcm_to_wav(samples: &[i16], sample_rate: u32) -> Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(44 + samples.len() * 2);
     let data_len = (samples.len() * 2) as u32;
     let file_len = 36 + data_len;
@@ -705,7 +705,7 @@ impl OggWriter {
 }
 
 /// OGG CRC-32 (polynomial 0x04C11DB7, no pre/post inversion).
-fn ogg_crc32(data: &[u8]) -> u32 {
+pub(crate) fn ogg_crc32(data: &[u8]) -> u32 {
     static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
     let table = TABLE.get_or_init(|| {
         let mut t = [0u32; 256];
@@ -796,7 +796,7 @@ pub async fn preview_voice(voice_id: &str) -> Result<()> {
 
 /// Clean text for TTS synthesis — strip markdown formatting markers only,
 /// keep all actual content so Piper reads the full response naturally.
-fn clean_for_tts(text: &str) -> String {
+pub(crate) fn clean_for_tts(text: &str) -> String {
     let mut s = text.to_string();
 
     // Strip code fence markers (```lang and ```) but keep the code content
@@ -905,7 +905,7 @@ fn clean_for_tts(text: &str) -> String {
 }
 
 /// Extract sample_rate from piper voice config JSON.
-fn extract_sample_rate(config: &str) -> Option<u32> {
+pub(crate) fn extract_sample_rate(config: &str) -> Option<u32> {
     let needle = "\"sample_rate\"";
     let pos = config.find(needle)?;
     let rest = &config[pos + needle.len()..];
@@ -913,108 +913,4 @@ fn extract_sample_rate(config: &str) -> Option<u32> {
     let after_colon = rest[colon + 1..].trim_start();
     let num_end = after_colon.find(|c: char| !c.is_ascii_digit())?;
     after_colon[..num_end].parse().ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_sample_rate() {
-        let config = r#"{"sample_rate": 22050, "other": "stuff"}"#;
-        assert_eq!(extract_sample_rate(config), Some(22050));
-    }
-
-    #[test]
-    fn test_extract_sample_rate_missing() {
-        let config = r#"{"other": "stuff"}"#;
-        assert_eq!(extract_sample_rate(config), None);
-    }
-
-    #[test]
-    fn test_find_piper_voice() {
-        assert!(find_piper_voice("ryan").is_some());
-        assert!(find_piper_voice("amy").is_some());
-        assert!(find_piper_voice("nonexistent").is_none());
-    }
-
-    #[test]
-    fn test_piper_voice_urls() {
-        let ryan = find_piper_voice("ryan").unwrap();
-        assert!(ryan.onnx_url().contains("en_US"));
-        assert!(ryan.onnx_url().contains("ryan"));
-        assert!(ryan.onnx_url().ends_with(".onnx"));
-        assert!(ryan.config_url().ends_with(".onnx.json"));
-    }
-
-    #[test]
-    fn test_clean_for_tts_strips_markdown() {
-        let input = "**Hello** *world*! Check `this_code` out.";
-        let cleaned = clean_for_tts(input);
-        assert_eq!(cleaned, "Hello world! Check this_code out.");
-    }
-
-    #[test]
-    fn test_clean_for_tts_keeps_code_block_content() {
-        let input = "Here is code:\n\n```rust\nfn main() {}\n```\n\nDone.";
-        let cleaned = clean_for_tts(input);
-        assert!(cleaned.contains("fn main()"));
-        assert!(cleaned.contains("Done."));
-        assert!(!cleaned.contains("```"));
-    }
-
-    #[test]
-    fn test_clean_for_tts_collapses_whitespace() {
-        let input = "Hello    world   how   are  you";
-        let cleaned = clean_for_tts(input);
-        assert_eq!(cleaned, "Hello world how are you");
-    }
-
-    #[test]
-    fn test_clean_for_tts_collapses_punctuation() {
-        let input = "Wow!!! Really??? Yes...";
-        let cleaned = clean_for_tts(input);
-        assert_eq!(cleaned, "Wow! Really? Yes.");
-    }
-
-    #[test]
-    fn test_clean_for_tts_strips_headers() {
-        let input = "## My Header\nSome text";
-        let cleaned = clean_for_tts(input);
-        assert_eq!(cleaned, "My Header. Some text");
-    }
-
-    #[test]
-    fn test_clean_for_tts_strips_bullets() {
-        let input = "- First item\n- Second item";
-        let cleaned = clean_for_tts(input);
-        assert_eq!(cleaned, "First item. Second item");
-    }
-
-    #[test]
-    fn test_default_voice_is_ryan() {
-        assert_eq!(PIPER_VOICES[0].id, "ryan");
-    }
-
-    #[test]
-    fn test_pcm_to_wav() {
-        let samples = vec![0i16, 100, -100, 32767, -32768];
-        let wav = pcm_to_wav(&samples, 22050).unwrap();
-        assert_eq!(&wav[..4], b"RIFF");
-        assert_eq!(&wav[8..12], b"WAVE");
-    }
-
-    #[test]
-    fn test_pcm_to_opus_produces_ogg() {
-        // 960 samples = one 20ms frame at 48kHz
-        let samples = vec![0i16; 960];
-        let ogg = encode_ogg_opus(&samples, 48000).unwrap();
-        assert_eq!(&ogg[..4], b"OggS", "Should produce OGG container");
-    }
-
-    #[test]
-    fn test_ogg_crc32() {
-        // Known test vector: CRC of empty data should be 0
-        assert_eq!(ogg_crc32(&[]), 0);
-    }
 }
