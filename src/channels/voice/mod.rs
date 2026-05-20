@@ -18,7 +18,7 @@ pub mod local_whisper;
 #[cfg(feature = "local-tts")]
 pub mod local_tts;
 
-mod service;
+pub(crate) mod service;
 
 pub use service::{synthesize, synthesize_speech, transcribe, transcribe_audio};
 

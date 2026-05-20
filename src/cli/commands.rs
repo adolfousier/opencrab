@@ -701,6 +701,7 @@ pub(crate) async fn cmd_run(
     tool_registry.register(Arc::new(ReadTool));
     tool_registry.register(Arc::new(WriteTool));
     tool_registry.register(Arc::new(EditTool));
+    tool_registry.register(Arc::new(crate::brain::tools::hashline::HashlineEditTool));
     tool_registry.register(Arc::new(BashTool));
     tool_registry.register(Arc::new(LsTool));
     tool_registry.register(Arc::new(GlobTool));

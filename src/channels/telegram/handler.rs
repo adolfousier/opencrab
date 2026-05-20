@@ -2848,7 +2848,7 @@ pub(crate) fn markdown_to_telegram_html(text: &str) -> String {
 }
 
 /// Escape HTML special characters
-fn escape_html(text: &str) -> String {
+pub(crate) fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -3130,77 +3130,4 @@ pub(crate) fn make_approval_callback(
             }
         })
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_short_message() {
-        let chunks = split_message("hello", 4096);
-        assert_eq!(chunks, vec!["hello"]);
-    }
-
-    #[test]
-    fn test_split_long_message() {
-        let text = "a\n".repeat(3000);
-        let chunks = split_message(&text, 4096);
-        assert!(chunks.len() >= 2);
-        for chunk in &chunks {
-            assert!(chunk.len() <= 4096);
-        }
-        let joined: String = chunks.into_iter().collect();
-        assert_eq!(joined, text);
-    }
-
-    #[test]
-    fn test_split_no_newlines() {
-        let text = "a".repeat(5000);
-        let chunks = split_message(&text, 4096);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), 4096);
-        assert_eq!(chunks[1].len(), 904);
-    }
-
-    #[test]
-    fn test_markdown_to_telegram_html_bold() {
-        let html = markdown_to_telegram_html("**hello**");
-        assert!(html.contains("<b>hello</b>"));
-    }
-
-    #[test]
-    fn test_markdown_to_telegram_html_code_block() {
-        let md = "```rust\nfn main() {}\n```";
-        let html = markdown_to_telegram_html(md);
-        assert!(html.contains("<pre><code"));
-        assert!(html.contains("fn main()"));
-        assert!(html.contains("</code></pre>"));
-    }
-
-    #[test]
-    fn test_markdown_to_telegram_html_inline_code() {
-        let html = markdown_to_telegram_html("use `cargo build`");
-        assert!(html.contains("<code>cargo build</code>"));
-    }
-
-    #[test]
-    fn test_escape_html() {
-        assert_eq!(
-            escape_html("<script>alert('xss')</script>"),
-            "&lt;script&gt;alert('xss')&lt;/script&gt;"
-        );
-        assert_eq!(escape_html("a & b"), "a &amp; b");
-    }
-
-    #[test]
-    fn test_img_marker_format() {
-        // Verify the <<IMG:path>> marker format used for photo attachments
-        let path = "/tmp/tg_photo_abc.jpg";
-        let caption = "What's in this image?";
-        let text = format!("<<IMG:{}>> {}", path, caption);
-        assert!(text.starts_with("<<IMG:"));
-        assert!(text.contains(path));
-        assert!(text.contains(caption));
-    }
 }

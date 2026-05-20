@@ -74,7 +74,7 @@ fn extract_reply_context(msg: &Message) -> Option<String> {
 }
 
 /// Extract plain text from a WhatsApp message.
-fn extract_text(msg: &Message) -> Option<String> {
+pub(crate) fn extract_text(msg: &Message) -> Option<String> {
     let msg = unwrap_message(msg);
     // Try conversation field first (simple text messages)
     if let Some(ref conv) = msg.conversation
@@ -99,7 +99,7 @@ fn extract_text(msg: &Message) -> Option<String> {
 }
 
 /// Check if the message has a downloadable image.
-fn has_image(msg: &Message) -> bool {
+pub(crate) fn has_image(msg: &Message) -> bool {
     let msg = unwrap_message(msg);
     msg.image_message.is_some()
 }
@@ -1123,64 +1123,5 @@ pub(crate) async fn handle_message(
                 .send_message(info.source.chat.clone(), error_msg)
                 .await;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_short_message() {
-        let chunks = split_message("hello", 4000);
-        assert_eq!(chunks, vec!["hello"]);
-    }
-
-    #[test]
-    fn test_split_long_message() {
-        let text = "a\n".repeat(3000);
-        let chunks = split_message(&text, 4000);
-        assert!(chunks.len() >= 2);
-        for chunk in &chunks {
-            assert!(chunk.len() <= 4000);
-        }
-        let joined: String = chunks.into_iter().collect();
-        assert_eq!(joined, text);
-    }
-
-    #[test]
-    fn test_extract_text_conversation() {
-        let msg = Message {
-            conversation: Some("hello".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(extract_text(&msg), Some("hello".to_string()));
-    }
-
-    #[test]
-    fn test_extract_text_image_caption() {
-        let msg = Message {
-            image_message: Some(Box::new(waproto::whatsapp::message::ImageMessage {
-                caption: Some("look at this".to_string()),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-        assert_eq!(extract_text(&msg), Some("look at this".to_string()));
-    }
-
-    #[test]
-    fn test_has_image() {
-        let text_msg = Message {
-            conversation: Some("hi".to_string()),
-            ..Default::default()
-        };
-        assert!(!has_image(&text_msg));
-
-        let img_msg = Message {
-            image_message: Some(Box::default()),
-            ..Default::default()
-        };
-        assert!(has_image(&img_msg));
     }
 }

@@ -277,9 +277,8 @@ impl AgentService {
         });
         let context_window = self.context_limit_for_session(session_id);
 
-        // Capture message count before move for auto-title trigger
-        let is_first_message = all_db_messages.is_empty();
-        let has_messages = all_db_messages.len() >= 1;
+        // Capture count before move for auto-title trigger
+        let db_message_count = all_db_messages.len();
 
         // Load from last compaction point — find the last CONTEXT COMPACTION marker
         // and only load messages from there forward. No arbitrary trimming.
@@ -290,7 +289,7 @@ impl AgentService {
         // context-based titles on ALL channels (TUI, Telegram, Discord, Slack, etc).
         // Fires once per session; subsequent turns won't re-trigger because the title
         // will no longer be empty/default.
-        if has_messages
+        if db_message_count >= 1
             && session
                 .title
                 .as_deref()
@@ -314,13 +313,8 @@ impl AgentService {
                 match title_provider.complete(title_request).await {
                     Ok(response) => {
                         let title_text = Self::extract_text_from_response(&response);
-                        let title = title_text.trim().trim_matches('"').trim_matches('\'');
-                        if !title.is_empty() {
-                            let final_title = if title.len() > 60 {
-                                title[..60].to_string()
-                            } else {
-                                title.to_string()
-                            };
+                        let final_title = Self::clean_auto_title(&title_text);
+                        if !final_title.is_empty() {
                             let _ = session_svc
                                 .update_session_title(session_id, Some(final_title))
                                 .await;
@@ -2912,12 +2906,18 @@ impl AgentService {
                          was NOT executed. Do not write JSON, do not write markdown code blocks, \
                          do not describe what you would do. Invoke the tool through the \
                          provider's structured tool-call API (the same channel the function \
-                         schemas were registered on). Pick the correct tool and call it now.]"
+                         schemas were registered on). Pick the correct tool and call it now. \
+                         If the task is already completed and you've reported the results, \
+                         respond with a short confirmation (e.g., 'Done.', 'Fixed.', 'Committed.') \
+                         and stop — do not run additional tool calls to verify work you already did.]"
                     } else {
                         "[System: You described changes to files but did not execute any tool \
                          calls. Your response contained action language and file paths but zero \
                          tool_use blocks. Execute the actual tool calls NOW. Do not narrate — \
-                         call the tools.]"
+                         call the tools. If the task is already completed and you've reported \
+                         the results, respond with a short confirmation (e.g., 'Done.', 'Fixed.', \
+                         'Committed.') and stop — do not run additional tool calls to verify work \
+                         you already did.]"
                     };
                     context.add_message(Message::user(nudge.to_string()));
                     continue;
@@ -2957,7 +2957,10 @@ impl AgentService {
                         "[System: You have repeatedly described actions without invoking any \
                          tool. STOP narrating. Pick the correct tool and call it now through the \
                          structured tool-call API. No JSON, no markdown code blocks, only a real \
-                         tool_use block.]"
+                         tool_use block. If the task is already completed and you've reported the \
+                         results, respond with a short confirmation (e.g., 'Done.', 'Fixed.', \
+                         'Committed.') and stop — do not run additional tool calls to verify work \
+                         you already did.]"
                             .to_string(),
                     ));
                     continue;

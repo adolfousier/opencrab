@@ -274,8 +274,13 @@ impl AgentContext {
             running += t;
             keep_count += 1;
         }
-        // Keep at least 2 messages (most recent pair) if possible
-        keep_count = keep_count.max(2.min(self.messages.len()));
+        // Caller can request a clean compaction (only the summary survives)
+        // by passing `keep_token_budget == 0` — in that case we honour zero
+        // kept messages. Otherwise keep at least the most recent pair so
+        // valid API request structure is preserved.
+        if keep_token_budget > 0 {
+            keep_count = keep_count.max(2.min(self.messages.len()));
+        }
         let mut keep_start = self.messages.len().saturating_sub(keep_count);
 
         // Advance past any leading orphaned tool_result messages in the kept slice.

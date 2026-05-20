@@ -3,6 +3,7 @@
 //! Allows reading file contents from the filesystem.
 
 use super::error::{Result, ToolError, validate_file_path};
+use super::hashline::hash::{format_hashline, hash_line};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,10 @@ struct ReadInput {
     /// Optional: Number of lines to read
     #[serde(skip_serializing_if = "Option::is_none")]
     line_count: Option<usize>,
+
+    /// Optional: Output with hashline tags (LINE#ID|content format)
+    #[serde(default)]
+    hashline: Option<bool>,
 }
 
 #[async_trait]
@@ -63,6 +68,10 @@ impl Tool for ReadTool {
                     "type": "integer",
                     "description": "Optional: Number of lines to read from start_line",
                     "minimum": 1
+                },
+                "hashline": {
+                    "type": "boolean",
+                    "description": "Optional: Output lines with hash tags (LINE#ID|content format) for use with hashline_edit tool. Default: false."
                 }
             },
             "required": ["path"]
@@ -106,6 +115,8 @@ impl Tool for ReadTool {
 
         let is_large_file = file_size > LARGE_FILE_THRESHOLD;
 
+        let is_hashline = input.hashline.unwrap_or(false);
+
         // For large files or line-range requests, use buffered streaming
         let (output, total_lines, warning) =
             if input.start_line.is_some() || input.line_count.is_some() || is_large_file {
@@ -117,6 +128,23 @@ impl Tool for ReadTool {
                 let line_count = contents.lines().count();
                 (contents, line_count, None)
             };
+
+        // Apply hashline formatting if requested
+        let output = if is_hashline {
+            let file_start_line = input.start_line.unwrap_or(0) + 1; // convert 0-indexed to 1-indexed
+            output
+                .lines()
+                .enumerate()
+                .map(|(i, line)| {
+                    let line_num = file_start_line + i;
+                    let hash = hash_line(line_num, line);
+                    format_hashline(line_num, &hash, line)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            output
+        };
 
         let output_len = output.len();
         let mut result = ToolResult::success(output)

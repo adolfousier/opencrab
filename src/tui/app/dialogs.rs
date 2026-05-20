@@ -1774,6 +1774,11 @@ impl App {
             }
             self.agent_service
                 .swap_provider_for_session(session.id, provider_arc.clone());
+
+            // Update context_max_tokens to reflect the new provider's context window.
+            // Without this, the footer shows stale values (e.g., 128k) after switching
+            // to a model with a different limit (e.g., 200k).
+            self.context_max_tokens = self.agent_service.context_limit_for_session(session.id);
         }
         // Cache the provider instance for fast session switching
         self.provider_cache

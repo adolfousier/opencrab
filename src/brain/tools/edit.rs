@@ -342,7 +342,7 @@ impl Tool for EditTool {
 
 /// Build a compact unified-style diff between old and new content.
 /// Shows only changed lines with `-`/`+` prefixes (capped at 40 diff lines).
-fn build_edit_diff(old: &str, new: &str) -> String {
+pub(crate) fn build_edit_diff(old: &str, new: &str) -> String {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
 
