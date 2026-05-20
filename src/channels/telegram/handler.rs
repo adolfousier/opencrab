@@ -1685,8 +1685,10 @@ pub(crate) async fn handle_message(
         })
     };
 
-    // Build Telegram-native approval callback for this session
+    // Build Telegram-native approval + follow-up-question callbacks
+    // for this session
     let approval_cb = make_approval_callback(telegram_state.clone());
+    let question_cb = super::follow_up_question::make_question_callback(telegram_state.clone());
 
     // ── Agent call ────────────────────────────────────────────────────────────
     let cancel_token = tokio_util::sync::CancellationToken::new();
@@ -1704,6 +1706,7 @@ pub(crate) async fn handle_message(
             Some(cancel_token.clone()),
             Some(approval_cb),
             Some(progress_cb.clone()),
+            Some(question_cb),
             "telegram",
             Some(&chat_id_str),
         )
@@ -1733,6 +1736,7 @@ pub(crate) async fn handle_message(
                         .register_session_chat(new_id, msg.chat.id.0)
                         .await;
                     let approval_cb2 = make_approval_callback(telegram_state.clone());
+                    let question_cb2 = super::follow_up_question::make_question_callback(telegram_state.clone());
                     let cancel_token2 = tokio_util::sync::CancellationToken::new();
                     telegram_state
                         .store_cancel_token(new_id, cancel_token2.clone())
@@ -1746,6 +1750,7 @@ pub(crate) async fn handle_message(
                             Some(cancel_token2),
                             Some(approval_cb2),
                             Some(progress_cb),
+                            Some(question_cb2),
                             "telegram",
                             Some(&chat_id_str),
                         )
@@ -2433,6 +2438,7 @@ pub(crate) async fn resume_session(
         .await;
 
     let chat_id_str = chat_id.0.to_string();
+    let question_cb = super::follow_up_question::make_question_callback(telegram_state.clone());
     let result = agent
         .send_message_with_tools_and_callback(
             session_id,
@@ -2441,6 +2447,7 @@ pub(crate) async fn resume_session(
             Some(cancel_token.clone()),
             None, // no approval callback for resume
             Some(progress_cb),
+            Some(question_cb),
             "telegram",
             Some(&chat_id_str),
         )

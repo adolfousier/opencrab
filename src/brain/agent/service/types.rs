@@ -35,6 +35,27 @@ pub type ApprovalCallback = Arc<
         + Sync,
 >;
 
+/// Info passed to the question callback when the agent calls
+/// `follow_up_question` to ask the user a discrete-choice question
+/// mid-task.
+#[derive(Debug, Clone)]
+pub struct FollowUpQuestionInfo {
+    pub session_id: Uuid,
+    pub question: String,
+    pub options: Vec<String>,
+}
+
+/// Type alias for the question callback. Channels (Telegram, Discord,
+/// etc.) build one of these to render the question as native buttons
+/// and resolve with the chosen option once the user clicks. Returns
+/// the selected option string (or a free-text reply when the channel
+/// allows it).
+pub type QuestionCallback = Arc<
+    dyn Fn(FollowUpQuestionInfo) -> Pin<Box<dyn Future<Output = Result<String>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Progress event emitted during tool execution
 #[derive(Debug, Clone)]
 pub enum ProgressEvent {

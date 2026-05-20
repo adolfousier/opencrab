@@ -665,6 +665,7 @@ pub(crate) async fn handle_message(
     };
 
     let discord_chat_id = msg.channel_id.get().to_string();
+    let question_cb = super::follow_up_question::make_question_callback(discord_state.clone());
     let result = agent
         .send_message_with_tools_and_display(
             session_id,
@@ -674,6 +675,7 @@ pub(crate) async fn handle_message(
             Some(cancel_token),
             Some(approval_cb),
             Some(progress_cb),
+            Some(question_cb),
             "discord",
             Some(&discord_chat_id),
         )

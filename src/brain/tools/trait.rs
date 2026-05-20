@@ -39,6 +39,14 @@ pub struct ToolExecutionContext {
 
     /// Service context — tools use this to create SessionService for /usage stats.
     pub service_context: Option<crate::services::ServiceContext>,
+
+    /// Callback the `follow_up_question` tool uses to render its
+    /// question with native buttons (Telegram inline keyboard, Discord
+    /// components, Slack actions, TUI overlay, WhatsApp numbered text)
+    /// and block until the user picks an option. None on channels that
+    /// have no interactive surface (A2A) or sessions where the caller
+    /// did not wire one.
+    pub question_callback: Option<crate::brain::agent::QuestionCallback>,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -67,6 +75,7 @@ impl ToolExecutionContext {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
+            question_callback: None,
         }
     }
 

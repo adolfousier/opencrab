@@ -673,7 +673,8 @@ pub(crate) async fn cmd_run(
             tools::{
                 bash::BashTool, brave_search::BraveSearchTool, code_exec::CodeExecTool,
                 config_tool::ConfigTool, context::ContextTool, doc_parser::DocParserTool,
-                edit::EditTool, exa_search::ExaSearchTool, glob::GlobTool, grep::GrepTool,
+                edit::EditTool, exa_search::ExaSearchTool, follow_up_question::FollowUpQuestionTool,
+                glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
                 notebook::NotebookEditTool, plan_tool::PlanTool, read::ReadTool,
                 registry::ToolRegistry, rename_session::RenameSessionTool,
@@ -724,6 +725,9 @@ pub(crate) async fn cmd_run(
     tool_registry.register(Arc::new(SlashCommandTool));
     // Session rename — agent can update the current session's title
     tool_registry.register(Arc::new(RenameSessionTool));
+    // Follow-up question — agent asks the user a multi-choice question
+    // mid-task and blocks until they click an option button.
+    tool_registry.register(Arc::new(FollowUpQuestionTool));
     // EXA search: always available (free via MCP), uses direct API if key is set
     let exa_key = config
         .providers
@@ -1047,7 +1051,8 @@ pub(crate) async fn cmd_agent_interactive(
             tools::{
                 bash::BashTool, brave_search::BraveSearchTool, code_exec::CodeExecTool,
                 config_tool::ConfigTool, context::ContextTool, doc_parser::DocParserTool,
-                edit::EditTool, exa_search::ExaSearchTool, glob::GlobTool, grep::GrepTool,
+                edit::EditTool, exa_search::ExaSearchTool, follow_up_question::FollowUpQuestionTool,
+                glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
                 notebook::NotebookEditTool, plan_tool::PlanTool, read::ReadTool,
                 registry::ToolRegistry, rename_session::RenameSessionTool,
@@ -1088,6 +1093,9 @@ pub(crate) async fn cmd_agent_interactive(
     tool_registry.register(Arc::new(ConfigTool));
     tool_registry.register(Arc::new(SlashCommandTool));
     tool_registry.register(Arc::new(RenameSessionTool));
+    // Follow-up question — agent asks the user a multi-choice question
+    // mid-task and blocks until they click an option button.
+    tool_registry.register(Arc::new(FollowUpQuestionTool));
     let exa_key = config
         .providers
         .web_search

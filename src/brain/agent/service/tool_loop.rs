@@ -149,6 +149,7 @@ impl AgentService {
         cancel_token: Option<CancellationToken>,
         override_approval_callback: Option<ApprovalCallback>,
         override_progress_callback: Option<ProgressCallback>,
+        override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
     ) -> Result<AgentResponse> {
@@ -177,6 +178,13 @@ impl AgentService {
         let has_progress_override = override_progress_callback.is_some();
         let progress_callback: Option<ProgressCallback> =
             override_progress_callback.or_else(|| self.progress_callback.clone());
+        // Effective question callback: per-call override wins over the
+        // service-level fallback. Channels with native button surfaces
+        // pass their own callback per message; everyone else passes
+        // None and the `follow_up_question` tool returns a graceful
+        // "no interactive surface" error.
+        let question_callback: Option<QuestionCallback> =
+            override_question_callback.or_else(|| self.question_callback.clone());
 
         // Notify TUI when a remote channel starts/finishes processing so it can
         // block concurrent sends on the same session and avoid garbled display.
@@ -198,6 +206,7 @@ impl AgentService {
                 approval_callback,
                 has_progress_override,
                 progress_callback,
+                question_callback,
             )
             .await;
 
@@ -234,6 +243,7 @@ impl AgentService {
         approval_callback: Option<ApprovalCallback>,
         has_progress_override: bool,
         progress_callback: Option<ProgressCallback>,
+        question_callback: Option<QuestionCallback>,
     ) -> Result<AgentResponse> {
         // Get or create session
         let session_service = SessionService::new(self.context.clone());
@@ -590,6 +600,7 @@ impl AgentService {
         tool_context.ssh_callback = self.ssh_callback.clone();
         tool_context.shared_working_directory = Some(Arc::clone(&self.working_directory));
         tool_context.service_context = Some(self.context.clone());
+        tool_context.question_callback = question_callback.clone();
 
         // Tool execution loop
         let mut iteration = 0;
@@ -3307,6 +3318,7 @@ impl AgentService {
                                         .shared_working_directory
                                         .clone(),
                                     service_context: tool_context.service_context.clone(),
+                                    question_callback: tool_context.question_callback.clone(),
                                 };
 
                                 // Execute the tool with approved context, racing against cancel

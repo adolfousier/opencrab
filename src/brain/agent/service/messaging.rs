@@ -147,6 +147,7 @@ impl AgentService {
             cancel_token,
             None,
             None,
+            None,
             "tui",
             None,
         )
@@ -154,14 +155,17 @@ impl AgentService {
     }
 
     /// Send a message with per-call callback overrides and channel routing.
-    #[allow(clippy::too_many_arguments)]
     ///
-    /// `override_approval_callback` and `override_progress_callback` take
-    /// precedence over the service-level callbacks (used by Telegram, Discord, etc.).
-    /// Pass `None` to fall back to the service-level callback.
+    /// `override_*_callback` parameters take precedence over the service-level
+    /// callbacks (used by channels). Pass `None` to fall back to the
+    /// service-level callback. `override_question_callback` is the
+    /// per-call surface for the `follow_up_question` tool — channels
+    /// with native button surfaces construct one per message; non-
+    /// interactive callers (CLI, RSI, A2A) pass None.
     ///
     /// `channel` and `channel_chat_id` identify the originating channel for
     /// crash recovery routing.
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_message_with_tools_and_callback(
         &self,
         session_id: Uuid,
@@ -170,6 +174,7 @@ impl AgentService {
         cancel_token: Option<CancellationToken>,
         override_approval_callback: Option<ApprovalCallback>,
         override_progress_callback: Option<ProgressCallback>,
+        override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
     ) -> Result<AgentResponse> {
@@ -181,6 +186,7 @@ impl AgentService {
             cancel_token,
             override_approval_callback,
             override_progress_callback,
+            override_question_callback,
             channel,
             channel_chat_id,
         )
@@ -195,10 +201,9 @@ impl AgentService {
     /// chat history shown in the TUI mirrors what the user actually typed
     /// in the channel.
     ///
-    /// Channels (Telegram, Discord, Slack, WhatsApp, Trello) pass the raw
-    /// user text — or a lightly prefixed `Sender: text` for groups/non-DM
-    /// scenarios — as `display_text` so opening the session in OpenCrabs
-    /// no longer surfaces the LLM-only metadata brackets.
+    /// `override_question_callback` is the per-call surface for the
+    /// `follow_up_question` tool — same semantics as the callback-only
+    /// shim above.
     #[allow(clippy::too_many_arguments)]
     pub async fn send_message_with_tools_and_display(
         &self,
@@ -209,6 +214,7 @@ impl AgentService {
         cancel_token: Option<CancellationToken>,
         override_approval_callback: Option<ApprovalCallback>,
         override_progress_callback: Option<ProgressCallback>,
+        override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
     ) -> Result<AgentResponse> {
@@ -220,6 +226,7 @@ impl AgentService {
             cancel_token,
             override_approval_callback,
             override_progress_callback,
+            override_question_callback,
             channel,
             channel_chat_id,
         )

@@ -288,6 +288,22 @@ pub async fn on_interaction(
                     continue;
                 }
 
+                // Follow-up question click: `q:<id>:<idx>`. Resolves
+                // the pending question with the chosen option string.
+                if let Some(rest) = action_id.strip_prefix("q:") {
+                    let mut parts = rest.splitn(2, ':');
+                    let q_id = parts.next().unwrap_or("");
+                    let idx: usize = parts.next().unwrap_or("").parse().unwrap_or(usize::MAX);
+                    let resolved = state.slack_state.resolve_pending_question(q_id, idx).await;
+                    tracing::info!(
+                        "Slack follow_up_question resolved: id={} idx={} answer={:?}",
+                        q_id,
+                        idx,
+                        resolved
+                    );
+                    continue;
+                }
+
                 let (approved, always, yolo, id) =
                     if let Some(id) = action_id.strip_prefix("approve:") {
                         (true, false, false, id.to_string())
@@ -1464,6 +1480,8 @@ async fn handle_message(
         })
     };
 
+    let question_cb =
+        super::follow_up_question::make_question_callback(state.slack_state.clone());
     let result = state
         .agent
         .send_message_with_tools_and_display(
@@ -1474,6 +1492,7 @@ async fn handle_message(
             Some(cancel_token),
             Some(approval_cb),
             Some(progress_cb),
+            Some(question_cb),
             "slack",
             Some(&channel_id),
         )

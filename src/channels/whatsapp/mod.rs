@@ -4,6 +4,7 @@
 //! allowlisted phone numbers to the AgentService and replying with responses.
 
 mod agent;
+pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod store;
 
@@ -14,6 +15,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+/// One pending `follow_up_question` on WhatsApp: oneshot half + the
+/// option list to translate the user's numeric reply back into the
+/// chosen option string.
+type PendingWhatsAppQuestion = (tokio::sync::oneshot::Sender<String>, Vec<String>);
 use whatsapp_rust::client::Client;
 
 /// Approval choices mirroring the TUI's Yes / Always (session) / YOLO (permanent) / No.
@@ -42,6 +48,11 @@ pub struct WhatsAppState {
     /// (text or button tap) is interpreted as Yes/Always/No instead of
     /// being routed to the agent.
     pub pending_approvals: Mutex<HashMap<String, tokio::sync::oneshot::Sender<WaApproval>>>,
+    /// Pending follow-up questions keyed by phone: oneshot sender for
+    /// the chosen option string plus the option list. WhatsApp's
+    /// ButtonsMessage is deprecated, so we render the question as a
+    /// numbered text list and parse the user's next numeric reply.
+    pub pending_questions: Mutex<HashMap<String, PendingWhatsAppQuestion>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Broadcast channel for QR codes — onboarding subscribes to this.
@@ -67,6 +78,7 @@ impl WhatsAppState {
             client: Mutex::new(None),
             owner_jid: Mutex::new(None),
             pending_approvals: Mutex::new(HashMap::new()),
+            pending_questions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             qr_tx,
             connected_tx,
@@ -96,6 +108,45 @@ impl WhatsAppState {
         } else {
             None
         }
+    }
+
+    /// Register a pending follow-up question for a phone number.
+    pub async fn register_pending_question(
+        &self,
+        phone: String,
+        tx: tokio::sync::oneshot::Sender<String>,
+        options: Vec<String>,
+    ) {
+        self.pending_questions
+            .lock()
+            .await
+            .insert(phone, (tx, options));
+    }
+
+    /// Resolve a pending question by parsing the user's text reply as
+    /// a 1-based option number. Returns the chosen option if the phone
+    /// had a pending question and the index is in range.
+    pub async fn resolve_pending_question(
+        &self,
+        phone: &str,
+        reply: &str,
+    ) -> Option<String> {
+        let parsed: usize = reply.trim().parse().ok()?;
+        if parsed == 0 {
+            return None;
+        }
+        let idx = parsed - 1;
+        let (tx, options) = self.pending_questions.lock().await.remove(phone)?;
+        let answer = options.get(idx)?.clone();
+        let _ = tx.send(answer.clone());
+        Some(answer)
+    }
+
+    /// Check whether a phone has a pending question without consuming
+    /// it. Used by the message router to decide if the incoming text
+    /// should be parsed as an answer rather than forwarded to the agent.
+    pub async fn has_pending_question(&self, phone: &str) -> bool {
+        self.pending_questions.lock().await.contains_key(phone)
     }
 
     /// Broadcast a QR code to any subscribed onboarding UI.

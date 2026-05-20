@@ -318,6 +318,7 @@ async fn execute_job(
                 Box::pin(async { Ok((true, false)) })
             })),
             None, // no progress callback
+            None, // no follow_up_question surface for cron
             "cron",
             None,
         )

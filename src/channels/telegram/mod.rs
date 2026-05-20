@@ -4,6 +4,7 @@
 //! allowlisted users to the AgentService and replying with responses.
 
 mod agent;
+pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 
 pub use agent::TelegramAgent;
@@ -13,6 +14,12 @@ use teloxide::prelude::Bot;
 use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+/// One pending `follow_up_question`: the oneshot half that the
+/// `follow_up_question` tool is awaiting, plus the option list the
+/// click handler uses to translate the button-index callback data
+/// back into the chosen option string.
+type PendingQuestion = (oneshot::Sender<String>, Vec<String>);
 
 /// Shared Telegram state for proactive messaging.
 ///
@@ -31,6 +38,14 @@ pub struct TelegramState {
     chat_sessions: Mutex<HashMap<i64, Uuid>>,
     /// Pending approval channels: approval_id → oneshot sender of (approved, always).
     pending_approvals: Mutex<HashMap<String, oneshot::Sender<(bool, bool)>>>,
+    /// Pending follow-up questions: question_id → (oneshot sender of
+    /// the chosen option string, list of options keyed by index). The
+    /// inline-keyboard callback data only carries the option index (to
+    /// stay under Telegram's 64-byte callback-data limit), so the
+    /// option list is stashed here for the click handler to resolve
+    /// `idx -> option string` before sending it back to the suspended
+    /// `follow_up_question` tool.
+    pending_questions: Mutex<HashMap<String, PendingQuestion>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
 }
@@ -50,6 +65,7 @@ impl TelegramState {
             session_chats: Mutex::new(HashMap::new()),
             chat_sessions: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
+            pending_questions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
         }
     }
@@ -123,6 +139,32 @@ impl TelegramState {
         } else {
             false
         }
+    }
+
+    /// Register a pending follow-up question by id. The click handler
+    /// later calls `resolve_pending_question(id, idx)` to deliver the
+    /// chosen option string from `options[idx]`.
+    pub async fn register_pending_question(
+        &self,
+        id: String,
+        tx: oneshot::Sender<String>,
+        options: Vec<String>,
+    ) {
+        self.pending_questions
+            .lock()
+            .await
+            .insert(id, (tx, options));
+    }
+
+    /// Resolve a pending follow-up question by option index. Returns
+    /// the chosen option string if the question was found and the
+    /// index is in range, otherwise None.
+    pub async fn resolve_pending_question(&self, id: &str, idx: usize) -> Option<String> {
+        let entry = self.pending_questions.lock().await.remove(id);
+        let (tx, options) = entry?;
+        let answer = options.get(idx)?.clone();
+        let _ = tx.send(answer.clone());
+        Some(answer)
     }
 
     /// Store a cancel token for a session (before starting agent call).

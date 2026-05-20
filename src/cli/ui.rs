@@ -32,7 +32,8 @@ async fn cmd_chat_inner(
                 analyze_image::AnalyzeImageTool, analyze_video::AnalyzeVideoTool, bash::BashTool,
                 brave_search::BraveSearchTool, code_exec::CodeExecTool, config_tool::ConfigTool,
                 context::ContextTool, doc_parser::DocParserTool, edit::EditTool,
-                exa_search::ExaSearchTool, generate_image::GenerateImageTool, glob::GlobTool,
+                exa_search::ExaSearchTool, follow_up_question::FollowUpQuestionTool,
+                generate_image::GenerateImageTool, glob::GlobTool,
                 grep::GrepTool, http::HttpClientTool, load_brain_file::LoadBrainFileTool,
                 ls::LsTool, memory_search::MemorySearchTool, notebook::NotebookEditTool,
                 plan_tool::PlanTool, provider_vision::ProviderVisionTool, read::ReadTool,
@@ -132,6 +133,9 @@ async fn cmd_chat_inner(
     tool_registry.register(Arc::new(SlashCommandTool));
     // Session rename — agent can update the current session's title
     tool_registry.register(Arc::new(RenameSessionTool));
+    // Follow-up question — agent asks the user a multi-choice question
+    // mid-task and blocks until they click an option button.
+    tool_registry.register(Arc::new(FollowUpQuestionTool));
     // EXA search: always available (free via MCP), uses direct API if key is set
     let exa_key = config
         .providers

@@ -367,6 +367,7 @@ mod send_input_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
+            question_callback: None,
         }
     }
 
@@ -519,6 +520,7 @@ mod close_agent_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
+            question_callback: None,
         }
     }
 
@@ -644,6 +646,7 @@ mod wait_agent_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
+            question_callback: None,
         }
     }
 
@@ -1259,6 +1262,7 @@ mod team_delete_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
+            question_callback: None,
         }
     }
 
@@ -1384,6 +1388,7 @@ mod team_broadcast_tool {
             ssh_callback: None,
             shared_working_directory: None,
             service_context: None,
+            question_callback: None,
         }
     }
 

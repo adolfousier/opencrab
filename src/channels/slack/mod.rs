@@ -4,6 +4,7 @@
 //! allowlisted users to the AgentService and replying with responses.
 
 mod agent;
+pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 
 pub use agent::SlackAgent;
@@ -14,6 +15,9 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+/// One pending `follow_up_question` on Slack: oneshot half + options.
+type PendingSlackQuestion = (oneshot::Sender<String>, Vec<String>);
 
 /// Shared Slack state for proactive messaging.
 ///
@@ -28,6 +32,11 @@ pub struct SlackState {
     session_channels: Mutex<HashMap<Uuid, String>>,
     /// Pending approval channels: approval_id → oneshot sender of (approved, always)
     pending_approvals: Mutex<HashMap<String, oneshot::Sender<(bool, bool)>>>,
+    /// Pending follow-up questions: question_id → (oneshot sender,
+    /// options). Same shape as the other channels — action_id only
+    /// carries the option index, the click handler maps it back via
+    /// the stored options list.
+    pending_questions: Mutex<HashMap<String, PendingSlackQuestion>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
 }
@@ -46,8 +55,32 @@ impl SlackState {
             owner_channel_id: Mutex::new(None),
             session_channels: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
+            pending_questions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Register a pending `follow_up_question`. The action-block click
+    /// handler resolves by option index.
+    pub async fn register_pending_question(
+        &self,
+        id: String,
+        tx: oneshot::Sender<String>,
+        options: Vec<String>,
+    ) {
+        self.pending_questions
+            .lock()
+            .await
+            .insert(id, (tx, options));
+    }
+
+    /// Resolve a pending question by option index. Returns the chosen
+    /// option string if the question + index are both valid.
+    pub async fn resolve_pending_question(&self, id: &str, idx: usize) -> Option<String> {
+        let (tx, options) = self.pending_questions.lock().await.remove(id)?;
+        let answer = options.get(idx)?.clone();
+        let _ = tx.send(answer.clone());
+        Some(answer)
     }
 
     /// Store the connected client, bot token, and optionally the owner's channel.

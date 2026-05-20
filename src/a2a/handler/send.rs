@@ -175,6 +175,9 @@ async fn process_task(
             Some(cancel_token),
             Some(approval_cb),
             None,
+            // A2A has no interactive user to render buttons to.
+            // follow_up_question surfaces an error if called.
+            None,
             "a2a",
             None,
         )
