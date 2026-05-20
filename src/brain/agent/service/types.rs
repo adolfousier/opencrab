@@ -250,4 +250,18 @@ impl AgentService {
 
         text
     }
+
+    /// Post-process an LLM-generated auto-title: trim whitespace, strip
+    /// surrounding quotes, and cap at 60 characters.
+    pub(crate) fn clean_auto_title(raw: &str) -> String {
+        let trimmed = raw.trim().trim_matches('"').trim_matches('\'');
+        if trimmed.is_empty() {
+            return String::new();
+        }
+        if trimmed.len() > 60 {
+            trimmed[..60].to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
 }

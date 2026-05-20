@@ -313,13 +313,8 @@ impl AgentService {
                 match title_provider.complete(title_request).await {
                     Ok(response) => {
                         let title_text = Self::extract_text_from_response(&response);
-                        let title = title_text.trim().trim_matches('"').trim_matches('\'');
-                        if !title.is_empty() {
-                            let final_title = if title.len() > 60 {
-                                title[..60].to_string()
-                            } else {
-                                title.to_string()
-                            };
+                        let final_title = Self::clean_auto_title(&title_text);
+                        if !final_title.is_empty() {
                             let _ = session_svc
                                 .update_session_title(session_id, Some(final_title))
                                 .await;
