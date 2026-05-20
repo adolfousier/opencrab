@@ -680,9 +680,9 @@ pub(crate) async fn cmd_run(
                 edit::EditTool, exa_search::ExaSearchTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
                 notebook::NotebookEditTool, plan_tool::PlanTool, read::ReadTool,
-                registry::ToolRegistry, session_search::SessionSearchTool,
-                slash_command::SlashCommandTool, task::TaskTool, web_search::WebSearchTool,
-                write::WriteTool,
+                registry::ToolRegistry, rename_session::RenameSessionTool,
+                session_search::SessionSearchTool, slash_command::SlashCommandTool,
+                task::TaskTool, web_search::WebSearchTool, write::WriteTool,
             },
         },
         db::Database,
@@ -726,6 +726,8 @@ pub(crate) async fn cmd_run(
     tool_registry.register(Arc::new(ConfigTool));
     // Slash command invocation (agent can call any slash command)
     tool_registry.register(Arc::new(SlashCommandTool));
+    // Session rename — agent can update the current session's title
+    tool_registry.register(Arc::new(RenameSessionTool));
     // EXA search: always available (free via MCP), uses direct API if key is set
     let exa_key = config
         .providers
@@ -1052,9 +1054,9 @@ pub(crate) async fn cmd_agent_interactive(
                 edit::EditTool, exa_search::ExaSearchTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
                 notebook::NotebookEditTool, plan_tool::PlanTool, read::ReadTool,
-                registry::ToolRegistry, session_search::SessionSearchTool,
-                slash_command::SlashCommandTool, task::TaskTool, web_search::WebSearchTool,
-                write::WriteTool,
+                registry::ToolRegistry, rename_session::RenameSessionTool,
+                session_search::SessionSearchTool, slash_command::SlashCommandTool,
+                task::TaskTool, web_search::WebSearchTool, write::WriteTool,
             },
         },
         db::Database,
@@ -1089,6 +1091,7 @@ pub(crate) async fn cmd_agent_interactive(
     tool_registry.register(Arc::new(SessionSearchTool::new(db.pool().clone())));
     tool_registry.register(Arc::new(ConfigTool));
     tool_registry.register(Arc::new(SlashCommandTool));
+    tool_registry.register(Arc::new(RenameSessionTool));
     let exa_key = config
         .providers
         .web_search
