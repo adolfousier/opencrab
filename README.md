@@ -1904,7 +1904,7 @@ A full example with all built-in providers (Anthropic, OpenAI, MiniMax, Google, 
 
 ## 🔧 Tool System
 
-OpenCrabs includes 30+ built-in tools. The AI can use these during conversation:
+OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 
 #### File & Code
 | Tool | Description |
@@ -1928,6 +1928,7 @@ OpenCrabs includes 30+ built-in tools. The AI can use these during conversation:
 | `brave_search` | Web search via Brave Search (set key in `keys.toml` — free $5/mo credits at brave.com/search/api) |
 | `http_request` | Make HTTP requests |
 | `memory_search` | Hybrid semantic search across past memory logs — FTS5 keyword + vector embeddings combined via RRF. Local GGUF, OpenAI-compatible API, or FTS5-only mode |
+| `session_search` | Hybrid FTS5 + vector search across every past session's message history. Same backends as `memory_search` |
 
 #### Image & Video
 | Tool | Description |
@@ -1952,9 +1953,14 @@ OpenCrabs includes 30+ built-in tools. The AI can use these during conversation:
 | `plan` | Create structured execution plans |
 | `config_manager` | Read/write config.toml and commands.toml at runtime (change settings, add/remove commands, reload config) |
 | `session_context` | Access session information |
+| `rename_session` | Rename the current session so `/sessions` shows a meaningful title instead of the channel default. Metadata-only, no approval required |
+| `follow_up_question` | Ask the user a multi-choice question via native channel buttons (Telegram, Discord, Slack inline buttons; WhatsApp numbered text fallback). Returns the chosen option string. Use only when you genuinely cannot proceed without picking from a short list |
 | `cron_manage` | Schedule recurring jobs — create, list, enable/disable, delete. Deliver results to any channel |
 | `a2a_send` | Send tasks to remote A2A-compatible agents via JSON-RPC 2.0 |
 | `tool_manage` | Manage runtime tools — list, add, remove, enable, disable, reload (`tools.toml`) |
+| `slash_command` | Invoke any installed slash command (`/help`, `/usage`, `/models`, `/sessions`, custom commands from `commands.toml`) directly from the agent |
+| `load_brain_file` | Load any brain context file from `~/.opencrabs/` on demand (USER.md, MEMORY.md, AGENTS.md, TOOLS.md, SECURITY.md, etc.) |
+| `write_opencrabs_file` | Write or edit any file under `~/.opencrabs/` (brain files, memory logs, commands.toml). Enforces append-only + dedup-aware shrink + `.bak` snapshots on the 9 protected brain files (SOUL/USER/AGENTS/TOOLS/CODE/SECURITY/MEMORY/BOOT/IDENTITY.md) |
 | `evolve` | Download latest release binary from GitHub and hot-restart (no Rust toolchain needed). Also runs automatically on startup and every 24h when `[agent] auto_update = true` (default), and via the `/evolve` slash command — both paths invoke the tool directly without the LLM, so they can't be dropped or refused by a provider |
 | `rebuild` | Build from source (`cargo build --release`) and hot-restart |
 

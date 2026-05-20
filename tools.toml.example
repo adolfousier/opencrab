@@ -128,19 +128,27 @@ type = "string"
 description = "Git branch to deploy"
 required = true
 
-# --- Built-in RSI Tools (no config needed) ---
+# --- Built-in tools (no config needed) ---
 #
-# OpenCrabs has 3 built-in Recursive Self-Improvement tools that work
-# out of the box — no tools.toml entry needed:
+# OpenCrabs ships 40+ compiled-in tools that appear automatically in
+# the LLM tool list — file/code (read_file, write_file, edit_file,
+# bash, ls, glob, grep, ...), search (memory_search, session_search,
+# web_search, exa_search, brave_search), channel I/O (telegram_send,
+# discord_send, slack_send, trello_send, channel_search, a2a_send),
+# agent/session (plan, task_manager, config_manager, cron_manage,
+# rename_session, follow_up_question, slash_command, load_brain_file,
+# write_opencrabs_file), and RSI (feedback_record, feedback_analyze,
+# self_improve). See the "Tool System" section in README.md for the
+# full catalog.
 #
-#   feedback_record   — Log observations (tool outcomes, user corrections, patterns)
-#   feedback_analyze  — Query the feedback ledger (summary, tool_stats, recent, failures)
-#   self_improve      — Propose/apply brain file changes (requires human approval)
+# Tool executions are auto-recorded to the feedback ledger — the agent
+# also calls feedback_record / feedback_analyze manually when it
+# notices patterns worth tracking.
 #
-# These are compiled-in tools, not dynamic tools. They appear automatically
-# in the LLM tool list. Tool executions are auto-recorded to the feedback
-# ledger — the agent also calls feedback_record/feedback_analyze manually
-# when it notices patterns worth tracking.
+# This file is only for DYNAMIC tools (HTTP and shell executors)
+# defined at runtime per project. The agent can also create, list,
+# enable/disable, and remove dynamic tools via the `tool_manage`
+# meta-tool — changes hot-reload without a restart.
 
 # --- Field Reference ---
 #
