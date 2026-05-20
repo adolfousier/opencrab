@@ -330,12 +330,12 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
     // static providers + custom_extra + "+ New Custom" + API key line + filter + models + footer + padding
     let provider_lines = CUSTOM_PROVIDER_IDX as u16 + custom_extra + 1; // static + customs + new custom
     // Custom providers: text fields + optional model list when fetched
-    // No models: Base URL(2) + API Key(2) + Model text(1) + Name(2) + Context Window(1) + spacing(2) + help(2) = 12
+    // No models (PASTE mode): Base URL(2) + API Key(2) + Model text(1) + paste hint(1) + Name(2) + Context Window(1) + spacing(2) + help(2) = 13
     // With models: Base URL(2) + API Key(2) + filter(1) + models + ↑↓ indicators(2) + Name(2) + Context Window(1) + spacing(1) + help(1) = 12 + models
     let visible_models = model_count.min(MAX_VISIBLE_MODELS);
     let has_more_indicators = model_count > MAX_VISIBLE_MODELS;
     let form_lines: u16 = if is_custom_selected && model_count == 0 {
-        12
+        13
     } else if is_custom_selected {
         // 11 base: Base URL(2) + API Key(2) + filter(1) + empty(1) + Name(1) + CtxWin(1) + empty(1) + help(1) + padding(1)
         // + visible models (capped at MAX_VISIBLE_MODELS for scrollable list)
@@ -690,10 +690,12 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
     const MAX_VISIBLE_MODELS: usize = 8;
 
     if is_custom && app.ps.models.is_empty() {
-        // Custom provider with no models fetched: free-text model name input
+        // Custom provider PASTE mode: free-text input for the model name.
+        // The user types or pastes a model name; pressing Enter on an
+        // empty input switches to LIST mode (live /v1/models fetch).
         let model_cursor = if model_focused { "█" } else { "" };
         let model_display = if app.ps.custom_model.is_empty() {
-            format!("enter model name (e.g. gpt-5-nano){}", model_cursor)
+            format!("type or paste model name{}", model_cursor)
         } else {
             format!("{}{}", app.ps.custom_model, model_cursor)
         };
@@ -717,6 +719,19 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
                 }),
             ),
         ]));
+        if model_focused {
+            let hint = if app.ps.custom_model.is_empty() {
+                "  press Enter to load live /v1/models from the provider"
+            } else {
+                "  press Enter to use this model, or clear it and press Enter for live list"
+            };
+            lines.push(Line::from(Span::styled(
+                hint,
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        }
     } else {
         // Non-custom: filter/search model list
         if model_focused {
@@ -871,7 +886,25 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
             ],
             1 => vec![("[Type]", "Base URL"), ("[Enter]", "Next")],
             2 => vec![("[Type]", "API Key"), ("[Enter]", "Next")],
-            3 => vec![("[Type]", "Model name"), ("[Enter]", "Next")],
+            3 => {
+                if app.ps.models.is_empty() {
+                    vec![
+                        ("[Type]", "Model name"),
+                        ("[Enter]", if app.ps.custom_model.is_empty() {
+                            "Load live models"
+                        } else {
+                            "Use this model"
+                        }),
+                    ]
+                } else {
+                    vec![
+                        ("[Type]", "Filter"),
+                        ("[↑/↓]", "Select"),
+                        ("[Enter]", "Use"),
+                        ("[Esc]", "Type custom"),
+                    ]
+                }
+            }
             4 => vec![("[Type]", "Provider name"), ("[Enter]", "Next")],
             5 => vec![("[Type]", "Context window (tokens)"), ("[Enter]", "Save")],
             _ => vec![],

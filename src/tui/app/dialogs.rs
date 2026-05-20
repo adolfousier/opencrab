@@ -236,20 +236,27 @@ impl App {
         self.ps.has_existing_key = api_key.is_some();
         self.ps.api_key_input.clear();
 
-        // Spawn async model fetch — dialog opens immediately, models arrive via event
-        let sender = self.event_sender();
-        tokio::spawn(async move {
-            let models = super::onboarding::fetch_provider_models(
-                provider_idx,
-                api_key.as_deref(),
-                None,
-                None,
-            )
-            .await;
-            let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
-        });
+        // Spawn async model fetch — dialog opens immediately, models arrive via event.
+        // Custom providers default to PASTE mode: skip the auto-fetch and let
+        // the user explicitly request the live /v1/models list by pressing
+        // Enter on an empty model field. This avoids overwriting a typed
+        // model with a stale list mid-input.
+        let is_custom_provider = provider_idx >= CUSTOM_PROVIDER_IDX;
+        if !is_custom_provider {
+            let sender = self.event_sender();
+            tokio::spawn(async move {
+                let models = super::onboarding::fetch_provider_models(
+                    provider_idx,
+                    api_key.as_deref(),
+                    None,
+                    None,
+                )
+                .await;
+                let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
+            });
+        }
 
-        // Clear models until fetch completes
+        // Clear models until fetch completes (or stays empty for custom)
         self.ps.models.clear();
 
         // Reset view state
@@ -270,9 +277,21 @@ impl App {
         use super::onboarding::PROVIDERS;
 
         let is_zhipu = self.ps.provider_id() == "zhipu";
+        let is_custom_field_3 =
+            self.ps.focused_field == 3 && self.ps.selected_provider >= CUSTOM_PROVIDER_IDX;
 
         if keys::is_cancel(&event) {
-            self.switch_mode(AppMode::Chat).await?;
+            // Custom field 3 in LIST mode: Esc drops back to PASTE mode
+            // (clears the fetched models so the renderer shows the
+            // free-text input) instead of closing the whole dialog. The
+            // user keeps their progress and can type/paste a model name.
+            if is_custom_field_3 && !self.ps.models.is_empty() {
+                self.ps.models.clear();
+                self.ps.model_filter.clear();
+                self.ps.selected_model = 0;
+            } else {
+                self.switch_mode(AppMode::Chat).await?;
+            }
         } else if event.code == crossterm::event::KeyCode::Tab {
             // Tab cycles through fields:
             // - Normal providers: provider(0) -> api_key(1) -> model(2) -> provider(0)
@@ -376,19 +395,27 @@ impl App {
                 } else {
                     None
                 };
-                let sender = self.event_sender();
-                tokio::spawn(async move {
-                    let models = super::onboarding::fetch_provider_models(
-                        provider_idx,
-                        api_key.as_deref(),
-                        zhipu_et.as_deref(),
-                        None,
-                    )
-                    .await;
-                    let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
-                });
+                // Custom providers default to PASTE mode: skip auto-fetch.
+                // The user requests /v1/models by pressing Enter on field 3
+                // with an empty input.
+                let is_custom_dest = provider_idx >= CUSTOM_PROVIDER_IDX;
+                if !is_custom_dest {
+                    let sender = self.event_sender();
+                    tokio::spawn(async move {
+                        let models = super::onboarding::fetch_provider_models(
+                            provider_idx,
+                            api_key.as_deref(),
+                            zhipu_et.as_deref(),
+                            None,
+                        )
+                        .await;
+                        let _ = sender
+                            .send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
+                    });
+                }
                 self.ps.models.clear();
                 self.ps.selected_model = 0;
+                self.ps.model_filter.clear();
             }
         } else if self.ps.focused_field == 1 && is_zhipu {
             // z.ai GLM endpoint type toggle (field 1)
@@ -467,6 +494,9 @@ impl App {
                         }
                     }
                     crossterm::event::KeyCode::Esc => {
+                        // Unreachable: the cancel branch at the top of
+                        // `handle_model_selector_key` intercepts Esc.
+                        // Kept as a no-op for clarity.
                         self.ps.model_filter.clear();
                         self.ps.selected_model = 0;
                     }
@@ -615,20 +645,9 @@ impl App {
                 // z.ai GLM: field 1 is endpoint type, move to field 2 (api_key)
                 self.ps.focused_field = 2;
             } else if self.ps.focused_field == 1 && is_custom {
-                // Custom provider: field 1 is base_url, move to field 2 (api_key)
-                // Trigger model fetch if base_url is set
-                if !self.ps.base_url.is_empty() {
-                    self.ps.models.clear();
-                    self.ps.selected_model = 0;
-                    self.ps.models = super::onboarding::fetch_provider_models(
-                        self.ps.selected_provider.min(CUSTOM_PROVIDER_IDX),
-                        None,
-                        None,
-                        Some(&self.ps.base_url),
-                    )
-                    .await;
-                    self.ps.merge_config_models_into_fetched();
-                }
+                // Custom provider: field 1 is base_url, move to field 2 (api_key).
+                // No auto-fetch — the user requests /v1/models explicitly
+                // on field 3 by pressing Enter on an empty input.
                 self.ps.focused_field = 2;
             } else if self.ps.focused_field == 1
                 && is_oauth_provider
@@ -759,18 +778,15 @@ impl App {
                 {
                     self.push_system_message(format!("Error: {}", e));
                 } else {
-                    // Fetch live models from the provider
-                    self.ps.models.clear();
                     self.ps.selected_model = 0;
+                    self.ps.model_filter.clear();
                     if is_custom {
-                        self.ps.models = super::onboarding::fetch_provider_models(
-                            provider_idx,
-                            api_key.as_deref(),
-                            None,
-                            Some(&self.ps.base_url),
-                        )
-                        .await;
+                        // Custom: stay in PASTE mode. User requests
+                        // /v1/models explicitly on field 3.
+                        self.ps.models.clear();
                     } else {
+                        // Non-custom (and zhipu): auto-fetch the live list.
+                        self.ps.models.clear();
                         let zhipu_et = if is_zhipu {
                             Some(if self.ps.zhipu_endpoint_type == 1 {
                                 "coding"
@@ -787,35 +803,61 @@ impl App {
                             None,
                         )
                         .await;
+                        self.ps.merge_config_models_into_fetched();
                     }
-                    self.ps.merge_config_models_into_fetched();
 
                     // Move to model field (field 2 for non-Custom, field 3 for Custom/zhipu)
                     self.ps.focused_field = if is_custom || is_zhipu { 3 } else { 2 };
                 }
             } else if is_custom && self.ps.focused_field == 3 {
-                // Custom: model field. Resolve the user's pick before
-                // advancing.
+                // Custom: model field has two modes selected by whether
+                // `self.ps.models` is empty:
                 //
-                // Three paths:
-                //   1. Models fetched and the filter matches at least
-                //      one entry → take filtered[selected_model] as
-                //      the chosen model.
-                //   2. Filter is non-empty but matches NO fetched
-                //      model → treat the filter text as a manual
-                //      model name. This lets the user paste a model
-                //      the provider returns but `/v1/models` doesn't
-                //      list (common with private deployments and
-                //      preview routes). We also append it to the
-                //      in-memory models list so the save below
-                //      persists it to `[providers.custom.X].models`
-                //      and the next fetch returns the typed name as
-                //      one of the choices.
-                //   3. Models list is empty (offline or fetch failed)
-                //      → `self.ps.custom_model` was already populated
-                //      via the free-text branch at lines 440-447, so
-                //      we just advance.
-                if !self.ps.models.is_empty() {
+                //   PASTE MODE (models empty): the input is free-text,
+                //   the user types or pastes a model name straight
+                //   into `custom_model`. Enter on an empty input
+                //   triggers a live /v1/models fetch and switches
+                //   into LIST mode. Enter on a non-empty input
+                //   accepts the typed value and advances.
+                //
+                //   LIST MODE (models non-empty): the user filters
+                //   the fetched list and Up/Down navigates. Enter
+                //   takes filtered[selected_model] — or, if the
+                //   filter matches none, treats the filter text as
+                //   a manual entry and appends it to the models
+                //   list so the save persists it.
+                if self.ps.models.is_empty() {
+                    if self.ps.custom_model.trim().is_empty() {
+                        // Trigger live fetch — switches into LIST mode.
+                        let provider_idx =
+                            self.ps.selected_provider.min(CUSTOM_PROVIDER_IDX);
+                        let api_key = crate::config::Config::load().ok().and_then(|c| {
+                            c.providers
+                                .active_custom()
+                                .and_then(|(_, p)| p.api_key.clone())
+                                .filter(|k| !k.is_empty())
+                        });
+                        let base_url = self.ps.base_url.clone();
+                        self.ps.models = super::onboarding::fetch_provider_models(
+                            provider_idx,
+                            api_key.as_deref(),
+                            None,
+                            Some(&base_url),
+                        )
+                        .await;
+                        self.ps.merge_config_models_into_fetched();
+                        self.ps.selected_model = 0;
+                        self.ps.model_filter.clear();
+                        // Stay on field 3 — user picks from the list.
+                    } else {
+                        // Typed/pasted model: accept and advance.
+                        let typed = self.ps.custom_model.trim().to_string();
+                        self.ps.custom_model = typed;
+                        self.ps.model_filter.clear();
+                        self.ps.selected_model = 0;
+                        self.ps.focused_field = 4;
+                    }
+                } else {
                     let filter = self.ps.model_filter.to_lowercase();
                     let filtered: Vec<&String> = self
                         .ps
@@ -832,10 +874,10 @@ impl App {
                             self.ps.models.push(typed);
                         }
                     }
+                    self.ps.model_filter.clear();
+                    self.ps.selected_model = 0;
+                    self.ps.focused_field = 4;
                 }
-                self.ps.model_filter.clear();
-                self.ps.selected_model = 0;
-                self.ps.focused_field = 4;
             } else if is_custom && self.ps.focused_field == 4 {
                 // Custom: on name field — validate, normalize, then go to context window
                 if self.ps.custom_name.is_empty() {
