@@ -10,7 +10,7 @@ cargo test --all-features
 
 | Category | Tests | Location |
 |----------|------:|----------|
-| **Brain — Agent Service** | 52 | `src/brain/agent/service/` |
+| **Brain — Agent Service** | 26 | `src/brain/agent/service/` |
 | **Brain — Prompt Builder** | 20 | `src/brain/prompt_builder.rs` |
 | **Brain — Agent Context** | 12 | `src/brain/agent/context.rs` |
 | **Brain — Provider (Anthropic)** | 9 | `src/brain/provider/anthropic.rs` |
@@ -20,6 +20,9 @@ cargo test --all-features
 | **Brain — Provider (Factory)** | 4 | `src/brain/provider/factory.rs` |
 | **Brain — Provider (Claude CLI)** | 4 | `src/brain/provider/claude_cli.rs` |
 | **Brain — Provider (Types/Error/Trait)** | 7 | `src/brain/provider/` |
+| **Brain — Provider (Qwen)** | 13 | `src/brain/provider/qwen.rs` |
+| **Brain — Provider (JSON Repair)** | 10 | `src/brain/provider/json_repair.rs` |
+| **Brain — Provider (Codex OAuth)** | 6 | `src/brain/provider/codex_oauth.rs` |
 | **Brain — Tokenizer** | 8 | `src/brain/tokenizer.rs` |
 | **Brain — Commands** | 6 | `src/brain/commands.rs` |
 | **Brain — Self-Update** | 1 | `src/brain/self_update.rs` |
@@ -37,6 +40,13 @@ cargo test --all-features
 | **Brain Tools — Registry** | 7 | `src/brain/tools/registry.rs` |
 | **Brain Tools — Slash Command** | 6 | `src/brain/tools/slash_command.rs` |
 | **Brain Tools — Write/Read/Config/Memory/Error** | 20 | `src/brain/tools/` |
+| **Brain Tools — Subagent** | 9 | `src/brain/tools/subagent.rs` |
+| **Brain Tools — Error** | 6 | `src/brain/tools/error.rs` |
+| **Brain Tools — Config Tool** | 5 | `src/brain/tools/config_tool.rs` |
+| **Brain Tools — Write** | 5 | `src/brain/tools/write.rs` |
+| **Brain Tools — Read** | 4 | `src/brain/tools/read.rs` |
+| **Brain Tools — Memory Search** | 2 | `src/brain/tools/memory_search.rs` |
+| **Brain Tools — Trait** | 3 | `src/brain/tools/trait.rs` |
 | **Channels — Voice Local Whisper** | 25 | `src/channels/voice/local_whisper.rs` |
 | **Channels — Voice Service** | 14 | `src/channels/voice/service.rs` |
 | **Channels — Voice Local TTS** | 14 | `src/channels/voice/local_tts.rs` |
@@ -85,27 +95,26 @@ cargo test --all-features
 | **Logging** | 4 | `src/logging/logger.rs` |
 | Tests — RSI Template Sync | 12 | `src/tests/rsi_sync_test.rs` |
 | Tests — Model Fetching | 10 | `src/tests/model_fetch_test.rs` |
-| Tests — Provider Factory Regression | 26 | `src/tests/provider_factory_regression_test.rs` |
+| Tests — Provider Factory Regression | 30 | `src/tests/provider_factory_regression_test.rs` |
 | Tests — Onboarding Welcome | 10 | `src/tests/onboarding_welcome_test.rs` |
-| Tests — Voice STT Dispatch | 21 | `src/tests/voice_stt_dispatch_test.rs` |
-| Tests — Voice Onboarding | 65 | `src/tests/voice_onboarding_test.rs` |
+| Tests — Voice STT Dispatch | 11 | `src/tests/voice_stt_dispatch_test.rs` |
+| Tests — Voice Onboarding | 61 | `src/tests/voice_onboarding_test.rs` |
 | Tests — Voice OpenAI Compatible | 12 | `src/tests/voice_openai_compatible_test.rs` |
-| Tests — Voice Voicebox | 10 | `src/tests/voice_voicebox_test.rs` |
-| Tests — Cron Jobs & Scheduling | 49 | `src/tests/cron_test.rs` |
-| Tests — Onboarding Field Nav | 46 | `src/tests/onboarding_field_nav_test.rs` |
+| Tests — Cron Jobs & Scheduling | 55 | `src/tests/cron_test.rs` |
+| Tests — Onboarding Field Nav | 49 | `src/tests/onboarding_field_nav_test.rs` |
 | Tests — GitHub Copilot Provider | 38 | `src/tests/github_provider_test.rs` |
 | Tests — File Extract | 36 | `src/tests/file_extract_test.rs` |
-| Tests — Fallback Vision | 35 | `src/tests/fallback_vision_test.rs` |
+| Tests — Fallback Vision | 39 | `src/tests/fallback_vision_test.rs` |
 | Tests — CLI Parsing | 28 | `src/tests/cli_test.rs` |
 | Tests — Custom Provider | 27 | `src/tests/custom_provider_test.rs` |
 | Tests — Onboarding Navigation | 26 | `src/tests/onboarding_navigation_test.rs` |
-| Tests — Message Compaction | 24 | `src/tests/compaction_test.rs` |
+| Tests — Message Compaction | 28 | `src/tests/compaction_test.rs` |
 | Tests — Channel Search | 24 | `src/tests/channel_search_test.rs` |
 | Tests — Evolve (Self-Update) | 23 | `src/tests/evolve_test.rs` |
 | Tests — Slack Formatting | 21 | `src/tests/slack_fmt_test.rs` |
 | Tests — Split Pane | 21 | `src/tests/split_pane_test.rs` |
 | Tests — OpenCode CLI Provider | 21 | `src/tests/opencode_provider_test.rs` |
-| Tests — Onboarding Brain | 21 | `src/tests/onboarding_brain_test.rs` |
+| Tests — Onboarding Brain | 23 | `src/tests/onboarding_brain_test.rs` |
 | Tests — Onboarding Types | 16 | `src/tests/onboarding_types_test.rs` |
 | Tests — OpenAI Provider | 16 | `src/tests/openai_provider_test.rs` |
 | Tests — TUI Error | 16 | `src/tests/tui_error_test.rs` |
@@ -132,9 +141,9 @@ cargo test --all-features
 | Tests — TUI Render Clear | 4 | `src/tests/tui_render_clear_test.rs` |
 | Tests — Gemini Fetch | 3 | `src/tests/gemini_fetch_test.rs` |
 | Tests — Profiles | 57 | `src/tests/profile_test.rs` |
-| Tests — Subagent / Swarm | 84 | `src/tests/subagent_test.rs` |
+| Tests — Subagent / Swarm | 83 | `src/tests/subagent_test.rs` |
 | Tests — Telegram Resume & Helpers | 55 | `src/tests/telegram_resume_test.rs` |
-| Tests — Token Tracking | 8 | `src/tests/token_tracking_test.rs` |
+| Tests — Token Tracking | 29 | `src/tests/token_tracking_test.rs` |
 | Tests — wait_agent Resolver | 12 | `src/tests/wait_agent_resolver_test.rs` |
 | Tests — Browser Default (macOS LSHandlers parser) | 8 | `src/tests/browser_default_test.rs` |
 | Tests — Browser Default (Linux xdg-settings parser) | 4 | `src/tests/browser_default_linux_test.rs` (Linux-only) |
@@ -150,7 +159,7 @@ cargo test --all-features
 | Tests — Browser Find JS Builder | 9 | `src/tests/browser_find_test.rs` |
 | Tests — exa_search MCP Handshake | 4 | `src/tests/exa_search_test.rs` |
 | Tests — http_request User-Agent | 3 | `src/tests/http_request_test.rs` |
-| Tests — Phantom Detection (Self-Healing) | 5 | `src/tests/self_healing_test.rs` |
+| Tests — Self-Healing (Phantom Detection + stuck-intent loop) | 88 | `src/tests/self_healing_test.rs` |
 | Tests — Bash SSH Detection | 10 | `src/tests/bash_ssh_detection_test.rs` |
 | Tests — Bash POSIX Quote (askpass) | 9 | `src/tests/bash_posix_quote_test.rs` |
 | Tests — RSI Proposals Inbox | 13 | `src/tests/rsi_proposals_test.rs` |
@@ -165,8 +174,14 @@ cargo test --all-features
 | Tests — Skills Dialog | 18 | `src/tests/skills_dialog_test.rs` |
 | Tests — merge_provider_keys (OpenCode persistence regression) | 4 | `src/tests/merge_provider_keys_test.rs` |
 | Tests — Onboarding Wizard | 67 | `src/tests/onboarding_wizard_test.rs` |
-| Tests — RSI (Recursive Self-Improvement) | 73 | `src/tests/rsi_test.rs` |
-| Tests — Self-Healing (Phantom Detection + stuck-intent loop) | 83 | `src/tests/self_healing_test.rs` |
+| Tests — RSI (Recursive Self-Improvement) | 79 | `src/tests/rsi_test.rs` |
+| Tests — Dynamic Tool Coercion | 11 | `src/tests/dynamic_tool_coerce_test.rs` |
+| Tests — Follow-Up Question Tool | 9 | `src/tests/follow_up_question_test.rs` |
+| Tests — Gemini Schema Sanitization | 7 | `src/tests/gemini_schema_sanitize_test.rs` |
+| Tests — Rename Session Tool | 6 | `src/tests/rename_session_test.rs` |
+| Tests — Custom Model Paste | 5 | `src/tests/custom_model_paste_test.rs` |
+| Tests — Brain File Generic Guard | 4 | `src/tests/brain_file_generic_guard_test.rs` |
+| Tests — Phantom DB Persistence | 2 | `src/tests/phantom_db_persistence_test.rs` |
 | Tests — Bash Interactive Reject | 36 | `src/tests/bash_interactive_reject_test.rs` |
 | Tests — Qwen Tool-Call Extractor | 34 | `src/tests/qwen_tool_extractor_test.rs` |
 | Tests — Brain File Safety (append-only enforcement) | 32 | `src/tests/brain_file_safety_test.rs` |
@@ -206,7 +221,7 @@ cargo test --all-features
 | **Usage — Categorizer** | 4 | `src/usage/categorizer.rs` |
 | **Usage — Dashboard** | 6 | `src/usage/dashboard.rs` |
 | **Usage — Data** | 7 | `src/usage/data.rs` |
-| **Total** | **2,626** | +19 since last update: Mission Control schedule fix — BLOB-typed `cron_jobs.prompt` regression + per-row error attribution (+7); `generation_model` 4-step rollout — 4 active_provider_generation resolver tests (`fallback_vision_test`), 3 image_setup wizard-nav tests for the new `GenerationModel` field (`onboarding_field_nav_test`), 5 generate_image backend-dispatch tests (Gemini vs OpenAI-compatible — new `generate_image_backend_test.rs`). |
+| **Total** | **2,711** | +85 since last update: v0.3.24 release features — new tools (rename_session, follow_up_question), dynamic tool coercion params, custom provider paste-by-default, Gemini schema sanitization, Qwen provider expansion, brain file safety guards, phantom DB persistence. |
 
 ---
 
@@ -309,4 +324,4 @@ When the agent outputs one of these phrases with zero tool calls, the phantom de
 
 ### Test Count
 
-5 tests covering phrase detection, edge cases, and integration with the tool loop.
+88 tests covering phrase detection, edge cases, and integration with the tool loop.
