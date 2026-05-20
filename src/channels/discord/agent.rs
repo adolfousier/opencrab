@@ -441,10 +441,7 @@ impl EventHandler for Handler {
                 let mut parts = rest.splitn(2, ':');
                 let q_id = parts.next().unwrap_or("");
                 let idx: usize = parts.next().unwrap_or("").parse().unwrap_or(usize::MAX);
-                let resolved = self
-                    .discord_state
-                    .resolve_pending_question(q_id, idx)
-                    .await;
+                let resolved = self.discord_state.resolve_pending_question(q_id, idx).await;
                 tracing::info!(
                     "Discord follow_up_question resolved: id={} idx={} answer={:?}",
                     q_id,

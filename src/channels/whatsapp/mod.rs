@@ -126,11 +126,7 @@ impl WhatsAppState {
     /// Resolve a pending question by parsing the user's text reply as
     /// a 1-based option number. Returns the chosen option if the phone
     /// had a pending question and the index is in range.
-    pub async fn resolve_pending_question(
-        &self,
-        phone: &str,
-        reply: &str,
-    ) -> Option<String> {
+    pub async fn resolve_pending_question(&self, phone: &str, reply: &str) -> Option<String> {
         let parsed: usize = reply.trim().parse().ok()?;
         if parsed == 0 {
             return None;

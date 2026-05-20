@@ -673,8 +673,8 @@ pub(crate) async fn cmd_run(
             tools::{
                 bash::BashTool, brave_search::BraveSearchTool, code_exec::CodeExecTool,
                 config_tool::ConfigTool, context::ContextTool, doc_parser::DocParserTool,
-                edit::EditTool, exa_search::ExaSearchTool, follow_up_question::FollowUpQuestionTool,
-                glob::GlobTool, grep::GrepTool,
+                edit::EditTool, exa_search::ExaSearchTool,
+                follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
                 notebook::NotebookEditTool, plan_tool::PlanTool, read::ReadTool,
                 registry::ToolRegistry, rename_session::RenameSessionTool,
@@ -1051,8 +1051,8 @@ pub(crate) async fn cmd_agent_interactive(
             tools::{
                 bash::BashTool, brave_search::BraveSearchTool, code_exec::CodeExecTool,
                 config_tool::ConfigTool, context::ContextTool, doc_parser::DocParserTool,
-                edit::EditTool, exa_search::ExaSearchTool, follow_up_question::FollowUpQuestionTool,
-                glob::GlobTool, grep::GrepTool,
+                edit::EditTool, exa_search::ExaSearchTool,
+                follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
                 notebook::NotebookEditTool, plan_tool::PlanTool, read::ReadTool,
                 registry::ToolRegistry, rename_session::RenameSessionTool,

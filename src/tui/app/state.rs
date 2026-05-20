@@ -2273,6 +2273,10 @@ impl App {
                     let target = saved_model.as_deref().unwrap_or(&self.default_model_name);
                     let selected = models.iter().position(|m| m == target).unwrap_or(0);
                     self.ps.models = models;
+                    // Merge config-persisted models (user-pasted ones
+                    // that the endpoint doesn't list) on top of the
+                    // fetched results so they survive the next fetch.
+                    self.ps.merge_config_models_into_fetched();
                     self.ps.selected_model = selected;
                     self.ps.model_filter.clear();
                 }

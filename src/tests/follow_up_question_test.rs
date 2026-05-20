@@ -10,15 +10,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn callback_returning(answer: &'static str) -> QuestionCallback {
-    Arc::new(move |_info: FollowUpQuestionInfo| {
-        Box::pin(async move { Ok(answer.to_string()) })
-    })
+    Arc::new(move |_info: FollowUpQuestionInfo| Box::pin(async move { Ok(answer.to_string()) }))
 }
 
-fn callback_recording(
-    counter: Arc<AtomicUsize>,
-    answer: &'static str,
-) -> QuestionCallback {
+fn callback_recording(counter: Arc<AtomicUsize>, answer: &'static str) -> QuestionCallback {
     Arc::new(move |_info: FollowUpQuestionInfo| {
         let counter = counter.clone();
         Box::pin(async move {
@@ -165,7 +160,12 @@ async fn rejects_too_many_options() {
         .expect("execute");
 
     assert!(!result.success);
-    assert!(result.error.unwrap_or_default().contains("Too many options"));
+    assert!(
+        result
+            .error
+            .unwrap_or_default()
+            .contains("Too many options")
+    );
 }
 
 #[tokio::test]
@@ -182,7 +182,12 @@ async fn rejects_duplicate_options() {
         .expect("execute");
 
     assert!(!result.success);
-    assert!(result.error.unwrap_or_default().contains("Duplicate option"));
+    assert!(
+        result
+            .error
+            .unwrap_or_default()
+            .contains("Duplicate option")
+    );
 }
 
 #[test]

@@ -35,8 +35,16 @@ fn strips_nested_additional_properties() {
         }
     });
     let out = sanitize_schema_for_gemini(schema);
-    assert!(out["properties"]["headers"].get("additionalProperties").is_none());
-    assert!(out["properties"]["query"].get("additionalProperties").is_none());
+    assert!(
+        out["properties"]["headers"]
+            .get("additionalProperties")
+            .is_none()
+    );
+    assert!(
+        out["properties"]["query"]
+            .get("additionalProperties")
+            .is_none()
+    );
     // Surrounding shape preserved.
     assert_eq!(out["properties"]["headers"]["type"], "object");
 }
@@ -90,9 +98,11 @@ fn strips_in_deeply_nested_oneof_style_shapes() {
         }
     });
     let out = sanitize_schema_for_gemini(schema);
-    assert!(out["properties"]["a"]["properties"]["b"]
-        .get("additionalProperties")
-        .is_none());
+    assert!(
+        out["properties"]["a"]["properties"]["b"]
+            .get("additionalProperties")
+            .is_none()
+    );
 }
 
 #[test]

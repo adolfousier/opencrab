@@ -57,10 +57,7 @@ fn template_section_drops_when_key_absent() {
 #[test]
 fn template_multiple_sections_independent() {
     let params = json!({ "a": "1" });
-    let out = DynamicToolDef::render_template(
-        "{{#a}}A={{a}}{{/a}} {{#b}}B={{b}}{{/b}}",
-        &params,
-    );
+    let out = DynamicToolDef::render_template("{{#a}}A={{a}}{{/a}} {{#b}}B={{b}}{{/b}}", &params);
     assert_eq!(out, "A=1 ");
 }
 
@@ -140,10 +137,7 @@ fn coerce_null_error_returns_error() {
         .expect("execute");
     assert!(!result.success);
     let err = result.error.unwrap_or_default();
-    assert!(
-        err.contains("'ids'") && err.contains("null"),
-        "got: {err}"
-    );
+    assert!(err.contains("'ids'") && err.contains("null"), "got: {err}");
 }
 
 #[test]

@@ -56,10 +56,7 @@ pub(crate) fn make_question_callback(
             );
 
             if let Err(e) = client.send_message(chat_jid, text_msg).await {
-                return Err(AgentError::Internal(format!(
-                    "WhatsApp send failed: {}",
-                    e
-                )));
+                return Err(AgentError::Internal(format!("WhatsApp send failed: {}", e)));
             }
 
             match tokio::time::timeout(std::time::Duration::from_secs(600), rx).await {

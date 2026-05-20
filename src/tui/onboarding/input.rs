@@ -757,7 +757,16 @@ impl OnboardingWizard {
                             }
                         }
                         KeyCode::Enter | KeyCode::Tab => {
-                            // Select the current model into custom_model then advance
+                            // Resolve the user's pick before advancing.
+                            // If the filter matches at least one fetched
+                            // model, take filtered[selected_model]. If
+                            // the filter is non-empty but matches NO
+                            // fetched model, treat the typed text as a
+                            // manual model name and push it into the
+                            // models list so the save flow persists it
+                            // alongside the other entries — common when
+                            // a provider exposes a model that
+                            // `/v1/models` doesn't advertise.
                             let filter = self.ps.model_filter.to_lowercase();
                             let filtered: Vec<&String> = self
                                 .ps
@@ -767,7 +776,15 @@ impl OnboardingWizard {
                                 .collect();
                             if let Some(m) = filtered.get(self.ps.selected_model) {
                                 self.ps.custom_model = (*m).clone();
+                            } else if !self.ps.model_filter.trim().is_empty() {
+                                let typed = self.ps.model_filter.trim().to_string();
+                                self.ps.custom_model = typed.clone();
+                                if !self.ps.models.iter().any(|m| m == &typed) {
+                                    self.ps.models.push(typed);
+                                }
                             }
+                            self.ps.model_filter.clear();
+                            self.ps.selected_model = 0;
                             self.auth_field = AuthField::CustomContextWindow;
                         }
                         KeyCode::BackTab => {

@@ -627,6 +627,7 @@ impl App {
                         Some(&self.ps.base_url),
                     )
                     .await;
+                    self.ps.merge_config_models_into_fetched();
                 }
                 self.ps.focused_field = 2;
             } else if self.ps.focused_field == 1
@@ -787,12 +788,53 @@ impl App {
                         )
                         .await;
                     }
+                    self.ps.merge_config_models_into_fetched();
 
                     // Move to model field (field 2 for non-Custom, field 3 for Custom/zhipu)
                     self.ps.focused_field = if is_custom || is_zhipu { 3 } else { 2 };
                 }
             } else if is_custom && self.ps.focused_field == 3 {
-                // Custom: after model, go to name field (field 4)
+                // Custom: model field. Resolve the user's pick before
+                // advancing.
+                //
+                // Three paths:
+                //   1. Models fetched and the filter matches at least
+                //      one entry → take filtered[selected_model] as
+                //      the chosen model.
+                //   2. Filter is non-empty but matches NO fetched
+                //      model → treat the filter text as a manual
+                //      model name. This lets the user paste a model
+                //      the provider returns but `/v1/models` doesn't
+                //      list (common with private deployments and
+                //      preview routes). We also append it to the
+                //      in-memory models list so the save below
+                //      persists it to `[providers.custom.X].models`
+                //      and the next fetch returns the typed name as
+                //      one of the choices.
+                //   3. Models list is empty (offline or fetch failed)
+                //      → `self.ps.custom_model` was already populated
+                //      via the free-text branch at lines 440-447, so
+                //      we just advance.
+                if !self.ps.models.is_empty() {
+                    let filter = self.ps.model_filter.to_lowercase();
+                    let filtered: Vec<&String> = self
+                        .ps
+                        .models
+                        .iter()
+                        .filter(|m| m.to_lowercase().contains(&filter))
+                        .collect();
+                    if let Some(m) = filtered.get(self.ps.selected_model) {
+                        self.ps.custom_model = (*m).clone();
+                    } else if !self.ps.model_filter.trim().is_empty() {
+                        let typed = self.ps.model_filter.trim().to_string();
+                        self.ps.custom_model = typed.clone();
+                        if !self.ps.models.iter().any(|m| m == &typed) {
+                            self.ps.models.push(typed);
+                        }
+                    }
+                }
+                self.ps.model_filter.clear();
+                self.ps.selected_model = 0;
                 self.ps.focused_field = 4;
             } else if is_custom && self.ps.focused_field == 4 {
                 // Custom: on name field — validate, normalize, then go to context window

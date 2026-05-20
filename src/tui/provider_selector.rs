@@ -394,6 +394,22 @@ impl ProviderSelectorState {
 
     // ── Model list management ───────────────────────────────────────
 
+    /// Merge any config-persisted models into the live-fetched list
+    /// so user-pasted models that the provider's `/v1/models` doesn't
+    /// list survive the fetch. Reloads `config_models` first so the
+    /// merge sees the latest disk state. Fetched names keep their
+    /// order at the top; config-only names get appended at the end.
+    pub fn merge_config_models_into_fetched(&mut self) {
+        self.reload_config_models();
+        let extras: Vec<String> = self
+            .config_models
+            .iter()
+            .filter(|m| !self.models.iter().any(|x| x == *m))
+            .cloned()
+            .collect();
+        self.models.extend(extras);
+    }
+
     /// Reload config_models for the currently selected provider.
     pub fn reload_config_models(&mut self) {
         self.config_models.clear();
@@ -420,15 +436,27 @@ impl ProviderSelectorState {
         self.config_models = load_default_models(self.provider_id());
     }
 
-    /// All model names for the current provider (fetched → config → static fallback).
+    /// All model names for the current provider, with the live fetch
+    /// merged on top of the config-persisted list. Any model the user
+    /// has previously pasted in (and saved) survives even when the
+    /// provider's `/v1/models` endpoint omits it on the next call.
+    /// Fetched names win for ordering; config-only names are appended
+    /// at the end in their original order. Falls back to the static
+    /// provider catalogue when nothing's been fetched or saved yet.
     pub fn all_model_names(&self) -> Vec<&str> {
-        if !self.models.is_empty() {
-            self.models.iter().map(|s| s.as_str()).collect()
-        } else if !self.config_models.is_empty() {
-            self.config_models.iter().map(|s| s.as_str()).collect()
-        } else {
-            self.current_provider().models.to_vec()
+        if self.models.is_empty() && self.config_models.is_empty() {
+            return self.current_provider().models.to_vec();
         }
+        let mut out: Vec<&str> = Vec::with_capacity(self.models.len() + self.config_models.len());
+        for m in &self.models {
+            out.push(m.as_str());
+        }
+        for m in &self.config_models {
+            if !out.contains(&m.as_str()) {
+                out.push(m.as_str());
+            }
+        }
+        out
     }
 
     /// Model names filtered by `model_filter` (case-insensitive substring match).

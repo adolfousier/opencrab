@@ -54,11 +54,10 @@ pub(crate) fn make_question_callback(state: Arc<super::SlackState>) -> QuestionC
                 })
                 .collect();
 
-            let header = SlackBlock::Section(
-                SlackSectionBlock::new().with_text(SlackBlockText::MarkDown(
+            let header =
+                SlackBlock::Section(SlackSectionBlock::new().with_text(SlackBlockText::MarkDown(
                     SlackBlockMarkDownText::new(format!("❓ *{}*", info.question)),
-                )),
-            );
+                )));
             let actions = SlackBlock::Actions(SlackActionsBlock::new(buttons));
 
             let content = SlackMessageContent::new()

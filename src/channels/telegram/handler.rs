@@ -1736,7 +1736,8 @@ pub(crate) async fn handle_message(
                         .register_session_chat(new_id, msg.chat.id.0)
                         .await;
                     let approval_cb2 = make_approval_callback(telegram_state.clone());
-                    let question_cb2 = super::follow_up_question::make_question_callback(telegram_state.clone());
+                    let question_cb2 =
+                        super::follow_up_question::make_question_callback(telegram_state.clone());
                     let cancel_token2 = tokio_util::sync::CancellationToken::new();
                     telegram_state
                         .store_cancel_token(new_id, cancel_token2.clone())
