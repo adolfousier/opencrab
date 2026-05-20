@@ -284,14 +284,16 @@ impl AgentService {
         // and only load messages from there forward. No arbitrary trimming.
         let mut db_messages = Self::messages_from_last_compaction(all_db_messages);
 
-        // Auto-title: fire a one-shot background LLM call for fresh sessions.
-        // This request is completely separate from the main context — it never
-        // enters the conversation history or the LLM context for the real response.
-        if is_first_message
+        // Auto-title: fire a one-shot background LLM call after the user's first
+        // message is stored (end of first turn). Gives the LLM actual content for
+        // context-based titles on ALL channels (TUI, Telegram, Discord, Slack, etc).
+        // Fires once per session; subsequent turns won't re-trigger because the title
+        // will no longer be empty/default.
+        if all_db_messages.len() >= 1
             && session
                 .title
                 .as_deref()
-                .map(|t| t == "New Chat" || t.is_empty())
+                .map(|t| t.is_empty())
                 .unwrap_or(true)
         {
             let title_provider = self.provider_for_session(session_id);
