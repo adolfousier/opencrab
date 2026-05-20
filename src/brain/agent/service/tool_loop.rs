@@ -277,8 +277,8 @@ impl AgentService {
         });
         let context_window = self.context_limit_for_session(session_id);
 
-        // Check emptiness before move for auto-title trigger
-        let is_first_message = all_db_messages.is_empty();
+        // Capture count before move for auto-title trigger
+        let db_message_count = all_db_messages.len();
 
         // Load from last compaction point — find the last CONTEXT COMPACTION marker
         // and only load messages from there forward. No arbitrary trimming.
@@ -289,7 +289,7 @@ impl AgentService {
         // context-based titles on ALL channels (TUI, Telegram, Discord, Slack, etc).
         // Fires once per session; subsequent turns won't re-trigger because the title
         // will no longer be empty/default.
-        if all_db_messages.len() >= 1
+        if db_message_count >= 1
             && session
                 .title
                 .as_deref()
