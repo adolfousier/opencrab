@@ -21,6 +21,46 @@ impl App {
         self.ps.detect_existing_key();
     }
 
+    /// Refresh the model-selector's per-provider input fields
+    /// (`custom_name`, `base_url`, `custom_model`, `context_window`,
+    /// `editing_custom_key`) to match whatever `self.ps.selected_provider`
+    /// currently points at. Called from both navigation (Up/Down) and
+    /// the post-save reposition; without the latter call the dialog
+    /// kept showing the values the user just typed for a newly-saved
+    /// provider while the cursor was already on a different row.
+    pub(crate) fn reload_model_selector_custom_fields(&mut self) {
+        let provider_idx = self.ps.selected_provider;
+        if provider_idx == CUSTOM_PROVIDER_IDX {
+            self.ps.custom_name.clear();
+            self.ps.custom_model.clear();
+            self.ps.base_url.clear();
+            self.ps.context_window.clear();
+            self.ps.api_key_input.clear();
+            self.ps.editing_custom_key = None;
+        } else if provider_idx >= CUSTOM_INSTANCES_START {
+            let custom_idx = provider_idx - CUSTOM_INSTANCES_START;
+            if let Some(name) = self.ps.custom_names.get(custom_idx).cloned()
+                && let Ok(c) = crate::config::Config::load()
+                && let Some(cfg) = c.providers.custom_by_name(&name)
+            {
+                self.ps.custom_name = name.clone();
+                self.ps.base_url = cfg.base_url.clone().unwrap_or_default();
+                self.ps.custom_model = cfg.default_model.clone().unwrap_or_default();
+                self.ps.context_window = cfg
+                    .context_window
+                    .map(|cw| cw.to_string())
+                    .unwrap_or_default();
+                self.ps.editing_custom_key = Some(name);
+            }
+        } else {
+            self.ps.custom_name.clear();
+            self.ps.custom_model.clear();
+            self.ps.base_url.clear();
+            self.ps.context_window.clear();
+            self.ps.editing_custom_key = None;
+        }
+    }
+
     /// Open the model selector dialog - load from config and fetch models
     pub(crate) async fn open_model_selector(&mut self) {
         tracing::debug!("[open_model_selector] Opening model selector");
@@ -299,42 +339,14 @@ impl App {
                 );
                 self.detect_model_selector_key_for_provider();
 
-                // Clear/populate custom fields based on selected provider
-                let provider_idx = self.ps.selected_provider;
-                if provider_idx == CUSTOM_PROVIDER_IDX {
-                    // "+ New Custom" — clear all custom fields for fresh entry
-                    self.ps.custom_name.clear();
-                    self.ps.custom_model.clear();
-                    self.ps.base_url.clear();
-                    self.ps.context_window.clear();
-                    self.ps.api_key_input.clear();
-                    self.ps.editing_custom_key = None;
-                } else if provider_idx >= CUSTOM_INSTANCES_START {
-                    // Existing custom provider — populate fields from config
-                    let custom_idx = provider_idx - CUSTOM_INSTANCES_START;
-                    if let Some(name) = self.ps.custom_names.get(custom_idx).cloned()
-                        && let Ok(c) = crate::config::Config::load()
-                        && let Some(cfg) = c.providers.custom_by_name(&name)
-                    {
-                        self.ps.custom_name = name.clone();
-                        self.ps.base_url = cfg.base_url.clone().unwrap_or_default();
-                        self.ps.custom_model = cfg.default_model.clone().unwrap_or_default();
-                        self.ps.context_window = cfg
-                            .context_window
-                            .map(|cw| cw.to_string())
-                            .unwrap_or_default();
-                        self.ps.editing_custom_key = Some(name);
-                    }
-                } else {
-                    // Static provider — clear custom fields
-                    self.ps.custom_name.clear();
-                    self.ps.custom_model.clear();
-                    self.ps.base_url.clear();
-                    self.ps.context_window.clear();
-                    self.ps.editing_custom_key = None;
-                }
+                // Clear/populate per-provider input fields. Both the
+                // navigation path here and the post-save reposition
+                // below now share this helper so the dialog never
+                // shows the previous entry's fields on the wrong row.
+                self.reload_model_selector_custom_fields();
 
                 // Re-fetch models for the new provider — load API key from config
+                let provider_idx = self.ps.selected_provider;
                 let provider_id = self.ps.provider_id();
                 let custom_idx = provider_idx
                     .checked_sub(CUSTOM_INSTANCES_START)
@@ -1466,7 +1478,13 @@ impl App {
                 "[save_provider] refreshed custom_names after save: {:?}",
                 self.ps.custom_names,
             );
-            // Point selection to the newly saved custom provider
+            // Point selection to the newly saved custom provider, and
+            // re-read its fields from disk. Without the explicit
+            // reload, the dialog kept the values the user just typed
+            // visible even after the cursor moved off the new entry —
+            // and any subsequent save would re-write to whichever
+            // section `self.ps.custom_name` still pointed at, not the
+            // visually-selected row.
             if !self.ps.custom_name.is_empty()
                 && let Some(pos) = self
                     .ps
@@ -1475,6 +1493,7 @@ impl App {
                     .position(|n| n == &self.ps.custom_name)
             {
                 self.ps.selected_provider = CUSTOM_INSTANCES_START + pos;
+                self.reload_model_selector_custom_fields();
                 tracing::debug!(
                     "[save_provider] mapped custom '{}' to idx={}",
                     self.ps.custom_name,
