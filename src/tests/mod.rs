@@ -136,6 +136,7 @@ pub mod channel_commands_test;
 pub mod discord_handler_test;
 pub mod slack_handler_test;
 pub mod telegram_handler_test;
+pub mod telegram_photo_batching_test;
 pub mod voice_local_tts_test;
 pub mod voice_local_whisper_test;
 pub mod voice_service_test;

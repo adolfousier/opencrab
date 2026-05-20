@@ -21,6 +21,12 @@ use uuid::Uuid;
 /// back into the chosen option string.
 type PendingQuestion = (oneshot::Sender<String>, Vec<String>);
 
+/// Photo buffer entry: (img_marker, Optional caption)
+type PhotoEntry = (String, Option<String>);
+
+/// Photo buffer key: (chat_id, user_id, media_group_id)
+type PhotoBufferKey = (i64, i64, String);
+
 /// Shared Telegram state for proactive messaging.
 ///
 /// Set when the bot connects (agent stores Bot) and when the owner
@@ -48,6 +54,14 @@ pub struct TelegramState {
     pending_questions: Mutex<HashMap<String, PendingQuestion>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
+    /// Photo batching buffer: (chat_id, user_id, media_group_id) → Vec<(img_marker, Option<caption>)>
+    /// When user sends multiple photos in an album, we buffer them and only fire the agent
+    /// after a quiet period (no new photos for 3s). Keyed by media_group_id to avoid merging
+    /// unrelated photos sent within 3s of each other.
+    photo_buffer: Mutex<HashMap<PhotoBufferKey, Vec<PhotoEntry>>>,
+    /// Photo debounce tokens: (chat_id, user_id, media_group_id) → CancellationToken
+    /// Each new photo in the same album cancels the previous timer and starts a new 3s one.
+    photo_debounce: Mutex<HashMap<PhotoBufferKey, CancellationToken>>,
 }
 
 impl Default for TelegramState {
@@ -67,6 +81,8 @@ impl TelegramState {
             pending_approvals: Mutex::new(HashMap::new()),
             pending_questions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
+            photo_buffer: Mutex::new(HashMap::new()),
+            photo_debounce: Mutex::new(HashMap::new()),
         }
     }
 
@@ -203,5 +219,74 @@ impl TelegramState {
         {
             tokens.remove(&session_id);
         }
+    }
+
+    /// Buffer a photo marker for batching. Returns the current buffer size.
+    /// Photos are accumulated per (chat_id, user_id, media_group_id) until the debounce timer expires.
+    /// Only called for album photos (media_group_id is Some).
+    pub async fn buffer_photo(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+        media_group_id: &str,
+        img_marker: String,
+        caption: Option<String>,
+    ) -> usize {
+        let key = (chat_id, user_id, media_group_id.to_string());
+        let mut buffer = self.photo_buffer.lock().await;
+        buffer.entry(key.clone()).or_default().push((img_marker, caption));
+        buffer.get(&key).map(|v| v.len()).unwrap_or(0)
+    }
+
+    /// Reset the photo debounce timer for a (chat_id, user_id, media_group_id).
+    /// Cancels any existing timer and creates a new one.
+    /// Returns a CancellationToken that will be cancelled if another photo arrives.
+    /// Only called for album photos (media_group_id is Some).
+    pub async fn reset_photo_debounce(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+        media_group_id: &str,
+    ) -> CancellationToken {
+        let key = (chat_id, user_id, media_group_id.to_string());
+        let token = CancellationToken::new();
+
+        let mut debounce = self.photo_debounce.lock().await;
+        if let Some(old) = debounce.remove(&key) {
+            old.cancel();
+        }
+        debounce.insert(key, token.clone());
+
+        token
+    }
+
+    /// Wait for the photo debounce period (3 seconds) or until cancelled.
+    /// Returns true if the timer expired (no new photos), false if cancelled.
+    pub async fn wait_photo_debounce(&self, token: CancellationToken) -> bool {
+        tokio::select! {
+            _ = token.cancelled() => false,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => true,
+        }
+    }
+
+    /// Drain all buffered photos for a (chat_id, user_id, media_group_id).
+    /// Returns the vector of (img_marker, caption) tuples, or empty if none buffered.
+    /// Only called for album photos (media_group_id is Some).
+    pub async fn drain_photo_buffer(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+        media_group_id: &str,
+    ) -> Vec<(String, Option<String>)> {
+        let key = (chat_id, user_id, media_group_id.to_string());
+        let mut buffer = self.photo_buffer.lock().await;
+        buffer.remove(&key).unwrap_or_default()
+    }
+
+    /// Clean up the debounce token after processing.
+    /// Only called for album photos (media_group_id is Some).
+    pub async fn cleanup_photo_debounce(&self, chat_id: i64, user_id: i64, media_group_id: &str) {
+        let key = (chat_id, user_id, media_group_id.to_string());
+        self.photo_debounce.lock().await.remove(&key);
     }
 }

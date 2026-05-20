@@ -474,12 +474,102 @@ pub(crate) async fn handle_message(
         // and returns a <<IMG:path>> marker. Centralized temp management, single cleanup.
         use crate::utils::{inject_file_content, process_file_with_vision};
         let fc = process_file_with_vision(&photo_bytes, "image/jpeg", "photo.jpg", &cfg);
-        let injected = inject_file_content(&fc).0;
-        let caption = msg.caption().unwrap_or("");
-        let result = if caption.is_empty() || injected.contains("<<IMG:") {
-            injected
+        let img_marker = inject_file_content(&fc).0;
+
+        // Check if this photo is part of an album (media group).
+        // Telegram tags every album item with the same media_group_id.
+        // Only debounce for albums — single photos dispatch immediately (no 3s latency).
+        let chat_id = msg.chat.id.0;
+        let result = if let Some(media_group_id) = msg.media_group_id() {
+            // Album photo — buffer with caption for batching
+            let caption = msg.caption().map(|s| s.to_string());
+            let buffer_size = telegram_state
+                .buffer_photo(chat_id, user_id, media_group_id, img_marker, caption)
+                .await;
+            tracing::info!(
+                "Telegram: buffered album photo {} for user {} in chat {} (media_group={})",
+                buffer_size,
+                user_id,
+                chat_id,
+                media_group_id
+            );
+
+            // Reset debounce timer and wait. If another photo arrives in the same album,
+            // it cancels this wait and we return early. If 3 seconds pass with no new photos,
+            // we drain the buffer and process all photos together.
+            let token = telegram_state
+                .reset_photo_debounce(chat_id, user_id, media_group_id)
+                .await;
+            let expired = telegram_state.wait_photo_debounce(token).await;
+
+            if !expired {
+                // Another photo cancelled our timer — that photo will handle the batch
+                tracing::debug!(
+                    "Telegram: album photo debounce cancelled, waiting for next photo in batch"
+                );
+                return Ok(());
+            }
+
+            // Debounce expired — drain all buffered photos for this album
+            let buffered = telegram_state
+                .drain_photo_buffer(chat_id, user_id, media_group_id)
+                .await;
+            telegram_state
+                .cleanup_photo_debounce(chat_id, user_id, media_group_id)
+                .await;
+
+            // Bail out if buffer is empty (edge case: ghost dispatch)
+            if buffered.is_empty() {
+                tracing::warn!(
+                    "Telegram: album photo buffer empty after drain — skipping dispatch"
+                );
+                return Ok(());
+            }
+
+            tracing::info!(
+                "Telegram: processing album batch of {} photo(s) from user {} in chat {} (media_group={})",
+                buffered.len(),
+                user_id,
+                chat_id,
+                media_group_id
+            );
+
+            // Combine all img markers. Caption is on the first photo in the album.
+            let markers: Vec<String> = buffered.iter().map(|(m, _)| m.clone()).collect();
+            let caption = buffered
+                .iter()
+                .find_map(|(_, c)| c.clone())
+                .unwrap_or_default();
+
+            if markers.len() == 1 {
+                let injected = markers.into_iter().next().unwrap();
+                if caption.is_empty() || injected.contains("<<IMG:") {
+                    injected
+                } else {
+                    format!("{caption}\n\n{injected}")
+                }
+            } else {
+                let combined = markers.join("\n");
+                if caption.is_empty() {
+                    combined
+                } else {
+                    format!("{caption}\n\n{combined}")
+                }
+            }
         } else {
-            format!("{caption}\n\n{injected}")
+            // Single photo (not part of an album) — dispatch immediately, no debounce
+            tracing::info!(
+                "Telegram: processing single photo from user {} in chat {} (no media_group)",
+                user_id,
+                chat_id
+            );
+
+            let caption = msg.caption().unwrap_or("");
+            if caption.is_empty() || img_marker.contains("<<IMG:") {
+                img_marker
+            } else {
+                format!("{caption}\n\n{img_marker}")
+            }
         };
         (result, false)
     } else if let Some(vid) = msg.video() {
