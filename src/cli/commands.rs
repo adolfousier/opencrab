@@ -195,7 +195,7 @@ pub(crate) async fn cmd_doctor(config: &crate::config::Config) -> Result<()> {
     let mut warn = 0u32;
 
     // 1. Config file
-    let config_path = dirs::config_dir().map(|d| d.join("opencrabs").join("config.toml"));
+    let config_path = crate::config::Config::system_config_path();
     if let Some(ref p) = config_path
         && p.exists()
     {
@@ -207,7 +207,7 @@ pub(crate) async fn cmd_doctor(config: &crate::config::Config) -> Result<()> {
     }
 
     // 2. Keys file
-    let keys_path = dirs::config_dir().map(|d| d.join("opencrabs").join("keys.toml"));
+    let keys_path = crate::config::keys_path();
     if let Some(ref p) = keys_path
         && p.exists()
     {
