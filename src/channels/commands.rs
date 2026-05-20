@@ -87,6 +87,11 @@ pub async fn sync_provider_for_session(
                     agent_model,
                 );
                 agent.swap_provider_for_session(session_id, new_provider);
+                // Pin the saved model so display surfaces match what
+                // tool_loop will use for the actual request.
+                if let Some(m) = session_model {
+                    agent.set_session_model(session_id, m.to_string());
+                }
             }
             Err(e) => {
                 // Session has a stored provider but we couldn't create it.
@@ -853,7 +858,17 @@ pub async fn switch_model(
     // Pin per-session when possible; only touch the global slot for
     // callers without a session (kept for the bootstrap path).
     match session_id {
-        Some(sid) => agent.swap_provider_for_session(sid, new_provider),
+        Some(sid) => {
+            agent.swap_provider_for_session(sid, new_provider);
+            // The freshly-created provider reports the global config's
+            // default model from `default_model()`, not the model the
+            // user just picked. Pin the per-session override so every
+            // "current model" display surface (TUI status bar,
+            // /sessions, channel footers) matches what tool_loop will
+            // actually send on the wire (which already reads
+            // `session.model` from the DB row).
+            agent.set_session_model(sid, model_name.to_string());
+        }
         None => agent.swap_provider(new_provider),
     }
 

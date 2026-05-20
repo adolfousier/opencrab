@@ -31,6 +31,18 @@ pub struct AgentService {
     /// the other session had saved (2026-04-17 17:01 logs).
     pub(super) session_providers: std::sync::RwLock<HashMap<Uuid, Arc<dyn Provider>>>,
 
+    /// Per-session model name overrides. `swap_provider_for_session`
+    /// installs a fresh provider whose `default_model()` reflects the
+    /// global config rather than the model the session actually wants
+    /// (e.g. the user switched from `qwen-3.7-plus` to `qwen-3.7-max`
+    /// in Telegram). The actual LLM request reads the right model from
+    /// the session DB row via `tool_loop`, but every "current model"
+    /// display surface goes through `provider_model_for_session()`,
+    /// which used to surface the provider default instead. This map
+    /// captures the per-session pick so the display stays in sync with
+    /// what's actually being sent on the wire.
+    pub(super) session_models: std::sync::RwLock<HashMap<Uuid, String>>,
+
     /// Per-session context window overrides. When a session's provider
     /// has a custom `configured_context_window()`, it's cached here so
     /// compaction and budget checks use the correct window even when
@@ -112,6 +124,7 @@ impl AgentService {
         Self {
             provider: std::sync::RwLock::new(provider),
             session_providers: std::sync::RwLock::new(HashMap::new()),
+            session_models: std::sync::RwLock::new(HashMap::new()),
             session_context_limits: std::sync::RwLock::new(HashMap::new()),
             context,
             tool_registry: Arc::new(ToolRegistry::new()),
@@ -476,11 +489,39 @@ impl AgentService {
     }
 
     /// Default model for a specific session, including sticky-fallback
-    /// active sub-model.
+    /// active sub-model. Resolution order:
+    /// 1. The per-session override in `session_models` (set by
+    ///    `switch_model` and `sync_provider_for_session`). This is the
+    ///    user's actual current pick.
+    /// 2. The provider's active sub-model (sticky fallback in flight).
+    /// 3. The provider's compiled-in `default_model()` (from config).
     pub fn provider_model_for_session(&self, session_id: Uuid) -> String {
+        if let Ok(map) = self.session_models.read()
+            && let Some(m) = map.get(&session_id)
+        {
+            return m.clone();
+        }
         let p = self.provider_for_session(session_id);
         p.active_subprovider_model()
             .unwrap_or_else(|| p.default_model().to_string())
+    }
+
+    /// Install a per-session model override. Pair with
+    /// `swap_provider_for_session` when restoring or switching a
+    /// session's pick so display surfaces stay aligned with what the
+    /// LLM call will actually use.
+    pub fn set_session_model(&self, session_id: Uuid, model: String) {
+        if let Ok(mut map) = self.session_models.write() {
+            map.insert(session_id, model);
+        }
+    }
+
+    /// Clear the per-session model override (e.g. when a session ends
+    /// or is deleted).
+    pub fn clear_session_model(&self, session_id: Uuid) {
+        if let Ok(mut map) = self.session_models.write() {
+            map.remove(&session_id);
+        }
     }
 
     /// Persist a sticky-fallback {provider, model} pair onto the session row
@@ -506,6 +547,10 @@ impl AgentService {
         provider_name: String,
         model: String,
     ) {
+        // Pin the in-memory display override too so the TUI/channel
+        // footers reflect the fallback target immediately, not just on
+        // the next session reload.
+        self.set_session_model(session_id, model.clone());
         let context = self.context.clone();
         tokio::spawn(async move {
             let svc = crate::services::SessionService::new(context);
