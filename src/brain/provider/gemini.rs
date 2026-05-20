@@ -55,14 +55,21 @@ pub struct GeminiProvider {
 /// provider, but Gemini returns 400 INVALID_ARGUMENT
 /// `Unknown name "additionalProperties"`.
 ///
-/// Walks the schema recursively and removes any `additionalProperties`
-/// key from every object node. Other Gemini-incompatible keys (`$ref`,
-/// `oneOf`, etc.) are left alone for now; expand here if real-world
-/// usage surfaces them.
+/// Beyond `additionalProperties`, Gemini's schema validator also rejects
+/// `default` and `example` values inside property definitions (e.g. in
+/// `grep.rs` where fields have `"default": false`). These are valid JSON
+/// Schema keywords but not supported in Gemini function declarations.
+///
+/// Walks the schema recursively and removes any of the following keys
+/// from every object node: `additionalProperties`, `default`, `example`.
+/// Other Gemini-incompatible keys (`$ref`, `oneOf`, `nullable`, etc.)
+/// are left alone for now; expand here if real-world usage surfaces them.
 pub(crate) fn sanitize_schema_for_gemini(value: Value) -> Value {
     match value {
         Value::Object(mut map) => {
             map.remove("additionalProperties");
+            map.remove("default");
+            map.remove("example");
             for v in map.values_mut() {
                 let owned = std::mem::replace(v, Value::Null);
                 *v = sanitize_schema_for_gemini(owned);
