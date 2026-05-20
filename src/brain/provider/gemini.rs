@@ -47,6 +47,33 @@ pub struct GeminiProvider {
     cached_content_name: Arc<std::sync::Mutex<Option<String>>>,
 }
 
+/// Strip JSON-Schema keys that Gemini's `function_declarations.parameters`
+/// validator rejects (issue #99). Gemini accepts a narrow subset of
+/// OpenAPI 3 — built-in tools like `http`, `tool_manage`, etc. declare
+/// `additionalProperties` on dynamic dict fields (headers, query
+/// params) which is valid JSON-Schema and accepted by every other
+/// provider, but Gemini returns 400 INVALID_ARGUMENT
+/// `Unknown name "additionalProperties"`.
+///
+/// Walks the schema recursively and removes any `additionalProperties`
+/// key from every object node. Other Gemini-incompatible keys (`$ref`,
+/// `oneOf`, etc.) are left alone for now; expand here if real-world
+/// usage surfaces them.
+pub(crate) fn sanitize_schema_for_gemini(value: Value) -> Value {
+    match value {
+        Value::Object(mut map) => {
+            map.remove("additionalProperties");
+            for v in map.values_mut() {
+                let owned = std::mem::replace(v, Value::Null);
+                *v = sanitize_schema_for_gemini(owned);
+            }
+            Value::Object(map)
+        }
+        Value::Array(arr) => Value::Array(arr.into_iter().map(sanitize_schema_for_gemini).collect()),
+        other => other,
+    }
+}
+
 impl GeminiProvider {
     /// Create a new Gemini provider
     pub fn new(api_key: String) -> Self {
@@ -220,7 +247,7 @@ impl GeminiProvider {
                     serde_json::json!({
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.input_schema
+                        "parameters": sanitize_schema_for_gemini(t.input_schema.clone()),
                     })
                 })
                 .collect();
@@ -352,7 +379,7 @@ impl GeminiProvider {
                             function_declarations: vec![CachedContentFunctionDecl {
                                 name: t.name.clone(),
                                 description: t.description.clone(),
-                                parameters: t.input_schema.clone(),
+                                parameters: sanitize_schema_for_gemini(t.input_schema.clone()),
                             }],
                         })
                         .collect(),
