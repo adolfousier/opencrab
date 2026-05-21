@@ -2049,10 +2049,26 @@ pub(crate) async fn handle_message(
                 text_only
             };
 
-            // Append context budget footer to the final message
-            let text_only = if !text_only.trim().is_empty() {
-                let ctx_max = agent.context_limit_for_session(session_id);
-                let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+            // Always append the context budget footer to the final delivery
+            // — even when the response body was fully consumed by intermediate
+            // messages and `text_only` is empty post-dedup. The footer is
+            // metadata about the turn, not part of the streamed body, so
+            // skipping it just because the body was already sent leaves the
+            // user with no ctx counter on most turns. When the dedup leaves
+            // text_only empty, the footer becomes the sole content of the
+            // streaming placeholder edit; the intermediates already carry
+            // the conversation text, so no information is lost.
+            let ctx_max = agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+            let text_only = if text_only.trim().is_empty() {
+                tracing::info!(
+                    "Telegram footer: body empty after dedup, delivering footer-only \
+                     (context_tokens={}, ctx_max={})",
+                    response.context_tokens,
+                    ctx_max,
+                );
+                footer
+            } else {
                 tracing::info!(
                     "Telegram footer: appending ctx footer='{}' (context_tokens={}, ctx_max={}, text_len={})",
                     footer,
@@ -2061,12 +2077,6 @@ pub(crate) async fn handle_message(
                     text_only.len()
                 );
                 format!("{}\n{}", text_only, footer)
-            } else {
-                tracing::info!(
-                    "Telegram footer: SKIPPED — text_only is empty after dedup (response.content.len={})",
-                    response.content.len()
-                );
-                text_only
             };
 
             for img_path in img_paths {
@@ -2696,10 +2706,26 @@ pub(crate) async fn resume_session(
                 text_only
             };
 
-            // Append context budget footer to the final message
-            let text_only = if !text_only.trim().is_empty() {
-                let ctx_max = agent.context_limit_for_session(session_id);
-                let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+            // Always append the context budget footer to the final delivery
+            // — even when the response body was fully consumed by intermediate
+            // messages and `text_only` is empty post-dedup. The footer is
+            // metadata about the turn, not part of the streamed body, so
+            // skipping it just because the body was already sent leaves the
+            // user with no ctx counter on most turns. When the dedup leaves
+            // text_only empty, the footer becomes the sole content of the
+            // streaming placeholder edit; the intermediates already carry
+            // the conversation text, so no information is lost.
+            let ctx_max = agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+            let text_only = if text_only.trim().is_empty() {
+                tracing::info!(
+                    "Telegram footer: body empty after dedup, delivering footer-only \
+                     (context_tokens={}, ctx_max={})",
+                    response.context_tokens,
+                    ctx_max,
+                );
+                footer
+            } else {
                 tracing::info!(
                     "Telegram footer: appending ctx footer='{}' (context_tokens={}, ctx_max={}, text_len={})",
                     footer,
@@ -2708,12 +2734,6 @@ pub(crate) async fn resume_session(
                     text_only.len()
                 );
                 format!("{}\n{}", text_only, footer)
-            } else {
-                tracing::info!(
-                    "Telegram footer: SKIPPED — text_only is empty after dedup (response.content.len={})",
-                    response.content.len()
-                );
-                text_only
             };
 
             for img_path in img_paths {
