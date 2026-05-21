@@ -388,14 +388,8 @@ async fn run_loop(
             if capped > 0 {
                 app.scroll_offset = app.scroll_offset.saturating_add(capped as usize);
                 app.auto_scroll = false;
-                // Load more history when scrolling up, but only when near the top
-                // of the current view (within 20 lines) to avoid excessive DB queries.
-                if app.hidden_older_messages > 0
-                    && app.display_token_count < 300_000
-                    && app.scroll_offset > 20
-                {
-                    let _ = app.load_more_history().await;
-                }
+                // History loading removed — causes overshoot. User can manually
+                // load more history via keyboard shortcut if needed.
             } else if capped < 0 {
                 app.scroll_offset = app
                     .scroll_offset
