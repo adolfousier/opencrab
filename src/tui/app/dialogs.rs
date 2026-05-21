@@ -1047,20 +1047,23 @@ impl App {
                         .unwrap_or_default()
                 })
         } else if provider_idx >= CUSTOM_PROVIDER_IDX {
-            // Custom provider: prefer the LIVE filtered list when models
-            // were fetched. The list-picker (`focused_field == 3` branch
-            // in `handle_key`) only mutates `self.ps.selected_model` /
-            // `self.ps.model_filter` as the user navigates — it leaves
-            // `self.ps.custom_model` at whatever was loaded from config
-            // when the dialog opened, so saving from that text without
-            // syncing silently drops the new selection.
-            // Repro (2026-05-18 21:50 log): user picked
-            // `qwen-3.7-max-preview-thinking` from the dialagram live
-            // list, hit Enter, status bar reverted to
-            // `qwen-3.6-max-preview-thinking` because that was the old
-            // `custom_model` text. Fall back to the text only when the
-            // list is empty (no fetch / offline).
-            if !self.ps.models.is_empty() {
+            // Custom provider: trust `self.ps.custom_model`. The field-3
+            // Enter handler always writes the user's pick into it (either
+            // `filtered[selected_model]` in LIST mode, the typed text in
+            // PASTE mode, or a typed-not-in-list value), then clears the
+            // filter and resets `selected_model = 0` before advancing to
+            // field 4. By the time save fires the user has walked past
+            // field 4 and field 5, so `selected_model` is stale (0) and
+            // `filter` is empty — deriving from `filtered[selected_model]`
+            // here returns the FIRST item in the live list, not the pick.
+            // Repro (2026-05-21 02:58): user picked
+            // `qwen-3.7-max-preview-thinking`, hit Enter, status bar
+            // saved `qwen-3.7-max-preview` because that was filtered[0].
+            // Fall back to the live list only when custom_model is empty
+            // (e.g. existing-provider re-save with no model edit).
+            if !self.ps.custom_model.trim().is_empty() {
+                self.ps.custom_model.clone()
+            } else if !self.ps.models.is_empty() {
                 let filter = self.ps.model_filter.to_lowercase();
                 let filtered: Vec<_> = self
                     .ps
@@ -1071,9 +1074,9 @@ impl App {
                 filtered
                     .get(self.ps.selected_model)
                     .map(|m| m.to_string())
-                    .unwrap_or_else(|| self.ps.custom_model.clone())
+                    .unwrap_or_default()
             } else {
-                self.ps.custom_model.clone()
+                String::new()
             }
         } else if !self.ps.models.is_empty() {
             let filter = self.ps.model_filter.to_lowercase();

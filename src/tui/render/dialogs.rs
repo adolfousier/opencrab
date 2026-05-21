@@ -319,11 +319,23 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let model_count = display_models.len();
-    let current_model = app
-        .current_session
-        .as_ref()
-        .and_then(|s| s.model.clone())
-        .unwrap_or_else(|| app.provider_model());
+    // For custom providers in mid-edit (user picked a model on field 3 then
+    // advanced to field 4/5 but hasn't hit final save yet), prefer the
+    // freshly-picked `custom_model` over `session.model` — otherwise the
+    // (active) marker keeps highlighting the OLD model until the save
+    // flow runs and persists the pick. Falls back to session/provider
+    // model when `custom_model` is empty (e.g. on initial open before the
+    // user touches field 3).
+    let custom_in_progress =
+        provider_idx >= CUSTOM_PROVIDER_IDX && !app.ps.custom_model.trim().is_empty();
+    let current_model = if custom_in_progress {
+        app.ps.custom_model.clone()
+    } else {
+        app.current_session
+            .as_ref()
+            .and_then(|s| s.model.clone())
+            .unwrap_or_else(|| app.provider_model())
+    };
 
     let custom_extra = app.ps.custom_names.len() as u16;
     let is_custom_selected = provider_idx >= CUSTOM_PROVIDER_IDX;
