@@ -50,6 +50,18 @@ const COMMAND_SENSITIVE_PATTERNS: &[&str] = &[
     "password=",
     "passwd=",
     "access_token=",
+    // Environment variable suffixes that typically hold secrets
+    "_pass=",
+    "_password=",
+    "_passwd=",
+    "_secret=",
+    "_token=",
+    "_key=",
+    "_apikey=",
+    "_api_key=",
+    "_credential=",
+    "_credentials=",
+    "_auth=",
 ];
 
 /// Returns true if a JSON object key looks like it holds a sensitive value.
@@ -114,6 +126,37 @@ fn redact_command(cmd: &str) -> String {
             }
         }
     }
+
+    // 5. Redact environment variable assignments with sensitive suffixes
+    result = ENV_SECRET_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let var_name = caps.get(1).unwrap().as_str();
+            format!("{var_name}=[REDACTED]")
+        })
+        .into_owned();
+
+    // 6. Redact piped secrets: echo "secret" | command
+    //    The secret value inside quotes is replaced with [REDACTED]
+    result = PIPED_SECRET_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let full_match = caps.get(0).unwrap().as_str();
+            let secret = caps.get(1).unwrap().as_str();
+            full_match.replace(secret, "[REDACTED]")
+        })
+        .into_owned();
+
+    // 7. Redact IPv4 addresses (server IPs, infrastructure addresses).
+    //    Keeps 127.0.0.1 and 0.0.0.0 as they are non-sensitive.
+    result = IPV4_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let ip = caps.get(1).unwrap().as_str();
+            if ip == "127.0.0.1" || ip == "0.0.0.0" {
+                ip.to_string()
+            } else {
+                "[IP_REDACTED]".to_string()
+            }
+        })
+        .into_owned();
 
     result
 }
@@ -359,6 +402,27 @@ static HEX_TOKEN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[0-9a-fA-F]{32,}\
 static MIXED_ALNUM_TOKEN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\b[a-zA-Z0-9]{28,}\b").unwrap());
 
+/// Regex for environment variable assignments with sensitive suffixes.
+/// Matches UPPERCASE_VAR_NAME="value" or UPPERCASE_VAR_NAME=value where the
+/// name ends in _PASS, _SECRET, _TOKEN, _KEY, _APIKEY, _API_KEY, _CREDENTIAL,
+/// _CREDENTIALS, or _AUTH (case-insensitive suffix, uppercase name required).
+/// Only matches names starting with uppercase to avoid catching lowercase
+/// field names like auth_token that have dedicated prefix handlers.
+static ENV_SECRET_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"\b([A-Z][A-Z0-9_]*(?i:_PASS|_PASSWORD|_PASSWD|_SECRET|_TOKEN|_KEY|_APIKEY|_API_KEY|_CREDENTIAL|_CREDENTIALS|_AUTH))\s*=\s*(?:")?([^\s"']+)"#).unwrap()
+});
+
+/// Regex for piped secrets: echo "secret" | command or echo 'secret' | command
+/// Catches patterns where a secret is piped to docker login, kubectl, etc.
+static PIPED_SECRET_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)echo\s+["']([a-zA-Z0-9_\-+/=]{20,})["']\s*\|"#).unwrap());
+
+/// Regex for IPv4 addresses: four octets of 1-3 digits separated by dots.
+/// Uses word boundaries to avoid matching inside longer strings.
+/// Excludes common version-like patterns (e.g. `0.0.0.0`, `1.0.0`, `v1.2.3`).
+static IPV4_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b").unwrap());
+
 /// Redact API keys and tokens from free-form text (thinking, responses, etc.).
 ///
 /// Catches:
@@ -473,6 +537,37 @@ pub fn redact_secrets(text: &str) -> String {
             }
         }
     }
+
+    // 5. Redact environment variable assignments with sensitive suffixes
+    result = ENV_SECRET_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let var_name = caps.get(1).unwrap().as_str();
+            format!("{var_name}=[REDACTED]")
+        })
+        .into_owned();
+
+    // 6. Redact piped secrets: echo "secret" | command
+    //    The secret value inside quotes is replaced with [REDACTED]
+    result = PIPED_SECRET_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let full_match = caps.get(0).unwrap().as_str();
+            let secret = caps.get(1).unwrap().as_str();
+            full_match.replace(secret, "[REDACTED]")
+        })
+        .into_owned();
+
+    // 7. Redact IPv4 addresses (server IPs, infrastructure addresses).
+    //    Keeps 127.0.0.1 and 0.0.0.0 as they are non-sensitive.
+    result = IPV4_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let ip = caps.get(1).unwrap().as_str();
+            if ip == "127.0.0.1" || ip == "0.0.0.0" {
+                ip.to_string()
+            } else {
+                "[IP_REDACTED]".to_string()
+            }
+        })
+        .into_owned();
 
     result
 }
@@ -665,7 +760,7 @@ mod tests {
     fn redact_secrets_sendgrid_key() {
         let text = "SENDGRID_API_KEY=SG.abc123def456ghi789jkl012mno345pqr678stu901vwx234yz";
         let out = redact_secrets(text);
-        assert!(out.contains("SG.[REDACTED]"), "got: {out}");
+        assert!(out.contains("SENDGRID_API_KEY=[REDACTED]"), "got: {out}");
     }
 
     #[test]
@@ -725,7 +820,7 @@ mod tests {
     fn redact_secrets_digital_ocean_token() {
         let text = "DO_TOKEN=dop_v1_abc123def456ghi789jkl012mno345";
         let out = redact_secrets(text);
-        assert!(out.contains("dop_v1_[REDACTED]"), "got: {out}");
+        assert!(out.contains("DO_TOKEN=[REDACTED]"), "got: {out}");
     }
 
     // --- Unicode-expansion regression tests ---

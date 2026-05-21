@@ -87,7 +87,7 @@ cargo test --all-features
 | **Memory — Store** | 6 | `src/memory/store.rs` |
 | **Memory — Search** | 3 | `src/memory/search.rs` |
 | **Pricing** | 17 | `src/pricing.rs` |
-| **Utils — Sanitize** | 22 | `src/utils/sanitize.rs` |
+| **Utils — Sanitize** | 41 | `src/utils/sanitize.rs` + `src/tests/sanitize_redaction_test.rs` |
 | **Utils — Retry** | 8 | `src/utils/retry.rs` |
 | **Utils — String** | 6 | `src/utils/string.rs` |
 | **Utils — Install** | 6 | `src/utils/install.rs` |

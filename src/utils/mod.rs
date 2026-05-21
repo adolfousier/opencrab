@@ -20,6 +20,6 @@ pub use approval::{
 pub use file_extract::{FileContent, classify_file, inject_file_content, process_file_with_vision};
 pub use image::{extract_img_markers, extract_vid_markers};
 pub use retry::{RetryConfig, RetryableError, retry, retry_with_check};
-pub use sanitize::redact_tool_input;
+pub use sanitize::{redact_secrets, redact_tool_input};
 pub use string::{format_ctx_footer, truncate_str};
 pub use tool_context::tool_context_hint;

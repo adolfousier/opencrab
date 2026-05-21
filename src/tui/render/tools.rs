@@ -153,9 +153,10 @@ pub(super) fn render_tool_group<'a>(
                     Span::styled("running...", Style::default().fg(Color::Rgb(215, 100, 20))),
                 ]));
             } else {
-                // Show tool output details
+                // Show tool output details (with secrets redacted)
                 if let Some(ref details) = call.details {
-                    let detail_lines = collapse_build_output(details);
+                    let detail_lines =
+                        collapse_build_output(&crate::utils::redact_secrets(details));
                     let default_detail_style = Style::default().fg(Color::Rgb(90, 90, 90));
                     for detail_line in detail_lines.iter().take(200) {
                         let line_style = if detail_line.starts_with("+ ") {

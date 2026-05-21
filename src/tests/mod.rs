@@ -58,6 +58,7 @@ pub mod openai_provider_test;
 pub mod opencode_provider_test;
 pub mod rate_limiter_test;
 pub mod recent_paths_test;
+pub mod sanitize_redaction_test;
 //pub mod error_scenarios_test;
 pub mod fallback_vision_test;
 pub mod file_extract_test;
