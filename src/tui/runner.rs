@@ -340,7 +340,13 @@ async fn run_loop(
                 _ => {}
             }
 
-            if let Err(e) = app.handle_event(event).await {
+            // Intercept MouseScroll events — don't process through state handler.
+            // Instead, add to pending_scroll for coalesced processing to avoid
+            // double-counting and excessive load_more_history() calls.
+            let mut pending_scroll: i32 = 0;
+            if let TuiEvent::MouseScroll(dir) = &event {
+                pending_scroll += *dir as i32;
+            } else if let Err(e) = app.handle_event(event).await {
                 app.error_message = Some(e.to_string());
             }
 
@@ -348,7 +354,6 @@ async fn run_loop(
             // Coalesce Ticks, Scrolls, and streaming chunks to avoid redundant
             // re-renders. Streaming chunks are batched with a time budget so the
             // TUI stays responsive to keyboard/mouse input during long streams.
-            let mut pending_scroll: i32 = 0;
             let drain_start = std::time::Instant::now();
             loop {
                 match app.try_next_event() {
@@ -383,6 +388,14 @@ async fn run_loop(
             if capped > 0 {
                 app.scroll_offset = app.scroll_offset.saturating_add(capped as usize);
                 app.auto_scroll = false;
+                // Load more history when scrolling up, but only when near the top
+                // of the current view (within 20 lines) to avoid excessive DB queries.
+                if app.hidden_older_messages > 0
+                    && app.display_token_count < 300_000
+                    && app.scroll_offset > 20
+                {
+                    let _ = app.load_more_history().await;
+                }
             } else if capped < 0 {
                 app.scroll_offset = app
                     .scroll_offset

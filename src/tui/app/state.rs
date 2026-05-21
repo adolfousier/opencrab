@@ -1248,10 +1248,6 @@ impl App {
                             before,
                             self.scroll_offset
                         );
-                        // Load more history when scrolling up if hidden messages exist
-                        if self.hidden_older_messages > 0 && self.display_token_count < 300_000 {
-                            let _ = self.load_more_history().await;
-                        }
                     } else {
                         let before = self.scroll_offset;
                         self.scroll_offset = self.scroll_offset.saturating_sub(1);
