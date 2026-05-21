@@ -149,7 +149,10 @@ fn groups_broken_by_visible_text_not_stacked() {
         count, 2,
         "Should only count 2 groups before the visible text"
     );
-    assert_eq!(total_calls, 5, "Should count 5 tool calls in first 2 groups");
+    assert_eq!(
+        total_calls, 5,
+        "Should count 5 tool calls in first 2 groups"
+    );
 
     // Check the group after the break
     let (count2, total_calls2) = count_consecutive_groups(&messages, 3);

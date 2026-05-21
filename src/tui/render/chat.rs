@@ -115,10 +115,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 // Stacked: render a single collapsed summary for all groups
                 let dot = "●";
                 let stack_expanded = group.expanded; // Use first group's expanded state
-                let header = format!(
-                    "{} tool calls ({} groups)",
-                    stack_total_calls, stack_count
-                );
+                let header = format!("{} tool calls ({} groups)", stack_total_calls, stack_count);
                 let mut header_spans = vec![Span::styled(
                     format!("  {} {}", dot, header),
                     Style::default()

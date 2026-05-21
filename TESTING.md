@@ -139,6 +139,7 @@ cargo test --all-features
 | Tests — Post-Evolve | 5 | `src/tests/post_evolve_test.rs` |
 | Tests — Onboarding Keys | 4 | `src/tests/onboarding_keys_test.rs` |
 | Tests — TUI Render Clear | 4 | `src/tests/tui_render_clear_test.rs` |
+| Tests — TUI Tool Stack | 6 | `src/tests/tui_tool_stack_test.rs` |
 | Tests — Gemini Fetch | 3 | `src/tests/gemini_fetch_test.rs` |
 | Tests — Profiles | 57 | `src/tests/profile_test.rs` |
 | Tests — Subagent / Swarm | 83 | `src/tests/subagent_test.rs` |
