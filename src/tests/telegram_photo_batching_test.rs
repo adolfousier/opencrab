@@ -21,7 +21,9 @@ async fn single_photo_no_debounce() {
     // without calling buffer_photo or reset_photo_debounce.
 
     // Verify buffer is empty (nothing was buffered)
-    let buffered = state.drain_photo_buffer(chat_id, user_id, "test_group").await;
+    let buffered = state
+        .drain_photo_buffer(chat_id, user_id, "test_group")
+        .await;
     assert!(
         buffered.is_empty(),
         "single photo should not buffer anything"
@@ -71,7 +73,9 @@ async fn album_photos_batched_by_media_group() {
     assert_eq!(count3, 3);
 
     // Drain and verify all 3 photos are returned
-    let buffered = state.drain_photo_buffer(chat_id, user_id, media_group_id).await;
+    let buffered = state
+        .drain_photo_buffer(chat_id, user_id, media_group_id)
+        .await;
     assert_eq!(buffered.len(), 3);
 
     // Verify captions are preserved (first photo has caption, others don't)

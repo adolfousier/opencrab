@@ -234,7 +234,10 @@ impl TelegramState {
     ) -> usize {
         let key = (chat_id, user_id, media_group_id.to_string());
         let mut buffer = self.photo_buffer.lock().await;
-        buffer.entry(key.clone()).or_default().push((img_marker, caption));
+        buffer
+            .entry(key.clone())
+            .or_default()
+            .push((img_marker, caption));
         buffer.get(&key).map(|v| v.len()).unwrap_or(0)
     }
 

@@ -446,7 +446,7 @@ pub(crate) async fn handle_message(
         content = text.unwrap_or_default();
     }
 
-    // Download image if present, route through shared vision pipeline
+    // Download image if present, use photo batching for multi-image support
     if has_img
         && !has_aud
         && let Some((img_bytes, img_mime, img_fname)) = download_image(&msg, &client).await
@@ -455,12 +455,37 @@ pub(crate) async fn handle_message(
         let cfg = crate::config::Config::load();
         if let Ok(cfg) = cfg {
             let fc = process_file_with_vision(&img_bytes, &img_mime, &img_fname, &cfg);
-            let injected = inject_file_content(&fc).0;
+            let (injected, _) = inject_file_content(&fc);
             if !injected.is_empty() {
-                if content.is_empty() {
-                    content = injected;
-                } else {
-                    content.push_str(&format!("\n\n{injected}"));
+                // Buffer the image marker for batching
+                let caption = extract_text(&msg);
+                wa_state.buffer_photo(&phone, injected, caption).await;
+                
+                // Reset debounce timer
+                let token = wa_state.reset_photo_debounce(&phone).await;
+                
+                // Wait for debounce to expire
+                if !wa_state.wait_photo_debounce(&token).await {
+                    // Cancelled by another incoming photo, return early
+                    return;
+                }
+                
+                // Debounce expired, drain all buffered photos
+                let (markers, first_caption) = wa_state.drain_photo_buffer(&phone).await;
+                wa_state.cleanup_photo_debounce(&phone).await;
+                
+                if markers.is_empty() {
+                    return;
+                }
+                
+                // Combine all image markers
+                content = markers.join("\n\n");
+                
+                // Prepend caption if present
+                if let Some(caption) = first_caption {
+                    if !caption.trim().is_empty() {
+                        content = format!("{}\n\n{}", caption.trim(), content);
+                    }
                 }
             }
         }
