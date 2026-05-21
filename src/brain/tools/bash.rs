@@ -308,6 +308,10 @@ impl Tool for BashTool {
         };
 
         // Execute command with timeout — use piped stdin for sudo password
+        // RTK rewrite tracking (hoisted from normal-execution branch)
+        #[cfg(feature = "rtk")]
+        let mut rtk_was_rewritten = false;
+
         let output = if let Some(password) = sudo_password {
             // Rewrite command to read password from stdin via -S flag
             // Use -p "" to suppress sudo's own prompt (we handle it in the TUI)
@@ -476,6 +480,7 @@ impl Tool for BashTool {
                             input.command,
                             result.rewritten_command
                         );
+                        rtk_was_rewritten = result.was_rewritten;
                         result.rewritten_command
                     }
                     None => input.command.clone(),
@@ -516,52 +521,33 @@ impl Tool for BashTool {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        // RTK metrics tracking: record token savings if command was rewritten
+        // RTK metrics tracking: record that the command was rewritten.
+        // We can't measure "original" tokens without running the command twice,
+        // so we record the filtered output size. RTK's own `gain` command tracks
+        // the actual savings vs what the unfiltered output would have been.
         #[cfg(feature = "rtk")]
         {
-            if crate::rtk::is_rtk_available() {
-                // Check if this command was rewritten by RTK
-                let was_rewritten =
-                    if let Some(result) = crate::rtk::rewrite_command(&input.command) {
-                        result.was_rewritten
-                    } else {
-                        false
-                    };
+            if rtk_was_rewritten {
+                let filtered_output = format!("{}\n{}", stdout, stderr);
+                let filtered_tokens = filtered_output.split_whitespace().count();
 
-                if was_rewritten {
-                    // Calculate token counts
-                    let original_output = format!("{}\n{}", stdout, stderr);
-                    let original_tokens = original_output.split_whitespace().count();
+                let savings = crate::rtk::TokenSavings {
+                    command: input.command.clone(),
+                    rewritten_command: format!("rtk {}", input.command),
+                    original_tokens: 0,
+                    filtered_tokens,
+                    tokens_saved: 0,
+                    savings_percent: 0.0,
+                    timestamp: chrono::Utc::now(),
+                };
 
-                    // For now, assume RTK filtering reduces output by ~70% (typical savings)
-                    // In a real implementation, we'd track the actual filtered output
-                    let filtered_tokens = (original_tokens as f64 * 0.3) as usize;
-                    let tokens_saved = original_tokens.saturating_sub(filtered_tokens);
-                    let savings_percent = if original_tokens > 0 {
-                        (tokens_saved as f64 / original_tokens as f64) * 100.0
-                    } else {
-                        0.0
-                    };
+                crate::rtk::global_tracker().record_savings(savings);
 
-                    let savings = crate::rtk::TokenSavings {
-                        command: input.command.clone(),
-                        rewritten_command: format!("rtk {}", input.command),
-                        original_tokens,
-                        filtered_tokens,
-                        tokens_saved,
-                        savings_percent,
-                        timestamp: chrono::Utc::now(),
-                    };
-
-                    crate::rtk::global_tracker().record_savings(savings);
-
-                    tracing::info!(
-                        "RTK saved {} tokens ({:.1}%) on command: {}",
-                        tokens_saved,
-                        savings_percent,
-                        input.command
-                    );
-                }
+                tracing::info!(
+                    "RTK rewrote command ({} filtered tokens): {}",
+                    filtered_tokens,
+                    input.command
+                );
             }
         }
 
