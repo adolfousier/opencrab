@@ -633,10 +633,12 @@ impl AgentService {
         // Bounded retry for the "reasoning-only, no answer" failure mode:
         // MLX Qwen models periodically emit finish_reason=stop after only
         // reasoning_content chunks — zero text, zero tool calls — so the
-        // user sees a dropped request. We nudge the model once to actually
-        // produce the answer; repeated loops are unlikely to recover so
-        // one retry is enough.
-        let mut empty_reasoning_retry_used: bool = false;
+        // user sees a dropped request. We nudge up to 5 times, escalating
+        // the system instruction each round, and if the model STILL refuses
+        // to emit visible text we walk the fallback chain (sticky swap) so
+        // the turn never silently disappears.
+        let mut empty_reasoning_retries: u32 = 0;
+        const EMPTY_REASONING_MAX_NUDGES: u32 = 5;
         // Local reasoning models (notably Qwen3.6-35B on MLX) periodically
         // emit an EOS token mid-sentence — the response looks complete from
         // a protocol standpoint (proper finish_reason=stop + usage chunk)
@@ -3002,56 +3004,282 @@ impl AgentService {
                 }
 
                 // ── Empty-response + reasoning retry ─────────────────────
-                // Some local reasoning runtimes (notably MLX Qwen3) finish
-                // a turn with only `reasoning_content` chunks — zero visible
-                // text, zero tool calls — after an earlier tool iteration.
-                // The user sees the tool card and then nothing, which reads
-                // as a dropped request with no self-heal. Seen in logs at
-                // 2026-04-17 04:06:54 where finish_reason=stop fired right
-                // after reasoning wrapped.
+                // Some reasoning runtimes (local MLX Qwen3, and cloud
+                // thinking models like alibaba-qwen `qwen-latest-series-
+                // invite-beta-v34`) finish a turn with only
+                // `reasoning_content` chunks — zero visible text, zero
+                // tool calls. The user sees a tool card / their own
+                // message and then nothing, which reads as a dropped
+                // request with no self-heal.
                 //
-                // One-shot retry: ask the model to actually produce the
-                // answer. Bounded to avoid loops on models that will never
-                // emit content in this turn shape.
+                // Escalation:
+                //   1. Nudge up to EMPTY_REASONING_MAX_NUDGES (5) times,
+                //      sharpening the system instruction each round.
+                //   2. If still empty after the budget, walk the fallback
+                //      chain (sticky swap + persist) so the next turn
+                //      runs on a model that will actually answer.
+                //   3. If no fallback succeeds, emit a final visible
+                //      SelfHealingAlert so the user knows to switch
+                //      providers manually — never a silent drop.
                 let has_meaningful_reasoning = reasoning_text
                     .as_deref()
                     .map(|r| r.trim().len() >= 40)
                     .unwrap_or(false);
-                if !empty_reasoning_retry_used
-                    && iteration > 0
+                if iteration > 0
                     && !is_cli_provider
                     && iteration_text.trim().is_empty()
                     && has_meaningful_reasoning
                 {
-                    empty_reasoning_retry_used = true;
-                    tracing::warn!(
-                        "Model ended turn with reasoning but no visible response \
-                         (reasoning_len={}, iteration={}) — nudging for the actual answer.",
-                        reasoning_text.as_deref().map(|r| r.len()).unwrap_or(0),
-                        iteration,
-                    );
-                    if let Some(ref cb) = progress_callback {
-                        cb(
-                            session_id,
-                            ProgressEvent::SelfHealingAlert {
-                                message: "Model reasoned without answering — nudging for response"
-                                    .into(),
-                            },
+                    if empty_reasoning_retries < EMPTY_REASONING_MAX_NUDGES {
+                        empty_reasoning_retries += 1;
+                        let attempt = empty_reasoning_retries;
+                        tracing::warn!(
+                            "Model ended turn with reasoning but no visible response \
+                             (reasoning_len={}, iteration={}, nudge {}/{}) — nudging \
+                             for the actual answer.",
+                            reasoning_text.as_deref().map(|r| r.len()).unwrap_or(0),
+                            iteration,
+                            attempt,
+                            EMPTY_REASONING_MAX_NUDGES,
                         );
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "Model reasoned without answering — nudge {}/{}",
+                                        attempt, EMPTY_REASONING_MAX_NUDGES,
+                                    ),
+                                },
+                            );
+                        }
+                        // Each round gets a sharper system message so the
+                        // model can't keep replying with more silent
+                        // thinking. The last two attempts are explicit
+                        // commands to stop reasoning entirely.
+                        let nudge = match attempt {
+                            1 => "[System: Your previous turn produced only internal reasoning \
+                                  and no visible reply. The tool results above are sufficient — \
+                                  write the answer now as plain text (tables, prose, or whatever \
+                                  the user asked for). Do not re-reason, do not call more tools \
+                                  unless strictly necessary.]",
+                            2 => "[System: Second nudge — you again produced only reasoning. \
+                                  Output the answer as plain text on this turn. No reasoning \
+                                  block. No tool calls. Just the answer the user asked for.]",
+                            3 => "[System: Third nudge. Stop reasoning. Reply now in plain \
+                                  prose, one or two short paragraphs. No <thinking>, no \
+                                  reasoning_content, no internal monologue.]",
+                            4 => "[System: Fourth nudge — final warning before fallback. \
+                                  Emit a visible text reply NOW. If you produce another \
+                                  reasoning-only turn the conversation will switch to a \
+                                  different provider automatically.]",
+                            _ => "[System: Fifth and last nudge. Reply in plain text on this \
+                                  turn or the system will hand the conversation to a fallback \
+                                  provider on the next turn.]",
+                        };
+                        // Preserve the reasoning on the (empty) assistant
+                        // turn, then inject a sharpening user nudge so
+                        // the next iteration has to produce the actual
+                        // answer.
+                        context.add_message(Message::assistant(String::new()));
+                        context.add_message(Message::user(nudge.to_string()));
+                        continue;
                     }
-                    // Preserve the reasoning on the (empty) assistant turn,
-                    // then inject a user nudge so the next iteration has to
-                    // produce the actual answer.
-                    context.add_message(Message::assistant(String::new()));
-                    context.add_message(Message::user(
-                        "[System: Your previous turn produced only internal reasoning \
-                         and no visible reply. The tool results above are sufficient — \
-                         write the answer now as plain text (tables, prose, or whatever \
-                         the user asked for). Do not re-reason, do not call more tools \
-                         unless strictly necessary.]"
-                            .to_string(),
-                    ));
-                    continue;
+
+                    // Budget exhausted — walk the fallback chain. Sticky
+                    // swap so the next user turn also lands on the new
+                    // provider; the original is gone for this session.
+                    tracing::warn!(
+                        "Empty-reasoning nudge budget exhausted ({}/{}) — walking \
+                         fallback chain",
+                        empty_reasoning_retries,
+                        EMPTY_REASONING_MAX_NUDGES,
+                    );
+                    let active_name = self.provider_name_for_session(session_id);
+                    let candidates: Vec<_> = self
+                        .fallback_providers
+                        .iter()
+                        .filter(|p| p.name() != active_name)
+                        .collect();
+
+                    if candidates.is_empty() {
+                        // No escape hatch configured. Surface a visible
+                        // alert so the user knows to swap manually — do
+                        // NOT exit silently.
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "Model '{}/{}' refused to answer after {} nudges \
+                                         and no fallback provider is configured. Use \
+                                         /models to switch.",
+                                        active_name,
+                                        model_name,
+                                        EMPTY_REASONING_MAX_NUDGES,
+                                    ),
+                                },
+                            );
+                        }
+                        // Fall through: final_response = Some(response); break
+                        // happens below (existing path). The user sees the
+                        // alert instead of silence.
+                    } else {
+                        let mut fb_succeeded = None;
+                        for fallback in &candidates {
+                            let fb_name = fallback.name().to_string();
+                            let fb_model = fallback.default_model().to_string();
+                            if let Some(ref cb) = progress_callback {
+                                cb(
+                                    session_id,
+                                    ProgressEvent::SelfHealingAlert {
+                                        message: format!(
+                                            "Trying fallback '{}/{}' for empty-reasoning \
+                                             recovery...",
+                                            fb_name, fb_model,
+                                        ),
+                                    },
+                                );
+                            }
+
+                            let mut fb_req = LLMRequest::new(
+                                fb_model.clone(),
+                                context.messages.clone(),
+                            )
+                            .with_max_tokens(self.max_tokens);
+                            fb_req.working_directory = Some(
+                                self.get_working_directory().to_string_lossy().to_string(),
+                            );
+                            fb_req.session_id = Some(session_id);
+                            if let Some(system) = &context.system_brain {
+                                fb_req = fb_req.with_system(system.clone());
+                            }
+                            if self.tool_registry.count() > 0 {
+                                fb_req = fb_req
+                                    .with_tools(self.tool_registry.get_tool_definitions());
+                            }
+
+                            let original_provider = self.provider_for_session(session_id);
+                            self.swap_provider_for_session(
+                                session_id,
+                                (*fallback).clone(),
+                            );
+                            let mut restore_guard = FallbackProviderGuard {
+                                service: self,
+                                session_id,
+                                original: Some(original_provider),
+                            };
+                            let fb_result = self
+                                .stream_complete(
+                                    session_id,
+                                    fb_req,
+                                    cancel_token.as_ref(),
+                                    progress_callback.as_ref(),
+                                    None,
+                                    None,
+                                    false,
+                                )
+                                .await;
+                            match fb_result {
+                                Ok((fb_resp, _fb_reasoning)) => {
+                                    let has_visible_text = fb_resp.content.iter().any(|b| {
+                                        matches!(
+                                            b,
+                                            crate::brain::provider::ContentBlock::Text {
+                                                text,
+                                            } if !text.trim().is_empty()
+                                        )
+                                    });
+                                    if has_visible_text {
+                                        // Swap sticks for the rest of the session.
+                                        restore_guard.original = None;
+                                        drop(restore_guard);
+                                        if let Some(ref cb) = progress_callback {
+                                            let from_name = self
+                                                .provider_name_for_session(session_id);
+                                            cb(
+                                                session_id,
+                                                ProgressEvent::SelfHealingAlert {
+                                                    message: format!(
+                                                        "Empty-reasoning recovery → switched \
+                                                         to {}/{}",
+                                                        fb_name, fb_model,
+                                                    ),
+                                                },
+                                            );
+                                            cb(
+                                                session_id,
+                                                ProgressEvent::ProviderSwitched {
+                                                    from_name,
+                                                    from_model: self
+                                                        .provider_model_for_session(session_id),
+                                                    to_name: fb_name.clone(),
+                                                    to_model: fb_model.clone(),
+                                                    reason: "empty_reasoning".to_string(),
+                                                },
+                                            );
+                                        }
+                                        self.persist_sticky_pair(
+                                            session_id,
+                                            fb_name.clone(),
+                                            fb_model.clone(),
+                                        );
+                                        fb_succeeded = Some(fb_resp);
+                                        break;
+                                    } else {
+                                        // Also empty — restore and try next candidate.
+                                        drop(restore_guard);
+                                        tracing::warn!(
+                                            "Empty-reasoning fallback '{}' also returned \
+                                             empty — trying next",
+                                            fb_name,
+                                        );
+                                    }
+                                }
+                                Err(fb_err) => {
+                                    drop(restore_guard);
+                                    tracing::warn!(
+                                        "Empty-reasoning fallback '{}' failed: {} — \
+                                         trying next",
+                                        fb_name,
+                                        fb_err,
+                                    );
+                                }
+                            }
+                        }
+
+                        if let Some(fb_resp) = fb_succeeded {
+                            // Replace the empty-reasoning response with the
+                            // fallback's response and let the outer loop
+                            // tail handle final_response + IntermediateText.
+                            response = fb_resp;
+                            // Re-derive iteration_text from the new response
+                            // so the IntermediateText emit below has the
+                            // actual reply text.
+                            iteration_text = response
+                                .content
+                                .iter()
+                                .filter_map(|b| match b {
+                                    crate::brain::provider::ContentBlock::Text { text } => {
+                                        Some(text.as_str())
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("");
+                        } else if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "All {} fallback providers also returned empty \
+                                         reasoning. Use /models to pick a different model.",
+                                        candidates.len(),
+                                    ),
+                                },
+                            );
+                        }
+                    }
                 }
 
                 // ── Mid-sentence truncation retry ────────────────────────
