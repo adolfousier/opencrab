@@ -2053,8 +2053,19 @@ pub(crate) async fn handle_message(
             let text_only = if !text_only.trim().is_empty() {
                 let ctx_max = agent.context_limit_for_session(session_id);
                 let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+                tracing::info!(
+                    "Telegram footer: appending ctx footer='{}' (context_tokens={}, ctx_max={}, text_len={})",
+                    footer,
+                    response.context_tokens,
+                    ctx_max,
+                    text_only.len()
+                );
                 format!("{}\n{}", text_only, footer)
             } else {
+                tracing::info!(
+                    "Telegram footer: SKIPPED — text_only is empty after dedup (response.content.len={})",
+                    response.content.len()
+                );
                 text_only
             };
 
@@ -2075,6 +2086,11 @@ pub(crate) async fn handle_message(
             // Deliver final response — prefer editing the streaming message in-place
             // to avoid the delete+send race that causes duplicates.
             let html = markdown_to_telegram_html(&text_only);
+            tracing::info!(
+                "Telegram deliver: html.len={}, text_only ends_with_footer={:?}",
+                html.len(),
+                text_only.lines().last()
+            );
             if !html.is_empty() {
                 let chunks: Vec<String> = split_message(&html, 4096)
                     .into_iter()
@@ -2684,8 +2700,19 @@ pub(crate) async fn resume_session(
             let text_only = if !text_only.trim().is_empty() {
                 let ctx_max = agent.context_limit_for_session(session_id);
                 let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+                tracing::info!(
+                    "Telegram footer: appending ctx footer='{}' (context_tokens={}, ctx_max={}, text_len={})",
+                    footer,
+                    response.context_tokens,
+                    ctx_max,
+                    text_only.len()
+                );
                 format!("{}\n{}", text_only, footer)
             } else {
+                tracing::info!(
+                    "Telegram footer: SKIPPED — text_only is empty after dedup (response.content.len={})",
+                    response.content.len()
+                );
                 text_only
             };
 
