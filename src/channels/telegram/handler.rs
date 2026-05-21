@@ -2049,6 +2049,15 @@ pub(crate) async fn handle_message(
                 text_only
             };
 
+            // Append context budget footer to the final message
+            let text_only = if !text_only.trim().is_empty() {
+                let ctx_max = agent.context_limit_for_session(session_id);
+                let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+                format!("{}\n{}", text_only, footer)
+            } else {
+                text_only
+            };
+
             for img_path in img_paths {
                 match tokio::fs::read(&img_path).await {
                     Ok(bytes) => {
@@ -2667,6 +2676,15 @@ pub(crate) async fn resume_session(
                     remaining = remaining.replace(intermediate.as_str(), "");
                 }
                 remaining.trim().to_string()
+            } else {
+                text_only
+            };
+
+            // Append context budget footer to the final message
+            let text_only = if !text_only.trim().is_empty() {
+                let ctx_max = agent.context_limit_for_session(session_id);
+                let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+                format!("{}\n{}", text_only, footer)
             } else {
                 text_only
             };

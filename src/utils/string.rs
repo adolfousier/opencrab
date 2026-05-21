@@ -96,6 +96,39 @@ pub fn truncate_middle(s: &str, max_bytes: usize) -> String {
     format!("{}{}{}", &s[..head_end], ELLIPSIS, &s[tail_start..])
 }
 
+/// Format a token count as a compact human-readable string (e.g. "150K", "1.2M").
+fn format_token_count(tokens: u32) -> String {
+    let tokens = tokens as f64;
+    if tokens >= 1_000_000.0 {
+        format!("{:.1}M", tokens / 1_000_000.0)
+    } else if tokens >= 1_000.0 {
+        format!("{:.0}K", tokens / 1_000.0)
+    } else if tokens > 0.0 {
+        format!("{}", tokens as u32)
+    } else {
+        "0".to_string()
+    }
+}
+
+/// Format a context budget footer line: "ctx: 8K/200K 4%".
+///
+/// Used by channel handlers to append a context usage indicator to the
+/// final message delivered to the user. Plain text so it works across all
+/// channel-specific formatters (Telegram HTML, Discord markdown, Slack mrkdwn, WhatsApp).
+pub fn format_ctx_footer(used: u32, max: u32) -> String {
+    let pct = if max > 0 {
+        (used as f64 / max as f64) * 100.0
+    } else {
+        0.0
+    };
+    format!(
+        "ctx: {}/{} {:.0}%",
+        format_token_count(used),
+        format_token_count(max),
+        pct
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +254,37 @@ mod tests {
     fn test_looks_like_file_path_no_slash_prefix() {
         assert!(!looks_like_file_path("hello world"));
         assert!(!looks_like_file_path("report.pdf"));
+    }
+
+    // ── format_ctx_footer ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_ctx_footer_k_values() {
+        assert_eq!(format_ctx_footer(8000, 200000), "ctx: 8K/200K 4%");
+    }
+
+    #[test]
+    fn test_format_ctx_footer_small_values() {
+        assert_eq!(format_ctx_footer(500, 200000), "ctx: 500/200K 0%");
+    }
+
+    #[test]
+    fn test_format_ctx_footer_m_values() {
+        assert_eq!(format_ctx_footer(1200000, 2000000), "ctx: 1.2M/2.0M 60%");
+    }
+
+    #[test]
+    fn test_format_ctx_footer_zero_used() {
+        assert_eq!(format_ctx_footer(0, 200000), "ctx: 0/200K 0%");
+    }
+
+    #[test]
+    fn test_format_ctx_footer_zero_max() {
+        assert_eq!(format_ctx_footer(5000, 0), "ctx: 5K/0 0%");
+    }
+
+    #[test]
+    fn test_format_ctx_footer_full() {
+        assert_eq!(format_ctx_footer(200000, 200000), "ctx: 200K/200K 100%");
     }
 }

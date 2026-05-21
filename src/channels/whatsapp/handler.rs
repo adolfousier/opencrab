@@ -997,6 +997,15 @@ pub(crate) async fn handle_message(
             let text_content = redact_secrets(&text_content);
             let text_content = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_content);
 
+            // Append context budget footer to the final message
+            let text_content = if !text_content.trim().is_empty() {
+                let ctx_max = agent.context_limit_for_session(session_id);
+                let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+                format!("{}\n{}", text_content, footer)
+            } else {
+                text_content
+            };
+
             // Send images before text
             for img_path in img_paths {
                 match tokio::fs::read(&img_path).await {

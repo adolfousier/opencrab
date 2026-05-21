@@ -1690,6 +1690,15 @@ async fn handle_message(
                 }
             }
 
+            // Append context budget footer to the final message
+            let text_only = if !text_only.trim().is_empty() {
+                let ctx_max = state.agent.context_limit_for_session(session_id);
+                let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+                format!("{}\n{}", text_only, footer)
+            } else {
+                text_only
+            };
+
             for chunk in split_message(&text_only, 3000) {
                 if chunk.is_empty() {
                     continue;
