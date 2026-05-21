@@ -146,6 +146,65 @@ jobs:
           AWS_LC_SYS_CMAKE_BUILDER: ${{ matrix.os == 'windows-latest' && '1' || '' }}
         run: cargo build --release --target ${{ matrix.target }} --all-features
 
+      - name: Download and bundle RTK 0.40.0
+        shell: bash
+        run: |
+          RTK_VERSION="0.40.0"
+          RTK_TARGET="${{ matrix.target }}"
+          
+          # Map Rust targets to RTK release asset names (v0.40.0 actual names)
+          case "$RTK_TARGET" in
+            x86_64-unknown-linux-gnu)
+              RTK_ASSET="rtk-x86_64-unknown-linux-musl.tar.gz"
+              ;;
+            aarch64-unknown-linux-gnu)
+              RTK_ASSET="rtk-aarch64-unknown-linux-gnu.tar.gz"
+              ;;
+            x86_64-apple-darwin)
+              RTK_ASSET="rtk-x86_64-apple-darwin.tar.gz"
+              ;;
+            aarch64-apple-darwin)
+              RTK_ASSET="rtk-aarch64-apple-darwin.tar.gz"
+              ;;
+            x86_64-pc-windows-msvc)
+              RTK_ASSET="rtk-x86_64-pc-windows-msvc.zip"
+              ;;
+            *)
+              echo "Unknown target: $RTK_TARGET"
+              exit 1
+              ;;
+          esac
+          
+          RTK_URL="https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/${RTK_ASSET}"
+          echo "Downloading RTK from: $RTK_URL"
+          
+          curl -L -o "/tmp/$RTK_ASSET" "$RTK_URL"
+          
+          # Extract RTK binary
+          mkdir -p /tmp/rtk-extract
+          if [[ "$RTK_ASSET" == *.zip ]]; then
+            unzip -q "/tmp/$RTK_ASSET" -d /tmp/rtk-extract
+          else
+            tar xzf "/tmp/$RTK_ASSET" -C /tmp/rtk-extract
+          fi
+          
+          # Find the rtk binary in the extracted archive
+          RTK_BINARY=$(find /tmp/rtk-extract -name "rtk" -o -name "rtk.exe" | head -1)
+          if [ -z "$RTK_BINARY" ]; then
+            echo "RTK binary not found in archive"
+            ls -laR /tmp/rtk-extract
+            exit 1
+          fi
+          
+          # Copy to the release directory alongside opencrabs
+          RELEASE_DIR="target/${{ matrix.target }}/release"
+          cp "$RTK_BINARY" "$RELEASE_DIR/"
+          if [[ "${{ matrix.os }}" != "windows-latest" ]]; then
+            chmod +x "$RELEASE_DIR/rtk"
+          fi
+          echo "RTK binary bundled at: $RELEASE_DIR/$(basename $RTK_BINARY)"
+          ls -lh "$RELEASE_DIR/$(basename $RTK_BINARY)"
+
       - name: Strip binary (Unix)
         if: matrix.os != 'windows-latest'
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
@@ -156,9 +215,9 @@ jobs:
           ASSET_NAME="opencrabs-v${{ steps.version.outputs.version }}-${{ matrix.asset_suffix }}"
           cd target/${{ matrix.target }}/release
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ../../../${ASSET_NAME}.zip ${{ matrix.artifact_name }}
+            7z a ../../../${ASSET_NAME}.zip ${{ matrix.artifact_name }} rtk.exe
           else
-            tar czf ../../../${ASSET_NAME}.tar.gz ${{ matrix.artifact_name }}
+            tar czf ../../../${ASSET_NAME}.tar.gz ${{ matrix.artifact_name }} rtk
           fi
 
       - name: Upload artifact

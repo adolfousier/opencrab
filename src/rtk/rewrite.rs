@@ -81,27 +81,64 @@ pub struct RtkResult {
     pub original_command: String,
 }
 
-/// Check if the rtk binary is available in PATH.
+/// Find the RTK binary path.
+///
+/// Checks in order:
+/// 1. Bundled binary in the same directory as the OpenCrabs executable
+/// 2. Bundled binary in `bin/` subdirectory relative to the executable
+/// 3. System PATH via `which rtk`
+///
+/// Result is cached after the first call.
+fn find_rtk_binary() -> Option<String> {
+    static RTK_BINARY: OnceLock<Option<String>> = OnceLock::new();
+
+    RTK_BINARY
+        .get_or_init(|| {
+            // Check for bundled binary in the same directory as the executable
+            if let Ok(exe_path) = std::env::current_exe()
+                && let Some(exe_dir) = exe_path.parent()
+            {
+                // Check ./rtk (same directory)
+                let bundled_path = exe_dir.join("rtk");
+                if bundled_path.exists() && bundled_path.is_file() {
+                    tracing::info!("RTK binary found bundled at: {:?}", bundled_path);
+                    return Some(bundled_path.to_string_lossy().to_string());
+                }
+
+                // Check ./bin/rtk (bin subdirectory)
+                let bin_path = exe_dir.join("bin").join("rtk");
+                if bin_path.exists() && bin_path.is_file() {
+                    tracing::info!("RTK binary found bundled at: {:?}", bin_path);
+                    return Some(bin_path.to_string_lossy().to_string());
+                }
+            }
+
+            // Fall back to PATH lookup
+            match Command::new("which").arg("rtk").output() {
+                Ok(output) => {
+                    if output.status.success() {
+                        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        tracing::info!("RTK binary found in PATH: {}", path);
+                        Some("rtk".to_string())
+                    } else {
+                        tracing::info!("RTK binary not found in PATH or bundled");
+                        None
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("Failed to check for rtk binary availability");
+                    None
+                }
+            }
+        })
+        .clone()
+}
+
+/// Check if the rtk binary is available (bundled or in PATH).
 ///
 /// Result is cached after the first call.
 pub fn is_rtk_available() -> bool {
-    static RTK_AVAILABLE: OnceLock<bool> = OnceLock::new();
-
-    *RTK_AVAILABLE.get_or_init(|| match Command::new("which").arg("rtk").output() {
-        Ok(output) => {
-            let available = output.status.success();
-            if available {
-                tracing::info!("RTK binary found in PATH");
-            } else {
-                tracing::info!("RTK binary not found in PATH");
-            }
-            available
-        }
-        Err(_) => {
-            tracing::warn!("Failed to check for rtk binary availability");
-            false
-        }
-    })
+    find_rtk_binary().is_some()
 }
 
 /// Extract the first real command token from a shell command string.
@@ -134,23 +171,23 @@ fn is_rtk_supported(token: &str) -> bool {
 /// Rewrite a bash command to use RTK as a proxy.
 ///
 /// If the command's first token is RTK-supported (git, cargo, npm, etc.),
-/// prepends `rtk` to the command. Otherwise returns None.
+/// prepends the RTK binary path to the command. Otherwise returns None.
+///
+/// The RTK binary path is determined by checking bundled locations first,
+/// then falling back to PATH.
 ///
 /// # Example
 /// ```rust
 /// use opencrabs::rtk::rewrite_command;
 ///
 /// let result = rewrite_command("git status");
-/// // Returns Some(RtkResult { rewritten_command: "rtk git status", ... })
+/// // Returns Some(RtkResult { rewritten_command: "/path/to/rtk git status", ... })
 ///
 /// let result = rewrite_command("echo hello");
 /// // Returns None (echo is not RTK-supported)
 /// ```
 pub fn rewrite_command(command: &str) -> Option<RtkResult> {
-    if !is_rtk_available() {
-        tracing::debug!("RTK not available, skipping command rewrite");
-        return None;
-    }
+    let rtk_binary = find_rtk_binary()?;
 
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -176,7 +213,7 @@ pub fn rewrite_command(command: &str) -> Option<RtkResult> {
         return None;
     }
 
-    let rewritten = format!("rtk {}", trimmed);
+    let rewritten = format!("{} {}", rtk_binary, trimmed);
 
     tracing::debug!("RTK rewrote: '{}' -> '{}'", command, rewritten);
 
