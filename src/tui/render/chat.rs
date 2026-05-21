@@ -695,7 +695,12 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // Compensate for new content appended at the bottom while user is scrolled up.
     // Only add the delta (new lines since last render), not the total, to avoid
     // the accumulation bug that inflated scroll_offset by 1000+ in seconds.
-    if !app.auto_scroll && app.scroll_offset > 0 && total_lines > app.prev_rendered_lines {
+    // Skip if prev_rendered_lines == 0 (first render) to avoid massive jump.
+    if !app.auto_scroll
+        && app.scroll_offset > 0
+        && app.prev_rendered_lines > 0
+        && total_lines > app.prev_rendered_lines
+    {
         let delta = total_lines - app.prev_rendered_lines;
         app.scroll_offset += delta;
         tracing::debug!(
