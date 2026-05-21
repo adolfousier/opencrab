@@ -575,8 +575,11 @@ impl AgentService {
                  query to recover the details.\n\
                  3. If you need specific brain context, selectively load ONLY the relevant \
                  brain file (e.g. TOOLS.md, SOUL.md, USER.md). NEVER use name=\"all\".\n\
-                 4. Continue the task immediately. Do NOT repeat completed work. \
-                 Do NOT ask the user for instructions — you have everything you need.]"
+                 4. IMMEDIATELY continue the task described in the \"IMMEDIATE TASK\" section \
+                 of the compaction summary. This is NOT optional — you MUST pick up exactly \
+                 where you left off. Do NOT start a new topic. Do NOT ask what to do next. \
+                 Do NOT deviate to unrelated work. If the IMMEDIATE TASK section says \
+                 \"CONTINUE: fixing X\", then fix X.]"
                     .to_string();
             if !self.auto_approve_tools {
                 cont_text.push_str("\n\nCRITICAL: Tool approval is REQUIRED. You MUST wait for user approval before EVERY tool execution. Do NOT batch tool calls without approval.");
@@ -786,8 +789,10 @@ impl AgentService {
                      1. Review the summary and snapshot to understand current task state.\n\
                      2. Use `session_search` with keywords from the summary if you need older \
                      context not in the snapshot.\n\
-                     3. Continue the task immediately. Do NOT repeat completed work. \
-                     Do NOT ask for instructions.]"
+                     3. IMMEDIATELY continue the task described in the \"IMMEDIATE TASK\" section \
+                     of the compaction summary. This is NOT optional — you MUST pick up exactly \
+                     where you left off. Do NOT start a new topic. Do NOT ask what to do next. \
+                     Do NOT deviate to unrelated work.]"
                         .to_string();
                 if !self.auto_approve_tools {
                     cont_text.push_str("\n\nCRITICAL: Tool approval is REQUIRED. You MUST wait for user approval before EVERY tool execution. Do NOT batch tool calls without approval.");
@@ -2164,7 +2169,9 @@ impl AgentService {
                 }
                 context.add_message(Message::user(
                     "[SYSTEM: Context was auto-compacted after calibration. \
-                     Review the summary above and continue immediately.]"
+                     Review the summary above. The \"IMMEDIATE TASK\" section tells you \
+                     exactly what to do next. Continue that task immediately. \
+                     Do NOT start a new topic or deviate to unrelated work.]"
                         .to_string(),
                 ));
             }
@@ -3058,24 +3065,34 @@ impl AgentService {
                         // thinking. The last two attempts are explicit
                         // commands to stop reasoning entirely.
                         let nudge = match attempt {
-                            1 => "[System: Your previous turn produced only internal reasoning \
+                            1 => {
+                                "[System: Your previous turn produced only internal reasoning \
                                   and no visible reply. The tool results above are sufficient — \
                                   write the answer now as plain text (tables, prose, or whatever \
                                   the user asked for). Do not re-reason, do not call more tools \
-                                  unless strictly necessary.]",
-                            2 => "[System: Second nudge — you again produced only reasoning. \
+                                  unless strictly necessary.]"
+                            }
+                            2 => {
+                                "[System: Second nudge — you again produced only reasoning. \
                                   Output the answer as plain text on this turn. No reasoning \
-                                  block. No tool calls. Just the answer the user asked for.]",
-                            3 => "[System: Third nudge. Stop reasoning. Reply now in plain \
+                                  block. No tool calls. Just the answer the user asked for.]"
+                            }
+                            3 => {
+                                "[System: Third nudge. Stop reasoning. Reply now in plain \
                                   prose, one or two short paragraphs. No <thinking>, no \
-                                  reasoning_content, no internal monologue.]",
-                            4 => "[System: Fourth nudge — final warning before fallback. \
+                                  reasoning_content, no internal monologue.]"
+                            }
+                            4 => {
+                                "[System: Fourth nudge — final warning before fallback. \
                                   Emit a visible text reply NOW. If you produce another \
                                   reasoning-only turn the conversation will switch to a \
-                                  different provider automatically.]",
-                            _ => "[System: Fifth and last nudge. Reply in plain text on this \
+                                  different provider automatically.]"
+                            }
+                            _ => {
+                                "[System: Fifth and last nudge. Reply in plain text on this \
                                   turn or the system will hand the conversation to a fallback \
-                                  provider on the next turn.]",
+                                  provider on the next turn.]"
+                            }
                         };
                         // Preserve the reasoning on the (empty) assistant
                         // turn, then inject a sharpening user nudge so
@@ -3114,9 +3131,7 @@ impl AgentService {
                                         "Model '{}/{}' refused to answer after {} nudges \
                                          and no fallback provider is configured. Use \
                                          /models to switch.",
-                                        active_name,
-                                        model_name,
-                                        EMPTY_REASONING_MAX_NUDGES,
+                                        active_name, model_name, EMPTY_REASONING_MAX_NUDGES,
                                     ),
                                 },
                             );
@@ -3142,28 +3157,22 @@ impl AgentService {
                                 );
                             }
 
-                            let mut fb_req = LLMRequest::new(
-                                fb_model.clone(),
-                                context.messages.clone(),
-                            )
-                            .with_max_tokens(self.max_tokens);
-                            fb_req.working_directory = Some(
-                                self.get_working_directory().to_string_lossy().to_string(),
-                            );
+                            let mut fb_req =
+                                LLMRequest::new(fb_model.clone(), context.messages.clone())
+                                    .with_max_tokens(self.max_tokens);
+                            fb_req.working_directory =
+                                Some(self.get_working_directory().to_string_lossy().to_string());
                             fb_req.session_id = Some(session_id);
                             if let Some(system) = &context.system_brain {
                                 fb_req = fb_req.with_system(system.clone());
                             }
                             if self.tool_registry.count() > 0 {
-                                fb_req = fb_req
-                                    .with_tools(self.tool_registry.get_tool_definitions());
+                                fb_req =
+                                    fb_req.with_tools(self.tool_registry.get_tool_definitions());
                             }
 
                             let original_provider = self.provider_for_session(session_id);
-                            self.swap_provider_for_session(
-                                session_id,
-                                (*fallback).clone(),
-                            );
+                            self.swap_provider_for_session(session_id, (*fallback).clone());
                             let mut restore_guard = FallbackProviderGuard {
                                 service: self,
                                 session_id,
@@ -3195,8 +3204,8 @@ impl AgentService {
                                         restore_guard.original = None;
                                         drop(restore_guard);
                                         if let Some(ref cb) = progress_callback {
-                                            let from_name = self
-                                                .provider_name_for_session(session_id);
+                                            let from_name =
+                                                self.provider_name_for_session(session_id);
                                             cb(
                                                 session_id,
                                                 ProgressEvent::SelfHealingAlert {
@@ -4088,7 +4097,9 @@ impl AgentService {
                      1. Review the summary to understand current task state.\n\
                      2. Use `session_search` with keywords if you need older context.\n\
                      Briefly acknowledge the compaction to the user with a fun/cheeky remark (be \
-                     creative, surprise them — cursing allowed), then pick up where you left off. \
+                     creative, surprise them — cursing allowed), then IMMEDIATELY continue the task \
+                     described in the \"IMMEDIATE TASK\" section of the compaction summary. \
+                     Do NOT start a new topic. Do NOT deviate to unrelated work. \
                      Do NOT re-do completed work.]"
                         .to_string();
                 if !self.auto_approve_tools {

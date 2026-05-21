@@ -377,8 +377,8 @@ async fn run_loop(
             }
             // Apply coalesced scroll as a single operation.
             // Cap to prevent macOS smooth-scroll flicks (20-50 events) from
-            // launching the user into orbit. Max one viewport-ish jump per frame.
-            const MAX_SCROLL_PER_FRAME: i32 = 15;
+            // launching the user into orbit. Keep it small for smooth scrolling.
+            const MAX_SCROLL_PER_FRAME: i32 = 3;
             let capped = pending_scroll.clamp(-MAX_SCROLL_PER_FRAME, MAX_SCROLL_PER_FRAME);
             if capped > 0 {
                 app.scroll_offset = app.scroll_offset.saturating_add(capped as usize);

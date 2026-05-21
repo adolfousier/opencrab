@@ -989,21 +989,21 @@ impl App {
                     }
                     "finalize" => "Plan: finalize — awaiting approval".to_string(),
                     "start_task" => {
-                        let id = ci(tool_input, "task_id")
+                        let id = ci(tool_input, "task_order")
                             .and_then(|v| v.as_u64())
                             .map(|n| n.to_string())
                             .unwrap_or_else(|| "?".to_string());
                         format!("Plan: start task #{}", id)
                     }
                     "complete_task" => {
-                        let id = ci(tool_input, "task_id")
+                        let id = ci(tool_input, "task_order")
                             .and_then(|v| v.as_u64())
                             .map(|n| n.to_string())
                             .unwrap_or_else(|| "?".to_string());
                         format!("Plan: complete task #{}", id)
                     }
                     "update_task" => {
-                        let id = ci(tool_input, "task_id")
+                        let id = ci(tool_input, "task_order")
                             .and_then(|v| v.as_u64())
                             .map(|n| n.to_string())
                             .unwrap_or_else(|| "?".to_string());

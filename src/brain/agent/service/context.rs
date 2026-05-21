@@ -370,6 +370,18 @@ The summary above is NOT sufficient for implementation work.
              instance will wake up with ONLY this summary as context. It must be able to continue \
              working immediately without asking the user what to do.\n\n\
              Analyze the ENTIRE conversation chronologically and produce the following:\n\n\
+             ## 0. IMMEDIATE TASK (CRITICAL — MOST IMPORTANT SECTION)\n\
+             Look at the LAST 6-8 message pairs in the conversation. Extract EXACTLY:\n\
+             - What was the user's LAST instruction or request? (quote their exact words)\n\
+             - What was the agent doing in response? (exact tool calls, file edits, investigations in progress)\n\
+             - What is the EXACT next action the agent should take?\n\n\
+             Write this as a DIRECTIVE, not a description. Use this format:\n\
+             \"CONTINUE THIS TASK: The user asked you to [exact instruction]. \
+             You were [exact action in progress — e.g. 'editing file X at line Y', 'running command Z']. \
+             Your next step is [specific next action]. \
+             Do NOT deviate to any other topic.\"\n\n\
+             This is the MOST IMPORTANT section. If nothing else survives compaction, this must. \
+             The fresh agent will read this section FIRST and act on it IMMEDIATELY.\n\n\
              ## 1. Chronological Analysis\n\
              Walk through every task the user requested, in order. For each task include:\n\
              - What was requested\n\
@@ -404,10 +416,7 @@ The summary above is NOT sufficient for implementation work.
              - Tasks mentioned but not started\n\
              - Investigations in progress\n\
              - Next steps the user expects\n\n\
-             ## 7. Current Work\n\
-             What was the agent doing RIGHT BEFORE this compaction? What is the immediate next action? \
-             The fresh agent must pick up exactly where this left off.\n\n\
-             ## 8. Recovery Playbook\n\
+             ## 7. Recovery Playbook\n\
              The fresh agent has these tools available to recover any missing context:\n\
              - `session_search` — search past conversation messages in this session by keyword\n\
              - `memory_search` — search daily memory logs and indexed knowledge\n\
@@ -422,11 +431,11 @@ The summary above is NOT sufficient for implementation work.
              then `read_file src/main.rs` to verify the current state of the fix, then \
              `session_search 'vision fallback'` to recover details from the investigation.\"\n\
              Be concrete — include actual file paths, search queries, and commands.\n\n\
-             ## 9. Next Step\n\
+             ## 8. Next Step\n\
              State the single most important thing the agent should do when it wakes up. \
              If the task is clear, continue immediately. If ambiguous, ask the user ONE focused \
              follow-up question.\n\n\
-             ## 10. Continuation Message\n\
+             ## 9. Continuation Message\n\
              Write a SHORT, punchy message (2-4 sentences) that the agent will say to the user \
              right after waking up from compaction. This message MUST:\n\
              - Reference SPECIFIC things from the conversation (file names, user quotes, inside jokes, \
@@ -529,8 +538,10 @@ The summary above is NOT sufficient for implementation work.
         } else {
             format!(
                 "{}\n\n{}\n\n## Recent Message Pairs (pre-compaction snapshot)\n\
-                 The following are the last messages before compaction — use them to \
-                 understand the current task state and decide what context to reload.\n\n{}",
+                 CRITICAL: These are the messages from RIGHT BEFORE compaction. You MUST \
+                 continue from where you left off. Read these messages, identify what was \
+                 in progress, and continue that exact work. Do NOT start a new topic. \
+                 Do NOT ask the user what to do — the answer is in these messages.\n\n{}",
                 brain_context, summary, recent_snapshot
             )
         };
