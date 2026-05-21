@@ -100,6 +100,12 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                         .map(|g| g.calls.len())
                         .unwrap_or(0);
                     lookahead += 1;
+                } else if app.messages[lookahead].role == "assistant"
+                    && app.messages[lookahead].content.trim().is_empty()
+                    && app.messages[lookahead].details.is_some()
+                {
+                    // Skip thinking-only assistant messages (no visible text)
+                    lookahead += 1;
                 } else {
                     break;
                 }
@@ -131,10 +137,10 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
 
                 if stack_expanded {
                     // Show each group's last call as a tree entry
-                    for i in 0..stack_count {
-                        let group_idx = msg_idx + i;
-                        if let Some(ref g) = app.messages[group_idx].tool_group {
-                            let connector = if i == stack_count - 1 {
+                    let mut group_idx = 0;
+                    for i in msg_idx..lookahead {
+                        if let Some(ref g) = app.messages[i].tool_group {
+                            let connector = if group_idx == stack_count - 1 {
                                 "└─"
                             } else {
                                 "├─"
@@ -157,6 +163,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                                     Span::styled(last.description.clone(), style),
                                 ]));
                             }
+                            group_idx += 1;
                         }
                     }
                 } else {
@@ -184,8 +191,8 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 lines.push(Line::from(""));
                 line_to_msg.resize(lines.len(), None);
 
-                // Skip the remaining stacked groups (for loop increments by 1)
-                skip_count = stack_count - 1;
+                // Skip all messages in the stack (tool groups + thinking-only assistants)
+                skip_count = lookahead - msg_idx - 1;
                 continue;
             }
 
