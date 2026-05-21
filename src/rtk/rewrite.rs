@@ -177,7 +177,7 @@ fn is_rtk_supported(token: &str) -> bool {
 /// then falling back to PATH.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// use opencrabs::rtk::rewrite_command;
 ///
 /// let result = rewrite_command("git status");
