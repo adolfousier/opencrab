@@ -5,6 +5,153 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.25] - 2026-05-21
+
+36 commits since v0.3.24. Feature release. Bundles RTK (Rust Token
+Killer) as a default feature with zero-config, saving 40%+ tokens on
+common dev commands. New tool call stacking collapses consecutive tool
+groups into a single summary line. Sensitive data redaction applied to
+tool output in TUI and all channels. Context budget footer for channels
+(closes #104). hashline_edit tool for hash-anchored file editing (closes
+#60). Brain file cleanup_intent for user-driven maintenance (issue #103).
+Scroll fixes, auto-title improvements, and various stability fixes.
+
+Contributions from @leshchenko1979 (PRs #100, #101).
+
+RTK TOKEN SAVINGS INTEGRATION (3 commits, PR #102)
+
+Bundled RTK as a default feature with zero-config. Works as a direct
+proxy: when the agent runs `git status`, RTK intercepts the output
+through Rust, filters it, and returns a token-optimized version. Supports
+100+ commands (git, cargo, npm, pnpm, docker, kubectl, grep, find, ls,
+tree, curl, etc.) with a blocklist for interactive/REPL commands (vim,
+ssh, python, mysql, etc.). Binary discovery checks bundled location
+first (same dir or bin/ subdir), falls back to PATH. Locked to RTK
+v0.40.0. `/rtk` slash command shows savings stats.
+
+Real-world results: 105 commands, 129.1K tokens saved (41.2%). Top
+saver: `cargo test` at 105.4K tokens (100% savings).
+
+- 157b807e feat: add RTK token savings integration
+- c91ec81b fix(rtk): use prepend approach instead of non-existent rtk rewrite subcommand
+- 65a5ed8f feat(rtk): make rtk default feature, bundle binary in releases, lock to v0.40.0
+
+TOOL CALL STACKING (5 commits)
+
+3+ consecutive tool call groups collapse into a single summary line in
+the TUI. Spans across thinking-only assistant messages (empty content +
+reasoning). Ctrl+O expands/collapses. Shows "N tool calls" when each
+group has 1 call, or "N tool calls (M groups)" when some groups have
+multiple. 6 tests added.
+
+- 716ca621 feat(tui): stack consecutive tool call groups into single summary
+- a4d6477e feat(tui): stack tool groups across thinking-only assistant messages
+- 4b0e74f6 test(tui): add 6 tests for tool call group stacking logic
+- 058b52db docs: update test counts to 2,833 (6 new tool stacking tests)
+- d2d502a7 fix: remove redundant group count when each tool call is its own group
+
+SENSITIVE DATA REDACTION (1 commit)
+
+Applied redact_secrets() to tool output display in TUI and all channels.
+New patterns: env var suffixes (_pass=, _password=, _secret=, _token=,
+_key=, _apikey=, _api_key=, _credential=, _auth=), piped secrets
+(echo "secret" | command), plus existing patterns (sk-*, ghp_*, xoxb-*,
+AWS keys, Bearer tokens, Basic auth).
+
+- c068a35f redact sensitive data in TUI and channel output
+
+CONTEXT BUDGET FOOTER FOR CHANNELS (3 commits, closes #104)
+
+Every channel (Telegram, Discord, Slack, WhatsApp) now appends a context
+budget footer (e.g., "ctx: 8K/200K 4%") to the final message, matching
+the TUI footer. Footer always delivered even when body is fully consumed
+by intermediates.
+
+- 871edb20 add ctx budget footer to channel final messages (closes #104)
+- 7fc5d673 debug(telegram): add tracing logs for ctx footer append and delivery
+- 7d008235 fix(telegram): always deliver ctx footer, even when body is fully consumed by intermediates
+
+HASHLINE EDIT TOOL (1 commit, closes #60)
+
+New hashline_edit tool for hash-anchored file editing. Each line gets a
+2-char content hash from read_file(hashline=true). Reference lines as
+LINE#ID instead of reproducing text. Stale hashes rejected before any
+changes applied. Supports batch edits (multiple operations in one call).
+
+- cf7b05b3 feat(tools): add hashline_edit tool for hash-anchored file editing (#60)
+
+BRAIN FILE CLEANUP (1 commit, issue #103)
+
+Added cleanup_intent flag to write_opencrabs_file. User-driven brain
+file cleanup allowed, RSI agent blocked from shrinking brain files.
+Prevents autonomous self-improvement from accidentally wiping brain files.
+
+- 7f2479d7 Add cleanup_intent flag for user-driven brain file cleanup (issue #103)
+
+SCROLL FIXES (4 commits)
+
+Removed load_more_history() from scroll handler (was causing scroll-up
+to overshoot hundreds of pages). Preserved scroll position during
+streaming and system messages. Skip scroll compensation on first render.
+All scroll events routed through coalesced handler.
+
+- 1e7e85ae fix(tui): route all scroll events through coalesced handler to prevent overshoot
+- 1644bed2 fix(tui): remove load_more_history from scroll handler to fix scroll-up overshoot
+- 03c056bd fix(tui): preserve scroll position during streaming and system messages
+- 3fc2ae58 fix(tui): skip scroll compensation on first render to prevent massive jump
+
+AUTO-TITLE & SESSION MANAGEMENT (3 commits, PR #100)
+
+Auto-title fires at end of first turn across all channels. Sessions sort
+by last interaction time (/sessions). Context max tokens updates in
+footer after model switch.
+
+- d645089b feat(tui): auto-title fires at end of first turn, works on all channels
+- 6e7bbb5a fix(sessions): touch updated_at on message create so /sessions sorts by last interaction
+- 6fb0ac84 fix(tui): update context_max_tokens in footer after model switch
+
+COMPACTION & SELF-HEAL FIXES (3 commits)
+
+Compaction: dropped 55% kept-tail so summary IS the conversation.
+Self-heal: 5-nudge budget for reasoning-only turns with sticky fallback
+so empty replies never silently drop. Completion-escape clause for
+phantom enforcement messages.
+
+- ee38d710 fix(compaction): drop the 55%-of-window kept-tail — summary is the conversation
+- ccf747fa fix(self-heal): 5-nudge budget for reasoning-only turns + sticky fallback
+- 1e0cf750 fix(self-heal): add completion-escape clause to phantom enforcement messages
+
+CHANNEL IMPROVEMENTS (3 commits)
+
+WhatsApp photo batching for multi-image uploads. Telegram media_group_id-
+based photo batching. Gemini schema: strip default/example from tool
+schemas (PR #101 by @leshchenko1979).
+
+- a26a0c33 feat(whatsapp): add photo batching for multi-image uploads
+- 0e8cc010 fix(telegram): media_group_id-based photo batching
+- fbbc39ec fix(gemini): strip default and example from tool schemas (#101)
+
+OTHER FIXES (5 commits)
+
+Custom provider model selection persistence. CI: gate voice tests behind
+feature flags. Compaction prompt dominance fix + plan tool descriptions.
+Tool loop borrow-after-move fix from PR #100 merge. Test refactoring.
+
+- 62bb0612 fix(tui): properly save and display custom provider model selection
+- 6668d029 fix(ci): gate voice tests behind feature flags, ignore Windows-incompatible doctest
+- 24d1c55b fix: compaction prompt dominance + plan tool descriptions + scroll sensitivity
+- d457b484 fix(tool_loop): capture db_message_count before move to fix borrow-after-move from PR #100
+- 96faf3d5 refactor(tests): move channel handler inline tests to src/tests/
+
+DOCS & SOUL (2 commits)
+
+README updated with RTK token savings feature. SOUL.md: hard rule to
+never ignore user images during interruptions.
+
+- fe66e9fb docs(readme): add RTK token savings feature
+- c8854889 soul: add hard rule to never ignore user images during interruptions
+
+
 ## [0.3.24] - 2026-05-20
 
 13 commits since v0.3.23. Feature release. Adds two new built-in tools
@@ -870,6 +1017,7 @@ provider and context budget.
 - **Anti-code-block nudge for local models** — brain instructions explicitly
   tell the model to use `tool_calls`, not markdown code blocks.
 
+[0.3.25]: https://github.com/adolfousier/opencrabs/compare/v0.3.24...v0.3.25
 ### Changed
 
 #### Qwen/DashScope Migration
