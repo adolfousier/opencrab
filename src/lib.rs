@@ -66,6 +66,7 @@ pub mod utils;
 pub mod a2a;
 pub mod channels;
 pub mod cron;
+pub mod rtk;
 pub mod usage;
 
 // Re-export commonly used types

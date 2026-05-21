@@ -117,6 +117,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/skills",
         description: "Browse and run loaded skills",
     },
+    SlashCommand {
+        name: "/rtk",
+        description: "Show RTK token savings statistics",
+    },
 ];
 
 /// Approval option selected by the user
