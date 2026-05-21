@@ -71,7 +71,7 @@ mod shrink_check {
     fn unprotected_file_is_always_allowed() {
         // Non-brain files can shrink freely — that's not what this guard
         // is for.
-        let result = check_no_shrink(unprotected(), "lots of content here", "tiny", false);
+        let result = check_no_shrink(unprotected(), "lots of content here", "tiny", false, false);
         assert_eq!(result, ShrinkCheck::Allowed);
     }
 
@@ -81,7 +81,7 @@ mod shrink_check {
         let existing = "line one\nline two\n";
         let updated = "line one\nline two\nline three\n";
         assert_eq!(
-            check_no_shrink(protected(), existing, updated, false),
+            check_no_shrink(protected(), existing, updated, false, false),
             ShrinkCheck::Allowed
         );
     }
@@ -93,7 +93,7 @@ mod shrink_check {
         let existing = "abc def ghi";
         let updated = "abc XYZ ghi";
         assert_eq!(
-            check_no_shrink(protected(), existing, updated, false),
+            check_no_shrink(protected(), existing, updated, false, false),
             ShrinkCheck::Allowed
         );
     }
@@ -104,7 +104,7 @@ mod shrink_check {
         // KB down to a stub. Hard reject.
         let existing = "rule one\nrule two\nrule three\nrule four\nrule five\n";
         let updated = "rule one\n";
-        match check_no_shrink(protected(), existing, updated, false) {
+        match check_no_shrink(protected(), existing, updated, false, false) {
             ShrinkCheck::Rejected { message } => {
                 assert!(message.contains("Refusing to shrink"));
                 assert!(message.contains("TOOLS.md"));
@@ -121,7 +121,7 @@ mod shrink_check {
         let existing = "alpha\nbeta\nalpha\ngamma\n";
         let updated = "alpha\nbeta\ngamma\n";
         assert_eq!(
-            check_no_shrink(protected(), existing, updated, true),
+            check_no_shrink(protected(), existing, updated, true, false),
             ShrinkCheck::Allowed
         );
     }
@@ -133,7 +133,7 @@ mod shrink_check {
         // so the agent learns it can't be used as a bypass.
         let existing = "rule one\nrule two\nrule three\n";
         let updated = "rule one\n";
-        match check_no_shrink(protected(), existing, updated, true) {
+        match check_no_shrink(protected(), existing, updated, true, false) {
             ShrinkCheck::Rejected { message } => {
                 assert!(
                     message.contains("dedup_intent"),
@@ -152,7 +152,73 @@ mod shrink_check {
         let existing = "alpha\n\nbeta\n\nalpha\n";
         let updated = "alpha\nbeta\n";
         assert_eq!(
-            check_no_shrink(protected(), existing, updated, true),
+            check_no_shrink(protected(), existing, updated, true, false),
+            ShrinkCheck::Allowed
+        );
+    }
+}
+
+mod cleanup_intent {
+    use super::*;
+
+    fn protected() -> &'static Path {
+        Path::new("/tmp/fake/TOOLS.md")
+    }
+
+    #[test]
+    fn cleanup_intent_allows_shrinking_protected_file() {
+        // User explicitly wants to clean up a brain file — allow it.
+        let existing = "rule one\nrule two\nrule three\nrule four\nrule five\n";
+        let updated = "rule one\n";
+        assert_eq!(
+            check_no_shrink(protected(), existing, updated, false, true),
+            ShrinkCheck::Allowed
+        );
+    }
+
+    #[test]
+    fn cleanup_intent_bypasses_dedup_requirement() {
+        // cleanup_intent doesn't need every original line to survive.
+        let existing = "alpha\nbeta\ngamma\ndelta\n";
+        let updated = "only one line\n";
+        assert_eq!(
+            check_no_shrink(protected(), existing, updated, false, true),
+            ShrinkCheck::Allowed
+        );
+    }
+
+    #[test]
+    fn cleanup_intent_false_still_enforces_append_only() {
+        // When cleanup_intent is false, the append-only rule still applies.
+        let existing = "rule one\nrule two\nrule three\n";
+        let updated = "rule one\n";
+        match check_no_shrink(protected(), existing, updated, false, false) {
+            ShrinkCheck::Rejected { message } => {
+                assert!(message.contains("Refusing to shrink"));
+            }
+            other => panic!("expected Rejected, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cleanup_intent_with_dedup_both_true() {
+        // Both flags set — cleanup_intent takes precedence.
+        let existing = "alpha\nbeta\nalpha\ngamma\n";
+        let updated = "alpha\n";
+        assert_eq!(
+            check_no_shrink(protected(), existing, updated, true, true),
+            ShrinkCheck::Allowed
+        );
+    }
+
+    #[test]
+    fn cleanup_intent_on_unprotected_file() {
+        // Unprotected files can shrink regardless — cleanup_intent is irrelevant.
+        let unprotected = Path::new("/tmp/fake/notes.md");
+        let existing = "lots of content here";
+        let updated = "tiny";
+        assert_eq!(
+            check_no_shrink(unprotected, existing, updated, false, true),
             ShrinkCheck::Allowed
         );
     }

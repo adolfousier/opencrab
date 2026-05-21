@@ -222,6 +222,8 @@ impl Tool for SelfImproveTool {
                 // Append-only enforcement: brain files are append-only by user
                 // policy. Removals only allowed when the caller explicitly opts
                 // into a dedup intent AND every line of the original survives.
+                // Note: cleanup_intent is always false here because RSI is autonomous
+                // and cannot get user approval for destructive operations.
                 let dedup_intent = input
                     .get("dedup_intent")
                     .and_then(|v| v.as_bool())
@@ -233,6 +235,7 @@ impl Tool for SelfImproveTool {
                         &existing,
                         &updated,
                         dedup_intent,
+                        false, // cleanup_intent: RSI cannot do cleanup (no approval mechanism)
                     )
                 {
                     return Ok(ToolResult::error(message));

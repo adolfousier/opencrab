@@ -58,7 +58,11 @@ impl Tool for WriteOpenCrabsFileTool {
          Supports three operations: \
          \"overwrite\" replaces entire file content, \
          \"append\" adds text to the end, \
-         \"replace\" does a find-and-replace within the file."
+         \"replace\" does a find-and-replace within the file. \
+         \
+         Protected brain files are append-only by default. To shrink/clean up a brain file \
+         (remove outdated content), set cleanup_intent=true — this requires explicit user \
+         approval and is NOT available in autonomous RSI operations."
     }
 
     fn input_schema(&self) -> Value {
@@ -89,6 +93,10 @@ impl Tool for WriteOpenCrabsFileTool {
                 "dedup_intent": {
                     "type": "boolean",
                     "description": "Set to true ONLY when shrinking a protected brain file (TOOLS.md, MEMORY.md, SOUL.md, USER.md, AGENTS.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md) to deduplicate. Brain files are append-only — any overwrite/replace whose result is shorter than the existing file is rejected unless dedup_intent=true AND every original line still appears in the result."
+                },
+                "cleanup_intent": {
+                    "type": "boolean",
+                    "description": "Set to true ONLY when you need to intentionally clean up a protected brain file (remove outdated content, consolidate sections, etc.). This bypasses the append-only restriction and allows shrinking. Requires explicit user approval (this tool has requires_approval: true). This parameter is NOT available in the autonomous RSI self_improve tool — only user-initiated operations can clean up brain files."
                 }
             },
             "required": ["path", "operation"]
@@ -145,12 +153,17 @@ impl Tool for WriteOpenCrabsFileTool {
                         .get("dedup_intent")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
+                    let cleanup_intent = input
+                        .get("cleanup_intent")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     if let brain_file_safety::ShrinkCheck::Rejected { message } =
                         brain_file_safety::check_no_shrink(
                             &full_path,
                             &existing,
                             content,
                             dedup_intent,
+                            cleanup_intent,
                         )
                     {
                         return Ok(ToolResult::error(message));
@@ -283,12 +296,17 @@ impl Tool for WriteOpenCrabsFileTool {
                     .get("dedup_intent")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let cleanup_intent = input
+                    .get("cleanup_intent")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if let brain_file_safety::ShrinkCheck::Rejected { message } =
                     brain_file_safety::check_no_shrink(
                         &full_path,
                         &existing,
                         &updated,
                         dedup_intent,
+                        cleanup_intent,
                     )
                 {
                     return Ok(ToolResult::error(message));

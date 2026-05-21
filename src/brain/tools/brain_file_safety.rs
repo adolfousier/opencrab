@@ -75,15 +75,17 @@ pub enum ShrinkCheck {
 /// being mutated, `existing` is its current content (empty if new),
 /// `updated` is what the caller wants to write.
 ///
-/// Allows shrinking when the caller explicitly opts in via
-/// `dedup_intent=true` AND every byte that disappeared can still be
-/// found in the result (i.e. it really was a duplicate). Otherwise
-/// any byte loss on a protected file is a hard reject.
+/// Allows shrinking when:
+/// - `cleanup_intent=true`: User-initiated cleanup with approval gate (only for write_opencrabs_file)
+/// - `dedup_intent=true` AND every byte that disappeared can still be found in the result
+///
+/// Otherwise any byte loss on a protected file is a hard reject.
 pub fn check_no_shrink(
     path: &Path,
     existing: &str,
     updated: &str,
     dedup_intent: bool,
+    cleanup_intent: bool,
 ) -> ShrinkCheck {
     if !is_protected_path(path) {
         return ShrinkCheck::Allowed;
@@ -91,6 +93,14 @@ pub fn check_no_shrink(
     if updated.len() >= existing.len() {
         return ShrinkCheck::Allowed;
     }
+
+    // User-initiated cleanup: bypass append-only restriction.
+    // This is only available in write_opencrabs_file (requires_approval: true),
+    // not in self_improve (autonomous RSI, no approval mechanism).
+    if cleanup_intent {
+        return ShrinkCheck::Allowed;
+    }
+
     let removed_bytes = existing.len().saturating_sub(updated.len());
     let label = path
         .file_name()

@@ -184,7 +184,7 @@ cargo test --all-features
 | Tests — Phantom DB Persistence | 2 | `src/tests/phantom_db_persistence_test.rs` |
 | Tests — Bash Interactive Reject | 36 | `src/tests/bash_interactive_reject_test.rs` |
 | Tests — Qwen Tool-Call Extractor | 34 | `src/tests/qwen_tool_extractor_test.rs` |
-| Tests — Brain File Safety (append-only enforcement) | 32 | `src/tests/brain_file_safety_test.rs` |
+| Tests — Brain File Safety (append-only enforcement, cleanup_intent) | 37 | `src/tests/brain_file_safety_test.rs` |
 | Tests — Provider Config Regression | 28 | `src/tests/provider_config_regression_test.rs` |
 | Tests — Tool-Loop Helpers (Linor P0 hotspot) | 20 | `src/tests/tool_loop_helpers_test.rs` |
 | Tests — Recent Paths | 17 | `src/tests/recent_paths_test.rs` |
