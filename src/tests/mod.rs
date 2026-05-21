@@ -144,3 +144,4 @@ pub mod voice_local_whisper_test;
 pub mod voice_service_test;
 pub mod whatsapp_handler_test;
 pub mod whatsapp_photo_batching_test;
+pub mod tui_tool_stack_test;
