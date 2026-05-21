@@ -43,8 +43,17 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
 
     let content_width = area.width.saturating_sub(4) as usize; // borders + padding
 
+    // Track how many messages to skip (already rendered as part of a stack)
+    let mut skip_count: usize = 0;
+
     // Iterate by index to allow mutable access to render_cache while reading messages
     for msg_idx in 0..app.messages.len() {
+        // Skip messages already rendered as part of a stacked group
+        if skip_count > 0 {
+            skip_count -= 1;
+            continue;
+        }
+
         let lines_before = lines.len();
 
         // Render inline approval messages
@@ -76,8 +85,110 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             continue;
         }
 
-        // Render tool call groups (finalized)
+        // Render tool call groups (finalized) — stack consecutive groups
         if let Some(ref group) = app.messages[msg_idx].tool_group {
+            // Look ahead: count consecutive tool_group messages
+            let mut stack_count = 1;
+            let mut stack_total_calls = group.calls.len();
+            let mut lookahead = msg_idx + 1;
+            while lookahead < app.messages.len() {
+                if app.messages[lookahead].tool_group.is_some() {
+                    stack_count += 1;
+                    stack_total_calls += app.messages[lookahead]
+                        .tool_group
+                        .as_ref()
+                        .map(|g| g.calls.len())
+                        .unwrap_or(0);
+                    lookahead += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if stack_count >= 3 {
+                // Stacked: render a single collapsed summary for all groups
+                let dot = "●";
+                let stack_expanded = group.expanded; // Use first group's expanded state
+                let header = format!(
+                    "{} tool calls ({} groups)",
+                    stack_total_calls, stack_count
+                );
+                let mut header_spans = vec![Span::styled(
+                    format!("  {} {}", dot, header),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )];
+                header_spans.push(Span::styled(
+                    if stack_expanded {
+                        " (ctrl+o to collapse)"
+                    } else {
+                        " (ctrl+o to expand)"
+                    },
+                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                ));
+                lines.push(Line::from(header_spans));
+
+                if stack_expanded {
+                    // Show each group's last call as a tree entry
+                    for i in 0..stack_count {
+                        let group_idx = msg_idx + i;
+                        if let Some(ref g) = app.messages[group_idx].tool_group {
+                            let connector = if i == stack_count - 1 {
+                                "└─"
+                            } else {
+                                "├─"
+                            };
+                            if let Some(last) = g.calls.last() {
+                                let style = if last.success {
+                                    Style::default()
+                                        .fg(Color::DarkGray)
+                                        .add_modifier(Modifier::ITALIC)
+                                } else {
+                                    Style::default()
+                                        .fg(Color::Red)
+                                        .add_modifier(Modifier::ITALIC)
+                                };
+                                lines.push(Line::from(vec![
+                                    Span::styled(
+                                        format!("    {} ", connector),
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                    Span::styled(last.description.clone(), style),
+                                ]));
+                            }
+                        }
+                    }
+                } else {
+                    // Collapsed: show last group's last call
+                    if let Some(last) = group.calls.last() {
+                        let style = if last.success {
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::ITALIC)
+                        } else {
+                            Style::default()
+                                .fg(Color::Red)
+                                .add_modifier(Modifier::ITALIC)
+                        };
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                "    └─ ".to_string(),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                            Span::styled(last.description.clone(), style),
+                        ]));
+                    }
+                }
+
+                lines.push(Line::from(""));
+                line_to_msg.resize(lines.len(), None);
+
+                // Skip the remaining stacked groups (for loop increments by 1)
+                skip_count = stack_count - 1;
+                continue;
+            }
+
             render_tool_group(&mut lines, group, false, app.animation_frame, content_width);
             lines.push(Line::from(""));
             line_to_msg.resize(lines.len(), None);
