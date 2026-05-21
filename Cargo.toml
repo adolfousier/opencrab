@@ -175,9 +175,11 @@ rwhisper = { version = "0.4", optional = true, features = ["metal", "accelerate"
 winresource = "0.1"
 
 [features]
-default = ["telegram", "whatsapp", "discord", "slack", "trello", "local-stt", "local-tts", "browser"]
+default = ["telegram", "whatsapp", "discord", "slack", "trello", "local-stt", "local-tts", "browser", "rtk"]
 # Profiling feature enables pprof on Unix only (no-op on Windows)
 profiling = []
+# RTK (Rust Token Killer) integration - filters bash command outputs to save 60-90% tokens
+rtk = []
 telegram = ["teloxide"]
 trello = []
 whatsapp = ["whatsapp-rust", "whatsapp-rust-tokio-transport", "whatsapp-rust-ureq-http-client", "wacore", "wacore-binary", "waproto", "dep:qrcode", "dep:rmp-serde"]

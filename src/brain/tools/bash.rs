@@ -308,6 +308,10 @@ impl Tool for BashTool {
         };
 
         // Execute command with timeout — use piped stdin for sudo password
+        // RTK rewrite tracking (hoisted from normal-execution branch)
+        #[cfg(feature = "rtk")]
+        let mut rtk_was_rewritten = false;
+
         let output = if let Some(password) = sudo_password {
             // Rewrite command to read password from stdin via -S flag
             // Use -p "" to suppress sudo's own prompt (we handle it in the TUI)
@@ -464,10 +468,34 @@ impl Tool for BashTool {
             // with no controlling TTY — programs that bypass stdin and
             // open /dev/tty directly (ssh prompt, sudo getpass) cannot
             // steal the user's keyboard or corrupt the TUI.
+
+            // RTK rewriting: if the rtk feature is enabled and RTK is available,
+            // try to rewrite the command to save tokens (60-90% reduction).
+            #[cfg(feature = "rtk")]
+            let execution_command = if crate::rtk::is_rtk_available() {
+                match crate::rtk::rewrite_command(&input.command) {
+                    Some(result) => {
+                        tracing::debug!(
+                            "RTK rewrote command: '{}' -> '{}'",
+                            input.command,
+                            result.rewritten_command
+                        );
+                        rtk_was_rewritten = result.was_rewritten;
+                        result.rewritten_command
+                    }
+                    None => input.command.clone(),
+                }
+            } else {
+                input.command.clone()
+            };
+
+            #[cfg(not(feature = "rtk"))]
+            let execution_command = input.command.clone();
+
             let command_future = async {
                 let mut cmd = Command::new(shell);
                 cmd.arg(shell_arg)
-                    .arg(&input.command)
+                    .arg(&execution_command)
                     .current_dir(&working_dir)
                     .stdin(std::process::Stdio::null());
                 detach_session_pre_exec(&mut cmd);
@@ -492,6 +520,36 @@ impl Tool for BashTool {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
+
+        // RTK metrics tracking: record that the command was rewritten.
+        // We can't measure "original" tokens without running the command twice,
+        // so we record the filtered output size. RTK's own `gain` command tracks
+        // the actual savings vs what the unfiltered output would have been.
+        #[cfg(feature = "rtk")]
+        {
+            if rtk_was_rewritten {
+                let filtered_output = format!("{}\n{}", stdout, stderr);
+                let filtered_tokens = filtered_output.split_whitespace().count();
+
+                let savings = crate::rtk::TokenSavings {
+                    command: input.command.clone(),
+                    rewritten_command: format!("rtk {}", input.command),
+                    original_tokens: 0,
+                    filtered_tokens,
+                    tokens_saved: 0,
+                    savings_percent: 0.0,
+                    timestamp: chrono::Utc::now(),
+                };
+
+                crate::rtk::global_tracker().record_savings(savings);
+
+                tracing::info!(
+                    "RTK rewrote command ({} filtered tokens): {}",
+                    filtered_tokens,
+                    input.command
+                );
+            }
+        }
 
         // Build output message
         let mut result_text = String::new();
