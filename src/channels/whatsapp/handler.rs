@@ -460,32 +460,32 @@ pub(crate) async fn handle_message(
                 // Buffer the image marker for batching
                 let caption = extract_text(&msg);
                 wa_state.buffer_photo(&phone, injected, caption).await;
-                
+
                 // Reset debounce timer
                 let token = wa_state.reset_photo_debounce(&phone).await;
-                
+
                 // Wait for debounce to expire
                 if !wa_state.wait_photo_debounce(&token).await {
                     // Cancelled by another incoming photo, return early
                     return;
                 }
-                
+
                 // Debounce expired, drain all buffered photos
                 let (markers, first_caption) = wa_state.drain_photo_buffer(&phone).await;
                 wa_state.cleanup_photo_debounce(&phone).await;
-                
+
                 if markers.is_empty() {
                     return;
                 }
-                
+
                 // Combine all image markers
                 content = markers.join("\n\n");
-                
+
                 // Prepend caption if present
-                if let Some(caption) = first_caption {
-                    if !caption.trim().is_empty() {
-                        content = format!("{}\n\n{}", caption.trim(), content);
-                    }
+                if let Some(caption) = first_caption
+                    && !caption.trim().is_empty()
+                {
+                    content = format!("{}\n\n{}", caption.trim(), content);
                 }
             }
         }

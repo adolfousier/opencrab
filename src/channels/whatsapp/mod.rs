@@ -64,6 +64,7 @@ pub struct WhatsAppState {
     /// Photo batching buffer: (chat_jid) → Vec<(img_marker, caption)>
     /// When multiple photos arrive in quick succession (WhatsApp sends
     /// each as a separate message), we buffer them and dispatch together.
+    #[allow(clippy::type_complexity)]
     photo_buffer: Mutex<HashMap<String, Vec<(String, Option<String>)>>>,
     /// Photo debounce cancellation tokens: chat_jid → CancellationToken
     pub(crate) photo_debounce: Mutex<HashMap<String, CancellationToken>>,
@@ -262,9 +263,9 @@ impl WhatsAppState {
     pub async fn drain_photo_buffer(&self, chat_jid: &str) -> (Vec<String>, Option<String>) {
         let mut buffer = self.photo_buffer.lock().await;
         if let Some(entries) = buffer.remove(chat_jid) {
-            let caption = entries.iter().find_map(|(_, c)| {
-                c.as_ref().filter(|s| !s.trim().is_empty()).cloned()
-            });
+            let caption = entries
+                .iter()
+                .find_map(|(_, c)| c.as_ref().filter(|s| !s.trim().is_empty()).cloned());
             let markers: Vec<String> = entries.into_iter().map(|(m, _)| m).collect();
             (markers, caption)
         } else {
