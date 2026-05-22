@@ -2114,6 +2114,11 @@ Any tool on your `$PATH` works. If it runs in your terminal, OpenCrabs can use i
 | `/cd` | Change working directory (directory picker) |
 | `/settings` or `S` | Open Settings screen (provider, approval, commands, paths) |
 | `/stop` | Abort in-progress agent operation (channels only — TUI uses `Escape` x2) |
+| `/new` | Start a new session |
+| `/evolve` | Check for updates and install latest release |
+| `/rtk` | Show RTK token savings statistics |
+| `/mission-control` | Full-screen dialog: RSI proposals, activity log, cron schedule |
+| `/skills` | Browse and run available skills |
 
 ### Channel Commands (Telegram, Discord, Slack, WhatsApp)
 
@@ -2125,6 +2130,8 @@ When connected via messaging channels, the following slash commands are availabl
 | `/usage` | Usage dashboard — daily activity, cost breakdowns by project/model/activity, and tool stats with period filtering |
 | `/models` | Switch AI model — shows platform-native buttons (Telegram inline keyboard, Discord buttons, Slack Block Kit). WhatsApp shows a plain text list |
 | `/stop` | Abort the current agent operation immediately — cancels streaming, tool execution, and any pending approvals. Equivalent to double-Escape in the TUI |
+| `/rtk` | Show RTK token savings statistics |
+| `/new` | Start a new session |
 
 Model switching via `/models` changes the model within the current provider and takes effect immediately (no restart needed). The selection persists to `config.toml`.
 
