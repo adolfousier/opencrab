@@ -6,18 +6,24 @@ on:
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
 
 jobs:
   test:
     name: Test
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
@@ -29,23 +35,10 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - uses: swatinem/rust-cache@v2
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache target
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-target-stable-v3-${{ hashFiles('**/Cargo.lock') }}
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install CMake (Windows)
         if: runner.os == 'Windows'
@@ -59,7 +52,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           AWS_LC_SYS_CMAKE_BUILDER: "1"
-        run: cargo test --release --all-features --verbose
+        run: cargo test --all-features --verbose
 
       - name: Run tests (macOS)
         if: runner.os == 'macOS'
@@ -68,12 +61,15 @@ jobs:
           CXXFLAGS: -march=armv8-a+crypto
         run: cargo test --all-features --verbose
 
-      - name: Install ALSA dev (Linux)
+      - name: Install mold + ALSA dev (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y mold clang libasound2-dev
 
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
         run: cargo test --all-features --verbose
 
   clippy:
@@ -81,6 +77,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
@@ -144,6 +145,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
