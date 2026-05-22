@@ -130,6 +130,7 @@ fn variant_name(cmd: &ChannelCommand) -> &'static str {
         ChannelCommand::UserSystem(_) => "UserSystem",
         ChannelCommand::Doctor => "Doctor",
         ChannelCommand::Evolve => "Evolve",
+        ChannelCommand::Rtk(_) => "Rtk",
         ChannelCommand::NotACommand => "NotACommand",
     }
 }
