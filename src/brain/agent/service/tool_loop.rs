@@ -12,6 +12,32 @@ use uuid::Uuid;
 
 /// Strip ANSI escape codes from raw tool output before persisting to DB.
 /// Prevents garbled artifacts in session history.
+/// Build the content string sent to the LLM for a tool result.
+///
+/// On success, returns the raw output. On failure, includes the error
+/// message plus captured output (ANSI-stripped, size-capped to 8000 chars).
+pub(crate) fn build_tool_result_content(
+    success: bool,
+    error: Option<String>,
+    output: &str,
+) -> String {
+    if success {
+        output.to_string()
+    } else {
+        let mut msg =
+            strip_ansi_output(&error.unwrap_or_else(|| "Tool execution failed".to_string()));
+        if !output.is_empty() {
+            let captured: String = strip_ansi_output(output).chars().take(8000).collect();
+            msg.push_str("\n\n-- output captured before error --\n");
+            msg.push_str(&captured);
+            if output.len() > 8000 {
+                msg.push_str("\n... (output truncated)");
+            }
+        }
+        msg
+    }
+}
+
 pub(crate) fn strip_ansi_output(raw: &str) -> String {
     strip_ansi::strip_ansi(raw)
 }
@@ -3602,20 +3628,11 @@ impl AgentService {
                                     Ok(result) => {
                                         let success = result.success;
                                         let images = result.images;
-                                        let content = if result.success {
-                                            result.output
-                                        } else {
-                                            let mut msg = result.error.unwrap_or_else(|| {
-                                                "Tool execution failed".to_string()
-                                            });
-                                            if !result.output.is_empty() {
-                                                msg.push_str(
-                                                    "\n\n-- output captured before error --\n",
-                                                );
-                                                msg.push_str(&result.output);
-                                            }
-                                            msg
-                                        };
+                                        let content = build_tool_result_content(
+                                            result.success,
+                                            result.error,
+                                            &result.output,
+                                        );
 
                                         // GRANULAR LOG: Tool execution result
                                         if success {
@@ -3823,18 +3840,8 @@ impl AgentService {
                     Ok(result) => {
                         let success = result.success;
                         let images = result.images;
-                        let content = if result.success {
-                            result.output
-                        } else {
-                            let mut msg = result
-                                .error
-                                .unwrap_or_else(|| "Tool execution failed".to_string());
-                            if !result.output.is_empty() {
-                                msg.push_str("\n\n-- output captured before error --\n");
-                                msg.push_str(&result.output);
-                            }
-                            msg
-                        };
+                        let content =
+                            build_tool_result_content(result.success, result.error, &result.output);
 
                         // GRANULAR LOG: Direct tool execution result
                         if success {

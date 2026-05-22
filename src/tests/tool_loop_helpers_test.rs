@@ -22,7 +22,8 @@
 //! `src/tests/`) keeps the test surface flat.
 
 use crate::brain::agent::service::tool_loop::{
-    extract_path_for_recent_buffer, is_user_correction, strip_ansi_output,
+    build_tool_result_content, extract_path_for_recent_buffer, is_user_correction,
+    strip_ansi_output,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -317,4 +318,69 @@ fn user_correction_only_scans_first_300_chars() {
         !is_user_correction(&buried),
         "trigger word past 300-char window must not match"
     );
+}
+
+// ── build_tool_result_content ──────────────────────────────────────
+
+#[test]
+fn build_tool_result_success_returns_output() {
+    let content = build_tool_result_content(true, None, "command output");
+    assert_eq!(content, "command output");
+}
+
+#[test]
+fn build_tool_result_failure_includes_error_and_output() {
+    let content = build_tool_result_content(
+        false,
+        Some("Command exited with code 1".to_string()),
+        "stderr: file not found",
+    );
+    assert!(content.contains("Command exited with code 1"));
+    assert!(content.contains("-- output captured before error --"));
+    assert!(content.contains("stderr: file not found"));
+}
+
+#[test]
+fn build_tool_result_failure_strips_ansi_from_error() {
+    let content = build_tool_result_content(
+        false,
+        Some("\x1b[31merror\x1b[0m: build failed".to_string()),
+        "",
+    );
+    assert!(!content.contains("\x1b["));
+    assert!(content.contains("error: build failed"));
+}
+
+#[test]
+fn build_tool_result_failure_strips_ansi_from_output() {
+    let content = build_tool_result_content(
+        false,
+        Some("error".to_string()),
+        "\x1b[32msuccess\x1b[0m: compiled",
+    );
+    assert!(!content.contains("\x1b["));
+    assert!(content.contains("success: compiled"));
+}
+
+#[test]
+fn build_tool_result_failure_caps_output_at_8000_chars() {
+    let large_output = "x".repeat(10000);
+    let content = build_tool_result_content(false, Some("error".to_string()), &large_output);
+    // The captured portion should be truncated
+    assert!(content.contains("(output truncated)"));
+    // But should still contain some of the output
+    assert!(content.contains("xxx"));
+}
+
+#[test]
+fn build_tool_result_failure_no_truncation_for_small_output() {
+    let content = build_tool_result_content(false, Some("error".to_string()), "small output");
+    assert!(!content.contains("(output truncated)"));
+    assert!(content.contains("small output"));
+}
+
+#[test]
+fn build_tool_result_failure_default_error_message() {
+    let content = build_tool_result_content(false, None, "some output");
+    assert!(content.contains("Tool execution failed"));
 }
