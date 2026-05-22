@@ -559,3 +559,50 @@ async fn test_hashline_edit_collision_rejected() {
     assert!(error.contains("collision"));
     assert!(error.contains("edit_file"));
 }
+
+#[tokio::test]
+async fn test_read_file_hashline_collision_detection() {
+    // Test that when reading with hashline mode, lines with collisions are marked
+    // with #COLLISION and a warning is added
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    // Two identical lines that will produce the same hash
+    std::fs::write(&file_path, "same content\ndifferent\nsame content\n").unwrap();
+
+    let tool = ReadTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4())
+        .with_working_directory(temp_dir.path().to_path_buf());
+
+    let input = json!({
+        "path": file_path.to_str().unwrap(),
+        "hashline": true
+    });
+
+    let result = tool.execute(input, &context).await.unwrap();
+    assert!(result.success);
+
+    let output = result.output;
+    let lines: Vec<&str> = output.lines().collect();
+
+    // Should have 3 content lines + 1 empty line + 1 warning line = 5 lines
+    assert_eq!(lines.len(), 5);
+
+    // First line should be marked as COLLISION
+    assert!(lines[0].starts_with("1#COLLISION|same content"));
+
+    // Second line should have normal hash
+    assert!(lines[1].starts_with("2#"));
+    assert!(lines[1].contains("|different"));
+    assert!(!lines[1].contains("COLLISION"));
+
+    // Third line should also be marked as COLLISION
+    assert!(lines[2].starts_with("3#COLLISION|same content"));
+
+    // Fourth line should be empty
+    assert_eq!(lines[3], "");
+
+    // Fifth line should be the warning
+    assert!(lines[4].contains("WARNING"));
+    assert!(lines[4].contains("collision"));
+    assert!(lines[4].contains("edit_file"));
+}

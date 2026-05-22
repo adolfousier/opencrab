@@ -28,8 +28,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// In-memory cache of provider → ratio, hydrated from disk on first access.
-static CALIBRATION: Lazy<Mutex<HashMap<String, f64>>> =
-    Lazy::new(|| Mutex::new(load_from_disk()));
+static CALIBRATION: Lazy<Mutex<HashMap<String, f64>>> = Lazy::new(|| Mutex::new(load_from_disk()));
 
 /// EMA blend factor for new observations. Low value (= slow updates) so a
 /// single weird turn (e.g. an unusually large tool result) doesn't yank

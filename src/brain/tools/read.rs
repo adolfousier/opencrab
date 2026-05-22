@@ -132,16 +132,57 @@ impl Tool for ReadTool {
         // Apply hashline formatting if requested
         let output = if is_hashline {
             let file_start_line = input.start_line.unwrap_or(0) + 1; // convert 0-indexed to 1-indexed
-            output
+
+            // First pass: compute all hashes and detect collisions
+            let lines_with_hashes: Vec<(usize, String, &str)> = output
                 .lines()
                 .enumerate()
                 .map(|(i, line)| {
                     let line_num = file_start_line + i;
                     let hash = hash_line(line);
-                    format_hashline(line_num, &hash, line)
+                    (line_num, hash, line)
                 })
-                .collect::<Vec<_>>()
-                .join("\n")
+                .collect();
+
+            // Build reverse lookup to detect collisions
+            let mut hash_to_lines: std::collections::HashMap<&str, Vec<usize>> =
+                std::collections::HashMap::new();
+            for (line_num, hash, _) in &lines_with_hashes {
+                hash_to_lines
+                    .entry(hash.as_str())
+                    .or_default()
+                    .push(*line_num);
+            }
+
+            // Identify collision hashes (appear on multiple lines) - own the strings
+            let collision_hashes: std::collections::HashSet<String> = hash_to_lines
+                .iter()
+                .filter(|(_, lines)| lines.len() > 1)
+                .map(|(hash, _)| hash.to_string())
+                .collect();
+
+            // Second pass: format output, marking collision lines
+            let mut formatted_lines = Vec::new();
+            for (line_num, hash, line) in lines_with_hashes {
+                if collision_hashes.contains(&hash) {
+                    // Collision: don't show hash, add instruction
+                    formatted_lines.push(format!("{}#COLLISION|{}", line_num, line));
+                } else {
+                    formatted_lines.push(format_hashline(line_num, &hash, line));
+                }
+            }
+
+            // Add collision warning at the end if any collisions detected
+            if !collision_hashes.is_empty() {
+                let collision_count = collision_hashes.len();
+                formatted_lines.push(String::new());
+                formatted_lines.push(format!(
+                    "[WARNING: {} line(s) have hash collisions and cannot be edited with hashline_edit. Use the conventional edit_file tool with search/replace instead.]",
+                    collision_count
+                ));
+            }
+
+            formatted_lines.join("\n")
         } else {
             output
         };

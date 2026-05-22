@@ -2025,8 +2025,7 @@ impl AgentService {
                 // provider reports real usage; CLI providers and
                 // streaming-without-usage paths fall through to the
                 // local estimate below.
-                let local_estimate =
-                    context.token_count as u32 + self.base_context_tokens_raw();
+                let local_estimate = context.token_count as u32 + self.base_context_tokens_raw();
                 let provider_name = self.provider_name_for_session(session_id);
                 crate::brain::token_calibration::record_observation(
                     &provider_name,
