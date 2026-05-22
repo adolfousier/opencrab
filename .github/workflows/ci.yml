@@ -29,23 +29,21 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - uses: swatinem/rust-cache@v2
 
-      - name: Cache cargo index
-        uses: actions/cache@v4
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
         with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          tool: sccache
 
-      - name: Cache target
+      - name: Cache Chocolatey packages
+        if: runner.os == 'Windows'
         uses: actions/cache@v4
         with:
-          path: target
-          key: ${{ runner.os }}-target-stable-v3-${{ hashFiles('**/Cargo.lock') }}
+          path: C:\ProgramData\chocolatey\lib
+          key: chocolatey-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            chocolatey-${{ runner.os }}-
 
       - name: Install CMake (Windows)
         if: runner.os == 'Windows'
@@ -59,6 +57,8 @@ jobs:
         if: runner.os == 'Windows'
         env:
           AWS_LC_SYS_CMAKE_BUILDER: "1"
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: cargo test --release --all-features --verbose
 
       - name: Run tests (macOS)
@@ -66,6 +66,8 @@ jobs:
         env:
           CFLAGS: -march=armv8-a+crypto
           CXXFLAGS: -march=armv8-a+crypto
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: cargo test --all-features --verbose
 
       - name: Install ALSA dev (Linux)
@@ -74,13 +76,26 @@ jobs:
 
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: cargo test --all-features --verbose
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sccache
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
