@@ -264,4 +264,19 @@ impl AgentService {
             trimmed.to_string()
         }
     }
+
+    /// Check if a session title is a default channel-generated title that
+    /// should be replaced by auto-title. Default titles follow patterns like:
+    /// "Telegram: DM User (id) [chat:123]", "Discord: #channel", "Slack: #channel",
+    /// "WhatsApp: User", "Trello: Board Name".
+    pub(crate) fn is_default_channel_title(title: &str) -> bool {
+        let prefixes = [
+            "Telegram: ",
+            "Discord: ",
+            "Slack: ",
+            "WhatsApp: ",
+            "Trello: ",
+        ];
+        prefixes.iter().any(|p| title.starts_with(p))
+    }
 }

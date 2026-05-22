@@ -82,3 +82,59 @@ mod clean_auto_title {
         assert_eq!(AgentService::clean_auto_title("Fix Bug."), "Fix Bug.");
     }
 }
+
+mod is_default_channel_title {
+    use super::*;
+
+    #[test]
+    fn telegram_dm_title() {
+        assert!(AgentService::is_default_channel_title(
+            "Telegram: DM John (12345) [chat:67890]"
+        ));
+    }
+
+    #[test]
+    fn telegram_group_title() {
+        assert!(AgentService::is_default_channel_title(
+            "Telegram: My Group [chat:12345]"
+        ));
+    }
+
+    #[test]
+    fn discord_title() {
+        assert!(AgentService::is_default_channel_title("Discord: #general"));
+    }
+
+    #[test]
+    fn slack_title() {
+        assert!(AgentService::is_default_channel_title("Slack: #random"));
+    }
+
+    #[test]
+    fn whatsapp_title() {
+        assert!(AgentService::is_default_channel_title("WhatsApp: John Doe"));
+    }
+
+    #[test]
+    fn trello_title() {
+        assert!(AgentService::is_default_channel_title("Trello: My Board"));
+    }
+
+    #[test]
+    fn custom_title_not_default() {
+        assert!(!AgentService::is_default_channel_title(
+            "Rust Refactoring Session"
+        ));
+    }
+
+    #[test]
+    fn empty_title_not_default() {
+        assert!(!AgentService::is_default_channel_title(""));
+    }
+
+    #[test]
+    fn partial_prefix_not_default() {
+        assert!(!AgentService::is_default_channel_title("Telegram"));
+        assert!(!AgentService::is_default_channel_title("TelegramBot: test"));
+    }
+}
