@@ -98,7 +98,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
 
         let prefix = if is_selected { "  > " } else { "    " };
 
-        let name = session.title.as_deref().unwrap_or("Untitled");
+        let name = session.title.as_deref().unwrap_or("New Chat");
         let created = session.created_at.format("%Y-%m-%d %H:%M");
 
         // Format session total usage (cumulative billing tokens)
