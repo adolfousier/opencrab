@@ -11,34 +11,37 @@ use uuid::Uuid;
 
 #[test]
 fn test_hash_line_deterministic() {
-    let hash1 = hash_line(1, "test content");
-    let hash2 = hash_line(1, "test content");
+    let hash1 = hash_line("test content");
+    let hash2 = hash_line("test content");
     assert_eq!(hash1, hash2);
     assert_eq!(hash1.len(), 2);
 }
 
 #[test]
 fn test_hash_line_different_content() {
-    let hash1 = hash_line(1, "line one");
-    let hash2 = hash_line(1, "line two");
+    let hash1 = hash_line("line one");
+    let hash2 = hash_line("line two");
     assert_ne!(hash1, hash2);
 }
 
 #[test]
-fn test_hash_line_different_line_numbers() {
-    let hash1 = hash_line(1, "same content");
-    let hash2 = hash_line(2, "same content");
-    assert_ne!(hash1, hash2);
+fn test_hash_line_same_content_same_hash() {
+    // Pure content hashing: identical content always produces the same hash
+    // regardless of position. Line-shift avalanche is handled at validation time.
+    let hash1 = hash_line("same content");
+    let hash2 = hash_line("same content");
+    assert_eq!(hash1, hash2);
 }
 
 #[test]
-fn test_hash_line_blank_lines_different_positions() {
-    let hash1 = hash_line(1, "");
-    let hash2 = hash_line(5, "");
-    let hash3 = hash_line(10, "");
-    assert_ne!(hash1, hash2);
-    assert_ne!(hash2, hash3);
-    assert_ne!(hash1, hash3);
+fn test_hash_line_blank_lines_same_hash() {
+    // Blank lines all produce the same hash (pure content, no line number)
+    let hash1 = hash_line("");
+    let hash2 = hash_line("");
+    let hash3 = hash_line("");
+    assert_eq!(hash1, hash2);
+    assert_eq!(hash2, hash3);
+    assert_eq!(hash1, hash3);
 }
 
 #[test]
@@ -188,7 +191,7 @@ async fn test_hashline_edit_replace_single_line() {
         .with_auto_approve(true);
 
     // Get hash for line 2
-    let hash = hash_line(2, "line two");
+    let hash = hash_line("line two");
     let pos = format!("2#{}", hash);
 
     let input = json!({
@@ -219,8 +222,8 @@ async fn test_hashline_edit_replace_range() {
         .with_working_directory(temp_dir.path().to_path_buf())
         .with_auto_approve(true);
 
-    let hash2 = hash_line(2, "two");
-    let hash4 = hash_line(4, "four");
+    let hash2 = hash_line("two");
+    let hash4 = hash_line("four");
 
     let input = json!({
         "path": file_path.to_str().unwrap(),
@@ -253,7 +256,7 @@ async fn test_hashline_edit_append() {
         .with_working_directory(temp_dir.path().to_path_buf())
         .with_auto_approve(true);
 
-    let hash = hash_line(2, "line two");
+    let hash = hash_line("line two");
 
     let input = json!({
         "path": file_path.to_str().unwrap(),
@@ -284,7 +287,7 @@ async fn test_hashline_edit_prepend() {
         .with_working_directory(temp_dir.path().to_path_buf())
         .with_auto_approve(true);
 
-    let hash = hash_line(1, "line one");
+    let hash = hash_line("line one");
 
     let input = json!({
         "path": file_path.to_str().unwrap(),
@@ -341,9 +344,9 @@ async fn test_hashline_edit_overlapping_ranges() {
         .with_working_directory(temp_dir.path().to_path_buf())
         .with_auto_approve(true);
 
-    let hash1 = hash_line(1, "one");
-    let hash3 = hash_line(3, "three");
-    let hash5 = hash_line(5, "five");
+    let hash1 = hash_line("one");
+    let hash3 = hash_line("three");
+    let hash5 = hash_line("five");
 
     // Overlapping ranges: 1-3 and 3-5
     let input = json!({
@@ -380,8 +383,8 @@ async fn test_hashline_edit_multiple_edits() {
         .with_working_directory(temp_dir.path().to_path_buf())
         .with_auto_approve(true);
 
-    let hash1 = hash_line(1, "one");
-    let hash3 = hash_line(3, "three");
+    let hash1 = hash_line("one");
+    let hash3 = hash_line("three");
 
     let input = json!({
         "path": file_path.to_str().unwrap(),
@@ -418,7 +421,7 @@ async fn test_hashline_edit_strip_prefix_autocorrect() {
         .with_working_directory(temp_dir.path().to_path_buf())
         .with_auto_approve(true);
 
-    let hash = hash_line(1, "line one");
+    let hash = hash_line("line one");
 
     // Include hashline prefix in the replacement (model mistake)
     let input = json!({
