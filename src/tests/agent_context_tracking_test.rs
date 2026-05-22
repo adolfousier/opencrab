@@ -220,8 +220,13 @@ fn test_base_context_tokens_uses_real_tool_schemas() {
             .with_system_brain("Brain.".to_string())
             .with_tool_registry(Arc::new(registry));
 
-        let base_no_tools = service_no_tools.base_context_tokens();
-        let base_with_tools = service_with_tools.base_context_tokens();
+        // Use the RAW count here: the calibrated `base_context_tokens()`
+        // returns 0 for uncalibrated providers (no observations recorded
+        // in this unit-test context), which would make both services
+        // equal and defeat the purpose of this regression check. The raw
+        // method is the cl100k_base sum that calibration multiplies into.
+        let base_no_tools = service_no_tools.base_context_tokens_raw();
+        let base_with_tools = service_with_tools.base_context_tokens_raw();
 
         assert!(
             base_with_tools > base_no_tools,

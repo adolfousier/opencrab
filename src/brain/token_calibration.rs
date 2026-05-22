@@ -96,13 +96,18 @@ pub fn get_ratio(provider: &str) -> Option<f64> {
     CALIBRATION.lock().ok()?.get(provider).copied()
 }
 
-/// Apply the calibration ratio (if any) to a raw cl100k_base estimate.
-/// Returns the raw estimate unchanged when no ratio is known yet.
-pub fn calibrate(provider: &str, raw_estimate: u32) -> u32 {
-    match get_ratio(provider) {
-        Some(ratio) => ((raw_estimate as f64) * ratio).round() as u32,
-        None => raw_estimate,
-    }
+/// Apply the calibration ratio to a raw cl100k_base estimate. Returns
+/// `Some(calibrated)` when a ratio exists for the provider, `None` when
+/// no observation has been recorded yet.
+///
+/// Display surfaces should treat `None` as "show 0/max" — we have no
+/// reliable estimate, and surfacing the raw cl100k count would show the
+/// same misleading number that calibration exists to fix. The footer
+/// resets to a real value as soon as the first real `usage.input_tokens`
+/// lands, which both updates the calibration ratio and replaces the
+/// displayed value with the provider-reported count.
+pub fn calibrate(provider: &str, raw_estimate: u32) -> Option<u32> {
+    get_ratio(provider).map(|ratio| ((raw_estimate as f64) * ratio).round() as u32)
 }
 
 /// Record one (local_estimate, real_input_tokens) observation and update

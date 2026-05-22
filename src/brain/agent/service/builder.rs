@@ -373,19 +373,24 @@ impl AgentService {
 
     /// Estimate the baseline token cost of every request for this agent:
     /// system prompt + tool definitions, *calibrated* to the active
-    /// provider's tokenizer. This is the floor for the ctx display even
-    /// on a brand-new session with no messages.
+    /// provider's tokenizer. Used by the ctx-display floor for fresh
+    /// sessions before any API response has arrived.
     ///
     /// cl100k_base — the local tokenizer — overcounts Qwen-family models
-    /// by ~2.4× and undercounts some others. Once we've observed a real
-    /// `usage.input_tokens` from the active provider (see
-    /// `token_calibration::record_observation`), we apply the learned
-    /// ratio here so the footer doesn't jump from 24k → 10k on the first
-    /// turn (the most common UX complaint).
+    /// by ~2.4× and is off by varying amounts for other tokenizers, so
+    /// the raw count would show a misleading initial value that "drops"
+    /// the moment the first real `usage.input_tokens` arrives. Behaviour:
+    ///
+    ///   - **Calibrated provider**: apply the learned ratio, return a
+    ///     close-to-real estimate.
+    ///   - **Uncalibrated provider (first ever /new on this provider)**:
+    ///     return 0. The footer renders 0/max until the first turn
+    ///     observation lands, at which point both the calibration and
+    ///     the displayed value flip to real numbers.
     pub fn base_context_tokens(&self) -> u32 {
         let raw = self.base_context_tokens_raw();
         let provider_name = self.provider_name();
-        crate::brain::token_calibration::calibrate(&provider_name, raw)
+        crate::brain::token_calibration::calibrate(&provider_name, raw).unwrap_or(0)
     }
 
     /// Get the default model for this provider. Mirrors `provider_name()`
