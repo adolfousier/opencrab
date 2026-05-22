@@ -293,7 +293,7 @@ impl AgentService {
             && session
                 .title
                 .as_deref()
-                .map(|t| t.is_empty())
+                .map(|t| t.is_empty() || Self::is_default_channel_title(t))
                 .unwrap_or(true)
         {
             let title_provider = self.provider_for_session(session_id);

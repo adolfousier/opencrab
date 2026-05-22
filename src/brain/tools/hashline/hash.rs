@@ -32,24 +32,21 @@ fn fnv1a_32(data: &[u8]) -> u32 {
 
 /// Compute a 2-character hash for a line.
 ///
-/// The hash is computed over the line content concatenated with the
-/// 1-indexed line number (as ASCII decimal). This ensures blank lines
-/// at different positions get different hashes.
+/// The hash is computed over the line content only (stateless).
+/// This ensures **reference stability**: inserting or deleting lines
+/// at the top of a file does not invalidate hashes for the rest.
+///
+/// Identical content at different positions produces the same hash.
+/// Ambiguity is handled by the edit tool via lazy context escalation
+/// (see issue #105).
 ///
 /// # Arguments
-/// * `line_number` - 1-indexed line number
 /// * `content` - the line content (without newline)
 ///
 /// # Returns
 /// A 2-character string from HASH_ALPHABET.
-pub fn hash_line(line_number: usize, content: &str) -> String {
-    // Build the hash input: content + "#" + line_number
-    let mut input = Vec::with_capacity(content.len() + 8);
-    input.extend_from_slice(content.as_bytes());
-    input.push(b'#');
-    input.extend_from_slice(line_number.to_string().as_bytes());
-
-    let h = fnv1a_32(&input);
+pub fn hash_line(content: &str) -> String {
+    let h = fnv1a_32(content.as_bytes());
 
     // Extract two 4-bit nibbles for the two hash characters
     let hi = ((h >> 4) & 0xF) as usize;
@@ -65,7 +62,7 @@ pub fn hash_all_lines(content: &str) -> Vec<(usize, String)> {
     content
         .lines()
         .enumerate()
-        .map(|(i, line)| (i + 1, hash_line(i + 1, line)))
+        .map(|(i, line)| (i + 1, hash_line(line)))
         .collect()
 }
 
@@ -80,15 +77,15 @@ mod tests {
 
     #[test]
     fn test_hash_deterministic() {
-        let h1 = hash_line(1, "hello world");
-        let h2 = hash_line(1, "hello world");
+        let h1 = hash_line("hello world");
+        let h2 = hash_line("hello world");
         assert_eq!(h1, h2);
         assert_eq!(h1.len(), 2);
     }
 
     #[test]
     fn test_hash_two_chars_from_alphabet() {
-        let h = hash_line(42, "some code here");
+        let h = hash_line("some code here");
         assert_eq!(h.len(), 2);
         for c in h.chars() {
             assert!(
@@ -101,26 +98,28 @@ mod tests {
 
     #[test]
     fn test_different_content_different_hash() {
-        let h1 = hash_line(1, "hello");
-        let h2 = hash_line(1, "world");
+        let h1 = hash_line("hello");
+        let h2 = hash_line("world");
         assert_ne!(h1, h2);
     }
 
     #[test]
-    fn test_different_line_numbers_different_hash() {
-        let h1 = hash_line(1, "same content");
-        let h2 = hash_line(2, "same content");
-        assert_ne!(h1, h2);
+    fn test_identical_content_same_hash() {
+        // Stateless hashing: identical content produces same hash
+        // regardless of position. Ambiguity is handled by lazy context
+        // escalation in the edit tool (issue #105).
+        let h1 = hash_line("same content");
+        let h2 = hash_line("same content");
+        assert_eq!(h1, h2);
     }
 
     #[test]
-    fn test_blank_lines_differ_by_position() {
-        let h1 = hash_line(1, "");
-        let h5 = hash_line(5, "");
-        let h100 = hash_line(100, "");
-        assert_ne!(h1, h5);
-        assert_ne!(h5, h100);
-        assert_ne!(h1, h100);
+    fn test_blank_lines_same_hash() {
+        // Blank lines have identical content (""), so same hash.
+        // The edit tool disambiguates via line number in the HashRef.
+        let h1 = hash_line("");
+        let h5 = hash_line("");
+        assert_eq!(h1, h5);
     }
 
     #[test]
@@ -142,13 +141,13 @@ mod tests {
 
     #[test]
     fn test_empty_content() {
-        let h = hash_line(1, "");
+        let h = hash_line("");
         assert_eq!(h.len(), 2);
     }
 
     #[test]
     fn test_unicode_content() {
-        let h = hash_line(1, "héllo wörld 🦀");
+        let h = hash_line("héllo wörld 🦀");
         assert_eq!(h.len(), 2);
     }
 }

@@ -176,6 +176,8 @@ pub enum ChannelCommand {
     Doctor,
     /// `/evolve` — check for updates and install directly (no LLM needed)
     Evolve,
+    /// `/rtk` — show RTK token savings statistics
+    Rtk(String),
     /// User-defined command with action "prompt" — forward prompt text to the agent
     UserPrompt(String),
     /// User-defined command with action "system" — display text directly
@@ -232,6 +234,7 @@ pub async fn handle_command(
         "/help" => ChannelCommand::Help(format_help()),
         "/models" => ChannelCommand::Models(format_providers(agent)),
         "/new" => ChannelCommand::NewSession,
+        "/rtk" => ChannelCommand::Rtk(format_rtk().await),
         "/sessions" => ChannelCommand::Sessions(format_sessions(session_id, session_svc).await),
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
@@ -251,6 +254,7 @@ pub async fn handle_command(
         ChannelCommand::UserSystem(body) => Some(body.clone()),
         ChannelCommand::Doctor => Some("Running health check...".to_string()),
         ChannelCommand::Evolve => Some("Checking for updates...".to_string()),
+        ChannelCommand::Rtk(body) => Some(body.clone()),
         ChannelCommand::Compact | ChannelCommand::UserPrompt(_) | ChannelCommand::NotACommand => {
             None
         }
@@ -357,6 +361,7 @@ pub(crate) fn format_help() -> String {
         "`/help`     — Show this message".to_string(),
         "`/models`   — Switch AI model".to_string(),
         "`/new`      — Start a new session".to_string(),
+        "`/rtk`      — Show RTK token savings statistics".to_string(),
         "`/sessions` — Switch between sessions".to_string(),
         "`/stop`     — Abort current operation".to_string(),
         "`/usage`    — Session token & cost stats".to_string(),
@@ -378,6 +383,37 @@ pub(crate) fn format_help() -> String {
     lines.push(String::new());
     lines.push("🦀 Any other message is sent to OpenCrabs. 🦀".to_string());
     lines.join("\n")
+}
+
+// ── /rtk ────────────────────────────────────────────────────────────────────
+
+#[cfg(feature = "rtk")]
+async fn format_rtk() -> String {
+    match tokio::process::Command::new("rtk")
+        .arg("gain")
+        .output()
+        .await
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            if output.status.success() {
+                format!("📊 *RTK Token Savings:*\n\n```\n{}\n```", stdout.trim())
+            } else {
+                format!("⚠️ RTK gain command failed:\n\n```\n{}\n```", stderr.trim())
+            }
+        }
+        Err(e) => {
+            format!("⚠️ Failed to run rtk gain: {}. Is RTK installed?", e)
+        }
+    }
+}
+
+#[cfg(not(feature = "rtk"))]
+async fn format_rtk() -> String {
+    "⚠️ RTK feature is not enabled. Rebuild with --features rtk to enable token savings tracking."
+        .to_string()
 }
 
 // ── /usage ──────────────────────────────────────────────────────────────────
@@ -897,20 +933,64 @@ pub async fn switch_model(
 
     Ok(change_msg)
 }
-
 /// Run evolve directly (no LLM needed). Returns a user-facing status message.
+/// Handles the RestartReady signal by triggering a process restart via exec().
 pub async fn run_evolve() -> String {
+    use crate::brain::agent::ProgressEvent;
     use crate::brain::tools::{Tool, ToolExecutionContext, evolve::EvolveTool};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    // Track whether we received a RestartReady signal
+    let restart_ready = Arc::new(AtomicBool::new(false));
+    let restart_flag = restart_ready.clone();
+
+    // Create a progress callback that detects RestartReady
+    let progress_callback: crate::brain::agent::ProgressCallback = Arc::new(move |_sid, event| {
+        if matches!(event, ProgressEvent::RestartReady { .. }) {
+            restart_flag.store(true, Ordering::SeqCst);
+        }
+    });
 
     let ctx = ToolExecutionContext::new(uuid::Uuid::nil());
-    let tool = EvolveTool::new(None);
-    match tool
+    let tool = EvolveTool::new(Some(progress_callback));
+    let result = match tool
         .execute(serde_json::json!({"check_only": false}), &ctx)
         .await
     {
         Ok(result) => result.output,
         Err(e) => format!("Evolve failed: {}", e),
+    };
+
+    // If we received a RestartReady signal, trigger the restart
+    if restart_ready.load(Ordering::SeqCst) {
+        trigger_restart();
     }
+
+    result
+}
+
+/// Trigger a process restart by exec-ing the current binary.
+/// This replaces the current process with a fresh instance.
+#[cfg(unix)]
+fn trigger_restart() {
+    use std::os::unix::process::CommandExt;
+
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("opencrabs"));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    tracing::info!("Restarting daemon via exec()");
+
+    // exec() replaces the current process, so this never returns on success
+    let err = std::process::Command::new(&exe).args(&args).exec();
+    tracing::error!("exec() failed: {}", err);
+}
+
+#[cfg(not(unix))]
+fn trigger_restart() {
+    tracing::warn!("Restart via exec() not supported on this platform. Manual restart required.");
 }
 
 /// Run doctor health check directly (no LLM needed). Returns a user-facing status message.
@@ -929,7 +1009,8 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
     match cmd {
         ChannelCommand::Help(body)
         | ChannelCommand::Usage(body)
-        | ChannelCommand::UserSystem(body) => Some(body.clone()),
+        | ChannelCommand::UserSystem(body)
+        | ChannelCommand::Rtk(body) => Some(body.clone()),
         ChannelCommand::Doctor => Some(run_doctor()),
         ChannelCommand::Evolve => Some(run_evolve().await),
         _ => None,

@@ -137,7 +137,7 @@ impl Tool for ReadTool {
                 .enumerate()
                 .map(|(i, line)| {
                     let line_num = file_start_line + i;
-                    let hash = hash_line(line_num, line);
+                    let hash = hash_line(line);
                     format_hashline(line_num, &hash, line)
                 })
                 .collect::<Vec<_>>()
