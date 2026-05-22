@@ -933,20 +933,64 @@ pub async fn switch_model(
 
     Ok(change_msg)
 }
-
 /// Run evolve directly (no LLM needed). Returns a user-facing status message.
+/// Handles the RestartReady signal by triggering a process restart via exec().
 pub async fn run_evolve() -> String {
+    use crate::brain::agent::ProgressEvent;
     use crate::brain::tools::{Tool, ToolExecutionContext, evolve::EvolveTool};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    // Track whether we received a RestartReady signal
+    let restart_ready = Arc::new(AtomicBool::new(false));
+    let restart_flag = restart_ready.clone();
+
+    // Create a progress callback that detects RestartReady
+    let progress_callback: crate::brain::agent::ProgressCallback = Arc::new(move |_sid, event| {
+        if matches!(event, ProgressEvent::RestartReady { .. }) {
+            restart_flag.store(true, Ordering::SeqCst);
+        }
+    });
 
     let ctx = ToolExecutionContext::new(uuid::Uuid::nil());
-    let tool = EvolveTool::new(None);
-    match tool
+    let tool = EvolveTool::new(Some(progress_callback));
+    let result = match tool
         .execute(serde_json::json!({"check_only": false}), &ctx)
         .await
     {
         Ok(result) => result.output,
         Err(e) => format!("Evolve failed: {}", e),
+    };
+
+    // If we received a RestartReady signal, trigger the restart
+    if restart_ready.load(Ordering::SeqCst) {
+        trigger_restart();
     }
+
+    result
+}
+
+/// Trigger a process restart by exec-ing the current binary.
+/// This replaces the current process with a fresh instance.
+#[cfg(unix)]
+fn trigger_restart() {
+    use std::os::unix::process::CommandExt;
+
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("opencrabs"));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    tracing::info!("Restarting daemon via exec()");
+
+    // exec() replaces the current process, so this never returns on success
+    let err = std::process::Command::new(&exe).args(&args).exec();
+    tracing::error!("exec() failed: {}", err);
+}
+
+#[cfg(not(unix))]
+fn trigger_restart() {
+    tracing::warn!("Restart via exec() not supported on this platform. Manual restart required.");
 }
 
 /// Run doctor health check directly (no LLM needed). Returns a user-facing status message.
