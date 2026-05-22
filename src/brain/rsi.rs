@@ -237,7 +237,14 @@ Each brain file controls a different aspect of the agent. Route improvements to 
   preambles, verbose/repetitive responses, wrong tone.
 - **TOOLS.md** — How TOOLS are used: argument formats, common pitfalls, usage patterns. \
   Fix here when: tool_failure events show the same tool failing with similar args, or the \
-  model consistently misuses a tool parameter.
+  model consistently misuses a tool parameter. **Write the DERIVED RULE, never the raw failure log.** \
+  A section header that reads `### Bash Exit Code 127 — Command Not Found` describing the cause and \
+  the fix is a rule. A section header that reads `### Bash Exit Code 127 — Recurring (6 failures since \
+  2026-05-17)` with a body of timestamps and session IDs is a log — that does not belong in TOOLS.md. \
+  If you want to record that a rule is load-bearing, use a single inline counter like `Violations: 6` \
+  inside the rule body — do NOT enumerate the individual incidents, do NOT include session IDs, do \
+  NOT put dates or `(N failures: ...)` in the section header. The brain file is for the agent to read \
+  before acting, not for archaeology.
 - **USER.md** — How to interact with THIS USER: preferences, corrections, frustrations. \
   Fix here when: user_correction events show a repeated preference the agent keeps violating.
 - **MEMORY.md** — Persistent KNOWLEDGE: facts, context, project state, integrations. \

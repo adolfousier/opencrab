@@ -30,6 +30,50 @@ const ALLOWED_FILES: &[&str] = &[
     "IDENTITY.md",
 ];
 
+/// Heuristic guard: reject brain-file content that looks like a raw failure
+/// event log (timestamps, session IDs, `(N failures: ...)` counters in
+/// section headers) rather than a derived rule. Issue #111: RSI cycles were
+/// appending sections like `### Timeout Handling (5 failures: 17:02, 16:59,
+/// 16:58, 16:57, 16:55)` to TOOLS.md, turning the brain file into an audit
+/// log instead of operational guidance.
+///
+/// The system prompt tells the agent not to do this; this guard catches
+/// the cases where the model ignores the prompt anyway.
+///
+/// Returns `Some(reason)` when the content should be rejected, `None`
+/// when it passes.
+fn looks_like_failure_log(content: &str) -> Option<&'static str> {
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with('#') {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        // Section headers describing a failure count: "(N failures:",
+        // "(N failures since", "— N failures", etc.
+        if (lower.contains("failures:") || lower.contains("failures since"))
+            && trimmed.chars().any(|c| c.is_ascii_digit())
+        {
+            return Some(
+                "Section header looks like a failure-event log \
+                 (e.g. `### Foo (N failures: ...)`). Brain files hold derived RULES, \
+                 not raw audit data. Restate the header as the rule itself and put \
+                 any incident counter on a single inline line in the body \
+                 (e.g. `Violations: 6`). See issue #111.",
+            );
+        }
+        // "— Recurring (N failures since YYYY-MM-DD)" — same shape with different prefix.
+        if lower.contains("recurring") && lower.contains("failures") {
+            return Some(
+                "`Recurring (... failures ...)` headers are audit-log entries, \
+                 not operational rules. Restate the section as the cause-and-fix \
+                 rule the agent should follow; do not list dates/sessions in the header.",
+            );
+        }
+    }
+    None
+}
+
 pub struct SelfImproveTool;
 
 #[async_trait]
@@ -193,6 +237,10 @@ impl Tool for SelfImproveTool {
                         "target_file must be one of: {}",
                         ALLOWED_FILES.join(", ")
                     )));
+                }
+
+                if let Some(reason) = looks_like_failure_log(new_content) {
+                    return Ok(ToolResult::error(reason.to_string()));
                 }
 
                 let target_path = home.join(target_file);
@@ -370,6 +418,10 @@ impl Tool for SelfImproveTool {
                         "target_file must be one of: {}",
                         ALLOWED_FILES.join(", ")
                     )));
+                }
+
+                if let Some(reason) = looks_like_failure_log(content) {
+                    return Ok(ToolResult::error(reason.to_string()));
                 }
 
                 // Ensure RSI dirs exist
