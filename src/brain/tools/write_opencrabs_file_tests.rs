@@ -75,8 +75,8 @@ fn test_profiles_prefix_rejected() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
-        err.contains("profile prefix"),
-        "Error message should mention profile prefix: {err}"
+        err.contains("directory prefix"),
+        "Error message should mention directory prefix: {err}"
     );
     assert!(
         err.contains("profiles/ops/TOOLS.md"),

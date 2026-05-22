@@ -40,16 +40,16 @@ pub(super) fn validate_opencrabs_path(path: &str) -> std::result::Result<(), Str
     if path.contains('\0') {
         return Err("path contains null bytes".into());
     }
-    // Reject profiles/ prefix — the tool resolves paths under the active profile's home,
-    // so including the profile prefix causes path doubling.
-    // Example: profiles/ops/TOOLS.md → ~/.opencrabs/profiles/ops/profiles/ops/TOOLS.md (wrong)
+    // Reject profiles/ prefix — the tool resolves paths from the agent's home directory,
+    // so including a directory prefix causes path doubling.
+    // Example: profiles/ops/TOOLS.md → <home>/profiles/ops/TOOLS.md (wrong if home is already profiles/ops/)
     // Correct: just pass TOOLS.md or memory/note.md
     if path.starts_with("profiles/") {
         return Err(format!(
-            "It looks like you included the profile prefix in '{}'. \
-             The tool resolves paths under the active profile's home. \
-             For brain files, pass just the filename (e.g. \"TOOLS.md\"). \
-             For other files, pass the relative path (e.g. \"memory/note.md\").",
+            "Path '{}' starts with 'profiles/' which looks like you included a directory prefix. \
+             This tool expects a relative path from your home directory. \
+             For example: pass \"TOOLS.md\" not \"profiles/ops/TOOLS.md\", \
+             or \"memory/note.md\" not \"profiles/ops/memory/note.md\".",
             path
         ));
     }
@@ -63,15 +63,15 @@ impl Tool for WriteOpenCrabsFileTool {
     }
 
     fn description(&self) -> &str {
-        "Write or edit any file within the OpenCrabs home directory (~/.opencrabs/). \
+        "Write or edit any file within the OpenCrabs home directory. \
          Use this for brain files (MEMORY.md, USER.md, AGENTS.md, SOUL.md, etc.), \
          config files (commands.toml), memory logs, and any other app files. \
-         The standard edit_file/write_file tools cannot reach ~/.opencrabs/ — use this instead. \
+         The standard edit_file/write_file tools cannot reach the home directory — use this instead. \
          \
          **Path rules:** \
-         - For brain files (MEMORY.md, TOOLS.md, AGENTS.md, SOUL.md, USER.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md): use just the filename (e.g. \"TOOLS.md\"), NOT a full path. \
-         - For other files: use relative paths under the active profile's home (e.g. \"memory/note.md\", \"rsi/improvements.md\"). \
-         - No leading slash, no '..' in paths, no 'profiles/' prefix (the tool resolves under the active profile automatically). \
+         - Pass a relative path from your home directory (e.g. \"MEMORY.md\", \"memory/note.md\", \"rsi/improvements.md\"). \
+         - No leading slash, no '..' in paths. \
+         - Do NOT include any directory prefix that duplicates your home path. \
          \
          Supports three operations: \
          \"overwrite\" replaces entire file content, \
@@ -89,7 +89,7 @@ impl Tool for WriteOpenCrabsFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Relative path under the active profile's home. For brain files (MEMORY.md, TOOLS.md, AGENTS.md, SOUL.md, USER.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md), use just the filename (e.g. \"TOOLS.md\"). For other files, use relative paths (e.g. \"memory/2026-03-02.md\", \"rsi/improvements.md\", \"commands.toml\"). No leading slash, no '..'."
+                    "description": "Relative path from your home directory (e.g. \"MEMORY.md\", \"memory/2026-03-02.md\", \"rsi/improvements.md\", \"commands.toml\"). No leading slash, no '..'. Do not include any prefix that duplicates your home path."
                 },
                 "operation": {
                     "type": "string",
