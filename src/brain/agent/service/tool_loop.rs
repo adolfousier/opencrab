@@ -300,6 +300,8 @@ impl AgentService {
             let title_model = model_name.clone();
             let title_msg = user_message.chars().take(500).collect::<String>();
             let session_svc = SessionService::new(self.context.clone());
+            // Capture the old title to preserve channel prefix
+            let old_title = session.title.clone().unwrap_or_default();
             tokio::spawn(async move {
                 let title_request = LLMRequest::new(
                     title_model,
@@ -313,8 +315,15 @@ impl AgentService {
                 match title_provider.complete(title_request).await {
                     Ok(response) => {
                         let title_text = Self::extract_text_from_response(&response);
-                        let final_title = Self::clean_auto_title(&title_text);
-                        if !final_title.is_empty() {
+                        let clean_title = Self::clean_auto_title(&title_text);
+                        if !clean_title.is_empty() {
+                            // Preserve channel prefix if it existed
+                            let prefix = Self::extract_channel_prefix(&old_title);
+                            let final_title = if prefix.is_empty() {
+                                clean_title
+                            } else {
+                                format!("{}{}", prefix, clean_title)
+                            };
                             let _ = session_svc
                                 .update_session_title(session_id, Some(final_title))
                                 .await;
