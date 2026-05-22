@@ -31,10 +31,8 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
 
-      - name: Install sccache
-        uses: taiki-e/install-action@v2
-        with:
-          tool: sccache
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Cache Chocolatey packages
         if: runner.os == 'Windows'
@@ -92,10 +90,8 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
 
-      - name: Install sccache
-        uses: taiki-e/install-action@v2
-        with:
-          tool: sccache
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
