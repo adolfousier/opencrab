@@ -76,26 +76,12 @@ pub(super) fn render_help(f: &mut Frame, app: &App, area: Rect) {
         kv("Ctrl+U", "Delete to line start (vim)", cyan),
         Line::from(""),
         section_header("SLASH COMMANDS"),
-        kv("/help", "Show this screen", cyan),
-        kv("/models", "Switch model", cyan),
-        kv("/usage", "Token & cost stats", cyan),
-        kv("/onboard", "Setup wizard (start)", cyan),
-        kv("/onboard:provider", "Jump to AI provider setup", cyan),
-        kv("/onboard:workspace", "Jump to workspace settings", cyan),
-        kv("/onboard:channels", "Jump to channel config", cyan),
-        kv("/onboard:voice", "Jump to voice STT/TTS setup", cyan),
-        kv("/onboard:image", "Jump to image handling setup", cyan),
-        kv("/onboard:brain", "Jump to brain/persona setup", cyan),
-        kv("/doctor", "Run connection health check", cyan),
-        kv("/new", "Start a new session", cyan),
-        kv("/sessions", "Session manager", cyan),
-        kv("/approve", "Tool approval policy", cyan),
-        kv("/compact", "Compact context now", cyan),
-        kv("/rebuild", "Build & restart from source", cyan),
-        kv("/evolve", "Download latest release & restart", cyan),
-        kv("/cd", "Change working directory", cyan),
-        kv("/whisper", "Speak anywhere, paste to clipboard", cyan),
     ];
+
+    // Dynamically append all built-in commands from SLASH_COMMANDS constant
+    for cmd in crate::tui::app::SLASH_COMMANDS {
+        left.push(kv(cmd.name, cmd.description, cyan));
+    }
 
     // Skills section — collect owned data first so borrows outlive the lines
     let all_skills = crate::brain::skills::load_all_skills();
@@ -111,19 +97,6 @@ pub(super) fn render_help(f: &mut Frame, app: &App, area: Rect) {
         left.push(kv("/skills", &skills_summary, cyan));
         for (name, desc) in &skill_data {
             left.push(kv(name, desc, cyan));
-        }
-    }
-
-    // Append user-defined commands from commands.toml
-    let brain_path = crate::brain::BrainLoader::resolve_path();
-    let loader = crate::brain::CommandLoader::from_brain_path(&brain_path);
-    let mut user_cmds = loader.load();
-    if !user_cmds.is_empty() {
-        left.push(Line::from(""));
-        left.push(section_header("CUSTOM COMMANDS"));
-        user_cmds.sort_by(|a, b| a.name.cmp(&b.name));
-        for cmd in &user_cmds {
-            left.push(kv(&cmd.name, &cmd.description, cyan));
         }
     }
 
