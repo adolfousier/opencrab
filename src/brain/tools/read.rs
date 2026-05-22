@@ -163,12 +163,12 @@ impl Tool for ReadTool {
 
             // Second pass: format output, marking collision lines
             let mut formatted_lines = Vec::new();
-            for (line_num, hash, line) in lines_with_hashes {
+            for (_line_num, hash, line) in lines_with_hashes {
                 if collision_hashes.contains(&hash) {
                     // Collision: don't show hash, add instruction
-                    formatted_lines.push(format!("{}#COLLISION|{}", line_num, line));
+                    formatted_lines.push(format!("COLLISION|{}", line));
                 } else {
-                    formatted_lines.push(format_hashline(line_num, &hash, line));
+                    formatted_lines.push(format_hashline(0, &hash, line));
                 }
             }
 

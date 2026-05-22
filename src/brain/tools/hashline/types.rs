@@ -2,58 +2,52 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A reference to a specific line by its number and content hash.
+/// A reference to a specific line by its content hash.
 ///
-/// Format: `LINE#ID` where LINE is 1-indexed and ID is the 2-char hash.
-/// Example: `12#VK`
+/// Format: `ID` or `#ID` where ID is the 2-char hash.
+/// Example: `VK` or `#VK`
+///
+/// Note: Line numbers are NOT included in the ref to avoid the "avalanche" problem
+/// where inserting/deleting lines invalidates all subsequent refs. The tool looks
+/// up the line by hash alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashRef {
-    /// 1-indexed line number
-    pub line: usize,
     /// 2-character content hash
     pub hash: String,
 }
 
 impl HashRef {
-    /// Parse a `LINE#ID` string into a HashRef.
+    /// Parse a hash reference string.
     ///
     /// Accepts formats:
-    /// - `"12#VK"` → line 12, hash "VK"
-    /// - `"1#ZP"` → line 1, hash "ZP"
+    /// - `"VK"` → hash "VK"
+    /// - `"#VK"` → hash "VK"
+    /// - `"VK|some content"` → hash "VK" (strips content after pipe)
+    /// - `"12#VK"` → hash "VK" (legacy format, line number ignored)
     pub fn parse(s: &str) -> Result<Self, String> {
         let s = s.trim();
 
-        // Find the '#' separator
-        let hash_pos = s.find('#').ok_or_else(|| {
-            format!(
-                "Invalid hash ref '{}': missing '#' separator. Expected format: LINE#ID",
-                s
-            )
-        })?;
-
-        let line_str = &s[..hash_pos];
-        let hash_str = &s[hash_pos + 1..];
+        // Strip leading '#' if present
+        let s = if let Some(stripped) = s.strip_prefix('#') {
+            stripped
+        } else {
+            s
+        };
 
         // Strip trailing '|' and anything after it (model might include content)
-        let hash_str = if let Some(pipe_pos) = hash_str.find('|') {
-            &hash_str[..pipe_pos]
+        let hash_str = if let Some(pipe_pos) = s.find('|') {
+            &s[..pipe_pos]
+        } else {
+            s
+        };
+
+        // Handle legacy format: LINE#HASH (ignore the line number)
+        let hash_str = if let Some(hash_pos) = hash_str.find('#') {
+            // Legacy format like "12#VK" - extract just the hash part
+            &hash_str[hash_pos + 1..]
         } else {
             hash_str
         };
-
-        let line: usize = line_str.parse().map_err(|_| {
-            format!(
-                "Invalid hash ref '{}': '{}' is not a valid line number",
-                s, line_str
-            )
-        })?;
-
-        if line == 0 {
-            return Err(format!(
-                "Invalid hash ref '{}': line numbers are 1-indexed (got 0)",
-                s
-            ));
-        }
 
         if hash_str.len() != 2 {
             return Err(format!(
@@ -63,7 +57,6 @@ impl HashRef {
         }
 
         Ok(HashRef {
-            line,
             hash: hash_str.to_uppercase(),
         })
     }
@@ -144,21 +137,18 @@ mod tests {
     #[test]
     fn test_parse_hashref_valid() {
         let hr = HashRef::parse("12#VK").unwrap();
-        assert_eq!(hr.line, 12);
         assert_eq!(hr.hash, "VK");
     }
 
     #[test]
     fn test_parse_hashref_single_digit() {
         let hr = HashRef::parse("1#ZP").unwrap();
-        assert_eq!(hr.line, 1);
         assert_eq!(hr.hash, "ZP");
     }
 
     #[test]
     fn test_parse_hashref_large_line() {
         let hr = HashRef::parse("1234#AB").unwrap();
-        assert_eq!(hr.line, 1234);
         assert_eq!(hr.hash, "AB");
     }
 
@@ -166,7 +156,6 @@ mod tests {
     fn test_parse_hashref_with_pipe_content() {
         // Model might include the content after the pipe
         let hr = HashRef::parse("5#XY|some code here").unwrap();
-        assert_eq!(hr.line, 5);
         assert_eq!(hr.hash, "XY");
     }
 
@@ -182,13 +171,17 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_hashref_invalid_line() {
-        assert!(HashRef::parse("abc#VK").is_err());
+    fn test_parse_hashref_invalid_line_ignored() {
+        // Legacy format: line number is ignored, only hash matters
+        let hr = HashRef::parse("abc#VK").unwrap();
+        assert_eq!(hr.hash, "VK");
     }
 
     #[test]
-    fn test_parse_hashref_zero_line() {
-        assert!(HashRef::parse("0#VK").is_err());
+    fn test_parse_hashref_zero_line_ignored() {
+        // Legacy format: line number is ignored, only hash matters
+        let hr = HashRef::parse("0#VK").unwrap();
+        assert_eq!(hr.hash, "VK");
     }
 
     #[test]

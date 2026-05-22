@@ -66,9 +66,9 @@ pub fn hash_all_lines(content: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// Format a line with its hash tag: `LINE#ID|content`
-pub fn format_hashline(line_number: usize, hash: &str, content: &str) -> String {
-    format!("{}#{}|{}", line_number, hash, content)
+/// Format a line with its hash tag: `ID|content`
+pub fn format_hashline(_line_number: usize, hash: &str, content: &str) -> String {
+    format!("{}|{}", hash, content)
 }
 
 #[cfg(test)]
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn test_format_hashline() {
         let formatted = format_hashline(12, "VK", "function hello() {");
-        assert_eq!(formatted, "12#VK|function hello() {");
+        assert_eq!(formatted, "VK|function hello() {");
     }
 
     #[test]
