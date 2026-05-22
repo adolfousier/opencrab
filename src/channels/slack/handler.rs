@@ -1067,15 +1067,38 @@ async fn handle_message(
                             .slack_state
                             .register_session_channel(new_session.id, channel_id.clone())
                             .await;
+                        // Sync provider for the new session so baseline is accurate
+                        let new_meta = state
+                            .session_svc
+                            .get_session(new_session.id)
+                            .await
+                            .ok()
+                            .flatten();
+                        crate::channels::commands::sync_provider_for_session(
+                            &state.agent,
+                            new_session.id,
+                            new_meta.as_ref().and_then(|s| s.provider_name.as_deref()),
+                            new_meta.as_ref().and_then(|s| s.model.as_deref()),
+                        )
+                        .await;
+                        let baseline = state.agent.base_context_tokens();
+                        let ctx_max = state.agent.context_limit_for_session(new_session.id);
+                        let footer = crate::utils::format_ctx_footer(baseline, ctx_max);
+                        let msg_text = format!("✅ New session started.\n\n{footer}");
                         let token =
                             SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
                         let session = client.open_session(&token);
                         let request = SlackApiChatPostMessageRequest::new(
                             SlackChannelId::new(channel_id),
-                            SlackMessageContent::new()
-                                .with_text("✅ New session started.".to_string()),
+                            SlackMessageContent::new().with_text(msg_text),
                         );
                         let _ = session.chat_post_message(&request).await;
+                        tracing::info!(
+                            "Slack /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
+                            footer,
+                            baseline,
+                            ctx_max,
+                        );
                     }
                     Err(e) => {
                         tracing::error!("Slack: failed to create session: {}", e);

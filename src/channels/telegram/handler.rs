@@ -1124,8 +1124,26 @@ pub(crate) async fn handle_message(
                         telegram_state
                             .register_session_chat(new_session.id, msg.chat.id.0)
                             .await;
-                        bot.send_message(msg.chat.id, "✅ New session started.")
-                            .await?;
+                        // Sync provider for the new session so baseline is accurate
+                        let new_meta = session_svc.get_session(new_session.id).await.ok().flatten();
+                        crate::channels::commands::sync_provider_for_session(
+                            &agent,
+                            new_session.id,
+                            new_meta.as_ref().and_then(|s| s.provider_name.as_deref()),
+                            new_meta.as_ref().and_then(|s| s.model.as_deref()),
+                        )
+                        .await;
+                        let baseline = agent.base_context_tokens();
+                        let ctx_max = agent.context_limit_for_session(new_session.id);
+                        let footer = crate::utils::format_ctx_footer(baseline, ctx_max);
+                        let msg_text = format!("✅ New session started.\n\n{footer}");
+                        bot.send_message(msg.chat.id, &msg_text).await?;
+                        tracing::info!(
+                            "Telegram /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
+                            footer,
+                            baseline,
+                            ctx_max,
+                        );
                     }
                     Err(e) => {
                         tracing::error!("Telegram: failed to create session: {}", e);
