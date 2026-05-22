@@ -4,6 +4,124 @@ All notable changes to OpenCrabs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.3.26] - 2026-05-22
+
+42 commits since v0.3.25. Issue-fix and polish release addressing 8 issues
+(#105, #106, #107, #108, #109, #111, #112, #113) and merging 2 contributor
+PRs (#4, #113). Hashline collision detection prevents line-shift avalanche.
+Channel command parity (/evolve, /rtk, auto-title) matches TUI behavior.
+RSI brain file hygiene rejects raw failure-event logs. Tool error output
+now includes stdout/stderr with ANSI stripping and 8000 char cap. CI
+caching optimizations with rust-cache and mold. Dynamic help screen
+auto-generates from slash commands. Context counter calibration prevents
+jumpy footer on first turn.
+
+Contributions from @leshchenko1979 (issues #105, #111, #112, PRs #4, #113).
+
+HASHLINE COLLISION DETECTION (4 commits, closes #105)
+
+Pure content hashing prevents line-shift avalanche when lines are inserted.
+Collision detection in validate_hash() and read_file hashline mode marks
+affected lines with COLLISION prefix, directing LLM to use edit_file
+instead. HashRef format changed from 12#VK|content to VK|content.
+
+- ed711a2e fix(hashline): use pure content hash to prevent line-shift avalanche
+- 3ded0b4b fix(hashline): detect hash collisions and escalate to edit_file
+- 86ab2136 feat(hashline): detect collisions in read_file hashline mode and mark affected lines
+- 75532db9 fix(hashline): remove line numbers from HashRef to prevent avalanche problem
+
+CHANNEL COMMAND PARITY (3 commits, closes #106, #107, #108)
+
+/evolve, /rtk, and auto-title now work on all channel platforms (Telegram,
+Discord, Slack, WhatsApp), matching TUI behavior. Auto-title fires on
+sessions with default channel titles and preserves channel prefix
+(Telegram:, Slack:, etc.) when generating new titles.
+
+- a6a86f57 fix(channels): /evolve now restarts daemon on all platforms
+- fcb0784a feat(channels): add /rtk command to all channel platforms
+- f6658655 fix(auto-title): fire on channel sessions with default titles
+
+AUTO-TITLE TUI FIX (2 commits, closes #109)
+
+TUI sessions now create with None title so auto-rename fires immediately.
+Auto-title preserves channel prefix for channel sessions but generates
+clean titles for TUI. New Chat recognized as default title.
+
+- 0fb158b7 fix(tui): use None title for new sessions so auto-rename fires
+- 152c06f4 fix(auto-title): preserve channel prefix and handle New Chat default title
+
+RSI BRAIN FILE HYGIENE (1 commit, closes #111)
+
+RSI agent prompt updated to reject raw failure-event logs in brain files.
+Defense-in-depth: prompt teaches rule vs. log distinction, code guard in
+self_improve.rs rejects content with failure-event patterns.
+
+- a8703b13 fix(rsi): reject raw failure-event logs in brain files
+
+WRITE_OPENCRABS_FILE DOCUMENTATION (3 commits, closes #112)
+
+Clarified path rules for brain files vs. other files. Added profiles/
+prefix guard to prevent path doubling. Simplified documentation to remove
+profile-specific language that confused agents.
+
+- 2ac57c19 docs: clarify write_opencrabs_file path rules for brain files
+- 3395ce1a fix(write_opencrabs_file): add profiles/ prefix guard and profile-aware docs
+- 59a62af4 refactor: simplify write_opencrabs_file docs to remove profile-specific language
+
+TOOL ERROR OUTPUT HANDLING (2 commits, closes #113)
+
+Tool errors now include stdout/stderr in content sent to LLM, not just
+the error message. Extracted build_tool_result_content helper to eliminate
+duplication. ANSI escape sequences stripped, output capped at 8000 chars
+to prevent context bloat. 7 new tests added.
+
+- 33a93062 fix: include stdout/stderr in tool error content sent to LLM
+- 4729f14f improve(tool-loop): extract helper, strip ANSI, cap output size
+
+CI CACHING OPTIMIZATIONS (10 commits, closes #4)
+
+Merged CI caching improvements from @leshchenko1979, then refined with
+ZeroClaw-inspired optimizations. Uses rust-cache@v2 (no sccache), mold
+linker for Linux, CARGO_INCREMENTAL: 0, concurrency control with
+cancel-in-progress, Windows tests use dev profile (no --release).
+
+- 64319193 ci: add rust-cache, sccache, chocolatey cache from upstream/main base
+- 8544b459 ci: add rust-cache and chocolatey cache (no sccache)
+- 03216e02 ci: add rust-cache, sccache (with GHA cache), chocolatey cache
+- a3a30235 ci: use mozilla-actions/sccache-action (proper GHA cache setup)
+- 283d0b66 ci: add mold for Linux, fix Windows OOM with sccache cache limits
+- 232eb641 fix ci: correct mold RUSTFLAGS syntax
+- 9ae3bc81 ci: remove --release from Windows test (dev profile for fast builds)
+- 75208f42 merge: CI caching improvements from PR #4 + ZeroClaw refinements
+- 2e0e0ce7 ci: refine caching with ZeroClaw-inspired optimizations
+- 4e75da81 merge: CI caching improvements from PR #4
+
+DYNAMIC HELP SCREEN (1 commit)
+
+Help screen now auto-generates from SLASH_COMMANDS constant instead of
+hardcoding. New commands automatically appear without manual updates.
+
+- 23b963ef feat(tui): dynamically generate help screen from SLASH_COMMANDS constant
+
+CONTEXT COUNTER CALIBRATION (2 commits)
+
+Per-provider tokenizer calibration so the context budget footer doesn't
+jump on first turn. Uncalibrated providers show 0/max instead of
+misleading raw cl100k estimate.
+
+- b7f3f7e5 feat(ctx-counter): per-provider tokenizer calibration
+- 1ad45ba2 feat(ctx-counter): uncalibrated providers show 0/max instead of misleading estimate
+
+DOCUMENTATION UPDATES (3 commits)
+
+Added missing slash commands (/rtk, /mission-control, /skills, /new,
+/evolve) to README keyboard shortcuts and channel commands sections.
+Updated test count to 2,883.
+
+- fedbfd9c docs: add missing slash commands to README keyboard shortcuts and channel commands sections
+- 1f8afcff docs: update test count to 2,883 across README.md and TESTING.md
+
+
 
 ## [0.3.25] - 2026-05-21
 
@@ -1017,6 +1135,8 @@ provider and context budget.
 - **Anti-code-block nudge for local models** — brain instructions explicitly
   tell the model to use `tool_calls`, not markdown code blocks.
 
+[Unreleased]: https://github.com/adolfousier/opencrabs/compare/v0.3.26...HEAD
+[0.3.26]: https://github.com/adolfousier/opencrabs/compare/v0.3.25...v0.3.26
 [0.3.25]: https://github.com/adolfousier/opencrabs/compare/v0.3.24...v0.3.25
 ### Changed
 
