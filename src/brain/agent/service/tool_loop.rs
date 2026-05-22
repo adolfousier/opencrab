@@ -2018,6 +2018,21 @@ impl AgentService {
             // producing a ~20k undercount that made the UI ctx counter
             // display 7k when the real prompt was 23k+ (post-compaction).
             let call_input_tokens = if response.usage.input_tokens > 0 {
+                // Calibrate the per-provider local-estimate ratio while
+                // we have both sides in scope: local cl100k_base estimate
+                // of the full prompt (messages + system + tools) vs the
+                // provider's actual `input_tokens`. Only useful when the
+                // provider reports real usage; CLI providers and
+                // streaming-without-usage paths fall through to the
+                // local estimate below.
+                let local_estimate =
+                    context.token_count as u32 + self.base_context_tokens_raw();
+                let provider_name = self.provider_name_for_session(session_id);
+                crate::brain::token_calibration::record_observation(
+                    &provider_name,
+                    local_estimate,
+                    response.usage.input_tokens,
+                );
                 response.usage.input_tokens
             } else {
                 let baseline = self.base_context_tokens();
