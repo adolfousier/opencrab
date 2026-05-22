@@ -187,7 +187,7 @@ cargo test --all-features
 | Tests — Qwen Tool-Call Extractor | 34 | `src/tests/qwen_tool_extractor_test.rs` |
 | Tests — Brain File Safety (append-only enforcement, cleanup_intent) | 37 | `src/tests/brain_file_safety_test.rs` |
 | Tests — Provider Config Regression | 28 | `src/tests/provider_config_regression_test.rs` |
-| Tests — Tool-Loop Helpers (Linor P0 hotspot) | 20 | `src/tests/tool_loop_helpers_test.rs` |
+| Tests — Tool-Loop Helpers (Linor P0 hotspot) | 27 | `src/tests/tool_loop_helpers_test.rs` |
 | Tests — Recent Paths | 17 | `src/tests/recent_paths_test.rs` |
 | Tests — Provider Error Proxy | 16 | `src/tests/provider_error_proxy_test.rs` |
 | Tests — Mouse Fragment Filter | 13 | `src/tests/mouse_fragment_filter_test.rs` |
@@ -223,7 +223,9 @@ cargo test --all-features
 | **Usage — Dashboard** | 6 | `src/usage/dashboard.rs` |
 | **Usage — Data** | 7 | `src/usage/data.rs` |
 | **Hashline Edit** | 51 | `src/tests/hashline_test.rs` (28 integration tests) + inline unit tests in `hash.rs` (9) and `types.rs` (14) — hash computation, HashRef parsing, edit operations (replace/append/prepend), hash mismatch detection, overlap detection, batch edits, prefix stripping, read_file hashline mode |
-| **Total** | **2,762** | +51 hashline tests: hash-anchored edit tool with FNV-1a content hashes, 3 operation types, stale-line rejection, and read_file hashline mode. |
+| Tests — Auto-Title (channel prefix preservation) | 9 | `src/tests/auto_title_test.rs` |
+| Tests — Self-Improve Failure Log Guard | 3 | `src/tests/self_improve_failure_log_guard_test.rs` |
+| **Total** | **2,883** | +20 tests since v0.3.25: hashline avalanche fix, auto-title prefix preservation, tool error output guard, RSI failure log guard, write_opencrabs_file path validator. |
 
 ---
 
