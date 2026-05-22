@@ -997,14 +997,8 @@ pub(crate) async fn handle_message(
             let text_content = redact_secrets(&text_content);
             let text_content = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_content);
 
-            // Append context budget footer to the final message
-            let text_content = if !text_content.trim().is_empty() {
-                let ctx_max = agent.context_limit_for_session(session_id);
-                let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
-                format!("{}\n{}", text_content, footer)
-            } else {
-                text_content
-            };
+            // Context budget footer will be sent as a separate message after
+            // all response delivery is complete, with a 2-second delay.
 
             // Send images before text
             for img_path in img_paths {
@@ -1142,6 +1136,26 @@ pub(crate) async fn handle_message(
                         tracing::error!("WhatsApp: TTS synthesis error: {}", e);
                     }
                 }
+            }
+
+            // Send context budget footer as a separate message after 2-second delay
+            // This ensures it appears at the very end, after all response delivery is complete
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let ctx_max = agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+            let footer_msg = waproto::whatsapp::Message {
+                conversation: Some(footer.clone()),
+                ..Default::default()
+            };
+            if let Err(e) = client.send_message(reply_jid.clone(), footer_msg).await {
+                tracing::warn!("WhatsApp: failed to send ctx footer: {}", e);
+            } else {
+                tracing::info!(
+                    "WhatsApp: sent ctx footer='{}' after 2s delay (context_tokens={}, ctx_max={})",
+                    footer,
+                    response.context_tokens,
+                    ctx_max,
+                );
             }
         }
         Err(ref e) if matches!(e, crate::brain::agent::AgentError::Cancelled) => {

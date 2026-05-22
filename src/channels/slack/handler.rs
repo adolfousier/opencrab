@@ -1690,14 +1690,8 @@ async fn handle_message(
                 }
             }
 
-            // Append context budget footer to the final message
-            let text_only = if !text_only.trim().is_empty() {
-                let ctx_max = state.agent.context_limit_for_session(session_id);
-                let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
-                format!("{}\n{}", text_only, footer)
-            } else {
-                text_only
-            };
+            // Context budget footer will be sent as a separate message after
+            // all response delivery is complete, with a 2-second delay.
 
             for chunk in split_message(&text_only, 3000) {
                 if chunk.is_empty() {
@@ -1816,6 +1810,29 @@ async fn handle_message(
                         tracing::error!("Slack: TTS synthesis failed: {:#}", e);
                     }
                 }
+            }
+
+            // Send context budget footer as a separate message after 2-second delay
+            // This ensures it appears at the very end, after all response delivery is complete
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let ctx_max = state.agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+            let mut footer_request = SlackApiChatPostMessageRequest::new(
+                SlackChannelId::new(channel_id.clone()),
+                SlackMessageContent::new().with_text(footer.clone()),
+            );
+            if let Some(ref ts) = thread_ts {
+                footer_request = footer_request.with_thread_ts(ts.clone());
+            }
+            if let Err(e) = session.chat_post_message(&footer_request).await {
+                tracing::warn!("Slack: failed to send ctx footer: {}", e);
+            } else {
+                tracing::info!(
+                    "Slack: sent ctx footer='{}' after 2s delay (context_tokens={}, ctx_max={})",
+                    footer,
+                    response.context_tokens,
+                    ctx_max,
+                );
             }
         }
         Err(ref e) if matches!(e, crate::brain::agent::AgentError::Cancelled) => {

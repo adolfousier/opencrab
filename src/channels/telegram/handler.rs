@@ -2049,35 +2049,20 @@ pub(crate) async fn handle_message(
                 text_only
             };
 
-            // Always append the context budget footer to the final delivery
-            // — even when the response body was fully consumed by intermediate
-            // messages and `text_only` is empty post-dedup. The footer is
-            // metadata about the turn, not part of the streamed body, so
-            // skipping it just because the body was already sent leaves the
-            // user with no ctx counter on most turns. When the dedup leaves
-            // text_only empty, the footer becomes the sole content of the
-            // streaming placeholder edit; the intermediates already carry
-            // the conversation text, so no information is lost.
+            // Context budget footer — send as a separate message AFTER all
+            // response delivery is complete, with a 2-second delay. This
+            // prevents the footer from appearing in the middle of the
+            // conversation flow when there are intermediate messages (tool
+            // calls, intermediate text). The footer is metadata about the
+            // turn, not part of the response body.
             let ctx_max = agent.context_limit_for_session(session_id);
             let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
-            let text_only = if text_only.trim().is_empty() {
-                tracing::info!(
-                    "Telegram footer: body empty after dedup, delivering footer-only \
-                     (context_tokens={}, ctx_max={})",
-                    response.context_tokens,
-                    ctx_max,
-                );
-                footer
-            } else {
-                tracing::info!(
-                    "Telegram footer: appending ctx footer='{}' (context_tokens={}, ctx_max={}, text_len={})",
-                    footer,
-                    response.context_tokens,
-                    ctx_max,
-                    text_only.len()
-                );
-                format!("{}\n{}", text_only, footer)
-            };
+            tracing::info!(
+                "Telegram footer: ctx footer='{}' (context_tokens={}, ctx_max={}) — will send as separate message after 2s delay",
+                footer,
+                response.context_tokens,
+                ctx_max,
+            );
 
             for img_path in img_paths {
                 match tokio::fs::read(&img_path).await {
@@ -2226,6 +2211,22 @@ pub(crate) async fn handle_message(
                         tracing::error!("Telegram: TTS synthesis failed: {:#}", e);
                     }
                 }
+            }
+
+            // Send context budget footer as a separate message after 2-second delay
+            // This ensures it appears at the very end, after all response delivery is complete
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let ctx_max = agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
+            if let Err(e) = bot.send_message(msg.chat.id, &footer).await {
+                tracing::warn!("Telegram: failed to send ctx footer: {}", e);
+            } else {
+                tracing::info!(
+                    "Telegram: sent ctx footer='{}' after 2s delay (context_tokens={}, ctx_max={})",
+                    footer,
+                    response.context_tokens,
+                    ctx_max,
+                );
             }
         }
         Err(ref e) if matches!(e, crate::brain::agent::AgentError::Cancelled) => {
@@ -2706,35 +2707,20 @@ pub(crate) async fn resume_session(
                 text_only
             };
 
-            // Always append the context budget footer to the final delivery
-            // — even when the response body was fully consumed by intermediate
-            // messages and `text_only` is empty post-dedup. The footer is
-            // metadata about the turn, not part of the streamed body, so
-            // skipping it just because the body was already sent leaves the
-            // user with no ctx counter on most turns. When the dedup leaves
-            // text_only empty, the footer becomes the sole content of the
-            // streaming placeholder edit; the intermediates already carry
-            // the conversation text, so no information is lost.
+            // Context budget footer — send as a separate message AFTER all
+            // response delivery is complete, with a 2-second delay. This
+            // prevents the footer from appearing in the middle of the
+            // conversation flow when there are intermediate messages (tool
+            // calls, intermediate text). The footer is metadata about the
+            // turn, not part of the response body.
             let ctx_max = agent.context_limit_for_session(session_id);
             let footer = crate::utils::format_ctx_footer(response.context_tokens, ctx_max);
-            let text_only = if text_only.trim().is_empty() {
-                tracing::info!(
-                    "Telegram footer: body empty after dedup, delivering footer-only \
-                     (context_tokens={}, ctx_max={})",
-                    response.context_tokens,
-                    ctx_max,
-                );
-                footer
-            } else {
-                tracing::info!(
-                    "Telegram footer: appending ctx footer='{}' (context_tokens={}, ctx_max={}, text_len={})",
-                    footer,
-                    response.context_tokens,
-                    ctx_max,
-                    text_only.len()
-                );
-                format!("{}\n{}", text_only, footer)
-            };
+            tracing::info!(
+                "Telegram footer: ctx footer='{}' (context_tokens={}, ctx_max={}) — will send as separate message after 2s delay",
+                footer,
+                response.context_tokens,
+                ctx_max,
+            );
 
             for img_path in img_paths {
                 if let Ok(bytes) = tokio::fs::read(&img_path).await {
