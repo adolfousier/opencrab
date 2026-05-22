@@ -47,27 +47,24 @@ fn test_hash_line_blank_lines_same_hash() {
 #[test]
 fn test_format_hashline() {
     let formatted = format_hashline(12, "VK", "test code");
-    assert_eq!(formatted, "12#VK|test code");
+    assert_eq!(formatted, "VK|test code");
 }
 
 #[test]
 fn test_hashref_parse_valid() {
     let href = HashRef::parse("42#AB").unwrap();
-    assert_eq!(href.line, 42);
     assert_eq!(href.hash, "AB");
 }
 
 #[test]
 fn test_hashref_parse_lowercase() {
     let href = HashRef::parse("10#cd").unwrap();
-    assert_eq!(href.line, 10);
     assert_eq!(href.hash, "CD");
 }
 
 #[test]
 fn test_hashref_parse_with_content() {
     let href = HashRef::parse("5#XY|some code here").unwrap();
-    assert_eq!(href.line, 5);
     assert_eq!(href.hash, "XY");
 }
 
@@ -78,15 +75,17 @@ fn test_hashref_parse_missing_separator() {
 }
 
 #[test]
-fn test_hashref_parse_invalid_line() {
-    let result = HashRef::parse("abc#AB");
-    assert!(result.is_err());
+fn test_hashref_parse_invalid_line_ignored() {
+    // Legacy format: line number is ignored, only hash matters
+    let href = HashRef::parse("abc#AB").unwrap();
+    assert_eq!(href.hash, "AB");
 }
 
 #[test]
-fn test_hashref_parse_zero_line() {
-    let result = HashRef::parse("0#AB");
-    assert!(result.is_err());
+fn test_hashref_parse_zero_line_ignored() {
+    // Legacy format: line number is ignored, only hash matters
+    let href = HashRef::parse("0#AB").unwrap();
+    assert_eq!(href.hash, "AB");
 }
 
 #[test]
@@ -330,7 +329,7 @@ async fn test_hashline_edit_hash_mismatch() {
 
     let result = tool.execute(input, &context).await.unwrap();
     assert!(!result.success);
-    assert!(result.error.unwrap().contains("Hash mismatch"));
+    assert!(result.error.unwrap().contains("not found in file"));
 }
 
 #[tokio::test]
@@ -464,13 +463,18 @@ async fn test_read_file_hashline_mode() {
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(lines.len(), 3);
 
-    // Check format: LINE#ID|content
-    assert!(lines[0].starts_with("1#"));
+    // Check format: ID|content (no line numbers)
     assert!(lines[0].contains("|line one"));
-    assert!(lines[1].starts_with("2#"));
     assert!(lines[1].contains("|line two"));
-    assert!(lines[2].starts_with("3#"));
     assert!(lines[2].contains("|line three"));
+    // Each line should start with a 2-char hash followed by |
+    for line in &lines {
+        assert!(
+            line.len() >= 3 && line.as_bytes()[2] == b'|',
+            "Expected format ID|content, got: {}",
+            line
+        );
+    }
 }
 
 #[tokio::test]
@@ -521,11 +525,17 @@ async fn test_read_file_hashline_with_start_line() {
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(lines.len(), 2);
 
-    // Should start at line 3 (1-indexed, since start_line is 2 which is 0-indexed)
-    assert!(lines[0].starts_with("3#"));
+    // Should contain the requested lines in ID|content format
     assert!(lines[0].contains("|three"));
-    assert!(lines[1].starts_with("4#"));
     assert!(lines[1].contains("|four"));
+    // Each line should start with a 2-char hash followed by |
+    for line in &lines {
+        assert!(
+            line.len() >= 3 && line.as_bytes()[2] == b'|',
+            "Expected format ID|content, got: {}",
+            line
+        );
+    }
 }
 
 #[tokio::test]
@@ -588,15 +598,14 @@ async fn test_read_file_hashline_collision_detection() {
     assert_eq!(lines.len(), 5);
 
     // First line should be marked as COLLISION
-    assert!(lines[0].starts_with("1#COLLISION|same content"));
+    assert!(lines[0].starts_with("COLLISION|same content"));
 
-    // Second line should have normal hash
-    assert!(lines[1].starts_with("2#"));
-    assert!(lines[1].contains("|different"));
+    // Second line should have normal hash (2-char hash + |content)
     assert!(!lines[1].contains("COLLISION"));
+    assert!(lines[1].contains("|different"));
 
     // Third line should also be marked as COLLISION
-    assert!(lines[2].starts_with("3#COLLISION|same content"));
+    assert!(lines[2].starts_with("COLLISION|same content"));
 
     // Fourth line should be empty
     assert_eq!(lines[3], "");
