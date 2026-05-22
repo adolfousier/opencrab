@@ -59,7 +59,7 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
           SCCACHE_CACHE_SIZE: "2G"
           CARGO_BUILD_JOBS: "2"
-        run: cargo test --release --all-features --verbose
+        run: cargo test --all-features --verbose
 
       - name: Run tests (macOS)
         if: runner.os == 'macOS'
