@@ -54,7 +54,12 @@ impl Tool for WriteOpenCrabsFileTool {
          Use this for brain files (MEMORY.md, USER.md, AGENTS.md, SOUL.md, etc.), \
          config files (commands.toml), memory logs, and any other app files. \
          The standard edit_file/write_file tools cannot reach ~/.opencrabs/ — use this instead. \
-         Provide a relative path (e.g. \"MEMORY.md\" or \"memory/note.md\"). \
+         \
+         **Path rules:** \
+         - For brain files (MEMORY.md, TOOLS.md, AGENTS.md, SOUL.md, USER.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md): use just the filename (e.g. \"TOOLS.md\"), NOT a full path. \
+         - For other files: use relative paths within ~/.opencrabs/ (e.g. \"memory/note.md\", \"rsi/improvements.md\"). \
+         - No leading slash, no '..' in paths. \
+         \
          Supports three operations: \
          \"overwrite\" replaces entire file content, \
          \"append\" adds text to the end, \
@@ -71,7 +76,7 @@ impl Tool for WriteOpenCrabsFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Relative path within ~/.opencrabs/ (e.g. \"MEMORY.md\", \"memory/2026-03-02.md\", \"commands.toml\"). No leading slash, no '..'."
+                    "description": "Relative path within ~/.opencrabs/. For brain files (MEMORY.md, TOOLS.md, AGENTS.md, SOUL.md, USER.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md), use just the filename (e.g. \"TOOLS.md\"). For other files, use relative paths (e.g. \"memory/2026-03-02.md\", \"rsi/improvements.md\", \"commands.toml\"). No leading slash, no '..'."
                 },
                 "operation": {
                     "type": "string",
