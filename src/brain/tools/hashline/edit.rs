@@ -4,7 +4,7 @@
 //! instead of reproducing text. Eliminates stale-line errors and reduces token
 //! usage, especially for weaker models.
 
-use super::hash::{format_hashline, hash_all_lines};
+use super::hash::hash_all_lines;
 use super::types::{HashRef, HashlineEditInput, HashlineEditOp, ResolvedEdit, ResolvedOp};
 use crate::brain::tools::brain_file_safety;
 use crate::brain::tools::edit::build_edit_diff;
@@ -121,10 +121,17 @@ impl Tool for HashlineEditTool {
             .map(|(num, hash)| (*num, hash.as_str()))
             .collect();
 
+        // Build a reverse lookup: hash → list of line numbers (for collision detection)
+        let mut hash_to_lines: std::collections::HashMap<&str, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (num, hash) in &line_hashes {
+            hash_to_lines.entry(hash.as_str()).or_default().push(*num);
+        }
+
         // Phase 1: Validate all hash references
         let mut resolved = Vec::with_capacity(input.edits.len());
         for (i, edit) in input.edits.iter().enumerate() {
-            match resolve_edit(edit, i, &hash_lookup, total_lines)? {
+            match resolve_edit(edit, i, &hash_lookup, &hash_to_lines, total_lines)? {
                 Ok(resolved_edit) => resolved.push(resolved_edit),
                 Err(error_msg) => return Ok(ToolResult::error(error_msg)),
             }
@@ -187,6 +194,7 @@ fn resolve_edit(
     edit: &HashlineEditOp,
     index: usize,
     hash_lookup: &std::collections::HashMap<usize, &str>,
+    hash_to_lines: &std::collections::HashMap<&str, Vec<usize>>,
     total_lines: usize,
 ) -> Result<std::result::Result<ResolvedEdit, String>> {
     match edit {
@@ -197,7 +205,7 @@ fn resolve_edit(
             };
 
             // Validate pos hash
-            if let Err(e) = validate_hash(&pos_ref, hash_lookup, total_lines) {
+            if let Err(e) = validate_hash(&pos_ref, hash_lookup, hash_to_lines, total_lines) {
                 return Ok(Err(format!("Edit #{}: {}", index + 1, e)));
             }
 
@@ -206,7 +214,7 @@ fn resolve_edit(
                     Ok(r) => r,
                     Err(e) => return Ok(Err(format!("Edit #{}: {}", index + 1, e))),
                 };
-                if let Err(e) = validate_hash(&end_ref, hash_lookup, total_lines) {
+                if let Err(e) = validate_hash(&end_ref, hash_lookup, hash_to_lines, total_lines) {
                     return Ok(Err(format!("Edit #{}: {}", index + 1, e)));
                 }
                 if end_ref.line < pos_ref.line {
@@ -240,7 +248,7 @@ fn resolve_edit(
                     Ok(r) => r,
                     Err(e) => return Ok(Err(format!("Edit #{}: {}", index + 1, e))),
                 };
-                if let Err(e) = validate_hash(&pos_ref, hash_lookup, total_lines) {
+                if let Err(e) = validate_hash(&pos_ref, hash_lookup, hash_to_lines, total_lines) {
                     return Ok(Err(format!("Edit #{}: {}", index + 1, e)));
                 }
                 pos_ref.line
@@ -265,7 +273,7 @@ fn resolve_edit(
                     Ok(r) => r,
                     Err(e) => return Ok(Err(format!("Edit #{}: {}", index + 1, e))),
                 };
-                if let Err(e) = validate_hash(&pos_ref, hash_lookup, total_lines) {
+                if let Err(e) = validate_hash(&pos_ref, hash_lookup, hash_to_lines, total_lines) {
                     return Ok(Err(format!("Edit #{}: {}", index + 1, e)));
                 }
                 pos_ref.line
@@ -287,9 +295,15 @@ fn resolve_edit(
 }
 
 /// Validate that a HashRef's hash matches the current file content.
+///
+/// Checks for:
+/// 1. Line number out of bounds
+/// 2. Hash collision (same hash on multiple lines) → escalate to edit_file
+/// 3. Hash mismatch at specified line
 fn validate_hash(
     href: &HashRef,
     hash_lookup: &std::collections::HashMap<usize, &str>,
+    hash_to_lines: &std::collections::HashMap<&str, Vec<usize>>,
     total_lines: usize,
 ) -> std::result::Result<(), String> {
     if href.line > total_lines {
@@ -297,6 +311,23 @@ fn validate_hash(
             "Line {}#{}: line {} does not exist (file has {} lines). \
              Re-read the file with hashline=true to get updated references.",
             href.line, href.hash, href.line, total_lines
+        ));
+    }
+
+    // Check for hash collision (same hash on multiple lines)
+    let collision = hash_to_lines
+        .get(href.hash.as_str())
+        .filter(|lines| lines.len() > 1);
+
+    if let Some(lines_with_hash) = collision {
+        let line_list: Vec<String> = lines_with_hash.iter().map(|l| l.to_string()).collect();
+        return Err(format!(
+            "Hash collision: #{} appears on {} lines ({}). \
+             This hash is ambiguous and cannot safely identify a single line. \
+             Use the `edit_file` tool with search/replace instead of hashline_edit.",
+            href.hash,
+            lines_with_hash.len(),
+            line_list.join(", ")
         ));
     }
 
@@ -436,27 +467,4 @@ fn strip_hashline_prefixes(text: &str) -> Vec<String> {
             line.to_string()
         })
         .collect()
-}
-
-/// Format the current file state with hashline tags for error messages.
-/// Shows updated LINE#ID references with >>> markers on changed lines.
-#[allow(dead_code)]
-pub fn format_stale_error(content: &str, _stale_line: usize) -> String {
-    let hashes = hash_all_lines(content);
-    let mut output = String::new();
-    output.push_str("Current file state (re-read these references):\n");
-    for (line_num, hash) in &hashes {
-        let line_content = content.lines().nth(line_num - 1).unwrap_or("");
-        let prefix = if *line_num == _stale_line {
-            ">>> "
-        } else {
-            "    "
-        };
-        output.push_str(&format!(
-            "{}{}\n",
-            prefix,
-            format_hashline(*line_num, hash, line_content)
-        ));
-    }
-    output
 }

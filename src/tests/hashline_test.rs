@@ -527,3 +527,35 @@ async fn test_read_file_hashline_with_start_line() {
     assert!(lines[1].starts_with("4#"));
     assert!(lines[1].contains("|four"));
 }
+
+#[tokio::test]
+async fn test_hashline_edit_collision_rejected() {
+    // Test that when the same hash appears on multiple lines, the tool rejects
+    // and tells the LLM to use edit_file instead
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    // Two identical lines that will produce the same hash
+    std::fs::write(&file_path, "same content\nsame content\n").unwrap();
+
+    let tool = HashlineEditTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4())
+        .with_working_directory(temp_dir.path().to_path_buf())
+        .with_auto_approve(true);
+
+    let hash = hash_line("same content");
+
+    let input = json!({
+        "path": file_path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": format!("1#{}", hash),
+            "lines": "new content"
+        }]
+    });
+
+    let result = tool.execute(input, &context).await.unwrap();
+    assert!(!result.success);
+    let error = result.error.unwrap();
+    assert!(error.contains("collision"));
+    assert!(error.contains("edit_file"));
+}
