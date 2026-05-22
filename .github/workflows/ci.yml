@@ -52,7 +52,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           AWS_LC_SYS_CMAKE_BUILDER: "1"
-        run: cargo test --all-features --verbose
+        run: cargo test --all-features --release --verbose
 
       - name: Run tests (macOS)
         if: runner.os == 'macOS'
