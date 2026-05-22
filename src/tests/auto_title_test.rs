@@ -137,4 +137,60 @@ mod is_default_channel_title {
         assert!(!AgentService::is_default_channel_title("Telegram"));
         assert!(!AgentService::is_default_channel_title("TelegramBot: test"));
     }
+
+    #[test]
+    fn new_chat_is_default() {
+        assert!(AgentService::is_default_channel_title("New Chat"));
+    }
+}
+
+mod extract_channel_prefix {
+    use super::*;
+
+    #[test]
+    fn telegram_prefix() {
+        assert_eq!(
+            AgentService::extract_channel_prefix("Telegram: DM John"),
+            "Telegram: "
+        );
+    }
+
+    #[test]
+    fn discord_prefix() {
+        assert_eq!(
+            AgentService::extract_channel_prefix("Discord: #general"),
+            "Discord: "
+        );
+    }
+
+    #[test]
+    fn slack_prefix() {
+        assert_eq!(
+            AgentService::extract_channel_prefix("Slack: #random"),
+            "Slack: "
+        );
+    }
+
+    #[test]
+    fn whatsapp_prefix() {
+        assert_eq!(
+            AgentService::extract_channel_prefix("WhatsApp: John"),
+            "WhatsApp: "
+        );
+    }
+
+    #[test]
+    fn trello_prefix() {
+        assert_eq!(
+            AgentService::extract_channel_prefix("Trello: Board"),
+            "Trello: "
+        );
+    }
+
+    #[test]
+    fn no_prefix() {
+        assert_eq!(AgentService::extract_channel_prefix("New Chat"), "");
+        assert_eq!(AgentService::extract_channel_prefix("Custom Title"), "");
+        assert_eq!(AgentService::extract_channel_prefix(""), "");
+    }
 }

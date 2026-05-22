@@ -276,7 +276,26 @@ impl AgentService {
             "Slack: ",
             "WhatsApp: ",
             "Trello: ",
+            "New Chat",
         ];
         prefixes.iter().any(|p| title.starts_with(p))
+    }
+
+    /// Extract the channel prefix from a title if it exists.
+    /// Returns the prefix (e.g., "Telegram: ") or empty string if none.
+    pub(crate) fn extract_channel_prefix(title: &str) -> &str {
+        let prefixes = [
+            "Telegram: ",
+            "Discord: ",
+            "Slack: ",
+            "WhatsApp: ",
+            "Trello: ",
+        ];
+        for prefix in prefixes.iter() {
+            if title.starts_with(prefix) {
+                return prefix;
+            }
+        }
+        ""
     }
 }
