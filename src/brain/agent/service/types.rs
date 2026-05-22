@@ -298,4 +298,20 @@ impl AgentService {
         }
         ""
     }
+
+    /// Extract the `[chat:ID]` suffix from a channel session title.
+    /// This suffix is the stable identifier that `find_session_by_title_suffix`
+    /// uses to resolve sessions across renames. Auto-title MUST preserve it
+    /// or every subsequent message creates a new session (issue #115).
+    pub(crate) fn extract_chat_id_suffix(title: &str) -> &str {
+        // Find the last `[chat:` occurrence and return from there to end
+        if let Some(pos) = title.rfind("[chat:") {
+            let suffix = &title[pos..];
+            // Validate it ends with `]`
+            if suffix.ends_with(']') {
+                return suffix;
+            }
+        }
+        ""
+    }
 }

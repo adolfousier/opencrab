@@ -345,10 +345,19 @@ impl AgentService {
                         if !clean_title.is_empty() {
                             // Preserve channel prefix if it existed
                             let prefix = Self::extract_channel_prefix(&old_title);
+                            // Preserve [chat:ID] suffix — critical for session resolution
+                            // via find_session_by_title_suffix (issue #115)
+                            let chat_suffix = Self::extract_chat_id_suffix(&old_title);
                             let final_title = if prefix.is_empty() {
-                                clean_title
-                            } else {
+                                if chat_suffix.is_empty() {
+                                    clean_title
+                                } else {
+                                    format!("{} {}", clean_title, chat_suffix)
+                                }
+                            } else if chat_suffix.is_empty() {
                                 format!("{}{}", prefix, clean_title)
+                            } else {
+                                format!("{}{} {}", prefix, clean_title, chat_suffix)
                             };
                             let _ = session_svc
                                 .update_session_title(session_id, Some(final_title))

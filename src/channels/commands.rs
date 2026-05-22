@@ -597,14 +597,12 @@ async fn format_sessions(
 
     for s in &sessions {
         let title = s.title.as_deref().unwrap_or("Untitled");
-        let marker = if s.id == current_session_id {
-            " ✓"
-        } else {
-            ""
-        };
         let date = s.updated_at.format("%b %d %H:%M");
+        let is_current = s.id == current_session_id;
+        let marker = if is_current { " ← current" } else { "" };
         let label = format!("{} ({})", title, date);
-        text_lines.push(format!("• `{}`{}", label, marker));
+        let prefix = if is_current { "▸ " } else { "  " };
+        text_lines.push(format!("{}*`{}`*{}", prefix, label, marker));
         items.push((s.id, label));
     }
 
