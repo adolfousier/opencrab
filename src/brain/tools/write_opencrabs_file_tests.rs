@@ -69,6 +69,25 @@ fn test_valid_subdirectory_paths_accepted() {
     assert!(validate_opencrabs_path("agents/session/context.json").is_ok());
 }
 
+#[test]
+fn test_profiles_prefix_rejected() {
+    let result = validate_opencrabs_path("profiles/ops/TOOLS.md");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("profile prefix"),
+        "Error message should mention profile prefix: {err}"
+    );
+    assert!(
+        err.contains("profiles/ops/TOOLS.md"),
+        "Error should echo the bad path: {err}"
+    );
+
+    // Also reject just "profiles/" with nothing after
+    let result2 = validate_opencrabs_path("profiles/ops/MEMORY.md");
+    assert!(result2.is_err());
+}
+
 // ── operation validation ──────────────────────────────────────────────────────
 
 #[tokio::test]

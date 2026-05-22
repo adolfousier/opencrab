@@ -40,6 +40,19 @@ pub(super) fn validate_opencrabs_path(path: &str) -> std::result::Result<(), Str
     if path.contains('\0') {
         return Err("path contains null bytes".into());
     }
+    // Reject profiles/ prefix — the tool resolves paths under the active profile's home,
+    // so including the profile prefix causes path doubling.
+    // Example: profiles/ops/TOOLS.md → ~/.opencrabs/profiles/ops/profiles/ops/TOOLS.md (wrong)
+    // Correct: just pass TOOLS.md or memory/note.md
+    if path.starts_with("profiles/") {
+        return Err(format!(
+            "It looks like you included the profile prefix in '{}'. \
+             The tool resolves paths under the active profile's home. \
+             For brain files, pass just the filename (e.g. \"TOOLS.md\"). \
+             For other files, pass the relative path (e.g. \"memory/note.md\").",
+            path
+        ));
+    }
     Ok(())
 }
 
@@ -57,8 +70,8 @@ impl Tool for WriteOpenCrabsFileTool {
          \
          **Path rules:** \
          - For brain files (MEMORY.md, TOOLS.md, AGENTS.md, SOUL.md, USER.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md): use just the filename (e.g. \"TOOLS.md\"), NOT a full path. \
-         - For other files: use relative paths within ~/.opencrabs/ (e.g. \"memory/note.md\", \"rsi/improvements.md\"). \
-         - No leading slash, no '..' in paths. \
+         - For other files: use relative paths under the active profile's home (e.g. \"memory/note.md\", \"rsi/improvements.md\"). \
+         - No leading slash, no '..' in paths, no 'profiles/' prefix (the tool resolves under the active profile automatically). \
          \
          Supports three operations: \
          \"overwrite\" replaces entire file content, \
@@ -76,7 +89,7 @@ impl Tool for WriteOpenCrabsFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Relative path within ~/.opencrabs/. For brain files (MEMORY.md, TOOLS.md, AGENTS.md, SOUL.md, USER.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md), use just the filename (e.g. \"TOOLS.md\"). For other files, use relative paths (e.g. \"memory/2026-03-02.md\", \"rsi/improvements.md\", \"commands.toml\"). No leading slash, no '..'."
+                    "description": "Relative path under the active profile's home. For brain files (MEMORY.md, TOOLS.md, AGENTS.md, SOUL.md, USER.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md), use just the filename (e.g. \"TOOLS.md\"). For other files, use relative paths (e.g. \"memory/2026-03-02.md\", \"rsi/improvements.md\", \"commands.toml\"). No leading slash, no '..'."
                 },
                 "operation": {
                     "type": "string",
