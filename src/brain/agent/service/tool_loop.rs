@@ -3605,9 +3605,16 @@ impl AgentService {
                                         let content = if result.success {
                                             result.output
                                         } else {
-                                            result.error.unwrap_or_else(|| {
+                                            let mut msg = result.error.unwrap_or_else(|| {
                                                 "Tool execution failed".to_string()
-                                            })
+                                            });
+                                            if !result.output.is_empty() {
+                                                msg.push_str(
+                                                    "\n\n-- output captured before error --\n",
+                                                );
+                                                msg.push_str(&result.output);
+                                            }
+                                            msg
                                         };
 
                                         // GRANULAR LOG: Tool execution result
@@ -3819,9 +3826,14 @@ impl AgentService {
                         let content = if result.success {
                             result.output
                         } else {
-                            result
+                            let mut msg = result
                                 .error
-                                .unwrap_or_else(|| "Tool execution failed".to_string())
+                                .unwrap_or_else(|| "Tool execution failed".to_string());
+                            if !result.output.is_empty() {
+                                msg.push_str("\n\n-- output captured before error --\n");
+                                msg.push_str(&result.output);
+                            }
+                            msg
                         };
 
                         // GRANULAR LOG: Direct tool execution result
