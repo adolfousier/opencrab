@@ -25,9 +25,10 @@ impl Tool for HashlineEditTool {
 
     fn description(&self) -> &str {
         "Edit a file using hash-anchored line references. Each line is identified by a 2-char \
-         content hash (from read_file with hashline=true). Reference lines as LINE#ID (e.g. 12#VK) \
-         instead of reproducing text. Stale hashes are rejected before any changes are applied. \
-         Supports batch edits (multiple operations in one call)."
+         content hash (from read_file with hashline=true). Reference lines by hash alone (e.g. 'VK' \
+         or '#VK'); legacy 'LINE#HASH' format is accepted but the line number is ignored. Stale \
+         hashes are rejected before any changes are applied. Supports batch edits (multiple \
+         operations in one call)."
     }
 
     fn input_schema(&self) -> Value {
@@ -51,11 +52,11 @@ impl Tool for HashlineEditTool {
                             },
                             "pos": {
                                 "type": "string",
-                                "description": "Anchor line reference (LINE#ID format, e.g. '12#VK'). Required for replace, optional for append/prepend."
+                                "description": "Anchor: 2-char content hash from hashline read (e.g. 'VK' or '#VK'). Legacy 'LINE#HASH' accepted; line number ignored. Required for replace, optional for append/prepend."
                             },
                             "end": {
                                 "type": "string",
-                                "description": "End of range for replace (LINE#ID, inclusive). Omit to replace a single line."
+                                "description": "End hash for range replace (inclusive, same format as pos). Omit to replace a single line."
                             },
                             "lines": {
                                 "type": "string",
