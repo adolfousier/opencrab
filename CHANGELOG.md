@@ -4,6 +4,41 @@ All notable changes to OpenCrabs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased]
+
+## [0.3.27] - 2026-05-22
+
+3 commits since v0.3.26. Patch release fixing session duplication caused
+by auto-title stripping [chat:ID] suffix from channel sessions, adding
+ctx budget baseline display on channel /new, and improving /sessions
+current session indicator across all platforms.
+
+CTX BUDGET BASELINE ON CHANNEL /NEW (1 commit)
+
+All channel platforms (Telegram, Discord, Slack, WhatsApp) now compute
+and send the ctx budget footer immediately after /new, showing the
+calibrated baseline so users can audit their starting context.
+
+- be1e4e8d feat: show ctx budget baseline on channel /new sessions
+
+AUTO-TITLE SESSION FIX (1 commit, closes #114)
+
+Auto-title was stripping the [chat:ID] suffix from channel session
+titles. Next message, find_session_by_title_suffix could not find the
+session, creating a duplicate. Every message produced a new session.
+Fix: extract_chat_id_suffix() preserves [chat:ID] alongside the
+channel prefix during auto-title generation.
+
+- 6525e9b4 fix: preserve [chat:ID] suffix during auto-title to prevent session duplication
+
+SESSIONS DISPLAY IMPROVEMENT (1 commit, closes #115)
+
+Current session now uses prominent indicator (arrow prefix and current
+label) instead of subtle checkmark. Button labels updated across
+Telegram, Discord, and Slack handlers to match text display.
+
+- b9f2c863 fix: update /sessions button labels across channel handlers to match text display
+
 ## [0.3.26] - 2026-05-22
 
 42 commits since v0.3.25. Issue-fix and polish release addressing 8 issues
@@ -1135,7 +1170,8 @@ provider and context budget.
 - **Anti-code-block nudge for local models** — brain instructions explicitly
   tell the model to use `tool_calls`, not markdown code blocks.
 
-[Unreleased]: https://github.com/adolfousier/opencrabs/compare/v0.3.26...HEAD
+[Unreleased]: https://github.com/adolfousier/opencrabs/compare/v0.3.27...HEAD
+[0.3.27]: https://github.com/adolfousier/opencrabs/compare/v0.3.26...v0.3.27
 [0.3.26]: https://github.com/adolfousier/opencrabs/compare/v0.3.25...v0.3.26
 [0.3.25]: https://github.com/adolfousier/opencrabs/compare/v0.3.24...v0.3.25
 ### Changed
