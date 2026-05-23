@@ -180,8 +180,22 @@ impl Tool for BrowserClickTool {
         let element = match page.find_element(selector).await {
             Ok(el) => el,
             Err(e) => {
+                // Surface the recovery path inline so the agent doesn't
+                // spend several iterations guessing alternate CSS. The
+                // logs from 2026-05-23 09:04 show ~25 wasted iterations
+                // after a single failed CSS click before the agent
+                // figured out browser_find on its own.
+                let hint = if selector.contains(' ') || selector.contains('|') {
+                    " Looks like a label or descriptive string rather than \
+                     CSS — try `text=...` (e.g. `text=Sign in`) instead."
+                } else {
+                    " Try `browser_find` with mode=\"text\"/\"aria\"/\"role\" \
+                     to locate the element, then click by the returned \
+                     `[data-opencrabs-match=\"N\"]` selector. Or use \
+                     `text=Label` directly if you know the visible text."
+                };
                 return Ok(ToolResult::error(format!(
-                    "Element '{selector}' not found: {e}"
+                    "Element '{selector}' not found: {e}.{hint}"
                 )));
             }
         };
