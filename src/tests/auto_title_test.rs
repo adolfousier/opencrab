@@ -95,8 +95,18 @@ mod is_default_channel_title {
 
     #[test]
     fn telegram_group_title() {
-        assert!(AgentService::is_default_channel_title(
+        // Telegram groups have no clear default pattern marker, so they're NOT default
+        // to prevent auto-title from firing on every message
+        assert!(!AgentService::is_default_channel_title(
             "Telegram: My Group [chat:12345]"
+        ));
+    }
+
+    #[test]
+    fn telegram_auto_titled_not_default() {
+        // After auto-title runs, the title should NOT be considered default
+        assert!(!AgentService::is_default_channel_title(
+            "Telegram: Fix Bug Report [chat:67890]"
         ));
     }
 
@@ -112,12 +122,18 @@ mod is_default_channel_title {
 
     #[test]
     fn whatsapp_title() {
-        assert!(AgentService::is_default_channel_title("WhatsApp: John Doe"));
+        // WhatsApp has no clear default pattern marker, so it's NOT default
+        // to prevent auto-title from firing on every message
+        assert!(!AgentService::is_default_channel_title(
+            "WhatsApp: John Doe"
+        ));
     }
 
     #[test]
     fn trello_title() {
-        assert!(AgentService::is_default_channel_title("Trello: My Board"));
+        // Trello has no clear default pattern marker, so it's NOT default
+        // to prevent auto-title from firing on every message
+        assert!(!AgentService::is_default_channel_title("Trello: My Board"));
     }
 
     #[test]

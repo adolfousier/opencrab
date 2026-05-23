@@ -266,19 +266,42 @@ impl AgentService {
     }
 
     /// Check if a session title is a default channel-generated title that
-    /// should be replaced by auto-title. Default titles follow patterns like:
-    /// "Telegram: DM User (id) [chat:123]", "Discord: #channel", "Slack: #channel",
-    /// "WhatsApp: User", "Trello: Board Name".
+    /// should be replaced by auto-title. Default titles follow specific patterns:
+    /// - Telegram DM: "Telegram: DM <name> (<id>) [chat:<id>]"
+    /// - Discord channel: "Discord: #<channel>"
+    /// - Slack channel: "Slack: #<channel>"
+    /// - New Chat (exact match)
+    ///
+    /// Auto-titled sessions like "Telegram: Fix Bug Report [chat:456]" do NOT match
+    /// these patterns, preventing auto-title from firing on every message.
     pub(crate) fn is_default_channel_title(title: &str) -> bool {
-        let prefixes = [
-            "Telegram: ",
-            "Discord: ",
-            "Slack: ",
-            "WhatsApp: ",
-            "Trello: ",
-            "New Chat",
-        ];
-        prefixes.iter().any(|p| title.starts_with(p))
+        // Exact match for "New Chat"
+        if title == "New Chat" {
+            return true;
+        }
+
+        // Telegram DM: "Telegram: DM <name> (<id>) [chat:<id>]"
+        // After "Telegram: ", must have "DM " AND contain "(<id>)"
+        if let Some(rest) = title.strip_prefix("Telegram: ") {
+            return rest.starts_with("DM ") && rest.contains('(') && rest.contains(')');
+        }
+
+        // Discord channel: "Discord: #<channel>"
+        // After "Discord: ", must start with "#"
+        if let Some(rest) = title.strip_prefix("Discord: ") {
+            return rest.starts_with('#');
+        }
+
+        // Slack channel: "Slack: #<channel>"
+        // After "Slack: ", must start with "#"
+        if let Some(rest) = title.strip_prefix("Slack: ") {
+            return rest.starts_with('#');
+        }
+
+        // WhatsApp and Trello: no clear default pattern marker, skip auto-title
+        // to prevent repeated firing. Users can manually rename if needed.
+
+        false
     }
 
     /// Extract the channel prefix from a title if it exists.
