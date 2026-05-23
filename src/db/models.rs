@@ -106,6 +106,7 @@ pub struct Session {
     pub token_count: i32,
     pub total_cost: f64,
     pub working_directory: Option<String>,
+    pub auto_title_attempted: bool,
 }
 
 impl Session {
@@ -121,6 +122,7 @@ impl Session {
             token_count: row.get("token_count")?,
             total_cost: row.get("total_cost")?,
             working_directory: row.get("working_directory")?,
+            auto_title_attempted: row.get::<_, i32>("auto_title_attempted").unwrap_or(0) != 0,
         })
     }
 
@@ -142,6 +144,7 @@ impl Session {
             token_count: 0,
             total_cost: 0.0,
             working_directory: None,
+            auto_title_attempted: false,
         }
     }
 

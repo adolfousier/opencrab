@@ -53,6 +53,7 @@ impl SessionService {
             token_count: 0,
             total_cost: 0.0,
             working_directory: None,
+            auto_title_attempted: false,
         };
 
         repo.create(&session)
@@ -171,6 +172,30 @@ impl SessionService {
             .await
             .map_err(interact_err)?
             .context("Failed to update session working directory")?;
+        Ok(())
+    }
+
+    /// Mark that auto-title generation has been attempted for this session.
+    /// Prevents re-triggering auto-title on subsequent messages.
+    pub async fn mark_auto_title_attempted(&self, id: Uuid) -> Result<()> {
+        use crate::db::interact_err;
+        use rusqlite::params;
+
+        let id_str = id.to_string();
+        self.context
+            .pool()
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE sessions SET auto_title_attempted = 1 WHERE id = ?1",
+                    params![id_str],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to mark auto_title_attempted")?;
         Ok(())
     }
 

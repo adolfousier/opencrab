@@ -109,8 +109,8 @@ impl SessionRepository {
             .interact(move |conn| {
                 conn.execute(
                     "INSERT INTO sessions (id, title, model, provider_name, created_at, updated_at,
-                                          archived_at, token_count, total_cost, working_directory)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                          archived_at, token_count, total_cost, working_directory, auto_title_attempted)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     params![
                         s.id.to_string(),
                         s.title,
@@ -122,6 +122,7 @@ impl SessionRepository {
                         s.token_count,
                         s.total_cost,
                         s.working_directory,
+                        s.auto_title_attempted,
                     ],
                 )
             })
@@ -144,8 +145,9 @@ impl SessionRepository {
                 conn.execute(
                     "UPDATE sessions
                      SET title = ?1, model = ?2, provider_name = ?3, updated_at = ?4,
-                         archived_at = ?5, token_count = ?6, total_cost = ?7, working_directory = ?8
-                     WHERE id = ?9",
+                         archived_at = ?5, token_count = ?6, total_cost = ?7, working_directory = ?8,
+                         auto_title_attempted = ?9
+                     WHERE id = ?10",
                     params![
                         s.title,
                         s.model,
@@ -155,6 +157,7 @@ impl SessionRepository {
                         s.token_count,
                         s.total_cost,
                         s.working_directory,
+                        s.auto_title_attempted,
                         s.id.to_string(),
                     ],
                 )

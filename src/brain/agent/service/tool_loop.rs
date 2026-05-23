@@ -316,6 +316,7 @@ impl AgentService {
         // Fires once per session; subsequent turns won't re-trigger because the title
         // will no longer be empty/default.
         if db_message_count >= 1
+            && !session.auto_title_attempted
             && session
                 .title
                 .as_deref()
@@ -326,6 +327,9 @@ impl AgentService {
             let title_model = model_name.clone();
             let title_msg = user_message.chars().take(500).collect::<String>();
             let session_svc = SessionService::new(self.context.clone());
+            // Mark auto_title_attempted BEFORE spawning to prevent race conditions
+            // where the next message arrives before the background task completes.
+            let _ = session_svc.mark_auto_title_attempted(session_id).await;
             // Capture the old title to preserve channel prefix
             let old_title = session.title.clone().unwrap_or_default();
             tokio::spawn(async move {
