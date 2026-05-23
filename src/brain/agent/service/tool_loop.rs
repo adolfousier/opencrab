@@ -696,6 +696,10 @@ impl AgentService {
         // but the visible text ends mid-word ("Standard Get I"). One-shot
         // nudge to continue from where they left off.
         let mut truncated_mid_sentence_retry_used: bool = false;
+        // One-shot nudge for the browser screenshot-spam pattern detected
+        // by the semantic-loop check below the per-iteration tool dispatch.
+        // Reset per turn; fires at most once.
+        let mut browser_screenshot_loop_nudged: bool = false;
         // Tracks whether the CURRENT iteration is a same-provider continuation
         // requested after a truncated-mid-sentence detection. Reset at the top
         // of every iteration; set true just before `continue;` from the
@@ -3523,6 +3527,69 @@ impl AgentService {
                     // Force a final response by breaking the loop
                     final_response = Some(response);
                     break;
+                }
+            }
+
+            // Semantic-loop detection for browser navigation cycles.
+            //
+            // Exact-loop detection above only fires when the SAME tool +
+            // SAME args repeat. The browser navigate→wait→screenshot
+            // rotation uses three different tools with varying args, so
+            // it slips through every check despite producing zero progress.
+            // 2026-05-23 09:04 logs show 32+ iterations of this rotation
+            // before the user gave up.
+            //
+            // Heuristic: if the last 8 iterations contain `browser_screenshot`
+            // 4+ times AND zero progress-making interactions (click/type),
+            // inject a nudge once per turn telling the agent to interact
+            // instead of screenshot again.
+            if !browser_screenshot_loop_nudged && recent_tool_calls.len() >= 8 {
+                let last8 = &recent_tool_calls[recent_tool_calls.len() - 8..];
+                let screenshot_count = last8
+                    .iter()
+                    .filter(|sig| sig.starts_with("browser_screenshot:"))
+                    .count();
+                let progress_count = last8
+                    .iter()
+                    .filter(|sig| {
+                        sig.starts_with("browser_click:")
+                            || sig.starts_with("browser_type:")
+                            || sig.starts_with("browser_eval:")
+                    })
+                    .count();
+                if screenshot_count >= 4 && progress_count == 0 {
+                    tracing::warn!(
+                        "Browser semantic loop: {} screenshots in last 8 iterations, \
+                         0 interactions — injecting nudge.",
+                        screenshot_count,
+                    );
+                    if let Some(ref cb) = progress_callback {
+                        cb(
+                            session_id,
+                            ProgressEvent::SelfHealingAlert {
+                                message: format!(
+                                    "Stuck in screenshot loop ({}/8 iterations) — \
+                                     nudging agent to interact with the page",
+                                    screenshot_count,
+                                ),
+                            },
+                        );
+                    }
+                    context.add_message(Message::user(
+                        "[System: You have taken multiple screenshots of the same page \
+                         without interacting. The screenshots already show what's on \
+                         screen — STOP screenshotting. To move forward you must either: \
+                         (1) `browser_click` an element (use `text=Label`, `xpath=...`, \
+                         or a CSS selector), (2) `browser_type` into an input field, or \
+                         (3) `browser_navigate` to a new URL. If you can't find the \
+                         element you need, call `browser_find` with mode=\"text\" or \
+                         mode=\"aria\" to enumerate candidates and get back stable \
+                         `[data-opencrabs-match=\"N\"]` selectors. Do not screenshot \
+                         again on this turn.]"
+                            .to_string(),
+                    ));
+                    browser_screenshot_loop_nudged = true;
+                    continue;
                 }
             }
 
