@@ -2574,12 +2574,35 @@ impl AgentService {
                             input_keys
                         );
 
-                        // Check for empty/Invalid input
+                        // Check for empty/Invalid input — only warn when the
+                        // tool actually has required parameters. Tools like
+                        // browser_screenshot accept zero args (selector is
+                        // optional) and call validly with `{}`; logging an
+                        // ERROR there is pure noise and showed up in logs as
+                        // 4+ false positives per browser session.
                         if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-                            tracing::error!(
-                                "[TOOL_EXEC] ⚠️ Tool '{}' received empty input — tool call will fail",
-                                name
-                            );
+                            let has_required = self
+                                .tool_registry
+                                .get(name.as_str())
+                                .map(|t| {
+                                    t.input_schema()
+                                        .get("required")
+                                        .and_then(|r| r.as_array())
+                                        .map(|a| !a.is_empty())
+                                        .unwrap_or(false)
+                                })
+                                .unwrap_or(true);
+                            if has_required {
+                                tracing::error!(
+                                    "[TOOL_EXEC] ⚠️ Tool '{}' received empty input — tool call will fail",
+                                    name
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "[TOOL_EXEC] Tool '{}' called with empty input (schema has no required fields, this is fine)",
+                                    name
+                                );
+                            }
                         }
 
                         // Normalize hallucinated tool names: some providers send
