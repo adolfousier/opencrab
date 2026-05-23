@@ -1159,7 +1159,7 @@ pub(crate) async fn handle_message(
                     .iter()
                     .map(|(id, label)| {
                         let display = if *id == resp.current_session_id {
-                            format!("✓ {}", label)
+                            format!("▸ {} ← current", label)
                         } else {
                             label.clone()
                         };

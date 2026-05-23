@@ -1127,7 +1127,7 @@ async fn handle_message(
                     .take(25)
                     .map(|(id, label)| {
                         let display = if *id == resp.current_session_id {
-                            format!("✓ {}", label)
+                            format!("▸ {} ← current", label)
                         } else {
                             label.clone()
                         };
