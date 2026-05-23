@@ -15,6 +15,21 @@ impl BrowserNavigateTool {
     pub fn new(manager: Arc<BrowserManager>) -> Self {
         Self { manager }
     }
+
+    /// Best-effort URL equivalence for the same-URL re-navigation guard.
+    /// Trailing slash + fragment are commonly different between what the
+    /// agent passes and what the browser settled on; trim both before
+    /// comparing. Keep query strings — they often change page state.
+    fn urls_equivalent(a: &str, b: &str) -> bool {
+        let strip = |u: &str| -> String {
+            let mut s = u.split('#').next().unwrap_or(u).to_string();
+            if s.ends_with('/') && s.matches('/').count() > 3 {
+                s.pop();
+            }
+            s
+        };
+        strip(a) == strip(b)
+    }
 }
 
 #[async_trait]
@@ -73,6 +88,23 @@ impl Tool for BrowserNavigateTool {
             Ok(p) => p,
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
+
+        // Short-circuit when the agent re-navigates to the same URL it's
+        // already on. The 2026-05-23 09:04 logs show the agent calling
+        // browser_navigate to the SAME URL on iterations 1, 16, and 25
+        // — each one waiting 3s for network-idle and returning identical
+        // output. Treat it as the no-op it is and tell the agent to take
+        // a different action.
+        if let Ok(Some(current)) = page.url().await
+            && Self::urls_equivalent(&current, url)
+        {
+            return Ok(ToolResult::error(format!(
+                "Already on '{url}' — re-navigating to the same URL won't change \
+                 anything. If the previous page state is stale, use `browser_eval` \
+                 with `\"window.location.reload()\"`. Otherwise take a different \
+                 action: click, type, or navigate to a different URL."
+            )));
+        }
 
         if let Err(e) = page.goto(url).await {
             return Ok(ToolResult::error(format!("Navigation failed: {e}")));
