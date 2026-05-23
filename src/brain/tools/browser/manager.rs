@@ -24,6 +24,12 @@ struct ManagerInner {
     pages: HashMap<String, Page>,
     handler_handle: Option<tokio::task::JoinHandle<()>>,
     headless: bool,
+    /// Per-session hash of the most recent screenshot bytes. Lets
+    /// `browser_screenshot` reject a no-op repeat without sending another
+    /// identical 25KB image into the LLM context. Updated on every
+    /// successful screenshot; never explicitly invalidated — when the
+    /// page genuinely changes the new bytes will hash differently.
+    last_screenshot_hash: HashMap<uuid::Uuid, u64>,
 }
 
 /// Best-effort cleanup when the last `BrowserManager` clone (and
@@ -80,6 +86,7 @@ impl BrowserManager {
                 pages: HashMap::new(),
                 handler_handle: None,
                 headless,
+                last_screenshot_hash: HashMap::new(),
             })),
         }
     }
@@ -467,6 +474,34 @@ impl BrowserManager {
     pub async fn list_pages(&self) -> Vec<String> {
         let inner = self.inner.lock().await;
         inner.pages.keys().cloned().collect()
+    }
+
+    /// Hash some screenshot bytes — used by `browser_screenshot` to detect
+    /// no-op repeats. SipHash 1-3 (std DefaultHasher) is plenty for
+    /// "are these two PNG byte vectors identical".
+    pub fn hash_screenshot_bytes(bytes: &[u8]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut h);
+        h.finish()
+    }
+
+    /// Returns the previous hash for a session, if any. Lets the screenshot
+    /// tool compare against the last capture and decide whether to short-
+    /// circuit with a "page unchanged" error.
+    pub async fn last_screenshot_hash(&self, session_id: uuid::Uuid) -> Option<u64> {
+        self.inner.lock().await.last_screenshot_hash.get(&session_id).copied()
+    }
+
+    /// Record the hash of a screenshot for `session_id`. Subsequent calls
+    /// to `last_screenshot_hash` return this value until a new capture
+    /// overwrites it.
+    pub async fn set_last_screenshot_hash(&self, session_id: uuid::Uuid, hash: u64) {
+        self.inner
+            .lock()
+            .await
+            .last_screenshot_hash
+            .insert(session_id, hash);
     }
 
     /// Shut down the browser entirely.

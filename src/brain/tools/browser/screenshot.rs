@@ -108,6 +108,34 @@ impl Tool for BrowserScreenshotTool {
             }
         };
 
+        // No-op repeat detection: if the bytes hash matches the previous
+        // capture for this session, the page hasn't changed since the last
+        // screenshot. Send the agent an actionable error instead of a 25KB
+        // duplicate image — saves context tokens AND breaks the
+        // screenshot-spam pattern at the tool layer (semantic-loop
+        // detection in tool_loop.rs handles it from the agent side too,
+        // this is the defense-in-depth half).
+        //
+        // Only applies to full-page screenshots: an element screenshot can
+        // legitimately repeat for different selectors against a stable
+        // page, so we don't dedupe those.
+        if selector.is_none() {
+            let hash = BrowserManager::hash_screenshot_bytes(&bytes);
+            if Some(hash) == self.manager.last_screenshot_hash(context.session_id).await {
+                return Ok(ToolResult::error(
+                    "Page is identical to your last screenshot. The previous action \
+                     (or no action) produced no visible change. Do not screenshot again — \
+                     take a different action: `browser_click` something, `browser_type` \
+                     into a field, `browser_navigate` to a new URL, or `browser_find` to \
+                     locate an element you can interact with."
+                        .to_string(),
+                ));
+            }
+            self.manager
+                .set_last_screenshot_hash(context.session_id, hash)
+                .await;
+        }
+
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
         Ok(ToolResult::success(format!("data:image/png;base64,{b64}")))
