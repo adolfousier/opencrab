@@ -490,7 +490,12 @@ impl BrowserManager {
     /// tool compare against the last capture and decide whether to short-
     /// circuit with a "page unchanged" error.
     pub async fn last_screenshot_hash(&self, session_id: uuid::Uuid) -> Option<u64> {
-        self.inner.lock().await.last_screenshot_hash.get(&session_id).copied()
+        self.inner
+            .lock()
+            .await
+            .last_screenshot_hash
+            .get(&session_id)
+            .copied()
     }
 
     /// Record the hash of a screenshot for `session_id`. Subsequent calls

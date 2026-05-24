@@ -17,18 +17,8 @@ fn normalise_unicode(s: &str) -> String {
             | '\u{2212}' => '-',
             '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}' => '\'',
             '\u{201c}' | '\u{201d}' | '\u{201e}' | '\u{201f}' => '"',
-            '\u{00a0}'
-            | '\u{2002}'
-            | '\u{2003}'
-            | '\u{2004}'
-            | '\u{2005}'
-            | '\u{2006}'
-            | '\u{2007}'
-            | '\u{2008}'
-            | '\u{2009}'
-            | '\u{200a}'
-            | '\u{202f}'
-            | '\u{205f}'
+            '\u{00a0}' | '\u{2002}' | '\u{2003}' | '\u{2004}' | '\u{2005}' | '\u{2006}'
+            | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200a}' | '\u{202f}' | '\u{205f}'
             | '\u{3000}' => ' ',
             other => other,
         })
@@ -117,7 +107,8 @@ pub fn fuzzy_replace_once(content: &str, old_str: &str, new_str: &str) -> Result
     let start = indices[0];
     let end_exclusive = start + search_lines.len();
 
-    let mut result: Vec<&str> = Vec::with_capacity(content_lines.len() - search_lines.len() + new_lines.len());
+    let mut result: Vec<&str> =
+        Vec::with_capacity(content_lines.len() - search_lines.len() + new_lines.len());
     result.extend_from_slice(&content_lines[..start]);
     result.extend_from_slice(&new_lines);
     result.extend_from_slice(&content_lines[end_exclusive..]);
