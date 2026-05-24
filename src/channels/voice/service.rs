@@ -22,74 +22,252 @@ pub async fn transcribe_audio(audio_bytes: Vec<u8>, groq_api_key: &str) -> Resul
 
 /// Dispatch STT transcription based on config.
 ///
-/// - Groq Whisper API (stt_provider)
+/// - Voicebox STT (voicebox_stt_enabled) — priority when enabled
 /// - OpenAI-compatible STT (stt_base_url + stt_model)
-/// - Voicebox STT (voicebox_stt_enabled)
+/// - Groq Whisper API (stt_provider)
 /// - Local whisper (local-stt feature)
+///
+/// When the active provider fails, walks `voice_config.stt_fallback_chain`
+/// in order (user-configured, e.g. `["groq", "openai_compatible", "local"]`)
+/// and tries each entry that has the credentials/config it needs. Empty
+/// chain falls back to the default order (groq → openai_compatible →
+/// local, skipping whichever the primary was).
+///
+/// Returns success on the first provider that produces a transcription;
+/// returns a composite error citing every attempted provider if the whole
+/// chain failed.
 pub async fn transcribe(audio_bytes: Vec<u8>, voice_config: &VoiceConfig) -> Result<String> {
-    // Voicebox STT takes priority if enabled
-    if voice_config.voicebox_stt_enabled {
-        return super::voicebox_stt::transcribe(audio_bytes, &voice_config.voicebox_stt_base_url)
-            .await;
-    }
+    let primary = resolve_primary_stt(voice_config);
+    let chain = resolve_fallback_chain(voice_config, primary);
+    let candidates: Vec<SttProviderKind> = std::iter::once(primary).chain(chain).collect();
 
-    // OpenAI-compatible STT if base_url is configured
-    if let (Some(base_url), Some(model)) = (&voice_config.stt_base_url, &voice_config.stt_model)
-        && let Some(api_key) = &voice_config.stt_api_key
-    {
-        return super::openai_stt::transcribe_audio(audio_bytes, api_key, model, base_url).await;
-    }
-
-    // Groq API (legacy)
-    if let Some(provider) = &voice_config.stt_provider
-        && let Some(api_key) = &provider.api_key
-    {
-        return transcribe_audio(audio_bytes, api_key).await;
-    }
-
-    // Local whisper
-    #[cfg(feature = "local-stt")]
-    {
-        if !super::local_stt_available() {
-            anyhow::bail!(
-                "Local STT is not supported on this CPU — AVX2 is required. \
-                 Please switch to API STT in settings."
-            );
-        }
-        let model_id = &voice_config.local_stt_model;
-        let preset = super::local_whisper::find_local_model(model_id)
-            .ok_or_else(|| anyhow::anyhow!("Unknown local STT model: {}", model_id))?;
-        if !super::local_whisper::is_model_downloaded(preset) {
-            tracing::info!(
-                "Local STT model '{}' not in candle format — downloading automatically",
-                model_id
-            );
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let preset_id = model_id.to_string();
-            let download_preset = super::local_whisper::find_local_model(&preset_id)
-                .ok_or_else(|| anyhow::anyhow!("Unknown model: {}", preset_id))?;
-            let download_handle = tokio::spawn(async move {
-                super::local_whisper::download_model(download_preset, tx).await
-            });
-            while let Some(progress) = rx.recv().await {
-                if progress.done {
-                    break;
+    let mut attempts: Vec<String> = Vec::with_capacity(candidates.len());
+    let mut audio = Some(audio_bytes);
+    for kind in candidates {
+        // Take the audio out once — Vec<u8> isn't free to clone for a
+        // multi-MB voice note. Each attempt CONSUMES it; the next
+        // attempt re-clones from a stashed copy.
+        let bytes = match audio.take() {
+            Some(b) => {
+                if !attempts.is_empty() {
+                    // Already failed once — clone before consuming so
+                    // a later fallback still has a copy.
                 }
-                if let Some(err) = progress.error {
-                    anyhow::bail!("Model download failed: {}", err);
-                }
+                b
             }
-            download_handle
-                .await
-                .map_err(|e| anyhow::anyhow!("Download task failed: {}", e))??;
-            tracing::info!("Local STT model '{}' downloaded successfully", model_id);
+            None => break,
+        };
+        let bytes_for_next = bytes.clone();
+        attempts.push(kind.label());
+        match try_stt(kind, bytes, voice_config).await {
+            Ok(text) => {
+                if attempts.len() > 1 {
+                    tracing::info!(
+                        "STT recovered via fallback chain: {} (attempts: {})",
+                        kind.label(),
+                        attempts.join(" → "),
+                    );
+                }
+                return Ok(text);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "STT provider '{}' failed: {} — trying next in chain",
+                    kind.label(),
+                    e,
+                );
+                if let Some(s) = attempts.last_mut() {
+                    s.push_str(&format!(": {e}"));
+                }
+                audio = Some(bytes_for_next);
+            }
         }
-        tracing::info!("Local STT: transcribing with model {}", model_id);
-        transcribe_audio_local(audio_bytes, model_id.clone()).await
     }
 
-    #[cfg(not(feature = "local-stt"))]
-    anyhow::bail!("No STT provider configured")
+    anyhow::bail!(
+        "All STT providers failed. Attempts:\n  - {}",
+        attempts.join("\n  - "),
+    )
+}
+
+/// Resolve which provider runs first based on the current config flags.
+fn resolve_primary_stt(cfg: &VoiceConfig) -> SttProviderKind {
+    if cfg.voicebox_stt_enabled {
+        SttProviderKind::Voicebox
+    } else if cfg.stt_base_url.is_some()
+        && cfg.stt_model.is_some()
+        && cfg.stt_api_key.is_some()
+    {
+        SttProviderKind::OpenAiCompatible
+    } else if cfg
+        .stt_provider
+        .as_ref()
+        .and_then(|p| p.api_key.as_ref())
+        .is_some()
+    {
+        SttProviderKind::Groq
+    } else {
+        SttProviderKind::Local
+    }
+}
+
+/// Build the ordered list of fallback providers after `primary`.
+/// Honours the user-configured chain when present, otherwise uses the
+/// default priority list with the primary removed.
+pub(crate) fn resolve_fallback_chain(
+    cfg: &VoiceConfig,
+    primary: SttProviderKind,
+) -> Vec<SttProviderKind> {
+    let user_chain = &cfg.stt_fallback_chain;
+    let raw: Vec<SttProviderKind> = if user_chain.is_empty() {
+        vec![
+            SttProviderKind::Voicebox,
+            SttProviderKind::OpenAiCompatible,
+            SttProviderKind::Groq,
+            SttProviderKind::Local,
+        ]
+    } else {
+        user_chain
+            .iter()
+            .filter_map(|s| SttProviderKind::from_label(s))
+            .collect()
+    };
+    raw.into_iter()
+        .filter(|k| *k != primary && provider_is_configured(*k, cfg))
+        .collect()
+}
+
+/// Returns true when `kind` has the config it needs to attempt a
+/// transcription — no point routing to a provider whose API key is
+/// missing.
+fn provider_is_configured(kind: SttProviderKind, cfg: &VoiceConfig) -> bool {
+    match kind {
+        SttProviderKind::Voicebox => cfg.voicebox_stt_enabled,
+        SttProviderKind::OpenAiCompatible => {
+            cfg.stt_base_url.is_some() && cfg.stt_model.is_some() && cfg.stt_api_key.is_some()
+        }
+        SttProviderKind::Groq => cfg
+            .stt_provider
+            .as_ref()
+            .and_then(|p| p.api_key.as_ref())
+            .is_some(),
+        SttProviderKind::Local => cfg!(feature = "local-stt"),
+    }
+}
+
+async fn try_stt(
+    kind: SttProviderKind,
+    audio_bytes: Vec<u8>,
+    cfg: &VoiceConfig,
+) -> Result<String> {
+    match kind {
+        SttProviderKind::Voicebox => {
+            super::voicebox_stt::transcribe(audio_bytes, &cfg.voicebox_stt_base_url).await
+        }
+        SttProviderKind::OpenAiCompatible => {
+            let base = cfg
+                .stt_base_url
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("openai-compatible STT missing base_url"))?;
+            let model = cfg
+                .stt_model
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("openai-compatible STT missing model"))?;
+            let key = cfg
+                .stt_api_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("openai-compatible STT missing api_key"))?;
+            super::openai_stt::transcribe_audio(audio_bytes, key, model, base).await
+        }
+        SttProviderKind::Groq => {
+            let key = cfg
+                .stt_provider
+                .as_ref()
+                .and_then(|p| p.api_key.as_ref())
+                .ok_or_else(|| anyhow::anyhow!("Groq STT missing api_key"))?;
+            transcribe_audio(audio_bytes, key).await
+        }
+        SttProviderKind::Local => {
+            #[cfg(feature = "local-stt")]
+            {
+                if !super::local_stt_available() {
+                    anyhow::bail!(
+                        "Local STT is not supported on this CPU — AVX2 is required."
+                    );
+                }
+                let model_id = &cfg.local_stt_model;
+                let preset = super::local_whisper::find_local_model(model_id)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown local STT model: {}", model_id))?;
+                if !super::local_whisper::is_model_downloaded(preset) {
+                    tracing::info!(
+                        "Local STT model '{}' not in candle format — downloading automatically",
+                        model_id
+                    );
+                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                    let preset_id = model_id.to_string();
+                    let download_preset =
+                        super::local_whisper::find_local_model(&preset_id).ok_or_else(|| {
+                            anyhow::anyhow!("Unknown model: {}", preset_id)
+                        })?;
+                    let download_handle = tokio::spawn(async move {
+                        super::local_whisper::download_model(download_preset, tx).await
+                    });
+                    while let Some(progress) = rx.recv().await {
+                        if progress.done {
+                            break;
+                        }
+                        if let Some(err) = progress.error {
+                            anyhow::bail!("Model download failed: {}", err);
+                        }
+                    }
+                    download_handle
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Download task failed: {}", e))??;
+                    tracing::info!("Local STT model '{}' downloaded successfully", model_id);
+                }
+                tracing::info!("Local STT: transcribing with model {}", model_id);
+                transcribe_audio_local(audio_bytes, model_id.clone()).await
+            }
+            #[cfg(not(feature = "local-stt"))]
+            {
+                let _ = audio_bytes;
+                anyhow::bail!("Local STT feature not compiled in")
+            }
+        }
+    }
+}
+
+/// Tag for the STT providers the dispatcher knows about. Kept `pub(crate)`
+/// so the fallback-chain test module can construct expectations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SttProviderKind {
+    Voicebox,
+    OpenAiCompatible,
+    Groq,
+    Local,
+}
+
+impl SttProviderKind {
+    pub(crate) fn label(self) -> String {
+        match self {
+            SttProviderKind::Voicebox => "voicebox".to_string(),
+            SttProviderKind::OpenAiCompatible => "openai_compatible".to_string(),
+            SttProviderKind::Groq => "groq".to_string(),
+            SttProviderKind::Local => "local".to_string(),
+        }
+    }
+
+    pub(crate) fn from_label(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "voicebox" => Some(SttProviderKind::Voicebox),
+            "openai_compatible" | "openai-compatible" | "openai" => {
+                Some(SttProviderKind::OpenAiCompatible)
+            }
+            "groq" => Some(SttProviderKind::Groq),
+            "local" | "whisper" | "local_whisper" => Some(SttProviderKind::Local),
+            _ => None,
+        }
+    }
 }
 
 /// Internal: transcribe with configurable URL (for testing).
