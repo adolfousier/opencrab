@@ -8,6 +8,7 @@ pub mod error;
 pub mod registry;
 mod r#trait;
 
+pub mod fuzzy;
 // Tool implementations - Phase 1: Essential File Operations
 pub mod bash;
 pub mod edit;

@@ -216,13 +216,25 @@ impl Tool for EditTool {
         // Perform edit operation
         let new_content = match input.operation {
             EditOperation::Replace { old_text, new_text } => {
-                if !content.contains(&old_text) {
-                    return Ok(ToolResult::error(format!(
-                        "Text not found in file: '{}'",
-                        old_text
-                    )));
+                // Try exact substring match first.
+                if content.contains(&old_text) {
+                    let count = content.matches(&old_text).count();
+                    if count > 1 {
+                        return Ok(ToolResult::error(format!(
+                            "old_text appears {count} times as exact substring. \
+                             Include more context to make a unique match."
+                        )));
+                    }
+                    content.replacen(&old_text, &new_text, 1)
+                } else {
+                    // Fall back to fuzzy line-sequence matching (tolerates
+                    // minor whitespace, indentation, and Unicode punctuation
+                    // differences). Ported from OpenAI Codex seek_sequence.
+                    match super::fuzzy::fuzzy_replace_once(&content, &old_text, &new_text) {
+                        Ok(new_content) => new_content,
+                        Err(msg) => return Ok(ToolResult::error(msg)),
+                    }
                 }
-                content.replace(&old_text, &new_text)
             }
 
             EditOperation::ReplaceLines {
