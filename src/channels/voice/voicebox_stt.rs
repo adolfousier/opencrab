@@ -67,7 +67,11 @@ pub async fn transcribe(audio_bytes: Vec<u8>, base_url: &str) -> Result<String> 
     let status = response.status();
     if !status.is_success() {
         let error_text = response.text().await.unwrap_or_default();
-        anyhow::bail!("Voicebox STT error ({}): {}", status, error_text);
+        anyhow::bail!(
+            "Voicebox STT error ({}): {}",
+            status,
+            translate_voicebox_error(&error_text),
+        );
     }
 
     let result: TranscribeResponse = response
@@ -87,4 +91,53 @@ pub async fn transcribe(audio_bytes: Vec<u8>, base_url: &str) -> Result<String> 
 #[derive(Deserialize)]
 struct TranscribeResponse {
     text: String,
+}
+
+/// Translate known voicebox server error patterns into a short, actionable
+/// message instead of dumping the raw Python traceback / PyInstaller
+/// internals to the end user. The raw text is returned unchanged when no
+/// pattern matches, so unknown failures still surface their original
+/// detail for debugging.
+///
+/// Patterns currently handled:
+/// - `Cannot load imports from non-existent stub '.../librosa/...'`
+///   (and any other `.../<package>/__init__.pyi`) — voicebox was shipped
+///   via PyInstaller without `.pyi` stub files that `lazy_loader` needs
+///   at runtime. Rebuild the voicebox bundle with
+///   `--collect-data <package>` and a `hooks/hook-lazy_loader.py` that
+///   sets `hiddenimports = ['lazy_loader']`. The librosa case bit us
+///   on 2026-05-23.
+pub(crate) fn translate_voicebox_error(raw: &str) -> String {
+    if raw.contains("Cannot load imports from non-existent stub")
+        && raw.contains("__init__.pyi")
+    {
+        let pkg = extract_package_from_stub_error(raw).unwrap_or_else(|| "<unknown>".to_string());
+        return format!(
+            "Voicebox is missing the `{pkg}` runtime stubs (likely a PyInstaller \
+             bundle issue — lazy_loader needs the `__init__.pyi` files at runtime \
+             but the build stripped them). Rebuild voicebox with \
+             `--collect-data {pkg}` and a `hooks/hook-lazy_loader.py` that sets \
+             `hiddenimports = ['lazy_loader']`. Original detail: {raw}"
+        );
+    }
+    raw.to_string()
+}
+
+/// Pull the failing package name out of an error string like
+/// `Cannot load imports from non-existent stub '/.../librosa/core/__init__.pyi'`.
+/// Returns just the top-level package (e.g. `librosa`), which is the
+/// argument the user needs to pass to `--collect-data`.
+fn extract_package_from_stub_error(raw: &str) -> Option<String> {
+    let after_marker = raw.split("__init__.pyi").next()?;
+    // `after_marker` ends right before `__init__.pyi`. The path before
+    // it sits between the opening `'` (or `"`) and the end-of-string,
+    // so taking the LAST segment after splitting on the quote yields
+    // the path itself.
+    let path_part = after_marker.rsplit(['\'', '"']).next()?;
+    let mei_split = path_part.split("_MEI").nth(1)?;
+    // `mei_split` looks like "xyz123/librosa/core/" — split on / and
+    // skip the first segment (the random suffix).
+    let mut segments = mei_split.split('/').filter(|s| !s.is_empty());
+    let _suffix = segments.next();
+    segments.next().map(|s| s.to_string())
 }

@@ -235,6 +235,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stt_translates_librosa_stub_error_into_actionable_message() {
+        // Reproduce the exact 2026-05-23 error body.
+        let mut server = mockito::Server::new_async().await;
+        let mock_url = server.url();
+        let raw_body = r#"{"detail":"Cannot load imports from non-existent stub '/var/folders/w_/p0_1b_hd18n1qgtrt2mwfwv80000gn/T/_MEItwjtji/librosa/core/__init__.pyi'"}"#;
+        let _mock = server
+            .mock("POST", "/transcribe")
+            .with_status(500)
+            .with_body(raw_body)
+            .create_async()
+            .await;
+
+        let result = voicebox_stt::transcribe(vec![0x00, 0x01], &mock_url).await;
+        let err = result.unwrap_err().to_string();
+
+        // Top-level package extracted from the path correctly.
+        assert!(
+            err.contains("librosa"),
+            "translation should name the failing package, got: {err}",
+        );
+        // Actionable rebuild instruction surfaced.
+        assert!(
+            err.contains("--collect-data librosa"),
+            "translation should suggest the rebuild fix, got: {err}",
+        );
+        // Original detail preserved at the end for full debugging.
+        assert!(
+            err.contains("Original detail"),
+            "translation should keep the raw detail for diagnosis, got: {err}",
+        );
+    }
+
+    #[tokio::test]
+    async fn stt_translator_passes_through_unknown_errors_unchanged() {
+        // An error that doesn't match the known librosa/lazy_loader
+        // pattern should bubble up verbatim so we don't hide real bugs.
+        let mut server = mockito::Server::new_async().await;
+        let mock_url = server.url();
+        let raw_body = r#"{"error": "completely unexpected new failure mode"}"#;
+        let _mock = server
+            .mock("POST", "/transcribe")
+            .with_status(500)
+            .with_body(raw_body)
+            .create_async()
+            .await;
+
+        let result = voicebox_stt::transcribe(vec![0x00, 0x01], &mock_url).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("completely unexpected new failure mode"));
+        // Should NOT have the librosa-pattern messaging.
+        assert!(!err.contains("--collect-data"));
+    }
+
+    #[tokio::test]
     async fn stt_dead_voicebox_returns_clear_unreachable_message() {
         // The error string must contain "unreachable" so the dispatcher
         // can pattern-match it for fallback decisions, and so the
