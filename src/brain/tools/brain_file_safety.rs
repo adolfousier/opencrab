@@ -49,6 +49,8 @@ pub fn is_protected_path(path: &Path) -> bool {
 /// Snapshot `path` to `<path>.YYYY-MM-DDTHHMMSS.bak` before a mutation
 /// happens. No-op when `path` doesn't exist yet (nothing to back up).
 /// Returns the backup path on success.
+///
+/// Retention policy: keeps max 5 backups per file, deletes any older than 7 days.
 pub fn backup_before_write(path: &Path) -> std::io::Result<Option<std::path::PathBuf>> {
     if !path.exists() {
         return Ok(None);
@@ -58,7 +60,67 @@ pub fn backup_before_write(path: &Path) -> std::io::Result<Option<std::path::Pat
     backup.push(format!(".{stamp}.bak"));
     let backup = std::path::PathBuf::from(backup);
     std::fs::copy(path, &backup)?;
+
+    // Prune old backups: keep max 5, delete any older than 7 days
+    if let Err(e) = prune_backups(path, 5, 7) {
+        eprintln!("Warning: failed to prune backups for {}: {}", path.display(), e);
+    }
+
     Ok(Some(backup))
+}
+
+/// Delete old backups for `path`, keeping at most `max_count` and removing
+/// any older than `max_age_days`. Backup files match `<path>.<timestamp>.bak`.
+fn prune_backups(path: &Path, max_count: usize, max_age_days: u64) -> std::io::Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return Ok(());
+    };
+
+    // Find all backup files for this base path
+    let mut backups: Vec<(std::path::PathBuf, chrono::DateTime<chrono::Utc>)> = Vec::new();
+
+    for entry in std::fs::read_dir(parent)? {
+        let entry = entry?;
+        let entry_name = entry.file_name();
+        let Some(entry_str) = entry_name.to_str() else {
+            continue;
+        };
+
+        // Check if this matches our backup pattern
+        if !entry_str.starts_with(file_name) || !entry_str.ends_with(".bak") {
+            continue;
+        }
+
+        // Extract timestamp from filename: <base>.<YYYY-MM-DDTHHMMSS>.bak
+        let without_base = &entry_str[file_name.len()..];
+        let without_ext = without_base.trim_start_matches('.').trim_end_matches(".bak");
+
+        // Parse timestamp
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(without_ext, "%Y-%m-%dT%H%M%S") {
+            let utc = dt.and_utc();
+            backups.push((entry.path(), utc));
+        }
+    }
+
+    // Sort by timestamp descending (newest first)
+    backups.sort_by_key(|b| std::cmp::Reverse(b.1));
+
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(max_age_days as i64);
+
+    // Delete backups beyond max_count or older than cutoff
+    for (i, (backup_path, timestamp)) in backups.iter().enumerate() {
+        if !(i >= max_count || *timestamp < cutoff) {
+            continue;
+        }
+        if let Err(e) = std::fs::remove_file(backup_path) {
+            eprintln!("Warning: failed to delete old backup {}: {}", backup_path.display(), e);
+        }
+    }
+
+    Ok(())
 }
 
 /// Decision returned by [`check_no_shrink`].
