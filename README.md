@@ -132,8 +132,8 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 | **Video Attachments** | Send a video on any channel (mp4, m4v, mov, webm, mkv, avi, 3gp, flv) or paste a video path in the TUI — the agent calls the `analyze_video` tool, which routes through Google Gemini's multimodal video API (inline ≤18 MB, resumable Files API for larger). Requires `image.vision.enabled = true` with a Gemini API key in `config.toml`. Phase 1 is Gemini-native; a frame-extraction fallback for non-Gemini providers (ffmpeg → analyze_image per frame) is on the roadmap |
 | **PDF Support** | Attach PDF files by path — native Anthropic PDF support; for other providers, text is extracted locally via `pdf-extract` |
 | **Document Parsing** | Built-in `parse_document` tool extracts text from PDF, DOCX, HTML, TXT, MD, JSON, XML |
-| **Voice (STT)** | Voice notes transcribed via **Groq Whisper API** (`whisper-large-v3-turbo`), any **OpenAI-compatible STT endpoint** (set `stt_base_url` + `stt_model` — works with self-hosted Whisper, Deepgram-compatible proxies, etc.), **Voicebox STT** (self-hosted open-source voice stack — point `voicebox_stt_base_url` at your instance), or **Local** whisper.cpp via `whisper-rs` (runs on-device, Tiny 75 MB / Base 142 MB / Small 466 MB / Medium 1.5 GB, zero API cost). All dispatched through a single entry point so every channel gets the same provider priority chain. Choose mode in `/onboard:voice`. Included by default |
-| **Voice (TTS)** | Agent replies to voice notes with audio via **OpenAI TTS API** (`gpt-4o-mini-tts`), any **OpenAI-compatible TTS endpoint** (set `tts_base_url` + `tts_model` + `tts_voice` — works with self-hosted Coqui/Bark, ElevenLabs-compatible proxies, etc.), **Voicebox TTS** (async `/generate` → poll `/generate/{id}/status` → fetch audio; set `voicebox_tts_base_url` + `voicebox_tts_profile_id`), or **Local** Piper TTS (runs on-device via Python venv, Ryan / Amy / Lessac / Kristin / Joe / Cori, zero API cost). All outputs normalised to OGG/Opus via `ensure_opus` before delivery — consistent format across every channel regardless of backend. Falls back to text if disabled |
+| **Voice (STT)** | Voice notes transcribed via **Groq Whisper API** (`whisper-large-v3-turbo`), any **OpenAI-compatible STT endpoint** (set `stt_base_url` + `stt_model` — works with self-hosted Whisper, Deepgram-compatible proxies, etc.), **Voicebox STT** (self-hosted open-source voice stack — point `voicebox_stt_base_url` at your instance; 2s liveness probe runs before each request so a dead voicebox fails fast), or **Local** whisper.cpp via `whisper-rs` (runs on-device, Tiny 75 MB / Base 142 MB / Small 466 MB / Medium 1.5 GB, zero API cost). All dispatched through a single entry point so every channel gets the same provider priority chain — and an optional `[providers.stt].fallback_chain` lets the user codify "if my local voicebox is down, try Groq, then OpenAI" so transient outages auto-route to the next provider with zero user action. Choose mode in `/onboard:voice`. Included by default |
+| **Voice (TTS)** | Agent replies to voice notes with audio via **OpenAI TTS API** (`gpt-4o-mini-tts`), any **OpenAI-compatible TTS endpoint** (set `tts_base_url` + `tts_model` + `tts_voice` — works with self-hosted Coqui/Bark, ElevenLabs-compatible proxies, etc.), **Voicebox TTS** (async `/generate` → poll `/generate/{id}/status` → fetch audio; set `voicebox_tts_base_url` + `voicebox_tts_profile_id`), or **Local** Piper TTS (runs on-device via Python venv, Ryan / Amy / Lessac / Kristin / Joe / Cori, zero API cost). All outputs normalised to OGG/Opus via `ensure_opus` before delivery — consistent format across every channel regardless of backend. `[providers.tts].fallback_chain` provides the same auto-failover behaviour as the STT side. Falls back to text if disabled |
 | **Attachment Indicator** | Attached images show as `[IMG1:filename.png]` in the input title bar |
 | **Image Generation** | Agent generates images via Google Gemini (`gemini-3.1-flash-image-preview` "Nano Banana") using the `generate_image` tool — enabled via `/onboard:image`. Returned as native images/attachments in all channels |
 
@@ -1126,6 +1126,18 @@ voicebox_tts_profile_id = "your-voice-profile-uuid"
 - **STT:** Voicebox → OpenAI-compatible → Groq API → Local whisper.cpp
 - **TTS:** Voicebox → OpenAI-compatible → OpenAI TTS API → Local Piper
 
+**Fallback chain** (auto-failover when the primary fails — set under `[providers.stt]` / `[providers.tts]` in `keys.toml`):
+
+```toml
+[providers.stt]
+fallback_chain = ["groq", "openai_compatible", "local"]
+
+[providers.tts]
+fallback_chain = ["openai_compatible", "openai", "local"]
+```
+
+When the primary returns a 5xx, fails a liveness probe (voicebox), or is otherwise unreachable, the dispatcher walks `fallback_chain` in order and tries each entry that has the credentials/config it needs. Empty/omitted chain → default priority order with the primary removed. STT labels: `voicebox`, `openai_compatible`, `groq`, `local`. TTS labels: `voicebox`, `openai_compatible`, `openai`, `local` (note `groq` is STT-only; TTS rejects it). Aliases: `openai-compatible`, `whisper`/`local_whisper`, `piper`/`local_piper`.
+
 All TTS outputs are normalised to OGG/Opus via `ensure_opus` before reaching a channel — channels can send the bytes directly to `send_voice` (Telegram), `audio_message` with `ptt=true` (WhatsApp), file attachment (Discord), or `files.upload` (Slack) without format checks of their own.
 
 #### Brain Personalization (Step 10)
@@ -1224,6 +1236,16 @@ api_key = "your-stt-key"
 # STT Local mode: no API key needed — runs whisper.cpp on device
 # Set stt_mode = "local" and local_stt_model in config.toml
 
+# STT fallback chain — when the active provider fails (5xx, liveness probe
+# error, unreachable), the dispatcher walks this list in order and tries
+# each entry that has the credentials/config it needs. Same shape as the
+# completion-side fallback_providers chain. Labels (case-insensitive):
+# "voicebox", "openai_compatible" (alias: "openai-compatible", "openai"),
+# "groq", "local" (alias: "whisper", "local_whisper"). Empty/omitted means
+# "use the default priority order with the primary removed".
+[providers.stt]
+fallback_chain = ["groq", "openai_compatible", "local"]
+
 # TTS OpenAI API (legacy default): uses OpenAI TTS
 [providers.tts.openai]
 api_key = "your-openai-key"
@@ -1238,6 +1260,13 @@ api_key = "your-tts-key"
 
 # TTS Local mode: no API key needed — runs Piper TTS on device
 # Set tts_mode = "local" and local_tts_voice in config.toml
+
+# TTS fallback chain — mirror of STT. Labels: "voicebox",
+# "openai_compatible" (alias: "openai-compatible"), "openai",
+# "local" (alias: "piper", "local_piper"). Note "groq" is STT-only — the
+# TTS chain rejects it. Empty/omitted means "use the default priority".
+[providers.tts]
+fallback_chain = ["openai_compatible", "openai", "local"]
 ```
 
 > **Note:** Anthropic OAuth tokens (`sk-ant-oat`) are no longer supported for third-party apps as of Feb 2026 ([anthropics/claude-code#28091](https://github.com/anthropics/claude-code/issues/28091)). Use console API keys (`sk-ant-api03-*`) instead.

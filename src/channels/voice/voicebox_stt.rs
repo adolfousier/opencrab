@@ -108,9 +108,7 @@ struct TranscribeResponse {
 ///   sets `hiddenimports = ['lazy_loader']`. The librosa case bit us
 ///   on 2026-05-23.
 pub(crate) fn translate_voicebox_error(raw: &str) -> String {
-    if raw.contains("Cannot load imports from non-existent stub")
-        && raw.contains("__init__.pyi")
-    {
+    if raw.contains("Cannot load imports from non-existent stub") && raw.contains("__init__.pyi") {
         let pkg = extract_package_from_stub_error(raw).unwrap_or_else(|| "<unknown>".to_string());
         return format!(
             "Voicebox is missing the `{pkg}` runtime stubs (likely a PyInstaller \

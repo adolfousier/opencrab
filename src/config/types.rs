@@ -384,6 +384,11 @@ pub struct VoiceConfig {
     /// codify "if my local voicebox is down, try Groq, then OpenAI".
     /// Values: `"voicebox"`, `"openai_compatible"`, `"groq"`, `"local"`.
     pub stt_fallback_chain: Vec<String>,
+    /// User-defined TTS fallback order. Empty means "use the default
+    /// priority: voicebox → openai-compatible → openai → local". Same
+    /// semantics as `stt_fallback_chain` but for synthesis.
+    /// Values: `"voicebox"`, `"openai_compatible"`, `"openai"`, `"local"`.
+    pub tts_fallback_chain: Vec<String>,
 }
 
 fn default_local_stt_model() -> String {
@@ -424,6 +429,7 @@ impl Default for VoiceConfig {
             voicebox_tts_profile_id: String::new(),
             voicebox_tts_engine: String::new(),
             stt_fallback_chain: Vec::new(),
+            tts_fallback_chain: Vec::new(),
         }
     }
 }
@@ -1186,6 +1192,18 @@ pub struct TtsProviders {
     /// Voicebox TTS configuration ([providers.tts.voicebox])
     #[serde(default)]
     pub voicebox: Option<VoiceboxTtsConfig>,
+
+    /// User-defined TTS fallback order. Empty/None means "use the default
+    /// priority". Each value names a provider: `"voicebox"`,
+    /// `"openai_compatible"`, `"openai"`, or `"local"`. When the active
+    /// provider fails the dispatcher walks this list in order and tries
+    /// each entry that has the credentials/config it needs.
+    ///
+    /// Mirrors the STT-side `fallback_chain` so the user can codify
+    /// "if my local voicebox is down, try OpenAI TTS, then Piper" in
+    /// one place.
+    #[serde(default)]
+    pub fallback_chain: Option<Vec<String>>,
 }
 
 /// OpenAI-compatible TTS configuration
@@ -2151,6 +2169,11 @@ impl Config {
             .and_then(|s| s.fallback_chain.clone())
             .unwrap_or_default();
 
+        // TTS fallback chain: same shape, [providers.tts].fallback_chain.
+        let tts_fallback_chain = tts
+            .and_then(|t| t.fallback_chain.clone())
+            .unwrap_or_default();
+
         VoiceConfig {
             stt_enabled,
             stt_mode,
@@ -2174,6 +2197,7 @@ impl Config {
             voicebox_tts_profile_id,
             voicebox_tts_engine,
             stt_fallback_chain,
+            tts_fallback_chain,
         }
     }
 

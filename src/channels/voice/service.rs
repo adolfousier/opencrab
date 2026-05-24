@@ -94,10 +94,7 @@ pub async fn transcribe(audio_bytes: Vec<u8>, voice_config: &VoiceConfig) -> Res
 fn resolve_primary_stt(cfg: &VoiceConfig) -> SttProviderKind {
     if cfg.voicebox_stt_enabled {
         SttProviderKind::Voicebox
-    } else if cfg.stt_base_url.is_some()
-        && cfg.stt_model.is_some()
-        && cfg.stt_api_key.is_some()
-    {
+    } else if cfg.stt_base_url.is_some() && cfg.stt_model.is_some() && cfg.stt_api_key.is_some() {
         SttProviderKind::OpenAiCompatible
     } else if cfg
         .stt_provider
@@ -155,11 +152,7 @@ fn provider_is_configured(kind: SttProviderKind, cfg: &VoiceConfig) -> bool {
     }
 }
 
-async fn try_stt(
-    kind: SttProviderKind,
-    audio_bytes: Vec<u8>,
-    cfg: &VoiceConfig,
-) -> Result<String> {
+async fn try_stt(kind: SttProviderKind, audio_bytes: Vec<u8>, cfg: &VoiceConfig) -> Result<String> {
     match kind {
         SttProviderKind::Voicebox => {
             super::voicebox_stt::transcribe(audio_bytes, &cfg.voicebox_stt_base_url).await
@@ -191,9 +184,7 @@ async fn try_stt(
             #[cfg(feature = "local-stt")]
             {
                 if !super::local_stt_available() {
-                    anyhow::bail!(
-                        "Local STT is not supported on this CPU — AVX2 is required."
-                    );
+                    anyhow::bail!("Local STT is not supported on this CPU — AVX2 is required.");
                 }
                 let model_id = &cfg.local_stt_model;
                 let preset = super::local_whisper::find_local_model(model_id)
@@ -205,10 +196,8 @@ async fn try_stt(
                     );
                     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                     let preset_id = model_id.to_string();
-                    let download_preset =
-                        super::local_whisper::find_local_model(&preset_id).ok_or_else(|| {
-                            anyhow::anyhow!("Unknown model: {}", preset_id)
-                        })?;
+                    let download_preset = super::local_whisper::find_local_model(&preset_id)
+                        .ok_or_else(|| anyhow::anyhow!("Unknown model: {}", preset_id))?;
                     let download_handle = tokio::spawn(async move {
                         super::local_whisper::download_model(download_preset, tx).await
                     });
@@ -325,64 +314,210 @@ pub async fn synthesize(text: &str, voice_config: &VoiceConfig) -> Result<Vec<u8
         anyhow::bail!("Cannot synthesize empty text");
     }
 
-    let audio = if voice_config.voicebox_tts_enabled {
-        tracing::info!(
-            "TTS dispatch → Voicebox (base_url={}, profile_id={}, engine={})",
-            voice_config.voicebox_tts_base_url,
-            voice_config.voicebox_tts_profile_id,
-            voice_config.voicebox_tts_engine
-        );
-        let client = super::voicebox_tts::VoiceboxTts::new(
-            &voice_config.voicebox_tts_base_url,
-            &voice_config.voicebox_tts_profile_id,
-            &voice_config.voicebox_tts_engine,
-        );
-        client.synthesize(text).await?
-    } else if let (Some(base_url), Some(api_key)) =
-        (&voice_config.tts_base_url, &voice_config.tts_api_key)
-    {
-        tracing::info!(
-            "TTS dispatch → OpenAI-compatible (base_url={}, model={}, voice={})",
-            base_url,
-            voice_config.tts_model,
-            voice_config.tts_voice
-        );
-        super::openai_tts::synthesize_speech(
-            text,
-            api_key,
-            &voice_config.tts_voice,
-            &voice_config.tts_model,
-            base_url,
-        )
-        .await?
-    } else if let Some(provider) = &voice_config.tts_provider
-        && let Some(api_key) = &provider.api_key
-    {
-        tracing::info!(
-            "TTS dispatch → OpenAI (model={}, voice={})",
-            voice_config.tts_model,
-            voice_config.tts_voice
-        );
-        synthesize_speech(
-            text,
-            api_key,
-            &voice_config.tts_voice,
-            &voice_config.tts_model,
-        )
-        .await?
-    } else {
-        #[cfg(feature = "local-tts")]
-        {
-            let voice_id = voice_config.local_tts_voice.clone();
-            tracing::info!("TTS dispatch → Local Piper (voice={})", voice_id);
-            synthesize_speech_local(text, &voice_id).await?
+    let primary = resolve_primary_tts(voice_config);
+    let chain = resolve_tts_fallback_chain(voice_config, primary);
+    let candidates: Vec<TtsProviderKind> = std::iter::once(primary).chain(chain).collect();
+
+    let mut attempts: Vec<String> = Vec::with_capacity(candidates.len());
+    let mut audio: Option<Vec<u8>> = None;
+    for kind in &candidates {
+        attempts.push(kind.label());
+        match try_tts(*kind, text, voice_config).await {
+            Ok(bytes) => {
+                if attempts.len() > 1 {
+                    tracing::info!(
+                        "TTS recovered via fallback chain: {} (attempts: {})",
+                        kind.label(),
+                        attempts.join(" → "),
+                    );
+                }
+                audio = Some(bytes);
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "TTS provider '{}' failed: {} — trying next in chain",
+                    kind.label(),
+                    e,
+                );
+                if let Some(s) = attempts.last_mut() {
+                    s.push_str(&format!(": {e}"));
+                }
+            }
         }
-        #[cfg(not(feature = "local-tts"))]
-        anyhow::bail!("No TTS provider configured")
-    };
+    }
+
+    let audio = audio.ok_or_else(|| {
+        anyhow::anyhow!(
+            "All TTS providers failed. Attempts:\n  - {}",
+            attempts.join("\n  - "),
+        )
+    })?;
 
     // Ensure Opus format for Telegram — converts WAV/MP3 if needed
     Ok(ensure_opus(audio).await)
+}
+
+/// Resolve which TTS provider runs first based on current config flags.
+fn resolve_primary_tts(cfg: &VoiceConfig) -> TtsProviderKind {
+    if cfg.voicebox_tts_enabled {
+        TtsProviderKind::Voicebox
+    } else if cfg.tts_base_url.is_some() && cfg.tts_api_key.is_some() {
+        TtsProviderKind::OpenAiCompatible
+    } else if cfg
+        .tts_provider
+        .as_ref()
+        .and_then(|p| p.api_key.as_ref())
+        .is_some()
+    {
+        TtsProviderKind::OpenAi
+    } else {
+        TtsProviderKind::Local
+    }
+}
+
+/// Build the ordered list of TTS fallback providers after `primary`.
+/// Mirrors the STT helper's contract — user-configured chain wins,
+/// otherwise default priority with primary removed; unconfigured
+/// providers are filtered out so the dispatcher doesn't waste a turn
+/// on a provider that will fail at the auth check.
+pub(crate) fn resolve_tts_fallback_chain(
+    cfg: &VoiceConfig,
+    primary: TtsProviderKind,
+) -> Vec<TtsProviderKind> {
+    let user_chain = &cfg.tts_fallback_chain;
+    let raw: Vec<TtsProviderKind> = if user_chain.is_empty() {
+        vec![
+            TtsProviderKind::Voicebox,
+            TtsProviderKind::OpenAiCompatible,
+            TtsProviderKind::OpenAi,
+            TtsProviderKind::Local,
+        ]
+    } else {
+        user_chain
+            .iter()
+            .filter_map(|s| TtsProviderKind::from_label(s))
+            .collect()
+    };
+    raw.into_iter()
+        .filter(|k| *k != primary && tts_provider_is_configured(*k, cfg))
+        .collect()
+}
+
+fn tts_provider_is_configured(kind: TtsProviderKind, cfg: &VoiceConfig) -> bool {
+    match kind {
+        TtsProviderKind::Voicebox => cfg.voicebox_tts_enabled,
+        TtsProviderKind::OpenAiCompatible => {
+            cfg.tts_base_url.is_some() && cfg.tts_api_key.is_some()
+        }
+        TtsProviderKind::OpenAi => cfg
+            .tts_provider
+            .as_ref()
+            .and_then(|p| p.api_key.as_ref())
+            .is_some(),
+        TtsProviderKind::Local => cfg!(feature = "local-tts"),
+    }
+}
+
+async fn try_tts(kind: TtsProviderKind, text: &str, cfg: &VoiceConfig) -> Result<Vec<u8>> {
+    match kind {
+        TtsProviderKind::Voicebox => {
+            tracing::info!(
+                "TTS dispatch → Voicebox (base_url={}, profile_id={}, engine={})",
+                cfg.voicebox_tts_base_url,
+                cfg.voicebox_tts_profile_id,
+                cfg.voicebox_tts_engine
+            );
+            let client = super::voicebox_tts::VoiceboxTts::new(
+                &cfg.voicebox_tts_base_url,
+                &cfg.voicebox_tts_profile_id,
+                &cfg.voicebox_tts_engine,
+            );
+            client.synthesize(text).await
+        }
+        TtsProviderKind::OpenAiCompatible => {
+            let base_url = cfg
+                .tts_base_url
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("openai-compatible TTS missing base_url"))?;
+            let api_key = cfg
+                .tts_api_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("openai-compatible TTS missing api_key"))?;
+            tracing::info!(
+                "TTS dispatch → OpenAI-compatible (base_url={}, model={}, voice={})",
+                base_url,
+                cfg.tts_model,
+                cfg.tts_voice
+            );
+            super::openai_tts::synthesize_speech(
+                text,
+                api_key,
+                &cfg.tts_voice,
+                &cfg.tts_model,
+                base_url,
+            )
+            .await
+        }
+        TtsProviderKind::OpenAi => {
+            let api_key = cfg
+                .tts_provider
+                .as_ref()
+                .and_then(|p| p.api_key.as_ref())
+                .ok_or_else(|| anyhow::anyhow!("OpenAI TTS missing api_key"))?;
+            tracing::info!(
+                "TTS dispatch → OpenAI (model={}, voice={})",
+                cfg.tts_model,
+                cfg.tts_voice
+            );
+            synthesize_speech(text, api_key, &cfg.tts_voice, &cfg.tts_model).await
+        }
+        TtsProviderKind::Local => {
+            #[cfg(feature = "local-tts")]
+            {
+                let voice_id = cfg.local_tts_voice.clone();
+                tracing::info!("TTS dispatch → Local Piper (voice={})", voice_id);
+                synthesize_speech_local(text, &voice_id).await
+            }
+            #[cfg(not(feature = "local-tts"))]
+            {
+                let _ = text;
+                let _ = cfg;
+                anyhow::bail!("Local TTS feature not compiled in")
+            }
+        }
+    }
+}
+
+/// Tag for the TTS providers the dispatcher knows about. `pub(crate)` so
+/// the fallback-chain test module can exercise the resolution helper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TtsProviderKind {
+    Voicebox,
+    OpenAiCompatible,
+    OpenAi,
+    Local,
+}
+
+impl TtsProviderKind {
+    pub(crate) fn label(self) -> String {
+        match self {
+            TtsProviderKind::Voicebox => "voicebox".to_string(),
+            TtsProviderKind::OpenAiCompatible => "openai_compatible".to_string(),
+            TtsProviderKind::OpenAi => "openai".to_string(),
+            TtsProviderKind::Local => "local".to_string(),
+        }
+    }
+
+    pub(crate) fn from_label(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "voicebox" => Some(TtsProviderKind::Voicebox),
+            "openai_compatible" | "openai-compatible" => Some(TtsProviderKind::OpenAiCompatible),
+            "openai" => Some(TtsProviderKind::OpenAi),
+            "local" | "piper" | "local_piper" => Some(TtsProviderKind::Local),
+            _ => None,
+        }
+    }
 }
 
 /// Detect if audio bytes are already in OGG/Opus format.

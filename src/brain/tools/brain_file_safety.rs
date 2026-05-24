@@ -63,7 +63,11 @@ pub fn backup_before_write(path: &Path) -> std::io::Result<Option<std::path::Pat
 
     // Prune old backups: keep max 5, delete any older than 7 days
     if let Err(e) = prune_backups(path, 5, 7) {
-        eprintln!("Warning: failed to prune backups for {}: {}", path.display(), e);
+        eprintln!(
+            "Warning: failed to prune backups for {}: {}",
+            path.display(),
+            e
+        );
     }
 
     Ok(Some(backup))
@@ -96,7 +100,9 @@ fn prune_backups(path: &Path, max_count: usize, max_age_days: u64) -> std::io::R
 
         // Extract timestamp from filename: <base>.<YYYY-MM-DDTHHMMSS>.bak
         let without_base = &entry_str[file_name.len()..];
-        let without_ext = without_base.trim_start_matches('.').trim_end_matches(".bak");
+        let without_ext = without_base
+            .trim_start_matches('.')
+            .trim_end_matches(".bak");
 
         // Parse timestamp
         if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(without_ext, "%Y-%m-%dT%H%M%S") {
@@ -116,7 +122,11 @@ fn prune_backups(path: &Path, max_count: usize, max_age_days: u64) -> std::io::R
             continue;
         }
         if let Err(e) = std::fs::remove_file(backup_path) {
-            eprintln!("Warning: failed to delete old backup {}: {}", backup_path.display(), e);
+            eprintln!(
+                "Warning: failed to delete old backup {}: {}",
+                backup_path.display(),
+                e
+            );
         }
     }
 

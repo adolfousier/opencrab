@@ -4,8 +4,8 @@
 //! user-configured `stt_fallback_chain` produces the right sequence of
 //! provider attempts when the primary is failing.
 
-use crate::channels::voice::service::resolve_fallback_chain;
 use crate::channels::voice::service::SttProviderKind;
+use crate::channels::voice::service::resolve_fallback_chain;
 use crate::config::{ProviderConfig, VoiceConfig};
 
 fn voicebox_primary_config() -> VoiceConfig {
@@ -65,11 +65,7 @@ fn unconfigured_entries_are_filtered_out() {
     let cfg = VoiceConfig {
         voicebox_stt_enabled: true,
         voicebox_stt_base_url: "http://localhost:8000".to_string(),
-        stt_fallback_chain: vec![
-            "voicebox".into(),
-            "openai_compatible".into(),
-            "groq".into(),
-        ],
+        stt_fallback_chain: vec!["voicebox".into(), "openai_compatible".into(), "groq".into()],
         ..Default::default()
     };
     let chain = resolve_fallback_chain(&cfg, SttProviderKind::Voicebox);
