@@ -204,4 +204,48 @@ mod tests {
         let result = voicebox_stt::transcribe(vec![0x00, 0x01], "http://localhost:1").await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn stt_liveness_probe_fails_fast_when_voicebox_down() {
+        // Port 1 is reserved and refuses connections immediately. The
+        // probe should bail in well under the multipart timeout — we
+        // assert <5s as a generous upper bound; in practice it's <100ms.
+        let start = std::time::Instant::now();
+        let result = voicebox_stt::probe_liveness("http://localhost:1").await;
+        let elapsed = start.elapsed();
+        assert!(result.is_err(), "probe must fail on connection refused");
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "probe took {elapsed:?} — should fail fast on refused connection",
+        );
+    }
+
+    #[tokio::test]
+    async fn stt_liveness_probe_passes_on_any_http_response() {
+        // mockito with no mocks configured for GET / still serves an HTTP
+        // response (501). The probe accepts that as "server alive" — the
+        // only failure it cares about is the connection itself.
+        let server = mockito::Server::new_async().await;
+        let url = server.url();
+        let result = voicebox_stt::probe_liveness(&url).await;
+        assert!(
+            result.is_ok(),
+            "liveness probe should pass on any HTTP response, got {result:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn stt_dead_voicebox_returns_clear_unreachable_message() {
+        // The error string must contain "unreachable" so the dispatcher
+        // can pattern-match it for fallback decisions, and so the
+        // surfaced error to the user is actionable instead of a raw
+        // reqwest panic.
+        let result = voicebox_stt::transcribe(vec![0x00, 0x01], "http://localhost:1").await;
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.to_lowercase().contains("unreachable")
+                || err.to_lowercase().contains("liveness probe failed"),
+            "error should explain voicebox is unreachable, got: {err}",
+        );
+    }
 }
