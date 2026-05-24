@@ -199,6 +199,34 @@ impl SessionService {
         Ok(())
     }
 
+    /// Reset the auto-title attempt flag so the next user message can
+    /// re-trigger auto-title generation. Called from the background task
+    /// when the title-generation LLM call failed — without this the
+    /// session would stay stuck on its default channel-generated title
+    /// forever, because the attempt flag is set BEFORE the LLM call to
+    /// prevent race conditions. Issue #118.
+    pub async fn reset_auto_title_attempted(&self, id: Uuid) -> Result<()> {
+        use crate::db::interact_err;
+        use rusqlite::params;
+
+        let id_str = id.to_string();
+        self.context
+            .pool()
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE sessions SET auto_title_attempted = 0 WHERE id = ?1",
+                    params![id_str],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to reset auto_title_attempted")?;
+        Ok(())
+    }
+
     /// Archive a session
     pub async fn archive_session(&self, id: Uuid) -> Result<()> {
         let repo = SessionRepository::new(self.context.pool());

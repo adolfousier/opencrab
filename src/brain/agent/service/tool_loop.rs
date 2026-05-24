@@ -303,19 +303,30 @@ impl AgentService {
         });
         let context_window = self.context_limit_for_session(session_id);
 
-        // Capture count before move for auto-title trigger
-        let db_message_count = all_db_messages.len();
-
         // Load from last compaction point — find the last CONTEXT COMPACTION marker
         // and only load messages from there forward. No arbitrary trimming.
         let mut db_messages = Self::messages_from_last_compaction(all_db_messages);
 
-        // Auto-title: fire a one-shot background LLM call after the user's first
-        // message is stored (end of first turn). Gives the LLM actual content for
-        // context-based titles on ALL channels (TUI, Telegram, Discord, Slack, etc).
-        // Fires once per session; subsequent turns won't re-trigger because the title
-        // will no longer be empty/default.
-        if db_message_count >= 1
+        // Auto-title: fire a one-shot background LLM call using the current
+        // user_message as the seed. Works on ALL channels (TUI, Telegram,
+        // Discord, Slack, etc). Issue #118 + #120.
+        //
+        // Why no `db_message_count >= 1` guard: the previous version only
+        // fired from the SECOND user message onward (because db_message_count
+        // is taken before the current message is stored). The reporter's
+        // sessions all had exactly 1 turn each (one /new, one message, done),
+        // so auto-title never ran and every session sat with the default
+        // `Telegram: DM <name> (<id>) [chat:<id>]` title forever — looking
+        // identical in `/sessions`. We already have `user_message` in scope,
+        // so fire on the first turn directly.
+        //
+        // Why a reset-on-failure path: `mark_auto_title_attempted` runs
+        // BEFORE the LLM call to prevent race conditions if the user sends
+        // a second message while the title generation is still in flight.
+        // But if the LLM call fails (provider down, 5xx, timeout), the flag
+        // stays true forever and the session is stuck. The Err arm now
+        // resets the flag so the next message retries.
+        if !user_message.trim().is_empty()
             && !session.auto_title_attempted
             && session
                 .title
@@ -327,8 +338,9 @@ impl AgentService {
             let title_model = model_name.clone();
             let title_msg = user_message.chars().take(500).collect::<String>();
             let session_svc = SessionService::new(self.context.clone());
-            // Mark auto_title_attempted BEFORE spawning to prevent race conditions
-            // where the next message arrives before the background task completes.
+            // Mark auto_title_attempted BEFORE spawning to prevent race
+            // conditions where the next message arrives before the
+            // background task completes. The Err arm resets it.
             let _ = session_svc.mark_auto_title_attempted(session_id).await;
             // Capture the old title to preserve channel prefix
             let old_title = session.title.clone().unwrap_or_default();
@@ -366,10 +378,20 @@ impl AgentService {
                             let _ = session_svc
                                 .update_session_title(session_id, Some(final_title))
                                 .await;
+                        } else {
+                            // Empty/unusable title — allow the next message
+                            // to retry. Same recovery path as the Err arm.
+                            let _ =
+                                session_svc.reset_auto_title_attempted(session_id).await;
                         }
                     }
                     Err(e) => {
-                        tracing::debug!("Auto-title generation failed: {}", e);
+                        tracing::warn!(
+                            "Auto-title generation failed for session {}: {} — resetting flag so the next message retries",
+                            session_id,
+                            e,
+                        );
+                        let _ = session_svc.reset_auto_title_attempted(session_id).await;
                     }
                 }
             });
