@@ -428,3 +428,63 @@ fn classify_bare_tool_array_states() {
     assert_eq!(classify_bare_tool_array("[{\"id\":42}]"), None);
     assert_eq!(classify_bare_tool_array("[{\"id\":\"banana_\""), None);
 }
+
+// ── Dict-by-call-id shape (2026-05-24 qwen-3.7-max-preview regression) ──
+
+#[test]
+fn extract_dict_by_call_id_single() {
+    // The exact shape seen in @adolfousier's Telegram screenshots:
+    // top-level object keyed by call_<hex>, value is {name, arguments}.
+    let text = r#"{"call_5f8d9c7b4a3e2f1c8d6e5b9a": {"name": "read_file", "arguments": {"path": "/tmp/x"}}}"#;
+    let (calls, remaining) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "should extract one tool call from dict-by-id");
+    assert_eq!(calls[0].0, "read_file");
+    assert_eq!(calls[0].1["path"], "/tmp/x");
+    assert!(
+        remaining.trim().is_empty(),
+        "the matched object should be stripped from the remaining text, got: {remaining:?}",
+    );
+}
+
+#[test]
+fn extract_dict_by_call_id_multiple_keys() {
+    // Some emissions cram several calls into one object.
+    let text = r#"{"call_aaa": {"name":"bash","arguments":{"command":"ls"}},"call_bbb": {"name":"read_file","arguments":{"path":"/x"}}}"#;
+    let (calls, _) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(calls[1].0, "read_file");
+}
+
+#[test]
+fn extract_dict_by_call_id_inside_markdown_fence() {
+    // Telegram screenshots show the dict wrapped in ```json fences.
+    // The fence isn't part of the JSON; we still want to find and strip
+    // the inner object.
+    let text = "Pushed fix.\n\n```json\n{\"call_7b8f9e6d4c5a3b2e1d7c6a9f\": {\"name\": \"bash\", \"arguments\": {\"command\": \"git push\"}}}\n```\n\nMore prose after.";
+    let (calls, _remaining) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(calls[0].1["command"], "git push");
+}
+
+#[test]
+fn dict_by_call_id_prose_mention_ignored() {
+    // Prose like `the field "call_id" is set` must not trigger extraction:
+    // the `"call_` substring exists but isn't the first key of an object.
+    let text = r#"The "call_id" field is set in your config."#;
+    let (calls, remaining) = extract_text_tool_calls(text);
+    assert!(calls.is_empty(), "prose `call_id` must not be extracted");
+    assert_eq!(remaining, text, "prose must pass through unchanged");
+}
+
+#[test]
+fn dict_by_call_id_with_function_envelope_form() {
+    // Some models nest under `function: {name, arguments}` even within
+    // the dict-by-id shape — parse_tool_call_value already handles that.
+    let text = r#"{"call_xyz": {"type":"function","function":{"name":"bash","arguments":"{\"command\":\"pwd\"}"}}}"#;
+    let (calls, _) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(calls[0].1["command"], "pwd");
+}

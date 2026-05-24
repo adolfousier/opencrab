@@ -400,6 +400,14 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
     // Cheap signal: `"id":"call_` is the OpenAI-envelope-with-call-prefix
     // signature; combined with a top-level `[` this is the leaked-array shape.
     let has_bare_array_signal = text.contains("\"id\":\"call_") || text.contains("\"id\": \"call_");
+    // Dict-by-call-id signal: 2026-05-24 regression with qwen-3.7-max-preview
+    // where the model emits tool calls as a top-level object keyed by call
+    // ID instead of using the structured `tool_calls` API or the bare array
+    // shape. Format: `{"call_<24hex>": {"name":"...", "arguments":{...}}}`.
+    // Often appears inside a markdown ```json fence, so Telegram renders
+    // the whole thing as a code block and the call never dispatches.
+    let has_dict_by_id_signal =
+        text.contains("\"call_") && (text.contains("\"name\"") || text.contains("\"function\""));
     if !text.contains("<tool_call>")
         && !text.contains("<function=")
         && !text.contains("tool_call:")
@@ -407,6 +415,7 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
         && !text.contains("\"tool_call\"")
         && !has_claude_style
         && !has_bare_array_signal
+        && !has_dict_by_id_signal
     {
         return (Vec::new(), text.to_string());
     }
@@ -496,6 +505,83 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
                 None => {
                     search_from = anchor_pos + anchor_lit.len();
                 }
+            }
+        }
+    }
+
+    // Pass 1.6 — top-level object keyed by call ID. 2026-05-24 qwen-3.7-max-
+    // preview regression where the model emits tool calls as:
+    //   {"call_<24hex>": {"name":"bash", "arguments":{"command":"..."}}}
+    // sometimes one per object, sometimes multiple keys in one object,
+    // often wrapped in a ```json fence. The structured tool_calls path
+    // never fires for these, so they leak into delta.content and Telegram
+    // renders them as code blocks.
+    //
+    // Strategy: anchor on `"call_` preceded by `{` (i.e. the very first
+    // key of a JSON object). Walk back to the `{`, balance-extract the
+    // object, parse it, and for every top-level key matching `^call_`
+    // run `parse_tool_call_value` on the value. Skip anchors inside
+    // already-stripped ranges.
+    if has_dict_by_id_signal {
+        let mut search_from = 0;
+        while let Some(rel) = text[search_from..].find("\"call_") {
+            let anchor_pos = search_from + rel;
+            // Require the call_ key to be the FIRST key of an object so
+            // we don't sweep up prose like `the "call_123" field`. Walk
+            // backwards past whitespace and quotes to find `{`.
+            let mut back = anchor_pos;
+            while back > 0 {
+                let b = text.as_bytes()[back - 1];
+                if b.is_ascii_whitespace() || b == b'\n' || b == b'\r' {
+                    back -= 1;
+                    continue;
+                }
+                break;
+            }
+            if back == 0 || text.as_bytes()[back - 1] != b'{' {
+                search_from = anchor_pos + "\"call_".len();
+                continue;
+            }
+            let obj_start = back - 1;
+            // Skip if already covered by an earlier strip range.
+            if strip_ranges
+                .iter()
+                .any(|(s, e)| *s <= obj_start && obj_start < *e)
+            {
+                search_from = anchor_pos + "\"call_".len();
+                continue;
+            }
+            // Allow a small window of leading whitespace inside the
+            // markdown ```json fence; the fence itself isn't part of
+            // the JSON so we balance-extract starting at `{`.
+            let Some(consumed) = extract_balanced_json(&text[obj_start..]) else {
+                search_from = anchor_pos + "\"call_".len();
+                continue;
+            };
+            let obj_slice = &text[obj_start..obj_start + consumed];
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(obj_slice) else {
+                search_from = anchor_pos + "\"call_".len();
+                continue;
+            };
+            let Some(obj) = v.as_object() else {
+                search_from = anchor_pos + "\"call_".len();
+                continue;
+            };
+            let mut found_any = false;
+            for (key, val) in obj {
+                if !key.starts_with("call_") {
+                    continue;
+                }
+                if let Some(call) = parse_tool_call_value(val) {
+                    tool_calls.push(call);
+                    found_any = true;
+                }
+            }
+            if found_any {
+                strip_ranges.push((obj_start, obj_start + consumed));
+                search_from = obj_start + consumed;
+            } else {
+                search_from = anchor_pos + "\"call_".len();
             }
         }
     }
