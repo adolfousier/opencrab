@@ -14,7 +14,6 @@ pub mod rsi_proposals;
 pub mod rsi_sync;
 pub mod self_update;
 pub mod skills;
-pub mod token_calibration;
 pub mod tokenizer;
 pub mod tools;
 

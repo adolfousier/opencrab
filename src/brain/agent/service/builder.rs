@@ -358,8 +358,10 @@ impl AgentService {
         self.default_system_brain.as_ref()
     }
 
-    /// Raw cl100k_base estimate of system_brain + tool schemas. Used as
-    /// the budget denominator and as the calibration source-of-truth.
+    /// Raw cl100k_base estimate of system_brain + tool schemas.
+    /// Kept for the few internal call sites that still need a local
+    /// floor estimate (e.g. when a provider reports zero input_tokens).
+    /// NOT used for the ctx footer — see `base_context_tokens()`.
     pub fn base_context_tokens_raw(&self) -> u32 {
         use crate::brain::tokenizer::count_tokens;
         let system_tokens = self
@@ -371,26 +373,20 @@ impl AgentService {
         (system_tokens + tool_tokens) as u32
     }
 
-    /// Estimate the baseline token cost of every request for this agent:
-    /// system prompt + tool definitions, *calibrated* to the active
-    /// provider's tokenizer. Used by the ctx-display floor for fresh
-    /// sessions before any API response has arrived.
+    /// Baseline for the ctx-footer display BEFORE any API response has
+    /// landed for this session. Returns 0 — opencrabs uses ONLY
+    /// real-time data from the provider's `usage.input_tokens`. There
+    /// is no local tokenizer estimate, no per-provider calibration
+    /// ratio, no prediction. On `/new` the footer shows `0/max` until
+    /// the first turn completes, then every subsequent footer shows the
+    /// provider's actual reported value verbatim.
     ///
-    /// cl100k_base — the local tokenizer — overcounts Qwen-family models
-    /// by ~2.4× and is off by varying amounts for other tokenizers, so
-    /// the raw count would show a misleading initial value that "drops"
-    /// the moment the first real `usage.input_tokens` arrives. Behaviour:
-    ///
-    ///   - **Calibrated provider**: apply the learned ratio, return a
-    ///     close-to-real estimate.
-    ///   - **Uncalibrated provider (first ever /new on this provider)**:
-    ///     return 0. The footer renders 0/max until the first turn
-    ///     observation lands, at which point both the calibration and
-    ///     the displayed value flip to real numbers.
+    /// History note: 2026-05-24 a calibration system tried to predict
+    /// this floor from a learned `real/local` ratio per provider; it
+    /// shipped wrong (issue #119) and was ripped out the same week.
+    /// Real data only, no guessing.
     pub fn base_context_tokens(&self) -> u32 {
-        let raw = self.base_context_tokens_raw();
-        let provider_name = self.provider_name();
-        crate::brain::token_calibration::calibrate(&provider_name, raw).unwrap_or(0)
+        0
     }
 
     /// Get the default model for this provider. Mirrors `provider_name()`
