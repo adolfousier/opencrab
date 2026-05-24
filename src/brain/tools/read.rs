@@ -57,21 +57,7 @@ impl Tool for ReadTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file to read (absolute or relative to working directory)"
-                },
-                "start_line": {
-                    "type": "integer",
-                    "description": "Optional: Starting line number (0-indexed)",
-                    "minimum": 0
-                },
-                "line_count": {
-                    "type": "integer",
-                    "description": "Optional: Number of lines to read from start_line",
-                    "minimum": 1
-                },
-                "hashline": {
-                    "type": "boolean",
-                    "description": "Optional: Output lines in HASH|content format (2-char content hash) for use with hashline_edit tool. Default: false."
+                    "description": "File path"
                 }
             },
             "required": ["path"]
