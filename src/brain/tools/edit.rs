@@ -118,45 +118,51 @@ impl Tool for EditTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path"
+                    "description": "Path to the file to edit"
+                },
+                "operation": {
+                    "type": "string",
+                    "description": "Type of edit operation",
+                    "enum": ["replace", "replace_lines", "insert_line", "delete_lines", "regex_replace"]
                 },
                 "old_text": {
                     "type": "string",
-                    "description": "Text to find"
+                    "description": "Text to find and replace (for 'replace' operation)"
                 },
                 "new_text": {
                     "type": "string",
-                    "description": "Replacement text"
+                    "description": "Replacement text (for 'replace' and 'replace_lines' operations)"
                 },
                 "start_line": {
                     "type": "integer",
-                    "description": "Start line (0-indexed)",
+                    "description": "Starting line number (0-indexed, for line operations)",
                     "minimum": 0
                 },
                 "end_line": {
                     "type": "integer",
-                    "description": "End line (0-indexed, inclusive)",
+                    "description": "Ending line number (0-indexed, inclusive, for line operations)",
                     "minimum": 0
                 },
                 "line": {
                     "type": "integer",
-                    "description": "Insert at line (0-indexed)",
+                    "description": "Line number to insert at (0-indexed, for 'insert_line')",
                     "minimum": 0
                 },
                 "text": {
                     "type": "string",
-                    "description": "Text to insert"
+                    "description": "Text to insert (for 'insert_line')"
                 },
                 "pattern": {
                     "type": "string",
-                    "description": "Regex pattern"
+                    "description": "Regex pattern to match (for 'regex_replace')"
                 },
                 "replacement": {
                     "type": "string",
-                    "description": "Regex replacement"
+                    "description": "Replacement text (for 'regex_replace')"
                 },
             },
-            "required": ["path"]
+            "required": ["path"],
+            "description": "If 'operation' is omitted but 'old_text' and 'new_text' are provided, 'replace' is inferred (Claude-style Edit shape)."
         })
     }
 

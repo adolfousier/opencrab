@@ -41,15 +41,15 @@ impl Tool for WriteTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path"
+                    "description": "Path to the file to write (absolute or relative to working directory)"
                 },
                 "content": {
                     "type": "string",
-                    "description": "File content"
+                    "description": "Content to write to the file"
                 },
                 "create_dirs": {
                     "type": "boolean",
-                    "description": "Create parent dirs (default: false)",
+                    "description": "Whether to create parent directories if they don't exist (default: false)",
                     "default": false
                 }
             },
