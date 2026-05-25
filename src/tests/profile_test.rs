@@ -1453,3 +1453,122 @@ fn test_resolve_profile_home_default_explicit() {
         unsafe { std::env::set_var("OPENCRABS_PROFILE", val) };
     }
 }
+
+// ─── Brain-file seeding on profile create (commit 8d87559b) ─────────────────
+
+/// Names of the 8 templates `create_profile` is contracted to seed.
+/// Must stay in sync with `seed_brain_templates` and the onboarding
+/// wizard's `TEMPLATE_FILES`.
+const EXPECTED_SEEDED_BRAIN_FILES: &[&str] = &[
+    "SOUL.md",
+    "IDENTITY.md",
+    "USER.md",
+    "AGENTS.md",
+    "TOOLS.md",
+    "MEMORY.md",
+    "CODE.md",
+    "SECURITY.md",
+];
+
+#[test]
+fn create_profile_seeds_all_brain_templates() {
+    let _guard = fs_lock();
+    let name = "_test_seed_brain";
+    let profile_dir = base_opencrabs_dir().join("profiles").join(name);
+
+    // Clean any leftovers from a prior aborted run.
+    let _ = fs::remove_dir_all(&profile_dir);
+    let mut reg = ProfileRegistry::load().unwrap_or_default();
+    reg.profiles.remove(name);
+    let _ = reg.save();
+
+    let path = create_profile(name, Some("brain-seed test")).unwrap();
+
+    for filename in EXPECTED_SEEDED_BRAIN_FILES {
+        let target = path.join(filename);
+        assert!(
+            target.exists(),
+            "create_profile must seed {filename} (issue from #120 audit)",
+        );
+        let content = fs::read_to_string(&target).expect("seeded file readable");
+        assert!(
+            !content.trim().is_empty(),
+            "{filename} seeded but empty — bundled template is broken",
+        );
+    }
+
+    // Cleanup
+    let _ = delete_profile(name);
+}
+
+#[test]
+fn create_profile_does_not_overwrite_existing_brain_files() {
+    // If the user pre-created the profile dir AND wrote their own
+    // SOUL.md before calling create_profile, the seeder must NOT
+    // overwrite it. (Realistic when imports happen out of band, or
+    // a user is recovering from a broken state.)
+    let _guard = fs_lock();
+    let name = "_test_seed_no_overwrite";
+    let profile_dir = base_opencrabs_dir().join("profiles").join(name);
+    let _ = fs::remove_dir_all(&profile_dir);
+    let mut reg = ProfileRegistry::load().unwrap_or_default();
+    reg.profiles.remove(name);
+    let _ = reg.save();
+
+    // Pre-create the dir and drop a custom SOUL.md.
+    fs::create_dir_all(&profile_dir).unwrap();
+    fs::write(profile_dir.join("SOUL.md"), "# my custom soul").unwrap();
+
+    // `create_profile` would error on the existing dir — clear our
+    // pre-existing marker for the dir check, but leave the file.
+    // We exercise the seeder directly instead via the public path it
+    // uses inside create_profile.
+    crate::config::profile::seed_brain_templates(&profile_dir);
+
+    assert_eq!(
+        fs::read_to_string(profile_dir.join("SOUL.md")).unwrap(),
+        "# my custom soul",
+        "seeder must not clobber an existing custom SOUL.md",
+    );
+    // Other templates SHOULD still be seeded for the first time.
+    assert!(
+        profile_dir.join("TOOLS.md").exists(),
+        "absent templates must still be seeded",
+    );
+
+    let _ = fs::remove_dir_all(&profile_dir);
+}
+
+#[test]
+fn create_profile_brain_files_are_non_trivial_size() {
+    // Sanity check that the templates pull in actual content (not the
+    // empty placeholders that would happen if include_str! ever pointed
+    // at the wrong path). TOOLS.md is the biggest template at ~40KB.
+    let _guard = fs_lock();
+    let name = "_test_seed_sizes";
+    let profile_dir = base_opencrabs_dir().join("profiles").join(name);
+    let _ = fs::remove_dir_all(&profile_dir);
+    let mut reg = ProfileRegistry::load().unwrap_or_default();
+    reg.profiles.remove(name);
+    let _ = reg.save();
+
+    let path = create_profile(name, None).unwrap();
+
+    let tools_bytes = fs::metadata(path.join("TOOLS.md"))
+        .expect("TOOLS.md exists")
+        .len();
+    assert!(
+        tools_bytes >= 10_000,
+        "TOOLS.md seeded at only {tools_bytes} bytes — template path is probably wrong",
+    );
+
+    let security_bytes = fs::metadata(path.join("SECURITY.md"))
+        .expect("SECURITY.md exists")
+        .len();
+    assert!(
+        security_bytes >= 1_000,
+        "SECURITY.md seeded at only {security_bytes} bytes — template path is probably wrong",
+    );
+
+    let _ = delete_profile(name);
+}
