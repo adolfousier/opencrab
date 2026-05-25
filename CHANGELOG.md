@@ -6,6 +6,149 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.28] - 2026-05-25
+
+25 commits since v0.3.27. Patch release covering STT/TTS fallback chains
+for voice notes, browser multi-step navigation hardening, qwen-3.7
+tool-call shape recovery, real-time ctx counter (calibration removed),
+auto-title fires on the first turn, and brain-template seeding for new
+profiles. Closes #117, #118, #119, #120.
+
+VOICEBOX + STT/TTS FALLBACK CHAINS (4 commits)
+
+Voicebox is a self-hosted Python STT/TTS service. When it crashes (the
+2026-05-23 librosa lazy_loader stub error from a PyInstaller bundle
+issue) or is offline, voice notes were lost. Three layers now keep them
+flowing:
+
+- 2-second liveness probe before every transcribe so a dead voicebox
+  fails in seconds instead of blocking on a 30-second multipart upload.
+- Known-error translator turns the librosa stub Python traceback into
+  an actionable rebuild instruction (collect-data + lazy_loader hook).
+- Per-provider STT and TTS fallback chains under [providers.stt] and
+  [providers.tts] in config.toml. User sets fallback_chain = ["groq",
+  "openai_compatible", "local"] once and outages auto-route through
+  the chain. First success wins, composite error on full-chain
+  failure. Labels case-insensitive with aliases.
+
+- 3bbeef29 feat(voicebox_stt): 2s liveness probe before multipart POST so dead voicebox fails fast
+- a4c1afe4 feat(voicebox_stt): translate librosa/lazy_loader stub error into actionable message
+- b0bc756e feat(voice): STT fallback chain — user-configured provider order with auto-failover
+- febfce99 feat(voice): TTS fallback chain (mirror of STT) + README docs for both
+
+BROWSER MULTI-STEP NAVIGATION HARDENING (6 commits)
+
+Browser turns were getting stuck at 32+ iterations rotating
+navigate-wait-screenshot without making progress. Six surgical fixes:
+
+- browser_click accepts text= and xpath= prefixes in addition to CSS,
+  so the agent does not have to reverse-engineer a selector when it
+  knows the visible label.
+- CSS-miss errors include an inline recovery hint pointing at
+  browser_find with mode=text/aria/role.
+- Empty-input warning no longer fires for tools whose schema has no
+  required fields (browser_screenshot accepts no args).
+- Semantic loop detection trips after 4+ screenshots in 8 iterations
+  with zero clicks or types, injects a nudge telling the agent to
+  interact instead of screenshot.
+- browser_screenshot hashes bytes and rejects identical repeats with
+  an actionable error pointing at click/type/navigate/find.
+- browser_navigate short-circuits same-URL re-navigation so the agent
+  does not waste 3s waiting for network-idle on a no-op.
+
+- 236eb7ca feat(browser_click): accept text= and xpath= selectors in addition to CSS
+- 38013094 feat(browser_click): inline recovery hint when CSS selector misses
+- 6601b101 fix(tool_loop): only warn on empty input when the tool actually requires fields
+- 6fae7296 feat(self-heal): semantic loop detection for browser screenshot-spam
+- f48dd66b feat(browser_screenshot): reject no-op repeats when the page hasn't changed
+- a3caff57 feat(browser_navigate): short-circuit same-URL re-navigation
+
+TOOL-CALL SHAPE RECOVERY (2 commits)
+
+Qwen-3.7-max-preview started emitting tool calls as
+`{"call_<hex>": {"name":"...", "arguments":{...}}}` (top-level object
+keyed by call ID). The existing extractor handled five other shapes
+but not this one, so calls leaked into delta.content as JSON and
+Telegram rendered them as code blocks. Two fixes:
+
+- The schema trim that probably triggered the regression in the model
+  (removed `operation` param + shortened param descriptions on
+  edit_file) was reverted.
+- The extractor got a new pass for dict-by-call-id, including the
+  markdown ```json fence wrapping the model often adds.
+
+- 13dae03b Revert "refactor(tools): trim file-editing schemas from 32 params to ~15"
+- b6288726 fix(custom_openai_compatible): extract dict-by-call-id tool call shape
+
+EDIT TOOL IMPROVEMENTS (2 commits, closes #117)
+
+- af0edd1f feat(edit): fuzzy line-sequence fallback for str_replace (H2 from agent-eval-matrix)
+- e2ef58f1 docs(hashline): fix tool descriptions to match hash-only ref format (issue #117, @leshchenko1979)
+
+BRAIN BACKUP ROTATION (1 commit)
+
+Backups for protected brain files now cap at 5 per file and 7 days
+maximum age. Without this they grew unbounded and consumed disk on
+RSI-heavy installs.
+
+- 705a13bb fix(brain): add backup rotation — max 5 per file, max 7 days old
+
+AUTO-TITLE FIXES (3 commits, closes #118, closes #120)
+
+Two bugs combined to leave Telegram sessions stuck with their default
+channel-generated title (`Telegram: DM <name> (<id>) [chat:<id>]`)
+forever, making the /sessions list look like 10 duplicate rows:
+
+- Auto-title only fired starting from the second user message because
+  the trigger required `db_message_count >= 1` (count taken before the
+  current message gets stored). Users who send one message per /new
+  session never had auto-title run. Now fires on the first turn.
+- mark_auto_title_attempted was set BEFORE the LLM call. If the LLM
+  failed, the flag stayed true forever and the session was stuck on
+  the default name. Error path now resets the flag so the next message
+  retries.
+
+- b65b23ba fix: prevent auto-title from re-triggering on subsequent messages
+- ea2943a6 fix: prevent auto-title from firing on every Telegram message
+- a12293d0 fix(auto-title): fire on the FIRST turn + retry when the LLM call fails (closes #118, closes #120)
+
+CTX COUNTER REAL-TIME DATA ONLY (1 commit, closes #119)
+
+The 2026-05-24 per-provider token-calibration system shipped with a
+brain-token double-count bug that learned a wrong ratio, making the
+footer jump from one value at /new to another value after the first
+real reply. The whole prediction system was the wrong approach since
+opencrabs already has real data from response.usage.input_tokens on
+every turn. Calibration module removed. /new shows 0K/200K 0%. Every
+reply afterward shows the exact provider-reported input tokens
+verbatim. No estimates, no learned ratios, no drift.
+
+- 54f19ffa fix(ctx-counter): real-time data only, rip out the calibration system (closes #119)
+
+PROFILE BRAIN-TEMPLATE SEEDING (3 commits)
+
+Audit triggered by @leshchenko1979's brain-file breakdown on #119 found
+that `opencrabs profile create <name>` only made the profile dir,
+`memory/`, and `logs/` — never seeded the brain templates. New profiles
+started with an empty brain dir and RSI sync did not fix it (it
+explicitly skips files that don't exist locally). Three commits:
+
+- create_profile now seeds all 8 brain templates (SOUL, IDENTITY, USER,
+  AGENTS, TOOLS, MEMORY, CODE, SECURITY) on profile creation.
+- sync_templates recovery path: when an existing profile is missing
+  more than half the core templates, seed them on the next RSI cycle.
+  Rescues older profiles created before the fix without user action.
+- New profile_test coverage locking in the seeding contract.
+
+- 8d87559b fix(profile): seed brain-file templates on `profile create` so new profiles aren't blank
+- 52c1baa9 fix(rsi_sync): re-seed brain templates when a profile dir is mostly empty
+- 7d1dec35 test(profile): cover brain-template seeding on create_profile + the no-overwrite contract
+
+STYLE (2 commits)
+
+- 6714caaa style: rustfmt pass [skip ci]
+- 7b7222e8 style: cargo fmt pass over voicebox + profile commits [skip ci]
+
 ## [0.3.27] - 2026-05-22
 
 3 commits since v0.3.26. Patch release fixing session duplication caused
@@ -1170,7 +1313,8 @@ provider and context budget.
 - **Anti-code-block nudge for local models** — brain instructions explicitly
   tell the model to use `tool_calls`, not markdown code blocks.
 
-[Unreleased]: https://github.com/adolfousier/opencrabs/compare/v0.3.27...HEAD
+[Unreleased]: https://github.com/adolfousier/opencrabs/compare/v0.3.28...HEAD
+[0.3.28]: https://github.com/adolfousier/opencrabs/compare/v0.3.27...v0.3.28
 [0.3.27]: https://github.com/adolfousier/opencrabs/compare/v0.3.26...v0.3.27
 [0.3.26]: https://github.com/adolfousier/opencrabs/compare/v0.3.25...v0.3.26
 [0.3.25]: https://github.com/adolfousier/opencrabs/compare/v0.3.24...v0.3.25
