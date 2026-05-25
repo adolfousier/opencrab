@@ -181,7 +181,20 @@ impl ProfileRegistry {
 
 // ─── Profile CRUD ────────────────────────────────────────────────────
 
-/// Create a new named profile with its directory structure.
+/// Create a new named profile with its directory structure AND the
+/// default brain-file templates seeded into the profile's root.
+///
+/// Without seeding, a freshly created profile starts with an empty
+/// brain dir. `RsiSync::sync_templates` skips files that don't exist
+/// locally (by design — it never CREATES brain files, only updates
+/// existing ones), so the empty state was sticky: no SOUL.md, no
+/// TOOLS.md, no SECURITY.md, etc. until the user manually copied them
+/// or re-ran the full onboarding wizard with the profile active.
+/// Issue noticed during the audit of #120's `ops` profile breakdown.
+///
+/// We materialize the same 8 files the wizard does (SOUL, IDENTITY,
+/// USER, AGENTS, TOOLS, MEMORY, CODE, SECURITY) so every profile
+/// starts with a working brain identical to a fresh default install.
 pub fn create_profile(name: &str, description: Option<&str>) -> Result<PathBuf> {
     validate_profile_name(name)?;
 
@@ -199,6 +212,12 @@ pub fn create_profile(name: &str, description: Option<&str>) -> Result<PathBuf> 
     fs::create_dir_all(profile_dir.join("memory"))?;
     fs::create_dir_all(profile_dir.join("logs"))?;
 
+    // Seed the default brain-file templates so the profile starts with
+    // a working brain. Errors here are logged but non-fatal — the
+    // profile still gets registered; the user can re-seed by running
+    // the onboarding wizard with the profile active.
+    seed_brain_templates(&profile_dir);
+
     // Register under file lock to prevent concurrent write races
     let name_owned = name.to_string();
     let desc_owned = description.map(|s| s.to_string());
@@ -208,6 +227,69 @@ pub fn create_profile(name: &str, description: Option<&str>) -> Result<PathBuf> 
 
     tracing::info!("Created profile '{}' at {}", name, profile_dir.display());
     Ok(profile_dir)
+}
+
+/// Write the default brain-file templates into `profile_dir`. The exact
+/// same list the onboarding wizard's `seed_templates` path writes, so
+/// CLI `profile create` and TUI onboarding produce identical brain
+/// starting states. Files already present in `profile_dir` are NOT
+/// overwritten (defensive — this function is also safe to call from
+/// the template-sync recovery path).
+pub(crate) fn seed_brain_templates(profile_dir: &Path) {
+    // Inline the canonical template set rather than reaching into the
+    // TUI module — `config` must not depend on `tui`. The templates
+    // are baked into the binary at compile time via `include_str!`,
+    // so this list and the TUI's `TEMPLATE_FILES` stay in lockstep
+    // because both reference the same files under
+    // `src/docs/reference/templates/`.
+    const TEMPLATES: &[(&str, &str)] = &[
+        (
+            "SOUL.md",
+            include_str!("../docs/reference/templates/SOUL.md"),
+        ),
+        (
+            "IDENTITY.md",
+            include_str!("../docs/reference/templates/IDENTITY.md"),
+        ),
+        (
+            "USER.md",
+            include_str!("../docs/reference/templates/USER.md"),
+        ),
+        (
+            "AGENTS.md",
+            include_str!("../docs/reference/templates/AGENTS.md"),
+        ),
+        (
+            "TOOLS.md",
+            include_str!("../docs/reference/templates/TOOLS.md"),
+        ),
+        (
+            "MEMORY.md",
+            include_str!("../docs/reference/templates/MEMORY.md"),
+        ),
+        (
+            "CODE.md",
+            include_str!("../docs/reference/templates/CODE.md"),
+        ),
+        (
+            "SECURITY.md",
+            include_str!("../docs/reference/templates/SECURITY.md"),
+        ),
+    ];
+
+    for (filename, content) in TEMPLATES {
+        let target = profile_dir.join(filename);
+        if target.exists() {
+            continue;
+        }
+        if let Err(e) = fs::write(&target, content) {
+            tracing::warn!(
+                "create_profile: failed to seed {} in {}: {e}",
+                filename,
+                profile_dir.display(),
+            );
+        }
+    }
 }
 
 /// List all profiles (always includes "default").
