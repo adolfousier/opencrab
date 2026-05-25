@@ -437,7 +437,11 @@ fn extract_dict_by_call_id_single() {
     // top-level object keyed by call_<hex>, value is {name, arguments}.
     let text = r#"{"call_5f8d9c7b4a3e2f1c8d6e5b9a": {"name": "read_file", "arguments": {"path": "/tmp/x"}}}"#;
     let (calls, remaining) = extract_text_tool_calls(text);
-    assert_eq!(calls.len(), 1, "should extract one tool call from dict-by-id");
+    assert_eq!(
+        calls.len(),
+        1,
+        "should extract one tool call from dict-by-id"
+    );
     assert_eq!(calls[0].0, "read_file");
     assert_eq!(calls[0].1["path"], "/tmp/x");
     assert!(

@@ -381,8 +381,7 @@ impl AgentService {
                         } else {
                             // Empty/unusable title — allow the next message
                             // to retry. Same recovery path as the Err arm.
-                            let _ =
-                                session_svc.reset_auto_title_attempted(session_id).await;
+                            let _ = session_svc.reset_auto_title_attempted(session_id).await;
                         }
                     }
                     Err(e) => {

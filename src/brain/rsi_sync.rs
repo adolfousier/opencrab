@@ -349,10 +349,7 @@ fn seed_missing_templates_if_blank(home: &std::path::Path) {
         "CODE.md",
         "SECURITY.md",
     ];
-    let missing = CORE
-        .iter()
-        .filter(|f| !home.join(f).exists())
-        .count();
+    let missing = CORE.iter().filter(|f| !home.join(f).exists()).count();
     if missing * 2 <= CORE.len() {
         return;
     }
