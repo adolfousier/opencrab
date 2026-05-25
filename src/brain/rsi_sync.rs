@@ -292,6 +292,16 @@ pub async fn sync_templates() -> Vec<FileSyncResult> {
     let mut results = Vec::new();
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
+    // Recovery seed for profiles created before the
+    // `seed_brain_templates` fix landed: if the home directory is
+    // missing the core brain files entirely (counted as "more than
+    // half of the templates are missing"), call the same template
+    // seeder `create_profile` uses. This rescues old `opencrabs
+    // profile create <name>` installs whose brain dir was left blank.
+    // Existing files are NOT overwritten by the seeder, so a healthy
+    // install is unaffected.
+    seed_missing_templates_if_blank(&home);
+
     for filename in TRACKED_FILES {
         let local_path = home.join(filename);
 
@@ -316,6 +326,43 @@ pub async fn sync_templates() -> Vec<FileSyncResult> {
     }
 
     results
+}
+
+/// Recovery seed: if `home` is missing more than half of the core
+/// brain-file templates, run `seed_brain_templates` to restore them.
+/// Used by `sync_templates` to rescue profiles created before the
+/// `create_profile` template-seeding fix.
+///
+/// The threshold (more than half missing) prevents a healthy install
+/// from triggering re-seeding when only one or two non-template files
+/// happen to be absent (e.g. user intentionally deleted USER.md). A
+/// brand-new empty profile dir, by contrast, will have all 8 missing
+/// and definitely needs seeding.
+fn seed_missing_templates_if_blank(home: &std::path::Path) {
+    const CORE: &[&str] = &[
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "AGENTS.md",
+        "TOOLS.md",
+        "MEMORY.md",
+        "CODE.md",
+        "SECURITY.md",
+    ];
+    let missing = CORE
+        .iter()
+        .filter(|f| !home.join(f).exists())
+        .count();
+    if missing * 2 <= CORE.len() {
+        return;
+    }
+    tracing::info!(
+        "RSI sync: home '{}' is missing {}/{} core brain files — re-seeding from templates",
+        home.display(),
+        missing,
+        CORE.len(),
+    );
+    crate::config::profile::seed_brain_templates(home);
 }
 
 /// Sync a single brain file.
