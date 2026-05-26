@@ -122,6 +122,7 @@ pub mod slash_autocomplete_dimensions_test;
 pub mod split_pane_test;
 pub mod subagent_test;
 pub mod telegram_resume_test;
+pub mod telegram_session_resolve_test;
 pub mod token_tracking_test;
 pub mod tool_execution_repo_test;
 pub mod tool_loop_helpers_test;
