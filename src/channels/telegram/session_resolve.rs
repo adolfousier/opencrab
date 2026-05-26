@@ -156,4 +156,22 @@ mod tests {
             ResolveSource::Suffix
         );
     }
+
+    #[test]
+    fn session_idle_expired_within_and_past_window() {
+        let recent = chrono::Utc::now() - chrono::Duration::minutes(30);
+        assert!(!session_idle_expired(recent, Some(1.0)));
+
+        let stale = chrono::Utc::now() - chrono::Duration::hours(2);
+        assert!(session_idle_expired(stale, Some(1.0)));
+        assert!(!session_idle_expired(stale, None));
+    }
+
+    #[test]
+    fn session_idle_expired_boundary_not_yet_expired() {
+        let at_limit = chrono::Utc::now() - chrono::Duration::seconds(3600);
+        assert!(!session_idle_expired(at_limit, Some(1.0)));
+        let past_limit = chrono::Utc::now() - chrono::Duration::seconds(3601);
+        assert!(session_idle_expired(past_limit, Some(1.0)));
+    }
 }

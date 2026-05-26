@@ -893,6 +893,8 @@ pub(crate) async fn handle_message(
         session_resolve::build_legacy_session_title(is_dm, &user.first_name, user_id, &chat_title);
 
     let session_id = {
+        // Resolve policy (chat map → suffix → create): see
+        // session_resolve::choose_resolve_source and telegram_session_resolve_test.
         // 0) Explicit chat→session binding from /sessions switch or prior message.
         if let Some(bound_id) = telegram_state.chat_session(chat_id).await
             && let Ok(Some(bound)) = session_svc.get_session(bound_id).await

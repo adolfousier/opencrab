@@ -1,8 +1,8 @@
 //! Integration tests for Telegram session title + label drift (issue #121).
 
 use crate::channels::telegram::session_resolve::{
-    build_session_title, chat_id_suffix, choose_resolve_source, should_refresh_label,
-    ResolveSource,
+    build_session_title, chat_id_suffix, choose_resolve_source, session_idle_expired,
+    should_refresh_label, ResolveSource,
 };
 use crate::channels::telegram::TelegramState;
 use uuid::Uuid;
@@ -96,6 +96,35 @@ async fn auto_titled_title_survives_should_refresh_check() {
         chat_id_suffix(99)
     );
     assert!(!should_refresh_label(&auto_titled, &template));
+}
+
+/// Mirrors handler chat-bound idle branch: archive stale bound row, create replacement.
+#[tokio::test]
+async fn chat_bound_idle_archives_and_creates_new_session() {
+    let (db, repo) = fresh_repo().await;
+    let ctx = ServiceContext::new(db.pool().clone());
+    let svc = SessionService::new(ctx.clone());
+    let chat_id = 77_i64;
+    let title = build_session_title(true, "U", 1, "", chat_id);
+
+    let mut bound = Session::new(Some(title.clone()), None, None);
+    bound.updated_at = chrono::Utc::now() - chrono::Duration::hours(48);
+    repo.create(&bound).await.expect("create bound");
+    assert!(session_idle_expired(bound.updated_at, Some(1.0)));
+
+    repo.archive(bound.id).await.expect("archive idle bound");
+    let new_session = svc
+        .create_session(Some(title))
+        .await
+        .expect("create replacement");
+
+    assert_ne!(new_session.id, bound.id);
+    let archived = svc
+        .get_session(bound.id)
+        .await
+        .expect("get")
+        .expect("row");
+    assert!(archived.is_archived());
 }
 
 #[tokio::test]
