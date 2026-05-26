@@ -32,6 +32,36 @@ pub fn chat_id_suffix(chat_id: i64) -> String {
     format!("[chat:{chat_id}]")
 }
 
+/// True when a session exceeded the configured idle window (same rule as handler suffix path).
+pub fn session_idle_expired(updated_at: chrono::DateTime<chrono::Utc>, idle_hours: Option<f64>) -> bool {
+    idle_hours.is_some_and(|h| {
+        let elapsed = (chrono::Utc::now() - updated_at).num_seconds();
+        elapsed > (h * 3600.0) as i64
+    })
+}
+
+/// Handler resolve policy: explicit chat binding wins over suffix `updated_at` winner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveSource {
+    ChatBound,
+    Suffix,
+    Create,
+}
+
+pub fn choose_resolve_source(
+    chat_bound: Option<uuid::Uuid>,
+    bound_archived: bool,
+    suffix_match: Option<uuid::Uuid>,
+) -> ResolveSource {
+    if chat_bound.is_some() && !bound_archived {
+        ResolveSource::ChatBound
+    } else if suffix_match.is_some() {
+        ResolveSource::Suffix
+    } else {
+        ResolveSource::Create
+    }
+}
+
 /// Whether to overwrite a stored session title with the freshly built template.
 ///
 /// - Default DM titles: refresh when the template default changed (display name).
@@ -105,5 +135,25 @@ mod tests {
         let old = build_session_title(true, "Alice", 1, "", 99);
         let new = build_session_title(true, "Bob", 1, "", 99);
         assert!(should_refresh_label(&old, &new));
+    }
+
+    #[test]
+    fn chat_bound_wins_over_suffix_candidate() {
+        let a = uuid::Uuid::new_v4();
+        let b = uuid::Uuid::new_v4();
+        assert_eq!(
+            choose_resolve_source(Some(a), false, Some(b)),
+            ResolveSource::ChatBound
+        );
+    }
+
+    #[test]
+    fn archived_bound_falls_through_to_suffix() {
+        let a = uuid::Uuid::new_v4();
+        let b = uuid::Uuid::new_v4();
+        assert_eq!(
+            choose_resolve_source(Some(a), true, Some(b)),
+            ResolveSource::Suffix
+        );
     }
 }

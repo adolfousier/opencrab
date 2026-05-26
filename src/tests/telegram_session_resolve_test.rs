@@ -1,8 +1,11 @@
 //! Integration tests for Telegram session title + label drift (issue #121).
 
 use crate::channels::telegram::session_resolve::{
-    build_session_title, chat_id_suffix, should_refresh_label,
+    build_session_title, chat_id_suffix, choose_resolve_source, should_refresh_label,
+    ResolveSource,
 };
+use crate::channels::telegram::TelegramState;
+use uuid::Uuid;
 use crate::db::Database;
 use crate::db::models::Session;
 use crate::db::repository::SessionRepository;
@@ -15,6 +18,30 @@ async fn fresh_repo() -> (Database, SessionRepository) {
     db.run_migrations().await.expect("migrations");
     let repo = SessionRepository::new(db.pool().clone());
     (db, repo)
+}
+
+#[test]
+fn resolve_policy_prefers_chat_bound_over_suffix_winner() {
+    let bound = Uuid::new_v4();
+    let suffix = Uuid::new_v4();
+    assert_eq!(
+        choose_resolve_source(Some(bound), false, Some(suffix)),
+        ResolveSource::ChatBound
+    );
+}
+
+#[tokio::test]
+async fn telegram_state_chat_map_survives_suffix_competition() {
+    let state = TelegramState::new();
+    let chat_id = 4242_i64;
+    let bound = Uuid::new_v4();
+    let suffix_winner = Uuid::new_v4();
+    state.register_session_chat(bound, chat_id).await;
+    assert_eq!(state.chat_session(chat_id).await, Some(bound));
+    assert_eq!(
+        choose_resolve_source(state.chat_session(chat_id).await, false, Some(suffix_winner)),
+        ResolveSource::ChatBound
+    );
 }
 
 #[test]
