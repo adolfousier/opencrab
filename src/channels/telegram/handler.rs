@@ -3,6 +3,7 @@
 //! Processes incoming messages: text, voice (STT/TTS), photos, image documents, allowlist enforcement.
 //! Supports live streaming (edit-based) and Telegram-native approval inline keyboards.
 
+use super::session_resolve;
 use super::TelegramState;
 use crate::brain::agent::{AgentService, ProgressCallback, ProgressEvent};
 use crate::config::{Config, RespondTo};
