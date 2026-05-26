@@ -880,25 +880,46 @@ pub(crate) async fn handle_message(
     // 2026-04-25: a "🦀 KRAB-INCEPTION 🦀" group renamed to "🦀 HEY IOLO
     // BUILD 🦀" produced two distinct DB rows under the old title-only
     // lookup. The chat_id suffix prevents that.
-    let chat_id_suffix = format!("[chat:{}]", msg.chat.id.0);
-    let session_title = if is_dm {
-        format!(
-            "Telegram: DM {} ({}) {}",
-            user.first_name, user_id, chat_id_suffix
-        )
-    } else {
-        format!("Telegram: {} {}", chat_title, chat_id_suffix)
-    };
+    let chat_id = msg.chat.id.0;
+    let chat_id_suffix = session_resolve::chat_id_suffix(chat_id);
+    let session_title = session_resolve::build_session_title(
+        is_dm,
+        &user.first_name,
+        user_id,
+        &chat_title,
+        chat_id,
+    );
     // Legacy title format used before the chat_id suffix was added.
-    // Kept so the first message after the upgrade matches the existing
-    // row instead of orphaning it.
-    let legacy_title = if is_dm {
-        format!("Telegram: DM {} ({})", user.first_name, user_id)
-    } else {
-        format!("Telegram: {}", chat_title)
-    };
+    let legacy_title =
+        session_resolve::build_legacy_session_title(is_dm, &user.first_name, user_id, &chat_title);
 
     let session_id = {
+        // 0) Explicit chat→session binding from /sessions switch or prior message.
+        if let Some(bound_id) = telegram_state.chat_session(chat_id).await
+            && let Ok(Some(bound)) = session_svc.get_session(bound_id).await
+            && !bound.is_archived()
+        {
+            if session_resolve::should_refresh_label(
+                bound.title.as_deref().unwrap_or(""),
+                &session_title,
+            ) {
+                let mut renamed = bound.clone();
+                renamed.title = Some(session_title.clone());
+                if let Err(e) = session_svc.update_session(&renamed).await {
+                    tracing::warn!(
+                        "Telegram: failed to refresh session {} label: {}",
+                        bound_id,
+                        e
+                    );
+                }
+            }
+            tracing::debug!(
+                "Telegram: using chat-bound session {} for chat_id={}",
+                bound_id,
+                chat_id
+            );
+            bound_id
+        } else {
         // 1) Stable lookup: any session whose title ends with the chat_id
         //    suffix is THIS chat regardless of how the label has changed.
         // 2) Legacy fallback: pre-suffix sessions match the bare title.
@@ -963,12 +984,12 @@ pub(crate) async fn handle_message(
                     }
                 }
             } else {
-                // Label drift: the chat was renamed since this session
-                // was created. The chat_id suffix kept us pointing at
-                // the right row, but the stored title still shows the
-                // old label. Update it so /sessions etc. show the
-                // user's current name for the chat.
-                if session.title.as_deref() != Some(session_title.as_str()) {
+                // Label drift: refresh display label when appropriate (issue #121:
+                // do not revert auto-titled DM sessions to the default template).
+                if session_resolve::should_refresh_label(
+                    session.title.as_deref().unwrap_or(""),
+                    &session_title,
+                ) {
                     let mut renamed = session.clone();
                     let prev_title = renamed.title.clone().unwrap_or_default();
                     renamed.title = Some(session_title.clone());
@@ -1018,6 +1039,7 @@ pub(crate) async fn handle_message(
                     return Ok(());
                 }
             }
+        }
         }
     };
 
