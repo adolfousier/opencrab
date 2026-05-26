@@ -896,9 +896,14 @@ pub(crate) async fn handle_message(
         // Resolve policy (chat map → suffix → create): see
         // session_resolve::choose_resolve_source and telegram_session_resolve_test.
         // 0) Explicit chat→session binding from /sessions switch or prior message.
+        // Policy: choose_resolve_source (tests) — ChatBound when map → live row.
         if let Some(bound_id) = telegram_state.chat_session(chat_id).await
             && let Ok(Some(bound)) = session_svc.get_session(bound_id).await
             && !bound.is_archived()
+            && matches!(
+                session_resolve::choose_resolve_source(Some(bound_id), false, None),
+                session_resolve::ResolveSource::ChatBound
+            )
         {
             if session_resolve::session_idle_expired(bound.updated_at, idle_timeout_hours) {
                 if let Err(e) = session_svc.archive_session(bound.id).await {

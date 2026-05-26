@@ -8,7 +8,6 @@ use crate::brain::agent::AgentService;
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
 use crate::services::{ServiceContext, SessionService};
-use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::sync::Mutex;
@@ -107,9 +106,6 @@ impl TelegramAgent {
                 }
             }
 
-            // Per-user session tracking for non-owner users (owner shares TUI session)
-            let extra_sessions: Arc<Mutex<HashMap<i64, (Uuid, std::time::Instant)>>> =
-                Arc::new(Mutex::new(HashMap::new()));
             let agent = self.agent_service.clone();
             let session_svc = self.session_service.clone();
             let bot_token = Arc::new(token);
@@ -179,14 +175,12 @@ impl TelegramAgent {
                 let agent = agent.clone();
                 let session_svc = session_svc.clone();
                 let shared_session = shared_session.clone();
-                let extra_sessions = extra_sessions.clone();
                 let config_rx = config_rx.clone();
                 move |bot: Bot, query: CallbackQuery| {
                     let state = telegram_state.clone();
                     let agent = agent.clone();
                     let session_svc = session_svc.clone();
                     let shared_session = shared_session.clone();
-                    let extra_sessions = extra_sessions.clone();
                     let config_rx = config_rx.clone();
                     async move {
                         if let Some(data) = query.data.as_deref() {
@@ -382,15 +376,16 @@ impl TelegramAgent {
 
                                     if is_owner {
                                         *shared_session.lock().await = Some(new_id);
-                                    } else {
-                                        extra_sessions.lock().await.insert(
-                                            caller_id,
-                                            (new_id, std::time::Instant::now()),
-                                        );
                                     }
-                                    state
-                                        .register_session_chat(new_id, query.message.as_ref().map(|m| m.chat().id.0).unwrap_or(caller_id))
-                                        .await;
+                                    // Owner and guest: bind chat_id → session_id for
+                                    // handle_message (issue #121). Guest extra_sessions
+                                    // map was removed — it was never read on ingest.
+                                    let switch_chat_id = query
+                                        .message
+                                        .as_ref()
+                                        .map(|m| m.chat().id.0)
+                                        .unwrap_or(caller_id);
+                                    state.register_session_chat(new_id, switch_chat_id).await;
 
                                     // Touch updated_at so find_session_by_title_suffix returns this session on next message
                                     if let Ok(Some(s)) = session_svc.get_session(new_id).await {

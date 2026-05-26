@@ -99,6 +99,43 @@ async fn auto_titled_title_survives_should_refresh_check() {
 }
 
 /// Mirrors handler chat-bound idle branch: archive stale bound row, create replacement.
+/// Guest /sessions switch only needs register_session_chat (extra_sessions map removed).
+#[tokio::test]
+async fn register_session_chat_binds_guest_dm() {
+    let state = TelegramState::new();
+    let guest_chat_id = 9988_i64;
+    let session_id = Uuid::new_v4();
+    state.register_session_chat(session_id, guest_chat_id).await;
+    assert_eq!(state.chat_session(guest_chat_id).await, Some(session_id));
+    assert_eq!(
+        choose_resolve_source(state.chat_session(guest_chat_id).await, false, None),
+        ResolveSource::ChatBound
+    );
+}
+
+#[tokio::test]
+async fn archived_chat_map_entry_uses_suffix_not_bound() {
+    let bound = Uuid::new_v4();
+    let suffix = Uuid::new_v4();
+    assert_eq!(
+        choose_resolve_source(Some(bound), true, Some(suffix)),
+        ResolveSource::Suffix
+    );
+}
+
+#[tokio::test]
+async fn suffix_path_when_chat_map_empty() {
+    let suffix = Uuid::new_v4();
+    assert_eq!(
+        choose_resolve_source(None, false, Some(suffix)),
+        ResolveSource::Suffix
+    );
+    assert_eq!(
+        choose_resolve_source(None, false, None),
+        ResolveSource::Create
+    );
+}
+
 #[tokio::test]
 async fn chat_bound_idle_archives_and_creates_new_session() {
     let (db, repo) = fresh_repo().await;
