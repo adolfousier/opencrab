@@ -3790,11 +3790,26 @@ impl AgentService {
                                         }
 
                                         // Auto-record to feedback ledger (fire-and-forget)
+                                        let feedback_snippet = if !success && tool_name == "bash" {
+                                            let cmd_prefix = tool_input
+                                                .get("command")
+                                                .and_then(|v| v.as_str())
+                                                .map(|cmd| {
+                                                    let truncated: String = cmd.chars().take(300).collect();
+                                                    format!("[command: {}] ", truncated)
+                                                })
+                                                .unwrap_or_default();
+                                            Some(format!("{}{}", cmd_prefix, content))
+                                        } else if !success {
+                                            Some(content.clone())
+                                        } else {
+                                            None
+                                        };
                                         self.record_tool_feedback(
                                             session_id,
                                             &tool_name,
                                             success,
-                                            if success { None } else { Some(&content) },
+                                            feedback_snippet.as_deref(),
                                         );
 
                                         // Record tool execution for usage dashboard
@@ -3995,11 +4010,26 @@ impl AgentService {
                         }
 
                         // Auto-record to feedback ledger (fire-and-forget)
+                        let feedback_snippet = if !success && tool_name == "bash" {
+                            let cmd_prefix = tool_input
+                                .get("command")
+                                .and_then(|v| v.as_str())
+                                .map(|cmd| {
+                                    let truncated: String = cmd.chars().take(300).collect();
+                                    format!("[command: {}] ", truncated)
+                                })
+                                .unwrap_or_default();
+                            Some(format!("{}{}", cmd_prefix, content))
+                        } else if !success {
+                            Some(content.clone())
+                        } else {
+                            None
+                        };
                         self.record_tool_feedback(
                             session_id,
                             &tool_name,
                             success,
-                            if success { None } else { Some(&content) },
+                            feedback_snippet.as_deref(),
                         );
 
                         // Record tool execution for usage dashboard
