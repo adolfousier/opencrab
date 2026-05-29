@@ -3742,7 +3742,7 @@ impl AgentService {
                                         tracing::warn!("🛑 Tool '{}' cancelled mid-execution", tool_name);
                                         break;
                                     }
-                                    r = self.tool_registry.execute(&tool_name, tool_input, &approved_tool_context) => r,
+                                    r = self.tool_registry.execute(&tool_name, tool_input.clone(), &approved_tool_context) => r,
                                 };
                                 match exec_result {
                                     Ok(result) => {
@@ -3969,7 +3969,7 @@ impl AgentService {
                         tracing::warn!("🛑 Tool '{}' cancelled mid-execution", tool_name);
                         break;
                     }
-                    r = self.tool_registry.execute(&tool_name, tool_input, &approved_context) => r,
+                    r = self.tool_registry.execute(&tool_name, tool_input.clone(), &approved_context) => r,
                 };
                 match exec_result {
                     Ok(result) => {
