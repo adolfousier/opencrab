@@ -25,9 +25,16 @@ jobs:
           REPO="${{ github.repository }}"
           echo "Waiting for CI workflow to complete on $SHA..."
           for i in $(seq 1 60); do
-            STATUS=$(gh api "repos/$REPO/commits/$SHA/check-runs" \
-              --jq '.check_runs[] | select(.name == "Test (ubuntu-latest)") | .conclusion' 2>/dev/null || echo "pending")
-            if [ "$STATUS" = "success" ]; then
+            STATUS=$(gh api "repos/$REPO/commits/$SHA/check-runs" --jq '
+              [.check_runs[] | select(.name == "Test (ubuntu-latest)")] |
+              if length == 0 then "skipped"
+              else .[0].conclusion
+              end
+            ' 2>/dev/null || echo "error")
+            if [ "$STATUS" = "skipped" ]; then
+              echo "CI was skipped (e.g. docs-only change) — proceeding with release"
+              exit 0
+            elif [ "$STATUS" = "success" ]; then
               echo "CI passed!"
               exit 0
             elif [ "$STATUS" = "failure" ] || [ "$STATUS" = "cancelled" ]; then
