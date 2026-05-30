@@ -23,30 +23,91 @@ jobs:
         run: |
           SHA="${{ github.sha }}"
           REPO="${{ github.repository }}"
-          # Gate on `CI Required Gate` (ci.yml line 233) — the
-          # authoritative summary check whose only purpose is "all
-          # required CI jobs passed for this commit." Filtering on
-          # an individual job name (e.g. `Test (Linux)`) breaks
-          # silently when that job is renamed — v0.3.31 release
-          # spun 30 min looking for `Test (ubuntu-latest)` after
-          # the test job was renamed to `Test (Linux)`. The gate
-          # name is stable because branch protection depends on it.
-          echo "Waiting for 'CI Required Gate' on $SHA..."
-          for i in $(seq 1 60); do
-            STATUS=$(gh api "repos/$REPO/commits/$SHA/check-runs" \
-              --jq '.check_runs[] | select(.name == "CI Required Gate") | .conclusion' 2>/dev/null || echo "pending")
-            if [ "$STATUS" = "success" ]; then
-              echo "CI passed!"
+          TIMEOUT_MINUTES=30
+          INTERVAL=30
+          MAX_ATTEMPTS=$((TIMEOUT_MINUTES * 60 / INTERVAL))
+          MAX_DEPTH=100
+
+          get_ci_status() {
+            # Gate on `CI Required Gate` — the authoritative summary
+            # check (from ci.yml). Stable because branch protection
+            # depends on it, unlike individual job names that can be
+            # renamed (v0.3.31 release spun 30 min looking for
+            # "Test (ubuntu-latest)" after test job was renamed).
+            gh api "repos/$REPO/commits/$1/check-runs" \
+              --jq '[.check_runs[] | select(.name == "CI Required Gate")] |
+                if length == 0 then "not_found"
+                else .[0].conclusion // "pending"
+                end' 2>/dev/null || echo "error"
+          }
+
+          walk_ancestors() {
+            local sha="$1"
+            local depth=0
+            while [ "$depth" -lt "$MAX_DEPTH" ]; do
+              local parent=$(gh api "repos/$REPO/commits/$sha" \
+                --jq '.parents[0].sha // ""' 2>/dev/null || echo "")
+              [ -z "$parent" ] && break
+              local status=$(get_ci_status "$parent")
+              case "$status" in
+                "success")
+                  echo "Last green CI on $parent — proceeding with release"
+                  exit 0
+                  ;;
+                "failure"|"cancelled"|"timed_out")
+                  echo "Last CI on $parent was $status — aborting release"
+                  exit 1
+                  ;;
+              esac
+              sha="$parent"
+              depth=$((depth + 1))
+            done
+            echo "No green CI found in $MAX_DEPTH ancestors — manual review needed"
+            exit 1
+          }
+
+          echo "Checking CI status for commit $SHA..."
+          STATUS=$(get_ci_status "$SHA")
+
+          case "$STATUS" in
+            "success")
+              echo "CI passed! Proceeding with release."
               exit 0
-            elif [ "$STATUS" = "failure" ] || [ "$STATUS" = "cancelled" ]; then
-              echo "CI failed ($STATUS) — aborting release"
+              ;;
+            "failure"|"cancelled"|"timed_out")
+              echo "CI $STATUS — aborting release"
               exit 1
-            fi
-            echo "CI still running... (attempt $i/60)"
-            sleep 30
-          done
-          echo "Timed out waiting for CI"
-          exit 1
+              ;;
+            "not_found"|"skipped")
+              echo "CI was skipped on this commit. Walking ancestors for last green..."
+              walk_ancestors "$SHA"
+              ;;
+            "error")
+              echo "Failed to check CI status — aborting"
+              exit 1
+              ;;
+            *)  # pending, in_progress, queued
+              echo "CI is $STATUS — polling for up to $TIMEOUT_MINUTES minutes..."
+              for i in $(seq 1 $MAX_ATTEMPTS); do
+                sleep "$INTERVAL"
+                STATUS=$(get_ci_status "$SHA")
+                case "$STATUS" in
+                  "success") echo "CI passed!"; exit 0 ;;
+                  "failure"|"cancelled"|"timed_out")
+                    echo "CI $STATUS — aborting release"; exit 1 ;;
+                  "not_found"|"skipped")
+                    echo "CI cancelled/skipped during polling. Walking ancestors..."
+                    walk_ancestors "$SHA"
+                    ;;
+                  *)
+                    echo "CI still $STATUS... (attempt $i/$MAX_ATTEMPTS)"
+                    ;;
+                esac
+              done
+              echo "Timed out after $TIMEOUT_MINUTES minutes. Walking ancestors..."
+              walk_ancestors "$SHA"
+              ;;
+          esac
 
   publish-crate:
     name: Publish to crates.io
