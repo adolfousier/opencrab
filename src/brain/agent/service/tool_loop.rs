@@ -487,7 +487,7 @@ impl AgentService {
                 session_id,
                 "user_correction",
                 "user_message",
-                Some(&user_message.chars().take(200).collect::<String>()),
+                Some(&display_text_override.as_deref().unwrap_or(&user_message).chars().take(200).collect::<String>()),
             );
         }
 
