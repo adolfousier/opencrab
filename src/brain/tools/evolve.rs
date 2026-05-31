@@ -557,7 +557,13 @@ impl EvolveTool {
             tracing::warn!("Could not create backup of current binary: {}", e);
         }
 
-        // Atomic rename
+        // Unlink old binary first so the directory entry is freed. On Linux,
+        // rename(2) by itself already replaces the directory entry atomically
+        // without touching the old inode (the running process keeps its mapped
+        // memory).  We still do remove_file first as a belt-and-suspenders
+        // guard against NFS / FUSE mounts where rename(2) may behave
+        // differently when the target is a running executable.
+        let _ = std::fs::remove_file(&exe_path);
         if let Err(e) = std::fs::rename(&tmp_path, &exe_path) {
             let _ = std::fs::remove_file(&tmp_path);
             return Ok(ToolResult::error(format!(
@@ -587,6 +593,33 @@ impl EvolveTool {
         }
 
         let _ = std::fs::remove_file(&backup_path);
+
+        // Schedule a delayed daemon restart for systemd-managed services.
+        // This runs 3 seconds after the tool returns, giving the current
+        // response enough time to be delivered before the daemon exits.
+        //
+        // We use systemd-run --on-active=N, which creates a transient timer
+        // unit tracked by PID 1, outside our service cgroup.  This means the
+        // timer survives even after `systemctl restart opencrabs*.service`
+        // kills the current process.
+        //
+        // Only units matching the glob pattern are restarted, so adding a
+        // new profile (e.g. opencrabs-staging.service) picks it up
+        // automatically with no code change.
+        if std::path::Path::new("/run/systemd/system").exists() {
+            let unit_name = format!("opencrabs-evolve-{}", std::process::id());
+            let _ = std::process::Command::new("systemd-run")
+                .args([
+                    "--on-active=3",
+                    &format!("--unit={}", unit_name),
+                    "systemctl",
+                    "restart",
+                    "opencrabs*.service",
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
 
         // Signal restart
         if let Some(ref cb) = self.progress {
