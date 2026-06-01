@@ -1662,10 +1662,12 @@ pub(crate) async fn handle_message(
                                         };
                                         let html = markdown_to_telegram_html(&text);
                                         if existing_mid.is_none()
-                                            && send_html_or_plain(&bot, chat, thread_id, &html)
-                                                .await
-                                                .is_ok()
+                                            && let Ok(mid) = send_html_or_plain(&bot, chat, thread_id, &html).await
                                         {
+                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                            if let Some(tool) = s.tool_msgs.get_mut(*idx) {
+                                                tool.msg_id = Some(mid);
+                                            }
                                         }
                                     }
                                 }
@@ -2156,10 +2158,13 @@ pub(crate) async fn handle_message(
                     };
                     let html = markdown_to_telegram_html(&text);
                     if existing_mid.is_none()
-                        && send_html_or_plain(&bot, msg.chat.id, thread_id, &html)
-                            .await
-                            .is_ok()
+                        && let Ok(mid) =
+                            send_html_or_plain(&bot, msg.chat.id, thread_id, &html).await
                     {
+                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                            tool.msg_id = Some(mid);
+                        }
                     }
                 }
             }
@@ -2588,10 +2593,12 @@ pub(crate) async fn resume_session(
                                         };
                                         let html = markdown_to_telegram_html(&text);
                                         if existing_mid.is_none()
-                                            && send_html_or_plain(&bot, chat_id, thread_id, &html)
-                                                .await
-                                                .is_ok()
+                                            && let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await
                                         {
+                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                            if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                                                tool.msg_id = Some(mid);
+                                            }
                                         }
                                     }
                                 }
@@ -2851,10 +2858,12 @@ pub(crate) async fn resume_session(
                     };
                     let html = markdown_to_telegram_html(&text);
                     if existing_mid.is_none()
-                        && send_html_or_plain(&bot, chat_id, thread_id, &html)
-                            .await
-                            .is_ok()
+                        && let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await
                     {
+                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                            tool.msg_id = Some(mid);
+                        }
                     }
                 }
             }
