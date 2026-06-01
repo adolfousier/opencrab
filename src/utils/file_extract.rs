@@ -111,6 +111,33 @@ pub fn is_text_mime(mime: &str) -> bool {
         )
 }
 
+/// Collapse trailing double extensions (e.g. "file.docx.docx" → "file.docx").
+/// Telegram preserves the original filename from forwarded messages; if the source
+/// already had an extension matching its MIME type, Telegram appends the same
+/// extension again, producing e.g. `zaiavlenie_s_ekzamena.docx.docx`.
+fn collapse_double_extension(name: &str) -> String {
+    // Split off the last two dot-separated parts
+    let parts: Vec<&str> = name.rsplitn(3, '.').collect();
+    // parts_rev = [base, inner_ext, outer_ext]
+    // e.g. "file.docx.docx" → ["docx", "docx", "file"] → rev: ["file", "docx", "docx"]
+    if parts.len() < 3 {
+        return name.to_string();
+    }
+    let parts_rev = parts.into_iter().rev().collect::<Vec<_>>();
+    let inner = parts_rev[1].to_lowercase();
+    let outer = parts_rev[2].to_lowercase();
+    if inner == outer && !inner.is_empty() {
+        // Rebuild: base + "." + inner (drop the duplicate outer)
+        format!(
+            "{}.{}",
+            &name[..name.len() - parts_rev[2].len() - 1],
+            inner
+        )
+    } else {
+        name.to_string()
+    }
+}
+
 /// Guess MIME from filename extension.
 pub fn mime_from_ext(filename: &str) -> &'static str {
     match filename
@@ -176,6 +203,10 @@ fn save_to_temp(bytes: &[u8], filename: &str) -> Result<PathBuf, String> {
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
         .collect::<String>();
+    // Collapse double extensions (e.g. "file.docx.docx") — Telegram preserves the
+    // original filename from forwarded messages; if the source already had the
+    // extension, Telegram appends it again based on MIME type.
+    let safe_name = collapse_double_extension(&safe_name);
     let path = tmp_dir.join(format!("{}_{safe_name}", uuid::Uuid::new_v4()));
     fs::write(&path, bytes).map_err(|e| format!("Failed to write temp file: {e}"))?;
     Ok(path)
@@ -688,4 +719,42 @@ fn extract_zip_contents(bytes: &[u8], archive_name: &str, config: &Config) -> Fi
     };
 
     FileContent::Text(combined)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collapse_double_extension_handles_double_docx() {
+        assert_eq!(
+            collapse_double_extension("zaiavlenie_s_ekzamena.docx.docx"),
+            "zaiavlenie_s_ekzamena.docx"
+        );
+    }
+
+    #[test]
+    fn collapse_double_extension_handles_case_insensitive() {
+        assert_eq!(collapse_double_extension("file.DOCX.DOCX"), "file.DOCX");
+        assert_eq!(collapse_double_extension("FILE.Pdf.Pdf"), "FILE.Pdf");
+    }
+
+    #[test]
+    fn collapse_double_extension_passthrough_no_double() {
+        assert_eq!(collapse_double_extension("file.docx"), "file.docx");
+        assert_eq!(collapse_double_extension("file.doc.pdf"), "file.doc.pdf");
+        assert_eq!(collapse_double_extension("file"), "file");
+    }
+
+    #[test]
+    fn collapse_double_extension_short() {
+        assert_eq!(collapse_double_extension("a.docx.docx"), "a.docx");
+        assert_eq!(collapse_double_extension("a.b.c"), "a.b.c");
+    }
+
+    #[test]
+    fn collapse_double_extension_single_char_extension() {
+        // Edge case: single-char inner ext same as outer (e.g. "file.x.x")
+        assert_eq!(collapse_double_extension("file.x.x"), "file.x");
+    }
 }
