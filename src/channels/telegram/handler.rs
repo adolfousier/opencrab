@@ -1662,15 +1662,10 @@ pub(crate) async fn handle_message(
                                         };
                                         let html = markdown_to_telegram_html(&text);
                                         if existing_mid.is_none()
-                                            && let Ok(m) = bot
-                                                .send_message(chat, &html)
-                                                .parse_mode(ParseMode::Html)
+                                            && send_html_or_plain(&bot, chat, thread_id, &html)
                                                 .await
+                                                .is_ok()
                                         {
-                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            if let Some(tool) = s.tool_msgs.get_mut(*idx) {
-                                                tool.msg_id = Some(m.id);
-                                            }
                                         }
                                     }
                                 }
@@ -2161,15 +2156,10 @@ pub(crate) async fn handle_message(
                     };
                     let html = markdown_to_telegram_html(&text);
                     if existing_mid.is_none()
-                        && let Ok(m) = bot
-                            .send_message(msg.chat.id, &html)
-                            .parse_mode(ParseMode::Html)
+                        && send_html_or_plain(&bot, msg.chat.id, thread_id, &html)
                             .await
+                            .is_ok()
                     {
-                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                            tool.msg_id = Some(m.id);
-                        }
                     }
                 }
             }
@@ -2598,15 +2588,10 @@ pub(crate) async fn resume_session(
                                         };
                                         let html = markdown_to_telegram_html(&text);
                                         if existing_mid.is_none()
-                                            && let Ok(m) = bot
-                                                .send_message(chat_id, &html)
-                                                .parse_mode(ParseMode::Html)
+                                            && send_html_or_plain(&bot, chat_id, thread_id, &html)
                                                 .await
+                                                .is_ok()
                                         {
-                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                                                tool.msg_id = Some(m.id);
-                                            }
                                         }
                                     }
                                 }
@@ -2865,11 +2850,11 @@ pub(crate) async fn resume_session(
                         Some(false) => format!("❌ {}", label),
                     };
                     let html = markdown_to_telegram_html(&text);
-                    if existing_mid.is_none() {
-                        let _ = bot
-                            .send_message(chat_id, &html)
-                            .parse_mode(ParseMode::Html)
-                            .await;
+                    if existing_mid.is_none()
+                        && send_html_or_plain(&bot, chat_id, thread_id, &html)
+                            .await
+                            .is_ok()
+                    {
                     }
                 }
             }
