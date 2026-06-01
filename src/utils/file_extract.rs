@@ -67,6 +67,28 @@ pub fn is_text_mime(mime: &str) -> bool {
         )
 }
 
+/// Collapse trailing double extensions (e.g. "file.docx.docx" → "file.docx").
+/// Telegram preserves the original filename from forwarded messages; if the source
+/// already had an extension matching its MIME type, Telegram appends the same
+/// extension again, producing e.g. `zaiavlenie_s_ekzamena.docx.docx`.
+fn collapse_double_extension(name: &str) -> String {
+    // Split off the last two dot-separated parts
+    let parts: Vec<&str> = name.rsplitn(3, '.').collect();
+    // parts = [outer_ext, inner_ext, base...]
+    // e.g. "file.docx.docx" → ["docx", "docx", "file"]
+    if parts.len() < 3 {
+        return name.to_string();
+    }
+    let inner = parts[1].to_lowercase();
+    let outer = parts[0].to_lowercase();
+    if inner == outer && !inner.is_empty() {
+        // Rebuild: base + "." + inner (drop the duplicate outer)
+        format!("{}.{}", &name[..name.len() - parts[0].len() - 1], inner)
+    } else {
+        name.to_string()
+    }
+}
+
 /// Guess MIME from filename extension.
 pub fn mime_from_ext(filename: &str) -> &'static str {
     match filename
@@ -127,10 +149,14 @@ fn save_to_temp(bytes: &[u8], filename: &str) -> Result<PathBuf, String> {
     let tmp_dir = home.join(".opencrabs").join("tmp").join("files");
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
 
+    // Collapse double extensions (e.g. "file.docx.docx") — Telegram preserves the
+    // original filename from forwarded messages; if the source already had the
+    // extension, Telegram appends it again based on MIME type.
     let safe_name = filename
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
         .collect::<String>();
+    let safe_name = collapse_double_extension(&safe_name);
     let path = tmp_dir.join(format!("{}_{safe_name}", uuid::Uuid::new_v4()));
     fs::write(&path, bytes).map_err(|e| format!("Failed to write temp file: {e}"))?;
     Ok(path)
