@@ -281,7 +281,7 @@ Your job is to write improvements that PREVENT these from recurring:
 2. **Decide action**: After reading:
    - If the file has NO existing instruction covering your improvement → use action='apply' to append.
    - If the file ALREADY has an instruction that covers the same topic but needs refinement → use action='update' with the exact old_content copied from what you just read, and your improved content in 'content'.
-   - If the file already covers the topic AND the feedback shows a FRESH repeat violation (new incident since the rule was written) → use action='update' to reinforce: append the new date/incident as evidence, and tighten the wording if the model keeps slipping past it. Do NOT bump inline counters — see \"Reinforcing Repeat Violations\" below.
+   - If the file already covers the topic AND the feedback shows a FRESH repeat violation (new incident since the rule was written) → use action='update' to reinforce: append the new date/incident as evidence, and tighten the wording if the model keeps slipping past it. Do NOT bump inline counters — see \"Reinforcing Repeat Violations\" below. 
    Repeat violations of an existing rule are NOT a 'covered, skip' case — they signal the rule needs reinforcement.
    - If the file already says what you want to say AND there is no fresh evidence of new violations → SKIP. Do not duplicate.
 3. **Never rewrite the whole file**. The 'update' action replaces ONE specific section/paragraph. \
