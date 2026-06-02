@@ -188,6 +188,29 @@ impl DynamicToolDef {
         }
         result
     }
+
+    /// Escape string values in params for use in single-quoted shell
+    /// arguments. Replaces each `'` with `'\''` (end single-quote,
+    /// escaped single-quote, resume single-quote) — the standard POSIX
+    /// shell idiom for embedding a single quote inside a single-quoted
+    /// string.
+    ///
+    /// Non-string values (numbers, booleans, arrays, objects) pass
+    /// through unchanged — they are already safe for shell usage since
+    /// `render_template` converts them with `to_string()`.
+    pub fn shell_escape_params(params: &Value) -> Value {
+        match params {
+            Value::Object(map) => {
+                let mut out = serde_json::Map::new();
+                for (k, v) in map {
+                    out.insert(k.clone(), Self::shell_escape_params(v));
+                }
+                Value::Object(out)
+            }
+            Value::String(s) => Value::String(s.replace('\'', "'\\''")),
+            other => other.clone(),
+        }
+    }
 }
 
 /// Top-level tools.toml structure.
@@ -321,8 +344,12 @@ impl DynamicTool {
         params: &Value,
         context: &ToolExecutionContext,
     ) -> Result<ToolResult> {
+        // Shell-escape string parameter values so single quotes in
+        // values don't break single-quoted shell arguments like
+        // `--string 'message={{message}}'`.
+        let escaped_params = DynamicToolDef::shell_escape_params(params);
         let cmd = match &self.def.command {
-            Some(c) => DynamicToolDef::render_template(c, params),
+            Some(c) => DynamicToolDef::render_template(c, &escaped_params),
             None => {
                 return Ok(ToolResult::error(
                     "Shell tool missing 'command' field".into(),
@@ -603,5 +630,96 @@ url = "https://example.com/health"
         });
         let result = t.execute(serde_json::json!({}), &ctx()).await.unwrap();
         assert!(!result.success);
+    }
+
+    #[test]
+    fn test_shell_escape_params_noop() {
+        // No single quotes — values pass through unchanged
+        let params = serde_json::json!({"msg": "hello world"});
+        let escaped = DynamicToolDef::shell_escape_params(&params);
+        assert_eq!(escaped["msg"], "hello world");
+    }
+
+    #[test]
+    fn test_shell_escape_params_single_quote() {
+        // Single quote in value gets escaped
+        let params = serde_json::json!({"msg": "it's nice"});
+        let escaped = DynamicToolDef::shell_escape_params(&params);
+        assert_eq!(escaped["msg"], "it'\\''s nice");
+    }
+
+    #[test]
+    fn test_shell_escape_params_multiple_quotes() {
+        // Multiple single quotes
+        let params = serde_json::json!({"msg": "'a' 'b'"});
+        let escaped = DynamicToolDef::shell_escape_params(&params);
+        assert_eq!(escaped["msg"], "'\\''a'\\'' '\\''b'\\''");
+    }
+
+    #[test]
+    fn test_shell_escape_params_nested() {
+        // Nested object values are also escaped
+        let params = serde_json::json!({"outer": {"inner": "it's nested"}});
+        let escaped = DynamicToolDef::shell_escape_params(&params);
+        assert_eq!(escaped["outer"]["inner"], "it'\\''s nested");
+    }
+
+    #[test]
+    fn test_shell_escape_params_non_string() {
+        // Numbers, booleans, null pass through unchanged
+        let params = serde_json::json!({"n": 42, "b": true, "x": null});
+        let escaped = DynamicToolDef::shell_escape_params(&params);
+        assert_eq!(escaped["n"], 42);
+        assert_eq!(escaped["b"], true);
+        assert_eq!(escaped["x"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_execute_shell_with_single_quote() {
+        // Message with single quote — escaped params prevent shell breakage
+        let result = make_shell(
+            "echo_test",
+            "echo 'msg={{msg}}'",
+            vec![ParamDef {
+                name: "msg".into(),
+                param_type: "string".into(),
+                description: "".into(),
+                required: true,
+                default: None,
+                coerce_empty_to: Default::default(),
+                coerce_null_to: Default::default(),
+            }],
+        )
+        .execute(serde_json::json!({"msg": "it's nice"}), &ctx())
+        .await
+        .unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("msg=it's nice"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_shell_newlines() {
+        // Multi-line message — newlines survive single-quoted shell arg
+        let result = make_shell(
+            "echo_test",
+            "echo 'msg={{msg}}'",
+            vec![ParamDef {
+                name: "msg".into(),
+                param_type: "string".into(),
+                description: "".into(),
+                required: true,
+                default: None,
+                coerce_empty_to: Default::default(),
+                coerce_null_to: Default::default(),
+            }],
+        )
+        .execute(
+            serde_json::json!({"msg": "line1\nline2"}),
+            &ctx(),
+        )
+        .await
+        .unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("line1\nline2") || result.output.contains("line1\nline2"));
     }
 }
