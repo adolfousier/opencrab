@@ -30,6 +30,11 @@ enum PlanOperation {
         #[serde(default)]
         technical_stack: Vec<String>,
     },
+    /// Import a pre-defined plan from a JSON file. Replaces any existing plan in this session.
+    Import {
+        /// Absolute path to the plan JSON file on disk
+        file_path: String,
+    },
     /// Add a task to the current plan
     AddTask {
         title: String,
@@ -190,8 +195,8 @@ impl Tool for PlanTool {
 
     fn description(&self) -> &str {
         "Manage structured task plans with full plan-and-execute capabilities. Create plans, add tasks, \
-         execute them step-by-step, reflect on results, and adjust as needed. Supports dependency tracking, \
-         execution history, and automatic retry logic. \
+         import a pre-defined plan from a JSON file, execute them step-by-step, reflect on results, \
+         and adjust as needed. Supports dependency tracking, execution history, and automatic retry logic. \
          \n\nWHEN TO USE: call `plan` BEFORE starting any task that has 3+ distinct steps, dependencies \
          between steps, or touches multiple files. Always plan when: \
          (a) the user explicitly asks for a plan or roadmap, \
@@ -209,8 +214,8 @@ impl Tool for PlanTool {
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["create", "add_task", "update_plan", "finalize", "status", "next_task", "start_task", "complete_task", "reflect", "record_tool_call", "skip_task", "summary"],
-                    "description": "Operation to perform: create/add_task/update_plan for planning, next_task/start_task/complete_task/reflect for execution, summary for status"
+                    "enum": ["create", "add_task", "update_plan", "finalize", "status", "next_task", "start_task", "complete_task", "reflect", "record_tool_call", "skip_task", "summary", "import"],
+                    "description": "Operation to perform: create/add_task/update_plan for planning, next_task/start_task/complete_task/reflect for execution, summary for status, import to load a pre-defined plan from a JSON file"
                 },
                 "title": {
                     "type": "string",
@@ -301,6 +306,10 @@ impl Tool for PlanTool {
                 "reason": {
                     "type": "string",
                     "description": "Reason for skipping task (for skip_task)"
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to a plan JSON file on disk (for import)"
                 }
             },
             "required": ["operation"]
@@ -321,7 +330,7 @@ impl Tool for PlanTool {
         input
             .get("operation")
             .and_then(|v| v.as_str())
-            .map(|op| op == "finalize")
+            .map(|op| op == "finalize" || op == "import")
             .unwrap_or(false)
     }
 
@@ -415,6 +424,117 @@ impl Tool for PlanTool {
                      1. Use 'add_task' to add tasks to the plan\n\
                      2. Use 'finalize' when ready for user review",
                     title
+                )
+            }
+
+            PlanOperation::Import { file_path } => {
+                let import_path = std::path::Path::new(&file_path);
+
+                // Must be absolute
+                if !import_path.is_absolute() {
+                    return Err(ToolError::InvalidInput(
+                        "Import path must be absolute".to_string(),
+                    ));
+                }
+
+                // Check for symlinks in path components (security)
+                for ancestor in import_path.ancestors() {
+                    if ancestor.exists() {
+                        let meta = std::fs::symlink_metadata(ancestor).map_err(ToolError::Io)?;
+                        if meta.is_symlink() {
+                            return Err(ToolError::InvalidInput(
+                                "Import path contains a symlink (security restriction)"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+
+                // Check file size before reading
+                let metadata = tokio::fs::metadata(&import_path)
+                    .await
+                    .map_err(ToolError::Io)?;
+                if metadata.len() > MAX_PLAN_FILE_SIZE {
+                    return Err(ToolError::InvalidInput(format!(
+                        "Import file too large: {} bytes (max: {} bytes)",
+                        metadata.len(),
+                        MAX_PLAN_FILE_SIZE
+                    )));
+                }
+
+                // Read and deserialize plan JSON
+                let content = tokio::fs::read_to_string(&import_path)
+                    .await
+                    .map_err(ToolError::Io)?;
+
+                let mut imported: PlanDocument =
+                    serde_json::from_str(&content).map_err(|e| {
+                        ToolError::InvalidInput(format!("Invalid plan JSON: {}", e))
+                    })?;
+
+                // Log overwrite if a plan already exists
+                if let Some(existing_plan) = plan.as_ref() {
+                    tracing::info!(
+                        "📝 Importing plan '{}' over existing plan '{}'",
+                        imported.title,
+                        existing_plan.title
+                    );
+                }
+
+                // Build a mapping of old UUIDs → new UUIDs so we can remap
+                // task dependency references after reassignment.
+                let old_to_new: std::collections::HashMap<uuid::Uuid, uuid::Uuid> = imported
+                    .tasks
+                    .iter()
+                    .map(|t| (t.id, uuid::Uuid::new_v4()))
+                    .collect();
+
+                // Stamp the plan with fresh IDs and this session's context
+                imported.id = uuid::Uuid::new_v4();
+                imported.session_id = context.session_id;
+                imported.status = PlanStatus::Draft;
+                imported.created_at = chrono::Utc::now();
+                imported.updated_at = chrono::Utc::now();
+                imported.approved_at = None;
+
+                // Reset all task state — imported tasks start fresh
+                for task in &mut imported.tasks {
+                    let new_id = old_to_new[&task.id];
+                    task.id = new_id;
+                    task.status = crate::tui::plan::TaskStatus::Pending;
+                    task.completed_at = None;
+                    task.retry_count = 0;
+                    task.execution_history.clear();
+                    task.reflection = None;
+                    task.notes = None;
+
+                    // Remap dependency UUIDs to their new values
+                    task.dependencies = task
+                        .dependencies
+                        .iter()
+                        .filter_map(|old_dep_id| old_to_new.get(old_dep_id).copied())
+                        .collect();
+                }
+
+                // Validate the dependency graph is intact after remapping
+                imported.validate_dependencies().map_err(|e| {
+                    ToolError::InvalidInput(format!(
+                        "Imported plan has invalid dependencies: {}",
+                        e
+                    ))
+                })?;
+
+                plan = Some(imported.clone());
+
+                format!(
+                    "✓ Imported plan: '{}'\n  {} tasks loaded\n  Status: {:?}\n\n\
+                     Next steps:\n\
+                     1. Review with 'status'\n\
+                     2. Finalize with 'finalize'\n\
+                     3. Execute tasks with 'next_task' / 'start_task'",
+                    imported.title,
+                    imported.tasks.len(),
+                    imported.status
                 )
             }
 
