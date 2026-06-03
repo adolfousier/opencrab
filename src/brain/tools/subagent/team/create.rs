@@ -256,10 +256,20 @@ impl Tool for TeamCreateTool {
                     match result {
                         Ok(response) => {
                             manager.update_output(&agent_id_clone, response.content.clone());
+                            // Flip to AwaitingInput so wait_agent can observe
+                            // round-boundary progress (same pattern as spawn.rs).
+                            manager.mark_awaiting_input(&agent_id_clone);
+                            tracing::info!(
+                                "Team agent {} round complete, waiting for input",
+                                agent_id_clone
+                            );
 
                             let next = tokio::select! {
                                 msg = input_rx.recv() => msg,
-                                _ = cancel_clone.cancelled() => None,
+                                _ = cancel_clone.cancelled() => {
+                                    tracing::info!("Team agent {} cancelled while waiting for input", agent_id_clone);
+                                    None
+                                }
                             };
 
                             match next {
