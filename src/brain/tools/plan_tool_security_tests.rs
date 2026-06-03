@@ -226,4 +226,26 @@ mod tests {
         // May pass or fail depending on path resolution, but shouldn't panic
         let _ = result;
     }
+
+    #[tokio::test]
+    async fn test_import_sample_plan() {
+        let json = include_str!("test_data/sample-coding-plan.json");
+
+        let tmp_dir = TempDir::new().unwrap();
+        let plan_file = tmp_dir.path().join("sample-coding-plan.json");
+        std::fs::write(&plan_file, json).unwrap();
+
+        let ctx = crate::brain::tools::ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let tool = PlanTool;
+
+        let input = serde_json::json!({
+            "operation": "import",
+            "file_path": plan_file.to_str().unwrap(),
+        });
+
+        let result = tool.execute(input, &ctx).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("Imported plan"));
+        assert!(result.output.contains("7 tasks"));
+    }
 }

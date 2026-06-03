@@ -1,0 +1,104 @@
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "title": "Full Coding Process — Feature Development",
+  "description": "Standard workflow for OpenCrabs development. Covers the complete pipeline from investigation through merge, following the project coding process.",
+  "context": "This plan follows the OpenCrabs coding process for features larger than 100 lines or 5+ steps. Each stage must be completed before the next begins.",
+  "risks": [
+    "Forgetting to update the PR checklist",
+    "Missing edge cases in test coverage",
+    "Not running the full CI suite before merge"
+  ],
+  "test_strategy": "Run existing tests first, then add new tests for the feature, then run full suite with --all-features",
+  "technical_stack": ["Rust", "async-trait", "serde", "tokio", "uuid", "tracing"],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z",
+  "tasks": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "order": 1,
+      "title": "Investigate",
+      "description": "Run cargo check, cargo test. Understand the affected codebase area. Trace the issue or feature path.",
+      "status": "Pending",
+      "task_type": "research",
+      "dependencies": [],
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "tags": ["investigation"]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "order": 2,
+      "title": "Plan",
+      "description": "Create or import task list with plan tool. Present to user for approval before executing.",
+      "status": "Pending",
+      "task_type": "documentation",
+      "dependencies": ["00000000-0000-0000-0000-000000000001"],
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "tags": ["planning"]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "order": 3,
+      "title": "TDD — Write failing test",
+      "description": "Write a regression or behavior test that captures the expected behavior. Must fail before implementation.",
+      "status": "Pending",
+      "task_type": "test",
+      "dependencies": ["00000000-0000-0000-0000-000000000001"],
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "tags": ["tdd"]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "order": 4,
+      "title": "Implement fix/feature",
+      "description": "Write the implementation. Keep it minimal — enough to pass the test.",
+      "status": "Pending",
+      "task_type": "create",
+      "dependencies": ["00000000-0000-0000-0000-000000000003"],
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "tags": ["implementation"]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000005",
+      "order": 5,
+      "title": "Checks",
+      "description": "Run cargo clippy, cargo fmt --check, cargo test. All must pass.",
+      "status": "Pending",
+      "task_type": "test",
+      "dependencies": [
+        "00000000-0000-0000-0000-000000000003",
+        "00000000-0000-0000-0000-000000000004"
+      ],
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "tags": ["quality"]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000006",
+      "order": 6,
+      "title": "Code Review",
+      "description": "Open a PR. Address review comments. Ensure CI pipeline passes.",
+      "status": "Pending",
+      "task_type": "refactor",
+      "dependencies": ["00000000-0000-0000-0000-000000000005"],
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "tags": ["review"]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000007",
+      "order": 7,
+      "title": "Merge",
+      "description": "Squash-merge the PR. Update changelog if applicable.",
+      "status": "Pending",
+      "task_type": "configuration",
+      "dependencies": ["00000000-0000-0000-0000-000000000006"],
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "tags": ["merge"]
+    }
+  ]
+}
