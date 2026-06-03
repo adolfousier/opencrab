@@ -200,9 +200,9 @@ impl Tool for WriteOpenCrabsFileTool {
                 }
                 match std::fs::write(&full_path, content) {
                     Ok(()) => Ok(ToolResult::success(format!(
-                        "Wrote {} bytes to ~/.opencrabs/{}",
+                        "Wrote {} bytes to {}",
                         content.len(),
-                        path_str
+                        full_path.display()
                     ))),
                     Err(e) => Ok(ToolResult::error(format!(
                         "Failed to write {}: {}",
@@ -263,11 +263,11 @@ impl Tool for WriteOpenCrabsFileTool {
                     .open(&full_path)
                 {
                     Ok(mut f) => match f.write_all(effective_content.as_bytes()) {
-                        Ok(()) => Ok(ToolResult::success(format!(
-                            "Appended {} bytes to ~/.opencrabs/{}",
-                            effective_content.len(),
-                            path_str
-                        ))),
+                    Ok(()) => Ok(ToolResult::success(format!(
+                        "Appended {} bytes to {}",
+                        effective_content.len(),
+                        full_path.display()
+                    ))),
                         Err(e) => Ok(ToolResult::error(format!(
                             "Failed to append to {}: {}",
                             path_str, e
@@ -334,8 +334,8 @@ impl Tool for WriteOpenCrabsFileTool {
                 }
                 match std::fs::write(&full_path, &updated) {
                     Ok(()) => Ok(ToolResult::success(format!(
-                        "Replaced text in ~/.opencrabs/{}",
-                        path_str
+                        "Replaced text in {}",
+                        full_path.display()
                     ))),
                     Err(e) => Ok(ToolResult::error(format!(
                         "Failed to write {}: {}",
