@@ -334,3 +334,51 @@ fn test_core_brain_is_smaller_than_full_brain_when_contextual_files_exist() {
         full_len
     );
 }
+
+// ── frontmatter descriptions ──────────────────────────────────────
+
+#[test]
+fn test_contextual_file_frontmatter_description_in_index() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "MEMORY.md", "---\ndescription: custom memory notes\n---\n\nsome notes");
+    let brain = loader(&dir).build_core_brain(None, None);
+    assert!(
+        brain.contains("MEMORY.md: custom memory notes"),
+        "frontmatter description must appear in the index, not the hardcoded one"
+    );
+}
+
+#[test]
+fn test_contextual_file_without_frontmatter_uses_hardcoded() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "MEMORY.md", "some notes without frontmatter");
+    let brain = loader(&dir).build_core_brain(None, None);
+    assert!(
+        brain.contains("MEMORY.md: long-term memory"),
+        "without frontmatter the hardcoded description must be used"
+    );
+}
+
+#[test]
+fn test_user_file_frontmatter_description_in_index() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "MEMORY.md", "notes");
+    write(&dir, "MYCUSTOM.md", "---\ndescription: my custom rules\n---\n\ncontent");
+    let brain = loader(&dir).build_core_brain(None, None);
+    assert!(
+        brain.contains("MYCUSTOM.md: my custom rules"),
+        "user-created file frontmatter description must appear in index"
+    );
+}
+
+#[test]
+fn test_user_file_without_frontmatter_shows_fallback() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "MEMORY.md", "notes");
+    write(&dir, "AGENTVERSE.md", "no frontmatter here");
+    let brain = loader(&dir).build_core_brain(None, None);
+    assert!(
+        brain.contains("AGENTVERSE.md: (user-created)"),
+        "user-created file without frontmatter must show fallback"
+    );
+}
