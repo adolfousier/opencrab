@@ -190,7 +190,7 @@ impl AgentService {
     ///
     /// Skipped: MEMORY.md (summary replaces it), BOOT/BOOTSTRAP/HEARTBEAT (rarely
     /// needed mid-task), SECURITY.md/AGENTS.md (loaded on demand if flagged in
-    /// summary), IDENTITY.md (only for cron/social sessions).
+    /// summary).
     fn build_recovered_brain_context() -> String {
         use std::path::PathBuf;
 
@@ -220,6 +220,7 @@ The summary above is NOT sufficient for implementation work.
         let full_files = [
             ("SOUL.md", "personality"),
             ("USER.md", "user profile"),
+            ("IDENTITY.md", "identity"),
             ("TOOLS.md", "tool notes"),
         ];
 

@@ -6,19 +6,24 @@
 use crate::db::repository::feedback_ledger::FeedbackLedgerRepository;
 use std::path::PathBuf;
 
-/// Core brain files — always injected (personality + user context).
+/// Core brain files — always injected (personality + user context + identity).
 ///
-/// Kept lean (~8 KB) so always-injecting is cheap. TOOLS.md and CODE.md
-/// moved to contextual (on-demand via `load_brain_file`) to avoid ~44k
+/// IDENTITY.md was moved from contextual to core (2026-06) so the agent
+/// always knows who it is — branding/identity magic depends on this.
+/// Kept lean (~12 KB) so always-injecting is cheap. TOOLS.md and CODE.md
+/// remain contextual (on-demand via `load_brain_file`) to avoid ~44k
 /// first-request bloat.
-const CORE_BRAIN_FILES: &[(&str, &str)] =
-    &[("SOUL.md", "personality"), ("USER.md", "user profile")];
+const CORE_BRAIN_FILES: &[(&str, &str)] = &[
+    ("SOUL.md", "personality"),
+    ("USER.md", "user profile"),
+    ("IDENTITY.md", "identity"),
+];
 
 /// Contextual brain files — loaded on demand via the `load_brain_file` tool.
-/// IDENTITY.md lives here — only needed for cron jobs and social media replies.
+/// Also listed here so the agent can reload via load_brain_file on demand.
 /// TOOLS.md and CODE.md moved here (2026-05) to slim core prompt.
 pub(crate) const CONTEXTUAL_BRAIN_FILES: &[(&str, &str)] = &[
-    ("IDENTITY.md", "identity — social/cron replies only"),
+    ("IDENTITY.md", "identity"),
     ("AGENTS.md", "workspace rules"),
     ("CODE.md", "coding standards"),
     ("TOOLS.md", "tool notes & config"),
@@ -30,8 +35,8 @@ pub(crate) const CONTEXTUAL_BRAIN_FILES: &[(&str, &str)] = &[
 ];
 
 /// All brain files in assembly order — kept for `build_system_brain` (full mode).
-/// IDENTITY.md excluded — only loaded on-demand for cron/social agent sessions.
 /// TOOLS.md and CODE.md excluded from full mode too — they're contextual now.
+/// IDENTITY.md is in CORE (always injected via build_core_brain), not here.
 const BRAIN_FILES: &[(&str, &str)] = &[
     ("SOUL.md", "personality"),
     ("USER.md", "user"),
@@ -254,9 +259,10 @@ impl BrainLoader {
         prompt
     }
 
-    /// Build a lean "core" system brain: only SOUL.md + IDENTITY.md are injected.
     ///
-    /// All other brain files (USER.md, MEMORY.md, AGENTS.md, etc.) are listed in a
+    /// Build a lean "core" system brain: only SOUL.md + USER.md + IDENTITY.md are injected.
+    ///
+    /// All other brain files (MEMORY.md, AGENTS.md, etc.) are listed in a
     /// "Available Context Files" index section so the agent knows they exist and can
     /// load them on demand via the `load_brain_file` tool — only when actually needed.
     ///
@@ -642,7 +648,7 @@ pub(crate) fn push_known_paths(prompt: &mut String) {
          - Logs: {base}/logs/opencrabs.YYYY-MM-DD (daily, today is the most relevant)\n\
          - Config: {base}/config.toml\n\
          - Keys: {base}/keys.toml\n\
-         - Brain files: {home}/{{SOUL,USER,AGENTS,TOOLS,MEMORY,CODE}}.md\n\
+         - Brain files: {home}/{{SOUL,USER,IDENTITY,AGENTS,TOOLS,MEMORY,CODE}}.md\n\
          - Plans: {home}/agents/session/.opencrabs_plan_<session-id>.json\n\
          When the user asks to check logs, read today's file at \
          {base}/logs/opencrabs.<today UTC date>. Do NOT grep the repo \
