@@ -635,17 +635,21 @@ fn push_skills_section(prompt: &mut String) {
 /// question stays out; the goal is "next time you're told 'check
 /// the logs' you don't grep .git/".
 pub(crate) fn push_known_paths(prompt: &mut String) {
-    prompt.push_str(
-        "\nKnown paths (under ~/.opencrabs/):\n\
-         - Logs: ~/.opencrabs/logs/opencrabs.YYYY-MM-DD (daily, today is the most relevant)\n\
-         - Config: ~/.opencrabs/config.toml\n\
-         - Keys: ~/.opencrabs/keys.toml\n\
-         - Brain files: ~/.opencrabs/{SOUL,USER,AGENTS,TOOLS,MEMORY,CODE}.md\n\
-         - Plans: ~/.opencrabs/agents/session/.opencrabs_plan_<session-id>.json\n\
+    let base = crate::config::profile::base_opencrabs_dir();
+    let home = crate::config::opencrabs_home();
+    prompt.push_str(&format!(
+        "\nKnown paths:\n\
+         - Logs: {base}/logs/opencrabs.YYYY-MM-DD (daily, today is the most relevant)\n\
+         - Config: {base}/config.toml\n\
+         - Keys: {base}/keys.toml\n\
+         - Brain files: {home}/{{SOUL,USER,AGENTS,TOOLS,MEMORY,CODE}}.md\n\
+         - Plans: {home}/agents/session/.opencrabs_plan_<session-id>.json\n\
          When the user asks to check logs, read today's file at \
-         ~/.opencrabs/logs/opencrabs.<today UTC date>. Do NOT grep the repo \
+         {base}/logs/opencrabs.<today UTC date>. Do NOT grep the repo \
          working directory for log files — opencrabs never writes logs there.\n",
-    );
+        base = base.display(),
+        home = home.display(),
+    ));
 }
 
 #[cfg(test)]

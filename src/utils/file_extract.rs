@@ -191,8 +191,7 @@ fn is_video_vision_available(config: &Config) -> bool {
 
 /// Write file bytes to a temp path under `~/.opencrabs/tmp/files/` and return the path.
 fn save_to_temp(bytes: &[u8], filename: &str) -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("No home directory found")?;
-    let tmp_dir = home.join(".opencrabs").join("tmp").join("files");
+    let tmp_dir = crate::config::opencrabs_home().join("tmp").join("files");
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
 
     let safe_name = filename
