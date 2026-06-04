@@ -335,16 +335,28 @@ fn test_core_brain_is_smaller_than_full_brain_when_contextual_files_exist() {
     );
 }
 
-// ── frontmatter descriptions ──────────────────────────────────────
+// ── frontmatter descriptions (integration) ─────────────────────────
+//
+// Unit tests for the parser itself live in `tests/frontmatter_test.rs`.
+// These tests verify the END-TO-END wiring: that the frontmatter
+// value from a brain file actually replaces the hardcoded description
+// in the rendered "Available Context Files" index inside the system
+// prompt. Match strings include the `**` markdown emphasis so they
+// pin the rendered line, not the section header text.
 
 #[test]
 fn test_contextual_file_frontmatter_description_in_index() {
     let dir = TempDir::new().unwrap();
-    write(&dir, "MEMORY.md", "---\ndescription: custom memory notes\n---\n\nsome notes");
+    write(
+        &dir,
+        "MEMORY.md",
+        "---\ndescription: custom memory notes\n---\n\nsome notes",
+    );
     let brain = loader(&dir).build_core_brain(None, None);
     assert!(
-        brain.contains("MEMORY.md: custom memory notes"),
-        "frontmatter description must appear in the index, not the hardcoded one"
+        brain.contains("**MEMORY.md**: custom memory notes"),
+        "frontmatter description must appear in the index, not the hardcoded one — got:\n{}",
+        brain.lines().find(|l| l.contains("MEMORY.md")).unwrap_or(""),
     );
 }
 
@@ -354,7 +366,7 @@ fn test_contextual_file_without_frontmatter_uses_hardcoded() {
     write(&dir, "MEMORY.md", "some notes without frontmatter");
     let brain = loader(&dir).build_core_brain(None, None);
     assert!(
-        brain.contains("MEMORY.md: long-term memory"),
+        brain.contains("**MEMORY.md**: long-term memory"),
         "without frontmatter the hardcoded description must be used"
     );
 }
@@ -363,10 +375,14 @@ fn test_contextual_file_without_frontmatter_uses_hardcoded() {
 fn test_user_file_frontmatter_description_in_index() {
     let dir = TempDir::new().unwrap();
     write(&dir, "MEMORY.md", "notes");
-    write(&dir, "MYCUSTOM.md", "---\ndescription: my custom rules\n---\n\ncontent");
+    write(
+        &dir,
+        "MYCUSTOM.md",
+        "---\ndescription: my custom rules\n---\n\ncontent",
+    );
     let brain = loader(&dir).build_core_brain(None, None);
     assert!(
-        brain.contains("MYCUSTOM.md: my custom rules"),
+        brain.contains("**MYCUSTOM.md**: my custom rules"),
         "user-created file frontmatter description must appear in index"
     );
 }
@@ -378,7 +394,35 @@ fn test_user_file_without_frontmatter_shows_fallback() {
     write(&dir, "AGENTVERSE.md", "no frontmatter here");
     let brain = loader(&dir).build_core_brain(None, None);
     assert!(
-        brain.contains("AGENTVERSE.md: (user-created)"),
+        brain.contains("**AGENTVERSE.md**: (user-created)"),
         "user-created file without frontmatter must show fallback"
+    );
+}
+
+#[test]
+fn test_frontmatter_description_caps_long_values_with_ellipsis() {
+    // End-to-end: a brain file with a runaway description hits the
+    // 200-char cap in the rendered index. Without this guard a stray
+    // multi-MB description would silently bloat the system prompt.
+    let dir = TempDir::new().unwrap();
+    let huge = "a".repeat(500);
+    write(
+        &dir,
+        "MEMORY.md",
+        &format!("---\ndescription: {huge}\n---\n\nbody"),
+    );
+    let brain = loader(&dir).build_core_brain(None, None);
+    let line = brain
+        .lines()
+        .find(|l| l.contains("**MEMORY.md**:"))
+        .expect("MEMORY.md index line must be present");
+    let after = line.split_once("**MEMORY.md**: ").map(|(_, s)| s).unwrap();
+    assert!(after.ends_with('…'), "truncated value must end with …, got: {after:?}");
+    // 200 chars + the ellipsis = 201.
+    assert_eq!(
+        after.chars().count(),
+        201,
+        "truncation must cap at 200 chars + ellipsis, got {} chars: {after:?}",
+        after.chars().count(),
     );
 }

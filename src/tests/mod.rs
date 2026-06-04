@@ -67,6 +67,7 @@ pub mod evolve_test;
 pub mod exa_search_test;
 pub mod follow_up_intermediate_flush_test;
 pub mod follow_up_question_test;
+pub mod frontmatter_test;
 pub mod format_user_error_test;
 pub mod gemini_fetch_test;
 pub mod gemini_schema_sanitize_test;

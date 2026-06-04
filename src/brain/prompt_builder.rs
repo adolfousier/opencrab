@@ -332,19 +332,21 @@ impl BrainLoader {
                 brain_dir
             ));
             for (name, default_desc) in &available {
-                let desc = if let Some(content) = self.load_file(name) {
-                    extract_frontmatter_description(&content).unwrap_or(default_desc)
-                } else {
-                    default_desc
-                };
+                let desc = self
+                    .load_file(name)
+                    .and_then(|content| {
+                        crate::brain::frontmatter::extract_description(&content)
+                    })
+                    .unwrap_or_else(|| (*default_desc).to_string());
                 prompt.push_str(&format!("- **{}**: {}\n", name, desc));
             }
             for name in &extras {
-                let desc = if let Some(content) = self.load_file(name) {
-                    extract_frontmatter_description(&content).unwrap_or("(user-created)")
-                } else {
-                    "(user-created)"
-                };
+                let desc = self
+                    .load_file(name)
+                    .and_then(|content| {
+                        crate::brain::frontmatter::extract_description(&content)
+                    })
+                    .unwrap_or_else(|| "(user-created)".to_string());
                 prompt.push_str(&format!("- **{}**: {}\n", name, desc));
             }
             // Guidance text: only mention files that actually exist on disk
@@ -665,35 +667,6 @@ pub(crate) fn push_known_paths(prompt: &mut String) {
 #[cfg(test)]
 #[path = "prompt_builder_tests.rs"]
 mod prompt_builder_tests;
-
-/// Extract the `description` field from YAML frontmatter of a markdown file.
-///
-/// Frontmatter must be delimited by `---\n` at the start of the file and
-/// `\n---\n` after the frontmatter block. Returns `None` if no frontmatter
-/// or no `description:` key is found. Used by `build_core_brain` to read
-/// per-file descriptions for the "Available Context Files" index — if a
-/// brain file declares `description:` in its frontmatter, that value
-/// replaces the hardcoded description in the listing.
-fn extract_frontmatter_description(content: &str) -> Option<&str> {
-    let content = content.strip_prefix("---\n")?;
-    let close_idx = content.find("\n---\n")?;
-    let frontmatter = &content[..close_idx];
-
-    for line in frontmatter.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(value) = trimmed.strip_prefix("description:") {
-            let value = value.trim().trim_matches('"').trim_matches('\'');
-            if !value.is_empty() {
-                return Some(value);
-            }
-        }
-    }
-
-    None
-}
 
 #[cfg(test)]
 mod tests {
