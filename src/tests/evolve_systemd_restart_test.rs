@@ -38,7 +38,7 @@ fn unit_pattern_is_glob_so_multiple_profiles_match() {
 
 #[test]
 fn restart_command_uses_systemd_run_binary() {
-    let cmd = build_systemd_restart_command(12345);
+    let cmd = build_systemd_restart_command(12345, false);
     assert_eq!(
         cmd.get_program(),
         "systemd-run",
@@ -48,8 +48,8 @@ fn restart_command_uses_systemd_run_binary() {
 }
 
 #[test]
-fn restart_command_args_are_pinned() {
-    let cmd = build_systemd_restart_command(12345);
+fn restart_command_system_level_args_are_pinned() {
+    let cmd = build_systemd_restart_command(12345, false);
     let args: Vec<String> = cmd
         .get_args()
         .map(|a| a.to_string_lossy().to_string())
@@ -63,7 +63,7 @@ fn restart_command_args_are_pinned() {
             "restart",
             "opencrabs*.service",
         ],
-        "arg list must not drift — each flag's removal or rename re-introduces \
+        "system-level (user=false) arg list must not drift — each flag's removal or rename re-introduces \
          a known regression mode: --on-active=3 = the 3s delivery window, \
          --unit=... = the PID-derived name that avoids concurrent-evolve collisions, \
          opencrabs*.service = the multi-profile glob. \
@@ -74,13 +74,37 @@ fn restart_command_args_are_pinned() {
 }
 
 #[test]
+fn restart_command_user_level_includes_user_flag() {
+    let cmd = build_systemd_restart_command(12345, true);
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        args,
+        vec![
+            "--user",
+            "--on-active=3",
+            "--unit=opencrabs-evolve-12345",
+            "systemctl",
+            "--user",
+            "restart",
+            "opencrabs*.service",
+        ],
+        "user-level (user=true) command must include --user on both systemd-run \
+         (to connect to the user bus and create the timer in the user instance) \
+         and systemctl (to target the user service manager)"
+    );
+}
+
+#[test]
 fn restart_command_unit_name_includes_pid() {
     // Concurrent evolve calls would collide on a fixed transient
     // unit name. The PID embedding makes the name unique per
     // process. Verify both that the PID appears verbatim AND that
     // different PIDs produce different names.
-    let cmd_a = build_systemd_restart_command(12345);
-    let cmd_b = build_systemd_restart_command(67890);
+    let cmd_a = build_systemd_restart_command(12345, false);
+    let cmd_b = build_systemd_restart_command(67890, false);
     let unit_a = cmd_a
         .get_args()
         .map(|a| a.to_string_lossy().to_string())
@@ -101,22 +125,9 @@ fn restart_command_unit_name_includes_pid() {
 }
 
 // ── User-message coverage for every RestartStatus branch ────────
-//
-// RestartStatus is private to evolve.rs by design (no external
-// consumer), so we exercise the message wording via the public
-// success/failure modes the tool can produce. The wording itself
-// is the contract these tests pin — drifting any branch toward the
-// generic "Restarting into the new version." string would let the
-// no-units / spawn-failed / non-systemd cases get mistaken for a
-// successful auto-restart, exactly the gap #136 was filed for.
 
 #[test]
 fn restart_status_messages_are_distinct_per_outcome() {
-    // We construct each user-message by inspecting the actual
-    // tool source rather than re-importing the private enum —
-    // these are sentinel strings, so the assertion below is a
-    // build-time anchor: if any wording is reworded to look like
-    // "Restarting…" we'll catch the regression at test time.
     let src = include_str!("../brain/tools/evolve.rs");
     assert!(
         src.contains("Restarting into the new version."),
@@ -136,5 +147,25 @@ fn restart_status_messages_are_distinct_per_outcome() {
         src.contains("scheduling the systemd restart failed"),
         "the SpawnFailed branch must quote the actual error so the user knows \
          systemd-run couldn't fire"
+    );
+}
+
+#[test]
+fn no_units_matched_message_mentions_user_flag() {
+    // The user-facing message should guide the user toward
+    // `systemctl --user restart` as well as the system variant.
+    let src = include_str!("../brain/tools/evolve.rs");
+    assert!(
+        src.contains("systemctl --user restart"),
+        "NoUnitsMatched user message must mention --user restart as an option"
+    );
+}
+
+#[test]
+fn spawn_failed_message_mentions_user_flag() {
+    let src = include_str!("../brain/tools/evolve.rs");
+    assert!(
+        src.contains("systemctl --user restart"),
+        "SpawnFailed user message must mention --user restart as an option"
     );
 }
