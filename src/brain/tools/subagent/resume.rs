@@ -235,6 +235,14 @@ impl Tool for ResumeAgentTool {
                 match result {
                     Ok(response) => {
                         manager.update_output(&agent_id_clone, response.content.clone());
+                        // Flip to AwaitingInput so wait_agent can observe
+                        // round-boundary progress — same pattern as
+                        // spawn.rs / team/create.rs. Without this the
+                        // resumed agent's task never terminates at a
+                        // round (only on input/cancel), so the old
+                        // `handle.await` in wait.rs always hit its
+                        // timeout_secs and the LLM gave up the turn.
+                        manager.mark_awaiting_input(&agent_id_clone);
                         tracing::info!(
                             "Sub-agent {} round complete, waiting for input",
                             agent_id_clone
@@ -242,7 +250,13 @@ impl Tool for ResumeAgentTool {
 
                         let next = tokio::select! {
                             msg = input_rx.recv() => msg,
-                            _ = cancel_clone.cancelled() => None,
+                            _ = cancel_clone.cancelled() => {
+                                tracing::info!(
+                                    "Sub-agent {} cancelled while waiting for input",
+                                    agent_id_clone
+                                );
+                                None
+                            }
                         };
 
                         match next {
