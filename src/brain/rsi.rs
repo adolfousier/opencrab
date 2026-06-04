@@ -370,6 +370,14 @@ async fn run_rsi_agent_cycle(
     let provider =
         crate::brain::provider::factory::create_provider_by_name(config, provider_name).await?;
 
+    // Apply the [providers.fallback] chain (if any) to the RSI provider
+    // — same wrapping the main session path gets via
+    // `create_provider_with_warning`. Before this call, the autonomous
+    // loop bypassed the chain entirely: an RSI rate limit killed the
+    // cycle instead of cascading to the configured fallback.
+    let provider =
+        crate::brain::provider::factory::wrap_with_fallback_chain(config, provider).await?;
+
     let service_ctx = ServiceContext::new(pool);
     let tool_registry = build_rsi_tool_registry();
     let brain_path = crate::config::opencrabs_home();

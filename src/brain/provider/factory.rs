@@ -416,57 +416,112 @@ pub async fn create_provider_with_warning(
         }
     }
 
-    // Build fallback chain if configured (user-defined in config.toml)
-    let fallback_providers = if let Some(fallback) = &config.providers.fallback
-        && fallback.enabled
-    {
-        let chain = fallback_chain(fallback);
-        let mut providers = Vec::new();
-        for name in &chain {
-            match create_fallback(config, name).await {
-                Ok(p) => {
-                    tracing::info!("Fallback provider '{}' ready", name);
-                    providers.push(p);
-                }
-                Err(e) => {
-                    tracing::warn!("Fallback provider '{}' skipped: {}", name, e);
-                }
-            }
-        }
-        providers
-    } else {
-        Vec::new()
-    };
-
+    // Delegate the primary-wrap step to the shared helper. This is the
+    // common path: there IS a primary, and the user has configured a
+    // fallback chain. Going through the helper means the RSI loop
+    // (which calls `create_provider_by_name` + helper) gets identical
+    // fallback semantics — no divergence, no RSI-specific bugs.
+    //
+    // The `None` branch (no primary at all) keeps its own fallback-as-
+    // primary logic because there's no primary to wrap: instead we
+    // pick the first usable fallback as a last-resort primary.
     match primary {
         Some(provider) => {
-            if fallback_providers.is_empty() {
-                Ok((provider, warning))
-            } else {
-                tracing::info!(
-                    "Wrapping primary provider with {} fallback(s)",
-                    fallback_providers.len()
-                );
-                Ok((
-                    Arc::new(super::FallbackProvider::new_with_health(
-                        provider,
-                        fallback_providers,
-                    )),
-                    warning,
-                ))
-            }
+            let provider = wrap_with_fallback_chain(config, provider).await?;
+            Ok((provider, warning))
         }
         None => {
             // No primary — try fallbacks as primary candidates
-            if let Some(first) = fallback_providers.into_iter().next() {
-                tracing::warn!("No primary provider enabled, using first fallback");
-                Ok((first, warning))
-            } else {
-                tracing::info!("No provider configured, using placeholder provider");
-                Ok((Arc::new(super::PlaceholderProvider), warning))
+            if let Some(fallback) = &config.providers.fallback
+                && fallback.enabled
+            {
+                let chain = fallback_chain(fallback);
+                for name in &chain {
+                    if let Ok(p) = create_fallback(config, name).await {
+                        tracing::warn!(
+                            "No primary provider enabled, using fallback '{}' as primary",
+                            name
+                        );
+                        return Ok((p, warning));
+                    }
+                }
+            }
+            tracing::info!("No provider configured, using placeholder provider");
+            Ok((Arc::new(super::PlaceholderProvider), warning))
+        }
+    }
+}
+
+/// Wrap an already-resolved primary provider with the user-configured
+/// `[providers.fallback]` chain (if any).
+///
+/// This is the single producer of `FallbackProvider` wrappers in the
+/// factory. Both `create_provider_with_warning` (main session path) and
+/// `run_rsi_agent_cycle` (RSI autonomous loop) call it after they've
+/// produced a primary, so both code paths honour the same fallback
+/// config. Before this existed, RSI silently bypassed the chain — see
+/// the regression context in `src/tests/rsi_fallback_wrap_test.rs`.
+///
+/// Semantics:
+/// - If `config.providers.fallback` is missing, disabled, or produces
+///   an empty chain, returns `primary` unchanged (no wrap overhead).
+/// - Applies a self-name filter: any candidate whose name matches the
+///   primary's name is dropped from the chain. Including it would mean
+///   a primary failure cascades to the same dead endpoint, defeating
+///   the purpose of fallback (the agent would hit the same 429/530
+///   twice in a row instead of failing over).
+/// - Candidates that fail to construct (missing API key, unknown name,
+///   etc.) are logged and skipped — they don't fail the whole wrap.
+/// - If at least one usable fallback resolves, wraps the primary in
+///   `FallbackProvider::new_with_health` so health-aware startup
+///   semantics and sticky-promotion are applied identically to the
+///   main path.
+pub(crate) async fn wrap_with_fallback_chain(
+    config: &Config,
+    primary: Arc<dyn Provider>,
+) -> Result<Arc<dyn Provider>> {
+    let Some(fallback) = config.providers.fallback.as_ref().filter(|f| f.enabled) else {
+        return Ok(primary);
+    };
+
+    let chain = fallback_chain(fallback);
+    let primary_name = primary.name().to_string();
+    let mut providers = Vec::new();
+    for name in &chain {
+        if *name == primary_name {
+            // Self-name collision: skip so a primary failure doesn't
+            // cascade straight to itself. Logged at debug because in
+            // common configs (e.g. fallback = ["minimax"] when primary
+            // is opencode) this branch never fires.
+            tracing::debug!(
+                "Skipping fallback '{}' — same name as primary, would create a self-loop",
+                name
+            );
+            continue;
+        }
+        match create_fallback(config, name).await {
+            Ok(p) => {
+                tracing::info!("Fallback provider '{}' ready", name);
+                providers.push(p);
+            }
+            Err(e) => {
+                tracing::warn!("Fallback provider '{}' skipped: {}", name, e);
             }
         }
     }
+
+    if providers.is_empty() {
+        return Ok(primary);
+    }
+
+    tracing::info!(
+        "Wrapping primary provider '{}' with {} fallback(s)",
+        primary_name,
+        providers.len()
+    );
+    Ok(Arc::new(super::FallbackProvider::new_with_health(
+        primary, providers,
+    )))
 }
 
 /// Create a provider by name, ignoring the `enabled` flag.

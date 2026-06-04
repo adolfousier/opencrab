@@ -157,6 +157,7 @@ pub mod mission_control_schedule_service_test;
 pub mod mission_control_skill_inbox_test;
 pub mod model_fetch_test;
 pub mod profile_test;
+pub mod rsi_fallback_wrap_test;
 pub mod rsi_brain_dedup_test;
 pub mod rsi_git_history_test;
 pub mod rsi_proposals_test;
