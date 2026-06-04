@@ -109,7 +109,7 @@ enum PlanOperation {
     Summary,
 }
 
-fn default_complexity() -> u8 {
+pub(crate) fn default_complexity() -> u8 {
     3
 }
 
@@ -119,7 +119,7 @@ fn default_true() -> bool {
 
 /// Validate plan file path for security
 /// Prevents symlink attacks and path traversal
-fn validate_plan_file_path(path: &Path, base_dir: &Path) -> Result<()> {
+pub(crate) fn validate_plan_file_path(path: &Path, base_dir: &Path) -> Result<()> {
     // Check if path is absolute and within the base directory
     if !path.starts_with(base_dir) {
         return Err(ToolError::InvalidInput(
@@ -159,15 +159,15 @@ fn validate_plan_file_path(path: &Path, base_dir: &Path) -> Result<()> {
 }
 
 /// Maximum plan file size (10MB)
-const MAX_PLAN_FILE_SIZE: u64 = 10 * 1024 * 1024;
+pub(crate) const MAX_PLAN_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Input validation limits
-const MAX_TITLE_LENGTH: usize = 200;
-const MAX_DESCRIPTION_LENGTH: usize = 5000;
-const MAX_CONTEXT_LENGTH: usize = 5000;
+pub(crate) const MAX_TITLE_LENGTH: usize = 200;
+pub(crate) const MAX_DESCRIPTION_LENGTH: usize = 5000;
+pub(crate) const MAX_CONTEXT_LENGTH: usize = 5000;
 
 /// Validate string input
-fn validate_string(s: &str, max_len: usize, field_name: &str) -> Result<()> {
+pub(crate) fn validate_string(s: &str, max_len: usize, field_name: &str) -> Result<()> {
     if s.is_empty() || s.trim().is_empty() {
         return Err(ToolError::InvalidInput(format!(
             "{} cannot be empty",
@@ -1144,6 +1144,3 @@ impl Tool for PlanTool {
     }
 }
 
-#[cfg(test)]
-#[path = "plan_tool_security_tests.rs"]
-mod plan_tool_security_tests;

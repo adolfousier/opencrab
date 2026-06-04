@@ -1,5 +1,6 @@
 {
   "id": "00000000-0000-0000-0000-000000000000",
+  "session_id": "00000000-0000-0000-0000-000000000000",
   "title": "Full Coding Process — Feature Development",
   "description": "Standard workflow for OpenCrabs development. Covers the complete pipeline from investigation through merge, following the project coding process.",
   "context": "This plan follows the OpenCrabs coding process for features larger than 100 lines or 5+ steps. Each stage must be completed before the next begins.",
@@ -10,95 +11,108 @@
   ],
   "test_strategy": "Run existing tests first, then add new tests for the feature, then run full suite with --all-features",
   "technical_stack": ["Rust", "async-trait", "serde", "tokio", "uuid", "tracing"],
+  "status": "Draft",
   "created_at": "2026-01-01T00:00:00Z",
   "updated_at": "2026-01-01T00:00:00Z",
+  "approved_at": null,
   "tasks": [
     {
       "id": "00000000-0000-0000-0000-000000000001",
       "order": 1,
       "title": "Investigate",
       "description": "Run cargo check, cargo test. Understand the affected codebase area. Trace the issue or feature path.",
-      "status": "Pending",
-      "task_type": "research",
+      "task_type": "Research",
       "dependencies": [],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "tags": ["investigation"]
+      "complexity": 2,
+      "acceptance_criteria": ["Reproduction steps documented", "Affected files identified"],
+      "status": "Pending",
+      "notes": null,
+      "completed_at": null
     },
     {
       "id": "00000000-0000-0000-0000-000000000002",
       "order": 2,
       "title": "Plan",
       "description": "Create or import task list with plan tool. Present to user for approval before executing.",
-      "status": "Pending",
-      "task_type": "documentation",
+      "task_type": "Documentation",
       "dependencies": ["00000000-0000-0000-0000-000000000001"],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "tags": ["planning"]
+      "complexity": 2,
+      "acceptance_criteria": ["Plan finalised and approved"],
+      "status": "Pending",
+      "notes": null,
+      "completed_at": null
     },
     {
       "id": "00000000-0000-0000-0000-000000000003",
       "order": 3,
       "title": "TDD — Write failing test",
-      "description": "Write a regression or behavior test that captures the expected behavior. Must fail before implementation.",
-      "status": "Pending",
-      "task_type": "test",
+      "description": "Write a regression or behaviour test that captures the expected behaviour. Must fail before implementation.",
+      "task_type": "Test",
       "dependencies": ["00000000-0000-0000-0000-000000000001"],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "tags": ["tdd"]
+      "complexity": 3,
+      "acceptance_criteria": ["Failing test added", "Test fails with a clear message"],
+      "status": "Pending",
+      "notes": null,
+      "completed_at": null
     },
     {
       "id": "00000000-0000-0000-0000-000000000004",
       "order": 4,
       "title": "Implement fix/feature",
       "description": "Write the implementation. Keep it minimal — enough to pass the test.",
-      "status": "Pending",
-      "task_type": "create",
+      "task_type": "Create",
       "dependencies": ["00000000-0000-0000-0000-000000000003"],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "tags": ["implementation"]
+      "complexity": 4,
+      "acceptance_criteria": ["Implementation in place", "Failing test now passes"],
+      "status": "Pending",
+      "notes": null,
+      "completed_at": null
     },
     {
       "id": "00000000-0000-0000-0000-000000000005",
       "order": 5,
       "title": "Checks",
       "description": "Run cargo clippy, cargo fmt --check, cargo test. All must pass.",
-      "status": "Pending",
-      "task_type": "test",
+      "task_type": "Test",
       "dependencies": [
         "00000000-0000-0000-0000-000000000003",
         "00000000-0000-0000-0000-000000000004"
       ],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "tags": ["quality"]
+      "complexity": 2,
+      "acceptance_criteria": [
+        "cargo clippy --all-features --lib --bins --tests -- -D warnings is clean",
+        "cargo fmt --check passes",
+        "cargo test --all-features green"
+      ],
+      "status": "Pending",
+      "notes": null,
+      "completed_at": null
     },
     {
       "id": "00000000-0000-0000-0000-000000000006",
       "order": 6,
       "title": "Code Review",
       "description": "Open a PR. Address review comments. Ensure CI pipeline passes.",
-      "status": "Pending",
-      "task_type": "refactor",
+      "task_type": "Refactor",
       "dependencies": ["00000000-0000-0000-0000-000000000005"],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "tags": ["review"]
+      "complexity": 3,
+      "acceptance_criteria": ["PR opened", "All review comments addressed", "CI green"],
+      "status": "Pending",
+      "notes": null,
+      "completed_at": null
     },
     {
       "id": "00000000-0000-0000-0000-000000000007",
       "order": 7,
       "title": "Merge",
       "description": "Squash-merge the PR. Update changelog if applicable.",
-      "status": "Pending",
-      "task_type": "configuration",
+      "task_type": "Configuration",
       "dependencies": ["00000000-0000-0000-0000-000000000006"],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "tags": ["merge"]
+      "complexity": 1,
+      "acceptance_criteria": ["PR merged to main", "Changelog updated"],
+      "status": "Pending",
+      "notes": null,
+      "completed_at": null
     }
   ]
 }
