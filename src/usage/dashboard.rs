@@ -76,10 +76,10 @@ fn centered_rect(area: Rect) -> Rect {
 /// Layout inside the panel:
 /// ```text
 /// [Summary Bar ─────────────────── full width]
-/// [Daily Activity] [Cache Efficiency] [By Project]
-/// [By Model      ] [Core Tools                         ]
-/// [By Activity ─────────────────── full width]
-/// [Footer ──────────────────────── full width]
+/// [Daily Activity] [By Project]
+/// [By Model      ] [Core Tools]
+/// [By Activity ────────────────] [Cache Efficiency]
+/// [Footer ────────────────────── full width]
 /// ```
 pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
     let panel = centered_rect(area);
@@ -116,8 +116,8 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),                      // summary bar
-            Constraint::Min(grid_min),                  // middle grid (3 rows)
-            Constraint::Length(activity_height as u16), // activity (full width)
+            Constraint::Min(grid_min),                  // middle grid (2x2)
+            Constraint::Length(activity_height as u16), // activity + cache row
             Constraint::Length(1),                      // footer
         ])
         .split(inner);
@@ -125,21 +125,17 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
     // Summary bar
     cards::render_summary(f, &state.data, chunks[0], state.period.label());
 
-    // Middle grid: 3 rows
-    // Row 1: Daily Activity | Cache Efficiency | By Project (3 cols)
-    // Row 2: By Model | Core Tools (2 cols)
+    // Middle grid: 2x2
+    // Row 1: Daily Activity | By Project
+    // Row 2: By Model | Core Tools
     let mid_rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
     let top_cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(mid_rows[0]);
 
     let bot_cols = Layout::default()
@@ -147,23 +143,33 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(mid_rows[1]);
 
-    // Card index: 0=daily, 1=cache, 2=project, 3=model, 4=tools, 5=activity
+    // Card index: 0=daily, 1=project, 2=model, 3=tools, 4=activity, 5=cache
     cards::render_daily(f, &state.data.daily, top_cols[0], state.focused_card == 0);
-    cards::render_cache_efficiency(f, &state.data.cache, top_cols[1], state.focused_card == 1);
     cards::render_projects(
         f,
         &state.data.projects,
-        top_cols[2],
-        state.focused_card == 2,
+        top_cols[1],
+        state.focused_card == 1,
     );
-    cards::render_models(f, &state.data.models, bot_cols[0], state.focused_card == 3);
-    cards::render_tools(f, &state.data.tools, bot_cols[1], state.focused_card == 4);
+    cards::render_models(f, &state.data.models, bot_cols[0], state.focused_card == 2);
+    cards::render_tools(f, &state.data.tools, bot_cols[1], state.focused_card == 3);
 
-    // Activity (full width)
+    // Bottom row: Activity (75%) | Cache Efficiency (25%)
+    let bottom_row = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
+        .split(chunks[2]);
+
     cards::render_activities(
         f,
         &state.data.activities,
-        chunks[2],
+        bottom_row[0],
+        state.focused_card == 4,
+    );
+    cards::render_cache_efficiency(
+        f,
+        &state.data.cache,
+        bottom_row[1],
         state.focused_card == 5,
     );
 
