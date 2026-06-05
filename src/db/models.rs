@@ -175,6 +175,12 @@ pub struct Message {
     /// Used as the authoritative "last known context size" on session load
     /// — no more tokenizing raw message content to estimate.
     pub input_tokens: Option<i32>,
+    /// Tokens written to the provider's prompt cache (cache creation).
+    /// Populated only on assistant rows; always `None` for user rows.
+    pub cache_creation_tokens: Option<i32>,
+    /// Tokens served from the provider's prompt cache (cache hits).
+    /// Populated only on assistant rows; always `None` for user rows.
+    pub cache_read_tokens: Option<i32>,
     /// Reasoning/thinking content for non-CLI providers (dialagram, custom
     /// OpenAI-compatible). Persisted separately from `content` so it
     /// survives restart and can be reconstructed as Ctrl+O expandable
@@ -195,6 +201,8 @@ impl Message {
             token_count: row.get("token_count")?,
             cost: row.get("cost")?,
             input_tokens: row.get("input_tokens").ok(),
+            cache_creation_tokens: row.get("cache_creation_tokens").ok(),
+            cache_read_tokens: row.get("cache_read_tokens").ok(),
             thinking: row.get("thinking").ok().flatten(),
         })
     }
@@ -211,6 +219,8 @@ impl Message {
             token_count: None,
             cost: None,
             input_tokens: None,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
             thinking: None,
         }
     }

@@ -64,6 +64,8 @@ impl AgentService {
                 total_tokens as i32,
                 cost,
                 Some(billable_input as i32),
+                Some(response.usage.cache_creation_tokens as i32),
+                Some(response.usage.cache_read_tokens as i32),
             )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;

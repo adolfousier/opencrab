@@ -4815,6 +4815,8 @@ impl AgentService {
                 total_tokens as i32,
                 cost,
                 Some(stored_input_tokens),
+                Some(total_cache_creation as i32),
+                Some(total_cache_read as i32),
             )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;

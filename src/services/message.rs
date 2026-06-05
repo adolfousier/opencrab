@@ -42,6 +42,8 @@ impl MessageService {
             token_count: None,
             cost: None,
             input_tokens: None,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
             thinking: None,
         };
 
@@ -100,12 +102,20 @@ impl MessageService {
         token_count: i32,
         cost: f64,
         input_tokens: Option<i32>,
+        cache_creation_tokens: Option<i32>,
+        cache_read_tokens: Option<i32>,
     ) -> Result<()> {
         let mut message = self.get_message_required(id).await?;
         message.token_count = Some(token_count);
         message.cost = Some(cost);
         if input_tokens.is_some() {
             message.input_tokens = input_tokens;
+        }
+        if cache_creation_tokens.is_some() {
+            message.cache_creation_tokens = cache_creation_tokens;
+        }
+        if cache_read_tokens.is_some() {
+            message.cache_read_tokens = cache_read_tokens;
         }
 
         let repo = MessageRepository::new(self.context.pool());
@@ -114,10 +124,16 @@ impl MessageService {
             .context("Failed to update message usage")?;
 
         tracing::debug!(
-            "Updated message usage: {} ({} output, {} input, ${:.4})",
+            "Updated message usage: {} ({} output, {} input, {} cache_create, {} cache_read, ${:.4})",
             id,
             token_count,
             input_tokens
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            cache_creation_tokens
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            cache_read_tokens
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "—".to_string()),
             cost
@@ -319,7 +335,7 @@ mod tests {
             .unwrap();
 
         message_service
-            .update_message_usage(message.id, 100, 0.05, None)
+            .update_message_usage(message.id, 100, 0.05, None, None, None)
             .await
             .unwrap();
 
@@ -476,7 +492,7 @@ mod tests {
             .await
             .unwrap();
         message_service
-            .update_message_usage(msg1.id, 100, 0.05, None)
+            .update_message_usage(msg1.id, 100, 0.05, None, None, None)
             .await
             .unwrap();
 
@@ -485,7 +501,7 @@ mod tests {
             .await
             .unwrap();
         message_service
-            .update_message_usage(msg2.id, 200, 0.10, None)
+            .update_message_usage(msg2.id, 200, 0.10, None, None, None)
             .await
             .unwrap();
 

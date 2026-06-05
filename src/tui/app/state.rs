@@ -3779,6 +3779,8 @@ mod tests {
             token_count: Some(10),
             cost: Some(0.001),
             input_tokens: None,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
             thinking: None,
         };
 
@@ -3800,6 +3802,8 @@ mod tests {
             token_count: Some(50),
             cost: Some(0.005),
             input_tokens: Some(200),
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
             thinking: Some("I need to analyze this carefully...".to_string()),
         };
 
