@@ -3,8 +3,8 @@
 //! Each card is a self-contained render function that takes data + area and draws into a Frame.
 
 use super::data::{
-    ActivityStats, DailyStats, DashboardData, ModelEntry, ProjectStats, ToolStats, fmt_cost,
-    fmt_tokens,
+    ActivityStats, CacheStats, DailyStats, DashboardData, ModelEntry, ProjectStats, ToolStats,
+    fmt_cost, fmt_tokens,
 };
 use ratatui::{
     Frame,
@@ -580,6 +580,62 @@ pub fn render_activities(f: &mut Frame, activities: &[ActivityStats], area: Rect
             Span::styled(format!(" {:>width$}", one_shot, width = pct_width), DIM),
         ]));
     }
+
+    let p = Paragraph::new(lines);
+    f.render_widget(p, inner);
+}
+
+// ── Cache Efficiency ─────────────────────────────────────────────────────────
+
+pub fn render_cache_efficiency(
+    f: &mut Frame,
+    cache: &Option<CacheStats>,
+    area: Rect,
+    focused: bool,
+) {
+    let block = card_block("Cache Efficiency", focused);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let cache = match cache {
+        Some(c) => c,
+        None => {
+            let p = Paragraph::new(" No cache data").style(DIM);
+            f.render_widget(p, inner);
+            return;
+        }
+    };
+
+    // Color-code by hit rate: green >60%, yellow 30-60%, red <30%
+    let pct_color = if cache.cache_hit_pct >= 60.0 {
+        Color::Green
+    } else if cache.cache_hit_pct >= 30.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+    let pct_style = Style::new().fg(pct_color).add_modifier(Modifier::BOLD);
+
+    // Center the percentage vertically and horizontally
+    let pct_text = format!("{:.0}%", cache.cache_hit_pct);
+    let subtitle = format!(
+        "{} / {} cached",
+        fmt_tokens(cache.cached_tokens),
+        fmt_tokens(cache.total_input_tokens)
+    );
+
+    let center_y = inner.height / 2;
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Pad lines to center vertically
+    for _ in 0..center_y.saturating_sub(1) {
+        lines.push(Line::from(""));
+    }
+
+    // Big percentage
+    lines.push(Line::from(Span::styled(&pct_text, pct_style)).alignment(Alignment::Center));
+    // Subtitle
+    lines.push(Line::from(Span::styled(&subtitle, DIM)).alignment(Alignment::Center));
 
     let p = Paragraph::new(lines);
     f.render_widget(p, inner);

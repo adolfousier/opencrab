@@ -13,7 +13,7 @@ use ratatui::{
 };
 
 /// Number of focusable cards
-const CARD_COUNT: usize = 5;
+const CARD_COUNT: usize = 6;
 
 /// Dashboard UI state (lives in App)
 #[derive(Debug, Clone)]
@@ -76,8 +76,8 @@ fn centered_rect(area: Rect) -> Rect {
 /// Layout inside the panel:
 /// ```text
 /// [Summary Bar ─────────────────── full width]
-/// [Daily Activity ]  [By Project            ]
-/// [By Model       ]  [Core Tools            ]
+/// [Daily Activity] [Cache Efficiency] [By Project]
+/// [By Model      ] [Core Tools                         ]
 /// [By Activity ─────────────────── full width]
 /// [Footer ──────────────────────── full width]
 /// ```
@@ -110,13 +110,13 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
 
     // Adaptive: if panel is too short, shrink activity card
     let activity_height = if inner.height > 30 { 6 } else { 4 };
-    let grid_min = if inner.height > 30 { 8 } else { 5 };
+    let grid_min = if inner.height > 30 { 10 } else { 7 };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),                      // summary bar
-            Constraint::Min(grid_min),                  // middle 2x2 grid
+            Constraint::Min(grid_min),                  // middle grid (3 rows)
             Constraint::Length(activity_height as u16), // activity (full width)
             Constraint::Length(1),                      // footer
         ])
@@ -125,15 +125,21 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
     // Summary bar
     cards::render_summary(f, &state.data, chunks[0], state.period.label());
 
-    // Middle grid: 2 rows x 2 columns
+    // Middle grid: 3 rows
+    // Row 1: Daily Activity | Cache Efficiency | By Project (3 cols)
+    // Row 2: By Model | Core Tools (2 cols)
     let mid_rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
         .split(chunks[1]);
 
     let top_cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+        ])
         .split(mid_rows[0]);
 
     let bot_cols = Layout::default()
@@ -141,23 +147,24 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(mid_rows[1]);
 
-    // Card index: 0=daily, 1=project, 2=model, 3=tools, 4=activity
+    // Card index: 0=daily, 1=cache, 2=project, 3=model, 4=tools, 5=activity
     cards::render_daily(f, &state.data.daily, top_cols[0], state.focused_card == 0);
+    cards::render_cache_efficiency(f, &state.data.cache, top_cols[1], state.focused_card == 1);
     cards::render_projects(
         f,
         &state.data.projects,
-        top_cols[1],
-        state.focused_card == 1,
+        top_cols[2],
+        state.focused_card == 2,
     );
-    cards::render_models(f, &state.data.models, bot_cols[0], state.focused_card == 2);
-    cards::render_tools(f, &state.data.tools, bot_cols[1], state.focused_card == 3);
+    cards::render_models(f, &state.data.models, bot_cols[0], state.focused_card == 3);
+    cards::render_tools(f, &state.data.tools, bot_cols[1], state.focused_card == 4);
 
     // Activity (full width)
     cards::render_activities(
         f,
         &state.data.activities,
         chunks[2],
-        state.focused_card == 4,
+        state.focused_card == 5,
     );
 
     // Footer
@@ -188,12 +195,14 @@ mod tests {
         s.focus_next();
         assert_eq!(s.focused_card, 4);
         s.focus_next();
+        assert_eq!(s.focused_card, 5);
+        s.focus_next();
         assert_eq!(s.focused_card, 0); // wraps
 
         s.focus_prev();
-        assert_eq!(s.focused_card, 4); // wraps back
+        assert_eq!(s.focused_card, 5); // wraps back
         s.focus_prev();
-        assert_eq!(s.focused_card, 3);
+        assert_eq!(s.focused_card, 4);
     }
 
     #[test]

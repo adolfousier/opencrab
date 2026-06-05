@@ -126,6 +126,17 @@ pub struct ActivityStats {
     pub one_shot_pct: f64,
 }
 
+/// Cache efficiency statistics
+#[derive(Debug, Clone, Default)]
+pub struct CacheStats {
+    /// Percentage of input tokens served from cache (0-100)
+    pub cache_hit_pct: f64,
+    /// Total tokens served from cache
+    pub cached_tokens: i64,
+    /// Total input tokens (cached + non-cached)
+    pub total_input_tokens: i64,
+}
+
 /// All dashboard data, fetched once per period change
 #[derive(Debug, Clone, Default)]
 pub struct DashboardData {
@@ -135,6 +146,7 @@ pub struct DashboardData {
     pub models: Vec<ModelEntry>,
     pub tools: Vec<ToolStats>,
     pub activities: Vec<ActivityStats>,
+    pub cache: Option<CacheStats>,
 }
 
 /// Normalize a model name for grouping by stripping quantization suffixes.
@@ -260,13 +272,14 @@ impl DashboardData {
         let since = period.since_epoch();
 
         // Run all queries concurrently
-        let (mut summary, daily, projects, models, tools, activities) = tokio::try_join!(
+        let (mut summary, daily, projects, models, tools, activities, cache) = tokio::try_join!(
             fetch_summary(pool, since),
             fetch_daily(pool, since),
             fetch_projects(pool, since),
             fetch_model_entries(pool, since),
             fetch_tools(pool, since),
             fetch_activities(pool, since),
+            fetch_cache_stats(pool, since),
         )?;
 
         // Override total_cost with sum of recalculated model costs.
@@ -281,6 +294,7 @@ impl DashboardData {
             models,
             tools,
             activities,
+            cache,
         })
     }
 }
@@ -783,6 +797,52 @@ async fn fetch_activities(pool: &Pool, since: Option<i64>) -> Result<Vec<Activit
     .context("Failed to fetch activity stats")
 }
 
+async fn fetch_cache_stats(pool: &Pool, since: Option<i64>) -> Result<Option<CacheStats>> {
+    let conn = pool.get().await.context("pool")?;
+    let result = conn
+        .interact(move |conn| -> rusqlite::Result<Option<CacheStats>> {
+            let (query, param): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) = since
+            {
+                (
+                    "SELECT \
+                       COALESCE(SUM(cache_read_tokens), 0), \
+                       COALESCE(SUM(input_tokens + cache_creation_tokens + cache_read_tokens), 0) \
+                     FROM messages \
+                     WHERE created_at >= ?1 \
+                       AND (cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0)",
+                    vec![Box::new(s)],
+                )
+            } else {
+                (
+                    "SELECT \
+                       COALESCE(SUM(cache_read_tokens), 0), \
+                       COALESCE(SUM(input_tokens + cache_creation_tokens + cache_read_tokens), 0) \
+                     FROM messages \
+                     WHERE cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0",
+                    vec![],
+                )
+            };
+            let refs: Vec<&dyn rusqlite::types::ToSql> = param.iter().map(|p| p.as_ref()).collect();
+            conn.query_row(query, refs.as_slice(), |row| {
+                let cached_tokens: i64 = row.get(0)?;
+                let total_input_tokens: i64 = row.get(1)?;
+                if total_input_tokens == 0 {
+                    return Ok(None);
+                }
+                let cache_hit_pct = (cached_tokens as f64 / total_input_tokens as f64) * 100.0;
+                Ok(Some(CacheStats {
+                    cache_hit_pct,
+                    cached_tokens,
+                    total_input_tokens,
+                }))
+            })
+        })
+        .await
+        .map_err(interact_err)?
+        .context("Failed to fetch cache stats")?;
+    Ok(result)
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Format token count for display (e.g., 1292500000 → "1292.5M")
@@ -888,5 +948,6 @@ mod tests {
         assert!(d.models.is_empty());
         assert!(d.tools.is_empty());
         assert!(d.activities.is_empty());
+        assert!(d.cache.is_none());
     }
 }
