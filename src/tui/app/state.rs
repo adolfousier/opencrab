@@ -3203,6 +3203,26 @@ impl App {
                 && let Some(session_id) = pane.session_id
             {
                 self.load_session(session_id).await?;
+                // Ensure the session's provider entry exists in the HashMap
+                // after load. load_session skips swap if saved == current,
+                // but current may be from global fallback (closed pane's
+                // provider), causing contamination in the footer.
+                if let Some(ref session) = self.current_session
+                    && let Some(ref saved_provider) = session.provider_name
+                {
+                    let current_prov = self.agent_service.provider_name_for_session(session.id);
+                    if saved_provider != &current_prov
+                        && let Some(cached) = self.provider_cache.get(saved_provider).cloned()
+                    {
+                        self.agent_service.swap_provider_for_session(session.id, cached);
+                        // Restore the session's saved model, which
+                        // swap_provider_for_session overwrites to
+                        // the provider's default.
+                        if let Some(ref saved_model) = session.model {
+                            self.agent_service.set_session_model(session.id, saved_model.clone());
+                        }
+                    }
+                }
             }
             return Ok(());
         }
@@ -3212,6 +3232,26 @@ impl App {
                 && let Some(session_id) = pane.session_id
             {
                 self.load_session(session_id).await?;
+                // Ensure the session's provider entry exists in the HashMap
+                // after load. load_session skips swap if saved == current,
+                // but current may be from global fallback (other pane's
+                // provider), causing contamination in the footer.
+                if let Some(ref session) = self.current_session
+                    && let Some(ref saved_provider) = session.provider_name
+                {
+                    let current_prov = self.agent_service.provider_name_for_session(session.id);
+                    if saved_provider != &current_prov
+                        && let Some(cached) = self.provider_cache.get(saved_provider).cloned()
+                    {
+                        self.agent_service.swap_provider_for_session(session.id, cached);
+                        // Restore the session's saved model, which
+                        // swap_provider_for_session overwrites to
+                        // the provider's default.
+                        if let Some(ref saved_model) = session.model {
+                            self.agent_service.set_session_model(session.id, saved_model.clone());
+                        }
+                    }
+                }
             }
             return Ok(());
         }
