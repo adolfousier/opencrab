@@ -1270,6 +1270,21 @@ async fn cmd_chat_inner(
             }));
         }
 
+        // Telegram command refresh — re-register bot commands when commands.toml changes
+        #[cfg(feature = "telegram")]
+        {
+            let tg_state = telegram_state.clone();
+            callbacks.push(Arc::new(move |_cfg: crate::config::Config| {
+                let state = tg_state.clone();
+                tokio::spawn(async move {
+                    if let Some(bot) = state.bot().await {
+                        crate::channels::telegram::register_bot_commands(&bot).await;
+                        tracing::info!("ConfigWatcher: refreshed Telegram bot commands");
+                    }
+                });
+            }));
+        }
+
         let _config_watcher = config_watcher::spawn(callbacks);
     }
 

@@ -626,10 +626,18 @@ async fn resolve_callback_session(
 }
 
 /// Register bot commands with Telegram so they appear in the `/` menu.
-async fn register_bot_commands(bot: &Bot) {
+///
+/// Builds the command list dynamically from:
+/// 1. Built-in commands (hardcoded)
+/// 2. User-defined commands from commands.toml
+/// 3. Skills from SKILL.md files
+///
+/// Telegram constraints: max 100 commands, names must be lowercase with
+/// underscores only (no hyphens), descriptions max 256 chars.
+pub(crate) async fn register_bot_commands(bot: &Bot) {
     use teloxide::types::BotCommand;
 
-    let commands = vec![
+    let mut commands: Vec<BotCommand> = vec![
         BotCommand::new("help", "Show available commands"),
         BotCommand::new("models", "Switch AI model or provider"),
         BotCommand::new("usage", "Session token and cost stats"),
@@ -639,10 +647,61 @@ async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("compact", "Compact conversation context"),
         BotCommand::new("doctor", "Run connection health check"),
         BotCommand::new("evolve", "Check for updates"),
+        BotCommand::new("rtk", "Show RTK token savings statistics"),
     ];
 
+    // Load user-defined commands from commands.toml
+    let brain_path = crate::brain::BrainLoader::resolve_path();
+    let loader = crate::brain::CommandLoader::from_brain_path(&brain_path);
+    let user_commands = loader.load();
+    for cmd in &user_commands {
+        // Strip leading slash and convert to Telegram format
+        let name = cmd.name.strip_prefix('/').unwrap_or(&cmd.name);
+        let name = sanitize_command_name(name);
+        if name.is_empty() {
+            continue;
+        }
+        let description = truncate_description(&cmd.description, 256);
+        commands.push(BotCommand::new(name, description));
+    }
+
+    // Load skills and register them as commands
+    let skills = crate::brain::skills::load_all_skills();
+    for skill in &skills {
+        // Skills use hyphens (security-audit), convert to underscores
+        let name = sanitize_command_name(&skill.name);
+        if name.is_empty() {
+            continue;
+        }
+        let description = truncate_description(&skill.description, 256);
+        commands.push(BotCommand::new(name, description));
+    }
+
+    // Telegram limit: max 100 commands
+    commands.truncate(100);
+
+    let count = commands.len();
     match bot.set_my_commands(commands).await {
-        Ok(_) => tracing::info!("Telegram: registered {} bot commands", 9),
+        Ok(_) => tracing::info!("Telegram: registered {} bot commands", count),
         Err(e) => tracing::warn!("Telegram: failed to register bot commands: {}", e),
+    }
+}
+
+/// Sanitize a command name for Telegram: lowercase, underscores only.
+/// Telegram only allows: a-z, 0-9, and underscores.
+fn sanitize_command_name(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c == '-' { '_' } else { c })
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
+}
+
+/// Truncate description to max length, adding ellipsis if needed.
+fn truncate_description(desc: &str, max_len: usize) -> String {
+    if desc.len() <= max_len {
+        desc.to_string()
+    } else {
+        format!("{}…", &desc[..max_len.saturating_sub(1)])
     }
 }

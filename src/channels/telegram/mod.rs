@@ -11,6 +11,7 @@ pub(crate) mod send;
 pub(crate) mod session_resolve;
 
 pub use agent::TelegramAgent;
+pub(crate) use agent::register_bot_commands;
 
 use std::collections::HashMap;
 use teloxide::prelude::Bot;
