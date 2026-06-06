@@ -2460,7 +2460,31 @@ pub(crate) async fn handle_message(
                     }
                 }
             } else if let Some(mid) = streaming_msg_id {
-                // Empty final text — just clean up the streaming placeholder
+                // Empty final text — all content was already delivered as
+                // intermediate messages. Append the ctx/tok-s footer to the
+                // last intermediate so the user still sees the budget (it was
+                // being dropped on every tool-using turn — 2026-06-06), then
+                // remove the now-empty streaming placeholder. Never a
+                // standalone footer bubble (7a0ca1c9).
+                let last_inter = {
+                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    s.intermediate_msg_ids
+                        .last()
+                        .copied()
+                        .zip(s.sent_intermediates.last().cloned())
+                };
+                if let Some((inter_id, inter_text)) = last_inter
+                    && let Some(edited) =
+                        build_last_intermediate_with_footer(&inter_text, &footer)
+                    && let Err(e) = bot
+                        .edit_message_text(msg.chat.id, inter_id, &edited)
+                        .parse_mode(ParseMode::Html)
+                        .await
+                {
+                    tracing::warn!(
+                        "Telegram: failed to append ctx footer to last intermediate ({e})"
+                    );
+                }
                 let _ = bot.delete_message(msg.chat.id, mid).await;
             }
 
@@ -3075,6 +3099,28 @@ pub(crate) async fn resume_session(
                     }
                 }
             } else if let Some(mid) = streaming_msg_id {
+                // Empty final text on resume — same as handle_message: append
+                // the ctx/tok-s footer to the last intermediate so it isn't
+                // dropped, then remove the empty placeholder.
+                let last_inter = {
+                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    s.intermediate_msg_ids
+                        .last()
+                        .copied()
+                        .zip(s.sent_intermediates.last().cloned())
+                };
+                if let Some((inter_id, inter_text)) = last_inter
+                    && let Some(edited) =
+                        build_last_intermediate_with_footer(&inter_text, &footer)
+                    && let Err(e) = bot
+                        .edit_message_text(chat_id, inter_id, &edited)
+                        .parse_mode(ParseMode::Html)
+                        .await
+                {
+                    tracing::warn!(
+                        "Telegram resume: failed to append ctx footer to last intermediate ({e})"
+                    );
+                }
                 let _ = bot.delete_message(chat_id, mid).await;
             }
 
@@ -3476,6 +3522,43 @@ pub(crate) async fn flush_intermediates(
 /// Send an HTML message, falling back to plain text if Telegram rejects the HTML.
 /// Returns the resulting `MessageId` so callers that need to track or later delete
 /// the message (e.g. intermediate cleanup on cancellation) can do so.
+/// Build the edited message body for appending the ctx/tok-s footer to the
+/// last intermediate message.
+///
+/// Used when a turn's final response text deduped to empty because all of
+/// it was already delivered as intermediate messages (the common tool-
+/// using case). Rather than drop the footer (which left the user never
+/// seeing ctx budget on Telegram — 2026-06-06) or send a standalone
+/// footer bubble (removed in 7a0ca1c9), we edit the last intermediate
+/// message to carry the footer inline.
+///
+/// Reconstructs the last chunk exactly as it was originally sent
+/// (`markdown_to_telegram_html` + `split_message(_, 4096)` then `.last()`),
+/// appends the footer, and returns `None` when:
+/// - the footer or intermediate text is empty, OR
+/// - the combined result would exceed Telegram's 4096-char cap (never
+///   truncate real content to make room for metadata).
+///
+/// Pure + free function so the fit/reconstruct logic is unit-testable
+/// without a live bot.
+pub(crate) fn build_last_intermediate_with_footer(
+    last_intermediate_text: &str,
+    footer: &str,
+) -> Option<String> {
+    if footer.is_empty() || last_intermediate_text.is_empty() {
+        return None;
+    }
+    let html = markdown_to_telegram_html(last_intermediate_text);
+    let chunks = split_message(&html, 4096);
+    let last_chunk = chunks.last()?;
+    let combined = format!("{last_chunk}\n\n{footer}");
+    if combined.chars().count() > 4096 {
+        None
+    } else {
+        Some(combined)
+    }
+}
+
 pub(crate) async fn send_html_or_plain(
     bot: &Bot,
     chat_id: ChatId,
