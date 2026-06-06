@@ -166,12 +166,7 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
         bottom_row[0],
         state.focused_card == 4,
     );
-    cards::render_cache_efficiency(
-        f,
-        &state.data.cache,
-        bottom_row[1],
-        state.focused_card == 5,
-    );
+    cards::render_cache_efficiency(f, &state.data.cache, bottom_row[1], state.focused_card == 5);
 
     // Footer
     cards::render_footer(f, chunks[3]);

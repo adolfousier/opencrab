@@ -3214,12 +3214,14 @@ impl App {
                     if saved_provider != &current_prov
                         && let Some(cached) = self.provider_cache.get(saved_provider).cloned()
                     {
-                        self.agent_service.swap_provider_for_session(session.id, cached);
+                        self.agent_service
+                            .swap_provider_for_session(session.id, cached);
                         // Restore the session's saved model, which
                         // swap_provider_for_session overwrites to
                         // the provider's default.
                         if let Some(ref saved_model) = session.model {
-                            self.agent_service.set_session_model(session.id, saved_model.clone());
+                            self.agent_service
+                                .set_session_model(session.id, saved_model.clone());
                         }
                     }
                 }
@@ -3243,12 +3245,14 @@ impl App {
                     if saved_provider != &current_prov
                         && let Some(cached) = self.provider_cache.get(saved_provider).cloned()
                     {
-                        self.agent_service.swap_provider_for_session(session.id, cached);
+                        self.agent_service
+                            .swap_provider_for_session(session.id, cached);
                         // Restore the session's saved model, which
                         // swap_provider_for_session overwrites to
                         // the provider's default.
                         if let Some(ref saved_model) = session.model {
-                            self.agent_service.set_session_model(session.id, saved_model.clone());
+                            self.agent_service
+                                .set_session_model(session.id, saved_model.clone());
                         }
                     }
                 }

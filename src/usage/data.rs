@@ -839,7 +839,7 @@ async fn fetch_cache_stats(pool: &Pool, since: Option<i64>) -> Result<Option<Cac
         })
         .await
         .map_err(interact_err)?;
-    
+
     // Graceful degradation: return None on any query error
     Ok(result.unwrap_or(None))
 }
