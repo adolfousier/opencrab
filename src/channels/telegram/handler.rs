@@ -1883,39 +1883,37 @@ pub(crate) async fn handle_message(
                                 .map(|t| now.duration_since(t).as_secs())
                                 .unwrap_or(999);
 
-                            if snap.status_msg_id.is_some() && shown_elapsed >= 5 {
-                                if let Some(mid) = snap.status_msg_id {
-                                    let _ = bot.delete_message(chat, mid).await;
-                                }
-                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                s.status_msg_id = None;
-                                s.status_shown_at = Some(now);
-                            } else if snap.status_msg_id.is_none() && shown_elapsed >= 2 {
-                                let elapsed_total = snap.tools_started_at
-                                    .map(|t| t.elapsed().as_secs())
-                                    .unwrap_or(0);
+                            let elapsed_total = snap.tools_started_at
+                                .map(|t| t.elapsed().as_secs())
+                                .unwrap_or(0);
 
-                                let active_refs: Vec<(&str, &str)> = snap.active_tools.iter()
-                                    .map(|(n, c)| (n.as_str(), c.as_str()))
-                                    .collect();
-                                let last_ref = snap.last_completed_tool.as_ref()
-                                    .map(|(n, c)| (n.as_str(), c.as_str()));
-                                // build_status_message returns None when
-                                // there is no real signal — skip the send
-                                // entirely rather than ship hardcoded filler.
-                                if let Some(status) = build_status_message(
-                                    &active_refs,
-                                    last_ref,
-                                    snap.tool_round_count,
-                                    elapsed_total,
-                                    snap.processing,
-                                    snap.thinking_excerpt.as_deref(),
-                                    snap.user_message_preview.as_deref(),
-                                ) && let Ok(m) = message_in_thread(&bot, chat, thread_id, &status).await
-                                {
-                                    let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                    s.status_msg_id = Some(m.id);
-                                    s.status_shown_at = Some(now);
+                            let active_refs: Vec<(&str, &str)> = snap.active_tools.iter()
+                                .map(|(n, c)| (n.as_str(), c.as_str()))
+                                .collect();
+                            let last_ref = snap.last_completed_tool.as_ref()
+                                .map(|(n, c)| (n.as_str(), c.as_str()));
+
+                            if let Some(status) = build_status_message(
+                                &active_refs,
+                                last_ref,
+                                snap.tool_round_count,
+                                elapsed_total,
+                                snap.processing,
+                                snap.thinking_excerpt.as_deref(),
+                                snap.user_message_preview.as_deref(),
+                            ) {
+                                if let Some(mid) = snap.status_msg_id {
+                                    // Existing message — edit in place (no flicker, no extra API call)
+                                    let _ = bot.edit_message_text(chat, mid, &status)
+                                        .parse_mode(ParseMode::Html)
+                                        .await;
+                                } else if shown_elapsed >= 2 {
+                                    // No message yet — create one
+                                    if let Ok(m) = message_in_thread(&bot, chat, thread_id, &status).await {
+                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                        s.status_msg_id = Some(m.id);
+                                        s.status_shown_at = Some(now);
+                                    }
                                 }
                             }
                         }
