@@ -455,12 +455,22 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 ),
             ]));
             // See comment at the expanded-message reasoning site above.
+            // Cap thinking display to last N lines (rolling window) to avoid
+            // swallowing the entire viewport during long thinking phases.
+            const MAX_THINKING_LINES: usize = 12;
             let inner_width = content_width.saturating_sub(2);
             let reasoning_lines = reasoning_to_lines(reasoning, inner_width);
             let reasoning_style = Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC);
-            for line in reasoning_lines {
+            let start_idx = reasoning_lines.len().saturating_sub(MAX_THINKING_LINES);
+            if start_idx > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("  ⋯ {} more lines", start_idx),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            for line in reasoning_lines.into_iter().skip(start_idx) {
                 let mut padded_spans = vec![Span::styled("  ", Style::default())];
                 for span in line.spans {
                     padded_spans.push(Span::styled(span.content.to_string(), reasoning_style));
@@ -564,12 +574,22 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             ),
         ]));
         // See comment at the expanded-message reasoning site above.
+        // Cap thinking display to last N lines (rolling window) to avoid
+        // swallowing the entire viewport during long thinking phases.
+        const MAX_THINKING_LINES: usize = 12;
         let inner_width = content_width.saturating_sub(2);
         let reasoning_lines = reasoning_to_lines(reasoning, inner_width);
         let reasoning_style = Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC);
-        for rline in reasoning_lines {
+        let start_idx = reasoning_lines.len().saturating_sub(MAX_THINKING_LINES);
+        if start_idx > 0 {
+            lines.push(Line::from(Span::styled(
+                format!("  ⋯ {} more lines", start_idx),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        for rline in reasoning_lines.into_iter().skip(start_idx) {
             let mut padded_spans = vec![Span::styled("  ", Style::default())];
             for span in rline.spans {
                 padded_spans.push(Span::styled(span.content.to_string(), reasoning_style));
