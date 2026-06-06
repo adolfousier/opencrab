@@ -150,6 +150,7 @@ pub mod session_working_dir_test;
 pub mod slack_fmt_test;
 pub mod stream_loop_test;
 pub mod streaming_active_secs_test;
+pub mod streaming_tok_per_sec_guard_test;
 pub mod streaming_tps_accumulator_test;
 pub mod stt_fallback_chain_test;
 pub mod system_continuation_test;

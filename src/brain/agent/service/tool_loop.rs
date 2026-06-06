@@ -19,6 +19,53 @@ use uuid::Uuid;
 /// times consecutively successfully, the 4th it sticks".
 const STICKY_FALLBACK_THRESHOLD: u32 = 4;
 
+/// Minimum summed active-streaming time (seconds) below which a tok/s
+/// reading is not credible. Burst-delivering providers (e.g. glm-5.1)
+/// can dump an entire short response in a single sub-second SSE chunk,
+/// making the active window ~8ms and the computed rate physically
+/// impossible (37203 tok/s observed 2026-06-06). Below this floor the
+/// timing is too coarse to represent a generation rate.
+const MIN_ACTIVE_SECS_FOR_TOK_S: f64 = 0.3;
+
+/// Upper bound on a believable streaming tok/s. Frontier models stream
+/// to end users at tens to low-hundreds tok/s; the fastest specialized
+/// inference (Groq/Cerebras on small models) tops out around 1-2k. A
+/// computed rate above this is a network-burst measurement artifact,
+/// not a real generation rate, so we show nothing rather than a fantasy
+/// number.
+const MAX_PLAUSIBLE_TOK_S: f64 = 2000.0;
+
+/// Compute the streaming tokens-per-second for a turn, returning `None`
+/// when the measurement isn't credible.
+///
+/// `total_output_tokens` is the turn's summed output tokens; `active_secs`
+/// is the summed per-iteration active-streaming windows (idle gaps and
+/// tool/approval time already excluded by `helpers::stream_complete`).
+///
+/// Returns `None` when:
+/// - there are no output tokens, OR
+/// - the active window is below `MIN_ACTIVE_SECS_FOR_TOK_S` (burst
+///   delivery — timing too coarse to be a rate), OR
+/// - the resulting rate exceeds `MAX_PLAUSIBLE_TOK_S` (multi-burst
+///   artifact that still clears the floor).
+///
+/// Pure + free-function so the channel-footer rate can be unit-tested
+/// without spinning the whole tool loop.
+pub(crate) fn compute_streaming_tok_per_sec(
+    total_output_tokens: u32,
+    active_secs: f64,
+) -> Option<f64> {
+    if total_output_tokens == 0 || active_secs < MIN_ACTIVE_SECS_FOR_TOK_S {
+        return None;
+    }
+    let rate = total_output_tokens as f64 / active_secs;
+    if rate.is_finite() && rate <= MAX_PLAUSIBLE_TOK_S {
+        Some(rate)
+    } else {
+        None
+    }
+}
+
 /// Cross-provider model leak guard. Returns the model the next LLM call
 /// should ship with, plus `Some(stale)` when the resolved pin had to be
 /// substituted (so the caller can log the swap once with rich context).
@@ -4858,11 +4905,12 @@ impl AgentService {
         // not output-divided-by-full-turn-wall-clock (which silently
         // halved the rate on tool-heavy turns).
         //
-        let tokens_per_second = if total_streaming_active_secs > 0.0 && total_output_tokens > 0 {
-            Some(total_output_tokens as f64 / total_streaming_active_secs)
-        } else {
-            None
-        };
+        // Guarded against burst-delivery artifacts: a near-zero active
+        // window (provider dumped the response in one sub-second chunk)
+        // or an implausibly high rate yields None instead of a fantasy
+        // number like the 37203 tok/s observed on a glm-5.1 short reply.
+        let tokens_per_second =
+            compute_streaming_tok_per_sec(total_output_tokens, total_streaming_active_secs);
 
         Ok(AgentResponse {
             message_id: assistant_db_msg.id,
