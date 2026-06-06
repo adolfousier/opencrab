@@ -1107,8 +1107,11 @@ impl App {
             // Check for slash commands before sending to LLM
             let content = self.input_buffer.clone();
             if self.handle_slash_command(content.trim()).await {
-                self.input_buffer.clear();
-                self.cursor_position = 0;
+                // Don't clear input if it was a rejected unknown command (error_message is set)
+                if self.error_message.is_none() {
+                    self.input_buffer.clear();
+                    self.cursor_position = 0;
+                }
                 self.slash_suggestions_active = false;
                 self.dismiss_emoji_picker();
                 return Ok(());

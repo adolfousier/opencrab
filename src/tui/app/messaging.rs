@@ -897,11 +897,12 @@ impl App {
                     let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
                     return true;
                 }
-                // Unknown slash command — warn the user but don't send to agent
-                self.push_system_message(format!(
+                // Unknown slash command — show warning inline, keep input, don't add to chat
+                self.error_message = Some(format!(
                     "⚡ Unknown command: {}. Type /help for available commands.",
                     cmd
                 ));
+                self.error_message_shown_at = Some(std::time::Instant::now());
                 true
             }
             _ => false,
