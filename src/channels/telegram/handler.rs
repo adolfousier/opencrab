@@ -2392,9 +2392,12 @@ pub(crate) async fn handle_message(
             // Deliver final response — prefer editing the streaming message in-place
             // to avoid the delete+send race that causes duplicates.
             let html = markdown_to_telegram_html(&text_only);
-            // Append ctx footer to display only — never stored in DB or used for TTS
+            // Append ctx footer to display only — never stored in DB or used for TTS.
+            // When text is empty after dedup (all content was already delivered as
+            // intermediate messages), DON'T send a footer-only message. The streaming
+            // placeholder will be deleted instead.
             let display_html = if html.is_empty() {
-                footer.clone()
+                String::new()
             } else {
                 format!("{}\n\n{}", html, footer)
             };
@@ -3043,7 +3046,7 @@ pub(crate) async fn resume_session(
 
             let html = markdown_to_telegram_html(&text_only);
             let display_html = if html.is_empty() {
-                footer.clone()
+                String::new()
             } else {
                 format!("{}\n\n{}", html, footer)
             };
