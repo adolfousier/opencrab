@@ -1018,8 +1018,13 @@ pub(crate) async fn handle_message(
             let text_content = redact_secrets(&text_content);
             let text_content = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_content);
 
-            // Context budget footer will be sent as a separate message after
-            // all response delivery is complete, with a 2-second delay.
+            // Context budget footer is appended INLINE to the last chunk of
+            // the final response below (see the !was_streamed block) — never
+            // a separate message, never stored in DB. On fully-streamed turns
+            // (text already delivered as intermediate messages) the footer is
+            // intentionally skipped, matching the Telegram behaviour from
+            // commit 7a0ca1c9: the footer is per-turn metadata, and with no
+            // final text to attach it to there's nothing to footer.
 
             // Send images before text
             for img_path in img_paths {
