@@ -1982,21 +1982,14 @@ impl App {
                 let display_content = Self::humanize_image_markers(&content);
 
                 // Dedup: if the tail of the conversation is an unpaired user
-                // message with identical content (previous request failed with
-                // no assistant response), remove the stale one before pushing.
-                // This prevents duplicate retries from accumulating during
-                // network issues — matches Claude Code's "message goes back
-                // to input" behaviour.
+                // message with identical content (previous request failed or
+                // was cancelled with no assistant response), remove the stale
+                // one before pushing.  We only need to check the LAST message:
+                // if it's still a user message, it was never responded to.
                 let prev_is_duplicate = self
                     .messages
                     .last()
-                    .is_some_and(|last| last.role == "user" && last.content == display_content)
-                    && !self
-                        .messages
-                        .iter()
-                        .rev()
-                        .skip(1)
-                        .any(|m| m.role == "assistant");
+                    .is_some_and(|last| last.role == "user" && last.content == display_content);
                 if prev_is_duplicate {
                     self.messages.pop();
                 }
