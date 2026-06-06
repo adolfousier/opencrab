@@ -491,7 +491,7 @@ pub(crate) async fn handle_message(
 
     // Extract replied-to message context so the agent knows what the user is referencing.
     let reply_context = msg.referenced_message.as_ref().and_then(|reply| {
-        let reply_text = reply.content.trim();
+        let reply_text = crate::utils::strip_ctx_footer(reply.content.trim());
         if reply_text.is_empty() {
             return None;
         }
@@ -742,8 +742,13 @@ pub(crate) async fn handle_message(
             let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
             let text_only = redact_secrets(&text_only);
 
-            // Context budget footer will be sent as a separate message after
-            // all response delivery is complete, with a 2-second delay.
+            // Context budget footer appended to last display chunk, never stored in DB
+            let ctx_max = agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(
+                response.context_tokens,
+                ctx_max,
+                response.tokens_per_second,
+            );
 
             for img_path in img_paths {
                 match tokio::fs::read(&img_path).await {
@@ -768,7 +773,18 @@ pub(crate) async fn handle_message(
                 }
             }
 
-            for chunk in split_message(&text_only, 2000) {
+            let mut chunks: Vec<String> = split_message(&text_only, 2000)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+            // Append footer to last display chunk so it's inline, not a separate message
+            if let Some(last) = chunks.last_mut() {
+                last.push_str("\n\n");
+                last.push_str(&footer);
+            } else if !footer.is_empty() {
+                chunks.push(footer);
+            }
+            for chunk in &chunks {
                 if let Err(e) = msg.channel_id.say(&ctx.http, chunk).await {
                     tracing::error!("Discord: failed to send reply: {}", e);
                 }
@@ -821,26 +837,6 @@ pub(crate) async fn handle_message(
                     }
                     Err(e) => tracing::error!("Discord: TTS error: {e}"),
                 }
-            }
-
-            // Send context budget footer as a separate message after 2-second delay
-            // This ensures it appears at the very end, after all response delivery is complete
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let ctx_max = agent.context_limit_for_session(session_id);
-            let footer = crate::utils::format_ctx_footer(
-                response.context_tokens,
-                ctx_max,
-                response.tokens_per_second,
-            );
-            if let Err(e) = msg.channel_id.say(&ctx.http, &footer).await {
-                tracing::warn!("Discord: failed to send ctx footer: {}", e);
-            } else {
-                tracing::info!(
-                    "Discord: sent ctx footer='{}' after 2s delay (context_tokens={}, ctx_max={})",
-                    footer,
-                    response.context_tokens,
-                    ctx_max,
-                );
             }
         }
         Err(ref e) if matches!(e, crate::brain::agent::AgentError::Cancelled) => {

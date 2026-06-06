@@ -61,7 +61,7 @@ fn extract_reply_context(msg: &Message) -> Option<String> {
     let msg = unwrap_message(msg);
     let ctx = msg.extended_text_message.as_ref()?.context_info.as_ref()?;
     let quoted = ctx.quoted_message.as_ref()?;
-    let quoted_text = extract_text(quoted)?;
+    let quoted_text = crate::utils::strip_ctx_footer(&extract_text(quoted)?);
     if quoted_text.is_empty() {
         return None;
     }
@@ -1074,10 +1074,27 @@ pub(crate) async fn handle_message(
             // Send text response (markers stripped).
             // Skip if already delivered progressively via the intermediate-text callback
             // (happens when the agent used tool calls — text was sent between iterations).
+            // Context budget footer is appended to last chunk for display only, never stored in DB.
             if !text_content.is_empty() && !was_streamed.load(std::sync::atomic::Ordering::Relaxed)
             {
+                let ctx_max = agent.context_limit_for_session(session_id);
+                let footer = crate::utils::format_ctx_footer(
+                    response.context_tokens,
+                    ctx_max,
+                    response.tokens_per_second,
+                );
                 let tagged = format!("{}\n\n{}", MSG_HEADER, text_content);
-                for chunk in split_message(&tagged, 4000) {
+                let mut chunks: Vec<String> = split_message(&tagged, 4000)
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                if let Some(last) = chunks.last_mut() {
+                    last.push_str("\n\n");
+                    last.push_str(&footer);
+                } else if !footer.is_empty() {
+                    chunks.push(footer.clone());
+                }
+                for chunk in &chunks {
                     let reply_msg = waproto::whatsapp::Message {
                         conversation: Some(chunk.to_string()),
                         ..Default::default()
@@ -1159,29 +1176,7 @@ pub(crate) async fn handle_message(
                 }
             }
 
-            // Send context budget footer as a separate message after 2-second delay
-            // This ensures it appears at the very end, after all response delivery is complete
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let ctx_max = agent.context_limit_for_session(session_id);
-            let footer = crate::utils::format_ctx_footer(
-                response.context_tokens,
-                ctx_max,
-                response.tokens_per_second,
-            );
-            let footer_msg = waproto::whatsapp::Message {
-                conversation: Some(footer.clone()),
-                ..Default::default()
-            };
-            if let Err(e) = client.send_message(reply_jid.clone(), footer_msg).await {
-                tracing::warn!("WhatsApp: failed to send ctx footer: {}", e);
-            } else {
-                tracing::info!(
-                    "WhatsApp: sent ctx footer='{}' after 2s delay (context_tokens={}, ctx_max={})",
-                    footer,
-                    response.context_tokens,
-                    ctx_max,
-                );
-            }
+            // ctx footer already appended inline above
         }
         Err(ref e) if matches!(e, crate::brain::agent::AgentError::Cancelled) => {
             tracing::info!("WhatsApp: agent call cancelled for session {}", session_id);

@@ -1718,16 +1718,31 @@ async fn handle_message(
                 }
             }
 
-            // Context budget footer will be sent as a separate message after
-            // all response delivery is complete, with a 2-second delay.
+            // Context budget footer appended to last display chunk, never stored in DB
+            let ctx_max = state.agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(
+                response.context_tokens,
+                ctx_max,
+                response.tokens_per_second,
+            );
 
-            for chunk in split_message(&text_only, 3000) {
+            let mut chunks: Vec<String> = split_message(&text_only, 3000)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+            if let Some(last) = chunks.last_mut() {
+                last.push_str("\n\n");
+                last.push_str(&footer);
+            } else if !footer.is_empty() {
+                chunks.push(footer.clone());
+            }
+            for chunk in &chunks {
                 if chunk.is_empty() {
                     continue;
                 }
                 let mut request = SlackApiChatPostMessageRequest::new(
                     SlackChannelId::new(channel_id.clone()),
-                    SlackMessageContent::new().with_text(chunk.to_string()),
+                    SlackMessageContent::new().with_text(chunk.clone()),
                 );
                 if let Some(ref ts) = thread_ts {
                     request = request.with_thread_ts(ts.clone());
@@ -1840,32 +1855,7 @@ async fn handle_message(
                 }
             }
 
-            // Send context budget footer as a separate message after 2-second delay
-            // This ensures it appears at the very end, after all response delivery is complete
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let ctx_max = state.agent.context_limit_for_session(session_id);
-            let footer = crate::utils::format_ctx_footer(
-                response.context_tokens,
-                ctx_max,
-                response.tokens_per_second,
-            );
-            let mut footer_request = SlackApiChatPostMessageRequest::new(
-                SlackChannelId::new(channel_id.clone()),
-                SlackMessageContent::new().with_text(footer.clone()),
-            );
-            if let Some(ref ts) = thread_ts {
-                footer_request = footer_request.with_thread_ts(ts.clone());
-            }
-            if let Err(e) = session.chat_post_message(&footer_request).await {
-                tracing::warn!("Slack: failed to send ctx footer: {}", e);
-            } else {
-                tracing::info!(
-                    "Slack: sent ctx footer='{}' after 2s delay (context_tokens={}, ctx_max={})",
-                    footer,
-                    response.context_tokens,
-                    ctx_max,
-                );
-            }
+            // ctx footer already appended inline above
         }
         Err(ref e) if matches!(e, crate::brain::agent::AgentError::Cancelled) => {
             tracing::info!("Slack: agent call cancelled for session {}", session_id);

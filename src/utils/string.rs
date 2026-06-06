@@ -134,9 +134,44 @@ pub fn format_ctx_footer(used: u32, max: u32, tps: Option<f64>) -> String {
     }
 }
 
+/// Strip ctx footer lines (e.g. "ctx: 84K/200K 42% | 406 tok/s") from text.
+/// Used on incoming reply quotes so the metadata never leaks into agent context.
+pub fn strip_ctx_footer(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.starts_with("ctx:") || !trimmed.contains('/') || !trimmed.contains('%')
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end_matches('\n')
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_strip_ctx_footer() {
+        assert_eq!(
+            strip_ctx_footer("Hello\n\nctx: 84K/200K 42% | 406 tok/s"),
+            "Hello"
+        );
+        assert_eq!(strip_ctx_footer("ctx: 8K/200K 4%"), "");
+        assert_eq!(
+            strip_ctx_footer("Some text\nctx: 1M/2M 50% | 123 tok/s\nMore text"),
+            "Some text\nMore text"
+        );
+        // Don't strip lines that just happen to contain a colon
+        assert_eq!(
+            strip_ctx_footer("Note: something here"),
+            "Note: something here"
+        );
+        // Multi-line without footer is unchanged
+        let multi = "line1\nline2\nline3";
+        assert_eq!(strip_ctx_footer(multi), multi);
+    }
 
     #[test]
     fn test_truncate_str_ascii() {

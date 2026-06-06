@@ -1466,7 +1466,10 @@ pub(crate) async fn handle_message(
                 }
             })
             .unwrap_or_else(|| "unknown".to_string());
-        let ctx = format_reply_context(&reply_sender, full_text, quote_text);
+        // Strip ctx footer from quoted text so metadata never leaks into agent context
+        let full_clean = crate::utils::strip_ctx_footer(full_text);
+        let quote_clean = crate::utils::strip_ctx_footer(quote_text);
+        let ctx = format_reply_context(&reply_sender, &full_clean, &quote_clean);
         tracing::info!(
             "Telegram reply context: chat_id={}, has_reply_to=true, \
              has_quote={}, quote_is_manual={:?}, quote_text_len={}, \
@@ -2360,23 +2363,14 @@ pub(crate) async fn handle_message(
                 text_only
             };
 
-            // Context budget footer — send as a separate message AFTER all
-            // response delivery is complete, with a 2-second delay. This
-            // prevents the footer from appearing in the middle of the
-            // conversation flow when there are intermediate messages (tool
-            // calls, intermediate text). The footer is metadata about the
-            // turn, not part of the response body.
+            // Context budget footer is appended to the response text for
+            // display only. It must NOT be stored in the session/messages
+            // table or used for TTS synthesis — it's metadata for the user.
             let ctx_max = agent.context_limit_for_session(session_id);
             let footer = crate::utils::format_ctx_footer(
                 response.context_tokens,
                 ctx_max,
                 response.tokens_per_second,
-            );
-            tracing::info!(
-                "Telegram footer: ctx footer='{}' (context_tokens={}, ctx_max={}) — will send as separate message after 2s delay",
-                footer,
-                response.context_tokens,
-                ctx_max,
             );
 
             for img_path in img_paths {
@@ -2398,13 +2392,20 @@ pub(crate) async fn handle_message(
             // Deliver final response — prefer editing the streaming message in-place
             // to avoid the delete+send race that causes duplicates.
             let html = markdown_to_telegram_html(&text_only);
+            // Append ctx footer to display only — never stored in DB or used for TTS
+            let display_html = if html.is_empty() {
+                footer.clone()
+            } else {
+                format!("{}\n\n{}", html, footer)
+            };
             tracing::info!(
-                "Telegram deliver: html.len={}, text_only ends_with_footer={:?}",
+                "Telegram deliver: html.len={}, footer='{}', text_only ends_with={:?}",
                 html.len(),
+                footer,
                 text_only.lines().last()
             );
-            if !html.is_empty() {
-                let chunks: Vec<String> = split_message(&html, 4096)
+            if !display_html.is_empty() {
+                let chunks: Vec<String> = split_message(&display_html, 4096)
                     .into_iter()
                     .map(|s| s.to_string())
                     .collect();
@@ -2533,26 +2534,6 @@ pub(crate) async fn handle_message(
                         tracing::error!("Telegram: TTS synthesis failed: {:#}", e);
                     }
                 }
-            }
-
-            // Send context budget footer as a separate message after 2-second delay
-            // This ensures it appears at the very end, after all response delivery is complete
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let ctx_max = agent.context_limit_for_session(session_id);
-            let footer = crate::utils::format_ctx_footer(
-                response.context_tokens,
-                ctx_max,
-                response.tokens_per_second,
-            );
-            if let Err(e) = message_in_thread(&bot, msg.chat.id, thread_id, &footer).await {
-                tracing::warn!("Telegram: failed to send ctx footer: {}", e);
-            } else {
-                tracing::info!(
-                    "Telegram: sent ctx footer='{}' after 2s delay (context_tokens={}, ctx_max={})",
-                    footer,
-                    response.context_tokens,
-                    ctx_max,
-                );
             }
         }
         Err(ref e) if matches!(e, crate::brain::agent::AgentError::Cancelled) => {
@@ -3045,23 +3026,12 @@ pub(crate) async fn resume_session(
                 text_only
             };
 
-            // Context budget footer — send as a separate message AFTER all
-            // response delivery is complete, with a 2-second delay. This
-            // prevents the footer from appearing in the middle of the
-            // conversation flow when there are intermediate messages (tool
-            // calls, intermediate text). The footer is metadata about the
-            // turn, not part of the response body.
+            // Context budget footer is appended to display text, not sent as separate message
             let ctx_max = agent.context_limit_for_session(session_id);
             let footer = crate::utils::format_ctx_footer(
                 response.context_tokens,
                 ctx_max,
                 response.tokens_per_second,
-            );
-            tracing::info!(
-                "Telegram footer: ctx footer='{}' (context_tokens={}, ctx_max={}) — will send as separate message after 2s delay",
-                footer,
-                response.context_tokens,
-                ctx_max,
             );
 
             for img_path in img_paths {
@@ -3072,8 +3042,13 @@ pub(crate) async fn resume_session(
             }
 
             let html = markdown_to_telegram_html(&text_only);
-            if !html.is_empty() {
-                let chunks: Vec<String> = split_message(&html, 4096)
+            let display_html = if html.is_empty() {
+                footer.clone()
+            } else {
+                format!("{}\n\n{}", html, footer)
+            };
+            if !display_html.is_empty() {
+                let chunks: Vec<String> = split_message(&display_html, 4096)
                     .into_iter()
                     .map(|s| s.to_string())
                     .collect();
