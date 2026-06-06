@@ -689,7 +689,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
 
 /// Sanitize a command name for Telegram: lowercase, underscores only.
 /// Telegram only allows: a-z, 0-9, and underscores.
-fn sanitize_command_name(name: &str) -> String {
+pub(crate) fn sanitize_command_name(name: &str) -> String {
     name.to_lowercase()
         .chars()
         .map(|c| if c == '-' { '_' } else { c })
@@ -697,11 +697,14 @@ fn sanitize_command_name(name: &str) -> String {
         .collect()
 }
 
-/// Truncate description to max length, adding ellipsis if needed.
-fn truncate_description(desc: &str, max_len: usize) -> String {
-    if desc.len() <= max_len {
+/// Truncate description to max character length, adding ellipsis if needed.
+/// Telegram limits descriptions by character count, not byte count.
+pub(crate) fn truncate_description(desc: &str, max_chars: usize) -> String {
+    let char_count = desc.chars().count();
+    if char_count <= max_chars {
         desc.to_string()
     } else {
-        format!("{}…", &desc[..max_len.saturating_sub(1)])
+        let truncated: String = desc.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{truncated}…")
     }
 }

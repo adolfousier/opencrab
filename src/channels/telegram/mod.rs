@@ -12,6 +12,8 @@ pub(crate) mod session_resolve;
 
 pub use agent::TelegramAgent;
 pub(crate) use agent::register_bot_commands;
+#[cfg(test)]
+pub(crate) use agent::{sanitize_command_name, truncate_description};
 
 use std::collections::HashMap;
 use teloxide::prelude::Bot;
