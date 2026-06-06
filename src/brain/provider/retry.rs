@@ -28,7 +28,8 @@ pub struct RetryConfig {
     pub jitter: f64,
     /// If true, 429 / rate-limit errors are retried in-place with backoff
     /// (honoring Retry-After) instead of immediately bailing to the
-    /// FallbackProvider. Matches qwen-cli's DEFAULT_RETRY_OPTIONS behavior.
+    /// FallbackProvider. Default is true — most providers benefit from
+    /// a few in-place retries before walking the fallback chain.
     pub retry_on_rate_limit: bool,
 }
 
@@ -40,7 +41,7 @@ impl Default for RetryConfig {
             max_delay: Duration::from_secs(30),
             backoff_multiplier: 2.0,
             jitter: 0.1,
-            retry_on_rate_limit: false,
+            retry_on_rate_limit: true,
         }
     }
 }
@@ -153,12 +154,10 @@ where
                     return Err(err);
                 }
 
-                // Rate-limit errors: by default we bail immediately so the
-                // FallbackProvider can swap to a healthy chain in milliseconds
-                // instead of hammering a dead route whose shared upstream
-                // window is closed. Providers that want qwen-cli-style
-                // in-place retry (e.g. qwen OAuth, whose window reopens
-                // within seconds) opt in via `retry_on_rate_limit`.
+                // Rate-limit errors: retry in-place with backoff (honoring
+                // Retry-After) before bailing to the FallbackProvider.
+                // This gives the rate-limit window time to reopen instead of
+                // hammering the fallback chain on every transient 429.
                 let is_rate_limit = matches!(&err, ProviderError::RateLimitExceeded(_))
                     || matches!(
                         &err,

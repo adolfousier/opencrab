@@ -799,7 +799,7 @@ impl AgentService {
         let mut accumulated_text = String::new(); // Collect text from all iterations (not just final)
         let mut recent_tool_calls: Vec<String> = Vec::new(); // Track tool calls to detect loops
         let mut stream_retry_count = 0u32; // Track consecutive stream drop retries
-        const MAX_STREAM_RETRIES: u32 = 2; // Retry up to 2 times on dropped streams
+        const MAX_STREAM_RETRIES: u32 = 3; // Retry up to 3 times on dropped streams
         // Phantom-retry budget per turn. Single-shot proved insufficient —
         // when the model is stuck in a "Let me check…" narration loop, one
         // correction nudges it for one iteration and it drifts right back.
@@ -1354,7 +1354,10 @@ impl AgentService {
                         } else if is_auth {
                             format!("Auth error on '{}/{}'", primary_from_name, model_name)
                         } else {
-                            format!("Rate limit on '{}/{}'", primary_from_name, model_name)
+                            format!(
+                                "Rate limit on '{}/{}' (retried 3x in-place)",
+                                primary_from_name, model_name
+                            )
                         };
                         let message = if self.fallback_providers.is_empty() {
                             format!("{} — no fallback providers configured.", prefix)
