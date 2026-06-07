@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.3.35] - 2026-06-04
+## [0.3.36] - 2026-06-07
+
+76 commits since v0.3.35. The largest release to date — 130 files changed, +20,719/-2,341 lines. Closes #163, #164, #165, #167, #169, #170, #171, #174, #175, #176.
+
+**Multi-pane live updates (closes #163, #165, 5 commits):** Background-session live-state cache for non-focused panes, inactive panes update live via background-session routing, IntermediateText/QueuedUserMessage routed into per-session delta with cleanup, Ctrl+N binds focused pane + live-refreshes footer title, prevent provider/model contamination when closing/switching panes.
+
+**Channel UX overhaul (closes #174, #175, 9 commits):** Inline ctx budget footer into last response message across all 4 channels (Telegram, Discord, Slack, WhatsApp) instead of separate message. Telegram rolling status edit-in-place instead of delete+recreate. Telegram bot command hot-reload on config/skills change. Guard tok/s footer against burst-delivery artifacts. Warn on unknown slash commands + reject at input level (TUI). Append ctx footer to last intermediate (vanishing fix). Don't send footer-only message when text empty after dedup.
+
+**analyze_video frame-extraction fallback (1 commit):** When Gemini video API fails (network error, upload failure), auto-extract frames via ffmpeg at 1 fps, cap at 30 frames, analyze each with Gemini vision. Combines results into chronological description.
+
+**Cache efficiency dashboard (3 commits):** New cache efficiency card on /usage showing hit rate percentage. Persist cache_creation/cache_read tokens to messages table (migration #25). Layout fix + graceful degradation.
+
+**Plan tool improvements (closes #169, 4 commits):** Bundle reference plan JSON files + minimal import format. `insert_after` for mid-plan insertion with renumbering. Forward-only re-test pattern documentation. Fix bundled plans compilation, serde defaults, and comprehensive tests.
+
+**Provider/retry overhaul (10 commits):** Retry rate limits in-place (3 retries) before fallback chain. Patient backoff defaults (1s/2s/4s/8s vs 100ms hammering). Consolidate onto utils::retry, delete duplicate. Walk full fallback chain on any HTTP error. Block cross-provider model leaks at request time. Fail fast on hard-down endpoints (DNS failure, connection refused), patient on transient. Retry transient 4xx HTML infra pages + DNS-fail fast-bail. Surface retries as `RetryAttempt N/M - reason` events to user. Sync model on swap_provider_for_session to prevent contamination. Remove orphan keys.toml section on custom-provider rename + break circular cleanup.
+
+**Near-miss tool name self-healing (closes #176, 1 commit):** When model guesses wrong tool name (e.g., `tg_send_message`), registry tries normalized match, abbreviation expansion (tg->telegram), and typo fallback before returning NotFound. Conservative: only heals on unique high-confidence match.
+
+**Secret redaction (3 commits):** Bearer tokens, API keys, URL passwords redacted in one-line tool-call summary (TUI + DB). Query-param keys + URL passwords covered in redact_secrets. RSI TUI notifications redacted.
+
+**TUI polish (closes #167, #170, 9 commits):** Cap thinking display to 12 lines rolling window. Git branch in footer + /sessions dialog (cyan). Active profile chip in footer. Fix dedup for cancelled/repeated requests. Show dedup content in Mission Control detail popup. Preserve intermediate text when strip_llm_artifacts zeros it out. Render each reasoning-only iteration as its own Thinking row. Dedup repeated user messages during network failures. Atomic provider+model swap (27 call sites updated, prevents footer desync).
+
+**CI overhaul (1 commit):** Gate on PR + main push, not tags. Kills double-build on tag events (ci.yml + release.yml both compiled). Routine main pushes: lint + Linux test only (~5-8 min). Cross-platform build gated to PRs + manual dispatch.
+
+**RSI + brain hardening (closes #164, #166, 9 commits):** Respect [providers.fallback] chain. Pruned-sidecar tracker prevents sync from re-adding deleted sections. Per-file line cap in sync_templates with bail and warn. Purpose-order canonical + N-1 dedup proposals + stub warnings. Strip empty header stubs at read time. Close silent error drops and _-hides. Exclude sentinel dimensions from opportunity generation. Add awareness of custom .md reference files to prompt. Stop directing tool failure suggestions to TOOLS.md.
+
+**Refactors + tests + docs (closes #171, 8 commits):** Slim TOOLS.md template from 660 to 56 lines + regression tests. Expose params via OPENCRABS_PARAMS env var for structured data. Contributing docs: cargo run vs release, test placement, atomic commits. Bundled plans docs, plan re-test pattern. Bring test count + TESTING.md current for v0.3.36. Tests: telegram helpers, RSI fallback chain, evolve systemd, BRAIN_PREAMBLE cross-ref, proxy detection.
+
+**Provider fixes (1 commit):** Stop /models per-field save from corrupting last-active custom section.
+
+**Fixes:** Message dedup for cancelled/repeated requests. Dedup repeated user messages during network failures. apply_brain_dedup removes ALL occurrences instead of just the first. Cache card layout and graceful degradation. Evolve: check user-level systemd units when scheduling restart.
+
+**Config docs (1 commit):** Document self_improvement_provider/model config keys.
+
 
 22 commits since v0.3.34. Quality-of-life release closing #152, #153, #155, #156, #157, #159, #161. Alexey Leshchenko (`leshchenko1979`) contributed dynamic shell tool single-quote escaping (#153) and plan import from JSON files (#160); the remaining 20 commits added `opencrabs evolve` CLI, per-call provider/model overrides for subagents, profile-aware paths, phantom detector hardening, IDENTITY.md consolidation, and teloxide 0.13 → 0.17 upgrade.
 
@@ -5395,3 +5429,4 @@ fixes.
 [0.3.34]: https://github.com/adolfousier/opencrabs/compare/v0.3.33...v0.3.34
 
 [0.3.35]: https://github.com/adolfousier/opencrabs/compare/v0.3.34...v0.3.35
+[0.3.36]: https://github.com/adolfousier/opencrabs/compare/v0.3.35...v0.3.36
