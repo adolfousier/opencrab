@@ -14,7 +14,7 @@ cargo test --all-features
 | **Brain — Prompt Builder** | 20 | `src/brain/prompt_builder.rs` |
 | **Brain — Agent Context** | 12 | `src/brain/agent/context.rs` |
 | **Brain — Provider (Anthropic)** | 9 | `src/brain/provider/anthropic.rs` |
-| **Brain — Provider (Retry)** | 9 | `src/brain/provider/retry.rs` |
+| **Provider Retry (consolidated)** | 19 | `src/utils/retry.rs` (8 inline) + `src/tests/provider_retry_consolidation_test.rs` (11) — `brain/provider/retry.rs` was deleted and folded onto `utils::retry`; covers patient backoff schedule, hard-down fast-fail, Retry-After clamp, and retry-notify surfacing |
 | **Brain — Provider (Custom OpenAI)** | 9 | `src/brain/provider/custom_openai_compatible.rs` |
 | **Brain — Provider (Copilot)** | 8 | `src/brain/provider/copilot.rs` |
 | **Brain — Provider (Factory)** | 4 | `src/brain/provider/factory.rs` |
@@ -225,7 +225,21 @@ cargo test --all-features
 | **Hashline Edit** | 51 | `src/tests/hashline_test.rs` (28 integration tests) + inline unit tests in `hash.rs` (9) and `types.rs` (14) — hash computation, HashRef parsing, edit operations (replace/append/prepend), hash mismatch detection, overlap detection, batch edits, prefix stripping, read_file hashline mode |
 | Tests — Auto-Title (channel prefix preservation) | 9 | `src/tests/auto_title_test.rs` |
 | Tests — Self-Improve Failure Log Guard | 3 | `src/tests/self_improve_failure_log_guard_test.rs` |
-| **Total** | **2,883** | +20 tests since v0.3.25: hashline avalanche fix, auto-title prefix preservation, tool error output guard, RSI failure log guard, write_opencrabs_file path validator. |
+| Tests — Provider Retry Consolidation | 11 | `src/tests/provider_retry_consolidation_test.rs` — patient backoff, hard-down/DNS fast-fail, Retry-After clamp, retry-notify surfacing |
+| Tests — Tool-Name Self-Heal (#176) | 11 | `src/tests/tool_name_heal_test.rs` — maps a model's near-miss tool name (`tg_send_message` → `telegram_send`) to the registered tool |
+| Tests — Secret Redaction (tool summary) | 6 | `src/tests/tool_description_redaction_test.rs` — redacts Bearer/api_key/URL-password from the one-line tool display |
+| Tests — Secret Redaction (RSI notifications) | 5 | `src/tests/rsi_notification_redaction_test.rs` — redacts secrets from RSI TUI alerts |
+| Tests — Provider Error / HTML-page retry | (in proxy test) | `src/tests/provider_error_proxy_test.rs` — 4xx HTML infra error pages classified retryable (modelscope 405) |
+| Tests — Cross-Provider Model Leak Guard | 6 | `src/tests/cross_provider_model_leak_guard_test.rs` |
+| Tests — Session Provider Wrap / model pairing | — | `src/tests/session_provider_wrap_test.rs` — swap wraps in FallbackProvider; provider+model set atomically, never invents a default |
+| Tests — Streaming tok/s Guard | 10 | `src/tests/streaming_tok_per_sec_guard_test.rs` — floors/ceilings burst-delivery tok/s artifacts |
+| Tests — Telegram Last-Intermediate Footer | 7 | `src/tests/telegram_last_intermediate_footer_test.rs` — ctx/tok-s footer appended to the last completion message |
+| Tests — analyze_video Frame-Extraction Fallback | 6 | `src/tests/analyze_video_fallback_test.rs` |
+| Tests — Git Branch Footer | 8 | `src/tests/git_branch_test.rs` |
+| Tests — TOOLS.md Slim Regression | 9 | `src/tests/tools_md_regression_test.rs` |
+| Tests — Telegram Command Sanitize | 10 | `src/tests/telegram_command_sanitize_test.rs` |
+| Tests — Usage Cache | 13 | `src/tests/usage_cache_test.rs` |
+| **Total** | **3,746** | Authoritative count from `cargo test --all-features` (lib test binary). The per-category rows above are a maintained snapshot from the v0.3.25 baseline; v0.3.36 added ~863 tests across 35+ new modules (retry resilience + consolidation, tool-name self-heal #176, secret redaction across tool summaries/RSI/channels, HTML-page 4xx retry, atomic provider+model pairing, streaming tok/s guard, footer/branch/video fallbacks). Re-run `cargo test` for the live number. |
 
 ---
 

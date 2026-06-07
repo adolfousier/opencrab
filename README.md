@@ -1333,7 +1333,9 @@ OpenCrabs automatically redacts API keys and tokens from all outputs — convers
 **Structural redaction** also applies to:
 - JSON fields named `authorization`, `api_key`, `token`, `secret`, `password`, etc.
 - Inline patterns in bash commands (`bearer ...`, `x-api-key: ...`, `api_key=...`)
+- URL query params and key=value assignments in any casing (`?api_key=...`, `&token=...`)
 - URL passwords (`https://user:PASSWORD@host` → `https://user:[REDACTED]@host`)
+- The one-line tool-call summary and RSI self-improvement notifications, not just the expanded views
 
 ### Supported Key Prefixes
 
@@ -3127,7 +3129,7 @@ opencrabs/
 │   │   └── runner.rs     # TUI event loop
 │   ├── utils/            # Utilities (retry, etc.)
 │   ├── migrations/       # SQLite migrations
-│   ├── tests/            # 2,883 tests (see TESTING.md)
+│   ├── tests/            # 3,746 tests (see TESTING.md)
 │   ├── benches/          # Criterion benchmarks
 │   ├── assets/           # Icons, screenshots, visual assets
 │   ├── scripts/          # Build and setup scripts
@@ -3154,7 +3156,7 @@ cargo build --release
 # Small release build
 cargo build --profile release-small
 
-# Run tests (2,883 tests across 70+ modules; 13 filesystem-touching
+# Run tests (3,746 tests across 227 test modules; 22 filesystem-touching
 # profile tests are #[ignore]d to keep the default run fast — opt in
 # with `cargo test --all-features -- --ignored` when needed)
 cargo test --all-features
