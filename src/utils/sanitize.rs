@@ -416,6 +416,30 @@ static ENV_SECRET_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"\b([A-Z][A-Z0-9_]*(?i:_PASS|_PASSWORD|_PASSWD|_SECRET|_TOKEN|_KEY|_APIKEY|_API_KEY|_CREDENTIAL|_CREDENTIALS|_AUTH))\s*=\s*(?:")?([^\s"']+)"#).unwrap()
 });
 
+/// Regex for sensitive `key=value` assignments and URL query params in any
+/// casing — `?api_key=sk-xxx`, `&token=...`, `password = "..."`. ENV_SECRET_RE
+/// only catches UPPERCASE env vars; this covers the lowercase/query-param
+/// form that appears in provider-error URLs and is otherwise missed by the
+/// prefix/length-based passes (a short, unknown-prefix token slips through).
+/// Keys are an explicit allowlist — bare `key=` is excluded to avoid
+/// redacting `primary_key=5`, `cache_key=foo`, etc. The value runs to the
+/// next delimiter (`&`, quote, whitespace, `;`, bracket).
+static KEYVAL_SECRET_RE: Lazy<Regex> = Lazy::new(|| {
+    // The value class excludes `[` so this pass never consumes an existing
+    // `[REDACTED_TOKEN]` placeholder left by an earlier pass (HEX/MIXED run
+    // first) — that would mangle it to `[REDACTED]]`.
+    Regex::new(
+        r#"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key|secret|password|passwd|token)\s*=\s*"?([^\s"'`,)\]}>|;&\[]+)"#,
+    )
+    .unwrap()
+});
+
+/// Regex for credentials embedded in a URL authority:
+/// `scheme://user:PASSWORD@host`. Redacts the password, keeps the rest so
+/// the URL stays recognizable. ENV/prefix passes don't see these.
+static URL_PASSWORD_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(://[^:/\s@]+:)([^@/\s]+)(@)").unwrap());
+
 /// Regex for piped secrets: echo "secret" | command or echo 'secret' | command
 /// Catches patterns where a secret is piped to docker login, kubectl, etc.
 static PIPED_SECRET_RE: Lazy<Regex> =
@@ -593,6 +617,31 @@ pub fn redact_secrets(text: &str) -> String {
             let full_match = caps.get(0).unwrap().as_str();
             let secret = caps.get(1).unwrap().as_str();
             full_match.replace(secret, "[REDACTED]")
+        })
+        .into_owned();
+
+    // 5b. Redact lowercase / query-param sensitive assignments that
+    //     ENV_SECRET_RE (uppercase-only) misses: `?api_key=sk-xxx`,
+    //     `&token=...`, `password="..."`. These appear in provider-error
+    //     URLs surfaced to channels and the TUI; a short, unknown-prefix
+    //     token would otherwise slip past every other pass.
+    result = KEYVAL_SECRET_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let key = caps.get(1).unwrap().as_str();
+            format!("{key}=[REDACTED]")
+        })
+        .into_owned();
+
+    // 5c. Redact credentials embedded in a URL authority
+    //     (`scheme://user:PASSWORD@host`). Keeps the user and host so the
+    //     URL stays recognizable.
+    result = URL_PASSWORD_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            format!(
+                "{}[REDACTED]{}",
+                caps.get(1).unwrap().as_str(),
+                caps.get(3).unwrap().as_str()
+            )
         })
         .into_owned();
 

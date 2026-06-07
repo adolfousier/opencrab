@@ -266,3 +266,65 @@ fn cyrillic_emoji_cjk_in_post_prefix_window_do_not_panic() {
         let _out = redact_secrets(input); // must not panic
     }
 }
+
+// --- Query-param / lowercase key=value + URL-password coverage ---
+// Added 2026-06-07: redact_secrets is the redactor for ALL channel output,
+// the DB writeback, and build output, but it only caught UPPERCASE env
+// vars. Provider-error URLs with `?api_key=...` query params and
+// `https://user:pass@` credentials slipped through (a short, unknown-prefix
+// token evaded every other pass). These pin the folded-in coverage.
+
+#[test]
+fn redact_secrets_query_param_api_key() {
+    let text = "fetch failed: https://api.example.com/v1/sync?api_key=sk-shortABC123&page=2";
+    let out = redact_secrets(text);
+    assert!(!out.contains("sk-shortABC123"), "api_key query param leaked: {out}");
+    assert!(out.contains("api_key=[REDACTED]"), "got: {out}");
+    // The rest of the URL stays for context.
+    assert!(out.contains("api.example.com"));
+    assert!(out.contains("page=2"), "non-secret param should survive: {out}");
+}
+
+#[test]
+fn redact_secrets_query_param_token_and_secret() {
+    assert!(!redact_secrets("?token=abc123def456 done").contains("abc123def456"));
+    assert!(!redact_secrets("client_secret=xyz789short more").contains("xyz789short"));
+    assert!(!redact_secrets("password = hunter2plain end").contains("hunter2plain"));
+}
+
+#[test]
+fn redact_secrets_url_embedded_password() {
+    let text = "clone failed for https://alice:s3cr3tpw@git.example.com/repo.git";
+    let out = redact_secrets(text);
+    assert!(!out.contains("s3cr3tpw"), "URL password leaked: {out}");
+    assert!(out.contains("alice:[REDACTED]@"), "got: {out}");
+    assert!(out.contains("git.example.com"));
+}
+
+#[test]
+fn redact_secrets_does_not_overredact_benign_keys() {
+    // Non-secret `*_key=` / bare `key=` patterns must survive — only the
+    // explicit sensitive allowlist is redacted.
+    for benign in [
+        "primary_key=5",
+        "cache_key=user_42",
+        "sort_key=name",
+        "idempotency_key=order-123",
+    ] {
+        assert_eq!(
+            redact_secrets(benign),
+            benign,
+            "benign key wrongly redacted: {benign}"
+        );
+    }
+}
+
+#[test]
+fn redact_secrets_keyval_preserves_existing_placeholder() {
+    // An already-redacted token placeholder must not be re-mangled by the
+    // key=value pass (HEX/MIXED run first).
+    let text = "auth_token=aa83802d35bb2c4471e7e96f4eaeafa6c96fe42f set";
+    let out = redact_secrets(text);
+    assert!(!out.contains("aa83802d"), "secret leaked: {out}");
+    assert!(!out.contains("[REDACTED]]"), "placeholder got mangled: {out}");
+}
