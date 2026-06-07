@@ -510,9 +510,13 @@ async fn cmd_chat_inner(
                 ProgressEvent::Compacting => return,
                 ProgressEvent::CompactionSummary { .. } => return,
                 ProgressEvent::BuildLine(line) => progress_sender.send(TuiEvent::BuildLine(line)),
-                ProgressEvent::RestartReady { status } => {
-                    progress_sender.send(TuiEvent::RestartReady(status))
-                }
+                ProgressEvent::RestartReady {
+                    status,
+                    binary_path,
+                } => progress_sender.send(TuiEvent::RestartReady {
+                    status,
+                    binary_path,
+                }),
                 ProgressEvent::TokenCount(count) => {
                     // Real count from the API — update baseline.
                     last_ctx_tokens.store(count as u32, std::sync::atomic::Ordering::Relaxed);

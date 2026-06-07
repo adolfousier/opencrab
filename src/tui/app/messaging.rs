@@ -734,9 +734,15 @@ impl App {
                                 })
                                 .await
                             {
-                                Ok(_) => {
-                                    let _ = sender
-                                        .send(TuiEvent::RestartReady("✅ Build complete".into()));
+                                Ok(path) => {
+                                    // Restart into the binary we just built —
+                                    // on a pre-built install it's NOT the
+                                    // running exe (it lives under
+                                    // ~/.opencrabs/source/target/release).
+                                    let _ = sender.send(TuiEvent::RestartReady {
+                                        status: "✅ Build complete".into(),
+                                        binary_path: Some(path),
+                                    });
                                 }
                                 Err(e) => {
                                     let _ = sender.send(TuiEvent::Error {
@@ -2506,8 +2512,14 @@ pub(crate) async fn run_evolve_directly(
                     text,
                 });
             }
-            ProgressEvent::RestartReady { status } => {
-                let _ = tx.send(TuiEvent::RestartReady(status));
+            ProgressEvent::RestartReady {
+                status,
+                binary_path,
+            } => {
+                let _ = tx.send(TuiEvent::RestartReady {
+                    status,
+                    binary_path,
+                });
             }
             _ => {}
         });

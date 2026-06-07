@@ -2404,7 +2404,10 @@ impl App {
                 }
                 self.scroll_offset = 0;
             }
-            TuiEvent::RestartReady(_status) => {
+            TuiEvent::RestartReady {
+                status,
+                binary_path,
+            } => {
                 // Clear build progress
                 if let Some(idx) = self.build_msg_idx.take()
                     && idx < self.messages.len()
@@ -2413,21 +2416,21 @@ impl App {
                 }
                 self.build_lines.clear();
                 self.rebuild_status = None;
-                // Auto exec() restart — no prompt, no permission needed
+                tracing::info!("RestartReady: {status}");
+                // Auto exec() restart — no prompt, no permission needed.
                 if let Some(session) = &self.current_session {
                     let session_id = session.id;
-                    match SelfUpdater::auto_detect() {
-                        Ok(updater) => {
-                            if let Err(e) = updater.restart(session_id) {
-                                self.show_error(format!("Restart failed: {}", e));
-                                self.switch_mode(AppMode::Chat).await?;
-                            }
-                            // exec() succeeded — this process is replaced, never reached
-                        }
-                        Err(e) => {
-                            self.show_error(format!("Restart failed: {}", e));
-                            self.switch_mode(AppMode::Chat).await?;
-                        }
+                    // Prefer the exact binary the producer built (/rebuild);
+                    // fall back to current_exe() via auto_detect only when no
+                    // path was given (/evolve replaced the exe in place).
+                    let result = match &binary_path {
+                        Some(path) => SelfUpdater::restart_into(path, session_id),
+                        None => SelfUpdater::auto_detect().and_then(|u| u.restart(session_id)),
+                    };
+                    // Only reached on error — exec() replaces the process.
+                    if let Err(e) = result {
+                        self.show_error(format!("Restart failed: {}", e));
+                        self.switch_mode(AppMode::Chat).await?;
                     }
                 }
             }

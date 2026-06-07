@@ -51,8 +51,36 @@ impl SelfUpdater {
     /// "exec() failed: No such file or directory" on restart (#179).
     pub fn auto_detect() -> Result<Self> {
         let exe = std::env::current_exe()?;
+        let source_dir = crate::config::opencrabs_home().join("source");
+        let (project_root, binary_path) = Self::resolve_paths(&exe, source_dir)?;
+        tracing::info!(
+            "SelfUpdater: project_root={}, binary={}",
+            project_root.display(),
+            binary_path.display()
+        );
+        Ok(Self {
+            project_root,
+            binary_path,
+        })
+    }
 
-        // Walk up from the executable to find Cargo.toml
+    /// Pure path-resolution for `auto_detect`, factored out so it can be
+    /// tested without depending on `current_exe()`.
+    ///
+    /// Walking up from `exe`, the FIRST directory containing `Cargo.toml` is
+    /// a source tree → `(root, root/target/release/opencrabs)` (the
+    /// `/rebuild` build output). If no `Cargo.toml` is found, this is a
+    /// pre-built install → `(source_dir, exe)`: the binary path is the
+    /// running exe itself (which `/evolve` replaces in place), and
+    /// `source_dir` is only used as the lazy-clone target for `/rebuild`.
+    ///
+    /// The pre-built branch returning `exe` (not a never-built
+    /// `source_dir/target/release/opencrabs`) is the #179 fix: restart after
+    /// auto-update must exec the real binary, not a path that was never built.
+    pub(crate) fn resolve_paths(
+        exe: &std::path::Path,
+        source_dir: std::path::PathBuf,
+    ) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
         let mut search_dir = exe
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Cannot determine executable parent directory"))?
@@ -61,39 +89,15 @@ impl SelfUpdater {
         loop {
             if search_dir.join("Cargo.toml").exists() {
                 let binary_path = search_dir.join("target").join("release").join("opencrabs");
-                tracing::info!(
-                    "SelfUpdater: source tree at {}, binary at {}",
-                    search_dir.display(),
-                    binary_path.display()
-                );
-                return Ok(Self {
-                    project_root: search_dir,
-                    binary_path,
-                });
+                return Ok((search_dir, binary_path));
             }
             if !search_dir.pop() {
                 break;
             }
         }
 
-        // Pre-built binary: no source tree. Use the exe path as the binary
-        // path. The evolve tool replaces the binary in-place at this path,
-        // so restart after /evolve just exec's it.
-        //
-        // For /rebuild (build-from-source), the source will be lazily cloned
-        // into ~/.opencrabs/source/ when build() is called, not here.
-        let source_dir = crate::config::opencrabs_home().join("source");
-
-        tracing::info!(
-            "SelfUpdater: pre-built binary, exe={}, lazy source dir={}",
-            exe.display(),
-            source_dir.display()
-        );
-
-        Ok(Self {
-            project_root: source_dir,
-            binary_path: exe,
-        })
+        // Pre-built binary: no source tree. binary_path = the running exe.
+        Ok((source_dir, exe.to_path_buf()))
     }
 
     /// Ensure the source tree exists at project_root (lazy clone).
@@ -230,15 +234,34 @@ impl SelfUpdater {
     /// This function only returns on error — on success, the process is replaced.
     #[cfg(unix)]
     pub fn restart(&self, session_id: Uuid) -> Result<()> {
+        Self::restart_into(&self.binary_path, session_id)
+    }
+
+    /// On non-Unix platforms, restart is not supported via exec().
+    #[cfg(not(unix))]
+    pub fn restart(&self, session_id: Uuid) -> Result<()> {
+        Self::restart_into(&self.binary_path, session_id)
+    }
+
+    /// Exec-restart into a SPECIFIC binary path. Used by the RestartReady
+    /// handler to launch the exact binary that was just produced (e.g.
+    /// `/rebuild` returns a freshly-built binary that is NOT the running
+    /// exe on a pre-built install). Resolving the path via `auto_detect()`
+    /// instead would pick the stale running exe and restart into the old
+    /// version (#179 follow-up). Passes `chat --session <id>` to resume the
+    /// same session. Only returns on error — on success the process is
+    /// replaced.
+    #[cfg(unix)]
+    pub fn restart_into(binary_path: &std::path::Path, session_id: Uuid) -> Result<()> {
         use std::os::unix::process::CommandExt;
 
         tracing::info!(
             "Restarting OpenCrabs: {} chat --session {}",
-            self.binary_path.display(),
+            binary_path.display(),
             session_id
         );
 
-        let err = std::process::Command::new(&self.binary_path)
+        let err = std::process::Command::new(binary_path)
             .args(["chat", "--session", &session_id.to_string()])
             .env("OPENCRABS_EVOLVED_FROM", crate::VERSION)
             .exec(); // Replaces the process — only returns on error
@@ -246,9 +269,8 @@ impl SelfUpdater {
         Err(anyhow::anyhow!("exec() failed: {}", err))
     }
 
-    /// On non-Unix platforms, restart is not supported via exec().
     #[cfg(not(unix))]
-    pub fn restart(&self, _session_id: Uuid) -> Result<()> {
+    pub fn restart_into(_binary_path: &std::path::Path, _session_id: Uuid) -> Result<()> {
         Err(anyhow::anyhow!(
             "Hot restart via exec() is only supported on Unix platforms"
         ))

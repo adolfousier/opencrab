@@ -91,9 +91,17 @@ pub enum ProgressEvent {
     /// A single build-output line (e.g. "Compiling foo v1.0"). The TUI keeps a
     /// rolling window of the last few lines and clears them on RestartReady.
     BuildLine(String),
-    /// Build completed — TUI should offer restart
+    /// Build completed — TUI should restart into the new binary.
     RestartReady {
         status: String,
+        /// The binary to exec on restart. `Some` when the producer knows the
+        /// exact path (e.g. `/rebuild` returns the freshly-built binary,
+        /// which is NOT the running exe on a pre-built install). `None` when
+        /// the running exe was replaced in place (e.g. `/evolve`) — the
+        /// handler resolves it via `current_exe()`. Without this, `/rebuild`
+        /// on a pre-built binary restarted into the stale exe instead of the
+        /// binary it just built (#179 follow-up).
+        binary_path: Option<std::path::PathBuf>,
     },
     /// Real-time token count update — fire after every API response and tool execution
     TokenCount(usize),

@@ -120,8 +120,14 @@ pub enum TuiEvent {
     /// A single build-output line — TUI keeps a rolling window
     BuildLine(String),
 
-    /// Build completed — offer restart to the user
-    RestartReady(String), // global, not per-session
+    /// Build completed — restart into the new binary. `binary_path` is the
+    /// exact binary to exec when known (`/rebuild`); `None` means resolve via
+    /// `current_exe()` (`/evolve` replaced the running exe in place). Global,
+    /// not per-session.
+    RestartReady {
+        status: String,
+        binary_path: Option<std::path::PathBuf>,
+    },
 
     /// Configuration was reloaded (e.g. after config_tool write)
     ConfigReloaded,

@@ -642,6 +642,9 @@ impl EvolveTool {
                         "Evolved via cargo install: v{} -> v{}. Restarting now.",
                         current_version, latest_version
                     ),
+                    // evolve replaced the running exe in place; the handler
+                    // resolves it via current_exe().
+                    binary_path: None,
                 },
             );
         }
@@ -1129,6 +1132,8 @@ impl EvolveTool {
                         "Evolved: v{} -> v{}. Restarting now.",
                         current_version, latest_version
                     ),
+                    // evolve replaced the running exe in place.
+                    binary_path: None,
                 },
             );
         }

@@ -87,6 +87,10 @@ impl Tool for RebuildTool {
                         sid,
                         ProgressEvent::RestartReady {
                             status: format!("Build successful: {}", path.display()),
+                            // Restart into the binary we JUST built, not the
+                            // running exe — on a pre-built install they differ
+                            // (the build lives under ~/.opencrabs/source/).
+                            binary_path: Some(path.clone()),
                         },
                     );
                 }

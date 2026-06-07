@@ -185,6 +185,7 @@ pub mod rtk_sysadmin_supported_test;
 pub mod runtime_info_home_anchor_test;
 pub mod self_healing_test;
 pub mod self_improve_failure_log_guard_test;
+pub mod self_update_path_test;
 pub mod session_chat_id_lookup_test;
 pub mod session_provider_wrap_test;
 pub mod skill_slash_dispatch_test;
