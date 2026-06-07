@@ -77,6 +77,20 @@ impl ProviderError {
             | ProviderError::RateLimitExceeded(_)
             | ProviderError::Timeout(_) => true,
             ProviderError::ApiError { status, .. } if *status >= 500 => true,
+            // A 4xx whose body is an HTML page is an infrastructure / CDN /
+            // load-balancer error page, NOT a real JSON API client error.
+            // These are transient (the next request usually hits a healthy
+            // node) and must be retried, not bounced straight to the
+            // fallback chain. Canonical case: modelscope intermittently
+            // returns HTTP 405 with a Chinese HTML error page for a valid
+            // POST to /chat/completions; retrying succeeds, but the old code
+            // treated 405 as a hard client error and fell back instantly
+            // with zero retries (2026-06-07). Real client errors return
+            // JSON, never HTML, so this never masks an invalid_model /
+            // validation / auth problem.
+            ProviderError::ApiError {
+                status, message, ..
+            } if (400..500).contains(status) && is_html_error_body(message) => true,
             // HTTP 400 with a generic proxy-style body (empty error_type
             // AND a message that doesn't describe an actionable client
             // problem) is almost always a transient upstream failure
@@ -138,6 +152,27 @@ impl ProviderError {
     }
 }
 
+/// True when an error body is an HTML page rather than a JSON API error.
+/// A 4xx that returns HTML came from a CDN / load balancer / reverse proxy
+/// (an infrastructure error page), not the API itself — these are
+/// transient and worth retrying. Real API client errors are always JSON,
+/// so this never matches a genuine invalid_model / validation / auth error.
+pub(crate) fn is_html_error_body(message: &str) -> bool {
+    // Scan a bounded prefix so a huge HTML page isn't lowercased in full on
+    // every error. `chars().take()` is char-boundary-safe — a byte slice
+    // would panic mid-UTF8 (the modelscope body has Chinese characters).
+    let head: String = message
+        .trim_start()
+        .chars()
+        .take(256)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    head.contains("<!doctype")
+        || head.contains("<html")
+        || head.contains("<head")
+        || head.contains("<body")
+}
+
 /// True when an HTTP 400 response body looks like a proxy passthrough of
 /// an upstream hiccup rather than a real client-side error. Used by
 /// `is_retryable` so opencode.ai-style "Provider returned error" 400s
@@ -194,7 +229,7 @@ impl crate::utils::retry::RetryableError for ProviderError {
     }
 
     fn is_hard_down(&self) -> bool {
-        // A connection-phase reqwest error means the endpoint refused the
+        // A connection-phase failure means the endpoint refused the
         // connection, the DNS name didn't resolve, or the host is
         // unreachable — the host is down, not slow. These don't recover
         // within a retry window, so the retry loop caps them at one quick
@@ -202,8 +237,51 @@ impl crate::utils::retry::RetryableError for ProviderError {
         // chain) instead of burning the full patient backoff. Timeouts are
         // deliberately NOT hard-down: a slow-but-alive host is worth the
         // patient schedule.
-        matches!(self, ProviderError::HttpError(e) if e.is_connect())
+        let ProviderError::HttpError(e) = self else {
+            return false;
+        };
+        // reqwest's is_connect() is the clean signal, but it does NOT fire
+        // for DNS-resolution failures: a domain that went NXDOMAIN surfaces
+        // as a generic "error sending request for url" whose is_connect() is
+        // false (dialagram.me went NXDOMAIN 2026-06-07 and got the full 15s
+        // patient retry instead of failing fast). Fall back to scanning the
+        // error's source chain for the telltale resolver/connection failure.
+        if e.is_connect() {
+            return true;
+        }
+        let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
+        while let Some(err) = source {
+            if looks_like_connection_failure(&err.to_string()) {
+                return true;
+            }
+            source = err.source();
+        }
+        false
     }
+}
+
+/// True when an error message looks like a DNS-resolution or
+/// connection-establishment failure (host is down / unreachable), as
+/// opposed to a transient timeout or a real HTTP error. Matched against the
+/// reqwest error source chain because reqwest doesn't flag DNS failures via
+/// `is_connect()`. Lowercased substrings cover the common libc/getaddrinfo
+/// and OS socket error strings across macOS and Linux.
+pub(crate) fn looks_like_connection_failure(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    const NEEDLES: &[&str] = &[
+        "dns error",
+        "failed to lookup address",
+        "name or service not known", // Linux getaddrinfo
+        "nodename nor servname",     // macOS getaddrinfo (NXDOMAIN)
+        "no such host",
+        "could not resolve",
+        "name resolution",
+        "connection refused",
+        "network is unreachable",
+        "no route to host",
+        "connection reset",
+    ];
+    NEEDLES.iter().any(|n| m.contains(n))
 }
 
 /// Free wrapper so the `RetryableError` impl can call the inherent

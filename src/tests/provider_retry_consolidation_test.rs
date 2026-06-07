@@ -46,6 +46,45 @@ fn retryable_classification_matches_inherent() {
 }
 
 #[test]
+fn dns_and_connection_failures_classified_as_hard_down() {
+    // reqwest's is_connect() does NOT fire for DNS-resolution failures, so
+    // a domain that went NXDOMAIN got the full 15s patient retry instead of
+    // failing fast (dialagram.me, 2026-06-07). The source-chain message
+    // scan must catch these so a dead host fails fast.
+    use crate::brain::provider::error::looks_like_connection_failure;
+
+    for msg in [
+        "failed to lookup address information: nodename nor servname provided, or not known",
+        "failed to lookup address information: Name or service not known",
+        "dns error: no such host",
+        "could not resolve host: www.dialagram.me",
+        "Connection refused (os error 61)",
+        "Network is unreachable",
+        "No route to host",
+    ] {
+        assert!(
+            looks_like_connection_failure(msg),
+            "should be hard-down: {msg:?}"
+        );
+    }
+
+    // Transient / real-HTTP errors must NOT be misclassified as hard-down
+    // (they deserve the patient retry, not a fast bail).
+    for msg in [
+        "operation timed out",
+        "request timed out",
+        "500 Internal Server Error",
+        "stream ended unexpectedly",
+        "invalid json in response body",
+    ] {
+        assert!(
+            !looks_like_connection_failure(msg),
+            "should NOT be hard-down: {msg:?}"
+        );
+    }
+}
+
+#[test]
 fn retry_after_parses_rate_limit_hint() {
     let e = ProviderError::RateLimitExceeded("retry in 12 seconds".to_string());
     assert_eq!(e.retry_after(), Some(Duration::from_secs(12)));

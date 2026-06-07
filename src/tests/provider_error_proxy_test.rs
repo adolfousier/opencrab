@@ -11,7 +11,7 @@
 use crate::brain::provider::custom_openai_compatible::{
     OpenAIErrorResponse, needs_reasoning_content_for, unwrap_proxy_error,
 };
-use crate::brain::provider::error::{ProviderError, is_transient_proxy_400};
+use crate::brain::provider::error::{ProviderError, is_html_error_body, is_transient_proxy_400};
 
 // ─── unwrap_proxy_error ─────────────────────────────────────────────
 
@@ -231,4 +231,84 @@ fn reasoning_not_needed_for_unrelated_providers() {
         "https://api.openai.com/v1/chat/completions",
         "gpt-5"
     ));
+}
+
+// ─── HTML error pages on 4xx are transient infra errors (retryable) ──
+// Regression (2026-06-07): modelscope intermittently returned HTTP 405
+// with a Chinese HTML error page for a valid POST. 405 was non-retryable,
+// so the request bounced straight to the fallback chain with ZERO retries
+// — the user saw "no resilience, instant fallback" and a manual swap-back
+// worked because the 405 was a transient infra blip.
+
+#[test]
+fn html_body_detected_as_infra_error() {
+    for body in [
+        "<!doctypehtml><html lang=\"zh-cn\"><meta charset=\"utf-8\">...",
+        "<!DOCTYPE html>\n<html><head><title>405</title></head>",
+        "  \n  <html><body>Method Not Allowed</body></html>",
+        "<head><title>502 Bad Gateway</title></head>",
+    ] {
+        assert!(is_html_error_body(body), "should be HTML: {body:?}");
+    }
+}
+
+#[test]
+fn json_body_not_detected_as_infra_error() {
+    for body in [
+        r#"{"error":{"message":"invalid model","type":"invalid_request_error"}}"#,
+        r#"{"error":"unauthorized"}"#,
+        "Method Not Allowed",
+        "rate limit exceeded, retry in 5s",
+    ] {
+        assert!(!is_html_error_body(body), "should NOT be HTML: {body:?}");
+    }
+}
+
+#[test]
+fn http_405_with_html_body_is_retryable() {
+    // The exact modelscope case: 405 + HTML page → retry, don't instant-fail.
+    let err = ProviderError::ApiError {
+        status: 405,
+        message: "<!doctypehtml><html lang=\"zh-cn\">Method Not Allowed</html>".to_string(),
+        error_type: None,
+    };
+    assert!(
+        err.is_retryable(),
+        "a 405 with an HTML infra error page must be retryable, not bounced to fallback"
+    );
+}
+
+#[test]
+fn http_405_with_json_body_is_not_retryable() {
+    // A genuine API 405 (JSON) is a real client error — do not retry.
+    let err = ProviderError::ApiError {
+        status: 405,
+        message: r#"{"error":{"message":"method not allowed","type":"invalid_request_error"}}"#
+            .to_string(),
+        error_type: Some("invalid_request_error".to_string()),
+    };
+    assert!(
+        !err.is_retryable(),
+        "a JSON 405 client error must stay non-retryable"
+    );
+}
+
+#[test]
+fn http_404_html_retryable_but_json_not() {
+    let html = ProviderError::ApiError {
+        status: 404,
+        message: "<html><head><title>404 Not Found</title></head></html>".to_string(),
+        error_type: None,
+    };
+    assert!(html.is_retryable(), "404 HTML infra page → retryable");
+
+    let json = ProviderError::ApiError {
+        status: 404,
+        message: r#"{"error":"model not found"}"#.to_string(),
+        error_type: None,
+    };
+    assert!(
+        !json.is_retryable(),
+        "404 JSON client error → not retryable"
+    );
 }
