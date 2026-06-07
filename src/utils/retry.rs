@@ -97,6 +97,20 @@ impl RetryConfig {
         }
     }
 
+    /// Qwen / OpenRouter-style tight-rate-limit-window retry: a 3s initial
+    /// delay so we don't burn quota while the rate-limit window is closed.
+    /// Backoff 3s → 6s → 12s → 24s. Used by the custom OpenAI-compatible
+    /// provider for qwen-family models, which rate-limit on tight windows.
+    pub fn qwen_cli_match() -> Self {
+        Self {
+            max_attempts: 4,
+            initial_delay: Duration::from_secs(3),
+            max_delay: Duration::from_secs(30),
+            backoff_multiplier: 2.0,
+            jitter: 0.2,
+        }
+    }
+
     /// Calculate delay for a given attempt with optional jitter
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
         let base_delay_ms = self.initial_delay.as_millis() as f64;

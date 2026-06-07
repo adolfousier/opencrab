@@ -242,7 +242,7 @@ impl AnthropicProvider {
 #[async_trait]
 impl Provider for AnthropicProvider {
     async fn complete(&self, request: LLMRequest) -> Result<LLMResponse> {
-        use super::retry::{RetryConfig, retry_with_backoff};
+        use crate::utils::retry::{RetryConfig, retry};
 
         let model = request.model.clone();
         let message_count = request.messages.len();
@@ -258,7 +258,7 @@ impl Provider for AnthropicProvider {
         let retry_config = RetryConfig::default();
 
         // Retry the entire API call with exponential backoff
-        let result = retry_with_backoff(
+        let result = retry(
             || async {
                 tracing::debug!("Sending request to Anthropic API");
                 let response = self
@@ -300,7 +300,7 @@ impl Provider for AnthropicProvider {
     }
 
     async fn stream(&self, request: LLMRequest) -> Result<ProviderStream> {
-        use super::retry::{RetryConfig, retry_with_backoff};
+        use crate::utils::retry::{RetryConfig, retry};
 
         let model = request.model.clone();
         let message_count = request.messages.len();
@@ -316,7 +316,7 @@ impl Provider for AnthropicProvider {
         let retry_config = RetryConfig::default();
 
         // Retry the stream connection establishment
-        let response = retry_with_backoff(
+        let response = retry(
             || async {
                 let response = self
                     .client

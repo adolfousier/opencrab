@@ -6,7 +6,6 @@ pub mod error;
 pub mod json_repair;
 pub mod placeholder;
 pub mod rate_limiter;
-pub mod retry;
 #[allow(clippy::module_inception)]
 mod r#trait;
 pub mod types;

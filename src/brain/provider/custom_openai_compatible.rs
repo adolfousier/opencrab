@@ -1706,7 +1706,7 @@ pub struct OpenAIProvider {
     /// When set, overrides the automatic retry config selection in
     /// `retry_config()`. Used by `RotatingQwenProvider` to disable
     /// retry-on-rate-limit for sub-providers (rotation handles 429).
-    retry_config_override: Option<super::retry::RetryConfig>,
+    retry_config_override: Option<crate::utils::retry::RetryConfig>,
     /// OpenRouter response caching — when true, adds `X-OpenRouter-Cache: true`.
     cache_enabled: bool,
     /// OpenRouter cache TTL in seconds (1-86400, default 300).
@@ -1734,7 +1734,7 @@ impl OpenAIProvider {
     ///   the user on the free tier instead of silently burning paid credits
     ///   on the fallback chain.
     /// - All other providers keep the default (bail-to-fallback on 429).
-    fn retry_config(&self, model: &str) -> super::retry::RetryConfig {
+    fn retry_config(&self, model: &str) -> crate::utils::retry::RetryConfig {
         if let Some(ref ovr) = self.retry_config_override {
             return ovr.clone();
         }
@@ -1743,9 +1743,9 @@ impl OpenAIProvider {
         // that reopen within seconds — bailing to fallback on the first 429
         // is wasteful when a 3-retry backoff would get through.
         if self.name == "qwen" || self.is_openrouter() || model.ends_with(":free") {
-            super::retry::RetryConfig::qwen_cli_match()
+            crate::utils::retry::RetryConfig::qwen_cli_match()
         } else {
-            super::retry::RetryConfig::default()
+            crate::utils::retry::RetryConfig::default()
         }
     }
 
@@ -1938,7 +1938,7 @@ impl OpenAIProvider {
     /// Override the automatic retry config selection. Used inside
     /// `RotatingQwenProvider` to disable retry-on-rate-limit so 429s
     /// rotate immediately instead of burning ~45s in backoff per account.
-    pub fn with_retry_config(mut self, config: super::retry::RetryConfig) -> Self {
+    pub fn with_retry_config(mut self, config: crate::utils::retry::RetryConfig) -> Self {
         self.retry_config_override = Some(config);
         self
     }
@@ -2733,9 +2733,9 @@ impl OpenAIProvider {
         model: String,
         message_count: usize,
         anthropic_request: AnthropicORRequest,
-        retry_config: super::retry::RetryConfig,
+        retry_config: crate::utils::retry::RetryConfig,
     ) -> Result<LLMResponse> {
-        use super::retry::retry_with_backoff;
+        use crate::utils::retry::retry;
 
         let tool_count = anthropic_request
             .tools
@@ -2757,7 +2757,7 @@ impl OpenAIProvider {
             }
         }
 
-        let result = retry_with_backoff(
+        let result = retry(
             || async {
                 let body = self.encode_body(&anthropic_request)?;
                 let response = self
@@ -2825,7 +2825,7 @@ impl OpenAIProvider {
         message_count: usize,
         anthropic_request: AnthropicORRequest,
     ) -> Result<ProviderStream> {
-        use super::retry::retry_with_backoff;
+        use crate::utils::retry::retry;
 
         let tool_count = anthropic_request
             .tools
@@ -2847,7 +2847,7 @@ impl OpenAIProvider {
             }
         }
 
-        let response = retry_with_backoff(
+        let response = retry(
             || async {
                 let body = self.encode_body(&anthropic_request)?;
                 let response = self
@@ -3099,7 +3099,7 @@ impl OpenAIProvider {
 #[async_trait]
 impl Provider for OpenAIProvider {
     async fn complete(&self, request: LLMRequest) -> Result<LLMResponse> {
-        use super::retry::retry_with_backoff;
+        use crate::utils::retry::retry;
 
         let model = request.model.clone();
         let message_count = request.messages.len();
@@ -3135,7 +3135,7 @@ impl Provider for OpenAIProvider {
         }
 
         // Retry the entire API call with exponential backoff
-        let result = retry_with_backoff(
+        let result = retry(
             || async {
                 tracing::debug!("Sending request to OpenAI API: {}", self.base_url);
                 let body = self.encode_body(&openai_request)?;
@@ -3195,7 +3195,7 @@ impl Provider for OpenAIProvider {
                     model
                 );
                 openai_request.swap_token_fields();
-                return retry_with_backoff(
+                return retry(
                     || async {
                         let body = self.encode_body(&openai_request)?;
                         let response = self
@@ -3229,7 +3229,7 @@ impl Provider for OpenAIProvider {
                         // 401, do NOT invalidate — could be transient server
                         // propagation delay. Let the outer rotation/fallback
                         // handle it; the next request cycle will try again.
-                        return retry_with_backoff(
+                        return retry(
                             || async {
                                 let body = self.encode_body(&openai_request)?;
                                 let response = self
@@ -3274,7 +3274,7 @@ impl Provider for OpenAIProvider {
     }
 
     async fn stream(&self, request: LLMRequest) -> Result<ProviderStream> {
-        use super::retry::retry_with_backoff;
+        use crate::utils::retry::retry;
 
         let model = request.model.clone();
         let message_count = request.messages.len();
@@ -3347,7 +3347,7 @@ impl Provider for OpenAIProvider {
         let retry_config = self.retry_config(&model);
 
         // Retry the stream connection establishment
-        let mut response = retry_with_backoff(
+        let mut response = retry(
             || async {
                 let body = self.encode_body(&openai_request)?;
                 let response = self
@@ -3380,7 +3380,7 @@ impl Provider for OpenAIProvider {
                 model
             );
             openai_request.swap_token_fields();
-            response = retry_with_backoff(
+            response = retry(
                 || async {
                     let body = self.encode_body(&openai_request)?;
                     let r = self
@@ -3411,7 +3411,7 @@ impl Provider for OpenAIProvider {
                 Ok(()) => {
                     // Retry once with the new token. If it STILL returns 401,
                     // do NOT invalidate — same rationale as non-streaming path.
-                    response = retry_with_backoff(
+                    response = retry(
                         || async {
                             let body = self.encode_body(&openai_request)?;
                             let r = self

@@ -170,6 +170,61 @@ pub(crate) fn is_transient_proxy_400(message: &str, error_type: Option<&str>) ->
 /// Result type for provider operations
 pub type Result<T> = std::result::Result<T, ProviderError>;
 
+impl crate::utils::retry::RetryableError for ProviderError {
+    fn is_retryable(&self) -> bool {
+        // Delegate to the inherent classifier. `Self::is_retryable` would
+        // be ambiguous (inherent vs this trait method), so go through a
+        // free helper that names the inherent unambiguously.
+        provider_error_is_retryable(self)
+    }
+
+    fn retry_after(&self) -> Option<std::time::Duration> {
+        // Parse a server Retry-After hint from rate-limit errors, clamped
+        // to 30s so a pathological "retry after 300s" can't stall a turn.
+        // Other error kinds have no hint — the caller falls back to the
+        // exponential schedule.
+        let msg = match self {
+            ProviderError::RateLimitExceeded(m) => m.as_str(),
+            ProviderError::ApiError {
+                status, message, ..
+            } if *status == 429 => message.as_str(),
+            _ => return None,
+        };
+        parse_retry_seconds(msg)
+            .map(|secs| std::time::Duration::from_secs(secs.min(30)))
+    }
+}
+
+/// Free wrapper so the `RetryableError` impl can call the inherent
+/// `ProviderError::is_retryable` without method-resolution ambiguity.
+fn provider_error_is_retryable(e: &ProviderError) -> bool {
+    e.is_retryable()
+}
+
+/// Parse a retry-delay (seconds) out of a rate-limit error message.
+/// Recognizes "60 seconds", "60s", "retry in 60", "wait 60". Moved here
+/// from the former `brain::provider::retry` module when retry logic was
+/// consolidated onto `utils::retry`.
+fn parse_retry_seconds(msg: &str) -> Option<u64> {
+    use regex::Regex;
+    let patterns = [
+        r"(\d+)\s*seconds?",
+        r"(\d+)\s*s\b",
+        r"retry in (\d+)",
+        r"wait (\d+)",
+    ];
+    for pattern in patterns {
+        if let Ok(re) = Regex::new(pattern)
+            && let Some(captures) = re.captures(msg)
+            && let Some(num_str) = captures.get(1)
+            && let Ok(secs) = num_str.as_str().parse::<u64>()
+        {
+            return Some(secs);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

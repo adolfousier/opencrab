@@ -444,7 +444,7 @@ impl GeminiProvider {
 #[async_trait]
 impl Provider for GeminiProvider {
     async fn complete(&self, request: LLMRequest) -> Result<LLMResponse> {
-        use super::retry::{RetryConfig, retry_with_backoff};
+        use crate::utils::retry::{RetryConfig, retry};
 
         let model = request.model.clone();
         let message_count = request.messages.len();
@@ -465,7 +465,7 @@ impl Provider for GeminiProvider {
         let url = self.generate_url(&model, false);
         let retry_config = RetryConfig::default();
 
-        let result = retry_with_backoff(
+        let result = retry(
             || async {
                 let response = self
                     .client
@@ -505,7 +505,7 @@ impl Provider for GeminiProvider {
     }
 
     async fn stream(&self, request: LLMRequest) -> Result<ProviderStream> {
-        use super::retry::{RetryConfig, retry_with_backoff};
+        use crate::utils::retry::{RetryConfig, retry};
 
         let model = request.model.clone();
         let message_count = request.messages.len();
@@ -526,7 +526,7 @@ impl Provider for GeminiProvider {
         let url = self.generate_url(&model, true);
         let retry_config = RetryConfig::default();
 
-        let response = retry_with_backoff(
+        let response = retry(
             || async {
                 let response = self
                     .client
