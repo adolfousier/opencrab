@@ -78,7 +78,11 @@ fn is_sensitive_key(key: &str) -> bool {
 ///   --header "X-Api-Key: abc123"
 ///   https://user:password@host/path
 ///   api_key=abc123
-fn redact_command(cmd: &str) -> String {
+///
+/// `pub(crate)` so the TUI's one-line tool-call summary can redact a
+/// command before display — the expanded view already redacts via
+/// `redact_tool_input`, this closes the same leak in the collapsed line.
+pub(crate) fn redact_command(cmd: &str) -> String {
     let mut result = cmd.to_string();
 
     // Redact URL passwords: https://user:PASSWORD@host → https://user:[REDACTED]@host

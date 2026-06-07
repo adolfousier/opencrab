@@ -877,7 +877,7 @@ impl AgentService {
     /// a constant prefix.
     pub(super) fn format_tool_summary(tool_name: &str, tool_input: &Value) -> String {
         use crate::utils::string::tilde_home;
-        match tool_name {
+        let raw = match tool_name {
             "bash" => {
                 let cmd = tool_input
                     .get("command")
@@ -970,7 +970,14 @@ impl AgentService {
                 format!("Memory: {}", q)
             }
             other => other.to_string(),
-        }
+        };
+        // Redact inline secrets (Bearer tokens, api_key=, URL passwords)
+        // before this summary is persisted to the DB and rendered on
+        // channels. Without this a `curl -H "Authorization: Bearer …"`
+        // command leaked the key into the session history and channel
+        // tool bubbles (2026-06-07). The agent still runs the real command;
+        // only the persisted/displayed summary is redacted.
+        crate::utils::sanitize::redact_command(&raw)
     }
 
     /// Normalize hallucinated tool names from providers.

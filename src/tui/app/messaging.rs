@@ -924,7 +924,7 @@ impl App {
 
     pub fn format_tool_description(tool_name: &str, tool_input: &Value) -> String {
         let ci = Self::get_input_ci;
-        match tool_name {
+        let raw = match tool_name {
             "bash" => {
                 let cmd = ci(tool_input, "command")
                     .and_then(|v| v.as_str())
@@ -1105,7 +1105,15 @@ impl App {
                 format!("Agent: {}", desc)
             }
             other => other.to_string(),
-        }
+        };
+        // Redact any inline secrets (Bearer tokens, api_key=, URL passwords)
+        // from the one-line summary so a command like
+        // `curl -H "Authorization: Bearer dgr_live_…"` never shows the key
+        // in the collapsed tool-call display. The expanded view already
+        // redacts via `redact_tool_input`; this closes the same leak in the
+        // summary line (2026-06-07 TUI exposure). The agent still runs the
+        // real command — only the display is redacted.
+        crate::utils::sanitize::redact_command(&raw)
     }
 
     /// Expand a DB message into one or more DisplayMessages.
