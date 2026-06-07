@@ -958,6 +958,9 @@ pub async fn switch_model(
             // it atomically. The freshly-created provider's default_model()
             // is the global config default, NOT the user's pick.
             agent.swap_provider_for_session(sid, new_provider, model_name.to_string());
+            // Mark as a USER switch so an in-flight turn's automatic fallback
+            // can't clobber it.
+            agent.mark_manual_switch(sid);
         }
         None => agent.swap_provider(new_provider),
     }

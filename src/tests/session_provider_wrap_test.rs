@@ -203,3 +203,35 @@ async fn swap_sets_the_paired_model_never_invents() {
         "swap must use the caller's model, never invent the provider default"
     );
 }
+
+/// Manual-switch epoch: a user switch bumps a per-session counter so an
+/// in-flight turn's automatic fallback can detect "the user switched while
+/// I was running" and decline to re-pin the session over their pick.
+///
+/// Regression (2026-06-07): on dialagram (doomed), the user switched to
+/// modelscope mid-request; the dialagram turn's fallback to zhipu landed
+/// 1.6s later and clobbered the switch, so the next turn wasn't modelscope.
+#[tokio::test]
+async fn manual_switch_epoch_bumps_per_session() {
+    let (svc, sid) = create_test_service_with_provider(Arc::new(MockProvider)).await;
+
+    assert_eq!(svc.manual_switch_epoch(sid), 0, "starts at 0");
+    svc.mark_manual_switch(sid);
+    assert_eq!(svc.manual_switch_epoch(sid), 1);
+    svc.mark_manual_switch(sid);
+    assert_eq!(svc.manual_switch_epoch(sid), 2);
+
+    // A captured start-epoch differs after a switch — this is exactly the
+    // signal the fallback uses to decline sticking.
+    let start = svc.manual_switch_epoch(sid);
+    svc.mark_manual_switch(sid);
+    assert_ne!(
+        svc.manual_switch_epoch(sid),
+        start,
+        "a mid-turn manual switch must be detectable by epoch change"
+    );
+
+    // Another session's epoch is independent.
+    let other = uuid::Uuid::new_v4();
+    assert_eq!(svc.manual_switch_epoch(other), 0);
+}

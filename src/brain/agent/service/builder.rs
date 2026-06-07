@@ -43,6 +43,15 @@ pub struct AgentService {
     /// what's actually being sent on the wire.
     pub(super) session_models: std::sync::RwLock<HashMap<Uuid, String>>,
 
+    /// Per-session counter bumped every time the USER manually switches the
+    /// provider/model (via the /models dialog or channel command). A turn
+    /// captures this at start; if it changes before the turn's automatic
+    /// fallback would stick, the user switched mid-turn — their pick wins
+    /// and the fallback must NOT re-pin the session. Without this, a
+    /// fallback fired by an in-flight (doomed) request silently clobbers a
+    /// manual switch the user made while it was running (2026-06-07).
+    pub(super) manual_switch_epoch: std::sync::RwLock<HashMap<Uuid, u64>>,
+
     /// Per-session context window overrides. When a session's provider
     /// has a custom `configured_context_window()`, it's cached here so
     /// compaction and budget checks use the correct window even when
@@ -148,6 +157,7 @@ impl AgentService {
             provider: std::sync::RwLock::new(provider),
             session_providers: std::sync::RwLock::new(HashMap::new()),
             session_models: std::sync::RwLock::new(HashMap::new()),
+            manual_switch_epoch: std::sync::RwLock::new(HashMap::new()),
             session_context_limits: std::sync::RwLock::new(HashMap::new()),
             session_primary_failure_streak: std::sync::RwLock::new(HashMap::new()),
             context,
@@ -710,6 +720,27 @@ impl AgentService {
         if let Ok(mut map) = self.session_models.write() {
             map.remove(&session_id);
         }
+    }
+
+    /// Record that the USER manually switched this session's provider/model.
+    /// Call AFTER `swap_provider_for_session` in the /models dialog and
+    /// channel /models paths. Bumps the per-session epoch so an in-flight
+    /// turn's automatic fallback won't clobber the fresh manual pick.
+    pub fn mark_manual_switch(&self, session_id: Uuid) {
+        if let Ok(mut map) = self.manual_switch_epoch.write() {
+            *map.entry(session_id).or_insert(0) += 1;
+        }
+    }
+
+    /// Current manual-switch epoch for a session (0 if never switched).
+    /// A turn captures this at start; a change before the turn's fallback
+    /// would stick means the user switched mid-turn.
+    pub fn manual_switch_epoch(&self, session_id: Uuid) -> u64 {
+        self.manual_switch_epoch
+            .read()
+            .ok()
+            .and_then(|m| m.get(&session_id).copied())
+            .unwrap_or(0)
     }
 
     /// Record that a sticky-fallback fired for this session. Intentionally a

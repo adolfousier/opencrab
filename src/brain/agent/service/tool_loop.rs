@@ -359,6 +359,13 @@ impl AgentService {
         progress_callback: Option<ProgressCallback>,
         question_callback: Option<QuestionCallback>,
     ) -> Result<AgentResponse> {
+        // Snapshot the manual-switch epoch at turn start. If the user
+        // manually switches the provider/model while this turn is in
+        // flight, the epoch changes — and an automatic fallback fired by
+        // this (now-superseded) turn must NOT stick its provider over the
+        // user's fresh pick. See the fallback-success guard below.
+        let start_switch_epoch = self.manual_switch_epoch(session_id);
+
         // Get or create session
         let session_service = SessionService::new(self.context.clone());
         let session = session_service
@@ -1520,8 +1527,16 @@ impl AgentService {
                             .await;
                         match fb_result {
                             Ok(resp) => {
-                                // Disable restore — the swap must stick.
-                                restore_guard.original = None;
+                                // Only let the fallback STICK if the user
+                                // didn't manually switch provider while this
+                                // turn was in flight. If they did, leave the
+                                // restore guard active so its Drop puts the
+                                // session back on the pick captured before we
+                                // swapped — the manual switch wins and the
+                                // next turn uses it (2026-06-07).
+                                if self.manual_switch_epoch(session_id) == start_switch_epoch {
+                                    restore_guard.original = None;
+                                }
                                 drop(restore_guard);
                                 succeeded = Some((resp, fb_name, fb_model));
                                 break;
@@ -1548,7 +1563,18 @@ impl AgentService {
                             // up and calls session_service.update_session
                             // so the NEXT turn resolves model_name from
                             // the fallback, not the rate-limited primary.
-                            if let Some(ref cb) = progress_callback {
+                            //
+                            // BUT: skip the persist when the user manually
+                            // switched provider mid-turn — emitting here would
+                            // re-pin the session to the fallback and clobber
+                            // their fresh pick (the Ok arm above already kept
+                            // the restore guard, so the in-memory provider is
+                            // back on the user's choice).
+                            let user_switched_mid_turn =
+                                self.manual_switch_epoch(session_id) != start_switch_epoch;
+                            if let Some(ref cb) = progress_callback
+                                && !user_switched_mid_turn
+                            {
                                 let reason = if is_model_mismatch {
                                     "model_unsupported".to_string()
                                 } else if is_auth {
@@ -1869,8 +1895,14 @@ impl AgentService {
                                     let streak = self.bump_primary_failure_streak(session_id);
                                     let sticky = streak >= STICKY_FALLBACK_THRESHOLD;
                                     if sticky {
-                                        // Disable restore — the swap stays.
-                                        restore_guard.original = None;
+                                        // Disable restore — the swap stays,
+                                        // unless the user switched mid-turn
+                                        // (then the guard restores their pick).
+                                        if self.manual_switch_epoch(session_id)
+                                            == start_switch_epoch
+                                        {
+                                            restore_guard.original = None;
+                                        }
                                     }
                                     // Either way: dropping the guard either
                                     // restores the primary (non-sticky) or is
@@ -1879,7 +1911,12 @@ impl AgentService {
                                     // matches what callers see.
                                     drop(restore_guard);
                                     stream_succeeded = Some(resp);
-                                    if let Some(ref cb) = progress_callback {
+                                    // Skip the ProviderSwitched persist if the
+                                    // user switched mid-turn — their pick wins.
+                                    if let Some(ref cb) = progress_callback
+                                        && self.manual_switch_epoch(session_id)
+                                            == start_switch_epoch
+                                    {
                                         let primary_from_name =
                                             self.provider_name_for_session(session_id);
                                         cb(
@@ -2138,7 +2175,12 @@ impl AgentService {
                                     // permanently after the threshold.
                                     let streak = self.bump_primary_failure_streak(session_id);
                                     let sticky = streak >= STICKY_FALLBACK_THRESHOLD;
-                                    if let Some(ref cb) = progress_callback {
+                                    // Skip the ProviderSwitched persist if the
+                                    // user switched mid-turn — their pick wins.
+                                    if let Some(ref cb) = progress_callback
+                                        && self.manual_switch_epoch(session_id)
+                                            == start_switch_epoch
+                                    {
                                         let primary_from_name =
                                             self.provider_name_for_session(session_id);
                                         cb(
@@ -3749,10 +3791,21 @@ impl AgentService {
                                         )
                                     });
                                     if has_visible_text {
-                                        // Swap sticks for the rest of the session.
-                                        restore_guard.original = None;
+                                        // Swap sticks for the rest of the session,
+                                        // unless the user switched mid-turn (then
+                                        // the guard's Drop restores their pick).
+                                        if self.manual_switch_epoch(session_id)
+                                            == start_switch_epoch
+                                        {
+                                            restore_guard.original = None;
+                                        }
                                         drop(restore_guard);
-                                        if let Some(ref cb) = progress_callback {
+                                        // Skip the ProviderSwitched persist if the
+                                        // user switched mid-turn — their pick wins.
+                                        if let Some(ref cb) = progress_callback
+                                            && self.manual_switch_epoch(session_id)
+                                                == start_switch_epoch
+                                        {
                                             let from_name =
                                                 self.provider_name_for_session(session_id);
                                             cb(
