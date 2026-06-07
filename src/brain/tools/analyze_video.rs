@@ -1,17 +1,22 @@
 //! Analyze Video Tool — Gemini-native video understanding.
 //!
-//! Phase 1: Gemini-only. When the user attaches a video to a channel/TUI
-//! session, the file_extract pipeline emits `<<VID:path>>` and the agent
-//! invokes this tool. Two upload paths depending on file size:
+//! Two strategies tried in order:
 //!
-//! * **Inline (≤ ~18 MB)**: base64 the bytes and pass them directly inside
-//!   `inline_data` on `generateContent`. One round-trip, simplest path.
-//! * **Files API (> 18 MB)**: resumable upload to `/upload/v1beta/files`,
-//!   poll the file resource until `state == "ACTIVE"`, then reference it
-//!   via `file_data: { file_uri }` in `generateContent`.
+//! 1. **Native Gemini video** (primary): upload the file and let Gemini
+//!    process it as a video stream. Two upload paths depending on file size:
+//!    * **Inline (≤ ~18 MB)**: base64 the bytes and pass them directly inside
+//!      `inline_data` on `generateContent`. One round-trip, simplest path.
+//!    * **Files API (> 18 MB)**: resumable upload to `/upload/v1beta/files`,
+//!      poll the file resource until `state == "ACTIVE"`, then reference it
+//!      via `file_data: { file_uri }` in `generateContent`.
 //!
-//! Phase 2 (separate tool wiring) will add a frame-extraction fallback so
-//! sessions on non-Gemini providers still get something useful.
+//! 2. **Frame extraction fallback**: if the primary path fails (network
+//!    error, Files-API FAILED state, Gemini API error, etc.), fall back to
+//!    ffmpeg-based frame extraction. Extract N frames at 1 fps (capped at
+//!    30 frames), analyze each frame with the same Gemini vision API used
+//!    by `analyze_image`, then stitch the per-frame results into a single
+//!    chronological description. This works on any provider that has a
+//!    Gemini key configured for vision.
 
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
@@ -32,6 +37,11 @@ const INLINE_MAX_BYTES: u64 = 18 * 1024 * 1024;
 const FILES_API_POLL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Interval between Files-API state checks while polling.
 const FILES_API_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Max frames to extract in fallback mode (1 per second of video).
+const FALLBACK_MAX_FRAMES: usize = 30;
+/// Frame rate for fallback extraction (1 frame per N seconds).
+const FALLBACK_FPS: f64 = 1.0;
 
 pub struct AnalyzeVideoTool {
     api_key: String,
@@ -88,7 +98,7 @@ impl Tool for AnalyzeVideoTool {
     async fn execute(
         &self,
         input: Value,
-        _context: &ToolExecutionContext,
+        context: &ToolExecutionContext,
     ) -> super::error::Result<ToolResult> {
         let video_path = match input["video"].as_str() {
             Some(s) if !s.is_empty() => s.to_string(),
@@ -127,24 +137,199 @@ impl Tool for AnalyzeVideoTool {
             self.model,
         );
 
+        // Strategy 1: native Gemini video. Capture both transport errors
+        // (Err) and API/empty-response errors (Ok with success=false) so
+        // either kind triggers the frame-extraction fallback.
+        let native_err: String = match self
+            .try_native_video(&video_path, mime_type, size, &question)
+            .await
+        {
+            Ok(result) if result.success => return Ok(result),
+            Ok(failed) => failed.error.unwrap_or_else(|| "unknown error".to_string()),
+            Err(e) => e.to_string(),
+        };
+
+        tracing::warn!(
+            "analyze_video: native Gemini path failed ({}). Falling back to ffmpeg \
+             frame extraction + per-frame vision.",
+            native_err
+        );
+
+        // Strategy 2: ffmpeg frame extraction + per-frame Gemini vision.
+        self.frame_extraction_fallback(&video_path, &question, native_err, context)
+            .await
+    }
+}
+
+impl AnalyzeVideoTool {
+    /// Strategy 1: native Gemini video understanding. Builds the inline or
+    /// Files-API video part then runs `generateContent`. Returns the
+    /// `ToolResult` (which may itself be `success=false` on an API error) or
+    /// `Err` on a transport/IO failure — the caller treats either as a
+    /// signal to fall back to frame extraction.
+    async fn try_native_video(
+        &self,
+        video_path: &str,
+        mime_type: &'static str,
+        size: u64,
+        question: &str,
+    ) -> super::error::Result<ToolResult> {
         let video_part = if size <= INLINE_MAX_BYTES {
-            self.build_inline_part(&video_path, mime_type).await?
+            self.build_inline_part(video_path, mime_type).await?
         } else {
             tracing::info!(
                 "analyze_video: file size {} > {} inline cap — using Files API",
                 size,
                 INLINE_MAX_BYTES,
             );
-            self.upload_via_files_api(&video_path, mime_type, size)
+            self.upload_via_files_api(video_path, mime_type, size)
                 .await?
         };
-
-        // Send generateContent with the video part + question
-        self.run_generate_content(video_part, &question).await
+        self.run_generate_content(video_part, question).await
     }
-}
 
-impl AnalyzeVideoTool {
+    /// Strategy 2: extract up to `FALLBACK_MAX_FRAMES` frames at
+    /// `FALLBACK_FPS` with ffmpeg, analyze each frame with the Gemini vision
+    /// API (same path as `analyze_image`), and stitch the per-frame
+    /// descriptions into one chronological summary. Works on any setup with
+    /// a Gemini vision key, including when native video upload is down.
+    async fn frame_extraction_fallback(
+        &self,
+        video_path: &str,
+        question: &str,
+        native_err: String,
+        context: &ToolExecutionContext,
+    ) -> super::error::Result<ToolResult> {
+        // ffmpeg must be on PATH. If it isn't, neither strategy is available
+        // — surface both failures so the user knows why.
+        if !ffmpeg_available().await {
+            return Ok(ToolResult::error(format!(
+                "Video analysis failed. Native Gemini video upload errored ({native_err}) and \
+                 the ffmpeg frame-extraction fallback is unavailable: `ffmpeg` is not installed \
+                 or not on PATH. Install ffmpeg to enable frame-based video analysis."
+            )));
+        }
+
+        // Extract frames into a temp dir that auto-cleans on drop.
+        let tmp = tempfile::Builder::new()
+            .prefix("opencrabs-video-frames-")
+            .tempdir()
+            .map_err(|e| {
+                super::error::ToolError::Execution(format!(
+                    "Failed to create temp dir for frame extraction: {e}"
+                ))
+            })?;
+        let pattern = tmp.path().join("frame_%03d.jpg");
+        let pattern_str = pattern.to_string_lossy().to_string();
+
+        // -vf fps=F samples F frames/sec; -frames:v caps the total. -q:v 3
+        // keeps the JPEGs small but readable for vision.
+        let fps_filter = format!("fps={FALLBACK_FPS}");
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                video_path,
+                "-vf",
+                &fps_filter,
+                "-frames:v",
+                &FALLBACK_MAX_FRAMES.to_string(),
+                "-q:v",
+                "3",
+                &pattern_str,
+            ])
+            .output()
+            .await
+            .map_err(|e| {
+                super::error::ToolError::Execution(format!("Failed to spawn ffmpeg: {e}"))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Ok(ToolResult::error(format!(
+                "Video analysis failed. Native Gemini video upload errored ({native_err}) and \
+                 ffmpeg frame extraction failed: {}",
+                stderr.trim()
+            )));
+        }
+
+        // Collect + sort the extracted frames (frame_001.jpg, frame_002.jpg…).
+        let mut frames: Vec<std::path::PathBuf> = Vec::new();
+        let mut entries = tokio::fs::read_dir(tmp.path()).await.map_err(|e| {
+            super::error::ToolError::Execution(format!("Failed to read frame dir: {e}"))
+        })?;
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            super::error::ToolError::Execution(format!("Failed to iterate frame dir: {e}"))
+        })? {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("jpg") {
+                frames.push(path);
+            }
+        }
+        frames.sort();
+
+        if frames.is_empty() {
+            return Ok(ToolResult::error(format!(
+                "Video analysis failed. Native Gemini video upload errored ({native_err}) and \
+                 ffmpeg produced no frames (unreadable or zero-length video?)."
+            )));
+        }
+
+        tracing::info!(
+            "analyze_video fallback: extracted {} frame(s), analyzing each with Gemini vision",
+            frames.len()
+        );
+
+        // Analyze each frame with the vision model. Reuse AnalyzeImageTool so
+        // the request shape, error handling, and model stay in lockstep with
+        // the standalone image path.
+        let vision = super::analyze_image::AnalyzeImageTool::new(
+            self.api_key.clone(),
+            self.model.clone(),
+        );
+        let total = frames.len();
+        let mut sections: Vec<String> = Vec::with_capacity(total);
+        for (idx, frame) in frames.iter().enumerate() {
+            // At FALLBACK_FPS frames/sec, frame i (0-based) is ≈ i/FPS seconds in.
+            let approx_secs = (idx as f64) / FALLBACK_FPS;
+            let per_frame_q = format!(
+                "This is frame {} of {} extracted from a video (≈{:.0}s in). Describe \
+                 concisely what is visible and any action or change. The user ultimately \
+                 asked: {}",
+                idx + 1,
+                total,
+                approx_secs,
+                question
+            );
+            let frame_path = frame.to_string_lossy().to_string();
+            let res = vision
+                .execute(
+                    serde_json::json!({ "image": frame_path, "question": per_frame_q }),
+                    context,
+                )
+                .await;
+            let desc = match res {
+                Ok(r) if r.success => r.output.trim().to_string(),
+                Ok(r) => format!(
+                    "[frame analysis failed: {}]",
+                    r.error.unwrap_or_else(|| "unknown".to_string())
+                ),
+                Err(e) => format!("[frame analysis failed: {e}]"),
+            };
+            sections.push(format!("Frame {} (≈{:.0}s): {}", idx + 1, approx_secs, desc));
+        }
+
+        let body = sections.join("\n\n");
+        let header = format!(
+            "[Frame-extraction fallback — native Gemini video upload was unavailable \
+             ({native_err}). Analyzed {total} frame(s) sampled at {FALLBACK_FPS} fps. \
+             The descriptions below are per-frame, in chronological order.]\n\n"
+        );
+        Ok(ToolResult::success(format!("{header}{body}")))
+    }
+
     /// Read the file, base64 it, and produce an `inline_data` part. Single
     /// round-trip path used for files ≤ INLINE_MAX_BYTES.
     async fn build_inline_part(
@@ -416,7 +601,21 @@ impl AnalyzeVideoTool {
     }
 }
 
-fn detect_video_mime_type(path: &str) -> &'static str {
+/// Whether `ffmpeg` can be invoked on this host. Runs `ffmpeg -version`
+/// and treats a successful spawn+exit as available. Used to decide whether
+/// the frame-extraction fallback is possible before attempting extraction.
+async fn ffmpeg_available() -> bool {
+    tokio::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub(crate) fn detect_video_mime_type(path: &str) -> &'static str {
     let lower = path.to_lowercase();
     if lower.ends_with(".mp4") || lower.ends_with(".m4v") {
         "video/mp4"
