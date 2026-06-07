@@ -293,6 +293,13 @@ profile_id = ""
 # subagent_provider = "zhipu"
 # subagent_model = "GLM 5"
 
+# Provider/model for Recursive Self-Improvement (RSI) cycles. The model is
+# paired with the provider, same as subagent_provider/subagent_model.
+# Unset self_improvement_provider → inherit the active provider; unset
+# self_improvement_model → use that provider's default model.
+# self_improvement_provider = "zhipu"
+# self_improvement_model = "glm-5.1"
+
 # Auto-install new releases on startup (default: true).
 # When true, OpenCrabs checks GitHub on startup and silently installs any
 # new release, then hot-restarts. Set to false if you prefer to be prompted
