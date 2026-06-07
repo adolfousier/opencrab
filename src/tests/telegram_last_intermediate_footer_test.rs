@@ -65,8 +65,8 @@ fn ctx_only_footer_no_tok_s_still_appends() {
 fn result_within_telegram_cap_is_returned() {
     // A ~3500-char intermediate plus a short footer stays under 4096.
     let big = "x".repeat(3500);
-    let body =
-        build_last_intermediate_with_footer(&big, FOOTER).expect("3500 + footer must fit under 4096");
+    let body = build_last_intermediate_with_footer(&big, FOOTER)
+        .expect("3500 + footer must fit under 4096");
     assert!(body.chars().count() <= 4096);
     assert!(body.ends_with(FOOTER));
 }

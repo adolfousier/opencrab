@@ -285,10 +285,8 @@ impl AnalyzeVideoTool {
         // Analyze each frame with the vision model. Reuse AnalyzeImageTool so
         // the request shape, error handling, and model stay in lockstep with
         // the standalone image path.
-        let vision = super::analyze_image::AnalyzeImageTool::new(
-            self.api_key.clone(),
-            self.model.clone(),
-        );
+        let vision =
+            super::analyze_image::AnalyzeImageTool::new(self.api_key.clone(), self.model.clone());
         let total = frames.len();
         let mut sections: Vec<String> = Vec::with_capacity(total);
         for (idx, frame) in frames.iter().enumerate() {
@@ -318,7 +316,12 @@ impl AnalyzeVideoTool {
                 ),
                 Err(e) => format!("[frame analysis failed: {e}]"),
             };
-            sections.push(format!("Frame {} (≈{:.0}s): {}", idx + 1, approx_secs, desc));
+            sections.push(format!(
+                "Frame {} (≈{:.0}s): {}",
+                idx + 1,
+                approx_secs,
+                desc
+            ));
         }
 
         let body = sections.join("\n\n");

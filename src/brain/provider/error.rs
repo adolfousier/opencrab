@@ -190,8 +190,7 @@ impl crate::utils::retry::RetryableError for ProviderError {
             } if *status == 429 => message.as_str(),
             _ => return None,
         };
-        parse_retry_seconds(msg)
-            .map(|secs| std::time::Duration::from_secs(secs.min(30)))
+        parse_retry_seconds(msg).map(|secs| std::time::Duration::from_secs(secs.min(30)))
     }
 
     fn is_hard_down(&self) -> bool {

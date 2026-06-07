@@ -23,9 +23,9 @@ use std::time::Duration;
 fn retryable_classification_matches_inherent() {
     // Transient kinds retry.
     assert!(RetryableError::is_retryable(&ProviderError::Timeout(10)));
-    assert!(RetryableError::is_retryable(&ProviderError::RateLimitExceeded(
-        "slow down".to_string()
-    )));
+    assert!(RetryableError::is_retryable(
+        &ProviderError::RateLimitExceeded("slow down".to_string())
+    ));
     assert!(RetryableError::is_retryable(&ProviderError::ApiError {
         status: 503,
         message: "upstream unavailable".to_string(),
@@ -197,8 +197,8 @@ async fn retry_with_notify_fires_per_attempt_for_surfacing() {
     // feeds the TUI "⏳ Retry N/M" — pin it so a refactor can't silently
     // stop surfacing retries (the exact bug the user reported).
     use crate::utils::retry::{RetryConfig, retry_with_notify};
-    use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
 
     let cfg = RetryConfig {
         max_attempts: 4,
@@ -312,7 +312,11 @@ async fn provider_error_drives_generic_retry() {
     )
     .await;
     assert_eq!(out.unwrap(), 7);
-    assert_eq!(count.load(Ordering::SeqCst), 3, "should retry twice then succeed");
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        3,
+        "should retry twice then succeed"
+    );
 
     // Non-retryable: fails once, no retries.
     let count = Arc::new(AtomicU32::new(0));
@@ -329,5 +333,9 @@ async fn provider_error_drives_generic_retry() {
     )
     .await;
     assert!(out.is_err());
-    assert_eq!(count.load(Ordering::SeqCst), 1, "non-retryable must not retry");
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "non-retryable must not retry"
+    );
 }

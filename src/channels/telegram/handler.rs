@@ -2474,8 +2474,7 @@ pub(crate) async fn handle_message(
                         .zip(s.sent_intermediates.last().cloned())
                 };
                 if let Some((inter_id, inter_text)) = last_inter
-                    && let Some(edited) =
-                        build_last_intermediate_with_footer(&inter_text, &footer)
+                    && let Some(edited) = build_last_intermediate_with_footer(&inter_text, &footer)
                     && let Err(e) = bot
                         .edit_message_text(msg.chat.id, inter_id, &edited)
                         .parse_mode(ParseMode::Html)
@@ -3110,8 +3109,7 @@ pub(crate) async fn resume_session(
                         .zip(s.sent_intermediates.last().cloned())
                 };
                 if let Some((inter_id, inter_text)) = last_inter
-                    && let Some(edited) =
-                        build_last_intermediate_with_footer(&inter_text, &footer)
+                    && let Some(edited) = build_last_intermediate_with_footer(&inter_text, &footer)
                     && let Err(e) = bot
                         .edit_message_text(chat_id, inter_id, &edited)
                         .parse_mode(ParseMode::Html)

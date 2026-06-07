@@ -24,7 +24,10 @@ fn redact_command_hides_bearer_token() {
         !out.contains("dgr_live_txDsdsDDv7zpSECRETKEY"),
         "the bearer token must be redacted, got: {out}"
     );
-    assert!(out.contains("[REDACTED]"), "should mark the redaction: {out}");
+    assert!(
+        out.contains("[REDACTED]"),
+        "should mark the redaction: {out}"
+    );
     // Non-secret parts of the command stay visible for context.
     assert!(out.contains("curl"));
     assert!(out.contains("dialagram.me"));
@@ -33,7 +36,8 @@ fn redact_command_hides_bearer_token() {
 #[test]
 fn redact_command_hides_api_key_param_and_url_password() {
     assert!(
-        !redact_command("curl https://api.example.com?api_key=sk-abc123def").contains("sk-abc123def")
+        !redact_command("curl https://api.example.com?api_key=sk-abc123def")
+            .contains("sk-abc123def")
     );
     assert!(
         !redact_command("curl https://user:hunter2@host/path").contains("hunter2"),
