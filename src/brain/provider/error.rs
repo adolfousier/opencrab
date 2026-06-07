@@ -193,6 +193,18 @@ impl crate::utils::retry::RetryableError for ProviderError {
         parse_retry_seconds(msg)
             .map(|secs| std::time::Duration::from_secs(secs.min(30)))
     }
+
+    fn is_hard_down(&self) -> bool {
+        // A connection-phase reqwest error means the endpoint refused the
+        // connection, the DNS name didn't resolve, or the host is
+        // unreachable — the host is down, not slow. These don't recover
+        // within a retry window, so the retry loop caps them at one quick
+        // retry and moves on (e.g. to the next provider in the fallback
+        // chain) instead of burning the full patient backoff. Timeouts are
+        // deliberately NOT hard-down: a slow-but-alive host is worth the
+        // patient schedule.
+        matches!(self, ProviderError::HttpError(e) if e.is_connect())
+    }
 }
 
 /// Free wrapper so the `RetryableError` impl can call the inherent

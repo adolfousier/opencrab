@@ -92,6 +92,104 @@ fn retry_after_none_when_no_parseable_number() {
     assert_eq!(e.retry_after(), None);
 }
 
+// A test error whose hard-down classification is controllable, so the
+// hard-down cap can be exercised without constructing a real reqwest
+// connection error (flaky / network-dependent).
+#[derive(Debug)]
+struct ClassError {
+    hard_down: bool,
+}
+impl std::fmt::Display for ClassError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "class error (hard_down={})", self.hard_down)
+    }
+}
+impl RetryableError for ClassError {
+    fn is_retryable(&self) -> bool {
+        true
+    }
+    fn is_hard_down(&self) -> bool {
+        self.hard_down
+    }
+}
+
+#[tokio::test]
+async fn hard_down_error_is_capped_to_one_quick_retry() {
+    use crate::utils::retry::{HARD_DOWN_MAX_RETRIES, RetryConfig, retry};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    // Patient config (4 retries) — but a hard-down error must IGNORE it and
+    // cap at HARD_DOWN_MAX_RETRIES so a dead host doesn't burn ~15s before
+    // the fallback chain moves on.
+    let cfg = RetryConfig {
+        max_attempts: 4,
+        initial_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(2),
+        backoff_multiplier: 2.0,
+        jitter: 0.0,
+    };
+
+    let calls = Arc::new(AtomicU32::new(0));
+    let c2 = calls.clone();
+    let out: Result<i32, ClassError> = retry(
+        move || {
+            let c = c2.clone();
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Err(ClassError { hard_down: true })
+            }
+        },
+        &cfg,
+    )
+    .await;
+
+    assert!(out.is_err());
+    // 1 initial try + HARD_DOWN_MAX_RETRIES retries.
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1 + HARD_DOWN_MAX_RETRIES,
+        "hard-down must fail fast: 1 try + {HARD_DOWN_MAX_RETRIES} retry, not the full 4"
+    );
+}
+
+#[tokio::test]
+async fn transient_error_uses_full_patient_budget() {
+    use crate::utils::retry::{RetryConfig, retry};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let cfg = RetryConfig {
+        max_attempts: 4,
+        initial_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(2),
+        backoff_multiplier: 2.0,
+        jitter: 0.0,
+    };
+
+    let calls = Arc::new(AtomicU32::new(0));
+    let c2 = calls.clone();
+    let out: Result<i32, ClassError> = retry(
+        move || {
+            let c = c2.clone();
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Err(ClassError { hard_down: false })
+            }
+        },
+        &cfg,
+    )
+    .await;
+
+    assert!(out.is_err());
+    // 1 initial try + 4 retries = full patient budget for a transient error.
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        5,
+        "transient errors must use the full 4-retry patient budget"
+    );
+}
+
 #[tokio::test]
 async fn retry_with_notify_fires_per_attempt_for_surfacing() {
     // The retry-visibility feature depends on retry_with_notify calling the
