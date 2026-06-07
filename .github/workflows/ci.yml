@@ -1,9 +1,31 @@
 name: CI
 
+# Trigger model (single-maintainer OSS, GitHub Flow):
+#   - pull_request: full gate on contributions — required to review
+#     external PRs safely.
+#   - push to main: catch direct pushes and keep main provably green.
+#     Docs-only commits are skipped via paths-ignore so they don't burn
+#     the matrix; rapid pushes cancel older runs via `concurrency`. The
+#     heavy cross-platform BUILD job is gated off routine main pushes
+#     (see its `if:`) so a normal commit only pays for lint + Linux test
+#     + audit (~5-8 min, cached, cancellable). This replaces the old
+#     opt-out `[skip ci]`-on-every-commit toil with sensible defaults.
+#   - workflow_dispatch: run the full matrix on demand (e.g. to verify
+#     Windows/macOS before cutting a release tag).
+# CI deliberately does NOT run on tags — the release workflow owns tags
+# and trusts the commit already passed CI on its way to main. That also
+# kills the old double-build where ci.yml and release.yml both compiled
+# Windows/macOS on the same tag event.
 on:
+  pull_request:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE*'
+      - '.gitignore'
+      - 'docs/**'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -62,6 +84,13 @@ jobs:
   build:
     name: Build (${{ matrix.target }})
     needs: [lint]
+    # Cross-platform build verification is the expensive job (Windows is
+    # 3-5x slower). Run it where it pays off — on PRs (gate contributions)
+    # and on-demand (workflow_dispatch, e.g. before a release tag) — but
+    # NOT on every routine push to main. Direct main pushes still get
+    # lint + Linux test + audit. Any platform regression that slips
+    # through is caught by release.yml's build-release matrix at tag time.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -182,14 +211,16 @@ jobs:
         #     0.13.x.
         run: cargo audit --ignore RUSTSEC-2024-0437
 
-  # ── Stage 5: Coverage (gated on lint, runs only on main pushes) ──────────
-  # Coverage runs only on main to save PR wall-clock — tarpaulin is the
-  # slowest job (~12 min). PRs still get full test coverage via the
-  # `test` job above; this job just publishes the report.
+  # ── Stage 5: Coverage (on-demand only) ───────────────────────────────────
+  # Tarpaulin is the slowest job (~12 min). Running it on every main push
+  # would re-add the cost we just trimmed, so it's on-demand: trigger the
+  # CI workflow manually (workflow_dispatch) when you want a fresh coverage
+  # report. PRs and pushes still get full test coverage via the `test` job;
+  # this job only publishes the percentage report.
   coverage:
     name: Code Coverage
     needs: [lint]
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
