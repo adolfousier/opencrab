@@ -199,6 +199,47 @@ pub enum RsiNotification {
     AgentCycleFailed { error: String },
 }
 
+/// Format an RSI notification into its TUI display line, with secrets
+/// redacted.
+///
+/// The `error`, `summary`, and `description` fields are free text sourced
+/// from provider errors, feedback records, and tool output — any of which
+/// can contain an API key, Bearer token, or credentialed URL. Without
+/// redaction these surfaced on screen (2026-06-07). `redact_secrets` masks
+/// key prefixes, long opaque tokens, inline "Bearer <token>", and
+/// env-style secret assignments. Redaction happens here, at the single
+/// formatting point, so every variant and every caller is covered.
+pub(crate) fn format_rsi_notification(notification: &RsiNotification) -> String {
+    let msg = match notification {
+        RsiNotification::DigestWritten { total_events } => {
+            format!("RSI: digest written ({total_events} events)")
+        }
+        RsiNotification::CycleStarted => "RSI: analyzing feedback patterns...".to_string(),
+        RsiNotification::ImprovementOpportunity { description } => {
+            format!("RSI: {description}")
+        }
+        RsiNotification::AgentCycleComplete { summary } => {
+            format!("RSI: agent cycle complete — {summary}")
+        }
+        RsiNotification::AgentCycleFailed { error } => {
+            format!("RSI: agent cycle failed — {error}")
+        }
+        RsiNotification::TemplateSyncComplete { summary } => {
+            format!("RSI: template sync complete — {summary}")
+        }
+        RsiNotification::TemplateSyncFailed { error } => {
+            format!("RSI: template sync failed — {error}")
+        }
+    };
+    // Compose both redactors: redact_command catches command/URL patterns
+    // (api_key= query params, --header secrets, https://user:pass@ URLs)
+    // that RSI provider errors commonly carry; redact_secrets then masks
+    // key prefixes, long opaque tokens, and inline Bearer values. Each is
+    // a no-op on text the other already masked.
+    let command_safe = crate::utils::sanitize::redact_command(&msg);
+    crate::utils::sanitize::redact_secrets(&command_safe)
+}
+
 /// Build a minimal tool registry containing only the RSI tools.
 fn build_rsi_tool_registry() -> Arc<crate::brain::tools::ToolRegistry> {
     use crate::brain::tools::ToolRegistry;

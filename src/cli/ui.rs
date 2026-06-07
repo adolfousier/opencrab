@@ -388,35 +388,16 @@ async fn cmd_chat_inner(
         tokio::spawn(async move {
             use crate::tui::events::TuiEvent;
             while let Some(notification) = rsi_rx.recv().await {
-                let msg = match notification {
-                    crate::brain::rsi::RsiNotification::DigestWritten { total_events } => {
-                        format!("RSI: digest written ({total_events} events)")
-                    }
-                    crate::brain::rsi::RsiNotification::CycleStarted => {
-                        "RSI: analyzing feedback patterns...".to_string()
-                    }
-                    crate::brain::rsi::RsiNotification::ImprovementOpportunity { description } => {
-                        format!("RSI: {description}")
-                    }
-                    crate::brain::rsi::RsiNotification::AgentCycleComplete { summary } => {
-                        format!("RSI: agent cycle complete — {summary}")
-                    }
-                    crate::brain::rsi::RsiNotification::AgentCycleFailed { error } => {
-                        format!("RSI: agent cycle failed — {error}")
-                    }
-                    crate::brain::rsi::RsiNotification::TemplateSyncComplete { summary } => {
-                        format!("RSI: template sync complete — {summary}")
-                    }
-                    crate::brain::rsi::RsiNotification::TemplateSyncFailed { error } => {
-                        format!("RSI: template sync failed — {error}")
-                    }
-                };
+                // Secrets in the notification's free-text fields are redacted
+                // inside format_rsi_notification before this ever reaches the
+                // screen (2026-06-07: RSI alerts were exposing keys).
+                let text = crate::brain::rsi::format_rsi_notification(&notification);
                 // RSI alerts apply to the whole agent (not any single
                 // session) — Uuid::nil() bypasses the session-scope filter
                 // so the alert renders in whichever pane the user is on.
                 let _ = rsi_event_sender.send(TuiEvent::SystemMessage {
                     session_id: uuid::Uuid::nil(),
-                    text: msg,
+                    text,
                 });
             }
         });
