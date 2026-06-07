@@ -195,6 +195,69 @@ where
     }
 }
 
+/// Like [`retry`], but invokes `on_retry(attempt, max, &err)` immediately
+/// before each backoff sleep. The callback lets a caller surface retry
+/// progress to a UI (e.g. the agent's `RetryAttempt` event) without the
+/// retry loop knowing anything about UI plumbing.
+///
+/// `attempt` is 1-based (the upcoming retry number); `max` is
+/// `config.max_attempts`. The callback fires only for retryable errors that
+/// have attempts remaining — not on the final give-up or on non-retryable
+/// errors.
+pub async fn retry_with_notify<F, Fut, T, E, N>(
+    mut operation: F,
+    config: &RetryConfig,
+    mut on_retry: N,
+) -> std::result::Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = std::result::Result<T, E>>,
+    E: RetryableError,
+    N: FnMut(u32, u32, &E),
+{
+    let mut attempt = 0;
+    let mut last_error: Option<E> = None;
+
+    loop {
+        match operation().await {
+            Ok(result) => {
+                if attempt > 0 {
+                    tracing::info!("Operation succeeded after {} retries", attempt);
+                }
+                return Ok(result);
+            }
+            Err(err) => {
+                if config.max_attempts == 0 || !err.is_retryable() {
+                    tracing::debug!("Error is not retryable: {}", err);
+                    return Err(err);
+                }
+                if attempt >= config.max_attempts {
+                    tracing::warn!("Max retry attempts ({}) exceeded", config.max_attempts);
+                    return Err(last_error.unwrap_or(err));
+                }
+
+                let delay = err
+                    .retry_after()
+                    .unwrap_or_else(|| config.calculate_delay(attempt));
+
+                tracing::info!(
+                    "Retry attempt {}/{} after {}ms for error: {}",
+                    attempt + 1,
+                    config.max_attempts,
+                    delay.as_millis(),
+                    err
+                );
+                // Surface the upcoming retry to the caller (UI, metrics, …).
+                on_retry(attempt + 1, config.max_attempts, &err);
+
+                last_error = Some(err);
+                sleep(delay).await;
+                attempt += 1;
+            }
+        }
+    }
+}
+
 /// Retry with a simple error display (for errors that don't implement RetryableError)
 ///
 /// Uses a custom retryable check function.

@@ -398,6 +398,18 @@ impl Provider for FallbackProvider {
         self.pending_swap.lock().ok().and_then(|mut s| s.take())
     }
 
+    fn take_retry_notices(&self) -> Vec<(u32, u32, String)> {
+        // Aggregate retries from the primary and every fallback that was
+        // tried this turn, in chain order, so the user sees the full
+        // resilience sequence ("⏳ Retry 2/4 — dialagram …" then the
+        // fallback's own retries).
+        let mut out = self.primary.take_retry_notices();
+        for fb in &self.fallbacks {
+            out.extend(fb.take_retry_notices());
+        }
+        out
+    }
+
     fn active_subprovider_name(&self) -> Option<String> {
         let idx = self.active.load(Ordering::Acquire);
         if idx == 0 {

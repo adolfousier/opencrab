@@ -93,6 +93,92 @@ fn retry_after_none_when_no_parseable_number() {
 }
 
 #[tokio::test]
+async fn retry_with_notify_fires_per_attempt_for_surfacing() {
+    // The retry-visibility feature depends on retry_with_notify calling the
+    // notifier once per retry with the right (attempt, max). This is what
+    // feeds the TUI "⏳ Retry N/M" — pin it so a refactor can't silently
+    // stop surfacing retries (the exact bug the user reported).
+    use crate::utils::retry::{RetryConfig, retry_with_notify};
+    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let cfg = RetryConfig {
+        max_attempts: 4,
+        initial_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(2),
+        backoff_multiplier: 2.0,
+        jitter: 0.0,
+    };
+
+    // Always-failing transient error → exhausts all 4 retries.
+    let notices: Arc<Mutex<Vec<(u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+    let n2 = notices.clone();
+    let calls = Arc::new(AtomicU32::new(0));
+    let c2 = calls.clone();
+    let out: Result<i32, ProviderError> = retry_with_notify(
+        move || {
+            let c = c2.clone();
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Err(ProviderError::Timeout(1))
+            }
+        },
+        &cfg,
+        |attempt, max, _err| {
+            n2.lock().unwrap().push((attempt, max));
+        },
+    )
+    .await;
+
+    assert!(out.is_err());
+    // 4 retries notified (the final give-up is not a retry), attempts 1..=4.
+    let recorded = notices.lock().unwrap().clone();
+    assert_eq!(
+        recorded,
+        vec![(1, 4), (2, 4), (3, 4), (4, 4)],
+        "notifier must fire once per retry with 1-based attempt and the max"
+    );
+    // 1 initial + 4 retries = 5 operation calls.
+    assert_eq!(calls.load(Ordering::SeqCst), 5);
+}
+
+#[tokio::test]
+async fn retry_with_notify_does_not_fire_on_success_or_non_retryable() {
+    use crate::utils::retry::{RetryConfig, retry_with_notify};
+    use std::sync::{Arc, Mutex};
+
+    let cfg = RetryConfig {
+        max_attempts: 3,
+        initial_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(2),
+        backoff_multiplier: 2.0,
+        jitter: 0.0,
+    };
+
+    // Immediate success → no notices.
+    let fired = Arc::new(Mutex::new(0u32));
+    let f2 = fired.clone();
+    let _: Result<i32, ProviderError> =
+        retry_with_notify(|| async { Ok(1) }, &cfg, |_, _, _| *f2.lock().unwrap() += 1).await;
+    assert_eq!(*fired.lock().unwrap(), 0, "no retries on success");
+
+    // Non-retryable → no notices.
+    let fired = Arc::new(Mutex::new(0u32));
+    let f2 = fired.clone();
+    let _: Result<i32, ProviderError> = retry_with_notify(
+        || async { Err(ProviderError::InvalidApiKey) },
+        &cfg,
+        |_, _, _| *f2.lock().unwrap() += 1,
+    )
+    .await;
+    assert_eq!(
+        *fired.lock().unwrap(),
+        0,
+        "non-retryable errors must not notify"
+    );
+}
+
+#[tokio::test]
 async fn provider_error_drives_generic_retry() {
     // End-to-end: a ProviderError flowing through utils::retry::retry must
     // retry transient errors and stop on non-retryable ones — proving the

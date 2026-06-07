@@ -92,6 +92,24 @@ const MAX_OPEN_TAG_CARRY: usize = 17;
 /// "Thinking..." content and get persisted as `details` on the final
 /// assistant `DisplayMessage` — matching the UX of providers that emit
 /// reasoning via the structured field natively.
+/// Short, user-facing reason for a retry notice. Keeps the TUI "⏳ Retry
+/// N/M — …" line concise and non-technical instead of dumping a raw
+/// reqwest/HTTP error.
+fn retry_reason(err: &super::error::ProviderError) -> String {
+    use super::error::ProviderError;
+    match err {
+        ProviderError::HttpError(_) => "connection error".to_string(),
+        ProviderError::Timeout(_) => "timed out".to_string(),
+        ProviderError::RateLimitExceeded(_) => "rate limited".to_string(),
+        ProviderError::ApiError { status, .. } if *status == 429 => "rate limited".to_string(),
+        ProviderError::ApiError { status, .. } if *status >= 500 => {
+            format!("server error {status}")
+        }
+        ProviderError::ApiError { status, .. } => format!("HTTP {status}"),
+        _ => "transient error".to_string(),
+    }
+}
+
 fn filter_think_tags(
     text: &str,
     inside_think: &mut bool,
@@ -1711,6 +1729,12 @@ pub struct OpenAIProvider {
     cache_enabled: bool,
     /// OpenRouter cache TTL in seconds (1-86400, default 300).
     cache_ttl: Option<u32>,
+    /// Buffer of `(attempt, max, reason)` retry notices recorded during the
+    /// most recent stream/complete call. Drained by the agent service via
+    /// `take_retry_notices()` to surface "⏳ Retry N/M" to the user. Shared
+    /// via Arc so clones of this provider (and the FallbackProvider that
+    /// wraps it) read the same buffer.
+    retry_notices: Arc<std::sync::Mutex<Vec<(u32, u32, String)>>>,
 }
 
 impl OpenAIProvider {
@@ -1779,6 +1803,7 @@ impl OpenAIProvider {
             retry_config_override: None,
             cache_enabled: false,
             cache_ttl: None,
+            retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -1812,6 +1837,7 @@ impl OpenAIProvider {
             retry_config_override: None,
             cache_enabled: false,
             cache_ttl: None,
+            retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -1845,6 +1871,7 @@ impl OpenAIProvider {
             retry_config_override: None,
             cache_enabled: false,
             cache_ttl: None,
+            retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -3346,8 +3373,12 @@ impl Provider for OpenAIProvider {
 
         let retry_config = self.retry_config(&model);
 
-        // Retry the stream connection establishment
-        let mut response = retry(
+        // Retry the stream connection establishment. Each retry is recorded
+        // into `retry_notices` so the agent service can surface "⏳ Retry
+        // N/M" to the user — the resilience used to be completely invisible.
+        let notices = self.retry_notices.clone();
+        let pname = self.name().to_string();
+        let mut response = crate::utils::retry::retry_with_notify(
             || async {
                 let body = self.encode_body(&openai_request)?;
                 let response = self
@@ -3367,6 +3398,11 @@ impl Provider for OpenAIProvider {
                 Ok(response)
             },
             &retry_config,
+            |attempt, max, err| {
+                if let Ok(mut v) = notices.lock() {
+                    v.push((attempt, max, format!("{} — {}", pname, retry_reason(err))));
+                }
+            },
         )
         .await;
 
@@ -4368,6 +4404,13 @@ impl Provider for OpenAIProvider {
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn take_retry_notices(&self) -> Vec<(u32, u32, String)> {
+        self.retry_notices
+            .lock()
+            .map(|mut v| std::mem::take(&mut *v))
+            .unwrap_or_default()
     }
 
     fn base_url(&self) -> Option<&str> {

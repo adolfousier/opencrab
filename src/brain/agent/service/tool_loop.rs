@@ -2326,6 +2326,26 @@ impl AgentService {
                 }
             };
 
+            // Surface any in-place retries the provider performed (connection
+            // blip, 5xx, rate limit) so the user SEES the resilience working
+            // instead of an apparent instant jump to fallback. Drained once
+            // per iteration; the FallbackProvider aggregates retries from the
+            // primary and every fallback tried this turn.
+            if let Some(ref cb) = progress_callback {
+                for (attempt, max, reason) in
+                    self.provider_for_session(session_id).take_retry_notices()
+                {
+                    cb(
+                        session_id,
+                        ProgressEvent::RetryAttempt {
+                            attempt,
+                            max,
+                            reason,
+                        },
+                    );
+                }
+            }
+
             // Surface any sticky-fallback swap that the FallbackProvider
             // performed during this turn so the user sees which provider/model
             // is now active. Fires at most once per swap.

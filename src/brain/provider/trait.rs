@@ -121,6 +121,16 @@ pub trait Provider: Send + Sync {
         None
     }
 
+    /// Drain any retry notices recorded since the last call. Each entry is
+    /// `(attempt, max, reason)` for an in-place retry the provider performed
+    /// (connection blip, 5xx, rate limit). The agent service polls this once
+    /// per stream attempt and surfaces each as a `RetryAttempt` UI event so
+    /// the user sees the resilience working ("⏳ Retry 2/4 …"). Default
+    /// empty — only providers that retry internally override it.
+    fn take_retry_notices(&self) -> Vec<(u32, u32, String)> {
+        Vec::new()
+    }
+
     /// Name of the currently-active sub-provider when wrapped in a sticky
     /// fallback. Returns `None` when on the primary (or for non-fallback
     /// providers). Used by the footer/splash to show the live target.
