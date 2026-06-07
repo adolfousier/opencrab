@@ -7,4 +7,4 @@
 
 mod scheduler;
 
-pub use scheduler::CronScheduler;
+pub use scheduler::{CronScheduler, REBUILD_JOB_NAME, schedule_background_rebuild};

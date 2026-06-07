@@ -4,7 +4,6 @@ use super::dialogs::ensure_whispercrabs;
 use super::events::{AppMode, ToolApprovalResponse, TuiEvent};
 use super::onboarding::OnboardingWizard;
 use super::*;
-use crate::brain::SelfUpdater;
 use anyhow::Result;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -701,61 +700,32 @@ impl App {
                 true
             }
             "/rebuild" => {
-                self.push_system_message(
-                    "🔨 Building from source... (streaming output below)".to_string(),
-                );
-                let sender = self.event_sender();
+                // Schedule the build in the BACKGROUND via a one-shot cron job
+                // so the session isn't blocked for the minutes a release build
+                // takes. The scheduler builds from source and exec-restarts
+                // into the new binary when ready, resuming this session.
                 let sid = self
                     .current_session
                     .as_ref()
                     .map(|s| s.id)
                     .unwrap_or(Uuid::nil());
+                let pool = self.agent_service.context().pool();
+                let sender = self.event_sender();
                 tokio::spawn(async move {
-                    match SelfUpdater::auto_detect() {
-                        Ok(updater) => {
-                            let root = updater.project_root().display().to_string();
+                    match crate::cron::schedule_background_rebuild(pool, sid, None).await {
+                        Ok(()) => {
                             let _ = sender.send(TuiEvent::SystemMessage {
                                 session_id: sid,
-                                text: format!("📁 {}", root),
+                                text: "🔨 Rebuild scheduled in the background — I'll reload \
+                                       into the new binary automatically when it's ready. \
+                                       Keep working."
+                                    .into(),
                             });
-                            let tx = sender.clone();
-                            match updater
-                                .build_streaming(move |line| {
-                                    // Filter to only meaningful cargo lines
-                                    let trimmed = line.trim();
-                                    if trimmed.starts_with("Compiling")
-                                        || trimmed.starts_with("Finished")
-                                        || trimmed.starts_with("error")
-                                        || trimmed.starts_with("warning[")
-                                        || trimmed.starts_with("-->")
-                                    {
-                                        let _ = tx.send(TuiEvent::BuildLine(line));
-                                    }
-                                })
-                                .await
-                            {
-                                Ok(path) => {
-                                    // Restart into the binary we just built —
-                                    // on a pre-built install it's NOT the
-                                    // running exe (it lives under
-                                    // ~/.opencrabs/source/target/release).
-                                    let _ = sender.send(TuiEvent::RestartReady {
-                                        status: "✅ Build complete".into(),
-                                        binary_path: Some(path),
-                                    });
-                                }
-                                Err(e) => {
-                                    let _ = sender.send(TuiEvent::Error {
-                                        session_id: sid,
-                                        message: format!("Build failed: {}", e),
-                                    });
-                                }
-                            }
                         }
                         Err(e) => {
                             let _ = sender.send(TuiEvent::Error {
                                 session_id: sid,
-                                message: format!("Cannot detect project: {}", e),
+                                message: format!("Failed to schedule rebuild: {e}"),
                             });
                         }
                     }

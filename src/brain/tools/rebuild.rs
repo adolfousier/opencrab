@@ -1,26 +1,28 @@
 //! Rebuild Tool
 //!
-//! Lets the agent build OpenCrabs from source and exec() restart automatically.
-//! The build runs via `SelfUpdater::build_streaming` — progress lines are forwarded
-//! through the ProgressCallback so the TUI shows them live.  On success, a
-//! `ProgressEvent::RestartReady` is emitted which triggers an automatic exec() restart
-//! (no user prompt needed).
+//! Lets the agent build OpenCrabs from source and reload automatically.
+//! The build runs in the BACKGROUND via a one-shot cron job
+//! (`schedule_background_rebuild`) so the agent turn isn't blocked for the
+//! minutes a release build takes; the scheduler exec-restarts into the new
+//! binary when the build finishes.
 
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
-use crate::brain::SelfUpdater;
-use crate::brain::agent::{ProgressCallback, ProgressEvent};
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// Agent-callable tool that builds the project and auto-restarts via exec().
-pub struct RebuildTool {
-    progress: Option<ProgressCallback>,
-}
+/// Agent-callable tool that schedules a background rebuild from source.
+pub struct RebuildTool;
 
 impl RebuildTool {
-    pub fn new(progress: Option<ProgressCallback>) -> Self {
-        Self { progress }
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for RebuildTool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -31,9 +33,11 @@ impl Tool for RebuildTool {
     }
 
     fn description(&self) -> &str {
-        "Build OpenCrabs from source (cargo build --release) and signal the TUI to hot-restart. \
-         Call this after editing source code to apply your changes. On success the binary is \
-         exec()-replaced automatically (no prompt). On failure the compiler output is returned."
+        "Build OpenCrabs from source (cargo build --release) in the BACKGROUND and auto-reload \
+         when it's done. Call this after editing source code to apply your changes. Returns \
+         immediately — the build runs out-of-band (it does not block you), and OpenCrabs \
+         exec-restarts into the new binary automatically when the build finishes, resuming \
+         this session. On build failure a message is delivered; nothing restarts."
     }
 
     fn input_schema(&self) -> Value {
@@ -49,57 +53,30 @@ impl Tool for RebuildTool {
     }
 
     async fn execute(&self, _input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
-        let updater = match SelfUpdater::auto_detect() {
-            Ok(u) => u,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Cannot detect project root: {}",
-                    e
-                )));
+        // The build runs in the BACKGROUND via a one-shot cron job, so this
+        // turn (and the user's session) isn't blocked for the minutes a
+        // release build takes. The scheduler builds from source and
+        // exec-restarts into the new binary when ready, resuming this session.
+        let pool = match context.service_context.as_ref() {
+            Some(ctx) => ctx.pool(),
+            None => {
+                return Ok(ToolResult::error(
+                    "rebuild: no service context available to schedule the background build"
+                        .to_string(),
+                ));
             }
         };
 
-        let cb = self.progress.clone();
-        let sid = context.session_id;
-
-        // Stream build progress as rolling build lines (TUI shows last ~6)
-        let result = updater
-            .build_streaming(move |line| {
-                let trimmed = line.trim();
-                // Forward meaningful cargo lines as build progress
-                if (trimmed.starts_with("Compiling")
-                    || trimmed.starts_with("Finished")
-                    || trimmed.starts_with("error")
-                    || trimmed.starts_with("warning[")
-                    || trimmed.starts_with("-->"))
-                    && let Some(ref cb) = cb
-                {
-                    cb(sid, ProgressEvent::BuildLine(line));
-                }
-            })
-            .await;
-
-        match result {
-            Ok(path) => {
-                // Signal auto-restart — TuiEvent::RestartReady triggers exec() with no prompt
-                if let Some(ref cb) = self.progress {
-                    cb(
-                        sid,
-                        ProgressEvent::RestartReady {
-                            status: format!("Build successful: {}", path.display()),
-                            // Restart into the binary we JUST built, not the
-                            // running exe — on a pre-built install they differ
-                            // (the build lives under ~/.opencrabs/source/).
-                            binary_path: Some(path.clone()),
-                        },
-                    );
-                }
-                Ok(ToolResult::success(format!(
-                    "Build successful: {}. Restarting now.",
-                    path.display()
-                )))
-            }
-            Err(output) => Ok(ToolResult::error(format!("Build failed:\n{}", output))),
+        match crate::cron::schedule_background_rebuild(pool, context.session_id, None).await {
+            Ok(()) => Ok(ToolResult::success(
+                "🔨 Rebuild scheduled in the background. The build runs out-of-band; \
+                 OpenCrabs will reload into the new binary automatically when it's \
+                 done — no need to wait, you can keep working."
+                    .to_string(),
+            )),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to schedule background rebuild: {e}"
+            ))),
         }
     }
 }

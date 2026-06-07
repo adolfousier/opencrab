@@ -21,6 +21,116 @@ use uuid::Uuid;
 /// Name used for the shared cron session.
 const CRON_SESSION_NAME: &str = "Cron";
 
+/// Reserved cron-job name for a one-shot background `/rebuild`. The scheduler
+/// special-cases this name: instead of running an agent prompt it builds from
+/// source and exec-restarts into the new binary, then the job removes itself.
+/// The originating session id is carried in `prompt` so the restart resumes
+/// the user's session.
+pub const REBUILD_JOB_NAME: &str = "__opencrabs_rebuild__";
+
+/// Schedule a one-shot background rebuild for `session_id`. Returns once the
+/// job is queued — the build runs out-of-band on the scheduler's next tick
+/// (within ~60s), so the calling session is never blocked. `deliver_to` (if
+/// set) receives a status message; the reload resumes `session_id`.
+pub async fn schedule_background_rebuild(
+    pool: crate::db::Pool,
+    session_id: Uuid,
+    deliver_to: Option<String>,
+) -> anyhow::Result<()> {
+    let repo = CronJobRepository::new(pool);
+    // Remove any stale rebuild job first so we never stack two builds.
+    if let Ok(existing) = repo.list_all().await {
+        for j in existing.iter().filter(|j| j.name == REBUILD_JOB_NAME) {
+            let _ = repo.delete(&j.id.to_string()).await;
+        }
+    }
+    let now = Utc::now();
+    let job = CronJob {
+        id: Uuid::new_v4(),
+        name: REBUILD_JOB_NAME.to_string(),
+        // Every minute → the next tick (within 60s) picks it up; the job
+        // deletes itself on pickup so it runs exactly once.
+        cron_expr: "* * * * *".to_string(),
+        timezone: "UTC".to_string(),
+        prompt: session_id.to_string(),
+        provider: None,
+        model: None,
+        thinking: "off".to_string(),
+        auto_approve: true,
+        deliver_to,
+        deliver_api_key: None,
+        enabled: true,
+        last_run_at: None,
+        next_run_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo.insert(&job).await?;
+    tracing::info!("Background rebuild queued for session {session_id}");
+    Ok(())
+}
+
+/// Execute the reserved background-rebuild job: delete it first (one-shot, no
+/// retry on the 60s tick), build from source, then exec-restart into the
+/// freshly-built binary (replaces the whole process). On failure it reports
+/// to `deliver_to` and returns. The originating session id is in `job.prompt`.
+async fn run_rebuild_job(job: &CronJob, ctx: &ServiceContext) -> anyhow::Result<()> {
+    use crate::brain::SelfUpdater;
+
+    // Delete up front so a long/failed build can't re-trigger next tick.
+    let repo = CronJobRepository::new(ctx.pool());
+    if let Err(e) = repo.delete(&job.id.to_string()).await {
+        tracing::error!("rebuild job: failed to delete self: {e}");
+    }
+
+    let session_id = Uuid::parse_str(job.prompt.trim()).unwrap_or_else(|_| Uuid::nil());
+    tracing::info!("Background rebuild starting (will resume session {session_id})");
+
+    let updater =
+        SelfUpdater::auto_detect().map_err(|e| anyhow::anyhow!("rebuild: auto_detect: {e}"))?;
+
+    match updater
+        .build_streaming(|line| tracing::debug!("rebuild: {line}"))
+        .await
+    {
+        Ok(built_path) => {
+            tracing::info!(
+                "Background rebuild succeeded: {} — reloading",
+                built_path.display()
+            );
+            deliver_rebuild_status(
+                job,
+                "✅ Rebuilt from source — reloading into the new binary now.",
+            )
+            .await;
+            // exec() replaces the entire process (this scheduler task too).
+            if let Err(e) = SelfUpdater::restart_into(&built_path, session_id) {
+                tracing::error!("Background rebuild restart failed: {e}");
+                return Err(anyhow::anyhow!("rebuild restart failed: {e}"));
+            }
+            Ok(()) // unreachable on success
+        }
+        Err(out) => {
+            tracing::error!("Background rebuild failed: {out}");
+            deliver_rebuild_status(job, &format!("⚠️ Background rebuild failed:\n{out}")).await;
+            Ok(())
+        }
+    }
+}
+
+/// Deliver a rebuild status line to the job's configured channels (if any).
+async fn deliver_rebuild_status(job: &CronJob, msg: &str) {
+    if let Some(ref deliver_to) = job.deliver_to {
+        for target in deliver_to
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            deliver_result(target, &job.name, msg, job.deliver_api_key.as_deref()).await;
+        }
+    }
+}
+
 /// Background cron scheduler that polls the database and executes due jobs.
 pub struct CronScheduler {
     repo: CronJobRepository,
@@ -193,10 +303,16 @@ impl CronScheduler {
 async fn execute_job(
     job: &CronJob,
     factory: &ChannelFactory,
-    _ctx: &ServiceContext,
+    ctx: &ServiceContext,
     cron_session_id: Uuid,
     run_repo: &CronJobRunRepository,
 ) -> anyhow::Result<()> {
+    // Reserved one-shot background rebuild — build + exec-restart, never an
+    // agent prompt.
+    if job.name == REBUILD_JOB_NAME {
+        return run_rebuild_job(job, ctx).await;
+    }
+
     // Resolve effective provider/model: job override > config default > system default
     let config = Config::load()?;
     let effective_provider = job

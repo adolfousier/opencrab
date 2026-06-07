@@ -606,10 +606,8 @@ async fn cmd_chat_inner(
             })
         });
 
-    // Register rebuild tool (needs the progress callback for restart signaling)
-    tool_registry.register(Arc::new(crate::brain::tools::rebuild::RebuildTool::new(
-        Some(progress_callback.clone()),
-    )));
+    // Register rebuild tool (schedules a background build via cron)
+    tool_registry.register(Arc::new(crate::brain::tools::rebuild::RebuildTool::new()));
 
     // Register evolve tool (binary self-update from GitHub releases)
     tool_registry.register(Arc::new(crate::brain::tools::evolve::EvolveTool::new(
