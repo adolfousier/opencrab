@@ -36,8 +36,15 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_attempts: 3,
-            initial_delay: Duration::from_millis(100),
+            // 4 retries over ~15s: 1s → 2s → 4s → 8s. The old 100ms
+            // initial delay (100ms → 200ms → 400ms ≈ 0.7s total) was far
+            // too aggressive — it couldn't ride out a 1-2s network blip
+            // before bailing to the fallback chain, and retrying a
+            // rate-limited endpoint every 100ms actively makes the 429
+            // worse. A patient first delay gives a transient failure time
+            // to clear and a rate-limit window time to reopen.
+            max_attempts: 4,
+            initial_delay: Duration::from_secs(1),
             max_delay: Duration::from_secs(30),
             backoff_multiplier: 2.0,
             jitter: 0.1,
@@ -297,9 +304,26 @@ mod tests {
     #[test]
     fn test_retry_config_defaults() {
         let config = RetryConfig::default();
-        assert_eq!(config.max_attempts, 3);
-        assert_eq!(config.initial_delay, Duration::from_millis(100));
+        // Patient defaults: 4 retries starting at 1s (see Default impl).
+        // The old 100ms/3 was too aggressive to ride out transient blips
+        // and worsened rate limits.
+        assert_eq!(config.max_attempts, 4);
+        assert_eq!(config.initial_delay, Duration::from_secs(1));
         assert_eq!(config.max_delay, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_default_backoff_schedule_is_patient() {
+        // Pin the actual delay schedule so a future "optimization" back to
+        // sub-second retries fails loudly. Jitter off for determinism.
+        let config = RetryConfig {
+            jitter: 0.0,
+            ..RetryConfig::default()
+        };
+        assert_eq!(config.calculate_delay(0), Duration::from_secs(1));
+        assert_eq!(config.calculate_delay(1), Duration::from_secs(2));
+        assert_eq!(config.calculate_delay(2), Duration::from_secs(4));
+        assert_eq!(config.calculate_delay(3), Duration::from_secs(8));
     }
 
     #[test]

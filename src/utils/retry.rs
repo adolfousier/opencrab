@@ -35,8 +35,14 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_attempts: 3,
-            initial_delay: Duration::from_millis(100),
+            // Network/API default: 4 retries over ~15s (1s → 2s → 4s → 8s).
+            // Kept in lockstep with `brain::provider::retry::RetryConfig`
+            // default — the old 100ms initial was too aggressive to ride
+            // out a transient blip and hammered rate-limited endpoints.
+            // DB lock-contention retries use the `database()` preset
+            // (50ms) instead, which is correct for local SQLite.
+            max_attempts: 4,
+            initial_delay: Duration::from_secs(1),
             max_delay: Duration::from_secs(30),
             backoff_multiplier: 2.0,
             jitter: 0.1,
@@ -419,7 +425,8 @@ mod tests {
         assert_eq!(db.jitter, 0.0);
 
         let api = RetryConfig::api();
-        assert_eq!(api.max_attempts, 3);
+        assert_eq!(api.max_attempts, 4);
+        assert_eq!(api.initial_delay, Duration::from_secs(1));
         assert_eq!(api.jitter, 0.1);
 
         let no_retry = RetryConfig::no_retry();
