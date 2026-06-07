@@ -41,7 +41,7 @@ async fn swap_wraps_raw_provider_in_fallback_chain_when_fallbacks_configured() {
     svc.set_fallback_providers_for_test(vec![Arc::new(MockProviderWithTools::new())]);
 
     // Swap to a raw provider — no FallbackProvider wrapper around it.
-    svc.swap_provider_for_session(sid, Arc::new(MockProvider));
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "mock-model");
 
     let stored = svc.provider_for_session(sid);
     assert!(
@@ -59,7 +59,7 @@ async fn swap_wraps_raw_provider_in_fallback_chain_when_fallbacks_configured() {
 async fn swap_preserves_user_facing_name_after_wrap() {
     let (mut svc, sid) = create_test_service_with_provider(Arc::new(MockProvider)).await;
     svc.set_fallback_providers_for_test(vec![Arc::new(MockProviderWithTools::new())]);
-    svc.swap_provider_for_session(sid, Arc::new(MockProvider));
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "mock-model");
 
     let stored = svc.provider_for_session(sid);
     // FallbackProvider::name() delegates to the primary, so footers /
@@ -81,7 +81,7 @@ async fn swap_skips_wrap_when_no_fallbacks_configured() {
     // Drop overhead are pure waste. Skip the wrap in this case.
     let (mut svc, sid) = create_test_service_with_provider(Arc::new(MockProvider)).await;
     svc.set_fallback_providers_for_test(vec![]); // no fallbacks
-    svc.swap_provider_for_session(sid, Arc::new(MockProvider));
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "mock-model");
 
     let stored = svc.provider_for_session(sid);
     assert!(
@@ -107,7 +107,7 @@ async fn swap_does_not_double_wrap_existing_fallback_chain() {
         Arc::new(MockProvider),
         vec![Arc::new(MockProviderWithTools::new())],
     ));
-    svc.swap_provider_for_session(sid, already_wrapped.clone());
+    svc.swap_provider_for_session(sid, already_wrapped.clone(), "mock-model");
 
     let stored = svc.provider_for_session(sid);
     assert!(
@@ -137,7 +137,7 @@ async fn swap_excludes_self_from_fallback_chain() {
         Arc::new(MockProvider), // same name as the new primary
         Arc::new(MockProviderWithTools::new()),
     ]);
-    svc.swap_provider_for_session(sid, Arc::new(MockProvider));
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "mock-model");
 
     let stored = svc.provider_for_session(sid);
     assert!(
@@ -162,7 +162,7 @@ async fn swap_drops_to_raw_when_only_fallback_is_self() {
     // pointless FallbackProvider with an empty fallbacks vec.
     let (mut svc, sid) = create_test_service_with_provider(Arc::new(MockProvider)).await;
     svc.set_fallback_providers_for_test(vec![Arc::new(MockProvider)]);
-    svc.swap_provider_for_session(sid, Arc::new(MockProvider));
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "mock-model");
 
     let stored = svc.provider_for_session(sid);
     assert!(
@@ -170,5 +170,36 @@ async fn swap_drops_to_raw_when_only_fallback_is_self() {
         "when every configured fallback collides with the new primary's name, \
          the chain ends up empty and the raw provider should be stored — no point \
          building a FallbackProvider with zero fallbacks"
+    );
+}
+
+/// Provider+model are a pair, set atomically. `swap_provider_for_session`
+/// takes the model as a required argument and uses exactly that — it never
+/// invents or defaults the model to the provider's `default_model()`.
+///
+/// Regression (2026-06-07): the TUI footer showed "modelscope / GLM 5.1"
+/// after the user switched to Qwen3.7-Max, because swap clobbered the
+/// session model with `new_provider.default_model()` (a stale config
+/// default) instead of using the model the user actually picked. The fix
+/// makes the caller pass the paired model so a provider can't be swapped
+/// without its model.
+#[tokio::test]
+async fn swap_sets_the_paired_model_never_invents() {
+    let (svc, sid) = create_test_service_with_provider(Arc::new(MockProvider)).await;
+
+    // swap sets the provider AND the paired model atomically, from the
+    // caller's argument — the user's pick, not the provider default.
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "qwen-3.7-max");
+    assert_eq!(svc.provider_model_for_session(sid), "qwen-3.7-max");
+
+    // A later swap to the SAME provider with a different paired model
+    // updates the model — proving it always comes from the caller, never
+    // the provider's default_model() ("mock-model").
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "glm-5.1");
+    assert_eq!(svc.provider_model_for_session(sid), "glm-5.1");
+    assert_ne!(
+        svc.provider_model_for_session(sid),
+        "mock-model",
+        "swap must use the caller's model, never invent the provider default"
     );
 }

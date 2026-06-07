@@ -512,13 +512,25 @@ impl AgentService {
     /// `session_context_limits` so compaction uses the correct budget
     /// even if the global provider changes later.
     ///
-    /// **Model sync:** Also updates `session_models` to the new
-    /// provider's default model so the {provider, model} pair stays
-    /// consistent. Without this, a fallback that swaps only the
-    /// provider leaves the stale model from the previous provider,
-    /// causing contamination (e.g. zhipu + Qwen-Ambassador/Qwen3.7-Plus).
-    pub fn swap_provider_for_session(&self, session_id: Uuid, new_provider: Arc<dyn Provider>) {
-        let new_default_model = new_provider.default_model().to_string();
+    /// **Provider+model are a pair.** The `model` is REQUIRED and set
+    /// atomically with the provider — you cannot swap a provider without
+    /// saying which model it pairs with. The caller always knows the pair:
+    /// the user's pick (/models dialog, channel /models), the session's
+    /// saved model (restore), or the fallback's remapped model
+    /// (ProviderSwitched / sticky fallback). Pass `new_provider.default_model()`
+    /// explicitly ONLY when there is genuinely no chosen model (e.g. a
+    /// legacy session with an empty model column) — never let this function
+    /// invent one. An earlier version silently reset the model to the new
+    /// provider's default here, which clobbered the user's explicit pick on
+    /// every swap — the footer showed "modelscope / GLM 5.1" right after the
+    /// user switched to Qwen3.7-Max (2026-06-07).
+    pub fn swap_provider_for_session(
+        &self,
+        session_id: Uuid,
+        new_provider: Arc<dyn Provider>,
+        model: impl Into<String>,
+    ) {
+        let model = model.into();
         let context_window = new_provider.configured_context_window();
         let stored: Arc<dyn Provider> = if new_provider.is_fallback_chain() {
             new_provider
@@ -562,13 +574,11 @@ impl AgentService {
                 .expect("session_context_limits lock poisoned")
                 .insert(session_id, cw);
         }
-
-        // Sync the session's model to the new provider's default so
-        // the {provider, model} pair is always consistent. This prevents
-        // contamination where a fallback swaps the provider but leaves
-        // the stale model from the previous provider.
+        // Set the paired model atomically with the provider. The caller
+        // supplied it (the user's pick / saved / remapped model) — this
+        // function never invents a default.
         if let Ok(mut map) = self.session_models.write() {
-            map.insert(session_id, new_default_model);
+            map.insert(session_id, model);
         }
     }
 
@@ -642,6 +652,19 @@ impl AgentService {
             .session_providers
             .read()
             .expect("session_providers lock poisoned");
+        map.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    /// Snapshot of every explicit per-session model pin. Used by
+    /// `rebuild_agent_service` to carry the user's locked model choices
+    /// across the rebuild. Only contains models a caller pinned via
+    /// `set_session_model` — `swap_provider_for_session` never writes here,
+    /// so this carries real picks, not invented defaults.
+    pub fn session_model_snapshot(&self) -> Vec<(Uuid, String)> {
+        let map = self
+            .session_models
+            .read()
+            .expect("session_models lock poisoned");
         map.iter().map(|(k, v)| (*k, v.clone())).collect()
     }
 

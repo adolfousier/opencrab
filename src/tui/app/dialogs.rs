@@ -1861,8 +1861,15 @@ impl App {
                     );
                 }
             }
-            self.agent_service
-                .swap_provider_for_session(session_id, provider_arc.clone());
+            // Provider+model are a pair: set both atomically to the user's
+            // explicit pick. provider_arc is a cached object whose
+            // default_model can be stale, so the model MUST come from
+            // actual_model (what the user just selected), not the provider.
+            self.agent_service.swap_provider_for_session(
+                session_id,
+                provider_arc.clone(),
+                actual_model.clone(),
+            );
 
             // Update context_max_tokens to reflect the new provider's context window.
             // Without this, the footer shows stale values (e.g., 128k) after switching
@@ -2062,8 +2069,13 @@ impl App {
                         if let Some(ref session) = self.current_session {
                             let session_id = session.id;
                             let new_provider = self.agent_service.provider();
-                            self.agent_service
-                                .swap_provider_for_session(session_id, new_provider);
+                            // Pair with the newly-configured global model.
+                            let model = self.agent_service.provider_model();
+                            self.agent_service.swap_provider_for_session(
+                                session_id,
+                                new_provider,
+                                model,
+                            );
                         }
                         self.sync_session_to_provider().await;
                     }

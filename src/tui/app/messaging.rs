@@ -287,8 +287,13 @@ impl App {
                         saved_provider,
                         session.id
                     );
+                    // Restore the session's saved provider+model pair.
+                    let model = session
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| cached.default_model().to_string());
                     self.agent_service
-                        .swap_provider_for_session(session.id, cached);
+                        .swap_provider_for_session(session.id, cached, model);
                     swap_ok = true;
                 } else if let Ok(config) = crate::config::Config::load() {
                     match crate::brain::provider::create_provider_by_name(&config, saved_provider)
@@ -302,8 +307,12 @@ impl App {
                             );
                             self.provider_cache
                                 .insert(saved_provider.clone(), new_provider.clone());
+                            let model = session
+                                .model
+                                .clone()
+                                .unwrap_or_else(|| new_provider.default_model().to_string());
                             self.agent_service
-                                .swap_provider_for_session(session.id, new_provider);
+                                .swap_provider_for_session(session.id, new_provider, model);
                             swap_ok = true;
                         }
                         Err(e) => {
@@ -322,6 +331,8 @@ impl App {
                 // failure, so a failed swap never mutates the session's
                 // saved provider/model to the global default.
                 if swap_ok {
+                    // The swap above already set the session's saved model as
+                    // the paired model — no separate pin needed.
                     let live_name = self.agent_service.provider_name_for_session(session.id);
                     if live_name != *saved_provider
                         && let Some(ref mut s) = self.current_session
@@ -352,18 +363,23 @@ impl App {
                     // so future lookups for this session return the
                     // correct provider, not the global default.
                     if let Some(cached) = self.provider_cache.get(&prov).cloned() {
-                        self.agent_service
-                            .swap_provider_for_session(session.id, cached);
+                        self.agent_service.swap_provider_for_session(
+                            session.id,
+                            cached,
+                            model.clone(),
+                        );
                     } else if let Ok(config) = crate::config::Config::load()
                         && let Ok(new_provider) =
                             crate::brain::provider::create_provider_by_name(&config, &prov).await
                     {
                         self.provider_cache
                             .insert(prov.clone(), new_provider.clone());
-                        self.agent_service
-                            .swap_provider_for_session(session.id, new_provider);
+                        self.agent_service.swap_provider_for_session(
+                            session.id,
+                            new_provider,
+                            model.clone(),
+                        );
                     }
-                    self.agent_service.set_session_model(session.id, model);
                 } else {
                     // No old session (first load) — use global default
                     s.provider_name =

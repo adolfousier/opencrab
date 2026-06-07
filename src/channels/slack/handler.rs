@@ -64,7 +64,7 @@ pub async fn on_interaction(
                             {
                                 match session_id {
                                     Some(sid) => {
-                                        state.agent.swap_provider_for_session(sid, new_provider)
+                                        state.agent.swap_provider_for_session(sid, new_provider.clone(), new_provider.default_model().to_string())
                                     }
                                     None => state.agent.swap_provider(new_provider),
                                 }
@@ -185,7 +185,7 @@ pub async fn on_interaction(
                                 {
                                     Ok(new_provider) => match session_id {
                                         Some(sid) => {
-                                            state.agent.swap_provider_for_session(sid, new_provider)
+                                            state.agent.swap_provider_for_session(sid, new_provider.clone(), new_provider.default_model().to_string())
                                         }
                                         None => state.agent.swap_provider(new_provider),
                                     },

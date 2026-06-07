@@ -228,7 +228,7 @@ impl TelegramAgent {
                                         && let Ok(new_provider) = crate::brain::provider::factory::create_provider_by_name(&config, provider_name).await
                                     {
                                         match session_id {
-                                            Some(sid) => agent.swap_provider_for_session(sid, new_provider),
+                                            Some(sid) => agent.swap_provider_for_session(sid, new_provider.clone(), new_provider.default_model().to_string()),
                                             None => agent.swap_provider(new_provider),
                                         }
                                     }
@@ -359,7 +359,7 @@ impl TelegramAgent {
                                     match crate::config::Config::load() {
                                         Ok(config) => match crate::brain::provider::factory::create_provider_by_name(&config, pname).await {
                                             Ok(new_provider) => match session_id {
-                                                Some(sid) => agent.swap_provider_for_session(sid, new_provider),
+                                                Some(sid) => agent.swap_provider_for_session(sid, new_provider.clone(), new_provider.default_model().to_string()),
                                                 None => agent.swap_provider(new_provider),
                                             },
                                             Err(e) => provider_err = Some(format!("Failed to create provider '{}': {}", pname, e)),

@@ -181,8 +181,13 @@ struct FallbackProviderGuard<'a> {
 impl Drop for FallbackProviderGuard<'_> {
     fn drop(&mut self) {
         if let Some(original) = self.original.take() {
+            // Restore the original provider with its own paired model — the
+            // guard is a transient temp-swap, so put the pair back as it was.
+            let model = original
+                .active_subprovider_model()
+                .unwrap_or_else(|| original.default_model().to_string());
             self.service
-                .swap_provider_for_session(self.session_id, original);
+                .swap_provider_for_session(self.session_id, original, model);
         }
     }
 }
@@ -1490,7 +1495,13 @@ impl AgentService {
                         // swap STICKS, then emit ProviderSwitched to
                         // persist the pairing to DB via state.rs:2205.
                         let original_provider = self.provider_for_session(session_id);
-                        self.swap_provider_for_session(session_id, (*fallback).clone());
+                        self.swap_provider_for_session(
+                            session_id,
+                            (*fallback).clone(),
+                            (*fallback)
+                                .active_subprovider_model()
+                                .unwrap_or_else(|| (*fallback).default_model().to_string()),
+                        );
                         let mut restore_guard = FallbackProviderGuard {
                             service: self,
                             session_id,
@@ -1817,7 +1828,13 @@ impl AgentService {
                             // runs even if the outer future is cancelled
                             // mid-await (see FallbackProviderGuard doc).
                             let original_provider = self.provider_for_session(session_id);
-                            self.swap_provider_for_session(session_id, (*fallback).clone());
+                            self.swap_provider_for_session(
+                            session_id,
+                            (*fallback).clone(),
+                            (*fallback)
+                                .active_subprovider_model()
+                                .unwrap_or_else(|| (*fallback).default_model().to_string()),
+                        );
                             let mut restore_guard = FallbackProviderGuard {
                                 service: self,
                                 session_id,
@@ -2164,6 +2181,11 @@ impl AgentService {
                                         self.swap_provider_for_session(
                                             session_id,
                                             (*fallback).clone(),
+                                            (*fallback)
+                                                .active_subprovider_model()
+                                                .unwrap_or_else(|| {
+                                                    (*fallback).default_model().to_string()
+                                                }),
                                         );
                                         self.persist_sticky_pair(
                                             session_id,
@@ -2275,7 +2297,13 @@ impl AgentService {
 
                         // Swap provider for this session so stream_complete
                         // uses the fallback
-                        self.swap_provider_for_session(session_id, (*fallback).clone());
+                        self.swap_provider_for_session(
+                            session_id,
+                            (*fallback).clone(),
+                            (*fallback)
+                                .active_subprovider_model()
+                                .unwrap_or_else(|| (*fallback).default_model().to_string()),
+                        );
 
                         match self
                             .stream_complete(
@@ -3689,7 +3717,13 @@ impl AgentService {
                             }
 
                             let original_provider = self.provider_for_session(session_id);
-                            self.swap_provider_for_session(session_id, (*fallback).clone());
+                            self.swap_provider_for_session(
+                            session_id,
+                            (*fallback).clone(),
+                            (*fallback)
+                                .active_subprovider_model()
+                                .unwrap_or_else(|| (*fallback).default_model().to_string()),
+                        );
                             let mut restore_guard = FallbackProviderGuard {
                                 service: self,
                                 session_id,

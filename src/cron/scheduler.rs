@@ -294,7 +294,7 @@ async fn execute_job(
                     job.name,
                     provider_name
                 );
-                agent.swap_provider_for_session(cron_session_id, provider);
+                agent.swap_provider_for_session(cron_session_id, provider.clone(), provider.default_model().to_string());
             }
             Err(e) => {
                 tracing::warn!(

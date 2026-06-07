@@ -1390,10 +1390,21 @@ impl App {
         // Without this, any rebuild silently reverts every session to
         // the new global default.
         let preserved_session_providers = self.agent_service.session_provider_snapshot();
+        // Carry each session's locked model so the rebuild restores the
+        // exact provider+model pair, not the provider's default.
+        let preserved_session_models: std::collections::HashMap<uuid::Uuid, String> = self
+            .agent_service
+            .session_model_snapshot()
+            .into_iter()
+            .collect();
 
         let new_agent_service = Arc::new(new_agent_service);
         for (sid, prov) in preserved_session_providers {
-            new_agent_service.swap_provider_for_session(sid, prov);
+            let model = preserved_session_models
+                .get(&sid)
+                .cloned()
+                .unwrap_or_else(|| prov.default_model().to_string());
+            new_agent_service.swap_provider_for_session(sid, prov, model);
         }
 
         // Update app state
@@ -2915,8 +2926,13 @@ impl App {
                         crate::brain::provider::factory::create_provider_by_name(&config, &to_name)
                             .await
                 {
-                    self.agent_service
-                        .swap_provider_for_session(session_id, new_provider.clone());
+                    // Pair the rebuilt provider with the fallback's remapped
+                    // model (to_model) atomically.
+                    self.agent_service.swap_provider_for_session(
+                        session_id,
+                        new_provider.clone(),
+                        to_model.clone(),
+                    );
                     self.provider_cache.insert(to_name.clone(), new_provider);
                     tracing::info!(
                         "[ProviderSwitched] rebuilt session_providers for session {} → {}",
@@ -3214,15 +3230,13 @@ impl App {
                     if saved_provider != &current_prov
                         && let Some(cached) = self.provider_cache.get(saved_provider).cloned()
                     {
+                        // Restore the session's saved provider+model pair.
+                        let model = session
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| cached.default_model().to_string());
                         self.agent_service
-                            .swap_provider_for_session(session.id, cached);
-                        // Restore the session's saved model, which
-                        // swap_provider_for_session overwrites to
-                        // the provider's default.
-                        if let Some(ref saved_model) = session.model {
-                            self.agent_service
-                                .set_session_model(session.id, saved_model.clone());
-                        }
+                            .swap_provider_for_session(session.id, cached, model);
                     }
                 }
             }
@@ -3245,15 +3259,13 @@ impl App {
                     if saved_provider != &current_prov
                         && let Some(cached) = self.provider_cache.get(saved_provider).cloned()
                     {
+                        // Restore the session's saved provider+model pair.
+                        let model = session
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| cached.default_model().to_string());
                         self.agent_service
-                            .swap_provider_for_session(session.id, cached);
-                        // Restore the session's saved model, which
-                        // swap_provider_for_session overwrites to
-                        // the provider's default.
-                        if let Some(ref saved_model) = session.model {
-                            self.agent_service
-                                .set_session_model(session.id, saved_model.clone());
-                        }
+                            .swap_provider_for_session(session.id, cached, model);
                     }
                 }
             }

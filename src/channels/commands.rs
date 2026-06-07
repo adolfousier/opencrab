@@ -86,12 +86,11 @@ pub async fn sync_provider_for_session(
                     agent_provider,
                     agent_model,
                 );
-                agent.swap_provider_for_session(session_id, new_provider);
-                // Pin the saved model so display surfaces match what
-                // tool_loop will use for the actual request.
-                if let Some(m) = session_model {
-                    agent.set_session_model(session_id, m.to_string());
-                }
+                // Restore the saved provider+model pair atomically.
+                let model = session_model
+                    .map(str::to_string)
+                    .unwrap_or_else(|| new_provider.default_model().to_string());
+                agent.swap_provider_for_session(session_id, new_provider, model);
             }
             Err(e) => {
                 // Session has a stored provider but we couldn't create it.
@@ -129,7 +128,7 @@ pub async fn sync_provider_for_session(
                         cfg_provider,
                         agent_provider,
                     );
-                    agent.swap_provider_for_session(session_id, new_provider);
+                    agent.swap_provider_for_session(session_id, new_provider, cfg_model.clone());
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -955,15 +954,10 @@ pub async fn switch_model(
     // callers without a session (kept for the bootstrap path).
     match session_id {
         Some(sid) => {
-            agent.swap_provider_for_session(sid, new_provider);
-            // The freshly-created provider reports the global config's
-            // default model from `default_model()`, not the model the
-            // user just picked. Pin the per-session override so every
-            // "current model" display surface (TUI status bar,
-            // /sessions, channel footers) matches what tool_loop will
-            // actually send on the wire (which already reads
-            // `session.model` from the DB row).
-            agent.set_session_model(sid, model_name.to_string());
+            // Provider+model are a pair: the user picked model_name, so set
+            // it atomically. The freshly-created provider's default_model()
+            // is the global config default, NOT the user's pick.
+            agent.swap_provider_for_session(sid, new_provider, model_name.to_string());
         }
         None => agent.swap_provider(new_provider),
     }
