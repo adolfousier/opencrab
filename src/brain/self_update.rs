@@ -36,9 +36,19 @@ impl SelfUpdater {
 
     /// Auto-detect project root and binary path from the current executable.
     ///
-    /// First walks up from the binary looking for `Cargo.toml` (build-from-source).
-    /// If not found (pre-built binary), checks `~/.opencrabs/source/` for a
-    /// previous clone. If that doesn't exist either, clones the repo there.
+    /// **Source tree found** (Cargo.toml walks up from exe): uses
+    /// `<project_root>/target/release/opencrabs` as the binary path.
+    /// This is the `/rebuild` path.
+    ///
+    /// **Pre-built binary** (no Cargo.toml): uses the current executable
+    /// path (`std::env::current_exe()`) as the binary path. This is the
+    /// `/evolve` path: the download already replaced the binary at this
+    /// location, so restart just exec's it. Source is lazily cloned into
+    /// `~/.opencrabs/source/` only when `/rebuild` is invoked.
+    ///
+    /// Before this fix, auto_detect() cloned unconditionally then pointed
+    /// binary_path at a target/ dir that was never built, causing
+    /// "exec() failed: No such file or directory" on restart (#179).
     pub fn auto_detect() -> Result<Self> {
         let exe = std::env::current_exe()?;
 
@@ -51,6 +61,11 @@ impl SelfUpdater {
         loop {
             if search_dir.join("Cargo.toml").exists() {
                 let binary_path = search_dir.join("target").join("release").join("opencrabs");
+                tracing::info!(
+                    "SelfUpdater: source tree at {}, binary at {}",
+                    search_dir.display(),
+                    binary_path.display()
+                );
                 return Ok(Self {
                     project_root: search_dir,
                     binary_path,
@@ -61,44 +76,61 @@ impl SelfUpdater {
             }
         }
 
-        // No source tree found — use ~/.opencrabs/source/
+        // Pre-built binary: no source tree. Use the exe path as the binary
+        // path. The evolve tool replaces the binary in-place at this path,
+        // so restart after /evolve just exec's it.
+        //
+        // For /rebuild (build-from-source), the source will be lazily cloned
+        // into ~/.opencrabs/source/ when build() is called, not here.
         let source_dir = crate::config::opencrabs_home().join("source");
 
-        if source_dir.join("Cargo.toml").exists() {
-            // Source already cloned — pull latest
-            tracing::info!("Updating source at {}", source_dir.display());
-            let _ = std::process::Command::new("git")
-                .args(["pull", "--ff-only"])
-                .current_dir(&source_dir)
-                .output();
-        } else {
-            // Clone the repo
-            tracing::info!("Cloning OpenCrabs source to {}", source_dir.display());
-            let output = std::process::Command::new("git")
-                .args([
-                    "clone",
-                    "--depth",
-                    "1",
-                    REPO_URL,
-                    &source_dir.to_string_lossy(),
-                ])
-                .output()
-                .map_err(|e| {
-                    anyhow::anyhow!("Failed to clone source (is git installed?): {}", e)
-                })?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(anyhow::anyhow!("git clone failed: {}", stderr));
-            }
-        }
-
-        let binary_path = source_dir.join("target").join("release").join("opencrabs");
+        tracing::info!(
+            "SelfUpdater: pre-built binary, exe={}, lazy source dir={}",
+            exe.display(),
+            source_dir.display()
+        );
 
         Ok(Self {
             project_root: source_dir,
-            binary_path,
+            binary_path: exe,
         })
+    }
+
+    /// Ensure the source tree exists at project_root (lazy clone).
+    /// Called by build() when the user invokes /rebuild on a pre-built binary.
+    fn ensure_source_tree(&self) -> Result<()> {
+        if self.project_root.join("Cargo.toml").exists() {
+            // Already have source. Pull latest.
+            tracing::info!("Updating source at {}", self.project_root.display());
+            let _ = std::process::Command::new("git")
+                .args(["pull", "--ff-only"])
+                .current_dir(&self.project_root)
+                .output();
+            return Ok(());
+        }
+
+        // Clone the repo
+        tracing::info!(
+            "Cloning OpenCrabs source to {}",
+            self.project_root.display()
+        );
+        let output = std::process::Command::new("git")
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                REPO_URL,
+                &self.project_root.to_string_lossy(),
+            ])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to clone source (is git installed?): {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("git clone failed: {}", stderr));
+        }
+
+        Ok(())
     }
 
     /// Build the project with `cargo build --release`.
@@ -117,6 +149,11 @@ impl SelfUpdater {
     {
         use tokio::io::{AsyncBufReadExt, BufReader};
         use tokio::process::Command;
+
+        // Lazy clone source tree if needed (pre-built binary + /rebuild).
+        if let Err(e) = self.ensure_source_tree() {
+            return Err(format!("Failed to prepare source tree: {e}"));
+        }
 
         tracing::info!("Building OpenCrabs at {}", self.project_root.display());
 
@@ -143,8 +180,21 @@ impl SelfUpdater {
             .map_err(|e| format!("Build process error: {}", e))?;
 
         if status.success() {
-            tracing::info!("Build succeeded: {}", self.binary_path.display());
-            Ok(self.binary_path.clone())
+            // For pre-built binaries, binary_path points at the exe path
+            // (which /evolve replaced). After /rebuild, the binary is at
+            // <project_root>/target/release/opencrabs. Use whichever exists.
+            let built_path = self
+                .project_root
+                .join("target")
+                .join("release")
+                .join("opencrabs");
+            let result_path = if built_path.exists() {
+                built_path
+            } else {
+                self.binary_path.clone()
+            };
+            tracing::info!("Build succeeded: {}", result_path.display());
+            Ok(result_path)
         } else {
             Err("Build failed — see output above".to_string())
         }
