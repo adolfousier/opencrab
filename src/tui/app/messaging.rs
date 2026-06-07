@@ -311,8 +311,11 @@ impl App {
                                 .model
                                 .clone()
                                 .unwrap_or_else(|| new_provider.default_model().to_string());
-                            self.agent_service
-                                .swap_provider_for_session(session.id, new_provider, model);
+                            self.agent_service.swap_provider_for_session(
+                                session.id,
+                                new_provider,
+                                model,
+                            );
                             swap_ok = true;
                         }
                         Err(e) => {

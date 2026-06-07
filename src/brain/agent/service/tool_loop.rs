@@ -1829,12 +1829,12 @@ impl AgentService {
                             // mid-await (see FallbackProviderGuard doc).
                             let original_provider = self.provider_for_session(session_id);
                             self.swap_provider_for_session(
-                            session_id,
-                            (*fallback).clone(),
-                            (*fallback)
-                                .active_subprovider_model()
-                                .unwrap_or_else(|| (*fallback).default_model().to_string()),
-                        );
+                                session_id,
+                                (*fallback).clone(),
+                                (*fallback)
+                                    .active_subprovider_model()
+                                    .unwrap_or_else(|| (*fallback).default_model().to_string()),
+                            );
                             let mut restore_guard = FallbackProviderGuard {
                                 service: self,
                                 session_id,
@@ -2181,11 +2181,9 @@ impl AgentService {
                                         self.swap_provider_for_session(
                                             session_id,
                                             (*fallback).clone(),
-                                            (*fallback)
-                                                .active_subprovider_model()
-                                                .unwrap_or_else(|| {
-                                                    (*fallback).default_model().to_string()
-                                                }),
+                                            (*fallback).active_subprovider_model().unwrap_or_else(
+                                                || (*fallback).default_model().to_string(),
+                                            ),
                                         );
                                         self.persist_sticky_pair(
                                             session_id,
@@ -3718,12 +3716,12 @@ impl AgentService {
 
                             let original_provider = self.provider_for_session(session_id);
                             self.swap_provider_for_session(
-                            session_id,
-                            (*fallback).clone(),
-                            (*fallback)
-                                .active_subprovider_model()
-                                .unwrap_or_else(|| (*fallback).default_model().to_string()),
-                        );
+                                session_id,
+                                (*fallback).clone(),
+                                (*fallback)
+                                    .active_subprovider_model()
+                                    .unwrap_or_else(|| (*fallback).default_model().to_string()),
+                            );
                             let mut restore_guard = FallbackProviderGuard {
                                 service: self,
                                 session_id,

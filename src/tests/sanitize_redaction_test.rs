@@ -278,11 +278,17 @@ fn cyrillic_emoji_cjk_in_post_prefix_window_do_not_panic() {
 fn redact_secrets_query_param_api_key() {
     let text = "fetch failed: https://api.example.com/v1/sync?api_key=sk-shortABC123&page=2";
     let out = redact_secrets(text);
-    assert!(!out.contains("sk-shortABC123"), "api_key query param leaked: {out}");
+    assert!(
+        !out.contains("sk-shortABC123"),
+        "api_key query param leaked: {out}"
+    );
     assert!(out.contains("api_key=[REDACTED]"), "got: {out}");
     // The rest of the URL stays for context.
     assert!(out.contains("api.example.com"));
-    assert!(out.contains("page=2"), "non-secret param should survive: {out}");
+    assert!(
+        out.contains("page=2"),
+        "non-secret param should survive: {out}"
+    );
 }
 
 #[test]
@@ -326,5 +332,8 @@ fn redact_secrets_keyval_preserves_existing_placeholder() {
     let text = "auth_token=aa83802d35bb2c4471e7e96f4eaeafa6c96fe42f set";
     let out = redact_secrets(text);
     assert!(!out.contains("aa83802d"), "secret leaked: {out}");
-    assert!(!out.contains("[REDACTED]]"), "placeholder got mangled: {out}");
+    assert!(
+        !out.contains("[REDACTED]]"),
+        "placeholder got mangled: {out}"
+    );
 }

@@ -29,7 +29,8 @@ fn agent_cycle_failed_redacts_bearer_token() {
 #[test]
 fn template_sync_failed_redacts_api_key_param() {
     let n = RsiNotification::TemplateSyncFailed {
-        error: "fetch failed: https://api.example.com/sync?api_key=sk-abc123def456ghi789".to_string(),
+        error: "fetch failed: https://api.example.com/sync?api_key=sk-abc123def456ghi789"
+            .to_string(),
     };
     let out = format_rsi_notification(&n);
     assert!(

@@ -193,7 +193,11 @@ impl EventHandler for Handler {
                             .await
                     {
                         match session_id {
-                            Some(sid) => self.agent.swap_provider_for_session(sid, new_provider.clone(), new_provider.default_model().to_string()),
+                            Some(sid) => self.agent.swap_provider_for_session(
+                                sid,
+                                new_provider.clone(),
+                                new_provider.default_model().to_string(),
+                            ),
                             None => self.agent.swap_provider(new_provider),
                         }
                     }
@@ -334,9 +338,11 @@ impl EventHandler for Handler {
                             .await
                             {
                                 Ok(new_provider) => match session_id {
-                                    Some(sid) => {
-                                        self.agent.swap_provider_for_session(sid, new_provider.clone(), new_provider.default_model().to_string())
-                                    }
+                                    Some(sid) => self.agent.swap_provider_for_session(
+                                        sid,
+                                        new_provider.clone(),
+                                        new_provider.default_model().to_string(),
+                                    ),
                                     None => self.agent.swap_provider(new_provider),
                                 },
                                 Err(e) => {
