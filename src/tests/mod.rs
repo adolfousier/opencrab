@@ -196,6 +196,7 @@ pub mod telegram_resume_test;
 pub mod telegram_session_resolve_test;
 pub mod token_tracking_test;
 pub mod tool_arg_unescape_test;
+pub mod tool_name_heal_test;
 pub mod tool_execution_repo_test;
 pub mod tool_loop_helpers_test;
 pub mod tui_error_test;

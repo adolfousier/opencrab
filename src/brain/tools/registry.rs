@@ -129,9 +129,32 @@ impl ToolRegistry {
         input: Value,
         context: &ToolExecutionContext,
     ) -> Result<ToolResult> {
-        let tool = self
-            .get(name)
-            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
+        // Resolve the tool. On an unknown name, try the tool-name self-heal
+        // (a weaker model guessing `tg_send_message` for `telegram_send`,
+        // issue #176) before giving up. The healed name is used for param
+        // normalization and logging so everything downstream sees the real
+        // tool.
+        let (tool, resolved_name) = match self.get(name) {
+            Some(t) => (t, name.to_string()),
+            None => {
+                let registered = self.list_tools();
+                match super::tool_name_heal::resolve_tool_name(name, &registered) {
+                    Some(real) => {
+                        tracing::warn!(
+                            "Self-healed tool name: '{}' → '{}' (model called a near-miss name)",
+                            name,
+                            real
+                        );
+                        let t = self
+                            .get(&real)
+                            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
+                        (t, real)
+                    }
+                    None => return Err(ToolError::NotFound(name.to_string())),
+                }
+            }
+        };
+        let name = resolved_name.as_str();
 
         // Normalize LLM parameter name mistakes before validation
         let input = normalize_tool_input(name, input);
