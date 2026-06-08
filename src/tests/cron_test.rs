@@ -1111,7 +1111,8 @@ mod blob_prompt_regression {
                         last_run_at TEXT,
                         next_run_at TEXT,
                         created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
+                        updated_at TEXT NOT NULL,
+                        profile_name TEXT
                     );",
                 )
             })

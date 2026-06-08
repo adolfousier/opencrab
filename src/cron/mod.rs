@@ -7,4 +7,6 @@
 
 mod scheduler;
 
+#[cfg(test)]
+pub(crate) use scheduler::job_runs_in_active_profile;
 pub use scheduler::{CronScheduler, REBUILD_JOB_NAME, schedule_background_rebuild};

@@ -167,7 +167,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    const MIGRATION_COUNT: usize = 25;
+    const MIGRATION_COUNT: usize = 26;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
@@ -244,6 +244,9 @@ impl Database {
             )),
             M::up(include_str!(
                 "../migrations/20260606000001_add_message_cache_tokens.sql"
+            )),
+            M::up(include_str!(
+                "../migrations/20260608000001_add_cron_job_profile.sql"
             )),
         ]);
 

@@ -21,6 +21,27 @@ use uuid::Uuid;
 /// Name used for the shared cron session.
 const CRON_SESSION_NAME: &str = "Cron";
 
+/// Decide whether a job stamped with `job_profile` may run under the process's
+/// `active` profile.
+///
+/// `Config::load()`, the brain loader, and the DB path all key off the
+/// process-global active profile (a `OnceLock`), which cannot change at
+/// runtime. So a job can only ever run with the active profile's environment.
+/// To stop a job from silently running under the WRONG profile (e.g. an `ops`
+/// job picked up from a shared DB by a `default` process, #182), we compare the
+/// stamped origin against the active profile and skip on mismatch.
+///
+/// `None` (legacy, pre-stamping rows) always runs: we can't know the origin and
+/// the per-profile DB already isolates it, so blocking would silently break
+/// existing jobs. Newly created jobs always carry a stamp ("default" for the
+/// base profile), so the match is exact.
+pub(crate) fn job_runs_in_active_profile(job_profile: Option<&str>, active: Option<&str>) -> bool {
+    match job_profile {
+        None => true,
+        Some(stamped) => stamped == active.unwrap_or("default"),
+    }
+}
+
 /// Reserved cron-job name for a one-shot background `/rebuild`. The scheduler
 /// special-cases this name: instead of running an agent prompt it builds from
 /// source and exec-restarts into the new binary, then the job removes itself.
@@ -64,6 +85,12 @@ pub async fn schedule_background_rebuild(
         next_run_at: None,
         created_at: now,
         updated_at: now,
+        // Stamp the current profile so the guard in `tick()` lets it run here.
+        profile_name: Some(
+            crate::config::profile::active_profile()
+                .unwrap_or("default")
+                .to_string(),
+        ),
     };
     repo.insert(&job).await?;
     tracing::info!("Background rebuild queued for session {session_id}");
@@ -220,8 +247,23 @@ impl CronScheduler {
     async fn tick(&self) -> anyhow::Result<()> {
         let jobs = self.repo.list_enabled().await?;
         let now = Utc::now();
+        let active = crate::config::profile::active_profile();
 
         for job in &jobs {
+            // Skip jobs that belong to a different profile. They run in their
+            // own profile's process; executing them here would use the wrong
+            // brain/config/tools (#182). Skip BEFORE is_due / last_run updates
+            // so we never advance a foreign job's schedule out from under its
+            // owning process.
+            if !job_runs_in_active_profile(job.profile_name.as_deref(), active) {
+                tracing::debug!(
+                    "Cron job '{}' belongs to profile {:?}, active profile is {:?} — skipping",
+                    job.name,
+                    job.profile_name,
+                    active
+                );
+                continue;
+            }
             if self.is_due(job, now) {
                 tracing::info!("Cron job '{}' ({}) is due — executing", job.name, job.id);
 

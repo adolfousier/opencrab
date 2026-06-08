@@ -51,6 +51,7 @@ pub mod compaction_prompts_test;
 pub mod compaction_test;
 pub mod config_watcher_test;
 pub mod context_window_test;
+pub mod cron_profile_isolation_test;
 pub mod cron_test;
 pub mod cross_provider_model_leak_guard_test;
 pub mod custom_model_paste_test;

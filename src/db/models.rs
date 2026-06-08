@@ -508,6 +508,12 @@ pub struct CronJob {
     pub next_run_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Profile this job was created in. `None` = legacy job created before
+    /// profile stamping (scheduler runs it anywhere). Newly created jobs store
+    /// the active profile name, or the literal `"default"` for the base
+    /// profile, so the scheduler refuses to run them under another profile's
+    /// brain/config/tools (#182).
+    pub profile_name: Option<String>,
 }
 
 impl CronJob {
@@ -533,6 +539,7 @@ impl CronJob {
             next_run_at: opt_rfc3339_col(row, "next_run_at")?,
             created_at: rfc3339_col(row, "created_at")?,
             updated_at: rfc3339_col(row, "updated_at")?,
+            profile_name: row.get("profile_name")?,
         })
     }
 
@@ -567,6 +574,14 @@ impl CronJob {
             next_run_at: None,
             created_at: now,
             updated_at: now,
+            // Stamp the profile this job is born into. The base profile is
+            // stored as the literal "default" (not None) so the scheduler can
+            // enforce the match — only legacy pre-stamping rows stay NULL.
+            profile_name: Some(
+                crate::config::profile::active_profile()
+                    .unwrap_or("default")
+                    .to_string(),
+            ),
         }
     }
 }
