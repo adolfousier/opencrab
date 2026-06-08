@@ -1,51 +1,66 @@
-//! Tests for `cron::job_runs_in_active_profile` — the guard that stops a cron
-//! job from executing under the wrong profile's brain/config/tools (#182).
+//! Tests for the profile-home resolution that lets a cron job run under the
+//! profile it was created in, even when another profile's process picks it up
+//! from a shared database (#182).
 //!
-//! The process-global active profile (a `OnceLock`) drives `Config::load()`,
-//! the brain loader, and the DB path, and cannot change at runtime. So the
-//! scheduler can only run a job with the active profile's environment. The
-//! guard compares each job's stamped origin profile against the active profile
-//! and skips on mismatch. Legacy jobs (no stamp) always run for back-compat.
+//! The fix materializes a foreign profile's config + brain under a scoped home
+//! override (`with_profile_home`) that `resolve_profile_home()` consults before
+//! the process-global active profile. These tests cover the pure path mapping
+//! and the scoped override (applies inside the closure, cleared after).
 
-use crate::cron::job_runs_in_active_profile;
+use crate::config::profile::{
+    base_opencrabs_dir, home_for_profile, resolve_profile_home, with_profile_home,
+};
 
 #[test]
-fn legacy_unstamped_job_runs_anywhere() {
-    // Pre-stamping rows have profile_name = NULL. We can't know their origin
-    // and the per-profile DB already isolates them, so they must still run.
-    assert!(job_runs_in_active_profile(None, None));
-    assert!(job_runs_in_active_profile(None, Some("ops")));
-    assert!(job_runs_in_active_profile(None, Some("default")));
+fn home_for_profile_maps_default_to_base() {
+    let base = base_opencrabs_dir();
+    // None and the literal "default" both resolve to the base dir, never a
+    // profiles/ subdir — the base profile is unannotated on disk.
+    assert_eq!(home_for_profile(None), base);
+    assert_eq!(home_for_profile(Some("default")), base);
 }
 
 #[test]
-fn default_stamped_job_runs_in_default_process() {
-    // Base-profile process: active_profile() returns None, normalized to
-    // "default". A job stamped "default" matches.
-    assert!(job_runs_in_active_profile(Some("default"), None));
-    assert!(job_runs_in_active_profile(Some("default"), Some("default")));
+fn home_for_profile_maps_named_to_subdir() {
+    let base = base_opencrabs_dir();
+    assert_eq!(
+        home_for_profile(Some("ops")),
+        base.join("profiles").join("ops")
+    );
+    assert_eq!(
+        home_for_profile(Some("staging")),
+        base.join("profiles").join("staging")
+    );
 }
 
 #[test]
-fn named_profile_job_runs_in_its_own_process() {
-    assert!(job_runs_in_active_profile(Some("ops"), Some("ops")));
+fn with_profile_home_applies_override_inside_closure() {
+    let ops_home = home_for_profile(Some("ops"));
+    // Inside the scope, all home resolution points at the ops profile, which is
+    // how Config::load() and the brain loader pick up the foreign profile.
+    let seen = with_profile_home(Some("ops"), resolve_profile_home);
+    assert_eq!(seen, ops_home);
 }
 
 #[test]
-fn ops_job_does_not_run_in_default_process() {
-    // The core bug: an "ops" job picked up from a shared DB by the default
-    // process must be skipped, not run under default's brain/config.
-    assert!(!job_runs_in_active_profile(Some("ops"), None));
-    assert!(!job_runs_in_active_profile(Some("ops"), Some("default")));
+fn with_profile_home_clears_override_after_closure() {
+    let ops_home = home_for_profile(Some("ops"));
+    let _ = with_profile_home(Some("ops"), resolve_profile_home);
+    // After the scope, the override is gone: resolution falls back to the
+    // process profile (the base dir in tests, since no -p is set), never the
+    // ops dir we briefly overrode to.
+    assert_ne!(resolve_profile_home(), ops_home);
 }
 
 #[test]
-fn default_job_does_not_run_in_named_process() {
-    assert!(!job_runs_in_active_profile(Some("default"), Some("ops")));
+fn with_profile_home_returns_closure_value() {
+    let value = with_profile_home(Some("ops"), || 42);
+    assert_eq!(value, 42);
 }
 
 #[test]
-fn mismatched_named_profiles_do_not_cross() {
-    assert!(!job_runs_in_active_profile(Some("ops"), Some("staging")));
-    assert!(!job_runs_in_active_profile(Some("staging"), Some("ops")));
+fn with_profile_home_default_resolves_to_base() {
+    let base = base_opencrabs_dir();
+    let seen = with_profile_home(Some("default"), resolve_profile_home);
+    assert_eq!(seen, base);
 }

@@ -100,6 +100,13 @@ impl ChannelFactory {
         self.shared_session_id.clone()
     }
 
+    /// The shared tool registry, if it has been wired in yet. Used by the cron
+    /// scheduler to give a foreign-profile agent the same tools (the registry is
+    /// profile-agnostic dispatch; per-call config drives profile behaviour).
+    pub fn tool_registry(&self) -> Option<Arc<ToolRegistry>> {
+        self.tool_registry.get().cloned()
+    }
+
     pub fn service_context(&self) -> ServiceContext {
         self.service_context.clone()
     }

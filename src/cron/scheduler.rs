@@ -21,21 +21,11 @@ use uuid::Uuid;
 /// Name used for the shared cron session.
 const CRON_SESSION_NAME: &str = "Cron";
 
-/// Decide whether a job stamped with `job_profile` may run under the process's
-/// `active` profile.
-///
-/// `Config::load()`, the brain loader, and the DB path all key off the
-/// process-global active profile (a `OnceLock`), which cannot change at
-/// runtime. So a job can only ever run with the active profile's environment.
-/// To stop a job from silently running under the WRONG profile (e.g. an `ops`
-/// job picked up from a shared DB by a `default` process, #182), we compare the
-/// stamped origin against the active profile and skip on mismatch.
-///
-/// `None` (legacy, pre-stamping rows) always runs: we can't know the origin and
-/// the per-profile DB already isolates it, so blocking would silently break
-/// existing jobs. Newly created jobs always carry a stamp ("default" for the
-/// base profile), so the match is exact.
-pub(crate) fn job_runs_in_active_profile(job_profile: Option<&str>, active: Option<&str>) -> bool {
+/// Whether `job_profile` is the active process profile (so the cheap, already
+/// wired factory agent can run it) rather than a foreign profile that needs its
+/// own config + brain materialized. `None` = legacy pre-stamping row, treated as
+/// the active profile. The base profile is stored as the literal "default".
+fn is_active_profile(job_profile: Option<&str>, active: Option<&str>) -> bool {
     match job_profile {
         None => true,
         Some(stamped) => stamped == active.unwrap_or("default"),
@@ -247,23 +237,8 @@ impl CronScheduler {
     async fn tick(&self) -> anyhow::Result<()> {
         let jobs = self.repo.list_enabled().await?;
         let now = Utc::now();
-        let active = crate::config::profile::active_profile();
 
         for job in &jobs {
-            // Skip jobs that belong to a different profile. They run in their
-            // own profile's process; executing them here would use the wrong
-            // brain/config/tools (#182). Skip BEFORE is_due / last_run updates
-            // so we never advance a foreign job's schedule out from under its
-            // owning process.
-            if !job_runs_in_active_profile(job.profile_name.as_deref(), active) {
-                tracing::debug!(
-                    "Cron job '{}' belongs to profile {:?}, active profile is {:?} — skipping",
-                    job.name,
-                    job.profile_name,
-                    active
-                );
-                continue;
-            }
             if self.is_due(job, now) {
                 tracing::info!("Cron job '{}' ({}) is due — executing", job.name, job.id);
 
@@ -339,6 +314,61 @@ impl CronScheduler {
     }
 }
 
+/// Resolve the `(Config, AgentService)` a job should run with.
+///
+/// Jobs created in the active profile (and legacy unstamped jobs) use the
+/// already-wired factory agent — the common path, no extra work. A job stamped
+/// with a DIFFERENT profile (which happens when profiles share a database, #182)
+/// gets its own config + brain materialized from that profile's home, so it runs
+/// under the brain, config, keys, and working dir it was created with instead of
+/// the process profile's. The shared DB pool (`ServiceContext`) is reused — that
+/// pool is exactly why the foreign job is visible to this scheduler at all.
+///
+/// Tools are shared from the factory registry: dispatch is profile-agnostic and
+/// the per-call `config` we pass drives profile-specific behaviour.
+async fn resolve_job_agent(
+    job: &CronJob,
+    factory: &ChannelFactory,
+    ctx: &ServiceContext,
+) -> anyhow::Result<(Config, Arc<crate::brain::agent::AgentService>)> {
+    let active = crate::config::profile::active_profile();
+    if is_active_profile(job.profile_name.as_deref(), active) {
+        return Ok((Config::load()?, factory.create_agent_service().await));
+    }
+
+    let profile = job.profile_name.as_deref();
+    tracing::info!(
+        "Cron job '{}' belongs to profile {:?} (process profile {:?}) — \
+         running under its own profile context",
+        job.name,
+        profile,
+        active
+    );
+
+    // Materialize the foreign profile's config + brain under a scoped home
+    // override. Both loads are synchronous, so the thread-local override is
+    // cleared before any `.await` and cannot leak into another task.
+    let (config, brain, home) = crate::config::profile::with_profile_home(profile, || {
+        let config = Config::load()?;
+        let home = crate::config::opencrabs_home();
+        let brain = crate::brain::prompt_builder::BrainLoader::new(home.clone())
+            .build_core_brain(None, None);
+        anyhow::Ok((config, brain, home))
+    })?;
+
+    // Provider is built from the foreign profile's keys, not the process ones.
+    let provider = crate::brain::provider::create_provider(&config).await?;
+    let mut builder = crate::brain::agent::AgentService::new(provider, ctx.clone(), &config)
+        .await
+        .with_system_brain(brain)
+        .with_working_directory(home.clone())
+        .with_brain_path(home);
+    if let Some(registry) = factory.tool_registry() {
+        builder = builder.with_tool_registry(registry);
+    }
+    Ok((config, Arc::new(builder)))
+}
+
 /// Execute a single cron job in the shared cron session.
 /// Isolated from TUI — never touches the user's active session.
 /// Results are always stored in the DB; channel delivery is optional.
@@ -355,8 +385,10 @@ async fn execute_job(
         return run_rebuild_job(job, ctx).await;
     }
 
-    // Resolve effective provider/model: job override > config default > system default
-    let config = Config::load()?;
+    // Resolve the config + agent for this job's profile. A job created in a
+    // non-active profile (shared-DB case, #182) runs under its own profile's
+    // config + brain, not the process profile's.
+    let (config, agent) = resolve_job_agent(job, factory, ctx).await?;
     let effective_provider = job
         .provider
         .clone()
@@ -439,9 +471,6 @@ async fn execute_job(
         job.name,
         session_id
     );
-
-    // Spawn agent service (inherits tools, brain, working dir from factory)
-    let agent = factory.create_agent_service().await;
 
     // Swap to cron-specific provider if configured
     if let Some(ref provider_name) = effective_provider {

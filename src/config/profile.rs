@@ -20,6 +20,7 @@
 //! label that doesn't exist anywhere. Named profiles always show up;
 //! the base directory stays unannotated.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,6 +32,50 @@ use serde::{Deserialize, Serialize};
 
 /// Global active profile name. Set once at startup before anything calls `opencrabs_home()`.
 static ACTIVE_PROFILE: OnceLock<Option<String>> = OnceLock::new();
+
+thread_local! {
+    /// Per-thread override for the profile home. Set only for the brief,
+    /// SYNCHRONOUS span where we materialize a foreign profile's config + brain
+    /// so a cron job runs under the profile it was created in, not the process
+    /// profile (#182). `resolve_profile_home()` consults this BEFORE the global
+    /// `ACTIVE_PROFILE`. It is never held across an `.await`, so it cannot bleed
+    /// from one async task into another.
+    static PROFILE_HOME_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Resolve the home directory for an explicit profile name, WITHOUT reading the
+/// process-global active profile.
+///
+/// - `None` / `"default"` → `~/.opencrabs/`
+/// - `"ops"` → `~/.opencrabs/profiles/ops/`
+pub fn home_for_profile(name: Option<&str>) -> PathBuf {
+    let base = base_opencrabs_dir();
+    match name {
+        None | Some("default") => base,
+        Some(n) => base.join("profiles").join(n),
+    }
+}
+
+/// Run `f` with the profile home temporarily pointed at `profile`'s directory.
+///
+/// `f` MUST be synchronous — no `.await` inside. The override is a thread-local,
+/// and tokio can migrate a task to a different thread at any await point, so an
+/// override held across `.await` would silently stop applying (or leak into an
+/// unrelated task). We only use this to materialize a profile's `Config` and
+/// brain string, both of which are synchronous loads. The drop guard clears the
+/// override even if `f` panics.
+pub fn with_profile_home<T>(profile: Option<&str>, f: impl FnOnce() -> T) -> T {
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            PROFILE_HOME_OVERRIDE.with(|cell| *cell.borrow_mut() = None);
+        }
+    }
+    let home = home_for_profile(profile);
+    PROFILE_HOME_OVERRIDE.with(|cell| *cell.borrow_mut() = Some(home));
+    let _guard = Guard;
+    f()
+}
 
 /// Set the active profile. Must be called before any `opencrabs_home()` call.
 /// Returns `Err` if called more than once (OnceLock semantics).
@@ -50,6 +95,13 @@ pub fn active_profile() -> Option<&'static str> {
 /// - `None` / `"default"` → `~/.opencrabs/`
 /// - `"hermes"` → `~/.opencrabs/profiles/hermes/`
 pub fn resolve_profile_home() -> PathBuf {
+    // A scoped override wins — set while materializing a foreign profile's
+    // config/brain for a cron job (#182). Synchronous-only, never held across an
+    // await, so it cannot bleed between tasks.
+    if let Some(home) = PROFILE_HOME_OVERRIDE.with(|cell| cell.borrow().clone()) {
+        return home;
+    }
+
     let base = base_opencrabs_dir();
 
     let profile_name = active_profile().map(String::from).or_else(|| {
