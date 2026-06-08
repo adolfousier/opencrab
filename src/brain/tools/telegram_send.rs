@@ -51,6 +51,41 @@ fn get_id(input: &Value, key: &str) -> std::result::Result<i64, ToolResult> {
     }
 }
 
+/// Resolve a media reference (`photo_url` / `document_url`) into a Telegram
+/// `InputFile`. An HTTP(S) URL is handed to Telegram as-is (it fetches the
+/// remote file). Anything else is treated as a local path: the file is read
+/// into memory and uploaded directly, the same way the channel handler sends
+/// generated images and voice notes. Without this, local paths were passed to
+/// `InputFile::url()` and rejected as invalid URLs (#181).
+#[allow(clippy::result_large_err)]
+pub(crate) async fn resolve_input_file(
+    reference: &str,
+    label: &str,
+) -> std::result::Result<InputFile, ToolResult> {
+    if reference.starts_with("http://") || reference.starts_with("https://") {
+        return reference
+            .parse()
+            .map(InputFile::url)
+            .map_err(|e| ToolResult::error(format!("Invalid {label}: {e}")));
+    }
+
+    // Local file: read bytes and upload from memory.
+    let path = crate::brain::tools::error::expand_tilde(reference);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file".to_string());
+            Ok(InputFile::memory(bytes).file_name(name))
+        }
+        Err(e) => Err(ToolResult::error(format!(
+            "Failed to read local {label} '{}': {e}",
+            path.display()
+        ))),
+    }
+}
+
 /// Resolve chat_id: explicit param or owner fallback.
 #[allow(clippy::result_large_err)]
 /// Resolve a forum-topic `thread_id` for a proactive Telegram send.
@@ -162,11 +197,11 @@ impl Tool for TelegramSendTool {
                 },
                 "photo_url": {
                     "type": "string",
-                    "description": "HTTPS URL of the photo for send_photo"
+                    "description": "Photo for send_photo: an HTTPS URL or a local file path (e.g. /tmp/chart.png or ~/.opencrabs/out.png)"
                 },
                 "document_url": {
                     "type": "string",
-                    "description": "HTTPS URL of the document for send_document"
+                    "description": "Document for send_document: an HTTPS URL or a local file path (e.g. /tmp/report.pdf or ~/.opencrabs/data.csv)"
                 },
                 "latitude": {
                     "type": "number",
@@ -361,12 +396,8 @@ impl Tool for TelegramSendTool {
             // ── send_photo ───────────────────────────────────────────────────
             "send_photo" => {
                 let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
-                let url = pget!(get_str(&input, "photo_url")).to_string();
-                let file = InputFile::url(url.parse().map_err(|e| {
-                    crate::brain::tools::error::ToolError::Execution(format!(
-                        "Invalid photo_url: {e}"
-                    ))
-                })?);
+                let reference = pget!(get_str(&input, "photo_url")).to_string();
+                let file = pget!(resolve_input_file(&reference, "photo_url").await);
                 match bot.send_photo(ChatId(chat_id), file).await {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Photo sent to chat {chat_id}."
@@ -378,12 +409,8 @@ impl Tool for TelegramSendTool {
             // ── send_document ────────────────────────────────────────────────
             "send_document" => {
                 let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
-                let url = pget!(get_str(&input, "document_url")).to_string();
-                let file = InputFile::url(url.parse().map_err(|e| {
-                    crate::brain::tools::error::ToolError::Execution(format!(
-                        "Invalid document_url: {e}"
-                    ))
-                })?);
+                let reference = pget!(get_str(&input, "document_url")).to_string();
+                let file = pget!(resolve_input_file(&reference, "document_url").await);
                 match bot.send_document(ChatId(chat_id), file).await {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Document sent to chat {chat_id}."
