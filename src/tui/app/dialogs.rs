@@ -1870,6 +1870,11 @@ impl App {
                 provider_arc.clone(),
                 actual_model.clone(),
             );
+            // Pin this as a USER switch so an in-flight turn's fallback can't
+            // permanently overwrite it — the pick is restored after that turn
+            // completes (never on the completion path, so it can't drop it).
+            self.agent_service
+                .mark_manual_switch(session_id, actual_model.clone());
 
             // Update context_max_tokens to reflect the new provider's context window.
             // Without this, the footer shows stale values (e.g., 128k) after switching

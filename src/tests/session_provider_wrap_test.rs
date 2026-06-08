@@ -203,3 +203,52 @@ async fn swap_sets_the_paired_model_never_invents() {
         "swap must use the caller's model, never invent the provider default"
     );
 }
+
+/// Mid-turn manual switch (2026-06-08, the proper fix): the user's switch is
+/// captured as a pinned pair; AFTER a turn that took an automatic fallback,
+/// the pin is re-applied so the NEXT turn uses the user's pick — atomically
+/// (provider+model together), so the model can never desync from the
+/// provider. This restore runs OFF the completion path, so it can never drop
+/// the request (the earlier regression dropped it by suppressing the
+/// fallback's model-sync event mid-turn — this never touches the turn).
+#[tokio::test]
+async fn manual_switch_is_restored_after_a_fallback_turn_atomically() {
+    let (svc, sid) = create_test_service_with_provider(Arc::new(MockProvider)).await;
+
+    // Capture the turn-start epoch. No switch yet → restore is a no-op.
+    let start = svc.manual_switch_epoch(sid);
+    assert_eq!(start, 0);
+    assert_eq!(svc.restore_manual_switch_if_changed(sid, start), None);
+
+    // User switches provider/model mid-turn.
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "user-pick");
+    svc.mark_manual_switch(sid, "user-pick".to_string());
+    assert_ne!(
+        svc.manual_switch_epoch(sid),
+        start,
+        "the switch bumps the epoch"
+    );
+
+    // The in-flight turn takes a fallback, overwriting the session pair.
+    svc.swap_provider_for_session(sid, Arc::new(MockProvider), "fallback-model");
+    assert_eq!(svc.provider_model_for_session(sid), "fallback-model");
+
+    // After the turn completes, restore detects the mid-turn switch and
+    // re-applies the user's pinned pair (returns the model to persist to DB).
+    let restored = svc.restore_manual_switch_if_changed(sid, start);
+    assert_eq!(
+        restored.as_deref(),
+        Some("user-pick"),
+        "restore returns the user's model so the caller can persist it"
+    );
+    assert_eq!(
+        svc.provider_model_for_session(sid),
+        "user-pick",
+        "the user's pick wins for the NEXT turn, not the fallback"
+    );
+
+    // Idempotent: with no NEW switch, restoring against the current epoch is
+    // a no-op — it won't fight a legitimate fallback on a later turn.
+    let now = svc.manual_switch_epoch(sid);
+    assert_eq!(svc.restore_manual_switch_if_changed(sid, now), None);
+}

@@ -345,6 +345,35 @@ impl AgentService {
     /// channel-injected sender metadata, reply context, group history, etc.).
     /// When `None`, behaves identically to before — `user_message` is used
     /// for both context and DB.
+    /// Honor a mid-turn manual provider/model switch AFTER a turn finishes.
+    /// If the user switched while this turn was running (`start_epoch` no
+    /// longer matches), re-install their pinned provider+model pair in memory
+    /// and persist it to the session DB row — so the next turn (and channel
+    /// restore) use the user's pick, not the fallback the turn happened to
+    /// take. Called only after the response is fully built, so it cannot drop
+    /// or change the current turn's result. No-op when nothing changed.
+    async fn finalize_manual_switch(
+        &self,
+        session_id: Uuid,
+        start_epoch: u64,
+        session_service: &SessionService,
+    ) {
+        let Some(model) = self.restore_manual_switch_if_changed(session_id, start_epoch) else {
+            return;
+        };
+        let provider_name = self.provider_name_for_session(session_id);
+        if let Ok(Some(mut s)) = session_service.get_session(session_id).await {
+            s.provider_name = Some(provider_name.clone());
+            s.model = Some(model.clone());
+            if let Err(e) = session_service.update_session(&s).await {
+                tracing::warn!("finalize_manual_switch: DB persist failed for {session_id}: {e}");
+            }
+        }
+        tracing::info!(
+            "Restored user's mid-turn switch for session {session_id}: {provider_name}/{model}"
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn run_tool_loop_inner(
         &self,
@@ -359,6 +388,14 @@ impl AgentService {
         progress_callback: Option<ProgressCallback>,
         question_callback: Option<QuestionCallback>,
     ) -> Result<AgentResponse> {
+        // Snapshot the manual-switch epoch at turn start. If the user
+        // switches provider/model while this turn is in flight, an automatic
+        // fallback the turn takes could otherwise stick over their pick. We
+        // detect the change AFTER the turn completes (see the restore near
+        // the final return) and re-apply the user's pick then — off the
+        // completion path, so it can never drop or contaminate the request.
+        let start_switch_epoch = self.manual_switch_epoch(session_id);
+
         // Get or create session
         let session_service = SessionService::new(self.context.clone());
         let session = session_service
@@ -4963,6 +5000,12 @@ impl AgentService {
         // number like the 37203 tok/s observed on a glm-5.1 short reply.
         let tokens_per_second =
             compute_streaming_tok_per_sec(total_output_tokens, total_streaming_active_secs);
+
+        // The turn is complete and the response is built — NOW (never before)
+        // honor a manual provider/model switch the user made mid-turn, so an
+        // automatic fallback this turn took doesn't stick over their pick.
+        self.finalize_manual_switch(session_id, start_switch_epoch, &session_service)
+            .await;
 
         Ok(AgentResponse {
             message_id: assistant_db_msg.id,

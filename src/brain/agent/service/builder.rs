@@ -12,6 +12,10 @@ use uuid::Uuid;
 /// cross-session continuity dominates the cost.
 pub(super) const RECENT_PATHS_CAP: usize = 12;
 
+/// A captured manual provider/model switch: `(epoch, provider, model)`.
+/// Used to restore the user's pick after an in-flight turn took a fallback.
+type ManualSwitchPin = (u64, Arc<dyn Provider>, String);
+
 /// Agent Service for managing AI conversations
 pub struct AgentService {
     /// Default LLM provider — used for brand-new sessions that haven't
@@ -42,6 +46,17 @@ pub struct AgentService {
     /// captures the per-session pick so the display stays in sync with
     /// what's actually being sent on the wire.
     pub(super) session_models: std::sync::RwLock<HashMap<Uuid, String>>,
+
+    /// Captures a USER's manual provider/model switch so an in-flight turn's
+    /// automatic fallback can't permanently overwrite it. Maps session →
+    /// `(epoch, provider, model)`. A turn snapshots the epoch at start; if it
+    /// changed by the time the turn finishes, the user switched mid-turn and
+    /// `run_tool_loop_inner` RESTORES this pinned pair AFTER the turn
+    /// completes. Crucially this happens off the completion path — the turn
+    /// always runs to a full response first, so honoring the switch can never
+    /// drop or contaminate the request (the 2026-06-08 regression came from
+    /// suppressing the fallback's model-sync event mid-turn; this never does).
+    pub(super) manual_switch: std::sync::RwLock<HashMap<Uuid, ManualSwitchPin>>,
 
     /// Per-session context window overrides. When a session's provider
     /// has a custom `configured_context_window()`, it's cached here so
@@ -148,6 +163,7 @@ impl AgentService {
             provider: std::sync::RwLock::new(provider),
             session_providers: std::sync::RwLock::new(HashMap::new()),
             session_models: std::sync::RwLock::new(HashMap::new()),
+            manual_switch: std::sync::RwLock::new(HashMap::new()),
             session_context_limits: std::sync::RwLock::new(HashMap::new()),
             session_primary_failure_streak: std::sync::RwLock::new(HashMap::new()),
             context,
@@ -710,6 +726,55 @@ impl AgentService {
         if let Ok(mut map) = self.session_models.write() {
             map.remove(&session_id);
         }
+    }
+
+    /// Record that the USER manually switched this session's provider/model.
+    /// Call AFTER `swap_provider_for_session` in the /models dialog and
+    /// channel /models paths. Captures the just-installed provider+model
+    /// pair and bumps a per-session epoch. If a turn that started before
+    /// this call later finishes having taken an automatic fallback, it
+    /// restores this pair so the user's pick wins (see
+    /// `restore_manual_switch_if_changed`).
+    pub fn mark_manual_switch(&self, session_id: Uuid, model: String) {
+        let provider = self.provider_for_session(session_id);
+        let next = self.manual_switch_epoch(session_id).wrapping_add(1);
+        if let Ok(mut map) = self.manual_switch.write() {
+            map.insert(session_id, (next, provider, model));
+        }
+    }
+
+    /// Current manual-switch epoch for a session (0 if never switched).
+    pub fn manual_switch_epoch(&self, session_id: Uuid) -> u64 {
+        self.manual_switch
+            .read()
+            .ok()
+            .and_then(|m| m.get(&session_id).map(|(e, _, _)| *e))
+            .unwrap_or(0)
+    }
+
+    /// If the user manually switched this session AFTER `since_epoch`,
+    /// re-install their pinned provider+model pair (atomically, so the
+    /// model can never desync from the provider) and return the model so
+    /// the caller can persist it to the session DB row. Returns `None`
+    /// when there was no mid-turn switch. Called once, AFTER a turn
+    /// completes — never on the completion path — so it cannot affect
+    /// whether the turn delivered a response.
+    pub fn restore_manual_switch_if_changed(
+        &self,
+        session_id: Uuid,
+        since_epoch: u64,
+    ) -> Option<String> {
+        let pin = {
+            let map = self.manual_switch.read().ok()?;
+            let (epoch, provider, model) = map.get(&session_id)?;
+            if *epoch == since_epoch {
+                return None;
+            }
+            (provider.clone(), model.clone())
+        };
+        let (provider, model) = pin;
+        self.swap_provider_for_session(session_id, provider, model.clone());
+        Some(model)
     }
 
     /// Record that a sticky-fallback fired for this session. Intentionally a
