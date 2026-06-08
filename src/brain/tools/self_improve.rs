@@ -487,7 +487,39 @@ impl Tool for SelfImproveTool {
 
                 let target_path = home.join(target_file);
 
-                // Append content to target brain file
+                // Dedup guard. RSI re-proposes the SAME improvements every cycle
+                // (a tool's failure rate doesn't drop just because the guideline
+                // was already written), so without this each cycle blindly
+                // appended a duplicate paragraph — growing the brain file until
+                // the dedup-scan cleaned it up, an endless append→dedup→append
+                // loop. Append only genuinely-new paragraphs; if the improvement
+                // is already present, skip the write entirely (and don't log it
+                // as a fresh "Applied" improvement below).
+                use crate::brain::tools::brain_file_safety::{
+                    AppendDedup, filter_duplicate_append,
+                };
+                let existing = std::fs::read_to_string(&target_path).unwrap_or_default();
+                let to_append = match filter_duplicate_append(&existing, content) {
+                    AppendDedup::AllNew => content.trim().to_string(),
+                    AppendDedup::Filtered {
+                        filtered_content,
+                        skipped_paragraphs,
+                    } => {
+                        tracing::info!(
+                            "RSI self_improve: filtered {skipped_paragraphs} duplicate paragraph(s) \
+                             from '{description}' before appending to {target_file}"
+                        );
+                        filtered_content
+                    }
+                    AppendDedup::AllDuplicate => {
+                        return Ok(ToolResult::success(format!(
+                            "Skipped: '{description}' is already present in {target_file} — no change \
+                             made. The improvement is already in effect; do not re-apply it."
+                        )));
+                    }
+                };
+
+                // Append the new content to target brain file
                 let mut file = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
@@ -497,7 +529,7 @@ impl Tool for SelfImproveTool {
                             "Failed to open {target_file}: {e}"
                         ))
                     })?;
-                file.write_all(format!("\n{}\n", content.trim()).as_bytes())
+                file.write_all(format!("\n{}\n", to_append.trim()).as_bytes())
                     .map_err(|e| {
                         crate::brain::tools::ToolError::Execution(format!(
                             "Failed to write {target_file}: {e}"

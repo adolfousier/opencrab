@@ -842,30 +842,41 @@ mod self_improve_tool {
     #[tokio::test]
     async fn apply_writes_to_rsi_improvements() {
         let (_db, ctx) = setup_ctx_with_db().await;
-        let tool = SelfImproveTool;
-        let result = tool
-            .execute(
-                json!({
-                    "action": "apply",
-                    "target_file": "AGENTS.md",
-                    "description": "Add retry logic to bash tool",
-                    "rationale": "Frequent transient failures observed",
-                    "content": "## Bash Retry\nAdd exponential backoff."
-                }),
-                &ctx,
-            )
-            .await
-            .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("applied"));
-        assert!(result.output.contains("Add retry logic"));
+        // Isolate to a throwaway profile home. `apply` now dedups, so re-runs
+        // against the shared ~/.opencrabs would skip the already-present append
+        // and never write improvements.md. Isolation also stops this test
+        // polluting the user's real brain files.
+        let profile = "rsi-test-apply-improvements";
+        let home = crate::config::profile::home_for_profile(Some(profile));
+        let _ = std::fs::remove_dir_all(&home);
+        crate::config::profile::with_profile_home_async(Some(profile), async {
+            let tool = SelfImproveTool;
+            let result = tool
+                .execute(
+                    json!({
+                        "action": "apply",
+                        "target_file": "AGENTS.md",
+                        "description": "Add retry logic to bash tool",
+                        "rationale": "Frequent transient failures observed",
+                        "content": "## Bash Retry\nAdd exponential backoff."
+                    }),
+                    &ctx,
+                )
+                .await
+                .unwrap();
+            assert!(result.success);
+            assert!(result.output.contains("applied"));
+            assert!(result.output.contains("Add retry logic"));
 
-        // Verify rsi/improvements.md was written to ~/.opencrabs/
-        let home = crate::config::opencrabs_home();
-        let improvements =
-            std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
-        assert!(improvements.contains("Add retry logic"));
-        assert!(improvements.contains("Frequent transient failures"));
+            // Verify rsi/improvements.md was written to the profile home.
+            let home = crate::config::opencrabs_home();
+            let improvements =
+                std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
+            assert!(improvements.contains("Add retry logic"));
+            assert!(improvements.contains("Frequent transient failures"));
+        })
+        .await;
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]
@@ -960,34 +971,41 @@ mod self_improve_tool {
     #[tokio::test]
     async fn apply_valid_brain_file() {
         let (_db, ctx) = setup_ctx_with_db().await;
-        let tool = SelfImproveTool;
+        // Isolated profile home — see apply_writes_to_rsi_improvements.
+        let profile = "rsi-test-apply-valid";
+        let home = crate::config::profile::home_for_profile(Some(profile));
+        let _ = std::fs::remove_dir_all(&home);
+        crate::config::profile::with_profile_home_async(Some(profile), async {
+            let tool = SelfImproveTool;
+            let result = tool
+                .execute(
+                    json!({
+                        "action": "apply",
+                        "target_file": "SOUL.md",
+                        "description": "Add conciseness guideline",
+                        "rationale": "Users consistently prefer shorter responses",
+                        "content": "## Conciseness\nKeep responses under 3 sentences when possible."
+                    }),
+                    &ctx,
+                )
+                .await
+                .unwrap();
+            assert!(result.success);
+            assert!(result.output.contains("applied"));
+            assert!(result.output.contains("SOUL.md"));
 
-        let result = tool
-            .execute(
-                json!({
-                    "action": "apply",
-                    "target_file": "SOUL.md",
-                    "description": "Add conciseness guideline",
-                    "rationale": "Users consistently prefer shorter responses",
-                    "content": "## Conciseness\nKeep responses under 3 sentences when possible."
-                }),
-                &ctx,
-            )
-            .await
-            .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("applied"));
-        assert!(result.output.contains("SOUL.md"));
+            // Verify content was appended to SOUL.md in the profile home.
+            let home = crate::config::opencrabs_home();
+            let soul = std::fs::read_to_string(home.join("SOUL.md")).unwrap();
+            assert!(soul.contains("Conciseness"));
 
-        // Verify content was appended to SOUL.md in ~/.opencrabs/
-        let home = crate::config::opencrabs_home();
-        let soul = std::fs::read_to_string(home.join("SOUL.md")).unwrap();
-        assert!(soul.contains("Conciseness"));
-
-        // Verify rsi/improvements.md logged the change
-        let improvements =
-            std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
-        assert!(improvements.contains("SOUL.md"));
+            // Verify rsi/improvements.md logged the change
+            let improvements =
+                std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
+            assert!(improvements.contains("SOUL.md"));
+        })
+        .await;
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]
@@ -1044,25 +1062,33 @@ mod self_improve_tool {
     #[tokio::test]
     async fn apply_without_rationale() {
         let (_db, ctx) = setup_ctx_with_db().await;
-        let tool = SelfImproveTool;
-        let result = tool
-            .execute(
-                json!({
-                    "action": "apply",
-                    "target_file": "AGENTS.md",
-                    "description": "Improve error messages",
-                    "content": "## Better Errors\nReturn actionable hints."
-                }),
-                &ctx,
-            )
-            .await
-            .unwrap();
-        assert!(result.success);
-        // Rationale defaults to "(none)"
-        let home = crate::config::opencrabs_home();
-        let improvements =
-            std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
-        assert!(improvements.contains("(none)"));
+        // Isolated profile home — see apply_writes_to_rsi_improvements.
+        let profile = "rsi-test-apply-no-rationale";
+        let home = crate::config::profile::home_for_profile(Some(profile));
+        let _ = std::fs::remove_dir_all(&home);
+        crate::config::profile::with_profile_home_async(Some(profile), async {
+            let tool = SelfImproveTool;
+            let result = tool
+                .execute(
+                    json!({
+                        "action": "apply",
+                        "target_file": "AGENTS.md",
+                        "description": "Improve error messages",
+                        "content": "## Better Errors\nReturn actionable hints."
+                    }),
+                    &ctx,
+                )
+                .await
+                .unwrap();
+            assert!(result.success);
+            // Rationale defaults to "(none)"
+            let home = crate::config::opencrabs_home();
+            let improvements =
+                std::fs::read_to_string(home.join("rsi").join("improvements.md")).unwrap();
+            assert!(improvements.contains("(none)"));
+        })
+        .await;
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
 
