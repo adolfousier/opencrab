@@ -125,3 +125,26 @@ fn no_anchor_when_runtime_info_absent() {
     assert!(!prompt.contains("Home: "));
     assert!(!prompt.contains("Path expansion:"));
 }
+
+/// Issue #183: the agent hallucinated its version because the system prompt
+/// carried no ground truth. Both Runtime Info render paths must now surface
+/// the compile-time `CARGO_PKG_VERSION` so a direct "what version are you?"
+/// is answerable without the /doctor workaround.
+#[test]
+fn both_render_paths_include_the_binary_version() {
+    let (_dir, loader) = loader();
+    let info = runtime_info_with_collapsed_wd();
+    let version = env!("CARGO_PKG_VERSION");
+
+    let system = loader.build_system_brain(Some(&info), None);
+    assert!(
+        system.contains(&format!("OpenCrabs version: v{version}")),
+        "build_system_brain must surface the running binary's version (#183)"
+    );
+
+    let core = loader.build_core_brain(Some(&info), None);
+    assert!(
+        core.contains(&format!("OpenCrabs version: v{version}")),
+        "build_core_brain (lean prompt) must surface the version too (#183)"
+    );
+}

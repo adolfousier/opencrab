@@ -249,6 +249,13 @@ impl BrainLoader {
                 prompt.push_str(&format!("Working directory: {}\n", wd));
                 push_home_anchor_and_expansion_rule(&mut prompt);
             }
+            // The running binary's version, baked in at compile time. Without
+            // this line the agent has no ground truth and hallucinates its
+            // version when asked (issue #183) — /doctor was only a workaround.
+            prompt.push_str(&format!(
+                "OpenCrabs version: v{}\n",
+                env!("CARGO_PKG_VERSION")
+            ));
             prompt.push_str(&format!("OS: {}\n", std::env::consts::OS));
             prompt.push_str(&format!(
                 "Timestamp: {}\n",
@@ -408,6 +415,13 @@ impl BrainLoader {
                 prompt.push_str(&format!("Working directory: {}\n", wd));
                 push_home_anchor_and_expansion_rule(&mut prompt);
             }
+            // The running binary's version, baked in at compile time — gives
+            // the agent ground truth so it stops hallucinating its version
+            // when asked directly (issue #183; /doctor was only a workaround).
+            prompt.push_str(&format!(
+                "OpenCrabs version: v{}\n",
+                env!("CARGO_PKG_VERSION")
+            ));
             prompt.push_str(&format!("OS: {}\n", std::env::consts::OS));
             prompt.push_str(&format!(
                 "Timestamp: {}\n",
