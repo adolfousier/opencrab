@@ -20,7 +20,8 @@ impl SlashCommandTool {
             Err(e) => return format!("Failed to load config: {}", e),
         };
 
-        let mut lines = vec!["Health Check".to_string(), String::new()];
+        let version = env!("CARGO_PKG_VERSION");
+        let mut lines = vec![format!("Health Check (v{version})"), String::new()];
 
         // Check keys.toml validity
         let keys_path = crate::config::keys_path();
@@ -546,7 +547,8 @@ impl SlashCommandTool {
             Err(e) => return Ok(ToolResult::error(format!("Failed to load config: {}", e))),
         };
 
-        let mut lines = vec!["Health Check".to_string(), String::new()];
+        let version = env!("CARGO_PKG_VERSION");
+        let mut lines = vec![format!("Health Check (v{version})"), String::new()];
 
         // Check keys.toml validity
         let keys_path = crate::config::keys_path();
