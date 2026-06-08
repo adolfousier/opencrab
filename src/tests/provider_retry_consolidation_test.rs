@@ -46,45 +46,6 @@ fn retryable_classification_matches_inherent() {
 }
 
 #[test]
-fn dns_and_connection_failures_classified_as_hard_down() {
-    // reqwest's is_connect() does NOT fire for DNS-resolution failures, so
-    // a domain that went NXDOMAIN got the full 15s patient retry instead of
-    // failing fast (dialagram.me, 2026-06-07). The source-chain message
-    // scan must catch these so a dead host fails fast.
-    use crate::brain::provider::error::looks_like_connection_failure;
-
-    for msg in [
-        "failed to lookup address information: nodename nor servname provided, or not known",
-        "failed to lookup address information: Name or service not known",
-        "dns error: no such host",
-        "could not resolve host: www.dialagram.me",
-        "Connection refused (os error 61)",
-        "Network is unreachable",
-        "No route to host",
-    ] {
-        assert!(
-            looks_like_connection_failure(msg),
-            "should be hard-down: {msg:?}"
-        );
-    }
-
-    // Transient / real-HTTP errors must NOT be misclassified as hard-down
-    // (they deserve the patient retry, not a fast bail).
-    for msg in [
-        "operation timed out",
-        "request timed out",
-        "500 Internal Server Error",
-        "stream ended unexpectedly",
-        "invalid json in response body",
-    ] {
-        assert!(
-            !looks_like_connection_failure(msg),
-            "should NOT be hard-down: {msg:?}"
-        );
-    }
-}
-
-#[test]
 fn retry_after_parses_rate_limit_hint() {
     let e = ProviderError::RateLimitExceeded("retry in 12 seconds".to_string());
     assert_eq!(e.retry_after(), Some(Duration::from_secs(12)));
@@ -131,69 +92,28 @@ fn retry_after_none_when_no_parseable_number() {
     assert_eq!(e.retry_after(), None);
 }
 
-// A test error whose hard-down classification is controllable, so the
-// hard-down cap can be exercised without constructing a real reqwest
-// connection error (flaky / network-dependent).
+// A minimal retryable test error. The hard-down fast-fail was removed
+// (2026-06-08): EVERY retryable error — DNS/connection failures included —
+// now gets the full patient budget. Providers like dialagram (~98.8%
+// uptime) recover within the retry window, so abandoning them after one
+// retry was wrong; a genuinely dead host is bounded by the fallback chain +
+// sticky-fallback threshold instead, not by giving up on the first request.
 #[derive(Debug)]
-struct ClassError {
-    hard_down: bool,
-}
+struct ClassError;
 impl std::fmt::Display for ClassError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "class error (hard_down={})", self.hard_down)
+        write!(f, "class error")
     }
 }
 impl RetryableError for ClassError {
     fn is_retryable(&self) -> bool {
         true
     }
-    fn is_hard_down(&self) -> bool {
-        self.hard_down
-    }
 }
 
 #[tokio::test]
-async fn hard_down_error_is_capped_to_one_quick_retry() {
-    use crate::utils::retry::{HARD_DOWN_MAX_RETRIES, RetryConfig, retry};
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    // Patient config (4 retries) — but a hard-down error must IGNORE it and
-    // cap at HARD_DOWN_MAX_RETRIES so a dead host doesn't burn ~15s before
-    // the fallback chain moves on.
-    let cfg = RetryConfig {
-        max_attempts: 4,
-        initial_delay: Duration::from_millis(1),
-        max_delay: Duration::from_millis(2),
-        backoff_multiplier: 2.0,
-        jitter: 0.0,
-    };
-
-    let calls = Arc::new(AtomicU32::new(0));
-    let c2 = calls.clone();
-    let out: Result<i32, ClassError> = retry(
-        move || {
-            let c = c2.clone();
-            async move {
-                c.fetch_add(1, Ordering::SeqCst);
-                Err(ClassError { hard_down: true })
-            }
-        },
-        &cfg,
-    )
-    .await;
-
-    assert!(out.is_err());
-    // 1 initial try + HARD_DOWN_MAX_RETRIES retries.
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1 + HARD_DOWN_MAX_RETRIES,
-        "hard-down must fail fast: 1 try + {HARD_DOWN_MAX_RETRIES} retry, not the full 4"
-    );
-}
-
-#[tokio::test]
-async fn transient_error_uses_full_patient_budget() {
+async fn every_retryable_error_uses_the_full_patient_budget() {
+    // No error kind is fast-failed any more — DNS/connection blips included.
     use crate::utils::retry::{RetryConfig, retry};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -213,7 +133,7 @@ async fn transient_error_uses_full_patient_budget() {
             let c = c2.clone();
             async move {
                 c.fetch_add(1, Ordering::SeqCst);
-                Err(ClassError { hard_down: false })
+                Err(ClassError)
             }
         },
         &cfg,
@@ -221,11 +141,11 @@ async fn transient_error_uses_full_patient_budget() {
     .await;
 
     assert!(out.is_err());
-    // 1 initial try + 4 retries = full patient budget for a transient error.
+    // 1 initial try + 4 retries = full patient budget; nothing is capped.
     assert_eq!(
         calls.load(Ordering::SeqCst),
         5,
-        "transient errors must use the full 4-retry patient budget"
+        "all retryable errors must use the full 4-retry patient budget"
     );
 }
 

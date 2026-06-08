@@ -227,61 +227,6 @@ impl crate::utils::retry::RetryableError for ProviderError {
         };
         parse_retry_seconds(msg).map(|secs| std::time::Duration::from_secs(secs.min(30)))
     }
-
-    fn is_hard_down(&self) -> bool {
-        // A connection-phase failure means the endpoint refused the
-        // connection, the DNS name didn't resolve, or the host is
-        // unreachable — the host is down, not slow. These don't recover
-        // within a retry window, so the retry loop caps them at one quick
-        // retry and moves on (e.g. to the next provider in the fallback
-        // chain) instead of burning the full patient backoff. Timeouts are
-        // deliberately NOT hard-down: a slow-but-alive host is worth the
-        // patient schedule.
-        let ProviderError::HttpError(e) = self else {
-            return false;
-        };
-        // reqwest's is_connect() is the clean signal, but it does NOT fire
-        // for DNS-resolution failures: a domain that went NXDOMAIN surfaces
-        // as a generic "error sending request for url" whose is_connect() is
-        // false (dialagram.me went NXDOMAIN 2026-06-07 and got the full 15s
-        // patient retry instead of failing fast). Fall back to scanning the
-        // error's source chain for the telltale resolver/connection failure.
-        if e.is_connect() {
-            return true;
-        }
-        let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
-        while let Some(err) = source {
-            if looks_like_connection_failure(&err.to_string()) {
-                return true;
-            }
-            source = err.source();
-        }
-        false
-    }
-}
-
-/// True when an error message looks like a DNS-resolution or
-/// connection-establishment failure (host is down / unreachable), as
-/// opposed to a transient timeout or a real HTTP error. Matched against the
-/// reqwest error source chain because reqwest doesn't flag DNS failures via
-/// `is_connect()`. Lowercased substrings cover the common libc/getaddrinfo
-/// and OS socket error strings across macOS and Linux.
-pub(crate) fn looks_like_connection_failure(msg: &str) -> bool {
-    let m = msg.to_ascii_lowercase();
-    const NEEDLES: &[&str] = &[
-        "dns error",
-        "failed to lookup address",
-        "name or service not known", // Linux getaddrinfo
-        "nodename nor servname",     // macOS getaddrinfo (NXDOMAIN)
-        "no such host",
-        "could not resolve",
-        "name resolution",
-        "connection refused",
-        "network is unreachable",
-        "no route to host",
-        "connection reset",
-    ];
-    NEEDLES.iter().any(|n| m.contains(n))
 }
 
 /// Free wrapper so the `RetryableError` impl can call the inherent

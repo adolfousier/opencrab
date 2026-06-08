@@ -6,13 +6,6 @@ use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// Maximum retries for a "hard-down" error (connection refused, DNS
-/// failure, host unreachable). One quick retry catches a one-off socket
-/// hiccup; beyond that the host isn't accepting connections and the
-/// patient exponential schedule would just waste ~15s before the caller
-/// (e.g. the fallback chain) moves to the next provider.
-pub const HARD_DOWN_MAX_RETRIES: u32 = 1;
-
 /// Trait for errors that can be classified as retryable
 pub trait RetryableError: std::fmt::Display {
     /// Check if this error should be retried
@@ -21,28 +14,6 @@ pub trait RetryableError: std::fmt::Display {
     /// Optional: Extract Retry-After duration if available
     fn retry_after(&self) -> Option<Duration> {
         None
-    }
-
-    /// True when the error means the endpoint is "hard down" — a
-    /// connection refused / DNS resolution failure / host unreachable, as
-    /// opposed to a transient timeout, 5xx, or rate limit. Hard-down
-    /// errors get at most `HARD_DOWN_MAX_RETRIES` retries (fail fast and
-    /// move on) instead of the full patient backoff, because a dead host
-    /// won't come back within the retry window. Default false — most
-    /// error kinds are treated as transient.
-    fn is_hard_down(&self) -> bool {
-        false
-    }
-}
-
-/// Effective retry ceiling for the error at hand: capped at
-/// `HARD_DOWN_MAX_RETRIES` when the error is hard-down, otherwise the
-/// configured `max_attempts`.
-fn effective_max_attempts<E: RetryableError>(err: &E, config: &RetryConfig) -> u32 {
-    if err.is_hard_down() {
-        config.max_attempts.min(HARD_DOWN_MAX_RETRIES)
-    } else {
-        config.max_attempts
     }
 }
 
@@ -192,20 +163,15 @@ where
                     return Err(err);
                 }
 
-                // Hard-down errors (connect refused / DNS fail) get capped
-                // to one quick retry; transient errors get the full budget.
-                let max = effective_max_attempts(&err, config);
-                if attempt >= max {
-                    if err.is_hard_down() {
-                        tracing::warn!(
-                            "Endpoint hard-down after {} retr{} — giving up fast: {}",
-                            max,
-                            if max == 1 { "y" } else { "ies" },
-                            err
-                        );
-                    } else {
-                        tracing::warn!("Max retry attempts ({}) exceeded", max);
-                    }
+                // Every retryable error gets the full patient backoff. We do
+                // NOT fast-fail DNS/connection errors: real providers recover
+                // within the retry window (e.g. dialagram, ~98.8% uptime), and
+                // bailing after one retry abandoned the user's chosen provider
+                // for a transient blip. A genuinely dead host is bounded by the
+                // fallback chain + sticky-fallback threshold instead — not by
+                // giving up on the very first request.
+                if attempt >= config.max_attempts {
+                    tracing::warn!("Max retry attempts ({}) exceeded", config.max_attempts);
                     return Err(last_error.unwrap_or(err));
                 }
 
@@ -223,7 +189,7 @@ where
                 tracing::info!(
                     "Retry attempt {}/{} after {}ms for error: {}",
                     attempt + 1,
-                    max,
+                    config.max_attempts,
                     delay.as_millis(),
                     err
                 );
@@ -272,20 +238,15 @@ where
                     tracing::debug!("Error is not retryable: {}", err);
                     return Err(err);
                 }
-                // Hard-down errors (connect refused / DNS fail) get capped
-                // to one quick retry; transient errors get the full budget.
-                let max = effective_max_attempts(&err, config);
-                if attempt >= max {
-                    if err.is_hard_down() {
-                        tracing::warn!(
-                            "Endpoint hard-down after {} retr{} — giving up fast: {}",
-                            max,
-                            if max == 1 { "y" } else { "ies" },
-                            err
-                        );
-                    } else {
-                        tracing::warn!("Max retry attempts ({}) exceeded", max);
-                    }
+                // Every retryable error gets the full patient backoff. We do
+                // NOT fast-fail DNS/connection errors: real providers recover
+                // within the retry window (e.g. dialagram, ~98.8% uptime), and
+                // bailing after one retry abandoned the user's chosen provider
+                // for a transient blip. A genuinely dead host is bounded by the
+                // fallback chain + sticky-fallback threshold instead — not by
+                // giving up on the very first request.
+                if attempt >= config.max_attempts {
+                    tracing::warn!("Max retry attempts ({}) exceeded", config.max_attempts);
                     return Err(last_error.unwrap_or(err));
                 }
 
@@ -296,12 +257,12 @@ where
                 tracing::info!(
                     "Retry attempt {}/{} after {}ms for error: {}",
                     attempt + 1,
-                    max,
+                    config.max_attempts,
                     delay.as_millis(),
                     err
                 );
                 // Surface the upcoming retry to the caller (UI, metrics, …).
-                on_retry(attempt + 1, max, &err);
+                on_retry(attempt + 1, config.max_attempts, &err);
 
                 last_error = Some(err);
                 sleep(delay).await;
