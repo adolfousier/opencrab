@@ -1870,9 +1870,6 @@ impl App {
                 provider_arc.clone(),
                 actual_model.clone(),
             );
-            // Mark this as a USER switch so an in-flight turn's automatic
-            // fallback can't clobber it — the pick must take effect next turn.
-            self.agent_service.mark_manual_switch(session_id);
 
             // Update context_max_tokens to reflect the new provider's context window.
             // Without this, the footer shows stale values (e.g., 128k) after switching
