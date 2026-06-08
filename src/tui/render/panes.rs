@@ -1,5 +1,6 @@
 //! Split pane rendering — draws pane borders, labels, and delegates chat rendering.
 
+use super::utils::wrap_line_with_padding;
 use crate::tui::app::{App, DisplayMessage};
 use crate::tui::pane::PaneId;
 use ratatui::{
@@ -74,11 +75,11 @@ pub(super) fn render_inactive_pane(f: &mut Frame, app: &App, pane_id: PaneId, ar
         .session_id
         .and_then(|sid| app.pane_message_cache.get(&sid));
 
-    let mut lines: Vec<Line> = Vec::new();
+    let mut lines: Vec<Line<'static>> = Vec::new();
 
     if let Some(messages) = cached {
         for msg in messages {
-            render_simple_message(&mut lines, msg);
+            render_simple_message(&mut lines, msg, inner.width as usize);
         }
     }
 
@@ -89,7 +90,7 @@ pub(super) fn render_inactive_pane(f: &mut Frame, app: &App, pane_id: PaneId, ar
     // even when the inactive pane has accumulated several rounds.
     if let Some(bg) = live {
         for msg in &bg.pending_messages {
-            render_simple_message(&mut lines, msg);
+            render_simple_message(&mut lines, msg, inner.width as usize);
         }
     }
 
@@ -167,7 +168,7 @@ pub(super) fn render_inactive_pane(f: &mut Frame, app: &App, pane_id: PaneId, ar
 }
 
 /// Render a single message in simplified form for inactive panes.
-fn render_simple_message(lines: &mut Vec<Line<'_>>, msg: &DisplayMessage) {
+fn render_simple_message(lines: &mut Vec<Line<'static>>, msg: &DisplayMessage, width: usize) {
     // Skip system messages
     if msg.role == "system" || msg.role == "history_marker" {
         return;
@@ -200,11 +201,6 @@ fn render_simple_message(lines: &mut Vec<Line<'_>>, msg: &DisplayMessage) {
     }
 
     let is_assistant = msg.role == "assistant";
-    let (prefix, color) = match msg.role.as_str() {
-        "user" => ("> ", Color::Cyan),
-        "assistant" => ("", Color::Reset),
-        _ => ("", Color::DarkGray),
-    };
 
     // Strip reasoning/tool-marker blocks from content
     let mut content = msg.content.clone();
@@ -251,12 +247,29 @@ fn render_simple_message(lines: &mut Vec<Line<'_>>, msg: &DisplayMessage) {
         return;
     }
 
-    for (i, line) in content.lines().enumerate() {
-        let p = if i == 0 { prefix } else { "" };
-        lines.push(Line::from(Span::styled(
-            format!("{}{}", p, line),
-            Style::default().fg(color),
-        )));
+    // User input is shown verbatim (wrapped) so literal `*` or `_` chars in a
+    // prompt aren't mangled by the markdown parser. Assistant (and any other)
+    // content goes through the same markdown pipeline as the focused pane, then
+    // gets wrapped to the pane width. Without this the inactive pane dumped raw
+    // text: `**bold**` markers leaked through as literal asterisks and long
+    // lines were hard-truncated at the border instead of wrapping (#180).
+    if msg.role == "user" {
+        for (i, raw) in content.lines().enumerate() {
+            let prefix = if i == 0 { "> " } else { "" };
+            let line = Line::from(Span::styled(
+                format!("{}{}", prefix, raw),
+                Style::default().fg(Color::Cyan),
+            ));
+            for wrapped in wrap_line_with_padding(line, width, "  ") {
+                lines.push(wrapped);
+            }
+        }
+    } else {
+        for line in crate::tui::markdown::parse_markdown(&content, width) {
+            for wrapped in wrap_line_with_padding(line, width, "") {
+                lines.push(wrapped);
+            }
+        }
     }
     lines.push(Line::from(""));
 }
