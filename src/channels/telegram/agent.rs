@@ -303,26 +303,34 @@ impl TelegramAgent {
                                     let rows: Vec<Vec<InlineKeyboardButton>> = resp
                                         .models
                                         .iter()
-                                        .map(|m| {
+                                        .enumerate()
+                                        .map(|(i, m)| {
                                             let display = if *m == resp.current_model {
                                                 format!("✓ {}", m)
                                             } else {
                                                 m.clone()
                                             };
-                                            vec![InlineKeyboardButton::callback(
-                                                display,
-                                                // Pipe separator because BOTH provider_name and
-                                                // model can contain `:` — custom providers
-                                                // are `custom:<name>` (e.g. `custom:dialagram`)
-                                                // and OpenRouter models carry `:free`/`:thinking`
-                                                // suffixes. Splitting on `:` here put the
-                                                // provider's tail into the model name and the
-                                                // session got persisted with broken metadata
-                                                // (`provider=custom`, `model=dialagram:qwen-3.7-…`
-                                                // — seen 2026-05-18T23:39 sync_provider trace).
-                                                // Generator + parser MUST stay in lock-step.
-                                                format!("model:{}|{}", resp.provider_name, m),
-                                            )]
+                                            // Pipe separator because BOTH provider_name and
+                                            // model can contain `:` — custom providers
+                                            // are `custom:<name>` (e.g. `custom:dialagram`)
+                                            // and OpenRouter models carry `:free`/`:thinking`
+                                            // suffixes. Splitting on `:` here put the
+                                            // provider's tail into the model name and the
+                                            // session got persisted with broken metadata
+                                            // (`provider=custom`, `model=dialagram:qwen-3.7-…`
+                                            // — seen 2026-05-18T23:39 sync_provider trace).
+                                            // Generator + parser MUST stay in lock-step.
+                                            // Telegram caps callback_data at 64 BYTES. Long model
+                                            // names (e.g. modelscope's
+                                            // "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" → 65 B)
+                                            // overflow, and Telegram then rejects the ENTIRE
+                                            // keyboard (BUTTON_DATA_INVALID) — the picker showed
+                                            // nothing and spun on "loading" forever. This helper
+                                            // falls back to an index form the parser resolves.
+                                            let data = crate::channels::commands::model_button_callback_data(
+                                                &resp.provider_name, m, i,
+                                            );
+                                            vec![InlineKeyboardButton::callback(display, data)]
                                         })
                                         .collect();
                                     let keyboard = InlineKeyboardMarkup::new(rows);
@@ -342,11 +350,28 @@ impl TelegramAgent {
                             // OpenRouter-style model suffix (`:free`, `:thinking`)
                             // don't fold into each other on parse.
                             if let Some(rest) = data.strip_prefix("model:") {
-                                let (provider_name, model_name) = if let Some((p, m)) = rest.split_once('|') {
+                                let (provider_name, model_token) = if let Some((p, m)) = rest.split_once('|') {
                                     (Some(p), m)
                                 } else {
                                     (None, rest)
                                 };
+                                // An index-encoded button (model:<provider>|#<i>) — the
+                                // generator falls back to this when the literal model name
+                                // would overflow Telegram's 64-byte callback_data. Resolve
+                                // it back to the name via the same config list. Plain names
+                                // (short models, other callers) pass through unchanged.
+                                let resolved_owned: Option<String> =
+                                    match (provider_name, model_token.strip_prefix('#')) {
+                                        (Some(pname), Some(idx)) => idx
+                                            .parse::<usize>()
+                                            .ok()
+                                            .and_then(|i| {
+                                                crate::channels::commands::model_at_index(pname, i)
+                                            }),
+                                        _ => None,
+                                    };
+                                let model_name: &str =
+                                    resolved_owned.as_deref().unwrap_or(model_token);
                                 // Resolve session BEFORE the provider swap so the swap
                                 // lands on the right per-session slot. Leaving the
                                 // resolve below the swap (as it was) made the provider

@@ -900,6 +900,44 @@ fn provider_config_models(config: &crate::config::Config, name: &str) -> Vec<Str
         .unwrap_or_default()
 }
 
+/// Build the Telegram `callback_data` for a model button, guaranteed to fit
+/// Telegram's 64-byte limit. Uses the literal `model:<provider>|<name>` when
+/// it fits (short names — most providers), else the compact index form
+/// `model:<provider>|#<index>`, which [`model_at_index`] resolves back. The
+/// generator (telegram/agent.rs) and the parser MUST agree on this format.
+pub fn model_button_callback_data(provider_name: &str, model: &str, index: usize) -> String {
+    let literal = format!("model:{provider_name}|{model}");
+    if literal.len() <= 64 {
+        literal
+    } else {
+        format!("model:{provider_name}|#{index}")
+    }
+}
+
+/// Resolve a model-picker button's index back to its model name using ONLY
+/// config (no live fetch), matching the list `models_for_provider` renders
+/// for custom/OpenRouter providers.
+///
+/// The Telegram model picker can't carry long model names in `callback_data`
+/// — Telegram caps it at 64 bytes, and a name like
+/// `deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B` pushes
+/// `model:custom:modelscope|<name>` to 65 bytes, which makes Telegram reject
+/// the WHOLE inline keyboard (BUTTON_DATA_INVALID) so the picker silently
+/// renders nothing. The button encodes the index instead; this resolves it.
+pub fn model_at_index(provider_name: &str, index: usize) -> Option<String> {
+    let config = crate::config::Config::load().ok()?;
+    let models = provider_config_models(&config, provider_name);
+    if !models.is_empty() {
+        return models.get(index).cloned();
+    }
+    // Custom branch uses `[default_model]` when the models list is empty.
+    if index == 0 {
+        return crate::utils::providers::config_for(&config.providers, provider_name)
+            .and_then(|c| c.default_model.clone());
+    }
+    None
+}
+
 pub fn provider_display_name(name: &str) -> &str {
     crate::utils::providers::display_name(name)
 }
