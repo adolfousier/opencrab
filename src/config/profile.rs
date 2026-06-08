@@ -20,7 +20,6 @@
 //! label that doesn't exist anywhere. Named profiles always show up;
 //! the base directory stays unannotated.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,14 +32,8 @@ use serde::{Deserialize, Serialize};
 /// Global active profile name. Set once at startup before anything calls `opencrabs_home()`.
 static ACTIVE_PROFILE: OnceLock<Option<String>> = OnceLock::new();
 
-thread_local! {
-    /// Per-thread override for the profile home. Set only for the brief,
-    /// SYNCHRONOUS span where we materialize a foreign profile's config + brain
-    /// so a cron job runs under the profile it was created in, not the process
-    /// profile (#182). `resolve_profile_home()` consults this BEFORE the global
-    /// `ACTIVE_PROFILE`. It is never held across an `.await`, so it cannot bleed
-    /// from one async task into another.
-    static PROFILE_HOME_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+tokio::task_local! {
+    static PROFILE_HOME_OVERRIDE: PathBuf;
 }
 
 /// Resolve the home directory for an explicit profile name, WITHOUT reading the
@@ -56,25 +49,32 @@ pub fn home_for_profile(name: Option<&str>) -> PathBuf {
     }
 }
 
-/// Run `f` with the profile home temporarily pointed at `profile`'s directory.
+/// Run an async future with the profile home pointed at `profile`'s directory.
 ///
-/// `f` MUST be synchronous — no `.await` inside. The override is a thread-local,
-/// and tokio can migrate a task to a different thread at any await point, so an
-/// override held across `.await` would silently stop applying (or leak into an
-/// unrelated task). We only use this to materialize a profile's `Config` and
-/// brain string, both of which are synchronous loads. The drop guard clears the
-/// override even if `f` panics.
-pub fn with_profile_home<T>(profile: Option<&str>, f: impl FnOnce() -> T) -> T {
-    struct Guard;
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            PROFILE_HOME_OVERRIDE.with(|cell| *cell.borrow_mut() = None);
-        }
-    }
+/// The override is a `tokio::task_local!`, so it lives for the entire duration
+/// of `fut` including across every `.await`. It is scoped to this one tokio task
+/// only, it never leaks to sibling tasks or other jobs on the scheduler. Every
+/// call to `opencrabs_home()` / `resolve_profile_home()` inside `fut` (including
+/// deep inside tools like memory writes, config reads, brain file ops) resolves
+/// to the correct profile home.
+pub async fn with_profile_home_async<F, T>(profile: Option<&str>, fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
     let home = home_for_profile(profile);
-    PROFILE_HOME_OVERRIDE.with(|cell| *cell.borrow_mut() = Some(home));
-    let _guard = Guard;
-    f()
+    PROFILE_HOME_OVERRIDE.scope(home, fut).await
+}
+
+/// Run a sync closure with the profile home pointed at `profile`'s directory.
+///
+/// Convenience wrapper for synchronous loads (Config::load(), BrainLoader, etc.)
+/// that don't have an async context. Internally blocks on the task-local scope.
+pub fn with_profile_home<T>(profile: Option<&str>, f: impl FnOnce() -> T) -> T {
+    let home = home_for_profile(profile);
+    // Use a minimal tokio runtime to host the task-local scope for sync callers.
+    // This is only used for initial config/brain materialization before the
+    // async agent runs.
+    PROFILE_HOME_OVERRIDE.sync_scope(home, f)
 }
 
 /// Set the active profile. Must be called before any `opencrabs_home()` call.
@@ -94,11 +94,15 @@ pub fn active_profile() -> Option<&'static str> {
 ///
 /// - `None` / `"default"` → `~/.opencrabs/`
 /// - `"hermes"` → `~/.opencrabs/profiles/hermes/`
+///
+/// A task-local override wins when set (cron job running under a foreign
+/// profile, #182). It persists across every `.await` inside the task, so
+/// all tool calls during agent execution see the right home.
 pub fn resolve_profile_home() -> PathBuf {
-    // A scoped override wins — set while materializing a foreign profile's
-    // config/brain for a cron job (#182). Synchronous-only, never held across an
-    // await, so it cannot bleed between tasks.
-    if let Some(home) = PROFILE_HOME_OVERRIDE.with(|cell| cell.borrow().clone()) {
+    // Task-local override: set by with_profile_home_async() for the entire
+    // lifetime of a cron job's tokio task. Every opencrabs_home() call inside
+    // tools (memory writes, config reads, file ops) resolves here first.
+    if let Ok(home) = PROFILE_HOME_OVERRIDE.try_with(|h| h.clone()) {
         return home;
     }
 

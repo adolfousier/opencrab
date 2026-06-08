@@ -262,7 +262,31 @@ impl CronScheduler {
                 let ctx = self.service_context.clone();
                 let run_repo = self.run_repo.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await {
+                    // For foreign-profile jobs, wrap the ENTIRE execution in a
+                    // task-local profile home scope. This means every tool call
+                    // the agent makes (memory writes, config reads, file ops,
+                    // brain reads) resolves to the job's profile home, not the
+                    // process profile. The scope lives until the task ends, so
+                    // it persists across every .await inside the agent loop.
+                    let profile = job.profile_name.as_deref();
+                    let active = crate::config::profile::active_profile().unwrap_or("default");
+                    let needs_scope = profile.is_some() && profile != Some(active);
+
+                    let result = if needs_scope {
+                        crate::config::profile::with_profile_home_async(profile, async {
+                            tracing::info!(
+                                "Cron job '{}' — task-local profile home set to {:?}",
+                                job.name,
+                                crate::config::opencrabs_home()
+                            );
+                            execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await
+                        })
+                        .await
+                    } else {
+                        execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await
+                    };
+
+                    if let Err(e) = result {
                         tracing::error!("Cron job '{}' failed: {e}", job.name);
                     }
                 });
@@ -317,15 +341,10 @@ impl CronScheduler {
 /// Resolve the `(Config, AgentService)` a job should run with.
 ///
 /// Jobs created in the active profile (and legacy unstamped jobs) use the
-/// already-wired factory agent — the common path, no extra work. A job stamped
-/// with a DIFFERENT profile (which happens when profiles share a database, #182)
-/// gets its own config + brain materialized from that profile's home, so it runs
-/// under the brain, config, keys, and working dir it was created with instead of
-/// the process profile's. The shared DB pool (`ServiceContext`) is reused — that
-/// pool is exactly why the foreign job is visible to this scheduler at all.
-///
-/// Tools are shared from the factory registry: dispatch is profile-agnostic and
-/// the per-call `config` we pass drives profile-specific behaviour.
+/// already-wired factory agent. A job stamped with a DIFFERENT profile
+/// (shared-DB case, #182) gets its own config + brain + provider built from
+/// that profile's home. The shared DB pool is reused since that's exactly why
+/// the foreign job is visible to this scheduler at all.
 async fn resolve_job_agent(
     job: &CronJob,
     factory: &ChannelFactory,
@@ -345,9 +364,8 @@ async fn resolve_job_agent(
         active
     );
 
-    // Materialize the foreign profile's config + brain under a scoped home
-    // override. Both loads are synchronous, so the thread-local override is
-    // cleared before any `.await` and cannot leak into another task.
+    // Materialize config + brain from the foreign profile's home.
+    // with_profile_home sets a sync scope just for these two loads.
     let (config, brain, home) = crate::config::profile::with_profile_home(profile, || {
         let config = Config::load()?;
         let home = crate::config::opencrabs_home();
@@ -356,7 +374,7 @@ async fn resolve_job_agent(
         anyhow::Ok((config, brain, home))
     })?;
 
-    // Provider is built from the foreign profile's keys, not the process ones.
+    // Provider is built from the foreign profile's keys.
     let provider = crate::brain::provider::create_provider(&config).await?;
     let mut builder = crate::brain::agent::AgentService::new(provider, ctx.clone(), &config)
         .await
