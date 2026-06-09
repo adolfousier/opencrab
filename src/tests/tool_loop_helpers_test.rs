@@ -22,8 +22,8 @@
 //! `src/tests/`) keeps the test surface flat.
 
 use crate::brain::agent::service::tool_loop::{
-    build_tool_result_content, extract_path_for_recent_buffer, is_user_correction,
-    strip_ansi_output,
+    build_tool_result_content, extract_path_for_recent_buffer, is_implausible_token_report,
+    is_user_correction, strip_ansi_output,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -383,4 +383,47 @@ fn build_tool_result_failure_no_truncation_for_small_output() {
 fn build_tool_result_failure_default_error_message() {
     let content = build_tool_result_content(false, None, "some output");
     assert!(content.contains("Tool execution failed"));
+}
+
+// Sanity guard against a provider/proxy that over-reports input_tokens.
+// The zhipu "coding" endpoint added a flat ~20k to every call's reported
+// input regardless of content size (a fixed additive overhead, not a
+// tokenizer ratio): an 8.4k-token request came back reported as 28.8k, which
+// the ctx counter trusted and inflated to 28k for a one-word "yes" reply.
+// The guard keeps the local estimate when the provider's number is >2× the
+// real content size (system + messages + tool schemas).
+
+#[test]
+fn over_reporting_provider_is_rejected() {
+    // The exact observed shape: ~8.4k real content, provider claims 28.8k.
+    assert!(
+        is_implausible_token_report(8439, 0, 28775),
+        "a 3.4× over-report (the zhipu '+20k' inflation) must be rejected"
+    );
+    // Even when the inflation is a smaller ratio on a bigger request, >2× still trips.
+    assert!(is_implausible_token_report(10000, 0, 21000));
+}
+
+#[test]
+fn legitimate_usage_is_trusted() {
+    // Real tokenizer differences stay within ~2× — must be accepted.
+    assert!(
+        !is_implausible_token_report(8439, 0, 11000),
+        "a 1.3× tokenizer difference is normal and must be trusted"
+    );
+    // Tool schemas legitimately inflate the provider's count beyond the
+    // system+messages estimate — that overhead is expected, not over-reporting.
+    assert!(
+        !is_implausible_token_report(8000, 12000, 26000),
+        "system+messages(8k) + tool schemas(12k) → ~20k expected; 26k is within 2× and must be trusted"
+    );
+    // Exactly 2× is the boundary — trusted (must EXCEED 2× to reject).
+    assert!(!is_implausible_token_report(5000, 0, 10000));
+}
+
+#[test]
+fn tiny_requests_are_never_rejected() {
+    // Below the 1000-token floor the ratio is noise — never reject (a fresh
+    // session's first tiny turn shouldn't trip the guard).
+    assert!(!is_implausible_token_report(200, 0, 5000));
 }

@@ -19,6 +19,25 @@ use uuid::Uuid;
 /// times consecutively successfully, the 4th it sticks".
 const STICKY_FALLBACK_THRESHOLD: u32 = 4;
 
+/// True when a provider's reported `input_tokens` is implausibly larger than
+/// the real content size (system + messages + tool schemas) — the signature of
+/// an OVER-REPORTING endpoint. The zhipu "coding" endpoint was observed adding
+/// a flat ~20k to every call's reported input regardless of content size (a
+/// fixed additive overhead, not a tokenizer ratio): an 8.4k request came back
+/// as 28.8k. tiktoken and any real model tokenizer agree within ~2× for normal
+/// text, so beyond that we don't trust the provider's number for calibrating
+/// the ctx counter (and the billed-cost display). `local_estimate` is the
+/// pre-calibration `context.token_count` (system + messages); `tool_tokens` is
+/// the tool-schema size the provider also receives but the local estimate omits.
+pub(crate) fn is_implausible_token_report(
+    local_estimate: usize,
+    tool_tokens: usize,
+    reported: usize,
+) -> bool {
+    let expected = local_estimate + tool_tokens;
+    expected >= 1000 && reported > expected.saturating_mul(2)
+}
+
 /// Minimum summed active-streaming time (seconds) below which a tok/s
 /// reading is not credible. Burst-delivering providers (e.g. glm-5.1)
 /// can dump an entire short response in a single sub-second SSE chunk,
@@ -2623,13 +2642,44 @@ impl AgentService {
                 if real_message_tokens >= min_sane && real_message_tokens >= min_after_drop {
                     let drift = (context.token_count as f64 - real_message_tokens as f64).abs();
                     if drift > 5000.0 {
-                        tracing::info!(
-                            "Token calibration: estimated {} → API actual {} (drift: {:.0})",
+                        // Sanity guard against a provider/proxy that OVER-REPORTS usage.
+                        // tiktoken and any real model tokenizer agree within ~2× for normal
+                        // text, so a reported input more than 2× the real content size
+                        // (system + tool schemas + messages) is the endpoint inflating the
+                        // count — observed as a flat ~20k additive overhead on EVERY call
+                        // from one fallback endpoint (zhipu "coding"). Trusting it blows up
+                        // the ctx counter and the billed-cost display. Keep the local
+                        // estimate instead, and make the anomaly visible. Mirrors the
+                        // cumulative-inflation guard already on the CLI calibration path.
+                        let tool_tokens = self.actual_tool_schema_tokens();
+                        let expected = context.token_count + tool_tokens;
+                        if is_implausible_token_report(
                             context.token_count,
+                            tool_tokens,
                             real_message_tokens,
-                            drift,
-                        );
-                        context.token_count = real_message_tokens;
+                        ) {
+                            tracing::warn!(
+                                "Token usage REJECTED: provider '{}' reported {} input tokens, but \
+                                 the real content is ~{} ({} system+messages + {} tool schemas) — \
+                                 {}× over. Endpoint is over-reporting; keeping local estimate {} so \
+                                 the ctx counter and cost stay accurate.",
+                                self.provider_for_session(session_id).name(),
+                                api_input,
+                                expected,
+                                context.token_count,
+                                tool_tokens,
+                                real_message_tokens / expected.max(1),
+                                context.token_count,
+                            );
+                        } else {
+                            tracing::info!(
+                                "Token calibration: estimated {} → API actual {} (drift: {:.0})",
+                                context.token_count,
+                                real_message_tokens,
+                                drift,
+                            );
+                            context.token_count = real_message_tokens;
+                        }
                     }
                 } else if real_message_tokens > 0 && real_message_tokens < min_sane {
                     tracing::warn!(
