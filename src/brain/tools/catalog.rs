@@ -15,6 +15,20 @@
 /// agent can always reach for additional tools.
 pub const TOOL_SEARCH_NAME: &str = "tool_search";
 
+/// System-prompt note appended when `lazy_tools` is on. Tells the model it has
+/// a core set and must call `tool_search` for anything else, so it doesn't
+/// assume a capability is missing and give up. Shared across the TUI and CLI
+/// entry points so the guidance stays in one place.
+pub const LAZY_TOOLS_PROMPT: &str = "\n\n--- Tool Access ---\n\
+    You have a CORE set of tools always available (file read/write/edit, bash, ls/glob/grep, \
+    web/exa/memory search, task/context/plan, http, the brain-file loader, config, session). \
+    You do NOT see every tool by default. For anything else — browsing or clicking web pages, \
+    sending channel messages (Telegram/Discord/Slack/WhatsApp), spawning sub-agents or teams, \
+    generating or analyzing images/video, cron jobs, self-improvement/rebuild/evolve — call \
+    `tool_search` FIRST with a short description of what you need. It returns the exact tool's \
+    schema and makes it callable for the rest of the session. NEVER say you can't do something \
+    before searching for the tool.\n";
+
 /// Fundamental tools injected on EVERY request. Chosen to cover almost any
 /// task without a discovery round-trip: file I/O, shell, the common searches,
 /// core workflow/orchestration, the brain-file loader, and config/session

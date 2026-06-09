@@ -3,6 +3,32 @@
 This file is for tool routing rules and pointers. Tool params, search/GitHub/browser routing,
 and RSI instructions are already in the system prompt — don't duplicate them here.
 
+## Tool Access — core set + on-demand discovery
+
+When `[agent] lazy_tools = true`, only the CORE tools ship in every request; everything else is
+pulled on demand with `tool_search` (keeps a tool-light turn from carrying ~20k tokens of unused
+schemas). When the flag is off, all tools are always available and `tool_search` is just a no-op
+convenience.
+
+**Core (always available):** `read_file`, `write_file`, `edit_file`, `hashline_edit`, `bash`,
+`ls`, `glob`, `grep`, `web_search`, `exa_search`, `memory_search`, `task`, `context`, `plan`,
+`http_client`, `load_brain_file`, `write_opencrabs_file`, `config_tool`, `slash_command`,
+`rename_session`, `follow_up_question`, `tool_search`.
+
+**Extended (call `tool_search("…")` to discover + activate):**
+
+| Category | What it covers | Example query |
+|----------|----------------|---------------|
+| `browser` | navigate / click / type / screenshot / eval on live pages | "click a button on a web page" |
+| `channels` | Telegram / Discord / Slack / WhatsApp / Trello — send + connect | "send a telegram photo" |
+| `agents` | spawn / wait / send-input / close / resume sub-agents, teams | "spawn a sub-agent" |
+| `media` | generate / analyze images, analyze video, provider vision | "generate an image" |
+| `system` | feedback_record/analyze, self_improve, rebuild, evolve, tool_manage, rsi_proposals | "rebuild from source" |
+| `utility` | cron_manage, session_search, channel_search, a2a_send | "create a cron job" |
+
+Rule: if a task needs a non-core tool, call `tool_search` with a plain-words description FIRST —
+never assume the capability is missing before searching.
+
 ## What belongs here
 
 - Skill pointers (what/where to load on demand)

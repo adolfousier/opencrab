@@ -358,17 +358,7 @@ async fn cmd_chat_inner(
     // capability is missing. Without this nudge the model can give up on a task
     // whose tool simply wasn't injected.
     if config.agent.lazy_tools {
-        system_brain.push_str(
-            "\n\n--- Tool Access ---\n\
-             You have a CORE set of tools always available (file read/write/edit, bash, ls/glob/grep, \
-             web/exa/memory search, task/context/plan, http, the brain-file loader, config, session). \
-             You do NOT see every tool by default. For anything else — browsing or clicking web pages, \
-             sending channel messages (Telegram/Discord/Slack/WhatsApp), spawning sub-agents or teams, \
-             generating or analyzing images/video, cron jobs, self-improvement/rebuild/evolve — call \
-             `tool_search` FIRST with a short description of what you need. It returns the exact tool's \
-             schema and makes it callable for the rest of the session. NEVER say you can't do something \
-             before searching for the tool.\n",
-        );
+        system_brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
     }
 
     // Propagate persisted auto-always approval policy to the agent service so
