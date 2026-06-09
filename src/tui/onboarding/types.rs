@@ -300,13 +300,7 @@ pub const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
         id: "xiaomi",
         name: "Xiaomi MiMo",
-        models: &[
-            "mimo-v2.5-pro",
-            "mimo-v2-pro",
-            "mimo-v2.5",
-            "mimo-v2-omni",
-            "mimo-v2-flash",
-        ],
+        models: &[], // Fetched live from the proxy's /v1/models (chat models only)
         key_label: "",
         help_lines: &[
             "Free during the opencrabs x Xiaomi launch (no API key needed)",

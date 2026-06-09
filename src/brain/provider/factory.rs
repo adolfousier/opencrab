@@ -1063,11 +1063,30 @@ fn try_create_xiaomi(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         }
     };
 
-    tracing::info!("Using Xiaomi at: {base_url}");
-    let provider = configure_openai_compatible(
-        OpenAIProvider::with_base_url(api_key, base_url).with_name("xiaomi"),
-        xiaomi_config,
-    );
+    // Thinking is ON by default — Xiaomi streams reasoning_content and the API
+    // defaults to thinking enabled. Only disable it when the user opts out with
+    // enable_thinking = false in [providers.xiaomi]; Xiaomi's switch is
+    // {"thinking": {"type": "disabled"}} in the request body.
+    let enable_thinking = xiaomi_config.enable_thinking.unwrap_or(true);
+    tracing::info!("Using Xiaomi at: {base_url} (thinking: {enable_thinking})");
+    let mut builder = OpenAIProvider::with_base_url(api_key, base_url).with_name("xiaomi");
+    if !enable_thinking {
+        builder = builder.with_body_transform(Arc::new(|mut body| {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert(
+                    "thinking".to_string(),
+                    serde_json::json!({ "type": "disabled" }),
+                );
+            }
+            body
+        }));
+    }
+
+    // Caching: Xiaomi caches prompt prefixes automatically (server-side, surfaced
+    // via prompt_tokens_details) — there is no request-side cache parameter, so
+    // we deliberately do NOT set cache_enabled (which would send an
+    // OpenRouter/Anthropic-style cache_control Xiaomi doesn't accept).
+    let provider = configure_openai_compatible(builder, xiaomi_config);
     Ok(Some(Arc::new(provider)))
 }
 

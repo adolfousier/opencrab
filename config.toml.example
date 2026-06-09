@@ -22,13 +22,19 @@
 # installs — new users land almost straight in chat.
 #
 # After the cutoff, set your own key in keys.toml ([providers.xiaomi] api_key).
-# Get one at https://platform.xiaomimimo.com
+#
+# Models are fetched live from the proxy's /v1/models (chat models only), so the
+# /models picker always shows what's actually available. The list below is just
+# an offline fallback. Thinking is ON by default (the model streams its
+# reasoning); set enable_thinking = false to turn it off. Prompt caching is
+# automatic server-side — nothing to configure.
 [providers.xiaomi]
 enabled = true
 base_url = "https://xiaomi-collab.opencrabs.com/v1/chat/completions"
 default_model = "mimo-v2.5-pro"
 models = ["mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-flash"]
 context_window = 1000000
+# enable_thinking = false  # uncomment to disable the model's reasoning output
 
 # ========================================
 # Ollama Provider (Local + Cloud)
