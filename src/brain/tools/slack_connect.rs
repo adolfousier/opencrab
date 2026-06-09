@@ -160,7 +160,8 @@ impl Tool for SlackConnectTool {
             channel_msg_repo,
         );
 
-        let _handle = sl_agent.start(bot_token, app_token);
+        // Detached background task; the bot runs until the process exits.
+        sl_agent.start(bot_token, app_token);
 
         // Wait for the bot to connect (SlackAgent sets slack_state on connect)
         let timeout = Duration::from_secs(30);

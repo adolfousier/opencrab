@@ -220,8 +220,10 @@ impl Tool for SpawnAgentTool {
         // Prepend agent type system prompt to the user's task
         let full_prompt = format!("{}\n\n{}", agent_type.system_prompt(), prompt);
 
-        // Create the status file in Pending state before spawning.
-        let _agent_status = AgentStatus::new(
+        // Create the status file in Pending state before spawning. new()
+        // writes the file; we don't need the returned handle, but we do
+        // propagate any write error.
+        let _ = AgentStatus::new(
             &agent_id,
             &label,
             &child_session_id.to_string(),

@@ -283,8 +283,9 @@ mod fallback_runtime {
         let fb1 = Arc::new(MockProvider::always_succeed("fallback1"));
         let provider = FallbackProvider::new(primary, vec![fb1]);
 
-        // Should not error — fallback stream succeeds
-        let _stream = provider.stream(mock_request()).await.unwrap();
+        // The assertion is the unwrap: the fallback stream must succeed. The
+        // stream itself is must_use, so discard it explicitly.
+        let _ = provider.stream(mock_request()).await.unwrap();
     }
 
     #[tokio::test]

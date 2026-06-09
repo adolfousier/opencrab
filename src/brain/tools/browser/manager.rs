@@ -1244,7 +1244,7 @@ mod tests {
 
     #[test]
     fn test_detect_default_browser_id() {
-        // Just ensure it doesn't panic — result depends on system config
-        let _id = detect_default_browser_id();
+        // Just ensure it doesn't panic; the result depends on system config.
+        let _ = detect_default_browser_id();
     }
 }

@@ -202,7 +202,9 @@ impl App {
         // next event. No-op when there's no sidecar entry (typical
         // first-load case); the DB reload above already populated
         // the static message list.
-        let _restored = self.promote_to_foreground(session_id);
+        // Called for its side effect (promote the session to the foreground);
+        // the returned "was it present" bool isn't needed here.
+        self.promote_to_foreground(session_id);
 
         // Re-read approval policy from config (persisted by /approve)
         (self.approval_auto_session, self.approval_auto_always) =

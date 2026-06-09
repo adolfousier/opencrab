@@ -128,5 +128,6 @@ fn activity_and_schedule_split_right_60_percent_50_50() {
 fn handles_zero_area_without_panic() {
     // Pathological case: terminal mid-resize. compute must not panic.
     let outer = Rect::new(0, 0, 0, 0);
-    let _layout = compute(outer);
+    // The assertion is simply that this call returns without panicking.
+    let _ = compute(outer);
 }

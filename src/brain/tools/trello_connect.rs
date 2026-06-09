@@ -212,7 +212,8 @@ impl Tool for TrelloConnectTool {
             idle_timeout_hours,
         );
 
-        let _handle = trello_agent.start(api_key, api_token);
+        // Detached background task; the bot runs until the process exits.
+        trello_agent.start(api_key, api_token);
 
         // Wait up to 5 seconds for the agent to confirm connection
         let timeout = Duration::from_secs(5);

@@ -217,9 +217,11 @@ mod tests {
         let line = Line::from("hello █ world █ test █ more █ text █ end");
         let result = wrap_line_with_padding(line, 15, "  ");
         assert!(result.len() > 1);
-        // Verify all lines produce valid strings
+        // Every wrapped line must rejoin to a non-empty string (no span got
+        // dropped or split into nothing by the multibyte wrap).
         for l in &result {
-            let _s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            let joined: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(!joined.is_empty());
         }
     }
 

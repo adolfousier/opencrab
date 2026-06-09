@@ -1185,16 +1185,9 @@ fn export_import_preserves_nested_memory_directories() {
 
 #[test]
 fn explicit_default_name_resolves_to_base_dir() {
-    // When "default" is explicitly passed, it should resolve to ~/.opencrabs/
-    // not ~/.opencrabs/profiles/default/
-    let base = base_opencrabs_dir();
-
-    // The resolve logic: if profile_name is None or "default", return base
-    // This tests the contract — "default" is the root, not a subdirectory
-    // "default" profile should NOT create a subdirectory — it uses the base
-    let _default_would_be = base.join("profiles").join("default");
-
-    // Validate that "default" is rejected as a profile name
+    // Contract: "default" resolves to the base (~/.opencrabs/), not a
+    // profiles/default/ subdirectory, and is reserved so it cannot be created
+    // as a named profile.
     assert!(
         validate_profile_name("default").is_err(),
         "\"default\" is reserved and cannot be created as a named profile"

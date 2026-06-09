@@ -125,8 +125,8 @@ async fn suffix_lookup_excludes_archived() {
 #[tokio::test]
 async fn suffix_lookup_misses_when_no_match() {
     let (_db, repo) = fresh_repo().await;
-    let _s = make_session("Telegram: only chat [chat:-3]");
-    repo.create(&_s).await.expect("create");
+    let s = make_session("Telegram: only chat [chat:-3]");
+    repo.create(&s).await.expect("create");
 
     let hit = repo
         .find_by_title_suffix("[chat:-99999]")

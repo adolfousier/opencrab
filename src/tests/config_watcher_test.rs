@@ -38,7 +38,11 @@ async fn reload_callback_fires_on_change() {
         let _ = tx.try_send(());
     });
 
-    let _handle = {
+    // Spawn the watcher and discard its JoinHandle. spawn_blocking tasks are
+    // not cancelled by dropping the handle, so the watcher keeps running while
+    // the test below mutates the files and waits for the callback. drop() is
+    // the explicit, lint-clean way to discard the returned future.
+    drop({
         let config_path = config_path.clone();
         let keys_path = keys_path.clone();
         let callbacks = vec![cb];
@@ -88,7 +92,7 @@ async fn reload_callback_fires_on_change() {
                 }
             }
         })
-    };
+    });
 
     // Give the watcher thread time to register its subscription before
     // the first write. FSEvents on macOS needs a moment after watch()

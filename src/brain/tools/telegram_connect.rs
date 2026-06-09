@@ -127,7 +127,8 @@ impl Tool for TelegramConnectTool {
             channel_msg_repo,
         );
 
-        let _handle = tg_agent.start(token);
+        // Detached background task; the bot runs until the process exits.
+        tg_agent.start(token);
 
         // Wait for the bot to connect (agent stores Bot in state)
         let timeout = Duration::from_secs(15);

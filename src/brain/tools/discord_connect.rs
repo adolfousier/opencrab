@@ -136,7 +136,8 @@ impl Tool for DiscordConnectTool {
             channel_msg_repo,
         );
 
-        let _handle = dc_agent.start(token);
+        // Detached background task; the bot runs until the process exits.
+        dc_agent.start(token);
 
         // Wait for the bot to connect (ready event sets discord_state)
         let timeout = Duration::from_secs(30);

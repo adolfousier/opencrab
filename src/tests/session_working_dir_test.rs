@@ -96,7 +96,6 @@ mod session_db {
 
     #[tokio::test]
     async fn working_directory_in_new_session_via_create() {
-        let _svc = setup().await;
         let session = Session::new(
             Some("Manual".into()),
             Some("model".into()),

@@ -327,7 +327,6 @@ pub async fn embed_content_api(store: &'static Mutex<Store>, body: &str) -> Resu
 
     let embedding = embed_via_api(body).await?;
 
-    let _title = Store::extract_title(body);
     let hash = Store::hash_content(body);
     let model_name = super::embedding_api_config()
         .and_then(|c| c.model)

@@ -117,7 +117,9 @@ impl ExaSearchTool {
                 "jsonrpc": "2.0",
                 "method": "notifications/initialized"
             });
-            let _notif_resp = client
+            // Fire-and-forget notification: we only care that it was sent
+            // (errors propagate via `?`); the response body is unused.
+            client
                 .post(endpoint)
                 .header("Content-Type", "application/json")
                 .header("Mcp-Session-Id", id)

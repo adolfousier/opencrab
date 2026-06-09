@@ -466,7 +466,9 @@ mod tests {
     async fn test_get_most_recent_session() {
         let service = create_test_service().await;
 
-        let _session1 = service
+        // Create an earlier session so session2 below is the "most recent".
+        // We only need the row to exist; the returned value isn't used.
+        service
             .create_session(Some("Session 1".to_string()))
             .await
             .unwrap();
