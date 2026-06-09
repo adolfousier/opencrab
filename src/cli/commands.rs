@@ -809,12 +809,9 @@ pub(crate) async fn cmd_run(
             &std::env::current_dir().unwrap_or_default(),
         )),
     };
-    let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info), None);
-    if let Some(digest) =
-        crate::brain::prompt_builder::build_feedback_digest(db.pool().clone()).await
-    {
-        system_brain.push_str(&digest);
-    }
+    // Feedback/performance digest stays out of the LLM context — it's a
+    // maintenance warning in ~/.opencrabs/rsi/digest.md, not conversation input.
+    let system_brain = brain_loader.build_system_brain(Some(&runtime_info), None);
 
     // Load dynamic tools from ~/.opencrabs/tools.toml
     let tools_toml_path = crate::brain::tools::dynamic::DynamicToolLoader::default_path()
@@ -1171,12 +1168,9 @@ pub(crate) async fn cmd_agent_interactive(
             &std::env::current_dir().unwrap_or_default(),
         )),
     };
-    let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info), None);
-    if let Some(digest) =
-        crate::brain::prompt_builder::build_feedback_digest(db.pool().clone()).await
-    {
-        system_brain.push_str(&digest);
-    }
+    // Feedback/performance digest stays out of the LLM context — it's a
+    // maintenance warning in ~/.opencrabs/rsi/digest.md, not conversation input.
+    let system_brain = brain_loader.build_system_brain(Some(&runtime_info), None);
 
     // Load dynamic tools from ~/.opencrabs/tools.toml
     let tools_toml_path = crate::brain::tools::dynamic::DynamicToolLoader::default_path()

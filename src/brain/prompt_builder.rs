@@ -3,7 +3,6 @@
 //! Reads workspace markdown files and assembles the system brain dynamically
 //! each turn, so edits to brain files take effect immediately.
 
-use crate::db::repository::feedback_ledger::FeedbackLedgerRepository;
 use std::path::PathBuf;
 
 /// Core brain files — always injected (personality + user context).
@@ -443,71 +442,6 @@ impl BrainLoader {
 
         prompt
     }
-}
-
-/// Build a compact performance digest from the feedback ledger.
-///
-/// Returns `None` if there's no data (new user) or if the DB query fails.
-/// The digest is short — under 500 chars — to avoid bloating the system prompt.
-pub async fn build_feedback_digest(pool: crate::db::Pool) -> Option<String> {
-    let repo = FeedbackLedgerRepository::new(pool);
-    let total = repo.total_count().await.ok()?;
-    if total < 10 {
-        return None; // Not enough data to be useful
-    }
-
-    let mut out = String::from("--- Performance History ---\n");
-    out.push_str(&format!("Total tool executions recorded: {total}\n"));
-
-    // Tool stats — show tools with >10% failure rate
-    if let Ok(stats) = repo.stats_by_dimension("tool_").await {
-        let mut header_written = false;
-        for s in stats
-            .iter()
-            .filter(|s| s.failures > 0 && s.success_rate < 0.9)
-            .take(5)
-        {
-            if !header_written {
-                out.push_str("Tools with notable failure rates:\n");
-                header_written = true;
-            }
-            out.push_str(&format!(
-                "  {} — {:.0}% success ({} ok, {} fail)\n",
-                s.dimension,
-                s.success_rate * 100.0,
-                s.successes,
-                s.failures
-            ));
-        }
-    }
-
-    // Recent failures
-    if let Ok(entries) = repo.by_event_type("tool_failure", 5).await
-        && !entries.is_empty()
-    {
-        out.push_str("Recent failures:\n");
-        for e in &entries {
-            let meta = e.metadata.as_deref().unwrap_or("(no details)");
-            let short: String = meta.chars().take(80).collect();
-            out.push_str(&format!("  {} — {}\n", e.dimension, short));
-        }
-    }
-
-    // User corrections count
-    if let Ok(corrections) = repo.by_event_type("user_correction", 50).await
-        && !corrections.is_empty()
-    {
-        out.push_str(&format!(
-            "User corrections recorded: {}\n",
-            corrections.len()
-        ));
-    }
-
-    out.push_str(
-        "Use feedback_analyze for deeper analysis. \
-         If you see patterns, use self_improve to apply fixes autonomously.\n\n",
-    );
-    Some(out)
 }
 
 /// Runtime information injected into the system brain.

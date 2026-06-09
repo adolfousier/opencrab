@@ -339,15 +339,12 @@ async fn cmd_chat_inner(
         .collect();
     let commands_section = CommandLoader::commands_section(&builtin_commands, &user_commands);
 
-    let mut system_brain =
-        brain_loader.build_core_brain(Some(&runtime_info), Some(&commands_section));
-
-    // Inject performance history from feedback ledger (zero-setup, auto for all users)
-    if let Some(digest) =
-        crate::brain::prompt_builder::build_feedback_digest(db.pool().clone()).await
-    {
-        system_brain.push_str(&digest);
-    }
+    // The feedback/performance digest is a maintenance WARNING surface — it
+    // lives in ~/.opencrabs/rsi/digest.md (written by write_startup_digest),
+    // NOT in the LLM context. Injecting it here put unrelated tool-failure
+    // stats into every session's system prompt (and into the context token
+    // count) for no benefit to the conversation.
+    let system_brain = brain_loader.build_core_brain(Some(&runtime_info), Some(&commands_section));
 
     // Propagate persisted auto-always approval policy to the agent service so
     // the tool loop bypasses approval entirely. Without this, the TUI silently
