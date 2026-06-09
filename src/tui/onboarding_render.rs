@@ -972,9 +972,23 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
 
         // CLI providers have no API key — skip the field
         if !wizard.ps.is_cli() {
-            let key_focused = wizard.auth_field == AuthField::ApiKey;
-            let key_label = provider.key_label;
-            let (masked_key, key_hint) = if wizard.ps.has_existing_key_sentinel() {
+            // Keyless API providers (empty key_label, e.g. Xiaomi): the key is
+            // supplied server-side by the opencrabs proxy. During the free
+            // promotion users CANNOT enter a key — show it as set + non-editable,
+            // never an "enter your ..." input.
+            let is_keyless_api = provider.key_label.is_empty();
+            let key_focused = wizard.auth_field == AuthField::ApiKey && !is_keyless_api;
+            let key_label = if is_keyless_api {
+                "API Key"
+            } else {
+                provider.key_label
+            };
+            let (masked_key, key_hint) = if is_keyless_api {
+                (
+                    "•••••••• — free via the opencrabs × Xiaomi proxy (no key needed)".to_string(),
+                    String::new(),
+                )
+            } else if wizard.ps.has_existing_key_sentinel() {
                 (
                     "**************************".to_string(),
                     " (already configured, type to replace)".to_string(),
@@ -1007,7 +1021,9 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 ),
                 Span::styled(
                     format!("{}{}", masked_key, cursor),
-                    Style::default().fg(if wizard.ps.has_existing_key_sentinel() {
+                    Style::default().fg(if is_keyless_api {
+                        Color::Green
+                    } else if wizard.ps.has_existing_key_sentinel() {
                         Color::Cyan
                     } else if key_focused {
                         Color::White

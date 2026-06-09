@@ -596,8 +596,9 @@ impl OnboardingWizard {
                 }
                 KeyCode::Backspace => {
                     if self.ps.model_filter.is_empty() {
-                        // CLI providers have no API key — go back to Provider
-                        if self.ps.is_cli() {
+                        // Keyless providers (CLI or empty key_label like Xiaomi)
+                        // have no API key field — go straight back to Provider.
+                        if self.ps.is_cli() || self.ps.current_provider().key_label.is_empty() {
                             self.auth_field = AuthField::Provider;
                         } else {
                             self.auth_field = AuthField::ApiKey;
@@ -636,7 +637,7 @@ impl OnboardingWizard {
                     self.next_step();
                 }
                 KeyCode::BackTab => {
-                    if self.ps.is_cli() {
+                    if self.ps.is_cli() || self.ps.current_provider().key_label.is_empty() {
                         self.auth_field = AuthField::Provider;
                     } else {
                         self.auth_field = AuthField::ApiKey;

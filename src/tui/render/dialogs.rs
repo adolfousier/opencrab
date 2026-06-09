@@ -535,12 +535,26 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
         let is_zhipu = selected_provider.id == "zhipu";
         let key_focused = (focused_field == 1 && !is_custom && !is_zhipu)
             || (focused_field == 2 && (is_custom || is_zhipu));
-        let key_label = selected_provider.key_label;
+        // Keyless API providers (empty key_label, e.g. Xiaomi): the key is
+        // supplied server-side by the opencrabs proxy. During the free
+        // promotion users CANNOT enter a key — render it as already-set and
+        // non-editable, never an "optional" input.
+        let is_keyless_api = selected_provider.key_label.is_empty();
+        let key_label = if is_keyless_api {
+            "API Key"
+        } else {
+            selected_provider.key_label
+        };
 
         let has_existing_key = app.ps.has_existing_key;
         let has_user_key = !app.ps.api_key_input.is_empty();
 
-        let (masked_key, key_hint) = if has_user_key {
+        let (masked_key, key_hint) = if is_keyless_api {
+            (
+                "•••••••• — free via the opencrabs × Xiaomi proxy (no key needed)".to_string(),
+                String::new(),
+            )
+        } else if has_user_key {
             // User typed a new key - show asterisks for what they typed
             (
                 "*".repeat(app.ps.api_key_input.len().min(30)),
@@ -556,6 +570,8 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
                 String::new(),
             )
         };
+        // Keyless providers are never focusable/editable.
+        let key_focused = key_focused && !is_keyless_api;
         let cursor = if key_focused { "█" } else { "" };
 
         lines.push(Line::from(vec![
@@ -569,7 +585,9 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(
                 format!("{}{}", masked_key, cursor),
-                Style::default().fg(if key_focused {
+                Style::default().fg(if is_keyless_api {
+                    Color::Green
+                } else if key_focused {
                     Color::Reset
                 } else {
                     Color::Cyan

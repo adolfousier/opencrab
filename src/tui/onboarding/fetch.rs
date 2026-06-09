@@ -297,6 +297,24 @@ pub async fn fetch_provider_models(
         return merge_minimax_baseline(minimax_baseline_models(), user_minimax_models());
     }
 
+    // Xiaomi MiMo: the proxy's /v1/models is the live source, but the picker
+    // reads the curated chat-model list from config (config.toml.example) so it
+    // always shows even if the proxy is briefly unreachable. Chat itself still
+    // goes through the live proxy. Mirrors qwen/minimax/codex.
+    if provider_id == "xiaomi" {
+        let models = crate::tui::provider_selector::load_default_models("xiaomi");
+        if !models.is_empty() {
+            return models;
+        }
+        return vec![
+            "mimo-v2.5-pro".to_string(),
+            "mimo-v2-pro".to_string(),
+            "mimo-v2.5".to_string(),
+            "mimo-v2-omni".to_string(),
+            "mimo-v2-flash".to_string(),
+        ];
+    }
+
     let client = reqwest::Client::new();
 
     let result = match provider_id {
