@@ -98,7 +98,9 @@ const MAX_OPEN_TAG_CARRY: usize = 17;
 fn retry_reason(err: &super::error::ProviderError) -> String {
     use super::error::ProviderError;
     match err {
-        ProviderError::HttpError(_) => "connection error".to_string(),
+        // Surface the REAL cause (DNS failure, connection refused, TLS, …)
+        // instead of a flat "connection error" that tells the user nothing.
+        ProviderError::HttpError(e) => super::error::describe_reqwest_error(e),
         ProviderError::Timeout(_) => "timed out".to_string(),
         ProviderError::RateLimitExceeded(_) => "rate limited".to_string(),
         ProviderError::ApiError { status, .. } if *status == 429 => "rate limited".to_string(),

@@ -242,7 +242,7 @@ impl Provider for FallbackProvider {
                         offset + 1,
                         last_err
                             .as_ref()
-                            .map(|e| format!("{}", e))
+                            .map(super::error::user_facing_reason)
                             .unwrap_or_else(|| "unknown".into())
                             .as_str(),
                     );
@@ -291,7 +291,7 @@ impl Provider for FallbackProvider {
                         offset + 1,
                         last_err
                             .as_ref()
-                            .map(|e| format!("{}", e))
+                            .map(super::error::user_facing_reason)
                             .unwrap_or_else(|| "unknown".into())
                             .as_str(),
                     );

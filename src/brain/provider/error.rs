@@ -235,6 +235,77 @@ fn provider_error_is_retryable(e: &ProviderError) -> bool {
     e.is_retryable()
 }
 
+/// Render a concise, SPECIFIC reason for a provider error, for the user-facing
+/// TUI warnings ("⏳ Retry…", "🔧 Switched to…"). For HTTP errors this digs
+/// through reqwest's source chain to the real cause — DNS lookup failure,
+/// connection refused, TLS error, timeout — instead of the opaque top-level
+/// "error sending request for url (…)" that hides what actually happened.
+pub fn user_facing_reason(err: &ProviderError) -> String {
+    match err {
+        ProviderError::HttpError(e) => describe_reqwest_error(e),
+        other => other.to_string(),
+    }
+}
+
+/// Classify a reqwest error into a short, specific phrase by walking its source
+/// chain to the deepest OS/resolver cause. Appends the host when known, e.g.
+/// "DNS lookup failed (www.dialagram.me)" or "connection refused (api.x.com)".
+pub(crate) fn describe_reqwest_error(e: &reqwest::Error) -> String {
+    let host_suffix = e
+        .url()
+        .and_then(|u| u.host_str())
+        .map(|h| format!(" ({h})"))
+        .unwrap_or_default();
+
+    if e.is_timeout() {
+        return format!("request timed out{host_suffix}");
+    }
+
+    // The deepest source-chain entry carries the real OS/resolver error; the
+    // reqwest top-level Display ("error sending request for url …") does not.
+    let mut deepest: Option<String> = None;
+    let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
+    while let Some(s) = src {
+        deepest = Some(s.to_string());
+        src = s.source();
+    }
+    let detail = deepest.unwrap_or_else(|| e.to_string());
+    let low = detail.to_ascii_lowercase();
+
+    let label = if low.contains("dns")
+        || low.contains("lookup address")
+        || low.contains("nodename nor servname")
+        || low.contains("name or service not known")
+        || low.contains("no such host")
+        || low.contains("failed to resolve")
+        || low.contains("could not resolve")
+    {
+        "DNS lookup failed"
+    } else if low.contains("connection refused") {
+        "connection refused"
+    } else if low.contains("connection reset") {
+        "connection reset by peer"
+    } else if low.contains("network is unreachable") {
+        "network unreachable"
+    } else if low.contains("no route to host") {
+        "no route to host"
+    } else if low.contains("timed out") || low.contains("timeout") {
+        "timed out"
+    } else if low.contains("certificate")
+        || low.contains("tls")
+        || low.contains("ssl")
+        || low.contains("handshake")
+    {
+        "TLS/certificate error"
+    } else {
+        // Unknown shape — surface the real deepest cause itself, trimmed, so
+        // we never hide what happened behind a generic label.
+        let trimmed: String = detail.chars().take(140).collect();
+        return format!("{trimmed}{host_suffix}");
+    };
+    format!("{label}{host_suffix}")
+}
+
 /// Parse a retry-delay (seconds) out of a rate-limit error message.
 /// Recognizes "60 seconds", "60s", "retry in 60", "wait 60". Moved here
 /// from the former `brain::provider::retry` module when retry logic was
