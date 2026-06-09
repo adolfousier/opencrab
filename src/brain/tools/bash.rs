@@ -931,7 +931,7 @@ pub(crate) fn check_interactive_command(command: &str) -> Option<&'static str> {
         ) && cmd_seg
             .split_whitespace()
             .nth(1)
-            .map(|t| t.starts_with('-') && t != "-c" && t != "-e")
+            .map(|t| t.starts_with('-') && t != "-c" && t != "-e" && t != "-m")
             .unwrap_or(true)
         {
             return Some(

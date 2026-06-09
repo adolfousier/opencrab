@@ -181,6 +181,16 @@ mod repls {
     }
 
     #[test]
+    fn allows_python_with_dash_m() {
+        // `python -m <module>` always runs non-interactively, never opens a REPL.
+        assert!(check_interactive_command("python -m pytest").is_none());
+        assert!(check_interactive_command("python3 -m pytest").is_none());
+        assert!(check_interactive_command("python -m pip install foo").is_none());
+        assert!(check_interactive_command("python -m http.server").is_none());
+        assert!(check_interactive_command("python -m json.tool").is_none());
+    }
+
+    #[test]
     fn rejects_bare_node() {
         assert!(check_interactive_command("node").is_some());
     }
