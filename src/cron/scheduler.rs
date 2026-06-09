@@ -76,11 +76,8 @@ pub async fn schedule_background_rebuild(
         created_at: now,
         updated_at: now,
         // Stamp the current profile so the guard in `tick()` lets it run here.
-        profile_name: Some(
-            crate::config::profile::active_profile()
-                .unwrap_or("default")
-                .to_string(),
-        ),
+        // current_profile_name() honors the task-local profile scope.
+        profile_name: Some(crate::config::profile::current_profile_name()),
     };
     repo.insert(&job).await?;
     tracing::info!("Background rebuild queued for session {session_id}");
@@ -181,28 +178,35 @@ impl CronScheduler {
 
     /// Spawn the scheduler as a background tokio task.
     /// Polls every 60 seconds for due jobs.
-    pub fn spawn(mut self) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            // Find or create the dedicated cron session
-            match self.resolve_or_create_cron_session().await {
-                Ok(id) => {
-                    self.cron_session_id = Some(id);
-                    tracing::info!(
-                        "Cron scheduler started — polling every 60s, cron session: {}",
-                        id
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("Cron scheduler failed to create session: {e}");
-                }
+    pub fn spawn(self) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(self.run())
+    }
+
+    /// Run the polling loop in the CURRENT task (no internal spawn). The
+    /// multi-profile daemon drives this directly inside a
+    /// `with_profile_home_async(profile, ...)` scope so the scheduler's own
+    /// setup (cron session, config reads) resolves to that profile's home.
+    /// `spawn()` is the thin wrapper for callers that just want it backgrounded.
+    pub async fn run(mut self) {
+        // Find or create the dedicated cron session
+        match self.resolve_or_create_cron_session().await {
+            Ok(id) => {
+                self.cron_session_id = Some(id);
+                tracing::info!(
+                    "Cron scheduler started — polling every 60s, cron session: {}",
+                    id
+                );
             }
-            loop {
-                if let Err(e) = self.tick().await {
-                    tracing::error!("Cron scheduler tick error: {e}");
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Err(e) => {
+                tracing::error!("Cron scheduler failed to create session: {e}");
             }
-        })
+        }
+        loop {
+            if let Err(e) = self.tick().await {
+                tracing::error!("Cron scheduler tick error: {e}");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
     }
 
     /// Find an existing "Cron" session or create one.
@@ -268,6 +272,14 @@ impl CronScheduler {
                     // brain reads) resolves to the job's profile home, not the
                     // process profile. The scope lives until the task ends, so
                     // it persists across every .await inside the agent loop.
+                    //
+                    // This spawned task does NOT inherit the scheduler's own
+                    // task-local home (tokio::spawn drops it), so it defaults to
+                    // the process global. We therefore scope whenever the job's
+                    // profile differs from the process global, which is exactly
+                    // the multi-profile daemon case: a per-profile scheduler's
+                    // jobs are stamped with a non-global profile and get scoped
+                    // here.
                     let profile = job.profile_name.as_deref();
                     let active = crate::config::profile::active_profile().unwrap_or("default");
                     let needs_scope = profile.is_some() && profile != Some(active);
@@ -350,18 +362,22 @@ async fn resolve_job_agent(
     factory: &ChannelFactory,
     ctx: &ServiceContext,
 ) -> anyhow::Result<(Config, Arc<crate::brain::agent::AgentService>)> {
-    let active = crate::config::profile::active_profile();
-    if is_active_profile(job.profile_name.as_deref(), active) {
+    // Use the task-local profile (set by the per-job home scope above) rather
+    // than the process global, so a job running under its own profile scope
+    // is recognized as "local" and reuses the in-scope factory/config instead
+    // of needlessly re-materializing. Falls back to the global when unscoped.
+    let current = crate::config::profile::current_profile_name();
+    if is_active_profile(job.profile_name.as_deref(), Some(&current)) {
         return Ok((Config::load()?, factory.create_agent_service().await));
     }
 
     let profile = job.profile_name.as_deref();
     tracing::info!(
-        "Cron job '{}' belongs to profile {:?} (process profile {:?}) — \
+        "Cron job '{}' belongs to profile {:?} (current profile {:?}); \
          running under its own profile context",
         job.name,
         profile,
-        active
+        current
     );
 
     // Materialize config + brain from the foreign profile's home.

@@ -1578,3 +1578,28 @@ fn create_profile_brain_files_are_non_trivial_size() {
 
     let _ = delete_profile(name);
 }
+
+/// `current_profile_name()` reads the task-local profile set by
+/// `with_profile_home_async`, falling back to the process global. The
+/// multi-profile cron daemon relies on this so a job created or run inside a
+/// foreign profile's scope is attributed to THAT profile, not the process one.
+#[tokio::test]
+async fn current_profile_name_follows_the_task_local_scope() {
+    use crate::config::profile::{current_profile_name, with_profile_home_async};
+
+    // Inside a profile scope, the name is that profile.
+    let inside = with_profile_home_async(Some("ops"), async { current_profile_name() }).await;
+    assert_eq!(inside, "ops");
+
+    // Some(\"default\") scopes to the base profile, reported as "default".
+    let base = with_profile_home_async(Some("default"), async { current_profile_name() }).await;
+    assert_eq!(base, "default");
+
+    // Outside any scope it falls back to the global active profile (or
+    // "default" when none is set in this test process).
+    let outside = current_profile_name();
+    assert!(
+        !outside.is_empty(),
+        "must always return a usable profile name, got empty"
+    );
+}

@@ -576,12 +576,11 @@ impl CronJob {
             updated_at: now,
             // Stamp the profile this job is born into. The base profile is
             // stored as the literal "default" (not None) so the scheduler can
-            // enforce the match — only legacy pre-stamping rows stay NULL.
-            profile_name: Some(
-                crate::config::profile::active_profile()
-                    .unwrap_or("default")
-                    .to_string(),
-            ),
+            // enforce the match. Only legacy pre-stamping rows stay NULL.
+            // current_profile_name() reads the task-local profile, so a job
+            // created while running inside a foreign profile's scope is
+            // attributed to that profile, not the process global.
+            profile_name: Some(crate::config::profile::current_profile_name()),
         }
     }
 }

@@ -34,6 +34,10 @@ static ACTIVE_PROFILE: OnceLock<Option<String>> = OnceLock::new();
 
 tokio::task_local! {
     static PROFILE_HOME_OVERRIDE: PathBuf;
+    // The profile NAME for the current task, set alongside the home override.
+    // Lets `current_profile_name()` attribute data (e.g. a cron job's
+    // profile_name) to the profile actually running, not the process global.
+    static PROFILE_NAME_OVERRIDE: String;
 }
 
 /// Resolve the home directory for an explicit profile name, WITHOUT reading the
@@ -62,7 +66,22 @@ where
     F: std::future::Future<Output = T>,
 {
     let home = home_for_profile(profile);
-    PROFILE_HOME_OVERRIDE.scope(home, fut).await
+    let name = profile.unwrap_or("default").to_string();
+    PROFILE_NAME_OVERRIDE
+        .scope(name, PROFILE_HOME_OVERRIDE.scope(home, fut))
+        .await
+}
+
+/// The profile name for the CURRENT task. Returns the task-local name set by
+/// `with_profile_home_async`/`with_profile_home` when present, otherwise the
+/// process-global active profile (or "default"). Use this when stamping data
+/// (like a cron job's `profile_name`) so it attributes to the profile actually
+/// executing, not the process default.
+pub fn current_profile_name() -> String {
+    if let Ok(name) = PROFILE_NAME_OVERRIDE.try_with(|n| n.clone()) {
+        return name;
+    }
+    active_profile().unwrap_or("default").to_string()
 }
 
 /// Run a sync closure with the profile home pointed at `profile`'s directory.
@@ -71,10 +90,11 @@ where
 /// that don't have an async context. Internally blocks on the task-local scope.
 pub fn with_profile_home<T>(profile: Option<&str>, f: impl FnOnce() -> T) -> T {
     let home = home_for_profile(profile);
+    let name = profile.unwrap_or("default").to_string();
     // Use a minimal tokio runtime to host the task-local scope for sync callers.
     // This is only used for initial config/brain materialization before the
     // async agent runs.
-    PROFILE_HOME_OVERRIDE.sync_scope(home, f)
+    PROFILE_NAME_OVERRIDE.sync_scope(name, || PROFILE_HOME_OVERRIDE.sync_scope(home, f))
 }
 
 /// Set the active profile. Must be called before any `opencrabs_home()` call.

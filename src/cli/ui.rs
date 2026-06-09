@@ -6,9 +6,86 @@ use std::sync::Arc;
 use crate::brain::prompt_builder::RuntimeInfo;
 use crate::brain::{BrainLoader, CommandLoader};
 
-/// Start interactive chat session
+/// Start the headless daemon.
+///
+/// Multi-profile: this one process covers EVERY profile's scheduled jobs. The
+/// active profile is run in full by `cmd_chat_inner` below (which also spawns
+/// its own cron scheduler); every OTHER profile under `~/.opencrabs/profiles/`
+/// gets a lightweight cron-only scheduler. No need to run N separate daemons.
 pub(crate) async fn cmd_daemon(config: &crate::config::Config) -> Result<()> {
+    let active = crate::config::profile::active_profile()
+        .unwrap_or("default")
+        .to_string();
+    match crate::config::profile::list_profiles() {
+        Ok(entries) => {
+            for entry in entries {
+                // The active profile is already covered by cmd_chat_inner's
+                // scheduler. Skipping it here avoids running its jobs twice.
+                if entry.name == active {
+                    continue;
+                }
+                tokio::spawn(spawn_cron_scheduler_for_profile(entry.name));
+            }
+        }
+        Err(e) => {
+            tracing::warn!("daemon: list_profiles failed, running active profile only: {e}");
+        }
+    }
     cmd_chat_inner(config, None, false, true).await
+}
+
+/// Spawn a cron-only scheduler for one profile, pinned to that profile's home.
+///
+/// Builds the minimal resources (this profile's DB, provider, brain, channel
+/// factory) INSIDE the profile's task-local home scope and drives the scheduler
+/// loop there, so the scheduler's own setup (cron session, config reads) and
+/// every job it runs resolve to the right profile home. Logs and returns on any
+/// setup failure so one half-initialized profile never takes the daemon down.
+async fn spawn_cron_scheduler_for_profile(profile_name: String) {
+    use crate::channels::ChannelFactory;
+    use crate::db::{CronJobRepository, CronJobRunRepository, Database};
+    use crate::services::ServiceContext;
+
+    let name = profile_name.clone();
+    let result: anyhow::Result<()> =
+        crate::config::profile::with_profile_home_async(Some(&profile_name), async move {
+            let config = crate::config::Config::load()?;
+            let db = Database::connect(&config.database.path).await?;
+            db.run_migrations().await?;
+            let service_context = ServiceContext::new(db.pool().clone());
+            let provider = crate::brain::provider::create_provider(&config).await?;
+            let home = crate::config::opencrabs_home();
+            let system_brain = BrainLoader::new(home.clone()).build_core_brain(None, None);
+            // ChannelFactory wants a watch::Receiver<Config>, but every reader
+            // on the cron path only calls config_rx.borrow() (never .changed()),
+            // so we keep just the receiver and let the sender drop right here.
+            // borrow() still returns this seeded config after the sender is gone.
+            let config_rx = tokio::sync::watch::channel(config.clone()).1;
+            let shared_session = Arc::new(tokio::sync::Mutex::new(None));
+            let factory = Arc::new(ChannelFactory::new(
+                provider,
+                service_context.clone(),
+                system_brain,
+                home.clone(),
+                home,
+                shared_session.clone(),
+                config_rx,
+            ));
+            let scheduler = crate::cron::CronScheduler::new(
+                CronJobRepository::new(db.pool().clone()),
+                CronJobRunRepository::new(db.pool().clone()),
+                factory,
+                service_context,
+                shared_session,
+            );
+            tracing::info!("Multi-profile daemon: cron scheduler running for profile '{name}'");
+            scheduler.run().await; // loops forever
+            Ok(())
+        })
+        .await;
+    if let Err(e) = result {
+        tracing::error!("Cron scheduler for profile '{profile_name}' failed to start: {e}");
+    }
 }
 
 pub(crate) async fn cmd_chat(
@@ -1280,7 +1357,9 @@ async fn cmd_chat_inner(
             }));
         }
 
-        let _config_watcher = config_watcher::spawn(callbacks);
+        // spawn() returns a JoinHandle; the watcher runs detached, so there is
+        // nothing to hold. Don't bind a handle we never await or abort.
+        config_watcher::spawn(callbacks);
     }
 
     // Set force onboard flag if requested
@@ -1306,7 +1385,8 @@ async fn cmd_chat_inner(
             service_context.clone(),
             app.shared_session_id(),
         );
-        let _cron_handle = cron_scheduler.spawn();
+        // Detached task; the JoinHandle isn't awaited or aborted anywhere.
+        cron_scheduler.spawn();
         tracing::info!("Cron scheduler spawned");
     }
 
