@@ -25,7 +25,7 @@ fn test_provider_count_matches() {
     assert_eq!(PROVIDERS[11].name, "OpenCode");
     assert_eq!(PROVIDERS[12].name, "Qwen");
     assert_eq!(PROVIDERS[13].name, "Ollama");
-    assert_eq!(PROVIDERS[14].name, "Xiaomi MiMo");
+    assert_eq!(PROVIDERS[14].name, "Xiaomi");
     assert_eq!(PROVIDERS[15].name, "Custom OpenAI-Compatible");
 }
 

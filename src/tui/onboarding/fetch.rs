@@ -221,13 +221,14 @@ pub async fn fetch_provider_models(
         data: Vec<ModelEntry>,
     }
 
-    // Claude CLI — models are fixed (sonnet/opus/haiku), no API needed
+    // Claude CLI — no API to query; the models come from the single
+    // SUPPORTED_MODELS source of truth (family aliases + pinnable versions,
+    // including fable) so this list never drifts from the rest of the codebase.
     if provider_id == "claude-cli" {
-        return vec![
-            "sonnet".to_string(),
-            "opus".to_string(),
-            "haiku".to_string(),
-        ];
+        return crate::brain::provider::claude_cli::SUPPORTED_MODELS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
 
     // OpenCode CLI — fetch models via `opencode models` command

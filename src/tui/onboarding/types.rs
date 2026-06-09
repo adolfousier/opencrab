@@ -299,7 +299,7 @@ pub const PROVIDERS: &[ProviderInfo] = &[
     // skips the API-key step. After the cutoff a key is required.
     ProviderInfo {
         id: "xiaomi",
-        name: "Xiaomi MiMo",
+        name: "Xiaomi",
         models: &[], // Fetched live from the proxy's /v1/models (chat models only)
         key_label: "",
         help_lines: &[
