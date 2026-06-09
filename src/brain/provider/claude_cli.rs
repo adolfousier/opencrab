@@ -105,9 +105,11 @@ pub(crate) fn clear_learned_models() {
 /// Claude variant only requires editing this const, not chasing
 /// duplicated lists across modules.
 pub(crate) const SUPPORTED_MODELS: &[&str] = &[
+    "fable",
     "sonnet",
     "opus",
     "haiku",
+    "opus-4-8",
     "opus-4-7",
     "sonnet-4-6",
     "opus-4-6",
@@ -116,7 +118,7 @@ pub(crate) const SUPPORTED_MODELS: &[&str] = &[
 
 /// Default model when no per-session override is set. Mirrors the
 /// `default_for_alias("sonnet")` resolution used by `ClaudeCliProvider::new`.
-pub(crate) const DEFAULT_MODEL: &str = "opus-4-7";
+pub(crate) const DEFAULT_MODEL: &str = "opus-4-8";
 
 /// Claude CLI provider — talks directly to the `claude` binary.
 #[derive(Clone)]
@@ -144,7 +146,9 @@ impl ClaudeCliProvider {
 
     /// Map full Anthropic model name to CLI shorthand.
     fn map_model(model: &str) -> &str {
-        if model.contains("opus") {
+        if model.contains("fable") {
+            "fable"
+        } else if model.contains("opus") {
             "opus"
         } else if model.contains("haiku") {
             "haiku"

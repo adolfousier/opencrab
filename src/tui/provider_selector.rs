@@ -548,6 +548,8 @@ pub fn model_display_label(model_id: &str) -> &str {
         "kimi-k2.5" | "kimi-k2-5" => "Kimi K2.5",
         "glm-5.1" => "GLM 5.1",
         "glm-5-turbo" => "GLM 5 Turbo",
+        "fable" | "fable-5" => "Fable 5",
+        "opus-4-8" => "Opus 4.8",
         "opus-4-7" => "Opus 4.7",
         "opus-4-6" => "Opus 4.6",
         "sonnet-4-6" => "Sonnet 4.6",

@@ -409,13 +409,19 @@ impl Provider for AnthropicProvider {
     fn default_model(&self) -> &str {
         self.custom_default_model
             .as_deref()
-            .unwrap_or("claude-sonnet-4-5")
+            .unwrap_or("claude-opus-4-8")
     }
 
     fn supported_models(&self) -> Vec<String> {
+        // Fallback list, used only when the live /v1/models fetch fails. Keep the
+        // current models here so a fetch failure doesn't hide Fable / Opus 4.8.
         vec![
             // Claude 4.x models
+            "claude-fable-5".to_string(),
+            "claude-opus-4-8".to_string(),
+            "claude-opus-4-7".to_string(),
             "claude-opus-4-6".to_string(),
+            "claude-sonnet-4-6".to_string(),
             "claude-sonnet-4-5-20250929".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
             // Claude 3.5 models
@@ -464,7 +470,12 @@ impl Provider for AnthropicProvider {
 
     fn context_window(&self, model: &str) -> Option<u32> {
         match model {
-            "claude-opus-4-6" => Some(200_000),
+            // 1M-context models (Fable 5, Opus 4.6+, Sonnet 4.6).
+            "claude-fable-5" => Some(1_000_000),
+            "claude-opus-4-8" => Some(1_000_000),
+            "claude-opus-4-7" => Some(1_000_000),
+            "claude-opus-4-6" => Some(1_000_000),
+            "claude-sonnet-4-6" => Some(1_000_000),
             "claude-sonnet-4-5-20250929" => Some(200_000),
             "claude-haiku-4-5-20251001" => Some(200_000),
             "claude-3-5-sonnet-20241022" => Some(200_000),
@@ -571,7 +582,7 @@ mod tests {
     fn test_anthropic_provider_creation() {
         let provider = AnthropicProvider::new("test-key".to_string());
         assert_eq!(provider.name(), "anthropic");
-        assert_eq!(provider.default_model(), "claude-sonnet-4-5");
+        assert_eq!(provider.default_model(), "claude-opus-4-8");
     }
 
     #[test]
@@ -595,7 +606,7 @@ mod tests {
     #[test]
     fn test_context_window() {
         let provider = AnthropicProvider::new("test-key".to_string());
-        assert_eq!(provider.context_window("claude-opus-4-6"), Some(200_000));
+        assert_eq!(provider.context_window("claude-opus-4-6"), Some(1_000_000));
         assert_eq!(
             provider.context_window("claude-3-opus-20240229"),
             Some(200_000)
