@@ -501,8 +501,10 @@ impl OnboardingWizard {
                         return WizardAction::CodexDeviceFlow;
                     } else if self.ps.is_custom() {
                         self.auth_field = AuthField::CustomName;
-                    } else if self.ps.is_cli() {
-                        // CLI providers: no API key — skip to model
+                    } else if self.ps.is_cli() || self.ps.current_provider().key_label.is_empty() {
+                        // Keyless providers — CLI subprocesses AND key-less API
+                        // providers like Xiaomi (empty key_label). No API key, so
+                        // skip the key field and go straight to model selection.
                         self.auth_field = AuthField::Model;
                         self.ps.models.clear();
                         self.ps.selected_model = 0;
