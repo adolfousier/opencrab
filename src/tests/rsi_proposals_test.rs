@@ -393,3 +393,118 @@ async fn unknown_action_errors() {
         .unwrap();
     assert!(!result.success);
 }
+
+// ─────────────── rsi_propose tool — efficiency gate ───────────────
+
+#[tokio::test]
+async fn rsi_propose_tool_rejects_without_efficiency_gate() {
+    use crate::brain::tools::rsi_propose::RsiProposeTool;
+
+    let tool = RsiProposeTool;
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "kind": "tool",
+                "name": "ssh_exec",
+                "description": "Run SSH commands",
+                "rationale": "SSH commands appear frequently across sessions",
+                "executor_type": "shell",
+                "command": "ssh {{host}} '{{cmd}}'"
+            }),
+            &ctx(),
+        )
+        .await
+        .unwrap();
+
+    assert!(!result.success, "should reject without efficiency gate");
+    let msg = result.error.unwrap_or_default();
+    assert!(
+        msg.contains("efficiency gate"),
+        "expected efficiency gate error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn rsi_propose_tool_accepts_with_efficiency_gate_keywords() {
+    use crate::brain::tools::rsi_propose::RsiProposeTool;
+
+    let tool = RsiProposeTool;
+
+    // Test with "token savings" keyword
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "kind": "tool",
+                "name": "docker_logs",
+                "description": "Get Docker container logs",
+                "rationale": "TOKEN SAVINGS: eliminates boilerplate of repeated docker logs calls",
+                "executor_type": "shell",
+                "command": "docker logs {{container}}"
+            }),
+            &ctx(),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.success, "should accept with efficiency gate: {:?}", result.error);
+
+    // Test with "error reduction" keyword
+    let result2 = tool
+        .execute(
+            serde_json::json!({
+                "kind": "tool",
+                "name": "gh_issue_create",
+                "description": "Create GitHub issue",
+                "rationale": "ERROR REDUCTION: prevents quoting bugs in issue body",
+                "executor_type": "shell",
+                "command": "gh issue create --title '{{title}}' --body '{{body}}'"
+            }),
+            &ctx(),
+        )
+        .await
+        .unwrap();
+
+    assert!(result2.success, "should accept with error reduction: {:?}", result2.error);
+
+    // Test with "capability addition" keyword
+    let result3 = tool
+        .execute(
+            serde_json::json!({
+                "kind": "tool",
+                "name": "parse_json",
+                "description": "Parse JSON response",
+                "rationale": "CAPABILITY ADDITION: structured output parsing that bash cannot do",
+                "executor_type": "shell",
+                "command": "cat {{file}} | jq ."
+            }),
+            &ctx(),
+        )
+        .await
+        .unwrap();
+
+    assert!(result3.success, "should accept with capability addition: {:?}", result3.error);
+}
+
+#[tokio::test]
+async fn rsi_propose_command_not_subject_to_efficiency_gate() {
+    use crate::brain::tools::rsi_propose::RsiProposeTool;
+
+    let tool = RsiProposeTool;
+
+    // Commands should not require efficiency gate (only tools do)
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "kind": "command",
+                "name": "/standup",
+                "description": "Daily standup summary",
+                "rationale": "User types this repeatedly",
+                "prompt": "Summarize yesterday's commits"
+            }),
+            &ctx(),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.success, "commands should not require efficiency gate: {:?}", result.error);
+}

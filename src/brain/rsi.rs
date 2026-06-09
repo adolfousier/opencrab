@@ -368,6 +368,19 @@ When to propose a tool (kind='tool'):
 - Only propose tools whose execution is safe by default (read-only verbs, \
   GET requests). Set `requires_approval=true` for anything shell-based.
 
+EFFICIENCY GATE (required for all tool proposals):
+The rationale MUST explicitly state which of these applies. If none apply, do NOT \
+propose the tool:
+1. TOKEN SAVINGS — wrapper eliminates boilerplate (multi-step resolution, auth headers, \
+   JSON construction, repeated argument patterns)
+2. ERROR REDUCTION — wrapper prevents a known class of failures (quoting bugs, escaping \
+   issues, parameter validation, environment setup)
+3. CAPABILITY ADDITION — wrapper enables something bash cannot do alone (structured output \
+   parsing, protocol handling, binary data processing)
+
+Pure passthrough wrappers (e.g. `ssh_exec` that just wraps `bash ssh user@host 'cmd'`) \
+fail this gate: same token cost, no error reduction, no new capability. Reject them.
+
 When to propose a command (kind='command'):
 - The user types `/something` repeatedly that doesn't exist (look at user_correction \
   events or recent input patterns).

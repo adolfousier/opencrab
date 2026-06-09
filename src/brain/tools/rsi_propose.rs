@@ -160,6 +160,32 @@ impl Tool for RsiProposeTool {
                     .to_string(),
             ));
         }
+
+        // Efficiency gate: rationale must explicitly state which applies.
+        // Pure passthrough wrappers (same token cost, no error reduction, no new capability)
+        // fail this gate and should not be proposed.
+        let rationale_lower = rationale.to_lowercase();
+        let has_efficiency_gate = rationale_lower.contains("token savings")
+            || rationale_lower.contains("token saving")
+            || rationale_lower.contains("error reduction")
+            || rationale_lower.contains("capability addition")
+            || rationale_lower.contains("boilerplate")
+            || rationale_lower.contains("quoting")
+            || rationale_lower.contains("escaping")
+            || rationale_lower.contains("validation")
+            || rationale_lower.contains("structured output")
+            || rationale_lower.contains("protocol handling");
+
+        if kind == "tool" && !has_efficiency_gate {
+            return Ok(ToolResult::error(
+                "rationale must explicitly state which efficiency gate applies: \
+                 (1) TOKEN SAVINGS — eliminates boilerplate, (2) ERROR REDUCTION — prevents \
+                 known failures, or (3) CAPABILITY ADDITION — enables something bash cannot do. \
+                 Pure passthrough wrappers fail this gate."
+                    .to_string(),
+            ));
+        }
+
         if name.is_empty() || description.is_empty() {
             return Ok(ToolResult::error(
                 "name and description are required".to_string(),
