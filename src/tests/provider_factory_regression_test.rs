@@ -1,8 +1,9 @@
 //! Provider factory regression tests.
 //!
-//! These tests verify that all 11 built-in providers are correctly wired
-//! across the factory functions. They serve as a regression suite before
-//! refactoring the factory into a registry pattern.
+//! These tests verify that the built-in providers are correctly wired across
+//! the factory functions. The factory now uses the registry pattern (the
+//! `REGISTRATIONS` array in `factory.rs`); keep this suite in sync with that
+//! set when adding or removing a provider.
 
 use crate::brain::provider::factory::{
     active_provider_vision, create_provider, create_provider_by_name,
