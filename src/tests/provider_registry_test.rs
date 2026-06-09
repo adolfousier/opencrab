@@ -190,3 +190,32 @@ fn no_provider_configured_returns_not_configured() {
     assert_eq!(id, "none");
     assert_eq!(m, "none");
 }
+
+/// Completeness guard for adding a new provider. The onboarding `PROVIDERS`
+/// list and the `KNOWN_PROVIDERS` name registry must enumerate the SAME set of
+/// provider ids. If they drift, a provider was added to one surface but not the
+/// other (e.g. an onboarding entry with no KNOWN_PROVIDERS meta, which silently
+/// breaks name resolution / the /models picker). This is the cheap check that
+/// would have caught a half-wired provider like the dead `bedrock`/`vertex`
+/// stubs had they ever reached onboarding.
+#[test]
+fn onboarding_and_known_providers_list_the_same_ids() {
+    use crate::tui::onboarding::PROVIDERS;
+    use crate::utils::providers::KNOWN_PROVIDERS;
+    use std::collections::BTreeSet;
+
+    // Custom (empty id) is dynamic and intentionally absent from KNOWN_PROVIDERS.
+    let onboarding: BTreeSet<&str> = PROVIDERS
+        .iter()
+        .map(|p| p.id)
+        .filter(|id| !id.is_empty())
+        .collect();
+    let known: BTreeSet<&str> = KNOWN_PROVIDERS.iter().map(|m| m.id).collect();
+
+    assert_eq!(
+        onboarding, known,
+        "onboarding PROVIDERS and KNOWN_PROVIDERS must list the same provider ids. \
+         A mismatch means a provider was added/removed on one surface but not the \
+         other — wire ALL touchpoints (see docs/reference/ADDING_NEW_PROVIDERS.md)."
+    );
+}

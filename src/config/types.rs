@@ -925,6 +925,12 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub zhipu: Option<ProviderConfig>,
 
+    /// Xiaomi MiMo configuration (opencrabs x xiaomi collab). OpenAI-compatible.
+    /// During the free collab window the key is supplied server-side by our
+    /// proxy, so this needs no api_key; after the cutoff a user key is required.
+    #[serde(default)]
+    pub xiaomi: Option<ProviderConfig>,
+
     /// Named custom OpenAI-compatible providers (e.g. [providers.custom.ollama])
     #[serde(default, deserialize_with = "deserialize_custom_providers")]
     pub custom: Option<BTreeMap<String, ProviderConfig>>,
@@ -1028,8 +1034,12 @@ impl ProviderConfigs {
     /// providers handled separately by the caller via `active_custom()`.
     fn provider_registry(
         &self,
-    ) -> [(&'static str, &'static str, bool, Option<&ProviderConfig>); 16] {
+    ) -> [(&'static str, &'static str, bool, Option<&ProviderConfig>); 17] {
         [
+            // Xiaomi MiMo (opencrabs x xiaomi collab) — the default. Keyless
+            // (requires_api_key = false) during the free window: the proxy
+            // supplies the key. First so a fresh, key-less install lands on it.
+            ("xiaomi", "Xiaomi", false, self.xiaomi.as_ref()),
             // CLI providers — enabled flag alone is enough
             ("claude-cli", "Claude CLI", false, self.claude_cli.as_ref()),
             (
@@ -1887,6 +1897,15 @@ pub(crate) fn merge_provider_keys(
         && is_real_key(&key)
     {
         let entry = base.minimax.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    // Xiaomi: keyless during the free collab window, but if a user supplies
+    // their own key (e.g. after the cutoff) merge it like any other provider.
+    if let Some(k) = keys.xiaomi
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.xiaomi.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
     if let Some(k) = keys.gemini

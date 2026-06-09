@@ -211,7 +211,7 @@ fn all_known_providers_have_non_empty_display_names() {
 fn known_provider_count_matches_expected() {
     // If this fails, a provider was added/removed.
     // Update this count AND verify all section mappings above.
-    assert_eq!(KNOWN_PROVIDERS.len(), 14);
+    assert_eq!(KNOWN_PROVIDERS.len(), 15);
 }
 
 // ── TUI PROVIDERS sync with KNOWN_PROVIDERS ─────────────────────────

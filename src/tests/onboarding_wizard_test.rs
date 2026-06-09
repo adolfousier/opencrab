@@ -982,6 +982,7 @@ fn test_provider_display_order_no_customs() {
         index_of_provider("opencode-cli").unwrap(),
         index_of_provider("openrouter").unwrap(),
         index_of_provider("qwen").unwrap(),
+        index_of_provider("xiaomi").unwrap(),
         index_of_provider("zhipu").unwrap(),
         CUSTOM_PROVIDER_IDX,
     ];
@@ -1010,6 +1011,7 @@ fn test_provider_display_order_with_customs() {
         index_of_provider("opencode-cli").unwrap(),
         index_of_provider("openrouter").unwrap(),
         index_of_provider("qwen").unwrap(),
+        index_of_provider("xiaomi").unwrap(),
         index_of_provider("zhipu").unwrap(),
         CUSTOM_INSTANCES_START,
         CUSTOM_INSTANCES_START + 1,

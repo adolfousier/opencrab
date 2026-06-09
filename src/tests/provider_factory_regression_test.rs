@@ -37,6 +37,7 @@ fn config_with_provider(name: &str) -> Config {
         "openrouter" => providers.openrouter = Some(cfg),
         "minimax" => providers.minimax = Some(cfg),
         "zhipu" => providers.zhipu = Some(cfg),
+        "xiaomi" => providers.xiaomi = Some(cfg),
         "ollama" => providers.ollama = Some(cfg),
         _ => {}
     }
@@ -97,6 +98,17 @@ async fn by_name_zhipu() {
     let config = config_with_provider("zhipu");
     let result = create_provider_by_name(&config, "zhipu").await;
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn by_name_xiaomi_with_user_key() {
+    // Time-independent path: a user-supplied key works regardless of the free
+    // window. (The keyless free-window path is date-gated, so not unit-tested.)
+    let config = config_with_provider("xiaomi");
+    let provider = create_provider_by_name(&config, "xiaomi")
+        .await
+        .expect("xiaomi should create with a key");
+    assert_eq!(provider.name(), "xiaomi");
 }
 
 #[tokio::test]

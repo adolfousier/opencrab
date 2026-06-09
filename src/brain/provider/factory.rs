@@ -70,6 +70,16 @@ struct ProviderRegistration {
 /// The index is used by `provider_enabled()`.
 static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
     vec![
+        // Xiaomi MiMo (opencrabs x xiaomi collab) — the default provider.
+        // First so a key-less install lands on it via active_provider_and_model.
+        ProviderRegistration {
+            display_name: "Xiaomi",
+            session_id: "xiaomi",
+            aliases: &["mimo", "xiaomi-mimo"],
+            is_enabled: |c| c.providers.xiaomi.as_ref().is_some_and(|p| p.enabled),
+            factory: sync_factory(try_create_xiaomi),
+            config_field: |c| c.providers.xiaomi.as_ref(),
+        },
         ProviderRegistration {
             display_name: "Claude CLI",
             session_id: "claude-cli",
@@ -195,6 +205,7 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
 
 /// Provider names in priority order, derived from REGISTRATIONS.
 pub const PROVIDER_NAMES: &[&str] = &[
+    "Xiaomi",
     "Claude CLI",
     "OpenCode CLI",
     "Codex CLI",
@@ -999,6 +1010,67 @@ fn try_create_openrouter(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
 }
 
 /// Try to create Minimax provider if configured
+/// Default proxy endpoint for the opencrabs x xiaomi collab. The proxy holds
+/// the real Xiaomi key and injects it server-side, so the binary never ships a
+/// key. Overridable via `[providers.xiaomi] base_url`. Will be nginx-fronted.
+const XIAOMI_PROXY_BASE_URL: &str = "https://xiaomi-collab.opencrabs.com/v1/chat/completions";
+/// Last day (inclusive, UTC) of the free keyless window. After this, a user
+/// must supply their own `api_key`. The proxy also enforces this server-side.
+const XIAOMI_KEYLESS_CUTOFF: &str = "2026-06-25";
+
+/// True while the free keyless collab window is open (today <= cutoff, UTC).
+fn xiaomi_keyless_window_open() -> bool {
+    match chrono::NaiveDate::parse_from_str(XIAOMI_KEYLESS_CUTOFF, "%Y-%m-%d") {
+        Ok(cutoff) => chrono::Utc::now().date_naive() <= cutoff,
+        Err(_) => false,
+    }
+}
+
+/// Xiaomi MiMo (opencrabs x xiaomi collab). OpenAI-compatible.
+///
+/// Key resolution: a real user-supplied key always wins (works any time).
+/// Otherwise, during the free window we go keyless (empty Bearer) and the
+/// proxy supplies the real key. After the cutoff with no user key, the
+/// provider is unavailable so the user is steered to add their own key.
+fn try_create_xiaomi(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
+    let xiaomi_config = match &config.providers.xiaomi {
+        Some(cfg) => cfg,
+        None => return Ok(None),
+    };
+
+    let base_url = xiaomi_config
+        .base_url
+        .clone()
+        .unwrap_or_else(|| XIAOMI_PROXY_BASE_URL.to_string());
+    let base_url = if base_url.contains("/chat/completions") {
+        base_url
+    } else {
+        format!("{}/chat/completions", base_url.trim_end_matches('/'))
+    };
+
+    let user_key = xiaomi_config.api_key.clone().filter(|k| !k.is_empty());
+    let api_key = match user_key {
+        Some(k) => k,
+        None if xiaomi_keyless_window_open() => {
+            tracing::info!("Xiaomi: keyless free-window mode via proxy {base_url}");
+            String::new()
+        }
+        None => {
+            tracing::warn!(
+                "Xiaomi free keyless window ended ({XIAOMI_KEYLESS_CUTOFF}); add your own api_key in keys.toml to keep using Xiaomi"
+            );
+            return Ok(None);
+        }
+    };
+
+    tracing::info!("Using Xiaomi at: {base_url}");
+    let provider = configure_openai_compatible(
+        OpenAIProvider::with_base_url(api_key, base_url).with_name("xiaomi"),
+        xiaomi_config,
+    );
+    Ok(Some(Arc::new(provider)))
+}
+
 fn try_create_minimax(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     let minimax_config = match &config.providers.minimax {
         Some(cfg) => {

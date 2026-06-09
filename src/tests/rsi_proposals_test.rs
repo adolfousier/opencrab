@@ -446,7 +446,11 @@ async fn rsi_propose_tool_accepts_with_efficiency_gate_keywords() {
         .await
         .unwrap();
 
-    assert!(result.success, "should accept with efficiency gate: {:?}", result.error);
+    assert!(
+        result.success,
+        "should accept with efficiency gate: {:?}",
+        result.error
+    );
 
     // Test with "error reduction" keyword
     let result2 = tool
@@ -464,7 +468,11 @@ async fn rsi_propose_tool_accepts_with_efficiency_gate_keywords() {
         .await
         .unwrap();
 
-    assert!(result2.success, "should accept with error reduction: {:?}", result2.error);
+    assert!(
+        result2.success,
+        "should accept with error reduction: {:?}",
+        result2.error
+    );
 
     // Test with "capability addition" keyword
     let result3 = tool
@@ -482,7 +490,11 @@ async fn rsi_propose_tool_accepts_with_efficiency_gate_keywords() {
         .await
         .unwrap();
 
-    assert!(result3.success, "should accept with capability addition: {:?}", result3.error);
+    assert!(
+        result3.success,
+        "should accept with capability addition: {:?}",
+        result3.error
+    );
 }
 
 #[tokio::test]
@@ -506,5 +518,9 @@ async fn rsi_propose_command_not_subject_to_efficiency_gate() {
         .await
         .unwrap();
 
-    assert!(result.success, "commands should not require efficiency gate: {:?}", result.error);
+    assert!(
+        result.success,
+        "commands should not require efficiency gate: {:?}",
+        result.error
+    );
 }

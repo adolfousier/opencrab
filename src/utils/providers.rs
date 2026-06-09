@@ -62,6 +62,14 @@ pub const KNOWN_PROVIDERS: &[ProviderMeta] = &[
         needs_api_key: true,
     },
     ProviderMeta {
+        id: "xiaomi",
+        display_name: "Xiaomi",
+        config_section: "providers.xiaomi",
+        // Keyless during the free collab window (the proxy holds the key);
+        // needs_api_key=false tells the UI/onboarding not to prompt for a key.
+        needs_api_key: false,
+    },
+    ProviderMeta {
         id: "openai",
         display_name: "OpenAI",
         config_section: "providers.openai",
@@ -183,6 +191,7 @@ pub fn config_for<'a>(providers: &'a ProviderConfigs, name: &str) -> Option<&'a 
         Some("openrouter") => providers.openrouter.as_ref(),
         Some("minimax") => providers.minimax.as_ref(),
         Some("zhipu") => providers.zhipu.as_ref(),
+        Some("xiaomi") => providers.xiaomi.as_ref(),
         Some("claude-cli") => providers.claude_cli.as_ref(),
         Some("codex-cli") => providers.codex_cli.as_ref(),
         Some("opencode-cli") => providers.opencode_cli.as_ref(),

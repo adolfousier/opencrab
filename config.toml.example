@@ -14,6 +14,23 @@
 
 [providers]
 # ========================================
+# Xiaomi MiMo  ⭐ DEFAULT (opencrabs x Xiaomi collab)
+# ========================================
+# FREE + KEYLESS during the launch window (until 2026-06-25): leave api_key
+# unset. Requests go through our proxy, which supplies the key server-side, so
+# no key ever lives on your machine. This is the default provider for fresh
+# installs — new users land almost straight in chat.
+#
+# After the cutoff, set your own key in keys.toml ([providers.xiaomi] api_key).
+# Get one at https://platform.xiaomimimo.com
+[providers.xiaomi]
+enabled = true
+base_url = "https://xiaomi-collab.opencrabs.com/v1/chat/completions"
+default_model = "mimo-v2.5-pro"
+models = ["mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-flash"]
+context_window = 1000000
+
+# ========================================
 # Ollama Provider (Local + Cloud)
 # ========================================
 # Local: runs on localhost:11434 — no API key needed
