@@ -62,6 +62,15 @@ pub fn build_continuation(kind: CompactionKind, silent: bool, auto_approve: bool
     } else {
         fun_body(kind).to_string()
     };
+    // Session-recovery hint: applies to ALL variants (fun + silent).
+    // After compaction the agent should check for a live plan and,
+    // if the session is code-focused, load coding standards.
+    text.push_str(
+        "\n\nSESSION RECOVERY: Call `plan` with operation=\"status\" to check \
+         if this session has an active plan with incomplete tasks. If it does, \
+         continue executing from where the plan left off. If the task involves \
+         coding, load CODE.md for coding standards before editing files.",
+    );
     if !auto_approve {
         text.push_str(
             "\n\nCRITICAL: Tool approval is REQUIRED. You MUST wait for user \

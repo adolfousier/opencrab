@@ -22,6 +22,7 @@
 use crate::brain::agent::service::compaction_prompts::{CompactionKind, build_continuation};
 
 const APPROVAL_TAIL: &str = "Tool approval is REQUIRED";
+const SESSION_RECOVERY: &str = "SESSION RECOVERY";
 
 #[test]
 fn fun_regular_keeps_post_compaction_protocol_header() {
@@ -159,4 +160,33 @@ fn default_agent_config_is_fun_mode() {
         "AgentConfig::default() must keep silent_compaction=false so fun \
          post-compaction narration is the out-of-the-box behaviour"
     );
+}
+
+#[test]
+fn session_recovery_hint_present_in_all_variants() {
+    // After compaction the agent must check for an active plan and,
+    // if coding, load CODE.md. This hint is appended to ALL variants
+    // (fun + silent, all 4 kinds) so it never gets lost.
+    for kind in [
+        CompactionKind::Regular,
+        CompactionKind::MidLoop,
+        CompactionKind::Emergency,
+        CompactionKind::PostTool,
+    ] {
+        for silent in [false, true] {
+            let body = build_continuation(kind, silent, true);
+            assert!(
+                body.contains(SESSION_RECOVERY),
+                "{kind:?} silent={silent} must include the SESSION RECOVERY hint: {body}"
+            );
+            assert!(
+                body.contains("plan") && body.contains("status"),
+                "{kind:?} silent={silent} must tell the agent to call plan with status: {body}"
+            );
+            assert!(
+                body.contains("CODE.md"),
+                "{kind:?} silent={silent} must mention CODE.md for coding sessions: {body}"
+            );
+        }
+    }
 }
