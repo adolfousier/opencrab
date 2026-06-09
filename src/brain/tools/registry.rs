@@ -71,6 +71,10 @@ fn normalize_tool_input(tool_name: &str, mut input: Value) -> Value {
 /// runtime registration/removal through a shared `Arc<ToolRegistry>`.
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
+    /// EXTENDED tools each session has activated via `tool_search` (lazy-tools
+    /// mode). Lives here because both the agent loop and the `tool_search`
+    /// tool already share this registry's `Arc` — no separate plumbing.
+    session_active: RwLock<HashMap<uuid::Uuid, std::collections::HashSet<String>>>,
 }
 
 impl ToolRegistry {
@@ -78,7 +82,25 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: RwLock::new(HashMap::new()),
+            session_active: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Mark EXTENDED tools as active for a session, so subsequent requests
+    /// include their schemas. Called by `tool_search` after a discovery.
+    pub fn activate_tools(&self, session_id: uuid::Uuid, names: impl IntoIterator<Item = String>) {
+        let mut map = self.session_active.write().unwrap();
+        map.entry(session_id).or_default().extend(names);
+    }
+
+    /// The EXTENDED tools currently active for a session (empty if none yet).
+    pub fn active_tools(&self, session_id: uuid::Uuid) -> std::collections::HashSet<String> {
+        self.session_active
+            .read()
+            .unwrap()
+            .get(&session_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Register a tool (takes `&self` — safe through shared `Arc`)
@@ -114,6 +136,93 @@ impl ToolRegistry {
             .read()
             .unwrap()
             .values()
+            .map(|tool| crate::brain::provider::Tool {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                input_schema: tool.input_schema(),
+            })
+            .collect()
+    }
+
+    /// Lazy-tools mode: only the schemas for the CORE set plus any EXTENDED
+    /// tools the session has activated via `tool_search`. Keeps a "reply yes"
+    /// turn from shipping all ~95 schemas (~20k tokens) when it needs none.
+    /// A tool the agent hasn't discovered yet is simply omitted — calling
+    /// `tool_search` activates it for subsequent requests.
+    pub fn get_tool_definitions_filtered(
+        &self,
+        active_extended: &std::collections::HashSet<String>,
+    ) -> Vec<crate::brain::provider::Tool> {
+        use crate::brain::tools::catalog;
+        self.tools
+            .read()
+            .unwrap()
+            .values()
+            .filter(|tool| {
+                let name = tool.name();
+                catalog::is_core(name) || active_extended.contains(name)
+            })
+            .map(|tool| crate::brain::provider::Tool {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                input_schema: tool.input_schema(),
+            })
+            .collect()
+    }
+
+    /// Find EXTENDED (non-core) tools matching a free-text query, ranked by
+    /// how well the query terms hit the tool's name + description. Powers the
+    /// `tool_search` discovery tool. Returns `(name, category, description)`,
+    /// best matches first, capped at `limit`.
+    pub fn search_tools(&self, query: &str, limit: usize) -> Vec<(String, String, String)> {
+        use crate::brain::tools::catalog;
+        let q = query.to_ascii_lowercase();
+        let terms: Vec<&str> = q.split_whitespace().filter(|t| t.len() > 1).collect();
+        let mut scored: Vec<(i32, String, String, String)> = self
+            .tools
+            .read()
+            .unwrap()
+            .values()
+            .filter(|tool| !catalog::is_core(tool.name()))
+            .map(|tool| {
+                let name = tool.name().to_string();
+                let desc = tool.description().to_string();
+                let category = catalog::tool_category(&name).to_string();
+                let hay = format!("{name} {category} {desc}").to_ascii_lowercase();
+                let mut score = 0i32;
+                for term in &terms {
+                    if name.to_ascii_lowercase().contains(term) {
+                        score += 5; // name hit is the strongest signal
+                    } else if category.contains(term) {
+                        score += 3;
+                    } else if hay.contains(term) {
+                        score += 1;
+                    }
+                }
+                (score, name, category, desc)
+            })
+            .filter(|(score, ..)| *score > 0)
+            .collect();
+        // Highest score first; stable tie-break by name for determinism.
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        scored
+            .into_iter()
+            .take(limit)
+            .map(|(_, name, category, desc)| (name, category, desc))
+            .collect()
+    }
+
+    /// Full provider-format definitions for a specific set of tool names (used
+    /// by `tool_search` to hand the agent the exact schemas it just discovered).
+    pub fn definitions_for(
+        &self,
+        names: &std::collections::HashSet<String>,
+    ) -> Vec<crate::brain::provider::Tool> {
+        self.tools
+            .read()
+            .unwrap()
+            .values()
+            .filter(|tool| names.contains(tool.name()))
             .map(|tool| crate::brain::provider::Tool {
                 name: tool.name().to_string(),
                 description: tool.description().to_string(),

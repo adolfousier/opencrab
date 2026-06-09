@@ -1098,7 +1098,7 @@ impl AgentService {
             let tool_count = self.tool_registry.count();
             tracing::debug!("Tool registry contains {} tools", tool_count);
             if tool_count > 0 {
-                let tool_defs = self.tool_registry.get_tool_definitions();
+                let tool_defs = self.tool_schemas_for_session(session_id);
                 tracing::debug!("Adding {} tool definitions to request", tool_defs.len());
                 request = request.with_tools(tool_defs);
             } else {
@@ -1316,7 +1316,7 @@ impl AgentService {
                         retry_req = retry_req.with_system(system.clone());
                     }
                     if self.tool_registry.count() > 0 {
-                        retry_req = retry_req.with_tools(self.tool_registry.get_tool_definitions());
+                        retry_req = retry_req.with_tools(self.tool_schemas_for_session(session_id));
                     }
                     self.stream_complete(
                         session_id,
@@ -1529,7 +1529,7 @@ impl AgentService {
                             fb_req = fb_req.with_system(system.clone());
                         }
                         if self.tool_registry.count() > 0 {
-                            fb_req = fb_req.with_tools(self.tool_registry.get_tool_definitions());
+                            fb_req = fb_req.with_tools(self.tool_schemas_for_session(session_id));
                         }
 
                         // STICKY FALLBACK (rate-limit / auth path): swap
@@ -1722,7 +1722,7 @@ impl AgentService {
                         }
                         if self.tool_registry.count() > 0 {
                             retry_req =
-                                retry_req.with_tools(self.tool_registry.get_tool_definitions());
+                                retry_req.with_tools(self.tool_schemas_for_session(session_id));
                         }
 
                         match self
@@ -1876,7 +1876,7 @@ impl AgentService {
                             }
                             if self.tool_registry.count() > 0 {
                                 fb_req =
-                                    fb_req.with_tools(self.tool_registry.get_tool_definitions());
+                                    fb_req.with_tools(self.tool_schemas_for_session(session_id));
                             }
 
                             // Swap only this session's provider for the
@@ -2056,7 +2056,7 @@ impl AgentService {
                         }
                         if self.tool_registry.count() > 0 {
                             retry_req =
-                                retry_req.with_tools(self.tool_registry.get_tool_definitions());
+                                retry_req.with_tools(self.tool_schemas_for_session(session_id));
                         }
 
                         match self
@@ -2159,7 +2159,7 @@ impl AgentService {
                             }
                             if self.tool_registry.count() > 0 {
                                 fb_req =
-                                    fb_req.with_tools(self.tool_registry.get_tool_definitions());
+                                    fb_req.with_tools(self.tool_schemas_for_session(session_id));
                             }
 
                             match self
@@ -2346,7 +2346,7 @@ impl AgentService {
                             fb_req = fb_req.with_system(system.clone());
                         }
                         if self.tool_registry.count() > 0 {
-                            fb_req = fb_req.with_tools(self.tool_registry.get_tool_definitions());
+                            fb_req = fb_req.with_tools(self.tool_schemas_for_session(session_id));
                         }
 
                         // Swap provider for this session so stream_complete
@@ -3798,7 +3798,7 @@ impl AgentService {
                             }
                             if self.tool_registry.count() > 0 {
                                 fb_req =
-                                    fb_req.with_tools(self.tool_registry.get_tool_definitions());
+                                    fb_req.with_tools(self.tool_schemas_for_session(session_id));
                             }
 
                             let original_provider = self.provider_for_session(session_id);

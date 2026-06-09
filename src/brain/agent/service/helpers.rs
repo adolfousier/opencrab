@@ -39,8 +39,26 @@ impl AgentService {
     /// Actual token count for the serialized tool schemas (cached per call).
     pub(super) fn actual_tool_schema_tokens(&self) -> usize {
         crate::brain::tokenizer::count_tokens(
-            &serde_json::to_string(&self.tool_registry.get_tool_definitions()).unwrap_or_default(),
+            &serde_json::to_string(&self.tool_schemas_for_session(uuid::Uuid::nil()))
+                .unwrap_or_default(),
         )
+    }
+
+    /// The tool schemas to attach to a request for `session_id`. In lazy-tools
+    /// mode this is the CORE set + `tool_search` + whatever EXTENDED tools the
+    /// session has activated via `tool_search`; otherwise it's every
+    /// registered tool (the historical behaviour). Single source of truth so
+    /// the ~9 request-build sites in the tool loop stay in lock-step.
+    pub(super) fn tool_schemas_for_session(
+        &self,
+        session_id: uuid::Uuid,
+    ) -> Vec<crate::brain::provider::Tool> {
+        if self.lazy_tools {
+            let active = self.tool_registry.active_tools(session_id);
+            self.tool_registry.get_tool_definitions_filtered(&active)
+        } else {
+            self.tool_registry.get_tool_definitions()
+        }
     }
 
     /// Stream a request and accumulate into an LLMResponse.

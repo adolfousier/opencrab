@@ -103,6 +103,11 @@ pub struct AgentService {
     /// deployments can opt out by setting the flag.
     pub(super) silent_compaction: bool,
 
+    /// When true, ship only CORE tool schemas + `tool_search` per request and
+    /// let the agent activate extended tools on demand. Mirrors `[agent]
+    /// lazy_tools`. Default false — see `AgentConfig::lazy_tools`.
+    pub(super) lazy_tools: bool,
+
     /// Context window limit in tokens from config
     pub(super) context_limit: u32,
 
@@ -172,6 +177,7 @@ impl AgentService {
             default_system_brain: None,
             auto_approve_tools: false,
             silent_compaction: config.agent.silent_compaction,
+            lazy_tools: config.agent.lazy_tools,
             context_limit: config.agent.context_limit,
             max_tokens: config.agent.max_tokens,
             approval_callback: None,

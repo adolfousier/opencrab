@@ -136,6 +136,12 @@ async fn cmd_chat_inner(
     // Follow-up question — agent asks the user a multi-choice question
     // mid-task and blocks until they click an option button.
     tool_registry.register(Arc::new(FollowUpQuestionTool));
+    // Tool discovery — lets the agent activate extended tools on demand
+    // (lazy-tools mode). Holds the registry Arc so it can search all tools;
+    // harmless when lazy_tools is off (just one more always-available tool).
+    tool_registry.register(Arc::new(
+        crate::brain::tools::tool_search::ToolSearchTool::new(tool_registry.clone()),
+    ));
     // EXA search: always available (free via MCP), uses direct API if key is set
     let exa_key = config
         .providers
@@ -344,7 +350,26 @@ async fn cmd_chat_inner(
     // NOT in the LLM context. Injecting it here put unrelated tool-failure
     // stats into every session's system prompt (and into the context token
     // count) for no benefit to the conversation.
-    let system_brain = brain_loader.build_core_brain(Some(&runtime_info), Some(&commands_section));
+    let mut system_brain =
+        brain_loader.build_core_brain(Some(&runtime_info), Some(&commands_section));
+
+    // Lazy-tools mode: the model only sees the CORE tool schemas + `tool_search`.
+    // Tell it explicitly so it reaches for `tool_search` instead of assuming a
+    // capability is missing. Without this nudge the model can give up on a task
+    // whose tool simply wasn't injected.
+    if config.agent.lazy_tools {
+        system_brain.push_str(
+            "\n\n--- Tool Access ---\n\
+             You have a CORE set of tools always available (file read/write/edit, bash, ls/glob/grep, \
+             web/exa/memory search, task/context/plan, http, the brain-file loader, config, session). \
+             You do NOT see every tool by default. For anything else — browsing or clicking web pages, \
+             sending channel messages (Telegram/Discord/Slack/WhatsApp), spawning sub-agents or teams, \
+             generating or analyzing images/video, cron jobs, self-improvement/rebuild/evolve — call \
+             `tool_search` FIRST with a short description of what you need. It returns the exact tool's \
+             schema and makes it callable for the rest of the session. NEVER say you can't do something \
+             before searching for the tool.\n",
+        );
+    }
 
     // Propagate persisted auto-always approval policy to the agent service so
     // the tool loop bypasses approval entirely. Without this, the TUI silently

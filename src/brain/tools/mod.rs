@@ -4,6 +4,7 @@
 //! including file operations, shell commands, and more.
 
 pub mod brain_file_safety;
+pub mod catalog;
 pub mod error;
 pub mod registry;
 mod r#trait;
@@ -56,6 +57,7 @@ pub mod self_improve;
 pub mod session_search;
 pub mod slash_command;
 pub mod task;
+pub mod tool_search;
 pub mod write_opencrabs_file;
 
 // Tool implementations - Phase 5: Multi-Agent Orchestration
