@@ -1052,8 +1052,17 @@ fn try_create_xiaomi(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     let api_key = match user_key {
         Some(k) => k,
         None if xiaomi_keyless_window_open() => {
-            tracing::info!("Xiaomi: keyless free-window mode via proxy {base_url}");
-            String::new()
+            // Keyless: send the collab app token as the Bearer so the proxy can
+            // gate to OpenCrabs traffic. It's baked at release-build time from a
+            // secret (OPENCRABS_XIAOMI_APP_TOKEN), so it never lives in the
+            // public source; empty in unconfigured dev builds. The proxy
+            // validates it and swaps it for the real Xiaomi key server-side.
+            let app_token = option_env!("OPENCRABS_XIAOMI_APP_TOKEN").unwrap_or("");
+            tracing::info!(
+                "Xiaomi: keyless free-window mode via proxy {base_url} (app token: {})",
+                if app_token.is_empty() { "none" } else { "set" }
+            );
+            app_token.to_string()
         }
         None => {
             tracing::warn!(
