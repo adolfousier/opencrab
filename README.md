@@ -2103,6 +2103,15 @@ self_improvement_provider = "<your-provider-name>"   # provider for RSI cycles
 self_improvement_model    = "<model-id-on-that-provider>"   # paired model
 ```
 
+**Lazy Tool Loading** — **on by default, and recommended.** Instead of sending all ~95 tool schemas (~20k tokens) to the provider on *every* request, OpenCrabs ships only a small CORE set (file I/O, shell, search, task/plan/context, http, brain-file loader, config/session — ~4k tokens) plus a `tool_search` discovery tool. When the agent needs something else (browser, channels, sub-agents, media, system tools), it calls `tool_search("what I need")`, which returns the matching tool's schema and activates it for the rest of the session. This keeps a tool-light turn (e.g. a quick answer) from paying ~16k tokens of unused schemas — and that overhead is counted by the provider on every call, so it's real cost, not just display. The recommendation is to leave it on: load only the core set and let the agent pull the rest on demand.
+
+Setting `lazy_tools = false` reverts to sending the **full tool-schema set — all ~95 tools (~20k tokens) — in every single request**, whether the turn uses them or not. Only do this if a model in your setup struggles to reach for `tool_search`.
+
+```toml
+[agent]
+lazy_tools = false   # default true (recommended); false = send EVERY tool schema, every request
+```
+
 #### Browser Automation (feature: `browser`)
 
 Auto-detects your default Chromium-based browser and uses its native profile (cookies, logins, extensions). Supports **Chrome, Brave, Edge, Arc, Vivaldi, Opera, and Chromium**. If your default browser is Firefox or another non-Chromium browser, OpenCrabs falls back to the first available Chromium browser on your system. If no Chromium browser is found, a fresh Chrome instance is launched.

@@ -293,16 +293,19 @@ profile_id = ""
 # subagent_provider = "zhipu"
 # subagent_model = "GLM 5"
 
-# Lazy tool-schema loading (default: false). When true, each request ships
-# only the CORE tool schemas (~4k tokens) plus `tool_search`, instead of all
-# ~95 (~20k tokens counted in every request's input). The agent calls
-# `tool_search("what I need")` to discover and activate extended tools
-# (browser, channels, sub-agents, media, system) on demand — they then ride
-# on subsequent requests for the session. Saves ~16k tokens/turn on
-# tool-light turns. Trade-off: a model that fails to reach for `tool_search`
-# could stall a task that needs a non-core tool, so test on real workloads
-# before relying on it.
-# lazy_tools = true
+# Lazy tool-schema loading (default: true — RECOMMENDED). Each request ships
+# only the CORE tool schemas (~4k tokens) plus `tool_search`. The agent calls
+# `tool_search("what I need")` to discover and activate the extended tools
+# (browser, channels, sub-agents, media, system) on demand — they then ride on
+# subsequent requests for the session. We recommend leaving this on: load only
+# the core set and let the agent pull the rest as needed.
+#
+# Setting `lazy_tools = false` reverts to sending the FULL tool-schema set —
+# ALL ~95 tools (~20k tokens) — in EVERY single request, whether the turn uses
+# them or not. That overhead is counted by the provider on every call (real
+# cost, not just display). Only set false if a model in your setup struggles
+# to reach for `tool_search`.
+# lazy_tools = false
 
 # Provider/model for Recursive Self-Improvement (RSI) cycles. The model is
 # paired with the provider, same as subagent_provider/subagent_model.

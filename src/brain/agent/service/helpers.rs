@@ -36,11 +36,14 @@ pub(crate) fn handshake_timeout_for(cli_handles_tools: bool, base_url: Option<&s
 }
 
 impl AgentService {
-    /// Actual token count for the serialized tool schemas (cached per call).
+    /// Token count for the serialized schemas of ALL registered tools — the
+    /// upper-bound tool overhead. Used as the cl100k baseline and as the
+    /// calibration guard's `expected` ceiling, where over-counting (vs the
+    /// lazy-filtered set actually sent) only makes the guard more lenient.
+    /// The per-request filtering lives in `tool_schemas_for_session`.
     pub(super) fn actual_tool_schema_tokens(&self) -> usize {
         crate::brain::tokenizer::count_tokens(
-            &serde_json::to_string(&self.tool_schemas_for_session(uuid::Uuid::nil()))
-                .unwrap_or_default(),
+            &serde_json::to_string(&self.tool_registry.get_tool_definitions()).unwrap_or_default(),
         )
     }
 

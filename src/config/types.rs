@@ -612,14 +612,18 @@ pub struct AgentConfig {
     #[serde(default)]
     pub silent_compaction: bool,
 
-    /// Lazy tool-schema loading. When true, a request ships only the CORE tool
-    /// schemas (~4k tokens) plus `tool_search`, instead of all ~95 (~20k); the
-    /// agent calls `tool_search` to discover and activate extended tools on
-    /// demand. Off by default — flip on once verified on real tasks, since a
-    /// model that fails to reach for `tool_search` could stall a task that
-    /// needs a non-core tool.
-    #[serde(default)]
+    /// Lazy tool-schema loading. **On by default.** A request ships only the
+    /// CORE tool schemas (~4k tokens) plus `tool_search`, instead of all ~95
+    /// (~20k counted in every request's input); the agent calls `tool_search`
+    /// to discover and activate extended tools on demand. Set
+    /// `lazy_tools = false` to restore the old behaviour (all tool schemas in
+    /// every request).
+    #[serde(default = "default_lazy_tools")]
     pub lazy_tools: bool,
+}
+
+fn default_lazy_tools() -> bool {
+    true
 }
 
 fn default_approval_policy() -> String {
@@ -655,7 +659,7 @@ impl Default for AgentConfig {
             self_improvement_provider: None,
             self_improvement_model: None,
             silent_compaction: false,
-            lazy_tools: false,
+            lazy_tools: default_lazy_tools(),
         }
     }
 }
