@@ -106,8 +106,7 @@ pub fn tool_category(name: &str) -> &'static str {
             || n == "self_improve"
             || n == "rebuild"
             || n == "evolve"
-            || n == "tool_manage"
-            || n == "rsi_proposals" =>
+            || n == "tool_manage" =>
         {
             "system"
         }

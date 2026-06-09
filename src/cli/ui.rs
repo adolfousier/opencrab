@@ -961,18 +961,6 @@ async fn cmd_chat_inner(
         ),
     ));
 
-    // rsi_proposals — agent-facing list/apply/reject for tools/commands
-    // proposed by the autonomous RSI loop. Apply paths reuse tool_manage's
-    // DynamicToolLoader and CommandLoader, so installation is byte-equivalent
-    // to a manual tool_manage add / config_manager add_command.
-    shared_tool_registry.register(Arc::new(
-        crate::brain::tools::rsi_proposals::RsiProposalsTool::new(
-            shared_tool_registry.clone(),
-            tools_toml_path,
-            crate::config::opencrabs_home(),
-        ),
-    ));
-
     // Browser automation tools (headless Chrome via CDP)
     #[cfg(feature = "browser")]
     {

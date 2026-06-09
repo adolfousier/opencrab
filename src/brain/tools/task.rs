@@ -306,7 +306,7 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        "Manage multi-step workflows and tasks. Create, update, list, and track tasks with priorities, statuses, and dependencies."
+        "DEPRECATED: Use `plan` instead. Manage multi-step workflows and tasks. Create, update, list, and track tasks with priorities, statuses, and dependencies."
     }
 
     fn input_schema(&self) -> Value {

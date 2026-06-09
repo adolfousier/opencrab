@@ -42,7 +42,7 @@ impl Tool for CodeExecTool {
     }
 
     fn description(&self) -> &str {
-        "Execute code in a sandboxed environment. Supports Python, JavaScript (Node.js), Rust, and shell scripts. Returns stdout, stderr, and exit code."
+        "DEPRECATED: Use `bash` with heredoc or temp file instead. Execute code in a sandboxed environment. Supports Python, JavaScript (Node.js), Rust, and shell scripts. Returns stdout, stderr, and exit code."
     }
 
     fn input_schema(&self) -> Value {
