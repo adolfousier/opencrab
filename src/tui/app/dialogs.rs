@@ -626,20 +626,23 @@ impl App {
                 {
                     self.push_system_message(format!("Error: {}", e));
                 } else {
-                    // CLI and OAuth providers have no API key — skip straight to model field
-                    // Exception: Codex OAuth uses field 1 for device flow
-                    self.ps.focused_field = if is_cli_provider {
-                        2
-                    } else if is_oauth_provider
-                        && self.ps.provider_id() == "codex"
-                        && !self.ps.has_existing_key
-                    {
-                        1 // Go to device flow field
-                    } else if is_oauth_provider {
-                        2 // Already authenticated or non-codex OAuth
-                    } else {
-                        1
-                    };
+                    // Keyless providers have no API key — skip straight to the
+                    // model field. CLI subprocesses, OAuth, AND key-less API
+                    // providers like Xiaomi (empty key_label).
+                    // Exception: Codex OAuth uses field 1 for device flow.
+                    self.ps.focused_field =
+                        if is_cli_provider || self.ps.current_provider().key_label.is_empty() {
+                            2
+                        } else if is_oauth_provider
+                            && self.ps.provider_id() == "codex"
+                            && !self.ps.has_existing_key
+                        {
+                            1 // Go to device flow field
+                        } else if is_oauth_provider {
+                            2 // Already authenticated or non-codex OAuth
+                        } else {
+                            1
+                        };
                 }
             } else if self.ps.focused_field == 1 && is_zhipu {
                 // z.ai GLM: field 1 is endpoint type, move to field 2 (api_key)
@@ -991,6 +994,9 @@ impl App {
         if let Some(ref mut p) = config.providers.ollama {
             p.enabled = false;
         }
+        if let Some(ref mut p) = config.providers.xiaomi {
+            p.enabled = false;
+        }
 
         // Get existing key from config if not changing. Routes by provider
         // id so reordering PROVIDERS doesn't break the match.
@@ -1265,6 +1271,19 @@ impl App {
                     ..merged
                 });
             }
+            "xiaomi" => {
+                // Keyless collab provider — preserve base_url / models /
+                // context_window from config; just enable it and record the
+                // chosen model. The api_key stays whatever config has (none
+                // during the keyless window).
+                let merged = config.providers.xiaomi.clone().unwrap_or_default();
+                config.providers.xiaomi = Some(ProviderConfig {
+                    enabled: true,
+                    api_key: api_key.clone().or(merged.api_key.clone()),
+                    default_model: Some(default_model.to_string()),
+                    ..merged
+                });
+            }
             "" if !self.ps.custom_name.is_empty() => {
                 // Custom provider: edit-in-place semantics. If editing an
                 // existing entry, write back to that key (even on rename).
@@ -1334,6 +1353,7 @@ impl App {
             "opencode" => "providers.opencode",
             "qwen" => "providers.qwen",
             "ollama" => "providers.ollama",
+            "xiaomi" => "providers.xiaomi",
             "" => {
                 // Custom provider: resolve name from UI field. NEVER fall
                 // back to `active_custom()` — the previous code did, and
