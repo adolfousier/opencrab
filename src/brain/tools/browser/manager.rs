@@ -13,10 +13,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::config::BrowserConfig as ConfigBrowserConfig;
+
 /// Shared browser manager. Clone-safe via inner `Arc`.
 #[derive(Clone)]
 pub struct BrowserManager {
     inner: Arc<Mutex<ManagerInner>>,
+    config: Arc<ConfigBrowserConfig>,
 }
 
 struct ManagerInner {
@@ -64,22 +67,22 @@ impl Drop for ManagerInner {
 
 impl Default for BrowserManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(ConfigBrowserConfig::default())
     }
 }
 
 impl BrowserManager {
-    pub fn new() -> Self {
+    pub fn new(config: ConfigBrowserConfig) -> Self {
         // Auto-detect: use headed mode only if a display is available
         let headless = !Self::has_display();
         if headless {
             tracing::info!("No display detected — browser will run headless");
         }
-        Self::with_headless(headless)
+        Self::with_headless(headless, config)
     }
 
     /// Create a browser manager with explicit headless/headed mode.
-    pub fn with_headless(headless: bool) -> Self {
+    pub fn with_headless(headless: bool, config: ConfigBrowserConfig) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ManagerInner {
                 browser: None,
@@ -88,6 +91,7 @@ impl BrowserManager {
                 headless,
                 last_screenshot_hash: HashMap::new(),
             })),
+            config: Arc::new(config),
         }
     }
 
@@ -156,6 +160,30 @@ impl BrowserManager {
             if let Some(h) = inner.handler_handle.take() {
                 h.abort();
             }
+        }
+
+        // If a CDP endpoint is configured, connect to it instead of launching
+        // a new browser. This allows multiple profiles to share a single
+        // Chromium instance, saving significant memory.
+        if let Some(ref endpoint) = self.config.cdp_endpoint {
+            tracing::info!("Connecting to existing Chromium instance at {endpoint}");
+            let (browser, mut handler) = Browser::connect(endpoint).await.map_err(|e| {
+                anyhow::anyhow!("Failed to connect to CDP endpoint {endpoint}: {e}")
+            })?;
+
+            let handle = tokio::spawn(async move {
+                while let Some(event) = handler.next().await {
+                    if event.is_err() {
+                        tracing::warn!("CDP handler error, browser connection may be lost");
+                        break;
+                    }
+                }
+            });
+
+            inner.browser = Some(browser);
+            inner.handler_handle = Some(handle);
+            tracing::info!("Connected to external Chromium via CDP at {endpoint}");
+            return Ok(());
         }
 
         let mode = if inner.headless { "headless" } else { "headed" };
@@ -1158,38 +1186,38 @@ mod tests {
 
     #[test]
     fn test_manager_new() {
-        let mgr = BrowserManager::new();
+        let mgr = BrowserManager::new(Default::default());
         let _ = mgr.clone();
     }
 
     #[test]
     fn test_manager_with_headless() {
-        let mgr = BrowserManager::with_headless(false);
+        let mgr = BrowserManager::with_headless(false, Default::default());
         let _ = mgr.clone();
     }
 
     #[tokio::test]
     async fn test_is_headless_default() {
-        let mgr = BrowserManager::with_headless(true);
+        let mgr = BrowserManager::with_headless(true, Default::default());
         assert!(mgr.is_headless().await);
     }
 
     #[tokio::test]
     async fn test_is_headless_false() {
-        let mgr = BrowserManager::with_headless(false);
+        let mgr = BrowserManager::with_headless(false, Default::default());
         assert!(!mgr.is_headless().await);
     }
 
     #[tokio::test]
     async fn test_set_headless_no_change() {
-        let mgr = BrowserManager::with_headless(true);
+        let mgr = BrowserManager::with_headless(true, Default::default());
         // Already headless — no change
         assert!(!mgr.set_headless(true).await);
     }
 
     #[tokio::test]
     async fn test_set_headless_switch() {
-        let mgr = BrowserManager::with_headless(true);
+        let mgr = BrowserManager::with_headless(true, Default::default());
         assert!(mgr.is_headless().await);
 
         if BrowserManager::has_display() {
@@ -1208,13 +1236,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_pages_empty() {
-        let mgr = BrowserManager::new();
+        let mgr = BrowserManager::new(Default::default());
         assert!(mgr.list_pages().await.is_empty());
     }
 
     #[tokio::test]
     async fn test_close_nonexistent() {
-        let mgr = BrowserManager::new();
+        let mgr = BrowserManager::new(Default::default());
         assert!(!mgr.close_page("nonexistent").await);
     }
 

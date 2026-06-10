@@ -964,7 +964,9 @@ async fn cmd_chat_inner(
     // Browser automation tools (headless Chrome via CDP)
     #[cfg(feature = "browser")]
     {
-        let browser_manager = Arc::new(crate::brain::tools::browser::BrowserManager::new());
+        let browser_manager = Arc::new(crate::brain::tools::browser::BrowserManager::new(
+            config.browser.clone(),
+        ));
         shared_tool_registry.register(Arc::new(
             crate::brain::tools::browser::BrowserNavigateTool::new(browser_manager.clone()),
         ));

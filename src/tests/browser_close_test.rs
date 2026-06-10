@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 #[test]
 fn tool_name_is_browser_close() {
-    let mgr = Arc::new(BrowserManager::new());
+    let mgr = Arc::new(BrowserManager::new(Default::default()));
     let tool = BrowserCloseTool::new(mgr);
     assert_eq!(tool.name(), "browser_close");
 }
@@ -29,14 +29,14 @@ fn tool_name_is_browser_close() {
 fn tool_does_not_require_approval() {
     // Closing a tab is non-destructive of user data; should not
     // gate on the approval system.
-    let mgr = Arc::new(BrowserManager::new());
+    let mgr = Arc::new(BrowserManager::new(Default::default()));
     let tool = BrowserCloseTool::new(mgr);
     assert!(!tool.requires_approval());
 }
 
 #[test]
 fn tool_input_schema_is_object_with_no_required_fields() {
-    let mgr = Arc::new(BrowserManager::new());
+    let mgr = Arc::new(BrowserManager::new(Default::default()));
     let tool = BrowserCloseTool::new(mgr);
     let schema = tool.input_schema();
     assert_eq!(
@@ -56,7 +56,7 @@ async fn dispatch_with_no_session_returns_idempotent_success() {
     // call browser_close defensively (e.g. start of a workflow) so
     // calling it on an empty session must NOT return an error —
     // otherwise the agent thinks something failed and retries.
-    let mgr = Arc::new(BrowserManager::new());
+    let mgr = Arc::new(BrowserManager::new(Default::default()));
     let tool = BrowserCloseTool::new(mgr);
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
 
@@ -79,7 +79,7 @@ async fn close_page_for_unknown_name_returns_false() {
     // Lower-level invariant — `close_page` returns false when the
     // name isn't in the HashMap so callers can distinguish
     // "actually closed something" from "no-op".
-    let mgr = BrowserManager::new();
+    let mgr = BrowserManager::new(Default::default());
     let closed = mgr.close_page("session-does-not-exist").await;
     assert!(
         !closed,
@@ -90,7 +90,7 @@ async fn close_page_for_unknown_name_returns_false() {
 #[tokio::test]
 async fn close_page_for_unknown_session_uuid_returns_false() {
     // Same invariant via the session-keyed wrapper.
-    let mgr = BrowserManager::new();
+    let mgr = BrowserManager::new(Default::default());
     let closed = mgr.close_page_for_session(Uuid::new_v4()).await;
     assert!(
         !closed,

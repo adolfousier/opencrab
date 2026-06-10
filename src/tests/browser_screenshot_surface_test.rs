@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn attach_screenshot_on_unknown_session_marks_failure() {
-    let mgr = BrowserManager::new();
+    let mgr = BrowserManager::new(Default::default());
     let mut result = ToolResult::success("navigated".to_string());
     mgr.attach_screenshot(Uuid::new_v4(), &mut result).await;
 
@@ -40,7 +40,7 @@ async fn attach_screenshot_on_unknown_session_marks_failure() {
 async fn attach_screenshot_preserves_existing_output_text() {
     // The failure note is appended, not substituted — the primary
     // reply ("navigated to X") must still reach the model intact.
-    let mgr = BrowserManager::new();
+    let mgr = BrowserManager::new(Default::default());
     let mut result = ToolResult::success("Navigated to https://example.com".to_string());
     mgr.attach_screenshot(Uuid::new_v4(), &mut result).await;
     assert!(

@@ -14,7 +14,7 @@ use crate::brain::tools::browser::BrowserManager;
 
 #[test]
 fn drop_never_launched_manager_does_not_panic() {
-    let mgr = BrowserManager::new();
+    let mgr = BrowserManager::new(Default::default());
     drop(mgr); // explicit drop — Drop impl runs with browser=None, handler=None
 }
 
@@ -22,7 +22,7 @@ fn drop_never_launched_manager_does_not_panic() {
 fn drop_cloned_managers_is_safe() {
     // Tools hold cloned Arcs of BrowserManager. Dropping the clones
     // must not double-abort or panic when the final clone goes away.
-    let mgr = BrowserManager::new();
+    let mgr = BrowserManager::new(Default::default());
     let clone1 = mgr.clone();
     let clone2 = mgr.clone();
     drop(clone1);

@@ -34,7 +34,7 @@ const TEST_URL: &str = "https://example.com";
 #[tokio::test]
 #[ignore = "launches real Chrome — opt-in via `cargo test -- --ignored browser_e2e`"]
 async fn navigate_then_screenshot_is_not_blank() {
-    let mgr = Arc::new(BrowserManager::new());
+    let mgr = Arc::new(BrowserManager::new(Default::default()));
     let nav = BrowserNavigateTool::new(mgr.clone());
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
 
@@ -81,7 +81,7 @@ async fn navigate_then_screenshot_is_not_blank() {
 #[tokio::test]
 #[ignore = "launches real Chrome — opt-in via `cargo test -- --ignored browser_e2e`"]
 async fn concurrent_screenshots_do_not_deadlock() {
-    let mgr = Arc::new(BrowserManager::new());
+    let mgr = Arc::new(BrowserManager::new(Default::default()));
     let nav = BrowserNavigateTool::new(mgr.clone());
     let shot = Arc::new(BrowserScreenshotTool::new(mgr.clone()));
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
@@ -126,7 +126,7 @@ async fn concurrent_screenshots_do_not_deadlock() {
 #[tokio::test]
 #[ignore = "launches real Chrome — opt-in via `cargo test -- --ignored browser_e2e`"]
 async fn close_actually_removes_session_page() {
-    let mgr = Arc::new(BrowserManager::new());
+    let mgr = Arc::new(BrowserManager::new(Default::default()));
     let nav = BrowserNavigateTool::new(mgr.clone());
     let close = BrowserCloseTool::new(mgr.clone());
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
@@ -157,4 +157,42 @@ async fn close_actually_removes_session_page() {
         second.success,
         "browser_close must be idempotent — second call should not error"
     );
+}
+
+/// Tests that when `cdp_endpoint` is configured, the browser manager
+/// connects to an existing Chromium instance instead of launching a new one.
+/// This is the fix for issue #189 — multiple profiles sharing a single
+/// browser to save memory.
+///
+/// To run this test manually:
+/// 1. Start a headless Chromium with CDP enabled:
+///    chromium --remote-debugging-port=9222 --headless --no-sandbox
+/// 2. Run: cargo test --features browser --lib browser_cdp_endpoint -- --ignored
+#[tokio::test]
+#[ignore = "requires external Chromium with CDP enabled on port 9222"]
+async fn cdp_endpoint_connects_to_existing_browser() {
+    use crate::config::BrowserConfig;
+
+    // Configure the manager to connect to an existing CDP endpoint
+    let config = BrowserConfig {
+        cdp_endpoint: Some("ws://localhost:9222".to_string()),
+    };
+    let mgr = Arc::new(BrowserManager::new(config));
+    let nav = BrowserNavigateTool::new(mgr.clone());
+    let ctx = ToolExecutionContext::new(Uuid::new_v4());
+
+    // Navigate should succeed by connecting to the existing browser
+    let res = nav
+        .execute(serde_json::json!({ "url": TEST_URL }), &ctx)
+        .await
+        .expect("navigate tool must not panic");
+    assert!(
+        res.success,
+        "navigate must succeed when connecting to existing CDP endpoint: {}",
+        res.output
+    );
+
+    // Cleanup
+    let close = BrowserCloseTool::new(mgr);
+    let _ = close.execute(serde_json::json!({}), &ctx).await;
 }

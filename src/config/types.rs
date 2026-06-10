@@ -75,6 +75,13 @@ pub struct Config {
     /// where strip-on-load was off.
     #[serde(default)]
     pub brain: BrainConfig,
+
+    /// Browser configuration for browser_navigate and browser_click tools.
+    /// When `cdp_endpoint` is set, connects to an existing Chromium instance
+    /// instead of spawning a new one. Useful for sharing a single browser
+    /// across multiple profiles to save memory.
+    #[serde(default)]
+    pub browser: BrowserConfig,
 }
 
 /// Brain-file behaviour configuration. Issue #164 added read-time stripping
@@ -129,6 +136,34 @@ impl BrainConfig {
     pub fn cap_for(&self, filename: &str) -> usize {
         self.caps.get(filename).copied().unwrap_or(self.default_cap)
     }
+}
+
+/// Browser configuration for browser_navigate and browser_click tools.
+///
+/// When `cdp_endpoint` is set, the browser manager connects to an existing
+/// Chromium instance via Chrome DevTools Protocol instead of spawning a new
+/// one. This allows multiple profiles to share a single browser, saving
+/// significant memory (each Chromium instance uses ~250-300MB).
+///
+/// Example in config.toml:
+/// ```toml
+/// [browser]
+/// cdp_endpoint = "ws://localhost:9222"
+/// ```
+///
+/// To start a standalone Chromium with CDP enabled:
+/// ```bash
+/// chromium --remote-debugging-port=9222 --headless
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BrowserConfig {
+    /// WebSocket endpoint for an existing Chromium instance with CDP enabled.
+    /// When set, the browser manager connects to this endpoint instead of
+    /// spawning a new browser. Format: "ws://host:port" or "http://host:port".
+    ///
+    /// Example: "ws://localhost:9222"
+    #[serde(default)]
+    pub cdp_endpoint: Option<String>,
 }
 
 /// Daemon mode configuration (systemd / launchd service).
@@ -2177,6 +2212,7 @@ impl Default for Config {
             cron: CronConfig::default(),
             memory: MemoryConfig::default(),
             brain: BrainConfig::default(),
+            browser: BrowserConfig::default(),
         }
     }
 }
@@ -2798,6 +2834,7 @@ impl Config {
             cron: overlay.cron,
             memory: overlay.memory,
             brain: overlay.brain,
+            browser: overlay.browser,
         }
     }
 
