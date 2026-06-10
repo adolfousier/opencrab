@@ -211,6 +211,9 @@ impl ProviderSelectorState {
                     .as_ref()
                     .and_then(|p| p.api_key.as_ref())
                     .is_some_and(|k| !k.is_empty()),
+                // Keyless API providers (empty key_label, e.g. Xiaomi): the
+                // proxy supplies the key, so they're always configured/ready.
+                _ if PROVIDERS[idx].key_label.is_empty() => true,
                 // Standard API key providers
                 _ => crate::utils::providers::config_for(&config.providers, id)
                     .and_then(|p| p.api_key.as_ref())
