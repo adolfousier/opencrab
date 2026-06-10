@@ -262,39 +262,22 @@ fn tui_custom_provider_is_last() {
 // ── is_first_time provider coverage ─────────────────────────────────
 
 #[test]
-fn is_first_time_checks_all_known_providers() {
-    // Read the source of is_first_time() and verify it checks every provider
-    // that has a config field. This prevents the 2026-04-28 bug where
-    // ollama and opencode were missing from the check.
+fn is_first_time_uses_provider_registry_not_hardcoded_list() {
+    // is_first_time() must derive "is there a configured provider?" from
+    // active_provider_and_model() (which walks provider_registry — the single
+    // source of truth), NOT a hardcoded OR-chain of provider fields.
+    //
+    // History: the hardcoded chain silently omitted new providers — ollama and
+    // opencode (2026-04-28), then keyless Xiaomi (2026-06) — so an enabled but
+    // un-listed provider re-triggered onboarding on every restart. Routing
+    // through provider_registry makes that class of bug impossible: adding a
+    // provider to the registry automatically covers is_first_time().
     let source = include_str!("../tui/onboarding/fetch.rs");
-
-    // Source uses multiline chaining like `config\n    .providers\n    .anthropic`
-    // so we search for the field names directly, not the full path.
-    let required_checks = [
-        ("anthropic", "providers.anthropic"),
-        ("openai", "providers.openai"),
-        ("github", "providers.github"),
-        ("gemini", "providers.gemini"),
-        ("openrouter", "providers.openrouter"),
-        ("minimax", "providers.minimax"),
-        ("zhipu", "providers.zhipu"),
-        ("claude_cli", "providers.claude_cli"),
-        ("opencode_cli", "providers.opencode_cli"),
-        ("codex_cli", "providers.codex_cli"),
-        ("codex", "providers.codex"),
-        ("opencode", "providers.opencode"),
-        ("qwen", "providers.qwen"),
-        ("ollama", "providers.ollama"),
-        ("active_custom", "active_custom()"),
-    ];
-
-    for (field, label) in &required_checks {
-        assert!(
-            source.contains(field),
-            "is_first_time() is missing check for '{}'",
-            label
-        );
-    }
+    assert!(
+        source.contains("active_provider_and_model"),
+        "is_first_time() must use active_provider_and_model (provider_registry), \
+         not a hardcoded provider list that drifts every time a provider is added"
+    );
 }
 
 // ── save_provider_selection_internal section routing ────────────────

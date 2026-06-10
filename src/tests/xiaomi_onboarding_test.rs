@@ -80,6 +80,29 @@ fn xiaomi_keyless_quickjump_full_flow_commits() {
     );
 }
 
+/// is_first_time() must NOT loop back to onboarding when Xiaomi is the only
+/// enabled provider. It now derives "configured" from active_provider_and_model
+/// (provider_registry) instead of a hardcoded OR-chain that omitted xiaomi —
+/// that omission is exactly why an enabled Xiaomi re-triggered onboarding on
+/// every restart. Keyless: enabled + no api_key still counts as active.
+#[test]
+#[allow(clippy::field_reassign_with_default)]
+fn xiaomi_enabled_is_an_active_provider_no_onboarding_loop() {
+    use crate::config::{ProviderConfig, ProviderConfigs};
+    let mut providers = ProviderConfigs::default();
+    providers.xiaomi = Some(ProviderConfig {
+        enabled: true,
+        default_model: Some("mimo-v2.5-pro".to_string()),
+        ..Default::default()
+    });
+    let (provider, _) = providers.active_provider_and_model();
+    assert_eq!(
+        provider, "xiaomi",
+        "enabled keyless Xiaomi must resolve as the active provider so \
+         is_first_time() stops re-triggering onboarding on restart"
+    );
+}
+
 /// /models populates its list via fetch_provider_models — it must return the
 /// mimo chat models for Xiaomi (was empty: xiaomi missing from the endpoint
 /// match, so the picker showed nothing to select).

@@ -144,45 +144,14 @@ pub fn is_first_time() -> bool {
         }
     };
 
-    let has_enabled_provider = config
-        .providers
-        .anthropic
-        .as_ref()
-        .is_some_and(|p| p.enabled)
-        || config.providers.openai.as_ref().is_some_and(|p| p.enabled)
-        || config.providers.github.as_ref().is_some_and(|p| p.enabled)
-        || config.providers.gemini.as_ref().is_some_and(|p| p.enabled)
-        || config
-            .providers
-            .openrouter
-            .as_ref()
-            .is_some_and(|p| p.enabled)
-        || config.providers.minimax.as_ref().is_some_and(|p| p.enabled)
-        || config.providers.zhipu.as_ref().is_some_and(|p| p.enabled)
-        || config
-            .providers
-            .claude_cli
-            .as_ref()
-            .is_some_and(|p| p.enabled)
-        || config
-            .providers
-            .opencode_cli
-            .as_ref()
-            .is_some_and(|p| p.enabled)
-        || config
-            .providers
-            .codex_cli
-            .as_ref()
-            .is_some_and(|p| p.enabled)
-        || config.providers.codex.as_ref().is_some_and(|p| p.enabled)
-        || config.providers.qwen.as_ref().is_some_and(|p| p.enabled)
-        || config.providers.ollama.as_ref().is_some_and(|p| p.enabled)
-        || config
-            .providers
-            .opencode
-            .as_ref()
-            .is_some_and(|p| p.enabled)
-        || config.providers.active_custom().is_some();
+    // Past first-time setup iff there's an enabled + usable provider. Use
+    // active_provider_and_model (which walks provider_registry + customs)
+    // instead of a hardcoded list — the old hardcoded OR-chain silently omitted
+    // new providers (e.g. keyless Xiaomi), so an enabled Xiaomi still looped
+    // back into onboarding on every restart. provider_registry is the single
+    // source of truth and can't drift.
+    let (active_provider, _) = config.providers.active_provider_and_model();
+    let has_enabled_provider = active_provider != "none";
 
     tracing::debug!(
         "[is_first_time] has_enabled_provider={}, result={}",
