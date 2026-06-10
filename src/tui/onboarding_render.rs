@@ -985,7 +985,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             };
             let (masked_key, key_hint) = if is_keyless_api {
                 (
-                    "•••••••• — free via the opencrabs × Xiaomi proxy (no key needed)".to_string(),
+                    "•••••••• — OpenCrabs × Xiaomi Collab".to_string(),
                     String::new(),
                 )
             } else if wizard.ps.has_existing_key_sentinel() {

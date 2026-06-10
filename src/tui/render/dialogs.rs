@@ -551,7 +551,7 @@ pub(super) fn render_model_selector(f: &mut Frame, app: &App, area: Rect) {
 
         let (masked_key, key_hint) = if is_keyless_api {
             (
-                "•••••••• — free via the opencrabs × Xiaomi proxy (no key needed)".to_string(),
+                "•••••••• — OpenCrabs × Xiaomi Collab".to_string(),
                 String::new(),
             )
         } else if has_user_key {
