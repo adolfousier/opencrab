@@ -143,6 +143,25 @@ impl StreamingState {
     }
 }
 
+/// Prepend a user's caption (the message text typed alongside a Telegram
+/// photo/video/document) to the agent-facing body (image/file markers).
+/// Telegram delivers that text in `message.caption`, never `message.text`,
+/// so it must be combined here or the agent never sees it.
+///
+/// Regression guard (2026-06): the previous inline form was
+/// `caption.is_empty() || body.contains("<<IMG:")` (and `<<VID:`), which
+/// dropped EVERY caption — the marker emitted by `inject_file_content` always
+/// contains its `<<TAG:` sentinel, so the second clause was always true. The
+/// caption is independent of the marker and must always be included when
+/// present. See telegram_caption_test.
+pub(crate) fn prepend_caption(caption: &str, body: String) -> String {
+    if caption.trim().is_empty() {
+        body
+    } else {
+        format!("{caption}\n\n{body}")
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_message(
     bot: Bot,
@@ -658,18 +677,10 @@ pub(crate) async fn handle_message(
 
             if markers.len() == 1 {
                 let injected = markers.into_iter().next().unwrap();
-                if caption.is_empty() || injected.contains("<<IMG:") {
-                    injected
-                } else {
-                    format!("{caption}\n\n{injected}")
-                }
+                prepend_caption(&caption, injected)
             } else {
                 let combined = markers.join("\n");
-                if caption.is_empty() {
-                    combined
-                } else {
-                    format!("{caption}\n\n{combined}")
-                }
+                prepend_caption(&caption, combined)
             }
         } else {
             // Single photo (not part of an album) — dispatch immediately, no debounce
@@ -680,11 +691,7 @@ pub(crate) async fn handle_message(
             );
 
             let caption = msg.caption().unwrap_or("");
-            if caption.is_empty() || img_marker.contains("<<IMG:") {
-                img_marker
-            } else {
-                format!("{caption}\n\n{img_marker}")
-            }
+            prepend_caption(caption, img_marker)
         };
         (result, false)
     } else if let Some(vid) = msg.video() {
@@ -736,11 +743,7 @@ pub(crate) async fn handle_message(
         use crate::utils::{inject_file_content, process_file_with_vision};
         let content = process_file_with_vision(&bytes, &mime, &fname, &cfg);
         let injected = inject_file_content(&content).0;
-        let result = if caption.is_empty() || injected.contains("<<VID:") {
-            injected
-        } else {
-            format!("{caption}\n\n{injected}")
-        };
+        let result = prepend_caption(&caption, injected);
         (result, false)
     } else if let Some(anim) = msg.animation() {
         // Animations are Telegram's auto-converted short videos (iPhone .mov →
@@ -808,11 +811,7 @@ pub(crate) async fn handle_message(
         use crate::utils::{inject_file_content, process_file_with_vision};
         let content = process_file_with_vision(&bytes, "video/mp4", &fname, &cfg);
         let injected = inject_file_content(&content).0;
-        let result = if caption.is_empty() || injected.contains("<<VID:") {
-            injected
-        } else {
-            format!("{caption}\n\n{injected}")
-        };
+        let result = prepend_caption(&caption, injected);
         (result, false)
     } else if let Some(vnote) = msg.video_note() {
         let fname = "video_note.mp4".to_string();
@@ -933,11 +932,7 @@ pub(crate) async fn handle_message(
         use crate::utils::{inject_file_content, process_file_with_vision};
         let content = process_file_with_vision(&bytes, mime, fname, &cfg);
         let result = inject_file_content(&content).0;
-        let result = if caption.is_empty() || result.contains("<<IMG:") {
-            result
-        } else {
-            format!("{caption}\n\n{result}")
-        };
+        let result = prepend_caption(caption, result);
         (result, false)
     } else {
         // Non-text, non-voice, non-photo message -- ignore
