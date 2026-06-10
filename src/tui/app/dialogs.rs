@@ -612,7 +612,6 @@ impl App {
                 self.ps.base_url,
             );
 
-            let is_cli_provider = self.ps.is_cli();
             let is_oauth_provider = self.ps.is_oauth();
 
             if self.ps.focused_field == 0 {
@@ -630,19 +629,18 @@ impl App {
                     // model field. CLI subprocesses, OAuth, AND key-less API
                     // providers like Xiaomi (empty key_label).
                     // Exception: Codex OAuth uses field 1 for device flow.
-                    self.ps.focused_field =
-                        if is_cli_provider || self.ps.current_provider().key_label.is_empty() {
-                            2
-                        } else if is_oauth_provider
-                            && self.ps.provider_id() == "codex"
-                            && !self.ps.has_existing_key
-                        {
-                            1 // Go to device flow field
-                        } else if is_oauth_provider {
-                            2 // Already authenticated or non-codex OAuth
-                        } else {
-                            1
-                        };
+                    self.ps.focused_field = if self.ps.is_keyless() {
+                        2
+                    } else if is_oauth_provider
+                        && self.ps.provider_id() == "codex"
+                        && !self.ps.has_existing_key
+                    {
+                        1 // Go to device flow field
+                    } else if is_oauth_provider {
+                        2 // Already authenticated or non-codex OAuth
+                    } else {
+                        1
+                    };
                 }
             } else if self.ps.focused_field == 1 && is_zhipu {
                 // z.ai GLM: field 1 is endpoint type, move to field 2 (api_key)

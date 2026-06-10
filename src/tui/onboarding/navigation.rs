@@ -37,7 +37,7 @@ impl OnboardingWizard {
                 // CLI, OpenCode CLI) AND key-less API providers like Xiaomi,
                 // whose onboarding entry has an empty key_label. Only demand a
                 // key when the provider actually has a key field.
-                let keyless = self.ps.is_cli() || self.ps.current_provider().key_label.is_empty();
+                let keyless = self.ps.is_keyless();
                 if self.ps.api_key_input.is_empty() && !self.ps.is_custom() && !keyless {
                     self.error_message = Some("API key is required".to_string());
                     return;
