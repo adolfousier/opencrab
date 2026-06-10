@@ -100,7 +100,7 @@ OpenCrabs runs as a **single binary on your terminal** — no server, no gateway
 
 ## 🎬 Full onboard
 
-https://github.com/user-attachments/assets/f05a1132-5d00-4532-bc89-30fb80e45e22
+https://github.com/user-attachments/assets/833dd5e9-3bcc-432a-96ac-3a5bb97b5966
 
 ## 🎬 Demo
 
