@@ -6,7 +6,7 @@ mod close;
 mod content;
 mod eval;
 mod find;
-mod manager;
+pub(crate) mod manager;
 mod navigate;
 mod screenshot;
 mod type_text;

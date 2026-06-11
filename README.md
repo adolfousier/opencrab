@@ -2129,6 +2129,19 @@ Auto-detects your default Chromium-based browser and uses its native profile (co
 
 > **Why no Firefox?** Browser automation uses Chrome DevTools Protocol (CDP). Firefox dropped CDP support entirely — it now uses WebDriver BiDi, which is a different protocol. All Chromium-based browsers speak CDP natively.
 
+**Sharing one browser across profiles ([#189](https://github.com/adolfousier/opencrabs/discussions/189)).** By default every profile spawns its own headless Chromium (~250-300MB each), so several active profiles can OOM a small VDS. Set `[browser] cdp_endpoint` to make all profiles connect to a single shared Chromium instead — dropping memory from ~750MB (3 × 250MB) to ~260MB. Start a standalone Chromium with remote debugging, then point each profile at it:
+
+```bash
+chromium --remote-debugging-port=9222 --headless --no-sandbox
+```
+
+```toml
+[browser]
+cdp_endpoint = "http://localhost:9222"
+```
+
+Prefer the `http://host:port` form — OpenCrabs queries `/json/version` to resolve the real devtools websocket URL. A bare `ws://host:port` is also accepted (normalized to `http://` internally); a full `ws://host:port/devtools/browser/<id>` URL is used as-is. A profile shutting down only disconnects — it never kills the shared browser, so the other profiles keep running.
+
 #### Multi-Agent Orchestration
 
 OpenCrabs supports spawning specialized sub-agents that run autonomously in isolated sessions. Each sub-agent gets its own context, tool registry, and cancel token.

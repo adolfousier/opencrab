@@ -386,6 +386,21 @@ enabled = false
 model = "gemini-3.1-flash-image-preview"   # Gemini vision model
 
 # ========================================
+# Browser automation (feature: browser)
+# ========================================
+# By default each profile launches its own headless Chromium (~250-300MB each).
+# To share ONE Chromium across multiple profiles (big memory win on small VDS),
+# start a standalone instance with remote debugging:
+#
+#   chromium --remote-debugging-port=9222 --headless --no-sandbox
+#
+# then point every profile's config at it. Prefer the http:// form — OpenCrabs
+# queries /json/version to find the real devtools websocket URL. (A bare
+# ws://host:port is also accepted and normalized to http:// automatically.)
+# [browser]
+# cdp_endpoint = "http://localhost:9222"
+
+# ========================================
 # Tips for Using Local LLMs
 # ========================================
 # 1. Make sure LM Studio is running before starting OpenCrabs

@@ -22,6 +22,7 @@ pub mod brain_file_generic_guard_test;
 pub mod brain_file_safety_test;
 pub mod brain_filter_strip_empty_sections_test;
 pub mod brain_templates_test;
+pub mod browser_cdp_endpoint_test;
 pub mod browser_close_test;
 pub mod browser_default_linux_test;
 pub mod browser_default_test;

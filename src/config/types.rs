@@ -148,20 +148,25 @@ impl BrainConfig {
 /// Example in config.toml:
 /// ```toml
 /// [browser]
-/// cdp_endpoint = "ws://localhost:9222"
+/// cdp_endpoint = "http://localhost:9222"
 /// ```
 ///
 /// To start a standalone Chromium with CDP enabled:
 /// ```bash
-/// chromium --remote-debugging-port=9222 --headless
+/// chromium --remote-debugging-port=9222 --headless --no-sandbox
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BrowserConfig {
-    /// WebSocket endpoint for an existing Chromium instance with CDP enabled.
-    /// When set, the browser manager connects to this endpoint instead of
-    /// spawning a new browser. Format: "ws://host:port" or "http://host:port".
+    /// CDP endpoint for an existing Chromium instance with remote debugging
+    /// enabled. When set, the browser manager connects to this endpoint instead
+    /// of spawning a new browser, so multiple profiles can share one Chromium.
     ///
-    /// Example: "ws://localhost:9222"
+    /// Prefer the `http://host:port` form — the manager queries `/json/version`
+    /// to discover the real devtools websocket URL. A bare `ws://host:port` is
+    /// also accepted (normalized to `http://` internally); a full
+    /// `ws://host:port/devtools/browser/<id>` URL is used as-is.
+    ///
+    /// Example: "http://localhost:9222"
     #[serde(default)]
     pub cdp_endpoint: Option<String>,
 }

@@ -65,6 +65,32 @@ impl Drop for ManagerInner {
     }
 }
 
+/// Normalize a user-configured CDP endpoint for `Browser::connect`.
+///
+/// chromey resolves the real `/devtools/browser/<id>` websocket URL via the
+/// `/json/version` endpoint ONLY when the URL scheme is `http`/`https`. A bare
+/// `ws://host:port` (no devtools path) is handed straight to the websocket
+/// client, and Chromium rejects the upgrade on the root path — so the
+/// documented `ws://localhost:9222` form would silently fail to connect.
+///
+/// This rewrites a path-less `ws://`/`wss://` endpoint to `http://`/`https://`
+/// so resolution kicks in. A full devtools websocket URL (one that already has
+/// a `/devtools/...` path) is left untouched, as is any `http(s)` endpoint.
+pub(crate) fn normalize_cdp_endpoint(endpoint: &str) -> String {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    for (ws_scheme, http_scheme) in [("ws://", "http://"), ("wss://", "https://")] {
+        if let Some(rest) = trimmed.strip_prefix(ws_scheme) {
+            // Path-less host:port → rewrite scheme so /json/version resolution runs.
+            // A real devtools URL contains a path and is left as-is.
+            if !rest.contains('/') {
+                return format!("{http_scheme}{rest}");
+            }
+            return endpoint.to_string();
+        }
+    }
+    endpoint.to_string()
+}
+
 impl Default for BrowserManager {
     fn default() -> Self {
         Self::new(ConfigBrowserConfig::default())
@@ -166,9 +192,21 @@ impl BrowserManager {
         // a new browser. This allows multiple profiles to share a single
         // Chromium instance, saving significant memory.
         if let Some(ref endpoint) = self.config.cdp_endpoint {
-            tracing::info!("Connecting to existing Chromium instance at {endpoint}");
-            let (browser, mut handler) = Browser::connect(endpoint).await.map_err(|e| {
-                anyhow::anyhow!("Failed to connect to CDP endpoint {endpoint}: {e}")
+            // chromey's Browser::connect only auto-resolves the real
+            // /devtools/browser/<id> websocket URL when the endpoint is an
+            // http(s) URL (it queries /json/version). A bare `ws://host:port`
+            // would be handed straight to the websocket client and Chromium
+            // rejects the upgrade on the root path. Normalize a path-less
+            // ws/wss endpoint to http/https so resolution kicks in — so both
+            // `ws://localhost:9222` and `http://localhost:9222` work.
+            let resolved = normalize_cdp_endpoint(endpoint);
+            tracing::info!(
+                "Connecting to existing Chromium instance at {endpoint} (resolved: {resolved})"
+            );
+            let (browser, mut handler) = Browser::connect(&resolved).await.map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to connect to CDP endpoint {endpoint} (resolved {resolved}): {e}"
+                )
             })?;
 
             let handle = tokio::spawn(async move {
