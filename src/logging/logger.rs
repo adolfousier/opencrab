@@ -112,6 +112,74 @@ impl LoggerGuard {
     }
 }
 
+/// A synchronous, self-healing daily rolling file writer for tracing (#190).
+///
+/// Wraps `tracing_appender::rolling::daily` (reused for correct UTC date
+/// handling and rotation) but deliberately avoids `tracing_appender::non_blocking`:
+///
+///   * The non-blocking worker thread swallows IO errors (`worker.rs`:
+///     `Err(_) => {}`) while still draining the channel, so after a single
+///     write failure every later line is dropped silently and the file freezes
+///     with the process alive and no error surfaced. It also drops events when
+///     its bounded buffer fills under load.
+///   * Writing on the calling thread surfaces write errors to
+///     tracing-subscriber's stderr fallback instead of vanishing.
+///   * On a write error the inner appender is rebuilt, so the next event
+///     reopens the file — recovering from an fd closed out-of-band (logrotate,
+///     external close) instead of staying frozen until restart. The rolling
+///     appender alone only reopens on date rollover.
+///
+/// Debug file logging is opt-in (`-d`), so the synchronous IO cost is an
+/// acceptable trade for a log that is actually reliable.
+pub(crate) struct ResilientFileWriter {
+    log_dir: PathBuf,
+    prefix: String,
+    appender: std::sync::Mutex<tracing_appender::rolling::RollingFileAppender>,
+}
+
+impl ResilientFileWriter {
+    pub(crate) fn new(log_dir: PathBuf, prefix: String) -> Self {
+        let appender = tracing_appender::rolling::daily(&log_dir, &prefix);
+        Self {
+            log_dir,
+            prefix,
+            appender: std::sync::Mutex::new(appender),
+        }
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for ResilientFileWriter {
+    type Writer = ResilientFileGuard<'a>;
+    fn make_writer(&'a self) -> Self::Writer {
+        ResilientFileGuard {
+            parent: self,
+            appender: self.appender.lock().unwrap_or_else(|e| e.into_inner()),
+        }
+    }
+}
+
+pub(crate) struct ResilientFileGuard<'a> {
+    parent: &'a ResilientFileWriter,
+    appender: std::sync::MutexGuard<'a, tracing_appender::rolling::RollingFileAppender>,
+}
+
+impl std::io::Write for ResilientFileGuard<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let result = self.appender.write(buf);
+        if result.is_err() {
+            // Self-heal: rebuild the appender so the next event reopens the file
+            // instead of every subsequent write hitting the same dead handle.
+            *self.appender =
+                tracing_appender::rolling::daily(&self.parent.log_dir, &self.parent.prefix);
+        }
+        result
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.appender.flush()
+    }
+}
+
 /// Initialize the logging system
 ///
 /// Returns a guard that must be kept alive for the duration of the program.
@@ -149,21 +217,12 @@ fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::err
         .ok();
     }
 
-    // Set up rolling file appender (daily rotation), written SYNCHRONOUSLY.
-    //
-    // We deliberately do NOT wrap this in `tracing_appender::non_blocking`.
-    // That spawns a worker thread whose loop swallows IO errors
-    // (`worker.rs`: `Err(_) => {}`) while still draining the channel — so once a
-    // write starts failing, every subsequent line is silently dropped and the
-    // log file freezes with the process still alive and no error surfaced
-    // (issue #190: daemon logs froze ~5s after start, no fd, no error). It also
-    // drops events when its bounded buffer fills under load. Writing on the
-    // calling thread means each event is attempted independently, write errors
-    // reach tracing-subscriber's stderr fallback instead of vanishing, and a
-    // transient failure can't permanently wedge the writer. Debug file logging
-    // is opt-in (`-d`), so the synchronous IO cost is an acceptable trade for a
-    // log that's actually reliable.
-    let file_appender = tracing_appender::rolling::daily(&config.log_dir, &config.log_prefix);
+    // Set up the daily rolling file writer, written SYNCHRONOUSLY and
+    // self-healing — see `ResilientFileWriter` for the full rationale (#190).
+    // In short: no `non_blocking` worker thread to silently die and drop every
+    // event, and a write failure rebuilds the appender so the next event
+    // reopens the file instead of the log freezing forever.
+    let file_appender = ResilientFileWriter::new(config.log_dir.clone(), config.log_prefix.clone());
 
     // Build environment filter
     let env_filter = EnvFilter::from_default_env()
