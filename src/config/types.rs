@@ -660,9 +660,21 @@ pub struct AgentConfig {
     /// every request).
     #[serde(default = "default_lazy_tools")]
     pub lazy_tools: bool,
+
+    /// Redact sensitive data (API keys, tokens, passwords, IPs) from tool
+    /// outputs and display. **On by default** for safety. Set to `false`
+    /// during sysadmin/devops work where seeing IPs, tokens, and passwords
+    /// is necessary. When false, the agent will still warn about secrets
+    /// in logs but won't redact them from display.
+    #[serde(default = "default_redact_sensitive_data")]
+    pub redact_sensitive_data: bool,
 }
 
 fn default_lazy_tools() -> bool {
+    true
+}
+
+fn default_redact_sensitive_data() -> bool {
     true
 }
 
@@ -700,6 +712,7 @@ impl Default for AgentConfig {
             self_improvement_model: None,
             silent_compaction: false,
             lazy_tools: default_lazy_tools(),
+            redact_sensitive_data: default_redact_sensitive_data(),
         }
     }
 }

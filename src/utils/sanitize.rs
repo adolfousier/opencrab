@@ -5,10 +5,23 @@
 //! redacts those values before they are shown to users in Telegram/WhatsApp
 //! approval dialogs or the TUI, while preserving enough context (field names,
 //! non-sensitive values) for the user to understand what the tool is doing.
+//!
+//! Redaction can be disabled via `config.agent.redact_sensitive_data = false`
+//! for sysadmin/devops work where seeing IPs, tokens, and passwords is
+//! necessary.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{Map, Value};
+
+/// Check if sensitive data redaction is enabled.
+/// Loads the config and returns the `agent.redact_sensitive_data` flag.
+/// Defaults to `true` if config cannot be loaded.
+fn is_redaction_enabled() -> bool {
+    crate::config::Config::load()
+        .map(|c| c.agent.redact_sensitive_data)
+        .unwrap_or(true)
+}
 
 /// Field name patterns (case-insensitive) whose values are always redacted.
 const SENSITIVE_KEYS: &[&str] = &[
@@ -83,6 +96,11 @@ fn is_sensitive_key(key: &str) -> bool {
 /// command before display — the expanded view already redacts via
 /// `redact_tool_input`, this closes the same leak in the collapsed line.
 pub(crate) fn redact_command(cmd: &str) -> String {
+    // Skip redaction if disabled via config
+    if !is_redaction_enabled() {
+        return cmd.to_string();
+    }
+
     let mut result = cmd.to_string();
 
     // Redact URL passwords: https://user:PASSWORD@host → https://user:[REDACTED]@host
@@ -251,6 +269,11 @@ fn shrink_home_paths_inner(value: &Value, home: &str) -> Value {
 /// - Arrays and nested objects are recursively processed
 /// - Home directory paths are shortened to `~` for cleaner display
 pub fn redact_tool_input(value: &Value) -> Value {
+    // Skip redaction if disabled via config
+    if !is_redaction_enabled() {
+        return value.clone();
+    }
+
     // First shrink home paths, then redact secrets
     let shortened = shrink_home_paths(value);
     redact_value(&shortened, None)
@@ -479,6 +502,11 @@ static QWEN_TOOL_MARKER_RE: Lazy<Regex> =
 ///
 /// Preserves the prefix so the user can see *what kind* of key was redacted.
 pub fn redact_secrets(text: &str) -> String {
+    // Skip redaction if disabled via config
+    if !is_redaction_enabled() {
+        return text.to_string();
+    }
+
     let mut result = text.to_string();
 
     // 1. Redact known key prefixes — keep prefix, replace rest with [REDACTED]

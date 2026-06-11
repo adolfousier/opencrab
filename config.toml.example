@@ -343,6 +343,12 @@ profile_id = ""
 # before each update (or to /evolve manually).
 # auto_update = true
 
+# Redact sensitive data from tool outputs and display (default: true).
+# When true, API keys, tokens, passwords, and IP addresses are redacted
+# from tool call displays and outputs. Set to false during sysadmin/devops
+# work where seeing IPs, tokens, and passwords is necessary.
+# redact_sensitive_data = false
+
 [image.generation]
 enabled = false
 model = "gemini-3.1-flash-image-preview"   # Gemini image-gen model ("Nano Banana")

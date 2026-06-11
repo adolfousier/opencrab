@@ -1541,6 +1541,7 @@ Full annotated example — the onboarding wizard writes this for you, but you ca
 [agent]
 approval_policy = "auto-always"  # auto-always (default) | auto-session | ask
 working_directory = "~/projects" # default working dir for Bash/file tools
+redact_sensitive_data = true     # redact IPs, tokens, passwords from tool output (set false for sysadmin work)
 
 # ── Channels ──────────────────────────────────────────────────────────────────
 
