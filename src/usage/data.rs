@@ -800,14 +800,22 @@ async fn fetch_activities(pool: &Pool, since: Option<i64>) -> Result<Vec<Activit
 /// SELECT columns for the cache-efficiency aggregation, yielding
 /// `(cached_tokens, total_input_tokens)`.
 ///
-/// Every column is COALESCE'd to 0 *individually*. Non-caching rows store NULL
-/// (not 0) in `cache_read_tokens`/`cache_creation_tokens`, and
-/// `input + NULL + NULL` is NULL — which `SUM()` silently skips, dropping those
-/// rows' input tokens from the denominator and inflating the cache-hit %
-/// (87% reported vs 53% actual on real data). Shared with the regression test so
-/// the two can't drift.
+/// Every column is COALESCE'd to 0 *individually*: even within a caching-capable
+/// request a provider may report `cache_read` but leave `cache_creation` NULL,
+/// and `input + NULL + cache_read` would be NULL — which `SUM()` silently skips.
+/// Shared with the regression test so the two can't drift.
 pub(crate) const CACHE_STATS_SELECT_COLS: &str = "COALESCE(SUM(cache_read_tokens), 0), \
      COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0)), 0)";
+
+/// Filter to caching-CAPABLE requests only — the ones where the provider
+/// actually reported cache usage (`cache_read`/`cache_creation` present, even if
+/// the value is 0 on a cache miss). Requests on providers with no caching at all
+/// (local llama.cpp, etc.) store NULL in both and are EXCLUDED, because the card
+/// measures "of the input that could be cached, how much hit cache" — not a rate
+/// diluted by models that have no caching concept. A cache MISS (value 0, not
+/// NULL) stays in the denominator, correctly lowering the efficiency.
+pub(crate) const CACHE_CAPABLE_WHERE: &str =
+    "cache_read_tokens IS NOT NULL OR cache_creation_tokens IS NOT NULL";
 
 async fn fetch_cache_stats(pool: &Pool, since: Option<i64>) -> Result<Option<CacheStats>> {
     let conn = pool.get().await.context("pool")?;
@@ -819,16 +827,14 @@ async fn fetch_cache_stats(pool: &Pool, since: Option<i64>) -> Result<Option<Cac
                 (
                     format!(
                         "SELECT {CACHE_STATS_SELECT_COLS} FROM messages \
-                         WHERE created_at >= ?1 \
-                           AND (cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0)"
+                         WHERE created_at >= ?1 AND ({CACHE_CAPABLE_WHERE})"
                     ),
                     vec![Box::new(s)],
                 )
             } else {
                 (
                     format!(
-                        "SELECT {CACHE_STATS_SELECT_COLS} FROM messages \
-                         WHERE cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0"
+                        "SELECT {CACHE_STATS_SELECT_COLS} FROM messages WHERE {CACHE_CAPABLE_WHERE}"
                     ),
                     vec![],
                 )

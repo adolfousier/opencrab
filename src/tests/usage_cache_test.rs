@@ -133,13 +133,16 @@ fn dashboard_data_cache_field_defaults_to_none() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SQL aggregation — the NULL-cache-column trap that inflated the % (audit:
-// 87% reported vs 53% actual). Runs the ACTUAL production aggregation columns.
+// SQL aggregation — the card measures caching-CAPABLE efficiency: of the input
+// on providers that actually do caching, how much hit cache. Requests on models
+// with no caching at all (NULL cache columns) are excluded so they don't dilute
+// the number; cache MISSES (value 0) stay in the denominator. Runs the ACTUAL
+// production SQL (shared consts) so the test can't drift from the card.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn aggregation_counts_input_from_rows_with_null_cache_columns() {
-    use crate::usage::data::CACHE_STATS_SELECT_COLS;
+fn aggregation_is_caching_capable_only_and_coalesces_nulls() {
+    use crate::usage::data::{CACHE_CAPABLE_WHERE, CACHE_STATS_SELECT_COLS};
 
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     conn.execute_batch(
@@ -148,33 +151,35 @@ fn aggregation_counts_input_from_rows_with_null_cache_columns() {
             cache_creation_tokens INTEGER,
             cache_read_tokens INTEGER
          );
-         -- a caching request: 90 of its input was served from cache
+         -- caching HIT: 90 of its input came from cache. included.
          INSERT INTO messages VALUES (10, 0, 90);
-         -- a NON-caching request: the cache columns are NULL, exactly as the
-         -- agent records them when the provider returns no cache usage
+         -- caching MISS: provider reported 0 cached (not NULL). included, and it
+         -- correctly drags efficiency DOWN by adding 50 to the denominator only.
+         INSERT INTO messages VALUES (50, 0, 0);
+         -- caching row with a partial NULL (provider omitted cache_creation):
+         -- still included; COALESCE treats the NULL as 0.
+         INSERT INTO messages VALUES (20, NULL, 80);
+         -- NON-caching model (local llama.cpp etc.): both NULL. EXCLUDED so it
+         -- doesn't dilute the caching-efficiency number.
          INSERT INTO messages VALUES (100, NULL, NULL);",
     )
     .unwrap();
 
-    let sql = format!(
-        "SELECT {CACHE_STATS_SELECT_COLS} FROM messages \
-         WHERE cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0"
-    );
+    let sql = format!("SELECT {CACHE_STATS_SELECT_COLS} FROM messages WHERE {CACHE_CAPABLE_WHERE}");
     let (cached, total): (i64, i64) = conn
         .query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
         .unwrap();
 
-    // Cached is correct either way (the NULL row contributes 0 cached).
-    assert_eq!(cached, 90);
-    // The denominator MUST include the NULL-cache row's 100 input tokens:
-    // 10 + 90 + 100 = 200. The old `SUM(input + cache_creation + cache_read)`
-    // returned NULL for that row and dropped it, yielding 100 — which inflated
-    // the hit rate from the true 45% to a bogus 90%.
+    // cached = 90 + 0 + 80 = 170 (the excluded non-caching row adds nothing).
+    assert_eq!(cached, 170);
+    // total = (10+0+90) + (50+0+0) + (20+0+80) = 250.
+    // The non-caching row's 100 input is NOT counted (no caching to measure);
+    // the cache-miss row's 50 IS counted.
     assert_eq!(
-        total, 200,
-        "input tokens from rows with NULL cache columns must be counted"
+        total, 250,
+        "miss is in the denominator; the non-caching NULL row is excluded"
     );
 
     let pct = 100.0 * cached as f64 / total as f64;
-    assert!((pct - 45.0).abs() < 0.01, "expected 45%, got {pct}");
+    assert!((pct - 68.0).abs() < 0.01, "expected 68%, got {pct}");
 }
