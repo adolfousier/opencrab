@@ -131,3 +131,50 @@ fn dashboard_data_cache_field_defaults_to_none() {
     let d = DashboardData::default();
     assert!(d.cache.is_none());
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SQL aggregation — the NULL-cache-column trap that inflated the % (audit:
+// 87% reported vs 53% actual). Runs the ACTUAL production aggregation columns.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn aggregation_counts_input_from_rows_with_null_cache_columns() {
+    use crate::usage::data::CACHE_STATS_SELECT_COLS;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE messages (
+            input_tokens INTEGER,
+            cache_creation_tokens INTEGER,
+            cache_read_tokens INTEGER
+         );
+         -- a caching request: 90 of its input was served from cache
+         INSERT INTO messages VALUES (10, 0, 90);
+         -- a NON-caching request: the cache columns are NULL, exactly as the
+         -- agent records them when the provider returns no cache usage
+         INSERT INTO messages VALUES (100, NULL, NULL);",
+    )
+    .unwrap();
+
+    let sql = format!(
+        "SELECT {CACHE_STATS_SELECT_COLS} FROM messages \
+         WHERE cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0"
+    );
+    let (cached, total): (i64, i64) = conn
+        .query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+
+    // Cached is correct either way (the NULL row contributes 0 cached).
+    assert_eq!(cached, 90);
+    // The denominator MUST include the NULL-cache row's 100 input tokens:
+    // 10 + 90 + 100 = 200. The old `SUM(input + cache_creation + cache_read)`
+    // returned NULL for that row and dropped it, yielding 100 — which inflated
+    // the hit rate from the true 45% to a bogus 90%.
+    assert_eq!(
+        total, 200,
+        "input tokens from rows with NULL cache columns must be counted"
+    );
+
+    let pct = 100.0 * cached as f64 / total as f64;
+    assert!((pct - 45.0).abs() < 0.01, "expected 45%, got {pct}");
+}

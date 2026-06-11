@@ -797,33 +797,44 @@ async fn fetch_activities(pool: &Pool, since: Option<i64>) -> Result<Vec<Activit
     .context("Failed to fetch activity stats")
 }
 
+/// SELECT columns for the cache-efficiency aggregation, yielding
+/// `(cached_tokens, total_input_tokens)`.
+///
+/// Every column is COALESCE'd to 0 *individually*. Non-caching rows store NULL
+/// (not 0) in `cache_read_tokens`/`cache_creation_tokens`, and
+/// `input + NULL + NULL` is NULL — which `SUM()` silently skips, dropping those
+/// rows' input tokens from the denominator and inflating the cache-hit %
+/// (87% reported vs 53% actual on real data). Shared with the regression test so
+/// the two can't drift.
+pub(crate) const CACHE_STATS_SELECT_COLS: &str = "COALESCE(SUM(cache_read_tokens), 0), \
+     COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0)), 0)";
+
 async fn fetch_cache_stats(pool: &Pool, since: Option<i64>) -> Result<Option<CacheStats>> {
     let conn = pool.get().await.context("pool")?;
     let result = conn
         .interact(move |conn| -> rusqlite::Result<Option<CacheStats>> {
-            let (query, param): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) = since
+            let (query, param): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) =
+                since
             {
                 (
-                    "SELECT \
-                       COALESCE(SUM(cache_read_tokens), 0), \
-                       COALESCE(SUM(input_tokens + cache_creation_tokens + cache_read_tokens), 0) \
-                     FROM messages \
-                     WHERE created_at >= ?1 \
-                       AND (cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0)",
+                    format!(
+                        "SELECT {CACHE_STATS_SELECT_COLS} FROM messages \
+                         WHERE created_at >= ?1 \
+                           AND (cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0)"
+                    ),
                     vec![Box::new(s)],
                 )
             } else {
                 (
-                    "SELECT \
-                       COALESCE(SUM(cache_read_tokens), 0), \
-                       COALESCE(SUM(input_tokens + cache_creation_tokens + cache_read_tokens), 0) \
-                     FROM messages \
-                     WHERE cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0",
+                    format!(
+                        "SELECT {CACHE_STATS_SELECT_COLS} FROM messages \
+                         WHERE cache_read_tokens > 0 OR cache_creation_tokens > 0 OR input_tokens > 0"
+                    ),
                     vec![],
                 )
             };
             let refs: Vec<&dyn rusqlite::types::ToSql> = param.iter().map(|p| p.as_ref()).collect();
-            conn.query_row(query, refs.as_slice(), |row| {
+            conn.query_row(&query, refs.as_slice(), |row| {
                 let cached_tokens: i64 = row.get(0)?;
                 let total_input_tokens: i64 = row.get(1)?;
                 if total_input_tokens == 0 {
