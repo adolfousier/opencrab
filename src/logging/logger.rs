@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 use tracing::Level;
-use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -17,6 +16,12 @@ impl FormatTime for LocalTime {
         write!(w, "{}", now.format("%Y-%m-%dT%H:%M:%S%.6f%:z"))
     }
 }
+
+/// Filename prefix for rolling daily log files. The rolling appender writes
+/// `<prefix>.YYYY-MM-DD` (e.g. `opencrabs.2026-06-10`) — NO `.log` extension.
+/// Single source of truth shared by the writer config and the readers
+/// (`logs status` / `logs view` / cleanup), so they can't drift on the name.
+pub const DEFAULT_LOG_PREFIX: &str = "opencrabs";
 
 /// Logging configuration
 #[derive(Debug, Clone)]
@@ -47,7 +52,7 @@ impl Default for LogConfig {
             log_dir: crate::config::opencrabs_home().join("logs"),
             log_level: Level::INFO,
             console_output: false,
-            log_prefix: "opencrabs".to_string(),
+            log_prefix: DEFAULT_LOG_PREFIX.to_string(),
             max_age_days: 7,
         }
     }
@@ -93,23 +98,17 @@ impl LogConfig {
     }
 }
 
-/// Result of logger initialization
-pub struct LoggerGuard {
-    /// Keep the worker guard alive to ensure logs are flushed
-    _guard: Option<WorkerGuard>,
-}
+/// Result of logger initialization. Held by `main` for the whole program.
+///
+/// File logging is synchronous (no `tracing_appender::non_blocking` worker), so
+/// there is no background flush-on-drop guard to keep alive — every event is
+/// written on the calling thread. This stays as a marker type so the
+/// `init_logging` API and `main`'s `let _guard = …` contract are unchanged.
+pub struct LoggerGuard;
 
 impl LoggerGuard {
-    /// Create a new guard (for debug mode with file logging)
-    fn with_guard(guard: WorkerGuard) -> Self {
-        Self {
-            _guard: Some(guard),
-        }
-    }
-
-    /// Create an empty guard (for non-debug mode)
     fn empty() -> Self {
-        Self { _guard: None }
+        Self
     }
 }
 
@@ -150,9 +149,21 @@ fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::err
         .ok();
     }
 
-    // Set up rolling file appender (daily rotation)
+    // Set up rolling file appender (daily rotation), written SYNCHRONOUSLY.
+    //
+    // We deliberately do NOT wrap this in `tracing_appender::non_blocking`.
+    // That spawns a worker thread whose loop swallows IO errors
+    // (`worker.rs`: `Err(_) => {}`) while still draining the channel — so once a
+    // write starts failing, every subsequent line is silently dropped and the
+    // log file freezes with the process still alive and no error surfaced
+    // (issue #190: daemon logs froze ~5s after start, no fd, no error). It also
+    // drops events when its bounded buffer fills under load. Writing on the
+    // calling thread means each event is attempted independently, write errors
+    // reach tracing-subscriber's stderr fallback instead of vanishing, and a
+    // transient failure can't permanently wedge the writer. Debug file logging
+    // is opt-in (`-d`), so the synchronous IO cost is an acceptable trade for a
+    // log that's actually reliable.
     let file_appender = tracing_appender::rolling::daily(&config.log_dir, &config.log_prefix);
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     // Build environment filter
     let env_filter = EnvFilter::from_default_env()
@@ -172,7 +183,7 @@ fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::err
         .with(env_filter)
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking)
+                .with_writer(file_appender)
                 .with_timer(LocalTime)
                 .with_ansi(false) // No colors in log files
                 .with_target(true)
@@ -188,7 +199,7 @@ fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::err
     tracing::info!("📊 Log level: {:?}", config.log_level);
     tracing::debug!("Debug logging initialized successfully");
 
-    Ok(LoggerGuard::with_guard(guard))
+    Ok(LoggerGuard::empty())
 }
 
 /// Initialize minimal logging (no file output)
@@ -228,34 +239,46 @@ pub fn setup_from_cli(debug: bool) -> Result<LoggerGuard, Box<dyn std::error::Er
     init_logging(config)
 }
 
-/// Get the path to the current log file (if debug mode is enabled)
-pub fn get_log_path() -> Option<PathBuf> {
-    let log_dir = crate::config::opencrabs_home().join("logs");
-
-    if log_dir.exists() {
-        // Return the most recent log file
-        std::fs::read_dir(&log_dir)
-            .ok()?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .map(|ext| ext == "log")
-                    .unwrap_or(false)
-            })
-            .max_by_key(|entry| entry.metadata().ok()?.modified().ok())
-            .map(|entry| entry.path())
+/// Resolve the directory where debug log files live — the same path the writer
+/// uses (`DEBUG_LOGS_LOCATION` override, else `~/.opencrabs/logs`). Readers MUST
+/// resolve this rather than a CWD-relative path, or a daemon (whose working dir
+/// isn't home) reports an empty directory (#190 secondary).
+pub fn log_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("DEBUG_LOGS_LOCATION") {
+        PathBuf::from(dir)
     } else {
-        None
+        crate::config::opencrabs_home().join("logs")
     }
+}
+
+/// Whether a directory entry filename is one of our rolling daily log files
+/// (`<prefix>.YYYY-MM-DD`). The files carry NO `.log` extension, so the old
+/// `extension == "log"` checks matched zero files — making `logs status` report
+/// 0, `logs view` find nothing, and `cleanup_old_logs` never prune (#190).
+pub fn is_log_file(file_name: &str) -> bool {
+    file_name
+        .strip_prefix(DEFAULT_LOG_PREFIX)
+        .is_some_and(|rest| rest.starts_with('.'))
+}
+
+/// Get the path to the current (most recent) log file, if any exist.
+pub fn get_log_path() -> Option<PathBuf> {
+    let dir = log_dir();
+    if !dir.exists() {
+        return None;
+    }
+    std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_str().is_some_and(is_log_file))
+        .max_by_key(|entry| entry.metadata().ok()?.modified().ok())
+        .map(|entry| entry.path())
 }
 
 /// Clean up old log files based on max age
 pub fn cleanup_old_logs(max_age_days: u64) -> Result<usize, Box<dyn std::error::Error>> {
-    let log_dir = crate::config::opencrabs_home().join("logs");
-
-    if !log_dir.exists() {
+    let dir = log_dir();
+    if !dir.exists() {
         return Ok(0);
     }
 
@@ -263,11 +286,11 @@ pub fn cleanup_old_logs(max_age_days: u64) -> Result<usize, Box<dyn std::error::
     let now = std::time::SystemTime::now();
     let mut removed = 0;
 
-    for entry in std::fs::read_dir(&log_dir)? {
+    for entry in std::fs::read_dir(&dir)? {
         let entry = entry?;
         let path = entry.path();
 
-        if path.extension().map(|ext| ext == "log").unwrap_or(false)
+        if entry.file_name().to_str().is_some_and(is_log_file)
             && let Ok(metadata) = entry.metadata()
             && let Ok(modified) = metadata.modified()
             && let Ok(age) = now.duration_since(modified)

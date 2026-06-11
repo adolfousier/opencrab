@@ -61,6 +61,7 @@ pub mod custom_provider_rename_keys_toml_test;
 pub mod custom_provider_section_resolver_test;
 pub mod git_branch_test;
 pub mod intermediate_text_strip_guard_test;
+pub mod logging_log_files_test;
 pub mod new_session_pane_binding_test;
 pub mod rsi_notification_redaction_test;
 pub mod rsi_pruned_test;

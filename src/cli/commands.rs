@@ -894,7 +894,11 @@ pub(crate) async fn cmd_logs(operation: LogCommands) -> Result<()> {
     use crate::logging;
     use std::io::{BufRead, BufReader};
 
-    let log_dir = std::env::current_dir()?.join(".opencrabs").join("logs");
+    // Resolve the SAME directory the writer uses (~/.opencrabs/logs or the
+    // DEBUG_LOGS_LOCATION override). The old code looked under the process's
+    // CWD, so a daemon (whose working dir isn't home) always saw an empty
+    // directory and reported "Log files: 0" (#190 secondary).
+    let log_dir = logging::log_dir();
 
     match operation {
         LogCommands::Status => {
@@ -911,7 +915,7 @@ pub(crate) async fn cmd_logs(operation: LogCommands) -> Result<()> {
                 for entry in std::fs::read_dir(&log_dir)? {
                     let entry = entry?;
                     let path = entry.path();
-                    if path.extension().map(|e| e == "log").unwrap_or(false) {
+                    if entry.file_name().to_str().is_some_and(logging::is_log_file) {
                         file_count += 1;
                         if let Ok(metadata) = entry.metadata() {
                             total_size += metadata.len();
