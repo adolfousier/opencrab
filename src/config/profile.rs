@@ -618,6 +618,16 @@ pub fn migrate_profile(from: &str, to: &str, force: bool) -> Result<Vec<String>>
 
 // ─── Token Lock ──────────────────────────────────────────────────────
 
+/// Parse the owner PID from the second field of a lock file (`profile:pid`).
+///
+/// Returns `None` when the field names no live owner: a missing/zero PID, or a
+/// corrupted value (e.g. an external in-place edit concatenated entries, so the
+/// field is `"101528ops:103104"`). Callers treat `None` as a stale lock to take
+/// over, rather than coercing it to PID 0 (issue #192).
+pub(crate) fn parse_lock_owner_pid(field: &str) -> Option<u32> {
+    field.trim().parse::<u32>().ok().filter(|&p| p != 0)
+}
+
 /// Check and acquire a token lock for a channel credential.
 /// Returns `Err` if another profile holds the lock.
 pub fn acquire_token_lock(channel: &str, token_hash: &str) -> Result<()> {
@@ -633,30 +643,44 @@ pub fn acquire_token_lock(channel: &str, token_hash: &str) -> Result<()> {
         let parts: Vec<&str> = contents.splitn(2, ':').collect();
         if parts.len() == 2 {
             let locked_profile = parts[0];
-            let locked_pid: u32 = parts[1].parse().unwrap_or(0);
-
-            // Same profile — check if PID is still alive
-            if locked_profile == current_profile {
-                if is_pid_alive(locked_pid) && locked_pid != pid {
-                    bail!(
-                        "profile '{}' already running (PID {}). Only one instance per profile allowed.",
-                        current_profile,
-                        locked_pid
+            // A lock whose PID doesn't parse to a real process names no live
+            // owner. This happens when the file is corrupted — e.g. an external
+            // in-place edit concatenated several entries, so `parts[1]` is
+            // something like "101528ops:103104family" — or when it's literally
+            // 0. Treat that as a stale lock and take it over, rather than
+            // coercing it to PID 0 and depending on is_pid_alive(0) (issue #192).
+            match parse_lock_owner_pid(parts[1]) {
+                None => {
+                    tracing::warn!(
+                        "lock file {} has an invalid owner PID ({:?}) — treating as stale and taking over",
+                        lock_file.display(),
+                        parts[1]
                     );
+                    // fall through to overwrite
                 }
-                // Stale lock from same profile — overwrite
-            } else {
-                // Different profile — check PID
-                if is_pid_alive(locked_pid) {
-                    bail!(
-                        "channel '{}' token is locked by profile '{}' (PID {}). \
-                         Two profiles cannot share the same bot credential.",
-                        channel,
-                        locked_profile,
-                        locked_pid
-                    );
+                Some(locked_pid) => {
+                    if locked_profile == current_profile {
+                        // Same profile — only one instance per profile allowed.
+                        if is_pid_alive(locked_pid) && locked_pid != pid {
+                            bail!(
+                                "profile '{}' already running (PID {}). Only one instance per profile allowed.",
+                                current_profile,
+                                locked_pid
+                            );
+                        }
+                        // Stale lock from same profile — overwrite
+                    } else if is_pid_alive(locked_pid) {
+                        // Different profile holds it with a live process.
+                        bail!(
+                            "channel '{}' token is locked by profile '{}' (PID {}). \
+                             Two profiles cannot share the same bot credential.",
+                            channel,
+                            locked_profile,
+                            locked_pid
+                        );
+                        // else: stale lock from a dead process — overwrite
+                    }
                 }
-                // Stale lock from dead process — overwrite
             }
         }
     }
@@ -717,7 +741,16 @@ pub fn validate_profile_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn is_pid_alive(pid: u32) -> bool {
+pub(crate) fn is_pid_alive(pid: u32) -> bool {
+    // PID 0 is never a real process that could own a lock. Critically, on Unix
+    // `kill(0, 0)` does NOT probe "process 0" — it signals the CALLING process's
+    // entire process group and always succeeds, so without this guard a lock
+    // file whose PID parsed to 0 (corruption) would look alive forever and wedge
+    // the channel that owns that credential (issue #192). Guard it on every
+    // platform.
+    if pid == 0 {
+        return false;
+    }
     #[cfg(unix)]
     {
         // kill(pid, 0) returns 0 if we can signal the process.
