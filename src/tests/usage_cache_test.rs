@@ -68,6 +68,7 @@ fn cache_stats_construction() {
         cache_hit_pct: 67.5,
         cached_tokens: 1_200_000,
         total_input_tokens: 1_800_000,
+        per_model: Vec::new(),
     };
     assert!((stats.cache_hit_pct - 67.5).abs() < 0.01);
     assert_eq!(stats.cached_tokens, 1_200_000);
@@ -182,4 +183,57 @@ fn aggregation_is_caching_capable_only_and_coalesces_nulls() {
 
     let pct = 100.0 * cached as f64 / total as f64;
     assert!((pct - 68.0).abs() < 0.01, "expected 68%, got {pct}");
+}
+
+#[test]
+fn per_model_query_strips_namespace_and_excludes_non_caching() {
+    use crate::usage::data::{CACHE_CAPABLE_WHERE, CACHE_MODEL_EXPR, CACHE_STATS_SELECT_COLS};
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE sessions (id TEXT, model TEXT);
+         CREATE TABLE messages (
+            session_id TEXT, input_tokens INTEGER,
+            cache_creation_tokens INTEGER, cache_read_tokens INTEGER
+         );
+         INSERT INTO sessions VALUES ('s1','vendor/ModelA'), ('s2','ModelB'), ('s3','local-gguf');
+         INSERT INTO messages VALUES ('s1', 10,  0,    90);   -- ModelA: caching, 90%
+         INSERT INTO messages VALUES ('s2', 50,  0,    50);   -- ModelB: caching, 50%
+         INSERT INTO messages VALUES ('s3', 100, NULL, NULL); -- non-caching: excluded",
+    )
+    .unwrap();
+
+    let sql = format!(
+        "SELECT {CACHE_MODEL_EXPR}, {CACHE_STATS_SELECT_COLS} \
+         FROM messages m JOIN sessions s ON m.session_id = s.id \
+         WHERE {CACHE_CAPABLE_WHERE} GROUP BY {CACHE_MODEL_EXPR}"
+    );
+    let mut stmt = conn.prepare(&sql).unwrap();
+    let mut rows: Vec<(String, i64, i64)> = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                r.get(1)?,
+                r.get(2)?,
+            ))
+        })
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    // Sort highest hit-rate first, like production.
+    rows.sort_by(|a, b| {
+        (b.1 as f64 / b.2 as f64)
+            .partial_cmp(&(a.1 as f64 / a.2 as f64))
+            .unwrap()
+    });
+
+    // The non-caching model (NULL cache columns) is excluded entirely.
+    assert_eq!(
+        rows.len(),
+        2,
+        "non-caching model must be excluded; got {rows:?}"
+    );
+    // `vendor/ModelA` is grouped namespace-stripped as `ModelA`, highest first.
+    assert_eq!(rows[0], ("ModelA".to_string(), 90, 100));
+    assert_eq!(rows[1], ("ModelB".to_string(), 50, 100));
 }

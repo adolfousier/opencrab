@@ -606,39 +606,61 @@ pub fn render_cache_efficiency(
         }
     };
 
-    // Color-code by hit rate: green >60%, yellow 30-60%, red <30%
-    let pct_color = if cache.cache_hit_pct >= 60.0 {
-        Color::Green
-    } else if cache.cache_hit_pct >= 30.0 {
-        Color::Yellow
-    } else {
-        Color::Red
+    // Color-code by hit rate: green >=60%, yellow 30-60%, red <30%.
+    let pct_color = |p: f64| {
+        if p >= 60.0 {
+            Color::Green
+        } else if p >= 30.0 {
+            Color::Yellow
+        } else {
+            Color::Red
+        }
     };
-    let pct_style = Style::new().fg(pct_color).add_modifier(Modifier::BOLD);
 
-    // Center the percentage vertically and horizontally
-    let pct_text = format!("{:.0}%", cache.cache_hit_pct);
-    let subtitle = format!(
-        "{} / {} cached",
-        fmt_tokens(cache.cached_tokens),
-        fmt_tokens(cache.total_input_tokens)
-    );
-
-    let center_y = inner.height / 2;
     let mut lines: Vec<Line> = Vec::new();
 
-    // Pad lines to center vertically
-    for _ in 0..center_y.saturating_sub(1) {
+    // Overall efficiency — one compact header line.
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{:.0}%", cache.cache_hit_pct),
+            Style::new()
+                .fg(pct_color(cache.cache_hit_pct))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" overall", DIM),
+    ]));
+
+    // Per-model breakdown, highest hit-rate first. Each row: model … NN%.
+    if !cache.per_model.is_empty() {
         lines.push(Line::from(""));
+        let width = inner.width as usize;
+        let name_w = width.saturating_sub(5).max(6); // leave room for " 100%"
+        for ms in &cache.per_model {
+            if lines.len() as u16 >= inner.height {
+                break;
+            }
+            let name: String = ms.model.chars().take(name_w).collect();
+            lines.push(Line::from(vec![
+                Span::raw(format!("{name:<name_w$}")),
+                Span::styled(
+                    format!("{:>3}%", ms.cache_hit_pct.round() as i64),
+                    Style::new().fg(pct_color(ms.cache_hit_pct)),
+                ),
+            ]));
+        }
+    } else {
+        // No per-model rows (e.g. only one provider) — keep the cached/total line.
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{} / {} cached",
+                fmt_tokens(cache.cached_tokens),
+                fmt_tokens(cache.total_input_tokens)
+            ),
+            DIM,
+        )));
     }
 
-    // Big percentage
-    lines.push(Line::from(Span::styled(&pct_text, pct_style)).alignment(Alignment::Center));
-    // Subtitle
-    lines.push(Line::from(Span::styled(&subtitle, DIM)).alignment(Alignment::Center));
-
-    let p = Paragraph::new(lines);
-    f.render_widget(p, inner);
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 // ── Footer ───────────────────────────────────────────────────────────────────

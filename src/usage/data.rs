@@ -135,6 +135,16 @@ pub struct CacheStats {
     pub cached_tokens: i64,
     /// Total input tokens (cached + non-cached)
     pub total_input_tokens: i64,
+    /// Per-model cache efficiency, highest hit-rate first.
+    pub per_model: Vec<ModelCacheStat>,
+}
+
+/// Cache efficiency for a single model (caching-capable requests only).
+#[derive(Debug, Clone)]
+pub struct ModelCacheStat {
+    pub model: String,
+    pub cache_hit_pct: f64,
+    pub cached_tokens: i64,
 }
 
 /// All dashboard data, fetched once per period change
@@ -817,42 +827,96 @@ pub(crate) const CACHE_STATS_SELECT_COLS: &str = "COALESCE(SUM(cache_read_tokens
 pub(crate) const CACHE_CAPABLE_WHERE: &str =
     "cache_read_tokens IS NOT NULL OR cache_creation_tokens IS NOT NULL";
 
+/// Namespace-strip a model name for the per-model cache grouping: drops a
+/// leading `vendor/` so `Qwen-Ambassador/Qwen3.7-Plus` groups as `Qwen3.7-Plus`.
+/// References `s.model` (the sessions-table column), so callers must join
+/// `messages m` to `sessions s`.
+pub(crate) const CACHE_MODEL_EXPR: &str =
+    "CASE WHEN s.model LIKE '%/%' THEN SUBSTR(s.model, INSTR(s.model, '/') + 1) ELSE s.model END";
+
 async fn fetch_cache_stats(pool: &Pool, since: Option<i64>) -> Result<Option<CacheStats>> {
     let conn = pool.get().await.context("pool")?;
     let result = conn
         .interact(move |conn| -> rusqlite::Result<Option<CacheStats>> {
-            let (query, param): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) =
-                since
-            {
-                (
-                    format!(
-                        "SELECT {CACHE_STATS_SELECT_COLS} FROM messages \
-                         WHERE created_at >= ?1 AND ({CACHE_CAPABLE_WHERE})"
-                    ),
-                    vec![Box::new(s)],
+            // ── Global efficiency ───────────────────────────────────────────
+            let global_sql = if since.is_some() {
+                format!(
+                    "SELECT {CACHE_STATS_SELECT_COLS} FROM messages \
+                     WHERE created_at >= ?1 AND ({CACHE_CAPABLE_WHERE})"
                 )
             } else {
-                (
-                    format!(
-                        "SELECT {CACHE_STATS_SELECT_COLS} FROM messages WHERE {CACHE_CAPABLE_WHERE}"
-                    ),
-                    vec![],
+                format!(
+                    "SELECT {CACHE_STATS_SELECT_COLS} FROM messages WHERE {CACHE_CAPABLE_WHERE}"
                 )
             };
-            let refs: Vec<&dyn rusqlite::types::ToSql> = param.iter().map(|p| p.as_ref()).collect();
-            conn.query_row(&query, refs.as_slice(), |row| {
-                let cached_tokens: i64 = row.get(0)?;
-                let total_input_tokens: i64 = row.get(1)?;
-                if total_input_tokens == 0 {
-                    return Ok(None);
-                }
-                let cache_hit_pct = (cached_tokens as f64 / total_input_tokens as f64) * 100.0;
-                Ok(Some(CacheStats {
-                    cache_hit_pct,
-                    cached_tokens,
-                    total_input_tokens,
-                }))
-            })
+            let read_pair = |row: &rusqlite::Row| -> rusqlite::Result<(i64, i64)> {
+                Ok((row.get(0)?, row.get(1)?))
+            };
+            let (cached_tokens, total_input_tokens): (i64, i64) = if let Some(s) = since {
+                conn.query_row(&global_sql, params![s], read_pair)?
+            } else {
+                conn.query_row(&global_sql, [], read_pair)?
+            };
+            if total_input_tokens == 0 {
+                return Ok(None);
+            }
+            let cache_hit_pct = (cached_tokens as f64 / total_input_tokens as f64) * 100.0;
+
+            // ── Per-model efficiency (caching-capable rows only) ─────────────
+            let per_sql = if since.is_some() {
+                format!(
+                    "SELECT {CACHE_MODEL_EXPR}, {CACHE_STATS_SELECT_COLS} \
+                     FROM messages m JOIN sessions s ON m.session_id = s.id \
+                     WHERE m.created_at >= ?1 AND ({CACHE_CAPABLE_WHERE}) \
+                     GROUP BY {CACHE_MODEL_EXPR}"
+                )
+            } else {
+                format!(
+                    "SELECT {CACHE_MODEL_EXPR}, {CACHE_STATS_SELECT_COLS} \
+                     FROM messages m JOIN sessions s ON m.session_id = s.id \
+                     WHERE {CACHE_CAPABLE_WHERE} \
+                     GROUP BY {CACHE_MODEL_EXPR}"
+                )
+            };
+            let map_row = |row: &rusqlite::Row| -> rusqlite::Result<(Option<String>, i64, i64)> {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            };
+            let mut stmt = conn.prepare(&per_sql)?;
+            let raw: Vec<(Option<String>, i64, i64)> = if let Some(s) = since {
+                stmt.query_map(params![s], map_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            } else {
+                stmt.query_map([], map_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let mut per_model: Vec<ModelCacheStat> = raw
+                .into_iter()
+                .filter_map(|(model, cached, total)| {
+                    let model = model.unwrap_or_default();
+                    if model.is_empty() || total == 0 {
+                        return None;
+                    }
+                    Some(ModelCacheStat {
+                        model,
+                        cache_hit_pct: cached as f64 / total as f64 * 100.0,
+                        cached_tokens: cached,
+                    })
+                })
+                .collect();
+            // Highest hit-rate first; cached-token volume breaks ties.
+            per_model.sort_by(|a, b| {
+                b.cache_hit_pct
+                    .partial_cmp(&a.cache_hit_pct)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(b.cached_tokens.cmp(&a.cached_tokens))
+            });
+
+            Ok(Some(CacheStats {
+                cache_hit_pct,
+                cached_tokens,
+                total_input_tokens,
+                per_model,
+            }))
         })
         .await
         .map_err(interact_err)?;
