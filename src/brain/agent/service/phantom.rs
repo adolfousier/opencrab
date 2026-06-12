@@ -260,15 +260,17 @@ fn lang_intent_match_any(lower: &str) -> bool {
         .any(|lang| lang_intent_match(lower, &lang.intent_phrases))
 }
 
-/// Does `lead` read as a brief present-continuous work announcement in ANY
+/// Does `lead` OPEN with a present-continuous work announcement in ANY
 /// supported language ("Running checks now.", "Verificando ahora…")? Scanned
-/// across all languages like the intent phrases — the per-language regexes are
-/// anchored and require an imminence marker, so they don't collide. Capped at
-/// 80 chars so a paragraph that merely opens with a gerund can't qualify.
+/// across all languages like the intent phrases. Each regex is anchored to the
+/// message start and requires the announcement's imminence marker (now / ahora
+/// / agora / maintenant / сейчас / … / trailing :) at a sentence boundary, so
+/// the model leading with the announcement and then continuing ("Running fmt,
+/// clippy, tests now. Then fetching…") still matches, while an ordinary
+/// sentence that merely opens with a gerund ("Reading the file is
+/// straightforward.") or uses "now" as an adverb ("Running it now takes a
+/// minute.") does not.
 pub(crate) fn matches_work_announcement(lead: &str) -> bool {
-    if lead.chars().count() > 80 {
-        return false;
-    }
     phantom_lang::all_langs().iter().any(|lang| {
         !lang.work_announcement_re.is_empty()
             && Regex::new(&lang.work_announcement_re)

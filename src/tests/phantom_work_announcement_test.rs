@@ -25,6 +25,30 @@ fn english_running_checks_now_is_phantom() {
 }
 
 #[test]
+fn announcement_at_start_of_multi_sentence_turn_is_phantom() {
+    // mimo leads with the announcement then keeps talking — still phantom.
+    // (2026-06-12: this exact shape dropped because the v1 regex required the
+    // announcement to be the whole line.)
+    assert!(has_phantom_tool_intent_no_tools(
+        "Running fmt, clippy, tests now. Then fetching fresh commits.\n\nClippy clean. Tests next."
+    ));
+    assert!(has_phantom_tool_intent_no_tools(
+        "Running the tests now, then I'll report back."
+    ));
+}
+
+#[test]
+fn now_as_an_adverb_is_not_an_announcement() {
+    // "now" mid-sentence (not a sentence boundary) must NOT match.
+    assert!(!matches_work_announcement(
+        "Running the suite now takes about ten minutes on CI."
+    ));
+    assert!(!matches_work_announcement(
+        "Building it now would break the release, so let's wait."
+    ));
+}
+
+#[test]
 fn work_announcement_detected_in_every_language() {
     assert!(
         has_phantom_tool_intent_no_tools("Ejecutando las pruebas ahora."),
