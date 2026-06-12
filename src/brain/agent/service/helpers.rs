@@ -6,6 +6,27 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+/// Reminder appended to the system prompt for Xiaomi MiMo models. mimo
+/// habitually narrates tool calls in prose ("Running checks now.") or emits
+/// them as `<tool_call_list>{…}</tool_call_list>` text instead of using the
+/// structured tool-call field, which leaves the turn doing nothing. The
+/// phantom self-heal and the `<tool_call_list>` parser recover most of these
+/// after the fact; this addresses the cause up front.
+pub(crate) const MIMO_TOOL_CALL_HINT: &str = "## Tool calls — required format\n\
+When you need to run a tool, emit it ONLY as a real structured tool call. Never \
+write a tool call as text or JSON in your visible message or in your reasoning \
+(e.g. `<tool_call>`, `<tool_call_list>`, or a raw `{\"tool_name\": …}` object) — \
+text like that is NOT executed and the action silently does nothing. Do not \
+announce that you are about to act (\"Running the tests now.\", \"Let me check \
+the logs.\") and then stop: in the same turn, actually call the tool. Only write \
+a plain-text reply once the work is genuinely done.";
+
+/// True for Xiaomi MiMo models (`mimo-v2.5-pro`, `mimo-v2-flash`, …), which
+/// need the structured-tool-call reminder above.
+pub(crate) fn is_mimo_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("mimo")
+}
+
 /// Pick the stream-handshake timeout based on what kind of provider
 /// we're calling. Pulled out as a free `pub(crate)` function so the
 /// matrix is unit-testable without spinning up a real async stream.

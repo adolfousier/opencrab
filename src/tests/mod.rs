@@ -63,6 +63,7 @@ pub mod custom_provider_section_resolver_test;
 pub mod git_branch_test;
 pub mod intermediate_text_strip_guard_test;
 pub mod logging_log_files_test;
+pub mod mimo_tool_call_hint_test;
 pub mod new_session_pane_binding_test;
 pub mod phantom_going_to_test;
 pub mod phantom_work_announcement_test;

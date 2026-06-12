@@ -647,8 +647,16 @@ impl AgentService {
         // reflects the full API input from the start — prevents gross undercount
         // that causes the TUI context counter to jump wildly on first calibration)
         if let Some(brain) = &self.default_system_brain {
-            context.token_count += AgentContext::estimate_tokens(brain);
-            context.system_brain = Some(brain.clone());
+            // mimo narrates/text-emits tool calls instead of using the
+            // structured field; remind it up front (the self-heal + the
+            // <tool_call_list> parser are the after-the-fact safety nets).
+            let brain = if super::helpers::is_mimo_model(&model_name) {
+                format!("{brain}\n\n{}", super::helpers::MIMO_TOOL_CALL_HINT)
+            } else {
+                brain.clone()
+            };
+            context.token_count += AgentContext::estimate_tokens(&brain);
+            context.system_brain = Some(brain);
         }
 
         // Emit token count immediately after DB reload so the TUI reflects the
