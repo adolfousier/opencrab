@@ -127,6 +127,20 @@ pub fn detect_language(text: &str) -> &'static LangConfig {
     &LANG_EN
 }
 
+/// Every loaded language config, in detection-priority order.
+///
+/// The phantom-intent detectors scan intent phrases across all languages
+/// at once: `detect_language` only routes Cyrillic and accented-Latin
+/// text reliably, so accent-free non-English narration (e.g.
+/// `"Voy a usar write_file…"`, no ñ/¿) otherwise falls through to English
+/// and slips past. Intent phrases are multi-word and carry
+/// language-distinctive tokens, so cross-language scanning is
+/// collision-free — unlike the short single-word `action_verbs`, which
+/// stay gated to the detected language. 2026-06-12.
+pub fn all_langs() -> [&'static LangConfig; 5] {
+    [&LANG_EN, &LANG_RU, &LANG_ES, &LANG_PT, &LANG_FR]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

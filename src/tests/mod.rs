@@ -64,6 +64,7 @@ pub mod git_branch_test;
 pub mod intermediate_text_strip_guard_test;
 pub mod logging_log_files_test;
 pub mod new_session_pane_binding_test;
+pub mod phantom_going_to_test;
 pub mod profile_pid_lock_test;
 pub mod rsi_notification_redaction_test;
 pub mod rsi_pruned_test;

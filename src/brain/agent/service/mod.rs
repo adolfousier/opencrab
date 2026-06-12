@@ -11,7 +11,7 @@ pub(crate) mod feedback;
 mod gaslighting;
 pub(crate) mod helpers;
 mod messaging;
-mod phantom;
+pub(crate) mod phantom;
 mod phantom_lang;
 pub(crate) mod tool_loop;
 mod truncation;

@@ -42,10 +42,13 @@ pub fn has_phantom_tool_intent_no_tools(text: &str) -> bool {
         return false;
     }
     let lower = lead.to_lowercase();
-    let lang = phantom_lang::detect_language(trimmed);
-    if lang_intent_match(&lower, &lang.intent_phrases) {
+    if lang_intent_match_any(&lower) {
         return true;
     }
+    // Past-tense completion claims stay gated to the detected language:
+    // action_verbs are short single words with real cross-language
+    // collision risk, unlike the multi-word intent phrases above.
+    let lang = phantom_lang::detect_language(trimmed);
     has_past_tense_action_claim(&lower, &lang.action_verbs)
 }
 
@@ -76,8 +79,7 @@ fn has_past_tense_action_claim(lower: &str, action_verbs: &[String]) -> bool {
 /// narrating an action it should be executing via tools.
 pub fn has_investigative_intent(text: &str) -> bool {
     let lower = text.to_lowercase();
-    let lang = phantom_lang::detect_language(text);
-    lang_intent_match(&lower, &lang.intent_phrases)
+    lang_intent_match_any(&lower)
 }
 
 /// Forward-looking intent detector for the post-success path.
@@ -117,8 +119,7 @@ pub fn has_forward_intent_post_success(text: &str) -> bool {
         return false;
     }
     let lower = lead.to_lowercase();
-    let lang = phantom_lang::detect_language(trimmed);
-    lang_intent_match(&lower, &lang.intent_phrases)
+    lang_intent_match_any(&lower)
 }
 
 /// Count line-start intent phrases — `Let me <verb>`, `I'll <verb>`,
@@ -234,6 +235,21 @@ pub fn has_phantom_tool_intent(text: &str) -> bool {
 /// Check if `lower` contains any phrase from the list (case-insensitive).
 fn lang_intent_match(lower: &str, phrases: &[String]) -> bool {
     phrases.iter().any(|p| lower.contains(p.as_str()))
+}
+
+/// Check if `lower` matches an intent phrase in ANY supported language.
+///
+/// `detect_language` only routes Cyrillic and accented-Latin text
+/// reliably, so accent-free non-English narration (e.g.
+/// `"Voy a usar write_file…"`) falls through to English and would slip
+/// past a detected-language-only check. Intent phrases are multi-word and
+/// carry language-distinctive tokens, so the cross-language union is
+/// collision-free — a Spanish phrase can't match English prose and vice
+/// versa. 2026-06-12.
+fn lang_intent_match_any(lower: &str) -> bool {
+    phantom_lang::all_langs()
+        .iter()
+        .any(|lang| lang_intent_match(lower, &lang.intent_phrases))
 }
 
 /// Check if `lower` contains any completion claim.
