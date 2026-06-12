@@ -955,6 +955,42 @@ pub struct DebugConfig {
     pub profiling: bool,
 }
 
+/// Canonical defaults for the Xiaomi (opencrabs × xiaomi collab) provider,
+/// applied when `config.toml` has no `[providers.xiaomi]` section.
+///
+/// Xiaomi is keyless during the free collab window — the proxy supplies the
+/// key server-side — so a config that predates the provider (or a fresh
+/// `/evolve` that never appended the section) still gets a working, selectable
+/// Xiaomi with zero manual edits. Without this, `try_create_xiaomi` returned
+/// `Ok(None)` and `/models` showed "No models available" even though the picker
+/// listed Xiaomi as keyless-available (#194), and `default_model()` would have
+/// reported the `"MISSING_MODEL"` sentinel. The keyless time-gate stays in
+/// `try_create_xiaomi`, so a synthesized section is harmless after the cutoff —
+/// it only supplies model metadata.
+pub fn xiaomi_provider_defaults() -> ProviderConfig {
+    ProviderConfig {
+        enabled: true,
+        default_model: Some("mimo-v2.5-pro".to_string()),
+        models: [
+            "mimo-v2.5-pro",
+            "mimo-v2-pro",
+            "mimo-v2.5",
+            "mimo-v2-omni",
+            "mimo-v2-flash",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        ..Default::default()
+    }
+}
+
+/// serde field-default for [`ProviderConfigs::xiaomi`] — materializes the
+/// canonical keyless section when the TOML omits `[providers.xiaomi]`.
+fn default_xiaomi_provider() -> Option<ProviderConfig> {
+    Some(xiaomi_provider_defaults())
+}
+
 /// LLM Provider configurations
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderConfigs {
@@ -981,7 +1017,9 @@ pub struct ProviderConfigs {
     /// Xiaomi MiMo configuration (opencrabs x xiaomi collab). OpenAI-compatible.
     /// During the free collab window the key is supplied server-side by our
     /// proxy, so this needs no api_key; after the cutoff a user key is required.
-    #[serde(default)]
+    /// Defaults to the canonical keyless section when the TOML omits it, so
+    /// configs predating the provider still get a working Xiaomi (#194).
+    #[serde(default = "default_xiaomi_provider")]
     pub xiaomi: Option<ProviderConfig>,
 
     /// Named custom OpenAI-compatible providers (e.g. [providers.custom.ollama])

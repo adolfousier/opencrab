@@ -1033,8 +1033,19 @@ fn xiaomi_keyless_window_open() -> bool {
 /// proxy supplies the real key. After the cutoff with no user key, the
 /// provider is unavailable so the user is steered to add their own key.
 fn try_create_xiaomi(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
+    // Config load already materializes the canonical section via serde default
+    // (`default_xiaomi_provider`), so `xiaomi` is normally `Some`. Keep a
+    // belt-and-suspenders fallback for a programmatically-built `Config` that
+    // bypasses deserialization: during the keyless window synthesize the same
+    // defaults so Xiaomi still works; after the cutoff a missing section with
+    // no key stays unconfigured.
+    let synthesized_xiaomi;
     let xiaomi_config = match &config.providers.xiaomi {
         Some(cfg) => cfg,
+        None if xiaomi_keyless_window_open() => {
+            synthesized_xiaomi = crate::config::xiaomi_provider_defaults();
+            &synthesized_xiaomi
+        }
         None => return Ok(None),
     };
 

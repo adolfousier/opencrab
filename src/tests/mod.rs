@@ -156,6 +156,7 @@ pub mod rename_session_test;
 pub mod rtk_rewrite_test;
 #[cfg(feature = "rtk")]
 pub mod rtk_tracker_test;
+mod xiaomi_config_default_test;
 mod xiaomi_onboarding_test;
 //pub mod plan_mode_integration_test;
 pub mod session_working_dir_test;
