@@ -108,8 +108,12 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
         height: border_inner.height,
     };
 
-    // Adaptive: if panel is too short, shrink activity card
-    let activity_height = if inner.height > 30 { 6 } else { 4 };
+    // Activity + Cache row scales with the panel height (responsive to terminal
+    // resize / zoom), like the grid cards above — so the per-model Cache
+    // Efficiency list (and the activity list) reveal more rows as you zoom out
+    // instead of being pinned to two. Clamped so it never starves the 2x2 grid
+    // on a small panel or balloon on a huge one.
+    let activity_height = (inner.height / 4).clamp(5, 16);
     let grid_min = if inner.height > 30 { 10 } else { 7 };
 
     let chunks = Layout::default()
@@ -117,7 +121,7 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
         .constraints([
             Constraint::Length(2),                      // summary bar
             Constraint::Min(grid_min),                  // middle grid (2x2)
-            Constraint::Length(activity_height as u16), // activity + cache row
+            Constraint::Length(activity_height), // activity + cache row
             Constraint::Length(1),                      // footer
         ])
         .split(inner);

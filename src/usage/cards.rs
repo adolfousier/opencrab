@@ -631,8 +631,9 @@ pub fn render_cache_efficiency(
     ]));
 
     // Per-model breakdown, highest hit-rate first. Each row: model … NN%.
+    // No blank spacer — vertical space in this card is scarce, every row is a
+    // model we'd otherwise drop.
     if !cache.per_model.is_empty() {
-        lines.push(Line::from(""));
         let width = inner.width as usize;
         let name_w = width.saturating_sub(5).max(6); // leave room for " 100%"
         for ms in &cache.per_model {
