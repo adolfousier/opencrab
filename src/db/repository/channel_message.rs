@@ -65,6 +65,42 @@ impl ChannelMessageRepository {
         Ok(())
     }
 
+    /// Rewrite a stored message's content, matched by platform message id.
+    ///
+    /// Reconciles streamed/edited messages from peer bots: a bot that
+    /// streams its reply via Telegram message edits arrives as one initial
+    /// frame plus a run of `edited_message` updates. When an edit lands
+    /// after we already captured the message, this rewrites the row so
+    /// group history reflects the FINAL text rather than the first frame.
+    /// Returns the number of rows updated (0 if the message wasn't stored).
+    pub async fn update_content(
+        &self,
+        channel: &str,
+        chat_id: &str,
+        platform_message_id: &str,
+        content: &str,
+    ) -> Result<usize> {
+        let ch = channel.to_string();
+        let cid = chat_id.to_string();
+        let pmid = platform_message_id.to_string();
+        let body = content.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE channel_messages SET content = ?4 \
+                     WHERE channel = ?1 AND channel_chat_id = ?2 \
+                       AND platform_message_id = ?3",
+                    params![ch, cid, pmid, body],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to update channel message content")
+    }
+
     /// Get recent messages for a specific chat
     pub async fn recent(
         &self,

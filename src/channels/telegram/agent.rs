@@ -8,8 +8,11 @@ use crate::brain::agent::AgentService;
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
 use crate::services::{ServiceContext, SessionService};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use teloxide::prelude::*;
+use teloxide::types::MessageId;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -114,56 +117,108 @@ impl TelegramAgent {
             let config_rx = self.config_rx.clone();
             let channel_msg_repo = self.channel_msg_repo.clone();
 
+            // Shared dependencies handed to every agent dispatch (first-frame,
+            // settled-after-streaming, or immediate). `bot_token` and
+            // `channel_msg_repo` are only needed here, so move them in; the
+            // rest are cloned because the callback handler below reuses them.
+            let deps = DispatchDeps {
+                agent: agent.clone(),
+                session_svc: session_svc.clone(),
+                bot_token,
+                shared_session: shared_session.clone(),
+                telegram_state: telegram_state.clone(),
+                config_rx: config_rx.clone(),
+                channel_msg_repo,
+            };
+
+            // Pending edit-stream buffer keyed by (chat, message). Peer bots in
+            // a group stream their replies by editing one message progressively
+            // (the same mechanism we use). Reacting to the first frame makes us
+            // read a half-written message and wrongly conclude it was "cut off".
+            // We hold a bot's text message until its edit stream settles, then
+            // process the FINAL text. See `spawn_settle_watcher`.
+            let pending_edits: PendingEdits = Arc::new(Mutex::new(HashMap::new()));
+
             // ── Message handler ───────────────────────────────────────────────
             let msg_handler = Update::filter_message().endpoint({
-                let agent = agent.clone();
-                let session_svc = session_svc.clone();
-                let bot_token = bot_token.clone();
-                let shared_session = shared_session.clone();
-                let telegram_state = telegram_state.clone();
-                let config_rx = config_rx.clone();
-                let channel_msg_repo = channel_msg_repo.clone();
+                let deps = deps.clone();
+                let pending_edits = pending_edits.clone();
                 move |bot: Bot, msg: Message| {
-                    let agent = agent.clone();
-                    let session_svc = session_svc.clone();
-                    let bot_token = bot_token.clone();
-                    let shared_session = shared_session.clone();
-                    let telegram_state = telegram_state.clone();
-                    let config_rx = config_rx.clone();
-                    let channel_msg_repo = channel_msg_repo.clone();
+                    let deps = deps.clone();
+                    let pending_edits = pending_edits.clone();
                     async move {
-                        // Spawn in background so the dispatcher is free to
-                        // process callback queries (approval button clicks)
-                        // while the agent is running.
-                        tokio::spawn(async move {
-                            let result = tokio::task::spawn(async move {
-                                handle_message(
-                                    bot,
-                                    msg,
-                                    agent,
-                                    session_svc,
-                                    bot_token,
-                                    shared_session,
-                                    telegram_state,
-                                    config_rx,
-                                    channel_msg_repo,
-                                )
-                                .await
+                        // A peer bot's first frame: defer until the stream
+                        // settles instead of processing the partial.
+                        if is_stream_candidate(&msg) {
+                            let key = (msg.chat.id, msg.id);
+                            let generation = {
+                                let mut map = pending_edits.lock().await;
+                                let entry = map.entry(key).or_insert((0, msg.clone()));
+                                entry.0 += 1;
+                                entry.1 = msg.clone();
+                                entry.0
+                            };
+                            spawn_settle_watcher(key, generation, pending_edits, bot, deps);
+                            return ResponseResult::Ok(());
+                        }
+                        // Everything else (humans, DMs, non-text) processes
+                        // immediately, in the background so the dispatcher stays
+                        // free for callback queries while the agent runs.
+                        spawn_handle_message(bot, msg, deps);
+                        ResponseResult::Ok(())
+                    }
+                }
+            });
+
+            // ── Edited-message handler ────────────────────────────────────────
+            // Receives the progressive edits of a peer bot's streamed reply.
+            // While the message is still pending we reset its settle timer to
+            // the newest frame; once it has already been processed we only
+            // reconcile stored history so context reflects the final text.
+            let edited_handler = Update::filter_edited_message().endpoint({
+                let deps = deps.clone();
+                let pending_edits = pending_edits.clone();
+                move |bot: Bot, msg: Message| {
+                    let deps = deps.clone();
+                    let pending_edits = pending_edits.clone();
+                    async move {
+                        if !is_stream_candidate(&msg) {
+                            return ResponseResult::Ok(());
+                        }
+                        let key = (msg.chat.id, msg.id);
+                        let generation = {
+                            let mut map = pending_edits.lock().await;
+                            map.get_mut(&key).map(|entry| {
+                                entry.0 += 1;
+                                entry.1 = msg.clone();
+                                entry.0
                             })
-                            .await;
-                            match result {
-                                Ok(Ok(())) => {}
-                                Ok(Err(e)) => {
-                                    tracing::error!("Telegram handle_message error: {e}");
-                                }
-                                Err(panic_err) => {
-                                    tracing::error!(
-                                        "Telegram handle_message panicked: {:?}",
-                                        panic_err
-                                    );
+                        };
+                        match generation {
+                            // Still streaming — push the settle deadline out.
+                            Some(generation) => {
+                                spawn_settle_watcher(key, generation, pending_edits, bot, deps);
+                            }
+                            // Edit landed after we processed the settled message
+                            // (e.g. a manual late edit). Rewrite stored history;
+                            // don't reprocess — that would loop on every edit.
+                            None => {
+                                if let Some(text) = msg.text() {
+                                    let chat_id = msg.chat.id.0.to_string();
+                                    let pmid = msg.id.0.to_string();
+                                    if let Err(e) = deps
+                                        .channel_msg_repo
+                                        .update_content("telegram", &chat_id, &pmid, text)
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            "Telegram: failed to reconcile edited message \
+                                             {pmid} content: {e}"
+                                        );
+                                    }
                                 }
                             }
-                        });
+                        }
                         ResponseResult::Ok(())
                     }
                 }
@@ -609,7 +664,10 @@ impl TelegramAgent {
             // updates in teloxide 0.17+ — they flow through msg_handler and are
             // captured in handler.rs BEFORE the allowlist check so bot/user IDs
             // are logged even when the joining user isn't allowlisted yet.
-            let tree = dptree::entry().branch(msg_handler).branch(cb_handler);
+            let tree = dptree::entry()
+                .branch(msg_handler)
+                .branch(edited_handler)
+                .branch(cb_handler);
 
             // Retry loop: if the dispatcher exits (network hiccup, Telegram conflict
             // from another process using the same token, etc.), wait and reconnect.
@@ -625,6 +683,103 @@ impl TelegramAgent {
             }
         })
     }
+}
+
+/// How long a peer bot's streamed message must go without a further edit
+/// before we treat it as complete and hand the final text to the agent.
+/// Peer crab bots edit their reply roughly every 1.5s while streaming
+/// (matching our own stream throttle), so a few seconds of quiet reliably
+/// means the stream finished.
+const BOT_STREAM_SETTLE: Duration = Duration::from_secs(4);
+
+/// Pending peer-bot edit streams, keyed by (chat, message). The value is
+/// `(generation, latest_message)`: each new frame bumps the generation so a
+/// stale settle watcher knows it was superseded and bows out.
+type PendingEdits = Arc<Mutex<HashMap<(ChatId, MessageId), (u64, Message)>>>;
+
+/// Cloneable bundle of everything `handle_message` needs, so the message,
+/// edited-message, and settle paths can dispatch without threading nine
+/// arguments through each.
+#[derive(Clone)]
+struct DispatchDeps {
+    agent: Arc<AgentService>,
+    session_svc: SessionService,
+    bot_token: Arc<String>,
+    shared_session: Arc<Mutex<Option<Uuid>>>,
+    telegram_state: Arc<TelegramState>,
+    config_rx: tokio::sync::watch::Receiver<Config>,
+    channel_msg_repo: ChannelMessageRepository,
+}
+
+/// Should this message be held until its edit stream settles? True only for
+/// a text message sent by a bot in a group — the one case where the sender
+/// streams its reply via progressive edits. Humans, DMs, and non-text
+/// messages process immediately.
+fn is_stream_candidate(msg: &Message) -> bool {
+    !msg.chat.is_private()
+        && msg.text().is_some()
+        && msg.from.as_ref().is_some_and(|u| u.is_bot)
+}
+
+/// Dispatch a message to the agent in the background, isolating panics so a
+/// single bad turn can't take down the dispatcher. The dispatcher stays free
+/// to process callback queries (approval buttons) while the agent runs.
+fn spawn_handle_message(bot: Bot, msg: Message, deps: DispatchDeps) {
+    tokio::spawn(async move {
+        let result = tokio::task::spawn(async move {
+            handle_message(
+                bot,
+                msg,
+                deps.agent,
+                deps.session_svc,
+                deps.bot_token,
+                deps.shared_session,
+                deps.telegram_state,
+                deps.config_rx,
+                deps.channel_msg_repo,
+            )
+            .await
+        })
+        .await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::error!("Telegram handle_message error: {e}"),
+            Err(panic_err) => {
+                tracing::error!("Telegram handle_message panicked: {:?}", panic_err)
+            }
+        }
+    });
+}
+
+/// Wait for a peer bot's edit stream to go quiet, then process the final
+/// text. If a newer frame arrived while we waited (generation moved on) we
+/// bow out — that frame's own watcher will fire. The matching watcher
+/// removes the pending entry, so the map self-cleans.
+fn spawn_settle_watcher(
+    key: (ChatId, MessageId),
+    generation: u64,
+    pending_edits: PendingEdits,
+    bot: Bot,
+    deps: DispatchDeps,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(BOT_STREAM_SETTLE).await;
+        let final_msg = {
+            let mut map = pending_edits.lock().await;
+            match map.get(&key) {
+                Some((g, _)) if *g == generation => map.remove(&key).map(|(_, m)| m),
+                _ => None,
+            }
+        };
+        if let Some(final_msg) = final_msg {
+            tracing::debug!(
+                "Telegram: peer-bot message in chat {} settled after streaming — \
+                 processing final text",
+                key.0.0
+            );
+            spawn_handle_message(bot, final_msg, deps);
+        }
+    });
 }
 
 /// Resolve the correct session ID for a callback query.
