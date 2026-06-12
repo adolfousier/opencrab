@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.38] - 2026-06-12
+
+10 commits since v0.3.37. 25 files changed, +973 / -63 lines.
+
+### 🔧 Fixes
+
+- **Xiaomi MiMo keyless without config block** — `config_defaults` now seeds a default Xiaomi section so keyless onboarding works from a blank slate (no pre-existing `config.toml` entry needed).
+- **Xiaomi MiMo tool-call parsing** — parse tool calls wrapped in `<tool_call_list>` XML that MiMo models emit, so `tool_use` succeeds instead of falling through as prose.
+- **Xiaomi MiMo structured tool calls** — added a reminder to system prompts when the active model is Xiaomi MiMo so tool calls are structured JSON, not prose instructions to the user.
+- **Evolve restart on Linux** — `running_binary_path()` strips the " (deleted)" marker that Linux appends to `/proc/self/exe` after unlink+rename. Restart now exec's the real binary. Evolve also hands `RestartReady` the exact new-binary path captured pre-swap.
+- **Telegram peer-bot settle window** — wait ~2s of edit silence (down from 4s) before processing a peer bot's message in groups. Clears the ~1.5s edit cadence so we never act on a partial.
+- **Telegram group bot handling** — hold a bot's text message in a group until its edit stream settles, then dispatch the final text. Each edit resets the settle timer so the latest frame wins. Humans, DMs, and non-text messages are unaffected.
+- **Multilingual phantom self-heal** — intent-phrase matching now scans all languages at once instead of gating on `detect_language()`. Single-word verbs stay language-gated. Added missing forward-commitment shapes and filled use/write/run verb gaps in es/fr/pt/ru.
+- **Brief work announcements** — short announcements like "Running checks now." or "Building now." are now caught as phantom intents.
+- **Multi-sentence turn announcements** — the agent can announce work ("Checking CI status.") then do real work in the same turn. The check now returns early on announcements instead of flagging the turn as a phantom.
+
+### 🧪 Tests
+
+- Cover `ChannelMessageRepository::update_content` reconcile path
+- Phantom intent detection across all supported languages
+- Self-update path resolution with "(deleted)" marker
+- Config defaults seeds Xiaomi section when none exists
+
+### 📊 Stats
+
+- 10 commits since v0.3.37
+- 25 files changed, +973 / -63 lines
+
 ## [0.3.37] - 2026-06-12
 
 57 commits since v0.3.36. 121 files changed, +4,676 / -10,787 lines. Closes #179, #180, #181, #182, #183, #185, #187, #189, #190, #191, #192.
@@ -5490,3 +5518,5 @@ fixes.
 [0.3.36]: https://github.com/adolfousier/opencrabs/compare/v0.3.35...v0.3.36
 
 [0.3.37]: https://github.com/adolfousier/opencrabs/compare/v0.3.36...v0.3.37
+
+[0.3.38]: https://github.com/adolfousier/opencrabs/compare/v0.3.37...v0.3.38
