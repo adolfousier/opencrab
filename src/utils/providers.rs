@@ -240,20 +240,29 @@ pub fn configured_providers(providers: &ProviderConfigs) -> Vec<(String, String)
 /// the active ones (issue #126: there was no way to see that OpenCode-API
 /// existed as an option until the user already had the key in keys.toml).
 pub fn all_known_providers_with_status(providers: &ProviderConfigs) -> Vec<(String, String, bool)> {
-    let mut result = Vec::new();
-    for meta in KNOWN_PROVIDERS {
-        let cfg = config_for(providers, meta.id);
-        let configured = if meta.needs_api_key {
-            cfg.is_some_and(|c| c.api_key.is_some())
-        } else {
-            true
-        };
-        result.push((
-            meta.id.to_string(),
-            meta.display_name.to_string(),
-            configured,
-        ));
-    }
+    // Built-in providers, sorted alphabetically by display name — matches the
+    // TUI's `provider_display_order`, so a channel `/models` picker lists them
+    // in the same order as the desktop UI instead of raw KNOWN_PROVIDERS
+    // declaration order (which put e.g. Xiaomi between Minimax and OpenAI).
+    let mut result: Vec<(String, String, bool)> = KNOWN_PROVIDERS
+        .iter()
+        .map(|meta| {
+            let configured = if meta.needs_api_key {
+                config_for(providers, meta.id).is_some_and(|c| c.api_key.is_some())
+            } else {
+                true
+            };
+            (
+                meta.id.to_string(),
+                meta.display_name.to_string(),
+                configured,
+            )
+        })
+        .collect();
+    result.sort_by_key(|p| p.1.to_ascii_lowercase());
+
+    // Custom providers follow as their own alphabetical block (the config's
+    // custom map is a BTreeMap, so iteration is already key-sorted).
     if let Some(ref customs) = providers.custom {
         for (name, cfg) in customs {
             let configured = cfg.api_key.is_some();

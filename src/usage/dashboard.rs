@@ -119,10 +119,10 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),                      // summary bar
-            Constraint::Min(grid_min),                  // middle grid (2x2)
+            Constraint::Length(2),               // summary bar
+            Constraint::Min(grid_min),           // middle grid (2x2)
             Constraint::Length(activity_height), // activity + cache row
-            Constraint::Length(1),                      // footer
+            Constraint::Length(1),               // footer
         ])
         .split(inner);
 

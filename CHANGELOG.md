@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.37] - 2026-06-12
+
+57 commits since v0.3.36. 121 files changed, +4,676 / -10,787 lines. Closes #179, #180, #181, #182, #183, #185, #187, #189, #190, #191, #192.
+
+**🎉 OpenCrabs × Xiaomi MiMo Collaboration:** Xiaomi MiMo is now the default provider for new users. 2 weeks completely free with keyless mode via proxy (no API key needed). Models: mimo-v2.5-pro (1M context), mimo-v2-pro, mimo-v2.5, mimo-v2-omni, mimo-v2-flash. Thinking enabled by default. After the free window (2026-06-25), users can add their own key or switch providers. Full integration with keyless proxy mode, live model fetch, automatic caching.
+
+**Lazy tool-schema loading (3 commits):** Tool discovery via `tool_search`, core tools only by default. Reduces startup time and context usage. Flag-gated (`[agent] lazy_tools`), now enabled by default. `lazy_tools` is the default mode.
+
+**Multi-profile cron daemon (1 commit):** One process now covers all profiles' cron jobs. No need to run separate daemons per profile.
+
+**Background /rebuild (1 commit):** `/rebuild` now runs in the background via a one-shot cron job instead of blocking the TUI.
+
+**Per-model cache efficiency (1 commit):** The Cache card now shows a per-model breakdown with hit rates, sorted highest-first. See at a glance which models cache well.
+
+**Restart failure fix (closes #179, 1 commit):** Pre-built binaries now use `std::env::current_exe()` as `binary_path` instead of pointing at a never-built `target/release/opencrabs`. Source only gets cloned when `/rebuild` is invoked, via the new lazy `ensure_source_tree()`. All three restart paths (/evolve, /rebuild, auto-restart) share the same approach.
+
+**Inactive pane markdown rendering (closes #180, 1 commit):** Inactive pane now routes content through the same `parse_markdown` + `wrap_line_with_padding` pipeline as the focused pane. No more raw `**asterisks**`, no more truncated words, no more broken list indentation.
+
+**Local file paths in telegram_send (closes #181, 1 commit):** `telegram_send` now accepts local file paths in `send_photo`/`send_document`, not just HTTPS URLs. New `resolve_input_file()` helper: http(s) → `InputFile::url()`, anything else → tilde-expanded local path read into memory.
+
+**Cron job profile isolation (closes #182, 2 commits):** Cron jobs are now isolated to their origin profile. Each job is stamped with its profile at creation. The scheduler skips any job whose stamp doesn't match the running process. Legacy NULL-stamped jobs still run. New migration, `job_runs_in_active_profile` predicate with unit tests. Task-local profile home override persists for the entire agent execution so all tool calls resolve to the correct profile.
+
+**Version in /doctor output (closes #183, 1 commit):** `/doctor` now shows `Health Check (v0.3.x)` in the header on Telegram, Discord, Slack, WhatsApp. Both code paths (direct channel command and LLM-routed) covered.
+
+**RSI efficiency gate (closes #185, 1 commit):** RSI tool proposals now require the rationale to explicitly state which efficiency gate applies: TOKEN SAVINGS, ERROR REDUCTION, or CAPABILITY ADDITION. Commands and skills exempt. 3 tests added.
+
+**Deprecate execute_code/task_manager (closes #187, 1 commit):** `execute_code` and `task_manager` marked DEPRECATED in their tool descriptions. `rsi_proposals` removed from main tool registry (Mission Control still uses it directly). Removed from catalog.rs system category.
+
+**CDP endpoint config (closes #189, 1 commit):** `browser.cdp_endpoint` allows connecting to a shared Chromium instance instead of spawning per-profile. Reduces memory usage in multi-profile setups (~260MB vs ~750MB for 3 profiles).
+
+**Daemon file logs (closes #190, 2 commits):** Reliable daemon file logs + self-healing daily file writer. Recovers from lost fd mid-run.
+
+**Disable sensitive data redaction (closes #191, 1 commit):** `agent.redact_sensitive_data = false` disables redaction for sysadmin/devops work where IPs, tokens, etc. need to be visible.
+
+**Lock file corruption fix (closes #192, 1 commit):** `is_pid_alive(0)` returns false; corrupted lock files taken over. Fixes Telegram startup wedge.
+
+**Bash guard fix (1 commit):** Allow `python -m` module invocations (no false-positive REPL rejection). Fixes the main reason agents fell back to `execute_code`.
+
+**Mid-turn model switch fix (1 commit):** Mid-turn manual switch applies next turn, current request completes.
+
+**Onboarding keyless fix (1 commit):** Keyless providers skip API key field, reach model select.
+
+**RSI dedup fix (1 commit):** Dedup before appending to brain files — stop append→dedup→append loop.
+
+**Retry backoff (1 commit):** Patient backoff for DNS/connection errors — stop fast-failing flaky providers.
+
+**Context usage fix (1 commit):** Reject over-reported provider usage to prevent inflated counters.
+
+**Telegram model picker fix (1 commit):** No longer hung on 'loading' for long model names.
+
+**Telegram media fix (1 commit):** Pass user's caption alongside media to the agent.
+
+**Logging self-healing (1 commit):** Self-healing daily file writer — recover from lost fd mid-run.
+
+**Cache efficiency metric fix (1 commit):** Measures caching-capable requests only (metric B), excludes non-caching providers.
+
+**Docs & refactor (6 commits):** Audit + fix ADDING_NEW_PROVIDERS against real pipeline. Document `[agent] lazy_tools` flag in config.toml.example. Added onboard video with captions. Centralize keyless check into ProviderSelectorState. Remove dead underscore-prefixed bindings. Drop accidental .modum-baseline.json, gitignore it.
+
 ## [0.3.35] - 2026-06-04
 ## [0.3.36] - 2026-06-07
 
@@ -5430,3 +5488,5 @@ fixes.
 
 [0.3.35]: https://github.com/adolfousier/opencrabs/compare/v0.3.34...v0.3.35
 [0.3.36]: https://github.com/adolfousier/opencrabs/compare/v0.3.35...v0.3.36
+
+[0.3.37]: https://github.com/adolfousier/opencrabs/compare/v0.3.36...v0.3.37

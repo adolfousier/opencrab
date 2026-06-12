@@ -75,7 +75,16 @@ impl ProviderError {
         match self {
             ProviderError::HttpError(_)
             | ProviderError::RateLimitExceeded(_)
-            | ProviderError::Timeout(_) => true,
+            | ProviderError::Timeout(_)
+            // A stream that broke mid-flight ("connection closed before message
+            // completed", the SSE socket dropping, a partial body) is a
+            // transport hiccup, not a client mistake — re-issuing the request
+            // usually succeeds. Retry it like the other transport errors instead
+            // of bouncing straight to the fallback chain. A genuinely fatal
+            // cause (bad model, auth, invalid content) surfaces as a typed
+            // ApiError with its own status, which is handled below — it never
+            // reaches here as a StreamError.
+            | ProviderError::StreamError(_) => true,
             ProviderError::ApiError { status, .. } if *status >= 500 => true,
             // A 4xx whose body is an HTML page is an infrastructure / CDN /
             // load-balancer error page, NOT a real JSON API client error.

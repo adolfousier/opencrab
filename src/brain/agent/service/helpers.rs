@@ -1,8 +1,6 @@
 use super::builder::AgentService;
 use super::types::{MessageQueueCallback, ProgressCallback, ProgressEvent};
-use crate::brain::provider::{
-    ContentBlock, ImageSource, LLMRequest, LLMResponse, Message, Role, StopReason,
-};
+use crate::brain::provider::{ContentBlock, LLMRequest, LLMResponse, Message, StopReason};
 use serde_json::Value;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -807,89 +805,38 @@ impl AgentService {
         ))
     }
 
-    /// Build a user Message, auto-attaching images from `<<IMG:path>>` markers.
-    /// The TUI inserts these markers for detected image paths/URLs (handles spaces).
-    pub(super) async fn build_user_message(text: &str) -> Message {
-        let mut image_blocks: Vec<ContentBlock> = Vec::new();
-
-        // Extract <<IMG:path>> markers
+    /// Build a user Message from text, converting any `<<IMG:path>>` markers into
+    /// a plain-text `[image attached: path]` hint.
+    ///
+    /// Images are deliberately NOT inlined as multimodal `image_url` content
+    /// blocks. The agent views an attached image on demand via the
+    /// `analyze_image` tool, which uses the provider's configured `vision_model`,
+    /// or Gemini from onboarding — that's the intended, working design.
+    ///
+    /// Inlining the raw base64 image here (the previous behaviour) attached an
+    /// `image_url` content block that rode along to EVERY provider, including
+    /// text-only fallbacks like zhipu/glm. Those reject it with
+    /// `400 messages.content.type is invalid, allowed values: ['text']`, which
+    /// broke the fallback chain whenever an image message hit a text-only
+    /// provider (Telegram, 2026-06-12). Keeping the user message text-only means
+    /// any provider can handle it and vision stays in `analyze_image`.
+    pub(crate) fn build_user_message(text: &str) -> Message {
         let mut clean_text = text.to_string();
         while let Some(start) = clean_text.find("<<IMG:") {
-            if let Some(end) = clean_text[start..].find(">>") {
-                let marker_end = start + end + 2;
-                let img_path = &clean_text[start + 6..start + end];
-
-                // URL image
-                if img_path.starts_with("http://") || img_path.starts_with("https://") {
-                    image_blocks.push(ContentBlock::Image {
-                        source: ImageSource::Url {
-                            url: img_path.to_string(),
-                        },
-                    });
-                    tracing::info!("Auto-attached image URL: {}", img_path);
-                }
-                // Local file
-                else {
-                    let path = std::path::Path::new(img_path);
-                    if let Ok(data) = tokio::fs::read(path).await {
-                        let lower = img_path.to_lowercase();
-                        let media_type = match lower.rsplit('.').next().unwrap_or("") {
-                            "png" => "image/png",
-                            "jpg" | "jpeg" => "image/jpeg",
-                            "gif" => "image/gif",
-                            "webp" => "image/webp",
-                            "bmp" => "image/bmp",
-                            "svg" => "image/svg+xml",
-                            _ => "application/octet-stream",
-                        };
-                        use base64::Engine;
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                        image_blocks.push(ContentBlock::Image {
-                            source: ImageSource::Base64 {
-                                media_type: media_type.to_string(),
-                                data: b64,
-                            },
-                        });
-                        tracing::info!(
-                            "Auto-attached image: {} ({}, {} bytes)",
-                            img_path,
-                            media_type,
-                            data.len()
-                        );
-                    } else {
-                        tracing::warn!("Could not read image file: {}", img_path);
-                    }
-                }
-
-                // Replace marker with a path hint so any model (vision or text-only) can
-                // route the image through analyze_image / other vision tools. Vision-capable
-                // providers also get the base64 image block below; text-only models rely on
-                // this path to call analyze_image directly.
-                let hint = format!("[image attached: {}]", img_path);
-                clean_text = format!(
-                    "{}{}{}",
-                    &clean_text[..start],
-                    hint,
-                    &clean_text[marker_end..]
-                );
-            } else {
-                break; // Malformed marker
-            }
+            let Some(end) = clean_text[start..].find(">>") else {
+                break; // malformed marker
+            };
+            let marker_end = start + end + 2;
+            let img_path = clean_text[start + 6..start + end].to_string();
+            let hint = format!("[image attached: {img_path}]");
+            clean_text = format!(
+                "{}{}{}",
+                &clean_text[..start],
+                hint,
+                &clean_text[marker_end..]
+            );
         }
-
-        let clean_text = clean_text.trim().to_string();
-
-        if image_blocks.is_empty() {
-            Message::user(clean_text)
-        } else {
-            // Text first, then images
-            let mut blocks = vec![ContentBlock::Text { text: clean_text }];
-            blocks.extend(image_blocks);
-            Message {
-                role: Role::User,
-                content: blocks,
-            }
-        }
+        Message::user(clean_text.trim().to_string())
     }
 
     /// Compact tool description for DB persistence (mirrors TUI's format_tool_description).

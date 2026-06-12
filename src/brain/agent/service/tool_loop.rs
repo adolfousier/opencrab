@@ -682,8 +682,9 @@ impl AgentService {
         // Check for manual /compact before user_message is consumed
         let is_manual_compact = user_message.contains("[SYSTEM: Compact context now.");
 
-        // Build user message — detect and attach images from paths/URLs
-        let user_msg = Self::build_user_message(&user_message).await;
+        // Build user message — `<<IMG:path>>` markers become text hints; the
+        // agent views images via analyze_image (no inline image_url content).
+        let user_msg = Self::build_user_message(&user_message);
         context.add_message(user_msg);
 
         // Save user message to database (text only — images are ephemeral).
