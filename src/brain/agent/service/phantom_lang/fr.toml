@@ -218,6 +218,13 @@ completion_claims = [
 
 line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|okay|bon|d'accord|bien|oui)\\s*,?\\s+)?(?:maintenant\\s+)?(?:laissez-moi|je vais|allons|j'ai besoin de|je dois|il faut que je|je devrais)\\s+\\w"
 
+# Annonce de travail en cours qui clôt le tour sans appeler d'outil — "Je
+# vérifie maintenant.", "Vérification en cours…". Français n'a pas de gérondif-
+# statut comme l'anglais, donc on couvre « je <verbe> … maintenant » et le
+# nominal « <nom> en cours ». Exige un marqueur d'imminence (maintenant / en
+# cours / … / : ).
+work_announcement_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|okay|bon|d['’]accord|bien|oui)[,.!:]?\\s+)?(?:(?:je\\s+|j['’])(?:lance|relance|vérifie|exécute|teste|compile|construis|installe|recherche|cherche|lis|écris|crée|génère|corrige|analyse|inspecte|déploie|télécharge|mets à jour)\\b[^.!?:\\n]{0,48}?(?:\\s+maintenant[.!…]*|\\.{3}|…|:)|(?:lancement|vérification|exécution|compilation|installation|recherche|analyse|déploiement|téléchargement|mise à jour|tests?)\\s+en\\s+cours[.!…]*)\\s*$"
+
 gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:maintenant|déjà)\\s+(?:vérifiant|mettant à jour|modifiant|corrigeant|réparant|créant|ajoutant|supprimant|exécutant|lisant|cherchant)\\b"
 
 trailing_colon_re = "(?im)(?:^|\\n)\\s*(?:laissez-moi|je vais|maintenant je vais|allons)\\s+\\w[^:\\n]{0,80}:\\s*$"

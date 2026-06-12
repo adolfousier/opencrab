@@ -19,6 +19,14 @@ pub struct LangConfig {
     pub action_verbs: Vec<String>,
     #[serde(default)]
     pub line_start_re: String,
+    /// Matches a brief present-continuous work announcement that ends the
+    /// turn with no tool call — e.g. "Running checks now.", "Checking the
+    /// logs…". These fall under the no-tools detector's length floor and
+    /// aren't "I'll / let me / I'm going to" phrases, so they need their own
+    /// pattern. Anchored and ending in an imminence marker (now / … / :) to
+    /// avoid matching ordinary sentences that merely open with a gerund.
+    #[serde(default)]
+    pub work_announcement_re: String,
     #[serde(default)]
     pub completion_claims: Vec<String>,
     #[serde(default)]

@@ -34,11 +34,19 @@ use super::phantom_lang;
 /// even if its content happens to quote a phrase we watch for.
 pub fn has_phantom_tool_intent_no_tools(text: &str) -> bool {
     let trimmed = text.trim();
-    if trimmed.len() < 20 {
-        return false;
-    }
     let lead = prose_lead_in(trimmed);
     if lead.is_empty() {
+        return false;
+    }
+    // Brief present-continuous work announcements ("Running checks now.",
+    // "Checking the logs…") are phantom on their own — the model says it's
+    // acting but emitted no tool call. At 19 bytes "Running checks now." fell
+    // under the length floor below and the turn dropped with zero tools
+    // (2026-06-12), so check this before the floor.
+    if matches_work_announcement(lead) {
+        return true;
+    }
+    if trimmed.len() < 20 {
         return false;
     }
     let lower = lead.to_lowercase();
@@ -250,6 +258,23 @@ fn lang_intent_match_any(lower: &str) -> bool {
     phantom_lang::all_langs()
         .iter()
         .any(|lang| lang_intent_match(lower, &lang.intent_phrases))
+}
+
+/// Does `lead` read as a brief present-continuous work announcement in ANY
+/// supported language ("Running checks now.", "Verificando ahora…")? Scanned
+/// across all languages like the intent phrases — the per-language regexes are
+/// anchored and require an imminence marker, so they don't collide. Capped at
+/// 80 chars so a paragraph that merely opens with a gerund can't qualify.
+pub(crate) fn matches_work_announcement(lead: &str) -> bool {
+    if lead.chars().count() > 80 {
+        return false;
+    }
+    phantom_lang::all_langs().iter().any(|lang| {
+        !lang.work_announcement_re.is_empty()
+            && Regex::new(&lang.work_announcement_re)
+                .map(|re| re.is_match(lead))
+                .unwrap_or(false)
+    })
 }
 
 /// Check if `lower` contains any completion claim.
