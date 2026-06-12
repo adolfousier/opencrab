@@ -457,6 +457,7 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
     // inline.
     let has_bare_name_args = super::bare_tool_call_extractor::has_bare_name_args_signal(text);
     if !text.contains("<tool_call>")
+        && !text.contains("<tool_call_list>")
         && !text.contains("<function=")
         && !text.contains("tool_call:")
         && !text.contains("\"tool_calls\"")
@@ -556,6 +557,25 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
                 None => {
                     search_from = anchor_pos + anchor_lit.len();
                 }
+            }
+        }
+    }
+
+    // Pass 1.6 — `<tool_call_list>…</tool_call_list>` wrapper. Seen 2026-06-12
+    // with mimo-v2.5-pro: instead of the structured `tool_calls` field the
+    // model leaks the call into `content` as
+    // `<tool_call_list>{"tool_call_id":"…","tool_name":"…","tool_input":{…}}</tool_call_list>`
+    // (one object, several, or a JSON array inside). None of the other
+    // signals match `<tool_call_list>` — `"tool_call_id"` doesn't contain the
+    // literal `"tool_call"` — so without this pass the whole block ships to
+    // visible content and the call never dispatches.
+    if text.contains("<tool_call_list>") {
+        let mut seen_blocks: Vec<(usize, usize)> = Vec::new();
+        for (start, end, name, input) in extract_tool_call_list_calls(text) {
+            tool_calls.push((name, input));
+            if !seen_blocks.contains(&(start, end)) {
+                seen_blocks.push((start, end));
+                strip_ranges.push((start, end));
             }
         }
     }
@@ -1477,6 +1497,66 @@ fn parse_qwen_tool_json(json: &str) -> Option<(String, serde_json::Value)> {
     parse_tool_call_value(&v)
 }
 
+/// Extract calls wrapped in `<tool_call_list>…</tool_call_list>` (mimo-v2.5-pro
+/// leaks them into `content`). The block holds one or more tool-call JSON
+/// objects — a single object, newline-separated objects, or a JSON array —
+/// using the `{"tool_name":"…","tool_input":{…}}` schema (also accepts the
+/// `name`/`arguments` shapes via `parse_tool_call_value`). The closing tag is
+/// optional. Returns `(block_start, block_end, name, input)` per parsed call;
+/// callers strip `block_start..block_end` from the visible text.
+fn extract_tool_call_list_calls(text: &str) -> Vec<(usize, usize, String, serde_json::Value)> {
+    const OPEN: &str = "<tool_call_list>";
+    const CLOSE: &str = "</tool_call_list>";
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(rel) = text[i..].find(OPEN) {
+        let block_start = i + rel;
+        let inner_start = block_start + OPEN.len();
+        // End at the closing tag if present, else the next opener, else EOT.
+        let (inner_end, block_end) = match text[inner_start..].find(CLOSE) {
+            Some(r) => (inner_start + r, inner_start + r + CLOSE.len()),
+            None => {
+                let next = text[inner_start..]
+                    .find(OPEN)
+                    .map(|r| inner_start + r)
+                    .unwrap_or(text.len());
+                (next, next)
+            }
+        };
+        let inner = &text[inner_start..inner_end];
+        // Walk the inner text for balanced JSON objects/arrays and parse each.
+        let mut j = 0;
+        while j < inner.len() {
+            let b = inner.as_bytes()[j];
+            if (b == b'{' || b == b'[')
+                && let Some(consumed) = extract_balanced_json(&inner[j..])
+            {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&inner[j..j + consumed]) {
+                    match &v {
+                        serde_json::Value::Array(items) => {
+                            for item in items {
+                                if let Some(call) = parse_tool_call_value(item) {
+                                    out.push((block_start, block_end, call.0, call.1));
+                                }
+                            }
+                        }
+                        _ => {
+                            if let Some(call) = parse_tool_call_value(&v) {
+                                out.push((block_start, block_end, call.0, call.1));
+                            }
+                        }
+                    }
+                }
+                j += consumed.max(1);
+                continue;
+            }
+            j += 1;
+        }
+        i = block_end.max(inner_start);
+    }
+    out
+}
+
 /// Value-level parser shared by the JSON-string path and the
 /// `{"tool_calls":[{...}, ...]}` multi-envelope path.
 fn parse_tool_call_value(v: &serde_json::Value) -> Option<(String, serde_json::Value)> {
@@ -1506,6 +1586,7 @@ fn parse_tool_call_value(v: &serde_json::Value) -> Option<(String, serde_json::V
         .get("arguments")
         .or_else(|| v.get("args"))
         .or_else(|| v.get("input"))
+        .or_else(|| v.get("tool_input"))
         .or_else(|| v.get("parameters"))
         .or_else(|| v.get("function").and_then(|f| f.get("arguments")))
         .or_else(|| v.get("function").and_then(|f| f.get("parameters")));

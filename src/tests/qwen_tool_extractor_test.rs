@@ -882,3 +882,67 @@ Done."#;
     assert!(cleaned.contains("First read, then edit."));
     assert!(cleaned.contains("Done."));
 }
+
+// ── `<tool_call_list>` wrapper (mimo-v2.5-pro leaks it into content) ──────
+
+#[test]
+fn tool_call_list_single_object() {
+    let text = "<tool_call_list>\n{\"tool_call_id\": \"rsi_read\", \"tool_name\": \"self_improve\", \"tool_input\": {\"action\": \"read\", \"target_file\": \"USER.md\"}}\n</tool_call_list>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "self_improve");
+    assert_eq!(calls[0].1["action"], "read");
+    assert_eq!(calls[0].1["target_file"], "USER.md");
+    assert!(!cleaned.contains("tool_call_list"));
+}
+
+#[test]
+fn tool_call_list_keeps_surrounding_prose() {
+    let text = "Running checks now.\n\n<tool_call_list>{\"tool_name\": \"bash\", \"tool_input\": {\"command\": \"cargo test\"}}</tool_call_list>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(calls[0].1["command"], "cargo test");
+    assert!(cleaned.contains("Running checks now."));
+    assert!(!cleaned.contains("tool_call_list"));
+}
+
+#[test]
+fn tool_call_list_multiple_objects() {
+    // Newline-separated objects inside one block.
+    let text = "<tool_call_list>\n{\"tool_name\": \"read_file\", \"tool_input\": {\"path\": \"a.rs\"}}\n{\"tool_name\": \"edit_file\", \"tool_input\": {\"path\": \"b.rs\"}}\n</tool_call_list>";
+    let (calls, _cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, "read_file");
+    assert_eq!(calls[1].0, "edit_file");
+}
+
+#[test]
+fn tool_call_list_json_array() {
+    let text = "<tool_call_list>[{\"tool_name\": \"read_file\", \"tool_input\": {\"path\": \"a.rs\"}}, {\"tool_name\": \"bash\", \"tool_input\": {\"command\": \"ls\"}}]</tool_call_list>";
+    let (calls, _cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, "read_file");
+    assert_eq!(calls[1].0, "bash");
+}
+
+#[test]
+fn tool_call_list_open_ended_no_closing_tag() {
+    let text =
+        "<tool_call_list>{\"tool_name\": \"bash\", \"tool_input\": {\"command\": \"echo hi\"}}";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "bash");
+    assert!(!cleaned.contains("tool_call_list"));
+}
+
+#[test]
+fn tool_input_alias_maps_to_arguments() {
+    // The `tool_input` key (mimo) must resolve to the call arguments.
+    let text =
+        "<tool_call>{\"tool_name\": \"bash\", \"tool_input\": {\"command\": \"pwd\"}}</tool_call>";
+    let (calls, _cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(calls[0].1["command"], "pwd");
+}
