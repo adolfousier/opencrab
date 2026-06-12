@@ -688,9 +688,10 @@ impl TelegramAgent {
 /// How long a peer bot's streamed message must go without a further edit
 /// before we treat it as complete and hand the final text to the agent.
 /// Peer crab bots edit their reply roughly every 1.5s while streaming
-/// (matching our own stream throttle), so a few seconds of quiet reliably
-/// means the stream finished.
-const BOT_STREAM_SETTLE: Duration = Duration::from_secs(4);
+/// (matching our own stream throttle), so ~2s of quiet means the stream
+/// finished — we start processing about 2s after the peer stops, which
+/// keeps a bot-to-bot exchange snappy without ever acting on a partial.
+const BOT_STREAM_SETTLE: Duration = Duration::from_secs(2);
 
 /// Pending peer-bot edit streams, keyed by (chat, message). The value is
 /// `(generation, latest_message)`: each new frame bumps the generation so a
