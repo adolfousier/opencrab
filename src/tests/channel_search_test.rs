@@ -297,6 +297,47 @@ mod repository {
         assert_eq!(r.message_type, "text");
         assert_eq!(r.platform_message_id.as_deref(), Some("ts_789"));
     }
+
+    // Reconciling a streamed/edited peer-bot message: the first frame is
+    // stored, then a later edit rewrites the row to the final text so group
+    // history reflects the completed message, not the partial.
+    #[tokio::test]
+    async fn test_update_content_reconciles_edited_message() {
+        let (_db, repo) = setup().await;
+        let frame = ChannelMessage::new(
+            "telegram".into(),
+            "-100111".into(),
+            Some("Group".into()),
+            "u9".into(),
+            "Peer".into(),
+            "Confidence assessment: 1. HIGH — will produce a real signal. The".into(),
+            "text".into(),
+            Some("msg_42".into()),
+        );
+        repo.insert(&frame).await.unwrap();
+
+        let final_text = "Confidence assessment: 1. HIGH — will produce a real signal. \
+                          The plan is a concrete artifact.";
+        let updated = repo
+            .update_content("telegram", "-100111", "msg_42", final_text)
+            .await
+            .unwrap();
+        assert_eq!(updated, 1, "the stored frame should be rewritten");
+
+        let recent = repo.recent(Some("telegram"), "-100111", 10).await.unwrap();
+        assert_eq!(recent.len(), 1, "reconcile updates in place, no new row");
+        assert_eq!(recent[0].content, final_text);
+    }
+
+    #[tokio::test]
+    async fn test_update_content_no_match_is_zero_rows() {
+        let (_db, repo) = setup().await;
+        let updated = repo
+            .update_content("telegram", "-100111", "never_stored", "x")
+            .await
+            .unwrap();
+        assert_eq!(updated, 0);
+    }
 }
 
 // --- ChannelSearchTool Tests ---
