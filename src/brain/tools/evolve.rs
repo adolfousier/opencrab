@@ -829,8 +829,11 @@ impl EvolveTool {
             extract_from_tar_gz(&archive_bytes, bin_name)?
         };
 
-        // Locate current executable
-        let exe_path = match std::env::current_exe() {
+        // Locate current executable. Use running_binary_path() (not raw
+        // current_exe()) so a retry after a previous in-place swap doesn't
+        // capture a "<path> (deleted)" path and write the next binary to a
+        // literal "opencrabs (deleted)" file.
+        let exe_path = match crate::brain::self_update::running_binary_path() {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(
@@ -1132,8 +1135,13 @@ impl EvolveTool {
                         "Evolved: v{} -> v{}. Restarting now.",
                         current_version, latest_version
                     ),
-                    // evolve replaced the running exe in place.
-                    binary_path: None,
+                    // Hand the restart the exact path we just wrote the new
+                    // binary to — captured BEFORE the unlink/rename swap. If we
+                    // passed None the handler would re-resolve via
+                    // current_exe() AFTER the swap, and /proc/self/exe reads
+                    // back as "<path> (deleted)" (the old inode was unlinked),
+                    // so the exec would ENOENT on a literal "… (deleted)" path.
+                    binary_path: Some(exe_path.clone()),
                 },
             );
         }

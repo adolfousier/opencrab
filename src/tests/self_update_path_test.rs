@@ -12,9 +12,31 @@
 //! `resolve_paths` is the pure core of `auto_detect()`, factored out so it
 //! can be tested without depending on the real `current_exe()`.
 
-use crate::brain::self_update::SelfUpdater;
+use crate::brain::self_update::{SelfUpdater, strip_deleted_marker};
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+// After an in-place `/evolve` swap, Linux reports `/proc/self/exe` (and thus
+// `current_exe()`) as `"<path> (deleted)"`. Restarting that literal path
+// ENOENTs, and a retry writes the next binary to a real `opencrabs (deleted)`
+// file — both observed on a live standalone install. The marker must be
+// stripped so callers work off the genuine path.
+#[test]
+fn strips_deleted_marker_from_unlinked_exe() {
+    assert_eq!(
+        strip_deleted_marker(PathBuf::from("/home/user/opencrabs (deleted)")),
+        PathBuf::from("/home/user/opencrabs"),
+    );
+}
+
+#[test]
+fn leaves_a_normal_exe_path_untouched() {
+    let p = PathBuf::from("/home/user/opencrabs");
+    assert_eq!(strip_deleted_marker(p.clone()), p);
+    // Only the exact trailing marker is stripped, not an interior occurrence.
+    let weird = PathBuf::from("/home/user (deleted)/opencrabs");
+    assert_eq!(strip_deleted_marker(weird.clone()), weird);
+}
 
 #[test]
 fn prebuilt_install_resolves_binary_to_the_running_exe() {

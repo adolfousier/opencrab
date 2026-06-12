@@ -14,6 +14,29 @@ use uuid::Uuid;
 /// GitHub repo URL for auto-cloning when source is not available locally.
 const REPO_URL: &str = "https://github.com/adolfousier/opencrabs.git";
 
+/// Resolve the running executable's real on-disk path.
+///
+/// After an in-place binary replacement (`/evolve` unlinks the old inode,
+/// then renames the new binary into place), Linux reports `/proc/self/exe`
+/// as `"<path> (deleted)"`, and `std::env::current_exe()` returns that
+/// literal string verbatim. Using it as a path then `exec()`s a
+/// non-existent `"… (deleted)"` target (ENOENT), and — worse — a retry
+/// writes the next downloaded binary to a real file literally named
+/// `"opencrabs (deleted)"`. Both were observed in the wild. Strip the
+/// marker so every caller works off the genuine path.
+pub fn running_binary_path() -> std::io::Result<PathBuf> {
+    Ok(strip_deleted_marker(std::env::current_exe()?))
+}
+
+/// Pure helper for `running_binary_path`, factored out so the
+/// `" (deleted)"`-stripping can be tested without `current_exe()`.
+pub(crate) fn strip_deleted_marker(exe: PathBuf) -> PathBuf {
+    match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(stripped) => PathBuf::from(stripped),
+        None => exe,
+    }
+}
+
 /// Handles building, testing, and restarting OpenCrabs from source.
 pub struct SelfUpdater {
     /// Root of the OpenCrabs project (where Cargo.toml lives)
@@ -50,7 +73,7 @@ impl SelfUpdater {
     /// binary_path at a target/ dir that was never built, causing
     /// "exec() failed: No such file or directory" on restart (#179).
     pub fn auto_detect() -> Result<Self> {
-        let exe = std::env::current_exe()?;
+        let exe = running_binary_path()?;
         let source_dir = crate::config::opencrabs_home().join("source");
         let (project_root, binary_path) = Self::resolve_paths(&exe, source_dir)?;
         tracing::info!(
