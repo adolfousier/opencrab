@@ -51,7 +51,7 @@ prompt = "List all TODO/FIXME comments in the current project and any open tasks
 name = "/howto"
 description = "Show quick reference for common commands"
 action = "system"
-prompt = "Common commands: /models (switch model), /sessions (browse history), /usage (cost report), /stop (abort operation), /doctor (health check), /approve (approval policy), /compact (compact context), /whisper (voice-to-text), /rebuild (rebuild from source), /cd (change directory), /onboard (setup wizard). Channel commands (Telegram/Discord/Slack): /help, /usage, /models, /stop. Channel history: use channel_search tool (list_chats, recent, search) to browse stored messages across all channels."
+prompt = "Common commands: /models (switch model), /sessions (browse history), /usage (cost report), /analytics (brain/tool/RSI report), /stop (abort operation), /doctor (health check), /approve (approval policy), /compact (compact context), /whisper (voice-to-text), /rebuild (rebuild from source), /cd (change directory), /onboard (setup wizard). Channel commands (Telegram/Discord/Slack): /help, /usage, /analytics, /models, /stop. Channel history: use channel_search tool (list_chats, recent, search) to browse stored messages across all channels."
 
 # ========================================
 # Example: Channel History Commands
