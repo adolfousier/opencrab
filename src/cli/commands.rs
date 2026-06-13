@@ -1758,6 +1758,33 @@ fn run_systemctl(system: bool, args: &[&str]) -> Result<()> {
     );
 }
 
+/// Run `launchctl <flags> <plist>` and FAIL on a non-zero exit, except for its
+/// benign no-ops (loading an already-loaded agent, unloading one that isn't
+/// loaded). Like the Linux path, `.status()` alone hid real failures behind a
+/// green ✅.
+#[cfg(target_os = "macos")]
+fn run_launchctl(flags: &[&str], plist: &std::path::Path) -> Result<()> {
+    let out = std::process::Command::new("launchctl")
+        .args(flags)
+        .arg(plist)
+        .output()
+        .context("failed to spawn launchctl")?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lc = stderr.to_lowercase();
+    if lc.contains("already loaded") || lc.contains("not find") || lc.contains("no such") {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "launchctl {} {} failed: {}",
+        flags.join(" "),
+        plist.display(),
+        stderr.trim()
+    );
+}
+
 /// Guidance shown when a `--user` systemctl op fails for lack of a user bus.
 #[cfg(target_os = "linux")]
 fn user_service_hint() -> String {
@@ -1888,14 +1915,13 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
         ServiceCommands::Start => {
             #[cfg(target_os = "macos")]
             {
-                std::process::Command::new("launchctl")
-                    .args(["load", "-w"])
-                    .arg(
-                        dirs::home_dir()
-                            .context("No home dir")?
-                            .join(format!("Library/LaunchAgents/{plist_name}.plist")),
-                    )
-                    .status()?;
+                let plist = dirs::home_dir()
+                    .context("No home dir")?
+                    .join(format!("Library/LaunchAgents/{plist_name}.plist"));
+                if let Err(e) = run_launchctl(&["load", "-w"], &plist) {
+                    eprintln!("❌ {e}");
+                    return Err(e);
+                }
                 println!("✅ Started OpenCrabs daemon [{profile_label}]");
             }
 
@@ -1924,14 +1950,13 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
         ServiceCommands::Stop => {
             #[cfg(target_os = "macos")]
             {
-                std::process::Command::new("launchctl")
-                    .args(["unload"])
-                    .arg(
-                        dirs::home_dir()
-                            .context("No home dir")?
-                            .join(format!("Library/LaunchAgents/{plist_name}.plist")),
-                    )
-                    .status()?;
+                let plist = dirs::home_dir()
+                    .context("No home dir")?
+                    .join(format!("Library/LaunchAgents/{plist_name}.plist"));
+                if let Err(e) = run_launchctl(&["unload"], &plist) {
+                    eprintln!("❌ {e}");
+                    return Err(e);
+                }
                 println!("✅ Stopped OpenCrabs daemon [{profile_label}]");
             }
 
@@ -1956,14 +1981,11 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
                 let plist = dirs::home_dir()
                     .context("No home dir")?
                     .join(format!("Library/LaunchAgents/{plist_name}.plist"));
-                let _ = std::process::Command::new("launchctl")
-                    .args(["unload"])
-                    .arg(&plist)
-                    .status();
-                std::process::Command::new("launchctl")
-                    .args(["load", "-w"])
-                    .arg(&plist)
-                    .status()?;
+                let _ = run_launchctl(&["unload"], &plist);
+                if let Err(e) = run_launchctl(&["load", "-w"], &plist) {
+                    eprintln!("❌ {e}");
+                    return Err(e);
+                }
                 println!("✅ Restarted OpenCrabs daemon [{profile_label}]");
             }
             #[cfg(target_os = "linux")]

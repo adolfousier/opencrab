@@ -1094,16 +1094,26 @@ WantedBy=default.target
     std::fs::write(&service_path, service_content)
         .map_err(|e| format!("Failed to write service file: {}", e))?;
 
-    // Enable and start the service
-    std::process::Command::new("systemctl")
-        .args(["--user", "enable", "opencrabs"])
-        .output()
-        .map_err(|e| format!("Failed to enable service: {}", e))?;
-
-    std::process::Command::new("systemctl")
-        .args(["--user", "start", "opencrabs"])
-        .output()
-        .map_err(|e| format!("Failed to start service: {}", e))?;
+    // Enable and start the service. Check the EXIT STATUS, not just whether
+    // systemctl spawned: on a headless box `systemctl --user` fails with
+    // "Failed to connect to bus" (no per-user systemd), and silently ignoring
+    // that exit code used to report the install as successful when nothing ran.
+    for op in ["enable", "start"] {
+        let out = std::process::Command::new("systemctl")
+            .args(["--user", op, "opencrabs"])
+            .output()
+            .map_err(|e| format!("Failed to run systemctl {op}: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "systemctl --user {op} opencrabs failed: {}. A user service needs \
+                 a running per-user systemd instance, which a headless SSH session \
+                 usually lacks. Enable lingering with `sudo loginctl enable-linger \
+                 $(whoami)` then retry, or install a system service with `sudo \
+                 opencrabs service install`.",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -1146,10 +1156,16 @@ fn install_launchagent() -> Result<(), String> {
     std::fs::write(&plist_path, plist_content)
         .map_err(|e| format!("Failed to write plist: {}", e))?;
 
-    std::process::Command::new("launchctl")
-        .args(["load", &plist_path.to_string_lossy()])
+    let out = std::process::Command::new("launchctl")
+        .args(["load", "-w", &plist_path.to_string_lossy()])
         .output()
-        .map_err(|e| format!("Failed to load launch agent: {}", e))?;
+        .map_err(|e| format!("Failed to run launchctl load: {}", e))?;
+    if !out.status.success() {
+        return Err(format!(
+            "launchctl load failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
 
     Ok(())
 }
