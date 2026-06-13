@@ -717,9 +717,7 @@ struct DispatchDeps {
 /// streams its reply via progressive edits. Humans, DMs, and non-text
 /// messages process immediately.
 fn is_stream_candidate(msg: &Message) -> bool {
-    !msg.chat.is_private()
-        && msg.text().is_some()
-        && msg.from.as_ref().is_some_and(|u| u.is_bot)
+    !msg.chat.is_private() && msg.text().is_some() && msg.from.as_ref().is_some_and(|u| u.is_bot)
 }
 
 /// Dispatch a message to the agent in the background, isolating panics so a

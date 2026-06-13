@@ -15,7 +15,10 @@ fn missing_xiaomi_section_deserializes_to_canonical_defaults() {
 
     assert!(xiaomi.enabled, "default provider is enabled");
     assert_eq!(xiaomi.default_model.as_deref(), Some("mimo-v2.5-pro"));
-    assert!(xiaomi.api_key.is_none(), "keyless — the proxy supplies the key");
+    assert!(
+        xiaomi.api_key.is_none(),
+        "keyless — the proxy supplies the key"
+    );
     assert!(
         xiaomi.base_url.is_none(),
         "base_url stays None so the factory uses the proxy default"
@@ -27,7 +30,8 @@ fn missing_xiaomi_section_deserializes_to_canonical_defaults() {
 fn present_xiaomi_section_is_left_untouched() {
     // A user who wrote their own section keeps their values; the field default
     // only fires when the whole section is absent.
-    let toml = "[xiaomi]\nenabled = true\ndefault_model = \"mimo-v2-flash\"\napi_key = \"user-key\"\n";
+    let toml =
+        "[xiaomi]\nenabled = true\ndefault_model = \"mimo-v2-flash\"\napi_key = \"user-key\"\n";
     let cfgs: ProviderConfigs = toml::from_str(toml).expect("parse");
     let xiaomi = cfgs.xiaomi.expect("present");
 

@@ -46,6 +46,7 @@ pub mod claude_cli_model_test;
 pub mod cli_arg_too_long_test;
 pub mod cli_supported_models_test;
 pub mod cli_test;
+pub mod clipboard_image_paste_test;
 pub mod codex_cli_test;
 pub mod collapse_build_output_test;
 pub mod collapse_home_test;
@@ -72,7 +73,6 @@ pub mod rsi_notification_redaction_test;
 pub mod rsi_pruned_test;
 pub mod rsi_sync_cap_bail_test;
 pub mod systemd_unit_test;
-pub mod clipboard_image_paste_test;
 pub mod tools_md_regression_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows
 // `dirs::home_dir()` uses the Win32 `SHGetKnownFolderPath` API rather
