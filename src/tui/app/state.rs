@@ -1570,11 +1570,21 @@ impl App {
                         filtered = Self::expand_tabs(&filtered);
                     }
                     if filtered.trim().is_empty() {
-                        tracing::debug!(
-                            "Paste event contained only escape sequences ({} bytes) — dropped",
-                            text.len()
-                        );
-                        // skip — don't insert garbage into input
+                        // No usable text. The clipboard may instead hold raw
+                        // image bytes (copied from a browser, WhatsApp, a
+                        // screenshot) that bracketed paste can't carry as text.
+                        // Read them straight from the OS clipboard and attach.
+                        if let Some(att) = Self::attach_clipboard_image() {
+                            let label = att.name.clone();
+                            self.attachments.push(att);
+                            self.notification = Some(format!("📎 Attached pasted image: {label}"));
+                            self.notification_shown_at = Some(std::time::Instant::now());
+                        } else {
+                            tracing::debug!(
+                                "Paste event contained only escape sequences ({} bytes) — dropped",
+                                text.len()
+                            );
+                        }
                     } else {
                         // Ensure cursor is on a valid char boundary before inserting
                         // (defensive — prevents panics from corrupted cursor state, issue #69).

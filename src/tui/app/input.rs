@@ -625,6 +625,136 @@ impl App {
         false
     }
 
+    /// True if `bytes` start with a known raster-image magic number. Used to
+    /// reject non-image clipboard payloads before attaching.
+    pub(crate) fn looks_like_image(bytes: &[u8]) -> bool {
+        bytes.len() > 12
+            && (bytes.starts_with(&[0x89, b'P', b'N', b'G'])      // PNG
+                || bytes.starts_with(&[0xFF, 0xD8, 0xFF])         // JPEG
+                || bytes.starts_with(b"GIF8")                     // GIF
+                || bytes.starts_with(b"BM")                       // BMP
+                || (&bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP"))
+    }
+
+    /// File extension (no dot) inferred from image magic bytes; `png` default.
+    fn image_ext(bytes: &[u8]) -> &'static str {
+        if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            "jpg"
+        } else if bytes.starts_with(b"GIF8") {
+            "gif"
+        } else if bytes.starts_with(b"BM") {
+            "bmp"
+        } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+            "webp"
+        } else {
+            "png"
+        }
+    }
+
+    /// Read raw image bytes from the OS clipboard, if it currently holds an
+    /// image. Mirrors `copy_to_clipboard`'s shell-out approach (no new crates):
+    /// the bracketed-paste path only ever delivers text, so an image copied
+    /// from a browser / WhatsApp / a screenshot never reaches it. Returns the
+    /// encoded image bytes (PNG on every backend).
+    // Each platform's `return` is the exit of its own cfg block; on the one
+    // platform being compiled it reads as the tail, hence the allow.
+    #[allow(clippy::needless_return)]
+    fn read_clipboard_image() -> Option<Vec<u8>> {
+        use std::process::{Command, Stdio};
+
+        // macOS: pbpaste is text-only, so dump the clipboard PNG to a scratch
+        // file via osascript (built in). Fails cleanly when there's no image.
+        #[cfg(target_os = "macos")]
+        {
+            let scratch = std::env::temp_dir().join("opencrabs-clip-read.png");
+            let script = format!(
+                "set thePng to (the clipboard as «class PNGf»)\n\
+                 set fp to open for access POSIX file \"{}\" with write permission\n\
+                 set eof fp to 0\n\
+                 write thePng to fp\n\
+                 close access fp",
+                scratch.display()
+            );
+            let ok = Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok && let Ok(bytes) = std::fs::read(&scratch) {
+                let _ = std::fs::remove_file(&scratch);
+                if Self::looks_like_image(&bytes) {
+                    return Some(bytes);
+                }
+            }
+            return None;
+        }
+
+        // Linux: try Wayland (wl-paste) then X11 (xclip, already our copy tool).
+        // Both write the raw image bytes to stdout for the image/png target.
+        #[cfg(target_os = "linux")]
+        {
+            let attempts: [(&str, &[&str]); 2] = [
+                ("wl-paste", &["--type", "image/png"]),
+                (
+                    "xclip",
+                    &["-selection", "clipboard", "-t", "image/png", "-o"],
+                ),
+            ];
+            for (cmd, cmd_args) in attempts {
+                if let Ok(out) = Command::new(cmd)
+                    .args(cmd_args)
+                    .stderr(Stdio::null())
+                    .output()
+                    && out.status.success()
+                    && Self::looks_like_image(&out.stdout)
+                {
+                    return Some(out.stdout);
+                }
+            }
+            return None;
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            None
+        }
+    }
+
+    /// If the OS clipboard holds an image, write it to `~/.opencrabs/tmp/` and
+    /// return an attachment pointing at it (the rest of the pipeline is
+    /// path-based). Returns `None` when there's no image or the write fails.
+    pub(crate) fn attach_clipboard_image() -> Option<super::state::ImageAttachment> {
+        let bytes = Self::read_clipboard_image()?;
+        let dir = crate::config::opencrabs_home().join("tmp");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!("clipboard image: cannot create {}: {e}", dir.display());
+            return None;
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let name = format!("pasted-{stamp}.{}", Self::image_ext(&bytes));
+        let path = dir.join(&name);
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            tracing::warn!("clipboard image: cannot write {}: {e}", path.display());
+            return None;
+        }
+        tracing::info!(
+            "clipboard image attached: {} ({} bytes)",
+            path.display(),
+            bytes.len()
+        );
+        Some(super::state::ImageAttachment {
+            name,
+            path: path.to_string_lossy().to_string(),
+            is_video: false,
+        })
+    }
+
     /// Delete the word before the cursor (for Ctrl+Backspace and Alt+Backspace)
     pub(crate) fn delete_last_word(&mut self) {
         if self.cursor_position == 0 {
