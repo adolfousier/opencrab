@@ -67,6 +67,7 @@ Each param can specify how null/empty values are handled before being written to
 | `coerce_empty_to` / `coerce_null_to` | Effect |
 |---------------------------------------|--------|
 | `"keep"` (default) | Pass null/empty as-is into the JSON |
+| `"omit"` | Drop the key entirely from `$OPENCRABS_PARAMS` JSON |
 | `"null"` | Convert to JSON `null` |
 | `"error"` | Reject the tool call with a validation error |
 
