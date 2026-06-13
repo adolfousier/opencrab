@@ -9,6 +9,7 @@
 pub enum McPanel {
     #[default]
     Inbox,
+    Analytics,
     Activity,
     Schedule,
 }
@@ -35,6 +36,10 @@ pub struct McState {
     /// `activity`; sourced from the cron-jobs DB asynchronously so it
     /// can't run from inside the synchronous render path.
     pub schedule: Vec<crate::brain::mission_control::McScheduleItem>,
+    /// Cached analytics snapshot — populated by `actions::refresh`, read
+    /// by `analytics_panel::draw`. Brain sizes + tool/RSI stats from the
+    /// same DB; pre-fetched so the render path stays synchronous.
+    pub analytics: crate::brain::mission_control::McAnalytics,
 }
 
 impl McState {
@@ -51,7 +56,8 @@ impl McState {
     /// indices aren't comparable across panels.
     pub fn focus_next(&mut self) {
         self.focused_panel = match self.focused_panel {
-            McPanel::Inbox => McPanel::Activity,
+            McPanel::Inbox => McPanel::Analytics,
+            McPanel::Analytics => McPanel::Activity,
             McPanel::Activity => McPanel::Schedule,
             McPanel::Schedule => McPanel::Inbox,
         };
@@ -63,7 +69,8 @@ impl McState {
     pub fn focus_prev(&mut self) {
         self.focused_panel = match self.focused_panel {
             McPanel::Inbox => McPanel::Schedule,
-            McPanel::Activity => McPanel::Inbox,
+            McPanel::Analytics => McPanel::Inbox,
+            McPanel::Activity => McPanel::Analytics,
             McPanel::Schedule => McPanel::Activity,
         };
         self.selected_index = 0;

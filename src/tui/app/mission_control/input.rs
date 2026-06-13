@@ -164,5 +164,7 @@ fn panel_count(app: &App) -> usize {
         McPanel::Inbox => crate::brain::mission_control::inbox_service::list().len(),
         McPanel::Activity => app.mc.activity.len(),
         McPanel::Schedule => app.mc.schedule.len(),
+        // Read-only stats panel; nothing to row-select.
+        McPanel::Analytics => 0,
     }
 }

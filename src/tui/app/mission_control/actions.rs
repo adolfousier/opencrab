@@ -6,7 +6,9 @@
 //! agent uses, so a UI-applied proposal is byte-identical to one
 //! applied via `rsi_proposals apply <id>`.
 
-use crate::brain::mission_control::{activity_service, inbox_service, schedule_service};
+use crate::brain::mission_control::{
+    activity_service, analytics_service, inbox_service, schedule_service,
+};
 use crate::brain::tools::dynamic::DynamicToolLoader;
 use crate::brain::tools::rsi_proposals::RsiProposalsTool;
 use crate::tui::app::App;
@@ -35,7 +37,8 @@ pub async fn open(app: &mut App) {
 pub async fn refresh(app: &mut App) {
     app.mc.activity = activity_service::recent(ACTIVITY_LIMIT);
     let pool = app.agent_service.context().pool();
-    app.mc.schedule = schedule_service::list(pool).await;
+    app.mc.schedule = schedule_service::list(pool.clone()).await;
+    app.mc.analytics = analytics_service::summary(pool).await;
 }
 
 /// Apply the currently selected inbox proposal. Routes to

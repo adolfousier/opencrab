@@ -4,7 +4,7 @@
 
 use super::layout::{self, McLayout};
 use super::theme;
-use super::{activity_panel, detail_popup, inbox_panel, schedule_panel};
+use super::{activity_panel, analytics_panel, detail_popup, inbox_panel, schedule_panel};
 
 use crate::tui::app::App;
 use crate::tui::app::mission_control::McPanel;
@@ -20,6 +20,7 @@ use ratatui::widgets::Paragraph;
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let McLayout {
         inbox,
+        analytics,
         activity,
         schedule,
         help_bar,
@@ -27,6 +28,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
     let focus = app.mc.focused_panel;
     inbox_panel::draw(frame, app, inbox, focus == McPanel::Inbox);
+    analytics_panel::draw(frame, app, analytics, focus == McPanel::Analytics);
     activity_panel::draw(frame, app, activity, focus == McPanel::Activity);
     schedule_panel::draw(frame, app, schedule, focus == McPanel::Schedule);
 

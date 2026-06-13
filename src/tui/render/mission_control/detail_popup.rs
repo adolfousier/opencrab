@@ -36,6 +36,12 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         McPanel::Inbox => inbox_detail(app),
         McPanel::Activity => activity_detail(app),
         McPanel::Schedule => schedule_detail(app),
+        // Analytics has no per-row detail; the panel itself is the view.
+        McPanel::Analytics => (
+            " Analytics ".to_string(),
+            theme::BORDER_ANALYTICS_FOCUS,
+            empty_lines("Analytics is a read-only overview."),
+        ),
     };
 
     let block = Block::default()

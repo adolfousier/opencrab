@@ -30,6 +30,10 @@ fn every_panel_stays_inside_outer_area() {
     let layout: McLayout = compute(outer);
     assert!(rect_inside(layout.inbox, outer), "inbox escaped outer");
     assert!(
+        rect_inside(layout.analytics, outer),
+        "analytics escaped outer"
+    );
+    assert!(
         rect_inside(layout.activity, outer),
         "activity escaped outer"
     );
@@ -50,6 +54,22 @@ fn panels_do_not_overlap() {
     assert!(
         !rects_overlap(layout.inbox, layout.activity),
         "inbox/activity overlap"
+    );
+    assert!(
+        !rects_overlap(layout.inbox, layout.analytics),
+        "inbox/analytics overlap"
+    );
+    assert!(
+        !rects_overlap(layout.analytics, layout.activity),
+        "analytics/activity overlap"
+    );
+    assert!(
+        !rects_overlap(layout.analytics, layout.schedule),
+        "analytics/schedule overlap"
+    );
+    assert!(
+        !rects_overlap(layout.analytics, layout.help_bar),
+        "analytics overlaps help bar"
     );
     assert!(
         !rects_overlap(layout.inbox, layout.schedule),

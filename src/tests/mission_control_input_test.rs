@@ -36,9 +36,11 @@ fn esc_with_popup_open_just_closes_popup() {
 // ── Focus cycling ───────────────────────────────────────────────────────────
 
 #[test]
-fn tab_cycles_focus_forward_through_three_panels() {
+fn tab_cycles_focus_forward_through_four_panels() {
     let mut s = McState::default();
     assert_eq!(s.focused_panel, McPanel::Inbox);
+    decide(&mut s, 0, key(KeyCode::Tab));
+    assert_eq!(s.focused_panel, McPanel::Analytics);
     decide(&mut s, 0, key(KeyCode::Tab));
     assert_eq!(s.focused_panel, McPanel::Activity);
     decide(&mut s, 0, key(KeyCode::Tab));
@@ -55,6 +57,8 @@ fn back_tab_cycles_focus_backward() {
     decide(&mut s, 0, key(KeyCode::BackTab));
     assert_eq!(s.focused_panel, McPanel::Activity);
     decide(&mut s, 0, key(KeyCode::BackTab));
+    assert_eq!(s.focused_panel, McPanel::Analytics);
+    decide(&mut s, 0, key(KeyCode::BackTab));
     assert_eq!(s.focused_panel, McPanel::Inbox);
 }
 
@@ -62,7 +66,7 @@ fn back_tab_cycles_focus_backward() {
 fn h_and_l_are_vim_aliases_for_focus_navigation() {
     let mut s = McState::default();
     decide(&mut s, 0, key(KeyCode::Char('l')));
-    assert_eq!(s.focused_panel, McPanel::Activity);
+    assert_eq!(s.focused_panel, McPanel::Analytics);
     decide(&mut s, 0, key(KeyCode::Char('h')));
     assert_eq!(s.focused_panel, McPanel::Inbox);
 }

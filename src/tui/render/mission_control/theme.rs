@@ -17,6 +17,10 @@ pub const BORDER_IDLE: Color = Color::Rgb(120, 120, 120);
 pub const BORDER_INBOX_FOCUS: Color = TEAL;
 pub const BORDER_ACTIVITY_FOCUS: Color = ORANGE;
 pub const BORDER_SCHEDULE_FOCUS: Color = WHITE;
+/// Analytics panel focus accent (green, from the analytics dashboard palette).
+pub const BORDER_ANALYTICS_FOCUS: Color = Color::Rgb(46, 204, 113);
+/// Bar/value highlight for the analytics panel.
+pub const GREEN: Color = Color::Rgb(46, 204, 113);
 
 // ── Help bar ────────────────────────────────────────────────────────────────
 

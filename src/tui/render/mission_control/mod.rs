@@ -7,6 +7,7 @@
 //! a 1k-line `dispatch.rs`.
 
 mod activity_panel;
+mod analytics_panel;
 mod detail_popup;
 mod dispatch;
 mod inbox_panel;
