@@ -399,6 +399,14 @@ pub(crate) fn format_help() -> String {
 
 #[cfg(feature = "rtk")]
 async fn format_rtk() -> String {
+    if !crate::rtk::is_rtk_available().await {
+        return "⚡ *Token Optimization (RTK)*\n\n\
+            Not installed on this machine yet. It was bundled with your \
+            OpenCrabs release but may not have been extracted.\n\n\
+            If you just updated, try restarting OpenCrabs. Otherwise, \
+            download it from:\nhttps://github.com/rtk-ai/rtk/releases"
+            .to_string();
+    }
     match tokio::process::Command::new("rtk")
         .arg("gain")
         .output()
@@ -415,7 +423,7 @@ async fn format_rtk() -> String {
             }
         }
         Err(e) => {
-            format!("⚠️ Failed to run rtk gain: {}. Is RTK installed?", e)
+            format!("⚠️ Failed to run rtk gain: {}", e)
         }
     }
 }

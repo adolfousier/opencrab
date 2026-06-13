@@ -806,53 +806,63 @@ impl App {
             "/rtk" => {
                 #[cfg(feature = "rtk")]
                 {
-                    self.push_system_message(
-                        "🔍 Fetching RTK token savings statistics...".to_string(),
-                    );
-                    let sender = self.event_sender();
-                    let sid = self
-                        .current_session
-                        .as_ref()
-                        .map(|s| s.id)
-                        .unwrap_or(Uuid::nil());
-                    tokio::spawn(async move {
-                        match tokio::process::Command::new("rtk")
-                            .arg("gain")
-                            .output()
-                            .await
-                        {
-                            Ok(output) => {
-                                let stdout = String::from_utf8_lossy(&output.stdout);
-                                let stderr = String::from_utf8_lossy(&output.stderr);
+                    if !crate::rtk::is_rtk_available().await {
+                        self.push_system_message(
+                            "⚡ *Token Optimization (RTK)*\n\n\
+                                Not installed on this machine yet. It was bundled with your \
+                                OpenCrabs release but hasn't been extracted.\n\n\
+                                Run `/evolve` to update and install it automatically."
+                                .to_string(),
+                        );
+                    } else {
+                        self.push_system_message(
+                            "🔍 Fetching RTK token savings statistics...".to_string(),
+                        );
+                        let sender = self.event_sender();
+                        let sid = self
+                            .current_session
+                            .as_ref()
+                            .map(|s| s.id)
+                            .unwrap_or(Uuid::nil());
+                        tokio::spawn(async move {
+                            match tokio::process::Command::new("rtk")
+                                .arg("gain")
+                                .output()
+                                .await
+                            {
+                                Ok(output) => {
+                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
 
-                                let message = if output.status.success() {
-                                    format!(
-                                        "📊 **RTK Token Savings:**\n\n```\n{}\n```",
-                                        stdout.trim()
-                                    )
-                                } else {
-                                    format!(
-                                        "⚠️ RTK gain command failed:\n\n```\n{}\n```",
-                                        stderr.trim()
-                                    )
-                                };
+                                    let message = if output.status.success() {
+                                        format!(
+                                            "📊 **RTK Token Savings:**\n\n```\n{}\n```",
+                                            stdout.trim()
+                                        )
+                                    } else {
+                                        format!(
+                                            "⚠️ RTK gain command failed:\n\n```\n{}\n```",
+                                            stderr.trim()
+                                        )
+                                    };
 
-                                let _ = sender.send(TuiEvent::SystemMessage {
-                                    session_id: sid,
-                                    text: message,
-                                });
+                                    let _ = sender.send(TuiEvent::SystemMessage {
+                                        session_id: sid,
+                                        text: message,
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = sender.send(TuiEvent::Error {
+                                        session_id: sid,
+                                        message: format!(
+                                            "Failed to run rtk gain: {}. Is RTK installed?",
+                                            e
+                                        ),
+                                    });
+                                }
                             }
-                            Err(e) => {
-                                let _ = sender.send(TuiEvent::Error {
-                                    session_id: sid,
-                                    message: format!(
-                                        "Failed to run rtk gain: {}. Is RTK installed?",
-                                        e
-                                    ),
-                                });
-                            }
-                        }
-                    });
+                        });
+                    }
                 }
                 #[cfg(not(feature = "rtk"))]
                 {
