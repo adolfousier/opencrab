@@ -128,6 +128,49 @@ type = "string"
 description = "Git branch to deploy"
 required = true
 
+# --- Advanced: $OPENCRABS_PARAMS ---
+#
+# For tools with many parameters or values that may contain spaces,
+# quotes, or special characters, use --params-file instead of inline
+# {{param}} substitution. OpenCrabs writes all coerced parameters to
+# a temp JSON file and sets $OPENCRABS_PARAMS to its path. Your CLI
+# reads it via --params-file.
+
+[[tools]]
+name = "notify"
+description = "Send a notification via an external service"
+executor = "shell"
+command = "/usr/local/bin/myapp-cli notify --params-file \"$OPENCRABS_PARAMS\""
+timeout_secs = 30
+requires_approval = true
+enabled = false
+
+[[tools.params]]
+name = "channel"
+type = "string"
+description = "Notification channel: email, slack, push"
+required = true
+
+[[tools.params]]
+name = "message"
+type = "string"
+description = "Message text"
+required = true
+
+[[tools.params]]
+name = "priority"
+type = "string"
+description = "Priority level: low, normal, high"
+required = false
+default = "normal"
+
+[[tools.params]]
+name = "attachments"
+type = "array"
+description = "File paths or URLs to attach"
+required = false
+coerce_empty_to = "omit"
+
 # --- Built-in tools (no config needed) ---
 #
 # OpenCrabs ships 40+ compiled-in tools that appear automatically in
@@ -168,7 +211,10 @@ required = true
 #   headers        Key-value map, supports {{param}} substitution
 #
 # Shell-specific:
-#   command         Shell command with {{param}} template variables.
+#   command         Shell command — supports `{{param}}` for simple
+#                   substitution AND `"$OPENCRABS_PARAMS"` (path to
+#                   a temp JSON file with all coerced params) for
+#                   tools with complex or many parameters.
 #                   Supports `{{#name}}…{{/name}}` conditional blocks
 #                   that render only when `name` is present in the
 #                   coerced params — pair with `coerce_empty_to = "omit"`
