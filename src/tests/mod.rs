@@ -104,6 +104,7 @@ pub mod rate_limiter_test;
 pub mod recent_paths_test;
 pub mod sanitize_code_edit_block_test;
 pub mod sanitize_redaction_test;
+pub mod tool_execution_stats_test;
 pub mod tool_description_redaction_test;
 //pub mod error_scenarios_test;
 pub mod fallback_streak_test;

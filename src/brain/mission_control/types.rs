@@ -122,3 +122,40 @@ impl McScheduleKind {
         }
     }
 }
+
+/// One tool's usage and reliability, for the analytics panel.
+#[derive(Debug, Clone)]
+pub struct McToolStat {
+    pub name: String,
+    pub total: i64,
+    pub failures: i64,
+    /// Failures as a percentage of total, rounded to one decimal.
+    pub fail_rate: f64,
+}
+
+/// One brain file's on-disk size, for the analytics panel.
+#[derive(Debug, Clone)]
+pub struct McBrainFile {
+    pub name: String,
+    pub kb: f64,
+}
+
+/// Snapshot for the Mission Control analytics panel. Built from data
+/// OpenCrabs already owns: the `tool_executions` and `feedback_ledger`
+/// tables and the active profile's brain `.md` files. No secrets, no message
+/// content, nothing leaves the machine.
+#[derive(Debug, Clone, Default)]
+pub struct McAnalytics {
+    pub tool_total_calls: i64,
+    pub tool_total_fails: i64,
+    /// Most-used tools first.
+    pub top_tools: Vec<McToolStat>,
+    /// Highest failure rate first (only tools with enough calls to matter).
+    pub flakiest_tools: Vec<McToolStat>,
+    pub rsi_applied_total: i64,
+    /// RSI `improvement_applied` counts per dimension, largest first.
+    pub rsi_top_dimensions: Vec<(String, i64)>,
+    /// Brain files, largest first.
+    pub brain_files: Vec<McBrainFile>,
+    pub brain_total_kb: f64,
+}

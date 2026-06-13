@@ -15,6 +15,15 @@ pub struct ToolUsageStats {
     pub call_count: i64,
 }
 
+/// Per-tool totals with failure counts, for the Mission Control analytics
+/// panel (status `'error'` counts as a failure).
+#[derive(Debug, Clone)]
+pub struct ToolFailureStats {
+    pub tool_name: String,
+    pub total: i64,
+    pub failures: i64,
+}
+
 /// Repository for tool execution tracking
 #[derive(Clone)]
 pub struct ToolExecutionRepository {
@@ -118,5 +127,56 @@ impl ToolExecutionRepository {
             .await
             .map_err(interact_err)?
             .context("Failed to query tool usage stats")
+    }
+
+    /// Per-tool totals and failure counts (`status = 'error'`), optionally
+    /// since an epoch. Powers the Mission Control analytics panel's fail-rate
+    /// view. Ordered by total calls descending.
+    pub async fn stats_with_failures(
+        &self,
+        since_epoch: Option<i64>,
+    ) -> Result<Vec<ToolFailureStats>> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let (query, param): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+                    if let Some(since) = since_epoch {
+                        (
+                            "SELECT tool_name, COUNT(*) AS total, \
+                                    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS fails \
+                             FROM tool_executions \
+                             WHERE created_at >= ?1 AND tool_name <> '' \
+                             GROUP BY tool_name ORDER BY total DESC"
+                                .to_string(),
+                            vec![Box::new(since)],
+                        )
+                    } else {
+                        (
+                            "SELECT tool_name, COUNT(*) AS total, \
+                                    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS fails \
+                             FROM tool_executions \
+                             WHERE tool_name <> '' \
+                             GROUP BY tool_name ORDER BY total DESC"
+                                .to_string(),
+                            vec![],
+                        )
+                    };
+                let mut stmt = conn.prepare_cached(&query)?;
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    param.iter().map(|p| p.as_ref()).collect();
+                let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                    Ok(ToolFailureStats {
+                        tool_name: row.get(0)?,
+                        total: row.get(1)?,
+                        failures: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                    })
+                })?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to query tool failure stats")
     }
 }
