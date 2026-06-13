@@ -9,6 +9,7 @@
 use anyhow::{Context, Result, bail};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use super::args::MigrationSource;
 
@@ -252,6 +253,79 @@ fn build_prompt(source: MigrationSource, src_path: &Path, items: &[String]) -> S
     )
 }
 
+/// Brain files to track during migration verification.
+const BRAIN_FILES: &[&str] = &[
+    "SOUL.md",
+    "USER.md",
+    "MEMORY.md",
+    "AGENTS.md",
+    "TOOLS.md",
+    "CODE.md",
+    "SECURITY.md",
+];
+
+/// Snapshot of a brain file's metadata before migration.
+struct FileSnap {
+    exists: bool,
+    size: u64,
+    modified: Option<SystemTime>,
+}
+
+/// Record metadata for all brain files before the agent runs.
+fn snapshot_brain_files(brain_path: &Path) -> Vec<FileSnap> {
+    BRAIN_FILES
+        .iter()
+        .map(|name| {
+            let meta = brain_path.join(name).metadata().ok();
+            FileSnap {
+                exists: meta.is_some(),
+                size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                modified: meta.and_then(|m| m.modified().ok()),
+            }
+        })
+        .collect()
+}
+
+/// Compare before/after snapshots and print verification summary.
+fn verify_migration(before: &[FileSnap], brain_path: &Path) {
+    println!("\n  📋 Post-migration verification:\n");
+    let mut updated = 0u32;
+    let mut unchanged = 0u32;
+    let mut created = 0u32;
+
+    for (i, name) in BRAIN_FILES.iter().enumerate() {
+        let meta = brain_path.join(name).metadata().ok();
+        let exists_now = meta.is_some();
+        let size_now = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified_now = meta.as_ref().and_then(|m| m.modified().ok());
+
+        let snap = &before[i];
+        if exists_now && !snap.exists {
+            println!("    ✅ {name} — created ({size_now} bytes)");
+            created += 1;
+        } else if exists_now
+            && (size_now != snap.size || modified_now.is_some_and(|t| Some(t) != snap.modified))
+        {
+            println!("    ✅ {name} — updated ({size_now} bytes)");
+            updated += 1;
+        } else if exists_now {
+            println!("    ⏭  {name} — unchanged");
+            unchanged += 1;
+        }
+    }
+
+    let total = created + updated;
+    println!();
+    if total > 0 {
+        println!(
+            "  ✅ Migration verified: {total} file{} modified ({created} new, {updated} updated, {unchanged} unchanged)",
+            if total == 1 { "" } else { "s" }
+        );
+    } else {
+        println!("  ⚠  No brain files changed. Check the agent output above for errors.");
+    }
+}
+
 /// Entry point for `opencrabs migrate <source>`.
 pub(crate) async fn cmd_migrate(source: MigrationSource, dry_run: bool) -> Result<()> {
     let source_name = match source {
@@ -294,10 +368,20 @@ pub(crate) async fn cmd_migrate(source: MigrationSource, dry_run: bool) -> Resul
         return Ok(());
     }
 
-    // 5. Build prompt and spawn agent to do the actual migration
+    // 5. Snapshot brain files before migration
+    let brain_path = crate::brain::prompt_builder::BrainLoader::resolve_path();
+    let before = snapshot_brain_files(&brain_path);
+
+    // 6. Build prompt and spawn agent to do the actual migration
     let prompt = build_prompt(source, &instance.path, &items);
     println!("\n  Spawning agent to handle migration...\n");
 
     let config = super::commands::load_config(None).await?;
-    super::commands::cmd_run(&config, prompt, true, super::args::OutputFormat::Text).await
+    let result =
+        super::commands::cmd_run(&config, prompt, true, super::args::OutputFormat::Text).await;
+
+    // 7. Verify what actually changed (runs even if agent had errors)
+    verify_migration(&before, &brain_path);
+
+    result
 }
