@@ -30,10 +30,20 @@ Two executor types, set via the `executor` field:
 
 Every tool parameter defined in `[[tools.params]]` becomes available in two ways:
 
-1. **`$OPENCRABS_PARAMS`** — Path to a temporary JSON file containing **all** params with their current values. The file is created before the command runs and cleaned up after. Use with `--params-file` flags:
+1. **`$OPENCRABS_PARAMS`** — Environment variable pointing to a temporary JSON file containing **all** params with their current values. The file is created before the command runs and cleaned up after. Use with `--params-file` flags or read directly inside scripts:
 
    ```toml
-   command = "/usr/local/bin/tg-mcp-call send_message --params-file \"$OPENCRABS_PARAMS\""
+   command = "/usr/local/bin/mycli send --params-file \"$OPENCRABS_PARAMS\""
+   ```
+
+   Inside a shell script, read the file directly:
+
+   ```sh
+   #!/bin/sh
+   # $OPENCRABS_PARAMS points to a JSON file with all tool params
+   action=$(jq -r '.action // "default"' "$OPENCRABS_PARAMS")
+   payload=$(jq -r '.payload // empty' "$OPENCRABS_PARAMS")
+   exec mycli "$action" --data "$payload"
    ```
 
 2. **`{{param_name}}`** — Inline template substitution. Replaced with the string value of the parameter:
@@ -63,7 +73,7 @@ Each param can specify how null/empty values are handled before being written to
 Example:
 ```toml
 [[tools.params]]
-name = "message"
+name = "query"
 type = "string"
 required = false
 default = "null"
@@ -76,32 +86,32 @@ coerce_empty_to = "null"
 
 ```toml
 [[tools]]
-name = "tg_send_message"
-description = "Send a message to a Telegram chat"
+name = "send_notification"
+description = "Send a notification via the notification service"
 executor = "shell"
 enabled = true
 requires_approval = true
 timeout_secs = 30
-command = "/usr/local/bin/tg-mcp-call send_message --params-file \"$OPENCRABS_PARAMS\""
+command = "/usr/local/bin/notify-send --params-file \"$OPENCRABS_PARAMS\""
 
 [[tools.params]]
-name = "chat_id"
+name = "channel"
 type = "string"
-description = "Target chat: numeric id, username without @, or 'me'"
+description = "Notification channel: email, slack, or push"
 required = true
 
 [[tools.params]]
 name = "message"
 type = "string"
-description = "Message text (markdown supported)"
+description = "Message body"
 required = true
 
 [[tools.params]]
-name = "reply_to_id"
-type = "integer"
-description = "Message id to reply to"
+name = "priority"
+type = "string"
+description = "Priority level: low, normal, high"
 required = false
-default = "null"
+default = "normal"
 ```
 
 ### HTTP Executor
@@ -127,44 +137,37 @@ requests = "10"
 window = "1m"
 ```
 
-## Full Example — tg-mcp-call with `$OPENCRABS_PARAMS`
+## Full Example — CLI tool with `$OPENCRABS_PARAMS`
 
 ```toml
 [[tools]]
-name = "tg_get_messages"
-description = "Fetch messages from a Telegram chat"
+name = "search_index"
+description = "Search indexed documents by query"
 executor = "shell"
 enabled = true
 requires_approval = false
 timeout_secs = 60
-command = "/usr/local/bin/tg-mcp-call get_messages --params-file \"$OPENCRABS_PARAMS\" 2>&1"
-
-[[tools.params]]
-name = "chat_id"
-type = "string"
-description = "Target chat"
-required = true
-
-[[tools.params]]
-name = "limit"
-type = "integer"
-description = "Max messages to return"
-required = false
-default = "50"
+command = "/usr/local/bin/doc-search --params-file \"$OPENCRABS_PARAMS\" 2>&1"
 
 [[tools.params]]
 name = "query"
 type = "string"
 description = "Search text"
-required = false
-default = ""
+required = true
 
 [[tools.params]]
-name = "message_ids"
-type = "string"
-description = "JSON array of message ids to fetch"
+name = "limit"
+type = "integer"
+description = "Max results to return"
 required = false
-default = "null"
+default = "50"
+
+[[tools.params]]
+name = "source"
+type = "string"
+description = "Document source filter"
+required = false
+default = ""
 ```
 
 ## How It Works
@@ -174,4 +177,4 @@ default = "null"
 3. Use `tool_manage add` to create new tools at runtime.
 4. Use `tool_manage reload` to pick up manual edits to `tools.toml`.
 5. Unlike `commands.toml` (user-triggered slash commands), these are **agent-callable tools**.
-6. Shell commands run via `sh -c` — `$OPENCRABS_PARAMS` is substituted at runtime with the real temp file path. The file is cleaned up after command completion.
+6. Shell commands run via `sh -c` — `$OPENCRABS_PARAMS` is set as an environment variable pointing to the real temp JSON file path. The file is cleaned up after command completion.
