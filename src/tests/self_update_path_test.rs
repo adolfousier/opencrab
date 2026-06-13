@@ -30,6 +30,21 @@ fn strips_deleted_marker_from_unlinked_exe() {
 }
 
 #[test]
+fn strips_stacked_deleted_markers() {
+    // Repeated pre-fix evolves stack the suffix; all levels must be removed.
+    assert_eq!(
+        strip_deleted_marker(PathBuf::from("/home/user/opencrabs (deleted) (deleted)")),
+        PathBuf::from("/home/user/opencrabs"),
+    );
+    assert_eq!(
+        strip_deleted_marker(PathBuf::from(
+            "/home/user/opencrabs (deleted) (deleted) (deleted)"
+        )),
+        PathBuf::from("/home/user/opencrabs"),
+    );
+}
+
+#[test]
 fn leaves_a_normal_exe_path_untouched() {
     let p = PathBuf::from("/home/user/opencrabs");
     assert_eq!(strip_deleted_marker(p.clone()), p);

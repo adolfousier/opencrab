@@ -30,9 +30,24 @@ pub fn running_binary_path() -> std::io::Result<PathBuf> {
 
 /// Pure helper for `running_binary_path`, factored out so the
 /// `" (deleted)"`-stripping can be tested without `current_exe()`.
+///
+/// Strips EVERY trailing `" (deleted)"` marker, not just one: a binary that
+/// was evolved while running from an already-deleted inode stacks the suffix
+/// (`opencrabs (deleted) (deleted)` was observed on a VPS after repeated
+/// pre-fix evolves), so a single strip would still resolve to a junk file.
 pub(crate) fn strip_deleted_marker(exe: PathBuf) -> PathBuf {
-    match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
-        Some(stripped) => PathBuf::from(stripped),
+    match exe.to_str() {
+        Some(s) => {
+            let mut trimmed = s;
+            while let Some(stripped) = trimmed.strip_suffix(" (deleted)") {
+                trimmed = stripped;
+            }
+            if trimmed.len() == s.len() {
+                exe
+            } else {
+                PathBuf::from(trimmed)
+            }
+        }
         None => exe,
     }
 }
