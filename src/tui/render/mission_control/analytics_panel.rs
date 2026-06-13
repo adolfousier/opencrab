@@ -1,24 +1,29 @@
-//! Analytics panel (left column, under the Inbox). Brain sizes plus tool
-//! usage / reliability and RSI application counts, read from the cached
-//! `app.mc.analytics` snapshot. Read-only: the renderer never hits disk or
-//! the DB itself.
+//! Analytics panel (full-height right column). Brain sizes plus tool usage /
+//! reliability and RSI application counts, read from the cached
+//! `app.mc.analytics` snapshot. Read-only: the renderer never hits disk or the
+//! DB itself.
 //!
 //! This is the native home for what the external `opencrabs-analytics` HTML
-//! tool produced (discussion #178), reclaiming the formerly idle Inbox space.
+//! tool produced (discussion #178).
+//!
+//! The content is laid out responsively across two inner columns so it fills
+//! the wide panel: tool-usage (with bars scaled to the column width) on the
+//! left, reliability / RSI / brain sizes (values right-aligned to the edge) on
+//! the right. Both adapt to the panel size.
 
 use super::theme;
 use crate::brain::mission_control::{McAnalytics, McToolStat};
 use crate::tui::app::App;
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
-    let data = &app.mc.analytics;
+    let a = &app.mc.analytics;
     let border_color = if focused {
         theme::BORDER_ANALYTICS_FOCUS
     } else {
@@ -31,15 +36,38 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
         .border_set(symbols::border::ROUNDED)
         .border_style(Style::default().fg(border_color));
 
-    let inner_w = area.width.saturating_sub(2) as usize;
-    let lines = build_lines(data, inner_w);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Narrow panels (or a stray resize) fall back to a single column so the
+    // two-column split never produces unreadable slivers.
+    if inner.width < 56 {
+        let lines = left_column(a, inner.width as usize)
+            .into_iter()
+            .chain(std::iter::once(Line::from("")))
+            .chain(right_column(a, inner.width as usize))
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(54), Constraint::Percentage(46)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(left_column(a, cols[0].width as usize)),
+        cols[0],
+    );
+    frame.render_widget(
+        Paragraph::new(right_column(a, cols[1].width as usize)),
+        cols[1],
+    );
 }
 
-fn build_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
+/// Summary + top tools (with proportional bars sized to the column width).
+fn left_column(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
-
-    // ── Summary ───────────────────────────────────────────────────────────
     let fail_pct = if a.tool_total_calls > 0 {
         (a.tool_total_fails as f64 / a.tool_total_calls as f64) * 100.0
     } else {
@@ -62,7 +90,6 @@ fn build_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
         format!("{:.1} KB / {} files", a.brain_total_kb, a.brain_files.len()),
     ));
 
-    // ── Top tools (with a proportional bar) ───────────────────────────────
     if !a.top_tools.is_empty() {
         lines.push(blank());
         lines.push(header("Top tools"));
@@ -73,34 +100,47 @@ fn build_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
             .max()
             .unwrap_or(1)
             .max(1);
-        for t in a.top_tools.iter().take(8) {
-            lines.push(tool_row(t, max, w));
+        for t in a.top_tools.iter().take(10) {
+            lines.push(tool_bar_row(t, max, w));
         }
     }
+    lines
+}
 
-    // ── Flakiest tools ────────────────────────────────────────────────────
+/// Flakiest tools, RSI by dimension, and brain files, with values
+/// right-aligned to the column's right edge so the width is filled.
+fn right_column(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
     if !a.flakiest_tools.is_empty() {
-        lines.push(blank());
         lines.push(header("Flakiest (≥5 calls)"));
-        for t in a.flakiest_tools.iter().take(6) {
-            lines.push(fail_row(t, w));
+        for t in a.flakiest_tools.iter().take(8) {
+            lines.push(value_row(
+                &t.name,
+                format!("{:.1}%", t.fail_rate),
+                fail_color(t.fail_rate),
+                w,
+            ));
         }
-    }
-
-    // ── Brain files ───────────────────────────────────────────────────────
-    if !a.brain_files.is_empty() {
         lines.push(blank());
-        lines.push(header("Brain files"));
-        for f in a.brain_files.iter().take(8) {
-            lines.push(kv_row(&f.name, format!("{:.1} KB", f.kb), w));
-        }
     }
-
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  No analytics yet.",
-            Style::default().fg(theme::TEXT_DIM),
-        )));
+    if !a.rsi_top_dimensions.is_empty() {
+        lines.push(header("RSI applied by dimension"));
+        for (dim, n) in a.rsi_top_dimensions.iter().take(8) {
+            lines.push(value_row(dim, n.to_string(), theme::GREEN, w));
+        }
+        lines.push(blank());
+    }
+    if !a.brain_files.is_empty() {
+        lines.push(header("Brain files"));
+        for f in a.brain_files.iter().take(16) {
+            lines.push(value_row(
+                &f.name,
+                format!("{:.1} KB", f.kb),
+                theme::TEXT_SECONDARY,
+                w,
+            ));
+        }
     }
     lines
 }
@@ -126,58 +166,45 @@ fn summary_row(label: &str, value: String) -> Line<'static> {
     ])
 }
 
-/// `name  ███▌ count` with the bar scaled to the busiest tool.
-fn tool_row(t: &McToolStat, max: i64, w: usize) -> Line<'static> {
+/// `name  ███████▌ count rate%` with the bar filling the column width.
+fn tool_bar_row(t: &McToolStat, max: i64, w: usize) -> Line<'static> {
     let name_w = 12usize;
-    let bar_w = 8usize;
-    let name = pad(&trunc(&t.name, name_w), name_w);
+    let count_w = 8usize; // "  24304 " style trailing block
+    // Whatever is left after the name, count, and a 4% rate column is the bar.
+    let bar_w = w.saturating_sub(name_w + count_w + 6).clamp(4, 40);
     let filled = ((t.total as f64 / max as f64) * bar_w as f64).round() as usize;
     let bar: String = "█".repeat(filled.min(bar_w));
-    let rate_color = fail_color(t.fail_rate);
-    let count = format!("{}", t.total);
-    // Trim the trailing count if the panel is very narrow.
-    let mut spans = vec![
-        Span::raw("  "),
-        Span::styled(name, Style::default().fg(theme::TEXT_PRIMARY)),
-        Span::raw(" "),
-        Span::styled(format!("{bar:<bar_w$}"), Style::default().fg(theme::GREEN)),
-        Span::raw(" "),
-        Span::styled(count, Style::default().fg(theme::TEXT_SECONDARY)),
-    ];
-    if w >= 34 && t.failures > 0 {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            format!("{:.0}%", t.fail_rate),
-            Style::default().fg(rate_color),
-        ));
-    }
-    Line::from(spans)
-}
-
-fn fail_row(t: &McToolStat, w: usize) -> Line<'static> {
-    let name_w = w.saturating_sub(12).clamp(8, 22);
     Line::from(vec![
         Span::raw("  "),
         Span::styled(
             pad(&trunc(&t.name, name_w), name_w),
             Style::default().fg(theme::TEXT_PRIMARY),
         ),
+        Span::styled(format!("{bar:<bar_w$}"), Style::default().fg(theme::GREEN)),
         Span::styled(
-            format!("{:>5.1}%", t.fail_rate),
+            format!("{:>6}", t.total),
+            Style::default().fg(theme::TEXT_SECONDARY),
+        ),
+        Span::styled(
+            format!(" {:>3.0}%", t.fail_rate),
             Style::default().fg(fail_color(t.fail_rate)),
         ),
     ])
 }
 
-fn kv_row(name: &str, value: String, w: usize) -> Line<'static> {
-    let name_w = w.saturating_sub(value.chars().count() + 4).clamp(8, 24);
+/// `name<spaces>value` with `value` flush against the right edge of width `w`.
+fn value_row(name: &str, value: String, value_color: Color, w: usize) -> Line<'static> {
+    let value_len = value.chars().count();
+    let name_room = w.saturating_sub(value_len + 3);
+    let name = trunc(name, name_room.max(4));
+    let gap = w
+        .saturating_sub(name.chars().count() + value_len + 2)
+        .max(1);
     Line::from(vec![
         Span::raw("  "),
-        Span::styled(
-            pad(&trunc(name, name_w), name_w),
-            Style::default().fg(theme::TEXT_PRIMARY),
-        ),
-        Span::styled(value, Style::default().fg(theme::TEXT_SECONDARY)),
+        Span::styled(name, Style::default().fg(theme::TEXT_PRIMARY)),
+        Span::raw(" ".repeat(gap)),
+        Span::styled(value, Style::default().fg(value_color)),
     ])
 }
 
