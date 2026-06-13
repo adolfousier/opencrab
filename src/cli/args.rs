@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use super::{commands, cron, ui};
+use super::{commands, cron, migrate, ui};
 use crate::config::Config;
 
 /// OpenCrabs - High-Performance Terminal AI Orchestration Agent
@@ -164,6 +164,19 @@ pub enum Commands {
         /// Only check for updates without installing
         #[arg(long)]
         check_only: bool,
+    },
+
+    /// Migrate config and brain files from another AI agent tool
+    ///
+    /// Scans the system for instances of the source tool, shows an interactive
+    /// picker if multiple are found, then spawns an agent to handle the migration.
+    Migrate {
+        /// Source tool to migrate from (openclaw, hermes)
+        source: MigrationSource,
+
+        /// Preview what would be migrated without making changes
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -379,6 +392,15 @@ pub enum OutputFormat {
     Markdown,
 }
 
+/// Source tool for migration
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum MigrationSource {
+    /// Migrate from OpenClaw (TypeScript AI agent, ~/.openclaw/)
+    Openclaw,
+    /// Migrate from Hermes (NousResearch Python AI agent, ~/.hermes/)
+    Hermes,
+}
+
 /// Main CLI entry point
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
@@ -482,5 +504,6 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Some(Commands::Evolve { check_only }) => commands::cmd_evolve(check_only).await,
+        Some(Commands::Migrate { source, dry_run }) => migrate::cmd_migrate(source, dry_run).await,
     }
 }
