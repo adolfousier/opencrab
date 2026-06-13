@@ -164,7 +164,8 @@ fn panel_count(app: &App) -> usize {
         McPanel::Inbox => crate::brain::mission_control::inbox_service::list().len(),
         McPanel::Activity => app.mc.activity.len(),
         McPanel::Schedule => app.mc.schedule.len(),
-        // Read-only stats panel; nothing to row-select.
-        McPanel::Analytics => 0,
+        // One "item" (the whole snapshot) so Enter opens the full-detail popup
+        // like the other panels; there are no per-row selections.
+        McPanel::Analytics => 1,
     }
 }

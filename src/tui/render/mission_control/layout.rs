@@ -1,17 +1,18 @@
 //! Mission Control panel layout — pure function, no rendering.
 //!
 //! The MC takes a single outer rect (full content area) and partitions
-//! it into four panels. The left column splits into a small Inbox (often
-//! empty) over an Analytics panel that reclaims the formerly idle space:
+//! it into four panels. The left column stacks Inbox, Activity and Schedule;
+//! Analytics takes the full-height right column so its dense bars and tables
+//! have room:
 //!
 //! ```text
 //! ┌──────────────────────────────────────────────┐
-//! │ ┌── Inbox (40% × 30%) ┐ ┌ Activity (top) ───┐ │
-//! │ ├─────────────────────┤ │ (60% × 50%)       │ │
-//! │ │ Analytics           │ ├───────────────────┤ │
-//! │ │ (40% × 70%)         │ │ Schedule (bottom) │ │
-//! │ │                     │ │ (60% × 50%)       │ │
-//! │ └─────────────────────┘ └───────────────────┘ │
+//! │ ┌ Inbox (40% × 22%) ─┐ ┌ Analytics ────────┐ │
+//! │ ├────────────────────┤ │ (60% full height) │ │
+//! │ │ Activity (× 48%)   │ │                   │ │
+//! │ ├────────────────────┤ │                   │ │
+//! │ │ Schedule (× 30%)   │ │                   │ │
+//! │ └────────────────────┘ └───────────────────┘ │
 //! │ help bar (1 row)                             │
 //! └──────────────────────────────────────────────┘
 //! ```
@@ -47,23 +48,23 @@ pub fn compute(area: Rect) -> McLayout {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(panels_area);
 
-    // Left column: a small Inbox (usually empty) on top, Analytics below it
-    // claiming the space that used to sit idle.
+    // Left column: Inbox (small, usually short) over the Activity feed and the
+    // Schedule. Right column: Analytics, full height, so its bars and tables
+    // get the room the dense content needs.
     let left_rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .constraints([
+            Constraint::Percentage(22),
+            Constraint::Percentage(48),
+            Constraint::Percentage(30),
+        ])
         .split(cols[0]);
-
-    let right_rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(cols[1]);
 
     McLayout {
         inbox: left_rows[0],
-        analytics: left_rows[1],
-        activity: right_rows[0],
-        schedule: right_rows[1],
+        activity: left_rows[1],
+        schedule: left_rows[2],
+        analytics: cols[1],
         help_bar,
     }
 }

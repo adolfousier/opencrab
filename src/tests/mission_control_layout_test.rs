@@ -127,20 +127,25 @@ fn inbox_takes_left_40_percent() {
 }
 
 #[test]
-fn activity_and_schedule_split_right_60_percent_50_50() {
+fn analytics_takes_full_right_column_left_stacks_three() {
     let outer = Rect::new(0, 0, 100, 30);
     let layout = compute(outer);
-    // Combined right column = activity + schedule.
-    let right_height = layout.activity.height + layout.schedule.height;
     let panel_height = outer.height - layout.help_bar.height;
-    assert_eq!(right_height, panel_height);
-    // Activity and schedule are roughly equal height (rounding tolerance).
-    let diff = (layout.activity.height as i32 - layout.schedule.height as i32).abs();
+    // Analytics spans the full panel height on the right.
+    assert_eq!(
+        layout.analytics.height, panel_height,
+        "analytics should be full height"
+    );
+    // Inbox + Activity + Schedule stack to fill the left column.
+    let left_height = layout.inbox.height + layout.activity.height + layout.schedule.height;
+    assert_eq!(
+        left_height, panel_height,
+        "left column should fill the panel height"
+    );
+    // Analytics sits to the right of the left column.
     assert!(
-        diff <= 1,
-        "activity / schedule heights differ by more than 1: {} vs {}",
-        layout.activity.height,
-        layout.schedule.height
+        layout.analytics.x >= layout.inbox.x + layout.inbox.width,
+        "analytics should be right of the left column"
     );
 }
 

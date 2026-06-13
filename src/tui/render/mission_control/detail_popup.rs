@@ -9,8 +9,8 @@
 
 use super::theme;
 use crate::brain::mission_control::{
-    McActivity, McInboxDetail, McInboxItem, McInboxKind, McScheduleItem, McScheduleKind,
-    inbox_service,
+    McActivity, McAnalytics, McInboxDetail, McInboxItem, McInboxKind, McScheduleItem,
+    McScheduleKind, inbox_service,
 };
 use crate::tui::app::App;
 use crate::tui::app::mission_control::McPanel;
@@ -36,12 +36,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         McPanel::Inbox => inbox_detail(app),
         McPanel::Activity => activity_detail(app),
         McPanel::Schedule => schedule_detail(app),
-        // Analytics has no per-row detail; the panel itself is the view.
-        McPanel::Analytics => (
-            " Analytics ".to_string(),
-            theme::BORDER_ANALYTICS_FOCUS,
-            empty_lines("Analytics is a read-only overview."),
-        ),
+        McPanel::Analytics => analytics_detail(app),
     };
 
     let block = Block::default()
@@ -221,6 +216,88 @@ fn empty_lines(message: &str) -> Vec<Line<'static>> {
 
 fn blank() -> Line<'static> {
     Line::raw("")
+}
+
+// ── Analytics detail ──────────────────────────────────────────────────────
+
+fn analytics_detail(app: &App) -> (String, ratatui::style::Color, Vec<Line<'static>>) {
+    let a: &McAnalytics = &app.mc.analytics;
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let fail_pct = if a.tool_total_calls > 0 {
+        (a.tool_total_fails as f64 / a.tool_total_calls as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    lines.push(kv("Calls", &a.tool_total_calls.to_string()));
+    lines.push(kv(
+        "Fails",
+        &format!("{} ({:.1}%)", a.tool_total_fails, fail_pct),
+    ));
+    lines.push(kv("RSI", &format!("{} applied", a.rsi_applied_total)));
+    lines.push(kv(
+        "Brain",
+        &format!("{:.1} KB / {} files", a.brain_total_kb, a.brain_files.len()),
+    ));
+
+    if !a.top_tools.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(section_heading("Top tools"));
+        for t in &a.top_tools {
+            lines.push(body_line(format!(
+                "{:<16} {:>7}  {:>5.1}% fail",
+                trunc_name(&t.name, 16),
+                t.total,
+                t.fail_rate
+            )));
+        }
+    }
+    if !a.flakiest_tools.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(section_heading("Flakiest (≥5 calls)"));
+        for t in &a.flakiest_tools {
+            lines.push(body_line(format!(
+                "{:<16} {:>5.1}% fail ({} calls)",
+                trunc_name(&t.name, 16),
+                t.fail_rate,
+                t.total
+            )));
+        }
+    }
+    if !a.rsi_top_dimensions.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(section_heading("RSI applied by dimension"));
+        for (dim, n) in &a.rsi_top_dimensions {
+            lines.push(body_line(format!("{dim}: {n}")));
+        }
+    }
+    if !a.brain_files.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(section_heading("Brain files"));
+        for f in &a.brain_files {
+            lines.push(body_line(format!(
+                "{:<20} {:.1} KB",
+                trunc_name(&f.name, 20),
+                f.kb
+            )));
+        }
+    }
+
+    (
+        " Analytics ".to_string(),
+        theme::BORDER_ANALYTICS_FOCUS,
+        lines,
+    )
+}
+
+fn trunc_name(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn kv(key: &str, value: &str) -> Line<'static> {
