@@ -713,6 +713,9 @@ pub(crate) async fn cmd_run(
     tool_registry.register(Arc::new(MemorySearchTool));
     // Session search — hybrid QMD search across all session message history
     tool_registry.register(Arc::new(SessionSearchTool::new(db.pool().clone())));
+    tool_registry.register(Arc::new(
+        crate::brain::tools::analytics_report::AnalyticsReportTool::new(db.pool().clone()),
+    ));
     // Config management (read/write config.toml, commands.toml)
     tool_registry.register(Arc::new(ConfigTool));
     // Slash command invocation (agent can call any slash command)
@@ -1092,6 +1095,9 @@ pub(crate) async fn cmd_agent_interactive(
     tool_registry.register(Arc::new(PlanTool));
     tool_registry.register(Arc::new(MemorySearchTool));
     tool_registry.register(Arc::new(SessionSearchTool::new(db.pool().clone())));
+    tool_registry.register(Arc::new(
+        crate::brain::tools::analytics_report::AnalyticsReportTool::new(db.pool().clone()),
+    ));
     tool_registry.register(Arc::new(ConfigTool));
     tool_registry.register(Arc::new(SlashCommandTool));
     tool_registry.register(Arc::new(RenameSessionTool));

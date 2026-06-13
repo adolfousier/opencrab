@@ -31,6 +31,7 @@ pub mod web_search;
 
 // Tool implementations - Phase 3: Workflow & Integration
 pub mod a2a_send;
+pub mod analytics_report;
 pub mod analyze_image;
 pub mod analyze_video;
 

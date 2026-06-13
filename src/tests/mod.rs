@@ -42,6 +42,7 @@ pub mod bundled_plans_test;
 pub mod candle_whisper_test;
 pub mod channel_search_test;
 pub mod channel_session_resolve_test;
+pub mod analytics_report_test;
 pub mod claude_cli_model_test;
 pub mod cli_arg_too_long_test;
 pub mod cli_supported_models_test;
