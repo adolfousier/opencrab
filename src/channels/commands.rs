@@ -161,6 +161,8 @@ pub enum ChannelCommand {
     Help(String),
     /// `/usage` — formatted session/cost stats
     Usage(String),
+    /// `/analytics`: brain/tool/RSI analytics report
+    Analytics(String),
     /// `/models` — provider picker (step 1: choose provider, step 2: choose model)
     Models(ProvidersResponse),
     /// `/new` — create a new session and switch to it
@@ -243,6 +245,7 @@ pub async fn handle_command(
         "/sessions" => ChannelCommand::Sessions(format_sessions(session_id, session_svc).await),
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
+        "/analytics" => ChannelCommand::Analytics(format_analytics(agent).await),
         _ if trimmed.starts_with('/') && !crate::utils::string::looks_like_file_path(trimmed) => {
             match_user_command(trimmed)
         }
@@ -251,7 +254,9 @@ pub async fn handle_command(
 
     // Persist command + response to session history
     let response_text = match &result {
-        ChannelCommand::Help(body) | ChannelCommand::Usage(body) => Some(body.clone()),
+        ChannelCommand::Help(body)
+        | ChannelCommand::Usage(body)
+        | ChannelCommand::Analytics(body) => Some(body.clone()),
         ChannelCommand::Models(resp) => Some(resp.text.clone()),
         ChannelCommand::Sessions(resp) => Some(resp.text.clone()),
         ChannelCommand::NewSession => Some("New session started.".to_string()),
@@ -375,6 +380,7 @@ pub(crate) fn format_help() -> String {
         "`/sessions` — Switch between sessions".to_string(),
         "`/stop`     — Abort current operation".to_string(),
         "`/usage`    — Session token & cost stats".to_string(),
+        "`/analytics` Brain, tool & RSI analytics report".to_string(),
     ];
 
     // Append user-defined commands from commands.toml
@@ -435,6 +441,16 @@ async fn format_rtk() -> String {
 }
 
 // ── /usage ──────────────────────────────────────────────────────────────────
+
+/// Build the `/analytics` report (brain sizes, tool usage and failure rates,
+/// RSI applications) as Markdown. Same data and renderer as the Mission Control
+/// Analytics panel and the `analytics_report` agent tool, so all three surfaces
+/// agree. Reads only aggregate stats and brain file sizes.
+async fn format_analytics(agent: &AgentService) -> String {
+    let pool = agent.context().pool();
+    let snapshot = crate::brain::mission_control::analytics_service::summary(pool).await;
+    crate::brain::tools::analytics_report::render_markdown(&snapshot)
+}
 
 async fn format_usage(
     session_id: Uuid,
@@ -1112,6 +1128,7 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
     match cmd {
         ChannelCommand::Help(body)
         | ChannelCommand::Usage(body)
+        | ChannelCommand::Analytics(body)
         | ChannelCommand::UserSystem(body)
         | ChannelCommand::Rtk(body) => Some(body.clone()),
         ChannelCommand::Doctor => Some(run_doctor()),

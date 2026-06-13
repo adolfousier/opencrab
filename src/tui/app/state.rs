@@ -147,6 +147,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Session usage stats",
     },
     SlashCommand {
+        name: "/analytics",
+        description: "Brain, tool & RSI analytics",
+    },
+    SlashCommand {
         name: "/onboard",
         description: "Run setup wizard",
     },
