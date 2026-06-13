@@ -1682,6 +1682,92 @@ fn daemon_args() -> Vec<String> {
     args
 }
 
+/// Build a systemd unit file. A root-installed *system* unit runs the daemon
+/// as the invoking user (`run_as`, taken from `SUDO_USER`) so it reads that
+/// user's `~/.opencrabs` rather than root's, and targets `multi-user.target`
+/// so it starts on boot. A *user* unit omits `User=`/`HOME=` and targets
+/// `default.target`. Pure (no OS calls) so it is unit-testable on any platform.
+// Only the Linux install path calls this; off-Linux it lives solely for tests.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn build_systemd_unit(
+    profile_label: &str,
+    exec_args: &str,
+    run_as: Option<&str>,
+    system: bool,
+) -> String {
+    let identity = match run_as {
+        Some(u) => format!("User={u}\nGroup={u}\nEnvironment=HOME=/home/{u}\n"),
+        None => String::new(),
+    };
+    let wanted_by = if system {
+        "multi-user.target"
+    } else {
+        "default.target"
+    };
+    format!(
+        "[Unit]\n\
+         Description=OpenCrabs Daemon [{profile_label}]\n\
+         After=network.target\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         {identity}ExecStart={exec_args}\n\
+         Restart=on-failure\n\
+         RestartSec=5\n\
+         \n\
+         [Install]\n\
+         WantedBy={wanted_by}\n"
+    )
+}
+
+/// Linux: true when running as root (euid 0). We then install a *system* unit
+/// (`/etc/systemd/system`, plain `systemctl`) instead of a user unit, because a
+/// user unit needs a running per-user systemd + D-Bus session that a headless
+/// VPS SSH session lacks ("Failed to connect to bus").
+#[cfg(target_os = "linux")]
+fn running_as_root() -> bool {
+    // SAFETY: geteuid() always succeeds and has no preconditions.
+    unsafe { libc::geteuid() == 0 }
+}
+
+/// Run `systemctl` (system scope, or `--user`) and FAIL on a non-zero exit.
+/// `.status()` alone only catches a spawn failure, so "Failed to connect to
+/// bus" (exit 1) used to slip through and the caller printed a misleading ✅.
+#[cfg(target_os = "linux")]
+fn run_systemctl(system: bool, args: &[&str]) -> Result<()> {
+    let mut cmd = std::process::Command::new("systemctl");
+    if !system {
+        cmd.arg("--user");
+    }
+    let out = cmd
+        .args(args)
+        .output()
+        .context("failed to spawn systemctl")?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let scope = if system {
+        "systemctl"
+    } else {
+        "systemctl --user"
+    };
+    anyhow::bail!(
+        "{scope} {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+}
+
+/// Guidance shown when a `--user` systemctl op fails for lack of a user bus.
+#[cfg(target_os = "linux")]
+fn user_service_hint() -> String {
+    "A user service needs a running per-user systemd instance, which a headless \
+     SSH session usually lacks. Either enable lingering so it runs without an \
+     active login:\n    sudo loginctl enable-linger $(whoami)\nthen retry, or \
+     install a system-wide service instead:\n    sudo opencrabs service install"
+        .to_string()
+}
+
 /// OS service management
 #[allow(unused_variables)]
 pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
@@ -1742,43 +1828,53 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
 
             #[cfg(target_os = "linux")]
             {
-                let unit_path = dirs::home_dir()
-                    .context("No home dir")?
-                    .join(format!(".config/systemd/user/{systemd_name}.service"));
+                let system = running_as_root();
+                let unit_path = if system {
+                    std::path::PathBuf::from(format!("/etc/systemd/system/{systemd_name}.service"))
+                } else {
+                    dirs::home_dir()
+                        .context("No home dir")?
+                        .join(format!(".config/systemd/user/{systemd_name}.service"))
+                };
 
                 let exec_args = std::iter::once(binary_str.clone())
                     .chain(args.iter().cloned())
                     .collect::<Vec<_>>()
                     .join(" ");
 
-                let unit = format!(
-                    r#"[Unit]
-Description=OpenCrabs Daemon [{profile_label}]
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={exec_args}
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-"#
-                );
+                // System unit installed via sudo: run the daemon as the
+                // invoking user so it reads that user's ~/.opencrabs, not root's.
+                let run_as = if system {
+                    std::env::var("SUDO_USER")
+                        .ok()
+                        .filter(|u| !u.is_empty() && u != "root")
+                } else {
+                    None
+                };
+                let unit = build_systemd_unit(profile_label, &exec_args, run_as.as_deref(), system);
 
                 if let Some(parent) = unit_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::write(&unit_path, unit)?;
-                std::process::Command::new("systemctl")
-                    .args(["--user", "daemon-reload"])
-                    .status()?;
+                std::fs::write(&unit_path, unit)
+                    .with_context(|| format!("writing unit {}", unit_path.display()))?;
+
+                if let Err(e) = run_systemctl(system, &["daemon-reload"]) {
+                    eprintln!("❌ {e}");
+                    if !system {
+                        eprintln!("\n{}", user_service_hint());
+                    }
+                    return Err(e);
+                }
                 println!(
-                    "✅ Installed systemd user unit [{profile_label}]: {}",
+                    "✅ Installed systemd {} unit [{profile_label}]: {}",
+                    if system { "system" } else { "user" },
                     unit_path.display()
                 );
-                println!("   Run: opencrabs service start");
+                println!(
+                    "   Run: {}opencrabs service start",
+                    if system { "sudo " } else { "" }
+                );
             }
 
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -1805,9 +1901,21 @@ WantedBy=default.target
 
             #[cfg(target_os = "linux")]
             {
-                std::process::Command::new("systemctl")
-                    .args(["--user", "start", &systemd_name])
-                    .status()?;
+                let system = running_as_root();
+                // `enable --now` so a system unit also survives reboot; a user
+                // unit just starts (boot-persistence there needs lingering).
+                let res = if system {
+                    run_systemctl(true, &["enable", "--now", systemd_name.as_str()])
+                } else {
+                    run_systemctl(false, &["start", systemd_name.as_str()])
+                };
+                if let Err(e) = res {
+                    eprintln!("❌ {e}");
+                    if !system {
+                        eprintln!("\n{}", user_service_hint());
+                    }
+                    return Err(e);
+                }
                 println!("✅ Started OpenCrabs daemon [{profile_label}]");
             }
 
@@ -1829,9 +1937,14 @@ WantedBy=default.target
 
             #[cfg(target_os = "linux")]
             {
-                std::process::Command::new("systemctl")
-                    .args(["--user", "stop", &systemd_name])
-                    .status()?;
+                let system = running_as_root();
+                if let Err(e) = run_systemctl(system, &["stop", systemd_name.as_str()]) {
+                    eprintln!("❌ {e}");
+                    if !system {
+                        eprintln!("\n{}", user_service_hint());
+                    }
+                    return Err(e);
+                }
                 println!("✅ Stopped OpenCrabs daemon [{profile_label}]");
             }
 
@@ -1855,9 +1968,14 @@ WantedBy=default.target
             }
             #[cfg(target_os = "linux")]
             {
-                std::process::Command::new("systemctl")
-                    .args(["--user", "restart", &systemd_name])
-                    .status()?;
+                let system = running_as_root();
+                if let Err(e) = run_systemctl(system, &["restart", systemd_name.as_str()]) {
+                    eprintln!("❌ {e}");
+                    if !system {
+                        eprintln!("\n{}", user_service_hint());
+                    }
+                    return Err(e);
+                }
                 println!("✅ Restarted OpenCrabs daemon [{profile_label}]");
             }
             Ok(())
@@ -1878,10 +1996,18 @@ WantedBy=default.target
 
             #[cfg(target_os = "linux")]
             {
-                let output = std::process::Command::new("systemctl")
-                    .args(["--user", "status", &systemd_name])
-                    .output()?;
-                println!("{}", String::from_utf8_lossy(&output.stdout));
+                let system = running_as_root();
+                let mut cmd = std::process::Command::new("systemctl");
+                if !system {
+                    cmd.arg("--user");
+                }
+                let output = cmd.args(["status", systemd_name.as_str()]).output()?;
+                // `systemctl status` exits non-zero when the unit is inactive;
+                // that is informational, not an error, so just show the output.
+                print!("{}", String::from_utf8_lossy(&output.stdout));
+                if output.stdout.is_empty() {
+                    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                }
             }
 
             Ok(())
@@ -1908,20 +2034,21 @@ WantedBy=default.target
             }
             #[cfg(target_os = "linux")]
             {
-                let _ = std::process::Command::new("systemctl")
-                    .args(["--user", "stop", &systemd_name])
-                    .status();
-                std::process::Command::new("systemctl")
-                    .args(["--user", "disable", &systemd_name])
-                    .status()?;
-                let unit_path = dirs::home_dir()
-                    .context("No home dir")?
-                    .join(format!(".config/systemd/user/{systemd_name}.service"));
+                let system = running_as_root();
+                // Best-effort stop/disable: failing here (already stopped, no
+                // bus) must not block removing the unit file.
+                let _ = run_systemctl(system, &["stop", systemd_name.as_str()]);
+                let _ = run_systemctl(system, &["disable", systemd_name.as_str()]);
+                let unit_path = if system {
+                    std::path::PathBuf::from(format!("/etc/systemd/system/{systemd_name}.service"))
+                } else {
+                    dirs::home_dir()
+                        .context("No home dir")?
+                        .join(format!(".config/systemd/user/{systemd_name}.service"))
+                };
                 if unit_path.exists() {
                     std::fs::remove_file(&unit_path)?;
-                    std::process::Command::new("systemctl")
-                        .args(["--user", "daemon-reload"])
-                        .status()?;
+                    let _ = run_systemctl(system, &["daemon-reload"]);
                     println!(
                         "✅ Removed systemd unit [{profile_label}]: {}",
                         unit_path.display()
