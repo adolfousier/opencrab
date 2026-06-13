@@ -71,6 +71,7 @@ OpenCrabs runs as a **single binary on your terminal** — no server, no gateway
 - [Why OpenCrabs?](#why-opencrabs)
 - [Core Features](#-core-features)
 - [CLI Commands](#cli)
+- [Migrating from Other Tools](#-migrating-from-other-tools)
 - [Supported AI Providers](#-supported-ai-providers)
 - [Agent-to-Agent (A2A) Protocol](#-agent-to-agent-a2a-protocol)
 - [Quick Start](#-quick-start)
@@ -128,7 +129,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 ### Multimodal Input
 | Feature | Description |
 |---------|-------------|
-| **Image Attachments** | Paste image paths or URLs into the input — auto-detected and attached as vision content blocks for multimodal models |
+| **Image Attachments** | Paste image paths or URLs into the input — auto-detected and attached as vision content blocks for multimodal models. Also supports pasting raw image data from the clipboard (copied from a browser, screenshot tool, or any app) — on macOS via the clipboard as PNG, on Linux via wl-paste/xclip. The bytes are written to a temp file and routed through the existing image pipeline |
 | **Video Attachments** | Send a video on any channel (mp4, m4v, mov, webm, mkv, avi, 3gp, flv) or paste a video path in the TUI — the agent calls the `analyze_video` tool, which routes through Google Gemini's multimodal video API (inline ≤18 MB, resumable Files API for larger). Requires `image.vision.enabled = true` with a Gemini API key in `config.toml`. Phase 1 is Gemini-native; a frame-extraction fallback for non-Gemini providers (ffmpeg → analyze_image per frame) is on the roadmap |
 | **PDF Support** | Attach PDF files by path — native Anthropic PDF support; for other providers, text is extracted locally via `pdf-extract` |
 | **Document Parsing** | Built-in `parse_document` tool extracts text from PDF, DOCX, HTML, TXT, MD, JSON, XML |
@@ -211,6 +212,7 @@ Videos uploaded on any channel (mp4, m4v, mov, webm, mkv, avi, 3gp, flv) auto-ro
 | **Tool Context Persistence** | Tool call groups saved to DB and reconstructed on session reload — no vanishing tool history |
 | **Multi-line Input** | Alt+Enter / Shift+Enter for newlines; Enter to send |
 | **Abort Processing** | Escape×2 within 3 seconds to cancel any in-progress request |
+| **Clipboard Image Paste** | Copy an image from a browser, screenshot tool, or any app and paste it directly into the input. Raw image bytes are read from the OS clipboard (macOS: osascript, Linux: wl-paste/xclip), written to a temp file, and attached through the existing image pipeline. No need to save to disk first |
 | **Bang Operator (`!cmd`)** | Run any shell command directly from the input — no LLM round-trip. Output is shown as a system message in the working directory context |
 | **Auto-Update** | Checks GitHub for new releases on startup and once every 24h in the background. When a new version is found it silently installs and hot-restarts. Disable via `[agent] auto_update = false` in `config.toml` to be prompted instead |
 
@@ -262,6 +264,7 @@ Videos uploaded on any channel (mp4, m4v, mov, webm, mkv, avi, 3gp, flv) auto-ro
 | `opencrabs service install\|start\|stop\|restart\|status\|uninstall` | OS service management (launchd on macOS, systemd on Linux) |
 | `opencrabs daemon` | Run in headless daemon mode — channels only, no TUI |
 | `opencrabs completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
+| `opencrabs migrate <source>` | Migrate from OpenClaw or Hermes. Scans the system, shows interactive picker, spawns agent to handle migration. `--dry-run` to preview |
 | `opencrabs version` | Print version and exit |
 
 Global flags: `--debug` (enable file logging), `--config <path>` (custom config file), `--profile <name>` / `-p <name>` (run as a named profile).
@@ -328,6 +331,62 @@ opencrabs -p hermes service uninstall
 Multiple profiles can run as simultaneous daemon services with full isolation.
 
 **Environment variable:** Set `OPENCRABS_PROFILE=hermes` to select a profile without the `-p` flag. Useful for systemd services, cron jobs, and daemon mode.
+
+---
+
+## 🔄 Migrating from Other Tools
+
+Switching to OpenCrabs from another AI agent tool? There are two ways to do it.
+
+### Option 1: CLI Command (automated)
+
+The `migrate` command scans your system for existing tool instances, shows an interactive picker if it finds multiple, then spawns an agent to handle the actual migration:
+
+```bash
+# Migrate from OpenClaw
+opencrabs migrate openclaw
+
+# Migrate from Hermes
+opencrabs migrate hermes
+
+# Preview what would be migrated without making changes
+opencrabs migrate openclaw --dry-run
+```
+
+What it migrates:
+- **Brain files** (SOUL.md, USER.md, MEMORY.md, AGENTS.md, TOOLS.md)
+- **Config** (provider, model, channels)
+- **API keys and secrets**
+- **Memory logs and skills** (if present)
+
+The agent reads each source file, maps it to OpenCrabs format, and writes the result. If a brain file already has content, it merges rather than overwrites. After the agent finishes, a verification summary shows exactly which files were created, updated, or left unchanged.
+
+Use `-p <name>` to migrate into a specific profile instead of the default:
+
+```bash
+opencrabs -p my-openclaw-setup migrate openclaw
+```
+
+### Option 2: Just Ask the Agent
+
+No CLI command needed. Once OpenCrabs is running, tell it:
+
+> *"I'm migrating from [tool name]. Research what files I have, audit the config structure, and report what I need to move over for a seamless migration."*
+
+The agent will use its tools (read_file, web_search, grep) to inspect the source tool's directory, understand the config format, and either do the migration directly or give you a step-by-step plan. This works for **any** tool, not just OpenClaw and Hermes. Claude Code, Cursor, Aider, Windsurf, whatever. If it has config files and brain/personality files, OpenCrabs can figure out the mapping.
+
+The agent-native approach handles edge cases that hardcoded parsers can't: custom configs, non-standard setups, partial installations, format changes across versions.
+
+### Supported Sources
+
+| Source | Directory | Config Format | Status |
+|--------|-----------|---------------|--------|
+| **OpenClaw** | `~/.openclaw/` | JSON5 (`openclaw.json`) | CLI + agent |
+| **Hermes** | `~/.hermes/` | YAML (`config.yaml`) + `.env` | CLI + agent |
+| **Claude Code** | `~/.claude/` | JSON | Agent only |
+| **Anything else** | varies | varies | Agent only |
+
+The CLI `migrate` command currently supports OpenClaw and Hermes. For everything else, the agent handles it via chat. Both approaches use the same underlying mechanism: read source files, map to OpenCrabs format, write the result.
 
 ---
 
@@ -1060,6 +1119,11 @@ cargo run --bin opencrabs -- logs view
 cargo run --bin opencrabs -- logs view -l 100
 cargo run --bin opencrabs -- logs clean
 cargo run --bin opencrabs -- logs clean -d 3
+
+# Migrate from other AI agent tools
+cargo run --bin opencrabs -- migrate openclaw
+cargo run --bin opencrabs -- migrate hermes
+cargo run --bin opencrabs -- migrate openclaw --dry-run
 ```
 
 > **Tip:** After `cargo build --release`, run the binary directly: `./target/release/opencrabs`
