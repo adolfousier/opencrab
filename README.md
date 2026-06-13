@@ -1715,6 +1715,45 @@ required = false
 coerce_empty_to = "false"   # omitted → "false" instead of ""
 ```
 
+
+
+### Advanced: `$OPENCRABS_PARAMS`
+
+For shell tools with many parameters or complex values (spaces, quotes, special characters), inline `{{param}}` substitution can produce broken shell commands. OpenCrabs provides the `$OPENCRABS_PARAMS` environment variable — it points to a temporary JSON file containing all coerced parameters:
+
+```toml
+[[tools]]
+name = "send_notification"
+description = "Send a notification via a CLI client"
+executor = "shell"
+command = "/usr/local/bin/notify-send --params-file \"$OPENCRABS_PARAMS\""
+timeout_secs = 30
+requires_approval = true
+
+[[tools.params]]
+name = "channel"
+type = "string"
+description = "Notification channel"
+required = true
+
+[[tools.params]]
+name = "message"
+type = "string"
+description = "Message text"
+required = true
+```
+
+The tool reads the JSON file via `--params-file`. For scripts that need individual values, pipe through `jq`:
+
+```bash
+#!/bin/sh
+channel=$(cat "$OPENCRABS_PARAMS" | jq -r '.channel')
+message=$(cat "$OPENCRABS_PARAMS" | jq -r '.message')
+send-alert "$channel" "$message"
+```
+
+**Template substitution (`{{param}}`)** still works for simple cases. Use `--params-file "$OPENCRABS_PARAMS"` when parameters may contain spaces, quotes, or shell meta-characters.
+
 **Management via agent:** The `tool_manage` meta-tool lets the agent create, remove, enable/disable, and reload tools at runtime. Tell it *"add a tool that checks my server health"* and it writes the definition to `tools.toml` automatically.
 
 **Commands vs Tools:**
