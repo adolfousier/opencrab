@@ -1005,6 +1005,66 @@ impl EvolveTool {
 
         let _ = std::fs::remove_file(&backup_path);
 
+        // Extract the bundled RTK binary from the same archive.
+        // The release workflow packs `rtk` alongside `opencrabs` into the
+        // release asset. This is best-effort: older releases without RTK
+        // or extraction failures should not block the evolve.
+        let rtk_bin_name = if is_windows { "rtk.exe" } else { "rtk" };
+        let rtk_result = if is_windows {
+            extract_from_zip(&archive_bytes, rtk_bin_name)
+        } else {
+            extract_from_tar_gz(&archive_bytes, rtk_bin_name)
+        };
+        match rtk_result {
+            Ok(rtk_data) => {
+                let rtk_path = exe_path
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join(rtk_bin_name);
+                match tokio::fs::write(&rtk_path, &rtk_data).await {
+                    Ok(()) => {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let perms = std::fs::Permissions::from_mode(0o755);
+                            if let Err(e) = std::fs::set_permissions(&rtk_path, perms) {
+                                tracing::warn!(
+                                    target: "evolve",
+                                    rtk_path = %rtk_path.display(),
+                                    error = %e,
+                                    "evolve: extracted RTK but failed to set executable permissions"
+                                );
+                            }
+                        }
+                        tracing::info!(
+                            target: "evolve",
+                            rtk_path = %rtk_path.display(),
+                            bytes = rtk_data.len(),
+                            session_id = %sid,
+                            "evolve: extracted and installed bundled RTK binary"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "evolve",
+                            rtk_path = %rtk_path.display(),
+                            error = %e,
+                            "evolve: extracted RTK data but failed to write binary to disk"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                // Older releases may not bundle RTK — not a failure
+                tracing::debug!(
+                    target: "evolve",
+                    error = %e,
+                    session_id = %sid,
+                    "evolve: no RTK binary found in release archive (expected in newer releases)"
+                );
+            }
+        }
+
         // Schedule a delayed daemon restart for systemd-managed services.
         // This runs 3 seconds after the tool returns, giving the current
         // response enough time to be delivered before the daemon exits.
