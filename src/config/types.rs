@@ -981,6 +981,10 @@ pub fn xiaomi_provider_defaults() -> ProviderConfig {
         .iter()
         .map(|s| s.to_string())
         .collect(),
+        // MiMo v2.5 is multimodal, so analyze_image routes to it natively
+        // (via ProviderVisionTool) instead of needing a Gemini key. Falls back
+        // to Gemini at call time if the proxy ever rejects image content.
+        vision_model: Some("mimo-v2.5-pro".to_string()),
         ..Default::default()
     }
 }

@@ -24,6 +24,9 @@ fn missing_xiaomi_section_deserializes_to_canonical_defaults() {
         "base_url stays None so the factory uses the proxy default"
     );
     assert_eq!(xiaomi.models, xiaomi_provider_defaults().models);
+    // MiMo v2.5 is multimodal, so vision (analyze_image) routes to it natively
+    // via ProviderVisionTool — no Gemini key required for the keyless promo.
+    assert_eq!(xiaomi.vision_model.as_deref(), Some("mimo-v2.5-pro"));
 }
 
 #[test]

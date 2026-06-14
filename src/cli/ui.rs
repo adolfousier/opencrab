@@ -61,11 +61,21 @@ pub(crate) fn register_config_dependent_tools(
     if let Some((api_key, base_url, vision_model)) =
         crate::brain::provider::factory::active_provider_vision(config)
     {
-        registry.register(Arc::new(ProviderVisionTool::new(
-            api_key,
-            base_url,
-            vision_model,
-        )));
+        let mut tool = ProviderVisionTool::new(api_key, base_url, vision_model);
+        // Resilience: if Gemini image.vision is also configured, attach it as a
+        // fallback so analyze_image still works when the provider's own vision
+        // endpoint fails (model/proxy doesn't actually accept images).
+        if config.image.vision.enabled
+            && let Some(gkey) = config
+                .image
+                .vision
+                .api_key
+                .clone()
+                .filter(|k| !k.is_empty())
+        {
+            tool = tool.with_gemini_fallback(gkey, config.image.vision.model.clone());
+        }
+        registry.register(Arc::new(tool));
     } else if config.image.vision.enabled
         && let Some(key) = config
             .image

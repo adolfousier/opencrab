@@ -4,7 +4,7 @@
 //! OpenAI-compatible API. Registered as `analyze_image` when Gemini vision
 //! isn't configured but the active provider has a `vision_model` set.
 
-use super::analyze_image::{base64_encode, detect_mime_type};
+use super::analyze_image::{AnalyzeImageTool, base64_encode, detect_mime_type};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -14,6 +14,11 @@ pub struct ProviderVisionTool {
     api_key: String,
     base_url: String,
     vision_model: String,
+    /// Gemini fallback, used when the provider's own vision endpoint fails
+    /// (e.g. the model/proxy doesn't actually accept image content). Keeps
+    /// vision working even when the primary path is misconfigured or
+    /// unsupported.
+    gemini_fallback: Option<AnalyzeImageTool>,
 }
 
 impl ProviderVisionTool {
@@ -22,7 +27,32 @@ impl ProviderVisionTool {
             api_key,
             base_url,
             vision_model,
+            gemini_fallback: None,
         }
+    }
+
+    /// Attach a Gemini fallback (`image.vision` key + model). Tried only if the
+    /// provider's own vision call fails.
+    pub fn with_gemini_fallback(mut self, api_key: String, model: String) -> Self {
+        self.gemini_fallback = Some(AnalyzeImageTool::new(api_key, model));
+        self
+    }
+
+    /// Run the Gemini fallback if present; otherwise return `primary`.
+    async fn fallback_or(
+        &self,
+        input: &Value,
+        context: &ToolExecutionContext,
+        primary: ToolResult,
+        reason: &str,
+    ) -> super::error::Result<ToolResult> {
+        if let Some(fb) = &self.gemini_fallback {
+            tracing::warn!(
+                "analyze_image: provider vision failed ({reason}); falling back to Gemini"
+            );
+            return fb.execute(input.clone(), context).await;
+        }
+        Ok(primary)
     }
 }
 
@@ -122,22 +152,30 @@ impl Tool for ProviderVisionTool {
             .build()
             .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
 
-        let response = client
+        let response = match client
             .post(&self.base_url)
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&body)
             .send()
             .await
-            .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("Vision request failed: {e}");
+                return self
+                    .fallback_or(&input, _context, ToolResult::error(msg.clone()), &msg)
+                    .await;
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let err_body = response.text().await.unwrap_or_default();
-            return Ok(ToolResult::error(format!(
-                "Vision API error {}: {}",
-                status, err_body
-            )));
+            let msg = format!("Vision API error {status}: {err_body}");
+            return self
+                .fallback_or(&input, _context, ToolResult::error(msg.clone()), &msg)
+                .await;
         }
 
         let json: Value = response
@@ -154,9 +192,13 @@ impl Tool for ProviderVisionTool {
             .to_string();
 
         if result_text.is_empty() {
-            Ok(ToolResult::error(
-                "No text response from vision model".to_string(),
-            ))
+            self.fallback_or(
+                &input,
+                _context,
+                ToolResult::error("No text response from vision model".to_string()),
+                "empty response",
+            )
+            .await
         } else {
             Ok(ToolResult::success(result_text))
         }
