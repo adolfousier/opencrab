@@ -595,23 +595,34 @@ mod active_provider_vision {
     }
 
     #[test]
-    fn skips_provider_without_api_key() {
+    fn registers_keyless_provider_with_vision_model() {
+        // A keyless / local provider (Ollama, llama.cpp, LM Studio) has no API
+        // key but still serves vision. Modelled as a custom provider, which is
+        // how a local endpoint is configured, and which becomes active without
+        // a key. The gate is `vision_model`, so this resolves with an empty
+        // Bearer.
+        let mut custom = std::collections::BTreeMap::new();
+        custom.insert(
+            "localllm".to_string(),
+            ProviderConfig {
+                enabled: true,
+                api_key: None,
+                base_url: Some("http://localhost:11434/v1".into()),
+                vision_model: Some("llava".into()),
+                ..Default::default()
+            },
+        );
         let config = Config {
             providers: ProviderConfigs {
-                openai: Some(ProviderConfig {
-                    enabled: true,
-                    api_key: None,
-                    base_url: None,
-                    default_model: None,
-                    models: vec![],
-                    vision_model: Some("gpt-5-nano".into()),
-                    ..Default::default()
-                }),
+                custom: Some(custom),
                 ..Default::default()
             },
             ..Default::default()
         };
-        assert!(active_provider_vision(&config).is_none());
+        let (api_key, _, vision_model) = active_provider_vision(&config)
+            .expect("keyless provider with vision_model must resolve");
+        assert_eq!(api_key, "");
+        assert_eq!(vision_model, "llava");
     }
 
     #[test]
@@ -681,6 +692,34 @@ mod active_provider_generation {
         let (api_key, _, model) = active_provider_generation(&config).expect("must resolve");
         assert_eq!(api_key, "gemini-key");
         assert_eq!(model, "imagen-4.0-generate-001");
+    }
+
+    #[test]
+    fn registers_keyless_provider_with_generation_model() {
+        // Mirror of the vision path: a keyless / local custom provider with a
+        // `generation_model` set still resolves, with an empty Bearer.
+        let mut custom = std::collections::BTreeMap::new();
+        custom.insert(
+            "localllm".to_string(),
+            ProviderConfig {
+                enabled: true,
+                api_key: None,
+                base_url: Some("http://localhost:11434/v1".into()),
+                generation_model: Some("sd-xl".into()),
+                ..Default::default()
+            },
+        );
+        let config = Config {
+            providers: ProviderConfigs {
+                custom: Some(custom),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (api_key, _, model) = active_provider_generation(&config)
+            .expect("keyless provider with generation_model must resolve");
+        assert_eq!(api_key, "");
+        assert_eq!(model, "sd-xl");
     }
 
     #[test]

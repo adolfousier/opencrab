@@ -755,8 +755,32 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
     let active_cfg = custom_cfg.as_ref().or(native_cfg);
 
     if let Some(cfg) = active_cfg
-        && let (Some(api_key), Some(vision_model)) = (&cfg.api_key, &cfg.vision_model)
+        && let Some(vision_model) = &cfg.vision_model
     {
+        // A configured `vision_model` is the gate — NOT the presence of an API
+        // key. Keyless and local providers (Ollama, llama.cpp, LM Studio,
+        // Xiaomi's free window, etc.) have no key but still serve vision, so
+        // requiring one wrongly hid `analyze_image` from those installs.
+        //
+        // Key resolution mirrors provider creation: a real user key wins;
+        // otherwise Xiaomi sends the collab app token as the Bearer during its
+        // free window; any other keyless/local provider gets an empty Bearer.
+        // A provider that genuinely needs a key but has none simply fails at
+        // call time with a clear auth error, which is better than silently
+        // having no vision tool at all.
+        let api_key = cfg
+            .api_key
+            .clone()
+            .filter(|k| !k.is_empty())
+            .unwrap_or_else(|| {
+                if name == "xiaomi" && xiaomi_keyless_window_open() {
+                    option_env!("OPENCRABS_XIAOMI_APP_TOKEN")
+                        .unwrap_or("")
+                        .to_string()
+                } else {
+                    String::new()
+                }
+            });
         let base_url = cfg
             .base_url
             .clone()
@@ -766,7 +790,7 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
         } else {
             format!("{}/chat/completions", base_url.trim_end_matches('/'))
         };
-        return Some((api_key.clone(), base_url, vision_model.clone()));
+        return Some((api_key, base_url, vision_model.clone()));
     }
     // No provider-native vision — let cli/ui.rs fall back to Gemini if configured
     None
@@ -815,8 +839,26 @@ pub fn active_provider_generation(config: &Config) -> Option<(String, String, St
     let active_cfg = custom_cfg.as_ref().or(native_cfg);
 
     if let Some(cfg) = active_cfg
-        && let (Some(api_key), Some(generation_model)) = (&cfg.api_key, &cfg.generation_model)
+        && let Some(generation_model) = &cfg.generation_model
     {
+        // Gate on `generation_model`, not the API key, so keyless and local
+        // providers (Ollama, llama.cpp, LM Studio, Xiaomi's free window, etc.)
+        // still register `generate_image`. Same key resolution as the vision
+        // path: real user key wins; Xiaomi sends its collab app token during the
+        // free window; any other keyless/local provider gets an empty Bearer.
+        let api_key = cfg
+            .api_key
+            .clone()
+            .filter(|k| !k.is_empty())
+            .unwrap_or_else(|| {
+                if name == "xiaomi" && xiaomi_keyless_window_open() {
+                    option_env!("OPENCRABS_XIAOMI_APP_TOKEN")
+                        .unwrap_or("")
+                        .to_string()
+                } else {
+                    String::new()
+                }
+            });
         // Strip any chat-specific trailing segment so the caller can append
         // `/images/generations` cleanly. Accepts the three URL shapes users
         // typically paste into custom-provider config: `…/v1`,
@@ -829,7 +871,7 @@ pub fn active_provider_generation(config: &Config) -> Option<(String, String, St
             .trim_end_matches("/chat/completions")
             .trim_end_matches('/')
             .to_string();
-        return Some((api_key.clone(), base_url, generation_model.clone()));
+        return Some((api_key, base_url, generation_model.clone()));
     }
     None
 }

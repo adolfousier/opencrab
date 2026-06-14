@@ -513,21 +513,33 @@ fn vision_none_when_no_vision_model() {
 }
 
 #[test]
-fn vision_none_when_no_api_key() {
+fn vision_registers_keyless_provider_with_vision_model() {
+    // Keyless / local providers (no API key) still register vision: the
+    // `vision_model` is the gate, the Bearer is just empty. Modelled as a
+    // custom provider, which is how a local endpoint becomes active with no key.
+    let mut custom_map = BTreeMap::new();
+    custom_map.insert(
+        "localllm".to_string(),
+        ProviderConfig {
+            enabled: true,
+            api_key: None,
+            base_url: Some("http://localhost:11434/v1".to_string()),
+            vision_model: Some("llava".to_string()),
+            ..Default::default()
+        },
+    );
     let config = Config {
         providers: ProviderConfigs {
-            openai: Some(ProviderConfig {
-                enabled: true,
-                api_key: None,
-                vision_model: Some("gpt-4o".to_string()),
-                ..Default::default()
-            }),
+            custom: Some(custom_map),
             ..Default::default()
         },
         ..Default::default()
     };
     let result = active_provider_vision(&config);
-    assert!(result.is_none());
+    assert!(result.is_some());
+    let (key, _, model) = result.unwrap();
+    assert_eq!(key, "");
+    assert_eq!(model, "llava");
 }
 
 #[test]
