@@ -1,7 +1,10 @@
 //! Config hot-reload watcher.
 //!
-//! Watches `~/.opencrabs/config.toml` and `~/.opencrabs/keys.toml` for changes.
-//! On any modification, re-loads the full `Config` and fires all registered callbacks.
+//! Watches the `~/.opencrabs/` directory and reacts to changes of
+//! `config.toml`, `keys.toml`, and `commands.toml`. On any modification it
+//! re-loads the full `Config` and fires all registered callbacks. Watching the
+//! directory (rather than the files directly) is deliberate: atomic saves
+//! rename a temp file over the target, which a file-level watch would miss.
 //!
 //! Designed to be extended: register any channel state update or command reload
 //! by pushing a `ReloadCallback` via `spawn()`.
@@ -32,30 +35,45 @@ pub fn spawn(callbacks: Vec<ReloadCallback>) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
         let base = opencrabs_home();
-        let config_path = base.join("config.toml");
-        let keys_path = base.join("keys.toml");
-        let commands_path = base.join("commands.toml");
 
         let (tx, rx) = std::sync::mpsc::channel();
 
-        let mut watcher = match notify::recommended_watcher(move |res| {
-            if let Ok(event) = res {
-                let _ = tx.send(event);
-            }
-        }) {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::error!("ConfigWatcher: failed to create watcher: {}", e);
-                return;
-            }
-        };
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    // The directory watch also sees the SQLite DB and other churn in
+                    // ~/.opencrabs/, which would trigger a reload storm. React only
+                    // to our three config files.
+                    let relevant = event.paths.iter().any(|p| {
+                        matches!(
+                            p.file_name().and_then(|n| n.to_str()),
+                            Some("config.toml" | "keys.toml" | "commands.toml")
+                        )
+                    });
+                    if relevant {
+                        let _ = tx.send(event);
+                    }
+                }
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::error!("ConfigWatcher: failed to create watcher: {}", e);
+                    return;
+                }
+            };
 
-        for path in [&config_path, &keys_path, &commands_path] {
-            if path.exists()
-                && let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive)
-            {
-                tracing::warn!("ConfigWatcher: cannot watch {:?}: {}", path, e);
-            }
+        // Watch the DIRECTORY, not the individual files. Editors and our own
+        // toml_edit writes save atomically (write a temp file, then rename over
+        // the target), which changes the file's inode. A file-level watch stays
+        // bound to the now-deleted inode and silently misses every later edit —
+        // the cause of "saved config but the daemon (or TUI) didn't hot-reload,
+        // needed a restart." A directory watch survives renames and reliably
+        // catches every save.
+        if base.exists()
+            && let Err(e) = watcher.watch(&base, RecursiveMode::NonRecursive)
+        {
+            tracing::error!("ConfigWatcher: cannot watch {:?}: {}", base, e);
+            return;
         }
 
         tracing::info!(

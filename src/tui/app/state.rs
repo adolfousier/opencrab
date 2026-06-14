@@ -2475,12 +2475,25 @@ impl App {
                 // Refresh approval policy
                 (self.approval_auto_session, self.approval_auto_always) =
                     Self::read_approval_policy_from_config();
+                // Refresh the context-budget footer. A changed
+                // `providers.<name>.context_window` (or a provider swap from new
+                // keys) changes the effective window; the watcher fires this
+                // event AFTER swapping the provider, so re-read it now. Mirrors
+                // the load_session path so the active session updates at once.
+                if let Some(session) = self.current_session.as_ref() {
+                    let sid = session.id;
+                    let max_ctx = self.agent_service.context_limit_for_session(sid);
+                    self.context_max_tokens = max_ctx;
+                    self.session_context_max.insert(sid, max_ctx);
+                }
                 // Provider swap is already handled by the ConfigWatcher callback
                 // (ui.rs). Do NOT re-create the provider here — it causes a
                 // redundant create_provider call every reload, and the model-name
                 // comparison (config alias vs provider full ID) never matches,
                 // so it would fire on every single reload.
-                tracing::info!("Config reloaded — refreshed commands, approval policy, agent");
+                tracing::info!(
+                    "Config reloaded — refreshed commands, approval policy, context budget"
+                );
             }
             TuiEvent::TokenCountUpdated { session_id, count } => {
                 // Always cache the per-session value so a future

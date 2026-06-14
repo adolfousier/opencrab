@@ -127,3 +127,85 @@ async fn reload_callback_fires_on_change() {
         call_count.load(Ordering::Relaxed)
     );
 }
+
+/// Atomic saves (write a temp file, then rename over the target) are how
+/// editors and our own `toml_edit` writes persist config. They change the
+/// file's inode, so a file-level watch silently misses them. The production
+/// watcher fixes this by watching the DIRECTORY and filtering by filename —
+/// this test pins that behavior (a rename over config.toml is detected).
+#[tokio::test]
+async fn atomic_save_via_rename_is_detected_with_dir_watch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let config_path = dir.join("config.toml");
+    std::fs::write(&config_path, "[agent]\n").unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(4);
+
+    drop({
+        let dir = dir.clone();
+        tokio::task::spawn_blocking(move || {
+            let (etx, erx) = std::sync::mpsc::channel();
+            let mut watcher =
+                notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                    if let Ok(event) = res {
+                        // Mirror production: react only to the three config files.
+                        let relevant = event.paths.iter().any(|p| {
+                            matches!(
+                                p.file_name().and_then(|n| n.to_str()),
+                                Some("config.toml" | "keys.toml" | "commands.toml")
+                            )
+                        });
+                        if relevant {
+                            let _ = etx.send(());
+                        }
+                    }
+                })
+                .unwrap();
+            // Watch the DIRECTORY, like production does.
+            let _ = watcher.watch(&dir, notify::RecursiveMode::NonRecursive);
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                let remaining = end.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match erx.recv_timeout(remaining.min(std::time::Duration::from_millis(200))) {
+                    Ok(_) => {
+                        let _ = tx.try_send(());
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                }
+            }
+        })
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let mut detected = false;
+    for i in 0..3 {
+        // Write to a temp file, then rename over the target — the atomic-save
+        // pattern a file-level watch would miss.
+        let tmp_path = dir.join(format!("config.toml.tmp{i}"));
+        std::fs::write(
+            &tmp_path,
+            format!("[agent]\ncontext_limit = {}\n", 200_000 + i),
+        )
+        .unwrap();
+        std::fs::rename(&tmp_path, &config_path).unwrap();
+        if tokio::time::timeout(std::time::Duration::from_millis(3000), rx.recv())
+            .await
+            .is_ok()
+        {
+            detected = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+
+    assert!(
+        detected,
+        "directory watch must detect an atomic save (write temp + rename over config.toml)"
+    );
+}

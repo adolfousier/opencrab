@@ -1349,6 +1349,7 @@ async fn cmd_chat_inner(
 
                 // Provider swap still needs explicit call
                 let agent = agent.clone();
+                let sender = sender.clone();
                 tokio::spawn(async move {
                     match crate::brain::provider::create_provider(&cfg).await {
                         Ok(new_provider) => {
@@ -1362,10 +1363,11 @@ async fn cmd_chat_inner(
                             );
                         }
                     }
+                    // Fire AFTER the swap so the TUI refresh (commands, approval
+                    // policy, and the context-budget footer) reads the new
+                    // provider's context window, not the old one.
+                    let _ = sender.send(TuiEvent::ConfigReloaded);
                 });
-
-                // TUI refresh — commands autocomplete + approval policy
-                let _ = sender.send(TuiEvent::ConfigReloaded);
             }));
         }
 
