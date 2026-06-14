@@ -69,7 +69,7 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
             Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD),
         )));
         // Wrap subtitle so it never truncates
-        let subtitle_style = Style::default().fg(Color::DarkGray);
+        let subtitle_style = Style::default().fg(Color::Gray);
         for chunk in wrap_text(step.subtitle(), wrap_width) {
             lines.push(Line::from(Span::styled(chunk, subtitle_style)));
         }
@@ -399,7 +399,7 @@ fn render_whatsapp_qr_popup(f: &mut Frame, qr_text: &str, area: Rect) {
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(qr_h as usize + 3);
     lines.push(Line::from(Span::styled(
         " Open WhatsApp › Linked Devices › Link a Device ",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(""));
     for qr_line in qr_lines {
@@ -450,11 +450,7 @@ fn render_mode_select(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         ),
         Span::styled(
             if qs_selected { "[*]" } else { "[ ]" },
-            Style::default().fg(if qs_selected {
-                BRAND_GOLD
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if qs_selected { BRAND_GOLD } else { Color::Gray }),
         ),
         Span::styled(
             " QuickStart",
@@ -462,7 +458,7 @@ fn render_mode_select(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 .fg(if qs_selected {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 })
                 .add_modifier(if qs_selected {
                     Modifier::BOLD
@@ -473,7 +469,7 @@ fn render_mode_select(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     ]));
     lines.push(Line::from(Span::styled(
         "       Sensible defaults, 4 steps",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(""));
 
@@ -488,7 +484,7 @@ fn render_mode_select(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             Style::default().fg(if adv_selected {
                 BRAND_GOLD
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -497,7 +493,7 @@ fn render_mode_select(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 .fg(if adv_selected {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 })
                 .add_modifier(if adv_selected {
                     Modifier::BOLD
@@ -508,7 +504,7 @@ fn render_mode_select(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     ]));
     lines.push(Line::from(Span::styled(
         "       Full control, all 7 steps",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
 }
 
@@ -543,13 +539,18 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 .unwrap_or_else(|| "custom".to_string())
         };
 
-        // Green for configured providers, white/bold for selected, gray for rest
+        // Green for configured providers, white/bold for selected, light gray
+        // for the rest. The unselected rows MUST stay readable: ANSI bright
+        // black collapses into the background on dark terminal themes, which
+        // made every unselected provider invisible (only the white selected row
+        // and green configured row showed, so the list looked like it was
+        // missing most providers).
         let label_color = if selected {
             Color::White
         } else if configured {
             Color::Green
         } else {
-            Color::DarkGray
+            Color::Gray
         };
 
         let mut spans = vec![
@@ -561,7 +562,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 } else if configured {
                     Color::Green
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
             Span::styled(
@@ -600,7 +601,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 Style::default().fg(if name_focused {
                     BRAND_BLUE
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
             Span::styled(
@@ -608,7 +609,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 Style::default().fg(if name_focused {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
         ]));
@@ -625,7 +626,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 Style::default().fg(if base_focused {
                     BRAND_BLUE
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
             Span::styled(
@@ -633,7 +634,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 Style::default().fg(if base_focused {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
         ]));
@@ -658,7 +659,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 Style::default().fg(if api_key_focused {
                     BRAND_BLUE
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
             Span::styled(
@@ -668,7 +669,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 } else if api_key_focused {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
         ]));
@@ -687,7 +688,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     Style::default().fg(if model_focused {
                         BRAND_BLUE
                     } else {
-                        Color::DarkGray
+                        Color::Gray
                     }),
                 ),
                 Span::styled(
@@ -695,7 +696,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     Style::default().fg(if model_focused {
                         Color::White
                     } else {
-                        Color::DarkGray
+                        Color::Gray
                     }),
                 ),
             ]));
@@ -713,7 +714,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             if start > 0 {
                 lines.push(Line::from(Span::styled(
                     format!("  ↑ {} more", start),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(Color::Gray),
                 )));
             }
             for (off, m) in wizard.ps.models[start..end].iter().enumerate() {
@@ -736,7 +737,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             if end < total {
                 lines.push(Line::from(Span::styled(
                     format!("  ↓ {} more", total - end),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(Color::Gray),
                 )));
             }
         }
@@ -752,18 +753,14 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         lines.push(Line::from(vec![
             Span::styled(
                 "  Context:  ",
-                Style::default().fg(if cw_focused {
-                    BRAND_BLUE
-                } else {
-                    Color::DarkGray
-                }),
+                Style::default().fg(if cw_focused { BRAND_BLUE } else { Color::Gray }),
             ),
             Span::styled(
                 format!("{}{}", cw_display, cursor),
                 Style::default().fg(if cw_focused {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
         ]));
@@ -780,7 +777,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(Span::styled(
                 "  Press Enter to continue, or re-authenticate below",
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(Color::Gray)
                     .add_modifier(Modifier::ITALIC),
             )));
         } else {
@@ -789,7 +786,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(Span::styled(
                         "  Uses your GitHub Copilot subscription (no API charges)",
                         Style::default()
-                            .fg(Color::DarkGray)
+                            .fg(Color::Gray)
                             .add_modifier(Modifier::ITALIC),
                     )));
                     lines.push(Line::from(""));
@@ -815,7 +812,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(Span::styled(
                         "  Waiting for authorization...",
                         Style::default()
-                            .fg(Color::DarkGray)
+                            .fg(Color::Gray)
                             .add_modifier(Modifier::ITALIC),
                     )));
                 }
@@ -835,7 +832,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(Span::styled(
                         "  Press Enter to try again",
                         Style::default()
-                            .fg(Color::DarkGray)
+                            .fg(Color::Gray)
                             .add_modifier(Modifier::ITALIC),
                     )));
                 }
@@ -854,7 +851,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(Span::styled(
                 "  Press Enter to continue, or re-authenticate below",
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(Color::Gray)
                     .add_modifier(Modifier::ITALIC),
             )));
         } else {
@@ -863,7 +860,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(Span::styled(
                         "  Uses your OpenAI Codex subscription (no API charges)",
                         Style::default()
-                            .fg(Color::DarkGray)
+                            .fg(Color::Gray)
                             .add_modifier(Modifier::ITALIC),
                     )));
                     lines.push(Line::from(""));
@@ -889,7 +886,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(Span::styled(
                         "  Waiting for authorization...",
                         Style::default()
-                            .fg(Color::DarkGray)
+                            .fg(Color::Gray)
                             .add_modifier(Modifier::ITALIC),
                     )));
                 }
@@ -909,7 +906,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(Span::styled(
                         "  Press Enter to try again",
                         Style::default()
-                            .fg(Color::DarkGray)
+                            .fg(Color::Gray)
                             .add_modifier(Modifier::ITALIC),
                     )));
                 }
@@ -922,7 +919,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(Span::styled(
                 format!("  {}", help_line),
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(Color::Gray)
                     .add_modifier(Modifier::ITALIC),
             )));
         }
@@ -943,11 +940,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             };
             lines.push(Line::from(Span::styled(
                 "  Endpoint Type:",
-                Style::default().fg(if et_focused {
-                    BRAND_BLUE
-                } else {
-                    Color::DarkGray
-                }),
+                Style::default().fg(if et_focused { BRAND_BLUE } else { Color::Gray }),
             )));
             lines.push(Line::from(vec![
                 Span::styled(
@@ -955,7 +948,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     Style::default().fg(if et_focused && wizard.ps.zhipu_endpoint_type == 0 {
                         Color::White
                     } else {
-                        Color::DarkGray
+                        Color::Gray
                     }),
                 ),
                 Span::styled(
@@ -963,7 +956,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     Style::default().fg(if et_focused && wizard.ps.zhipu_endpoint_type == 1 {
                         Color::White
                     } else {
-                        Color::DarkGray
+                        Color::Gray
                     }),
                 ),
             ]));
@@ -1013,11 +1006,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("  {}: ", key_label),
-                    Style::default().fg(if key_focused {
-                        BRAND_BLUE
-                    } else {
-                        Color::DarkGray
-                    }),
+                    Style::default().fg(if key_focused { BRAND_BLUE } else { Color::Gray }),
                 ),
                 Span::styled(
                     format!("{}{}", masked_key, cursor),
@@ -1028,7 +1017,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     } else if key_focused {
                         Color::White
                     } else {
-                        Color::DarkGray
+                        Color::Gray
                     }),
                 ),
             ]));
@@ -1037,7 +1026,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 lines.push(Line::from(Span::styled(
                     format!("  {}", key_hint.trim()),
                     Style::default()
-                        .fg(Color::DarkGray)
+                        .fg(Color::Gray)
                         .add_modifier(Modifier::ITALIC),
                 )));
             }
@@ -1065,7 +1054,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 Style::default().fg(if model_focused {
                     BRAND_BLUE
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             )));
 
@@ -1089,7 +1078,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 if start > 0 {
                     lines.push(Line::from(Span::styled(
                         format!("  ↑ {} more", start),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::Gray),
                     )));
                 }
                 for (offset, model) in models[start..end].iter().enumerate() {
@@ -1102,22 +1091,18 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(vec![
                         Span::styled(
                             format!("  {}{} ", prefix, marker),
-                            Style::default().fg(if is_sel { ACCENT_GOLD } else { Color::DarkGray }),
+                            Style::default().fg(if is_sel { ACCENT_GOLD } else { Color::Gray }),
                         ),
                         Span::styled(
                             label,
-                            Style::default().fg(if is_sel {
-                                Color::White
-                            } else {
-                                Color::DarkGray
-                            }),
+                            Style::default().fg(if is_sel { Color::White } else { Color::Gray }),
                         ),
                     ]));
                 }
                 if end < total {
                     lines.push(Line::from(Span::styled(
                         format!("  ↓ {} more", total - end),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::Gray),
                     )));
                 }
             };
@@ -1134,7 +1119,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     lines.push(Line::from(Span::styled(
                         filter_display,
                         Style::default().fg(if wizard.ps.model_filter.is_empty() {
-                            Color::DarkGray
+                            Color::Gray
                         } else {
                             Color::White
                         }),
@@ -1161,7 +1146,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                         lines.push(Line::from(Span::styled(
                             "  no models match".to_string(),
                             Style::default()
-                                .fg(Color::DarkGray)
+                                .fg(Color::Gray)
                                 .add_modifier(Modifier::ITALIC),
                         )));
                     }
@@ -1185,7 +1170,7 @@ fn render_workspace(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Style::default().fg(if path_focused {
                 BRAND_BLUE
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -1193,7 +1178,7 @@ fn render_workspace(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Style::default().fg(if path_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1209,7 +1194,7 @@ fn render_workspace(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Style::default().fg(if wizard.seed_templates {
                 BRAND_GOLD
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -1217,21 +1202,21 @@ fn render_workspace(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Style::default().fg(if seed_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
 
     lines.push(Line::from(Span::styled(
         "       SOUL.md, USER.md, ...",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
 }
 
 fn render_channels(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) -> usize {
     lines.push(Line::from(Span::styled(
         "  Pick your channels (Space to toggle):",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(""));
 
@@ -1250,20 +1235,12 @@ fn render_channels(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) ->
             Span::styled(prefix, Style::default().fg(ACCENT_GOLD)),
             Span::styled(
                 marker,
-                Style::default().fg(if *enabled {
-                    BRAND_GOLD
-                } else {
-                    Color::DarkGray
-                }),
+                Style::default().fg(if *enabled { BRAND_GOLD } else { Color::Gray }),
             ),
             Span::styled(
                 format!(" {}", name),
                 Style::default()
-                    .fg(if focused {
-                        Color::White
-                    } else {
-                        Color::DarkGray
-                    })
+                    .fg(if focused { Color::White } else { Color::Gray })
                     .add_modifier(if focused {
                         Modifier::BOLD
                     } else {
@@ -1273,7 +1250,7 @@ fn render_channels(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) ->
         ]));
         lines.push(Line::from(Span::styled(
             format!("       {}", desc),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
     }
 
@@ -1294,7 +1271,7 @@ fn render_channels(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) ->
                 .fg(if continue_focused {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 })
                 .add_modifier(if continue_focused {
                     Modifier::BOLD
@@ -1313,19 +1290,19 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     lines.push(Line::from(Span::styled(
         "  1. Open Telegram, search @BotFather",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  2. Send /newbot, follow the prompts",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  3. Copy the bot token and paste below",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(""));
@@ -1357,7 +1334,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
             Style::default().fg(if token_focused {
                 BRAND_BLUE
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -1367,7 +1344,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
             } else if token_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1376,7 +1353,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         lines.push(Line::from(Span::styled(
             format!("  {}", token_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -1393,18 +1370,14 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     lines.push(Line::from(vec![
         Span::styled(
             "  Chat ID:   ",
-            Style::default().fg(if uid_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if uid_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", uid_display, uid_cursor),
             Style::default().fg(if uid_focused {
                 Color::White
             } else if wizard.telegram_user_id_input.is_empty() {
-                Color::DarkGray
+                Color::Gray
             } else {
                 Color::Cyan
             }),
@@ -1415,19 +1388,19 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     lines.push(Line::from(Span::styled(
         "  To get your chat ID: open Telegram, message @userinfobot",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  — it replies with your numeric ID. Paste it above.",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  (Leave empty to auto-detect from your messages, or allow any user.)",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
 
@@ -1444,7 +1417,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Tab/Shift+Tab: nav fields | \u{2190}\u{2192}: cursor | Ctrl+\u{232b}: clear | Enter: confirm",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     // Focused field for scrolling: token=base+4, uid=base+6, respond_to=base+10 (approx)
     let offset = match wizard.telegram_field {
@@ -1461,19 +1434,19 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
     lines.push(Line::from(Span::styled(
         "  1. Go to discord.com/developers/applications",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  2. Create app > Bot > Copy token",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  3. Enable Message Content Intent",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(""));
@@ -1505,7 +1478,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             Style::default().fg(if token_focused {
                 BRAND_BLUE
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -1515,7 +1488,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             } else if token_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1524,7 +1497,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         lines.push(Line::from(Span::styled(
             format!("  {}", token_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -1553,11 +1526,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
     lines.push(Line::from(vec![
         Span::styled(
             "  Channel ID:  ",
-            Style::default().fg(if ch_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if ch_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", ch_display, ch_cursor),
@@ -1566,7 +1535,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             } else if ch_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1575,7 +1544,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         lines.push(Line::from(Span::styled(
             format!("  {}", ch_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -1604,11 +1573,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
     lines.push(Line::from(vec![
         Span::styled(
             "  Allowed List: ",
-            Style::default().fg(if al_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if al_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", al_display, al_cursor),
@@ -1617,7 +1582,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             } else if al_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1626,7 +1591,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
         lines.push(Line::from(Span::styled(
             format!("  {}", al_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -1644,7 +1609,7 @@ fn render_discord_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Tab/Shift+Tab: nav fields | \u{2190}\u{2192}: cursor | Ctrl+\u{232b}: clear | Enter: confirm",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     let offset = match wizard.discord_field {
         DiscordField::BotToken => 4,
@@ -1673,7 +1638,7 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         lines.push(Line::from(Span::styled(
             "  QR code displayed — scan with WhatsApp",
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
         lines.push(Line::from(Span::styled(
@@ -1683,7 +1648,7 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     } else if wizard.whatsapp_connecting {
         lines.push(Line::from(Span::styled(
             "  Starting WhatsApp connection...",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
     } else if let Some(ref err) = wizard.whatsapp_error {
         lines.push(Line::from(Span::styled(
@@ -1692,13 +1657,13 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         )));
         lines.push(Line::from(Span::styled(
             "  Logs: ~/.opencrabs/logs/",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
         lines.push(Line::from(""));
         if conn_focused {
             lines.push(Line::from(Span::styled(
                 "  Press Enter to retry, 'R' to reset session, or 'S' to skip",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Gray),
             )));
         }
     } else if conn_focused {
@@ -1708,12 +1673,12 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         if session_db.exists() {
             lines.push(Line::from(Span::styled(
                 "  Previously connected  ·  Press R to reset and re-pair",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Gray),
             )));
         } else {
             lines.push(Line::from(Span::styled(
                 "  Press Enter to show QR code",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Gray),
             )));
         }
     }
@@ -1741,7 +1706,7 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
             Style::default().fg(if phone_focused {
                 BRAND_BLUE
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -1751,7 +1716,7 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
             } else if phone_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1760,14 +1725,14 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
         lines.push(Line::from(Span::styled(
             "  Type a new number to replace, or press Enter to keep existing",
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     } else if wizard.whatsapp_phone_input.is_empty() {
         lines.push(Line::from(Span::styled(
             "  Optional — leave empty to allow all numbers",
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -1778,7 +1743,7 @@ fn render_whatsapp_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Tab/Shift+Tab: nav fields | \u{2190}\u{2192}: cursor | Ctrl+\u{232b}: clear | Enter: confirm | S: skip",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     let offset = match wizard.whatsapp_field {
         WhatsAppField::Connection => 0,
@@ -1793,37 +1758,37 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(Span::styled(
         "  1. Go to api.slack.com/apps > Create App",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  2. OAuth > Bot Token Scopes: chat:write, channels:history,",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "     groups:history, im:history, mpim:history, users:read,",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "     files:read, files:write, reactions:write, app_mentions:read",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  3. Enable Socket Mode > copy App Token (xapp-...)",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  4. Install App to Workspace > copy Bot Token (xoxb-...)",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(""));
@@ -1852,11 +1817,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  Bot Token: ",
-            Style::default().fg(if bot_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if bot_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", masked_bot, cursor_b),
@@ -1865,7 +1826,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             } else if bot_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1874,7 +1835,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         lines.push(Line::from(Span::styled(
             format!("  {}", bot_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -1903,11 +1864,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  App Token: ",
-            Style::default().fg(if app_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if app_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", masked_app, cursor_a),
@@ -1916,7 +1873,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             } else if app_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1925,7 +1882,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         lines.push(Line::from(Span::styled(
             format!("  {}", app_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -1951,11 +1908,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  Channel ID: ",
-            Style::default().fg(if ch_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if ch_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", ch_display, ch_cursor),
@@ -1964,7 +1917,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             } else if ch_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -1973,7 +1926,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         lines.push(Line::from(Span::styled(
             format!("  {}", ch_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -2002,11 +1955,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(vec![
         Span::styled(
             "  Allowed List: ",
-            Style::default().fg(if al_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if al_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", al_display, al_cursor),
@@ -2015,7 +1964,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             } else if al_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -2024,7 +1973,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         lines.push(Line::from(Span::styled(
             format!("  {}", al_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -2042,7 +1991,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Tab/Shift+Tab: nav fields | \u{2190}\u{2192}: cursor | Ctrl+\u{232b}: clear | Enter: confirm",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     let offset = match wizard.slack_field {
         SlackField::BotToken => 4,
@@ -2058,7 +2007,7 @@ fn render_slack_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
 /// `selected` = 0..2, `focused` = whether this field has keyboard focus.
 fn render_respond_to_selector(lines: &mut Vec<Line<'static>>, selected: usize, focused: bool) {
     const OPTIONS: [&str; 3] = ["all", "dm_only", "mention"];
-    let label_style = Style::default().fg(if focused { BRAND_BLUE } else { Color::DarkGray });
+    let label_style = Style::default().fg(if focused { BRAND_BLUE } else { Color::Gray });
     let mut spans: Vec<Span<'static>> = vec![Span::styled("  Respond to: ", label_style)];
     for (i, opt) in OPTIONS.iter().enumerate() {
         let is_sel = i == selected;
@@ -2068,7 +2017,7 @@ fn render_respond_to_selector(lines: &mut Vec<Line<'static>>, selected: usize, f
         } else if is_sel {
             Style::default().fg(Color::Cyan)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::Gray)
         };
         spans.push(Span::styled(format!("{}{}{}", prefix, opt, suffix), style));
         if i < OPTIONS.len() - 1 {
@@ -2080,7 +2029,7 @@ fn render_respond_to_selector(lines: &mut Vec<Line<'static>>, selected: usize, f
         lines.push(Line::from(Span::styled(
             "  ← → to change",
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -2114,7 +2063,7 @@ fn render_channel_test_status(lines: &mut Vec<Line<'static>>, wizard: &Onboardin
             )));
             lines.push(Line::from(Span::styled(
                 "  Enter to retry | S to skip",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Gray),
             )));
         }
     }
@@ -2123,17 +2072,14 @@ fn render_channel_test_status(lines: &mut Vec<Line<'static>>, wizard: &Onboardin
 fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     // Provider row
     lines.push(Line::from(vec![
-        Span::styled(
-            "  Provider: ".to_string(),
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled("  Provider: ".to_string(), Style::default().fg(Color::Gray)),
         Span::styled(
             "[ Google ]".to_string(),
             Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "  gemini-3.1-flash-image-preview".to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         ),
         Span::styled(
             "  🍌 Nano Banana".to_string(),
@@ -2154,7 +2100,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     };
     lines.push(Line::from(Span::styled(
         hint_text,
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(""));
 
@@ -2174,7 +2120,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             Style::default().fg(if wizard.image_vision_enabled {
                 BRAND_GOLD
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -2183,7 +2129,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 .fg(if vision_focused {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 })
                 .add_modifier(if vision_focused {
                     Modifier::BOLD
@@ -2193,7 +2139,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         ),
         Span::styled(
             "   — analyze images the agent receives",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         ),
     ]));
 
@@ -2213,7 +2159,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             Style::default().fg(if wizard.image_generation_enabled {
                 BRAND_GOLD
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -2222,7 +2168,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 .fg(if gen_focused {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 })
                 .add_modifier(if gen_focused {
                     Modifier::BOLD
@@ -2232,7 +2178,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         ),
         Span::styled(
             " — generate images from text prompts",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         ),
     ]));
 
@@ -2255,13 +2201,13 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 Style::default().fg(if model_focused {
                     BRAND_BLUE
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
             Span::styled(
                 format!("{}{}", display, cursor),
                 Style::default().fg(if dim {
-                    Color::DarkGray
+                    Color::Gray
                 } else if model_focused {
                     Color::White
                 } else {
@@ -2301,11 +2247,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         lines.push(Line::from(vec![
             Span::styled(
                 "  Google API Key: ",
-                Style::default().fg(if key_focused {
-                    BRAND_BLUE
-                } else {
-                    Color::DarkGray
-                }),
+                Style::default().fg(if key_focused { BRAND_BLUE } else { Color::Gray }),
             ),
             Span::styled(
                 format!("{}{}", masked_key, cursor),
@@ -2314,7 +2256,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                 } else if key_focused {
                     Color::White
                 } else {
-                    Color::DarkGray
+                    Color::Gray
                 }),
             ),
         ]));
@@ -2323,7 +2265,7 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             lines.push(Line::from(Span::styled(
                 format!("  {}", key_hint.trim()),
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(Color::Gray)
                     .add_modifier(Modifier::ITALIC),
             )));
         }
@@ -2331,17 +2273,14 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
         // "get your key" hint — shown whenever key isn't set yet
         if !wizard.has_existing_image_key() {
             lines.push(Line::from(vec![
-                Span::styled("  Get a free key at ", Style::default().fg(Color::DarkGray)),
+                Span::styled("  Get a free key at ", Style::default().fg(Color::Gray)),
                 Span::styled(
                     "aistudio.google.com",
                     Style::default()
                         .fg(BRAND_BLUE)
                         .add_modifier(Modifier::UNDERLINED),
                 ),
-                Span::styled(
-                    "  →  Google AI Studio",
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Span::styled("  →  Google AI Studio", Style::default().fg(Color::Gray)),
             ]));
         }
     }
@@ -2362,7 +2301,7 @@ fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
 
     lines.push(Line::from(Span::styled(
         format!("  Install as {} ?", platform),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(""));
 
@@ -2377,7 +2316,7 @@ fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Style::default().fg(if yes_selected {
                 BRAND_GOLD
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -2385,7 +2324,7 @@ fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Style::default().fg(if yes_selected {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -2400,7 +2339,7 @@ fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Style::default().fg(if !yes_selected {
                 BRAND_GOLD
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
         Span::styled(
@@ -2408,7 +2347,7 @@ fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
             Style::default().fg(if !yes_selected {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -2417,7 +2356,7 @@ fn render_daemon(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
 fn render_health_check(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     for (name, status) in &wizard.health_results {
         let (icon, color) = match status {
-            HealthStatus::Pending => ("...", Color::DarkGray),
+            HealthStatus::Pending => ("...", Color::Gray),
             HealthStatus::Running => ("...", ACCENT_GOLD),
             HealthStatus::Pass => ("OK", Color::Cyan),
             HealthStatus::Fail(_) => ("FAIL", Color::Red),
@@ -2452,7 +2391,7 @@ fn render_health_check(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
             if !wizard.quick_jump {
                 lines.push(Line::from(Span::styled(
                     "  Press Enter to finish setup".to_string(),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(Color::Gray),
                 )));
             }
         } else {
@@ -2494,7 +2433,7 @@ fn render_brain_setup(
         )));
         lines.push(Line::from(Span::styled(
             "  Your agent is getting to know you".to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
         return;
     }
@@ -2510,12 +2449,12 @@ fn render_brain_setup(
         )));
         lines.push(Line::from(Span::styled(
             "  Your agent knows the deal now".to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  Press Enter to finish setup".to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
         return;
     }
@@ -2530,7 +2469,7 @@ fn render_brain_setup(
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  Press Enter to continue".to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
         return;
     }
@@ -2546,11 +2485,7 @@ fn render_brain_setup(
     lines.push(Line::from(Span::styled(
         "  About You:".to_string(),
         Style::default()
-            .fg(if me_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            })
+            .fg(if me_focused { BRAND_BLUE } else { Color::Gray })
             .add_modifier(Modifier::BOLD),
     )));
 
@@ -2572,7 +2507,7 @@ fn render_brain_setup(
             .fg(if agent_focused {
                 BRAND_BLUE
             } else {
-                Color::DarkGray
+                Color::Gray
             })
             .add_modifier(Modifier::BOLD),
     )));
@@ -2587,7 +2522,7 @@ fn render_brain_setup(
 
     lines.push(Line::from(""));
     let italic_style = Style::default()
-        .fg(Color::DarkGray)
+        .fg(Color::Gray)
         .add_modifier(Modifier::ITALIC);
     for chunk in wrap_text(
         "  The more you drop the better I cover your ass",
@@ -2603,7 +2538,7 @@ fn render_brain_setup(
             Style::default().fg(ACCENT_GOLD),
         )));
     }
-    let hint_style = Style::default().fg(Color::DarkGray);
+    let hint_style = Style::default().fg(Color::Gray);
     for chunk in wrap_text(
         "  Esc to skip · Tab to switch · Enter to generate",
         wrap_width,
@@ -2628,17 +2563,13 @@ fn render_brain_field(
         lines.push(Line::from(Span::styled(
             placeholder.to_string(),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
         return;
     }
 
-    let style = Style::default().fg(if focused {
-        Color::White
-    } else {
-        Color::DarkGray
-    });
+    let style = Style::default().fg(if focused { Color::White } else { Color::Gray });
 
     let cursor = if focused { "\u{2588}" } else { "" };
     let display = format!("  {}{}", content, cursor);
@@ -2655,7 +2586,7 @@ fn render_brain_field(
         lines.push(Line::from(Span::styled(
             format!("  ({} lines pasted)", content_lines),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
         for chunk in &wrapped[total - MAX_VISIBLE_LINES..] {
@@ -2717,7 +2648,7 @@ fn render_complete(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
         provider.name.to_string()
     };
     lines.push(Line::from(vec![
-        Span::styled("  Provider: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("  Provider: ", Style::default().fg(Color::Gray)),
         Span::styled(
             provider_label,
             Style::default()
@@ -2728,14 +2659,14 @@ fn render_complete(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
 
     if wizard.ps.is_custom() {
         lines.push(Line::from(vec![
-            Span::styled("  Base URL: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  Base URL: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 wizard.ps.base_url.clone(),
                 Style::default().fg(Color::White),
             ),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("  Model:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  Model:    ", Style::default().fg(Color::Gray)),
             Span::styled(
                 wizard.ps.custom_model.clone(),
                 Style::default().fg(Color::White),
@@ -2743,7 +2674,7 @@ fn render_complete(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
         ]));
     } else {
         lines.push(Line::from(vec![
-            Span::styled("  Model:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  Model:    ", Style::default().fg(Color::Gray)),
             Span::styled(
                 wizard.ps.selected_model_name().to_string(),
                 Style::default()
@@ -2754,7 +2685,7 @@ fn render_complete(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     }
 
     lines.push(Line::from(vec![
-        Span::styled("  Workspace:", Style::default().fg(Color::DarkGray)),
+        Span::styled("  Workspace:", Style::default().fg(Color::Gray)),
         Span::styled(
             format!(" {}", wizard.workspace_path),
             Style::default().fg(Color::White),
@@ -2777,19 +2708,19 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(Span::styled(
         "  1. Go to trello.com/power-ups/admin > Create Power-Up",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  2. Click 'API Key' tab > copy your API Key",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  3. Click 'Token' link > authorize > copy Token",
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(""));
@@ -2818,11 +2749,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(vec![
         Span::styled(
             "  API Key: ",
-            Style::default().fg(if ak_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if ak_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", masked_ak, cursor_ak),
@@ -2831,7 +2758,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
             } else if ak_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -2840,7 +2767,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
         lines.push(Line::from(Span::styled(
             format!("  {}", ak_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -2869,11 +2796,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(vec![
         Span::styled(
             "  API Token: ",
-            Style::default().fg(if at_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if at_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", masked_at, cursor_at),
@@ -2882,7 +2805,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
             } else if at_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -2891,7 +2814,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
         lines.push(Line::from(Span::styled(
             format!("  {}", at_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -2920,11 +2843,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(vec![
         Span::styled(
             "  Board(s): ",
-            Style::default().fg(if bd_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if bd_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", bd_display, bd_cursor),
@@ -2933,7 +2852,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
             } else if bd_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -2942,7 +2861,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
         lines.push(Line::from(Span::styled(
             format!("  {}", bd_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -2971,11 +2890,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(vec![
         Span::styled(
             "  Allowed Users: ",
-            Style::default().fg(if au_focused {
-                BRAND_BLUE
-            } else {
-                Color::DarkGray
-            }),
+            Style::default().fg(if au_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
             format!("{}{}", au_display, au_cursor),
@@ -2984,7 +2899,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
             } else if au_focused {
                 Color::White
             } else {
-                Color::DarkGray
+                Color::Gray
             }),
         ),
     ]));
@@ -2993,7 +2908,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
         lines.push(Line::from(Span::styled(
             format!("  {}", au_hint.trim()),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Gray)
                 .add_modifier(Modifier::ITALIC),
         )));
     }
@@ -3004,7 +2919,7 @@ fn render_trello_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Tab/Shift+Tab: nav fields | \u{2190}\u{2192}: cursor | Ctrl+\u{232b}: clear | Enter: confirm",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::Gray),
     )));
     let offset = match wizard.trello_field {
         TrelloField::ApiKey => 4,
