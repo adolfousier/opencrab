@@ -452,7 +452,42 @@ pub async fn fetch_provider_models(
             {
                 req = req.header("Authorization", format!("Bearer {}", key));
             }
-            req.send().await
+
+            // z.ai's /models is entitlement-gated: it returns only the models
+            // the key can access, so a brand-new GLM the account hasn't been
+            // granted (or one that lives on the other endpoint_type) is simply
+            // absent. Merge in the user's config.toml [providers.zhipu].models
+            // so a model can be pinned by exact id even when /models omits it —
+            // the same fallback MiniMax already has. (merge_minimax_baseline is
+            // a generic first-wins dedup merge despite the name.)
+            let api_models: Vec<String> = match req.send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<ModelsResponse>().await {
+                        Ok(body) => body.data.into_iter().map(|m| m.id).collect(),
+                        Err(e) => {
+                            tracing::warn!("[fetch_provider_models] zhipu parse error: {}", e);
+                            Vec::new()
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    tracing::warn!(
+                        "[fetch_provider_models] zhipu /models HTTP {}",
+                        resp.status()
+                    );
+                    Vec::new()
+                }
+                Err(e) => {
+                    tracing::warn!("[fetch_provider_models] zhipu request failed: {}", e);
+                    Vec::new()
+                }
+            };
+            let user_models = crate::config::Config::load()
+                .ok()
+                .and_then(|c| c.providers.zhipu.clone())
+                .map(|p| p.models)
+                .unwrap_or_default();
+            return merge_minimax_baseline(api_models, user_models);
         }
         "ollama" => {
             // Ollama — fetch from /api/tags (local or cloud)
