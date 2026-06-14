@@ -105,6 +105,8 @@ impl OnboardingWizard {
 
         let auth_label = if self.ps.is_cli() {
             "CLI Binary Found"
+        } else if self.ps.is_keyless() {
+            "Keyless Provider"
         } else {
             "API Key Present"
         };
@@ -167,9 +169,15 @@ impl OnboardingWizard {
             } else {
                 HealthStatus::Fail(format!("'{}' CLI not found in PATH", binary))
             }
-        } else if !self.ps.api_key_input.is_empty()
-            || (self.ps.is_custom() && !self.ps.base_url.is_empty())
-        {
+        } else if self.ps.is_keyless() {
+            // Keyless / local providers (Xiaomi's free window, Ollama, etc.)
+            // need no API key — the proxy or local server supplies it. Failing
+            // them on "No API key provided" wrongly blocked onboarding.
+            HealthStatus::Pass
+        } else if !self.ps.api_key_input.is_empty() || !self.ps.base_url.is_empty() {
+            // A key, or an explicit endpoint (custom provider, or a local /
+            // self-hosted base_url like Ollama on localhost) both count: a
+            // configured endpoint commonly needs no key.
             HealthStatus::Pass
         } else {
             HealthStatus::Fail("No API key provided".to_string())
