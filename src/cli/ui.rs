@@ -6,6 +6,100 @@ use std::sync::Arc;
 use crate::brain::prompt_builder::RuntimeInfo;
 use crate::brain::{BrainLoader, CommandLoader};
 
+/// Register (or unregister) the tools whose availability depends on config /
+/// keys: EXA, Brave, image generation, and vision/video. Idempotent — calling
+/// it with the current config produces the correct set, adding a tool when its
+/// key / enable flag appears and removing it when it disappears.
+///
+/// Shared by the startup registry build and the config-watcher reload callback,
+/// so a key added to `keys.toml` (or an `enabled` flag flipped) is picked up at
+/// runtime in BOTH the TUI and the daemon with no restart. The registry is an
+/// `Arc<ToolRegistry>` shared with the channel agents, which list tools from it
+/// per request, so the change reaches channels on their next message.
+pub(crate) fn register_config_dependent_tools(
+    registry: &Arc<crate::brain::tools::registry::ToolRegistry>,
+    config: &crate::config::Config,
+) {
+    use crate::brain::tools::{
+        analyze_image::AnalyzeImageTool, analyze_video::AnalyzeVideoTool,
+        brave_search::BraveSearchTool, exa_search::ExaSearchTool,
+        generate_image::GenerateImageTool, provider_vision::ProviderVisionTool,
+    };
+
+    // EXA: always available (free via MCP; direct API when a key is set).
+    let exa_key = config
+        .providers
+        .web_search
+        .as_ref()
+        .and_then(|ws| ws.exa.as_ref())
+        .and_then(|p| p.api_key.clone())
+        .filter(|k| !k.is_empty());
+    registry.register(Arc::new(ExaSearchTool::new(exa_key)));
+
+    // Brave: requires `enabled = true` AND a non-empty key.
+    if let Some(brave_cfg) = config
+        .providers
+        .web_search
+        .as_ref()
+        .and_then(|ws| ws.brave.as_ref())
+        && brave_cfg.enabled
+        && let Some(brave_key) = brave_cfg.api_key.clone().filter(|k| !k.is_empty())
+    {
+        registry.register(Arc::new(BraveSearchTool::new(brave_key)));
+    } else {
+        registry.unregister("brave_search");
+    }
+
+    // Image generation — active provider override or the global Gemini config.
+    if let Some(tool) = GenerateImageTool::from_config(config) {
+        registry.register(Arc::new(tool));
+    } else {
+        registry.unregister("generate_image");
+    }
+
+    // Vision (analyze_image): provider `vision_model` wins, else Gemini image.vision.
+    if let Some((api_key, base_url, vision_model)) =
+        crate::brain::provider::factory::active_provider_vision(config)
+    {
+        registry.register(Arc::new(ProviderVisionTool::new(
+            api_key,
+            base_url,
+            vision_model,
+        )));
+    } else if config.image.vision.enabled
+        && let Some(key) = config
+            .image
+            .vision
+            .api_key
+            .clone()
+            .filter(|k| !k.is_empty())
+    {
+        registry.register(Arc::new(AnalyzeImageTool::new(
+            key,
+            config.image.vision.model.clone(),
+        )));
+    } else {
+        registry.unregister("analyze_image");
+    }
+
+    // Video (analyze_video): Gemini-native, needs image.vision configured.
+    if config.image.vision.enabled
+        && let Some(key) = config
+            .image
+            .vision
+            .api_key
+            .clone()
+            .filter(|k| !k.is_empty())
+    {
+        registry.register(Arc::new(AnalyzeVideoTool::new(
+            key,
+            config.image.vision.model.clone(),
+        )));
+    } else {
+        registry.unregister("analyze_video");
+    }
+}
+
 /// Start the headless daemon.
 ///
 /// Multi-profile: this one process covers EVERY profile's scheduled jobs. The
@@ -106,17 +200,15 @@ async fn cmd_chat_inner(
         brain::{
             agent::AgentService,
             tools::{
-                analyze_image::AnalyzeImageTool, analyze_video::AnalyzeVideoTool, bash::BashTool,
-                brave_search::BraveSearchTool, code_exec::CodeExecTool, config_tool::ConfigTool,
+                bash::BashTool, code_exec::CodeExecTool, config_tool::ConfigTool,
                 context::ContextTool, doc_parser::DocParserTool, edit::EditTool,
-                exa_search::ExaSearchTool, follow_up_question::FollowUpQuestionTool,
-                generate_image::GenerateImageTool, glob::GlobTool, grep::GrepTool,
+                follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, load_brain_file::LoadBrainFileTool, ls::LsTool,
                 memory_search::MemorySearchTool, notebook::NotebookEditTool, plan_tool::PlanTool,
-                provider_vision::ProviderVisionTool, read::ReadTool, registry::ToolRegistry,
-                rename_session::RenameSessionTool, session_search::SessionSearchTool,
-                slash_command::SlashCommandTool, task::TaskTool, web_search::WebSearchTool,
-                write::WriteTool, write_opencrabs_file::WriteOpenCrabsFileTool,
+                read::ReadTool, registry::ToolRegistry, rename_session::RenameSessionTool,
+                session_search::SessionSearchTool, slash_command::SlashCommandTool, task::TaskTool,
+                web_search::WebSearchTool, write::WriteTool,
+                write_opencrabs_file::WriteOpenCrabsFileTool,
             },
         },
         db::Database,
@@ -223,76 +315,11 @@ async fn cmd_chat_inner(
     tool_registry.register(Arc::new(
         crate::brain::tools::tool_search::ToolSearchTool::new(tool_registry.clone()),
     ));
-    // EXA search: always available (free via MCP), uses direct API if key is set
-    let exa_key = config
-        .providers
-        .web_search
-        .as_ref()
-        .and_then(|ws| ws.exa.as_ref())
-        .and_then(|p| p.api_key.clone())
-        .filter(|k| !k.is_empty());
-    let exa_mode = if exa_key.is_some() {
-        "direct API"
-    } else {
-        "MCP (free)"
-    };
-    tool_registry.register(Arc::new(ExaSearchTool::new(exa_key)));
-    tracing::info!("Registered EXA search tool (mode: {})", exa_mode);
-    // Brave search: requires enabled = true in config.toml AND API key in keys.toml
-    if let Some(brave_cfg) = config
-        .providers
-        .web_search
-        .as_ref()
-        .and_then(|ws| ws.brave.as_ref())
-        && brave_cfg.enabled
-        && let Some(brave_key) = brave_cfg.api_key.clone()
-    {
-        tool_registry.register(Arc::new(BraveSearchTool::new(brave_key)));
-        tracing::info!("Registered Brave search tool");
-    }
-
-    // Image generation tool — picks the wire backend based on the active
-    // provider's `generation_model` override (Gemini if URL hits the
-    // Google host, OpenAI `/v1/images/generations` otherwise), or falls
-    // back to the global `image.generation` Gemini config.
-    if let Some(tool) = GenerateImageTool::from_config(config) {
-        tool_registry.register(Arc::new(tool));
-        tracing::info!("Registered generate_image tool");
-    }
-    // Image vision tool — provider.vision_model takes priority over image.vision (Gemini)
-    if let Some((api_key, base_url, vision_model)) =
-        crate::brain::provider::factory::active_provider_vision(config)
-    {
-        tool_registry.register(Arc::new(ProviderVisionTool::new(
-            api_key,
-            base_url,
-            vision_model,
-        )));
-        tracing::info!("Registered analyze_image tool (provider vision model)");
-    } else if config.image.vision.enabled
-        && let Some(ref key) = config.image.vision.api_key
-    {
-        tool_registry.register(Arc::new(AnalyzeImageTool::new(
-            key.clone(),
-            config.image.vision.model.clone(),
-        )));
-        tracing::info!("Registered analyze_image tool (Gemini)");
-    }
-
-    // Video vision tool — Gemini-native multimodal video understanding.
-    // Phase 1 only registers when image.vision is configured with Gemini;
-    // Phase 2 will add a frame-extraction fallback for non-Gemini providers
-    // (ffmpeg → N frames at 1 fps → analyze_image per frame).
-    if config.image.vision.enabled
-        && let Some(ref key) = config.image.vision.api_key
-        && !key.is_empty()
-    {
-        tool_registry.register(Arc::new(AnalyzeVideoTool::new(
-            key.clone(),
-            config.image.vision.model.clone(),
-        )));
-        tracing::info!("Registered analyze_video tool (Gemini)");
-    }
+    // Tools whose availability depends on config / keys (EXA, Brave, image
+    // generation, vision/video). Extracted so the config watcher can re-run it
+    // on reload, so a key added to keys.toml is picked up at runtime with no
+    // restart, in the daemon as well as the TUI.
+    register_config_dependent_tools(&tool_registry, config);
 
     // Phase 5: Multi-agent orchestration
     let subagent_manager = Arc::new(crate::brain::tools::subagent::SubAgentManager::new());
@@ -1296,6 +1323,19 @@ async fn cmd_chat_inner(
         use crate::utils::config_watcher::{self, ReloadCallback};
 
         let mut callbacks: Vec<ReloadCallback> = Vec::new();
+
+        // Tool availability — re-register config/key-gated tools (Brave, EXA,
+        // image generation, vision/video) on the shared registry so a key added
+        // to keys.toml (or a flipped `enabled` flag) is picked up at runtime,
+        // with no restart. Channels list tools from this same registry per
+        // message, so the change reaches the daemon's channels immediately.
+        {
+            let registry = shared_tool_registry.clone();
+            callbacks.push(Arc::new(move |cfg: crate::config::Config| {
+                register_config_dependent_tools(&registry, &cfg);
+                tracing::info!("ConfigWatcher: re-registered config-dependent tools");
+            }));
+        }
 
         // Unified config broadcast — push new config to watch channel so ALL
         // channel agents see the latest values on next message (allowlists,
