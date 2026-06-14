@@ -299,9 +299,9 @@ async fn cmd_chat_inner(
     tool_registry.register(Arc::new(WriteOpenCrabsFileTool));
     // Session search — hybrid QMD search across all session message history
     tool_registry.register(Arc::new(SessionSearchTool::new(db.pool().clone())));
-    // Analytics report — shareable brain/tool/RSI stats the agent can send to a chat
+    // Mission control report — shareable analytics/activity/inbox/schedule the agent can send to a chat
     tool_registry.register(Arc::new(
-        crate::brain::tools::analytics_report::AnalyticsReportTool::new(db.pool().clone()),
+        crate::brain::tools::mission_control_report::MissionControlReportTool::new(db.pool().clone()),
     ));
     // Channel search — search passively captured channel messages (Telegram groups, etc.)
     use crate::brain::tools::channel_search::ChannelSearchTool;

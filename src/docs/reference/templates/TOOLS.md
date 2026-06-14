@@ -24,7 +24,7 @@ convenience.
 | `agents` | spawn / wait / send-input / close / resume sub-agents, teams | "spawn a sub-agent" |
 | `media` | generate / analyze images, analyze video, provider vision | "generate an image" |
 | `system` | feedback_record/analyze, self_improve, rebuild, evolve, tool_manage, rsi_proposals | "rebuild from source" |
-| `utility` | cron_manage, session_search, channel_search, analytics_report, a2a_send | "create a cron job" |
+| `utility` | cron_manage, session_search, channel_search, mission_control_report, a2a_send | "create a cron job" |
 
 Rule: if a task needs a non-core tool, call `tool_search` with a plain-words description FIRST —
 never assume the capability is missing before searching.
@@ -72,10 +72,10 @@ never assume the capability is missing before searching.
 
 ## Reporting
 
-- `/analytics`: brain sizes, tool usage and failure rates, and RSI applications.
+- `/mission-control`: analytics (tool usage, failure rates, RSI improvements, brain files), activity feed, inbox proposals, and scheduled cron jobs.
   Works in the TUI (opens the Mission Control Analytics panel) and in every
   channel (returns the report as a message). The same data is also available as
-  the `analytics_report` agent tool, so you can ask in plain language (for
+  the `mission_control_report` agent tool, so you can ask in plain language (for
   example "send me my analytics") and the agent ships the report to the chat.
 
 ## Profile-Aware Paths

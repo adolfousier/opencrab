@@ -161,8 +161,8 @@ pub enum ChannelCommand {
     Help(String),
     /// `/usage` — formatted session/cost stats
     Usage(String),
-    /// `/analytics`: brain/tool/RSI analytics report
-    Analytics(String),
+    /// `/mission-control`: full mission control report (analytics, activity, inbox, schedule)
+    MissionControl(String),
     /// `/models` — provider picker (step 1: choose provider, step 2: choose model)
     Models(ProvidersResponse),
     /// `/new` — create a new session and switch to it
@@ -245,7 +245,7 @@ pub async fn handle_command(
         "/sessions" => ChannelCommand::Sessions(format_sessions(session_id, session_svc).await),
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
-        "/analytics" => ChannelCommand::Analytics(format_analytics(agent).await),
+        "/mission-control" => ChannelCommand::MissionControl(format_mission_control(agent).await),
         _ if trimmed.starts_with('/') && !crate::utils::string::looks_like_file_path(trimmed) => {
             match_user_command(trimmed)
         }
@@ -256,7 +256,7 @@ pub async fn handle_command(
     let response_text = match &result {
         ChannelCommand::Help(body)
         | ChannelCommand::Usage(body)
-        | ChannelCommand::Analytics(body) => Some(body.clone()),
+        | ChannelCommand::MissionControl(body) => Some(body.clone()),
         ChannelCommand::Models(resp) => Some(resp.text.clone()),
         ChannelCommand::Sessions(resp) => Some(resp.text.clone()),
         ChannelCommand::NewSession => Some("New session started.".to_string()),
@@ -390,7 +390,7 @@ pub(crate) fn format_help() -> String {
     let mut lines = vec![
         "📖 *Available Commands*".to_string(),
         String::new(),
-        "`/analytics` Brain, tool & RSI analytics report".to_string(),
+        "`/mission-control` Mission control: analytics, activity, inbox & schedule".to_string(),
         "`/compact`  — Compact context (summarize & trim)".to_string(),
         "`/evolve`   — Download latest release & restart".to_string(),
         "`/help`     — Show this message".to_string(),
@@ -456,14 +456,22 @@ async fn format_rtk() -> String {
 
 // ── /usage ──────────────────────────────────────────────────────────────────
 
-/// Build the `/analytics` report (brain sizes, tool usage and failure rates,
-/// RSI applications) as Markdown. Same data and renderer as the Mission Control
-/// Analytics panel and the `analytics_report` agent tool, so all three surfaces
-/// agree. Reads only aggregate stats and brain file sizes.
-async fn format_analytics(agent: &AgentService) -> String {
+/// Build the `/mission-control` report (analytics, activity feed, inbox proposals,
+/// schedule) as Markdown. Same data as the TUI Mission Control view, exposed to
+/// channels as a single command.
+async fn format_mission_control(agent: &AgentService) -> String {
+    use crate::brain::mission_control::{
+        activity_service, analytics_service, inbox_service, schedule_service,
+    };
+    use crate::brain::tools::mission_control_report::render_markdown;
+
     let pool = agent.context().pool();
-    let snapshot = crate::brain::mission_control::analytics_service::summary(pool).await;
-    crate::brain::tools::analytics_report::render_markdown(&snapshot)
+    let analytics = analytics_service::summary(pool.clone()).await;
+    let activity = activity_service::recent(5);
+    let inbox = inbox_service::list();
+    let schedule = schedule_service::list(pool.clone()).await;
+
+    render_markdown(&analytics, &activity, &inbox, &schedule)
 }
 
 async fn format_usage(
@@ -1155,7 +1163,7 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
     match cmd {
         ChannelCommand::Help(body)
         | ChannelCommand::Usage(body)
-        | ChannelCommand::Analytics(body)
+        | ChannelCommand::MissionControl(body)
         | ChannelCommand::UserSystem(body)
         | ChannelCommand::Rtk(body) => Some(body.clone()),
         ChannelCommand::Doctor => Some(run_doctor()),

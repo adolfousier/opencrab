@@ -820,7 +820,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("help", "Show available commands"),
         BotCommand::new("models", "Switch AI model or provider"),
         BotCommand::new("usage", "Session token and cost stats"),
-        BotCommand::new("analytics", "Brain, tool and RSI analytics report"),
+        BotCommand::new("mission-control", "Mission control: analytics, activity, inbox & schedule"),
         BotCommand::new("new", "Start a new session"),
         BotCommand::new("sessions", "List and switch sessions"),
         BotCommand::new("stop", "Cancel the current operation"),

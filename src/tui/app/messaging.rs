@@ -799,14 +799,6 @@ impl App {
                 crate::tui::app::mission_control::actions::open(self).await;
                 true
             }
-            "/analytics" => {
-                // Open Mission Control focused on the Analytics panel: the
-                // live view of the same stats the channel `/analytics` returns.
-                crate::tui::app::mission_control::actions::open(self).await;
-                self.mc.focused_panel = crate::tui::app::mission_control::McPanel::Analytics;
-                self.mc.selected_index = 0;
-                true
-            }
             "/skills" => {
                 crate::tui::app::skills_dialog::actions::open(self);
                 true

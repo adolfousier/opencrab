@@ -122,7 +122,7 @@ fn variant_name(cmd: &ChannelCommand) -> &'static str {
         ChannelCommand::Compact => "Compact",
         ChannelCommand::Help(_) => "Help",
         ChannelCommand::Usage(_) => "Usage",
-        ChannelCommand::Analytics(_) => "Analytics",
+        ChannelCommand::MissionControl(_) => "MissionControl",
         ChannelCommand::Models(_) => "Models",
         ChannelCommand::NewSession => "NewSession",
         ChannelCommand::Sessions(_) => "Sessions",
