@@ -204,3 +204,57 @@ impl Tool for ProviderVisionTool {
         }
     }
 }
+
+/// Placeholder `analyze_image` registered when no vision backend is configured
+/// (no provider `vision_model`, no Gemini `image.vision` key). Instead of the
+/// tool simply being absent — which leaves the agent unable to explain why it
+/// can't see an image — this returns a clear, actionable setup hint the agent
+/// relays to the user on the TUI or a channel.
+pub struct VisionSetupHintTool;
+
+#[async_trait]
+impl Tool for VisionSetupHintTool {
+    fn name(&self) -> &str {
+        "analyze_image"
+    }
+
+    fn description(&self) -> &str {
+        "Analyze an image. NOTE: image analysis is not configured on this \
+         install yet — calling this returns setup instructions to relay to the \
+         user."
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "image": { "type": "string", "description": "Image path or URL" }
+            },
+            "required": ["image"]
+        })
+    }
+
+    fn capabilities(&self) -> Vec<ToolCapability> {
+        vec![]
+    }
+
+    fn requires_approval(&self) -> bool {
+        false
+    }
+
+    async fn execute(
+        &self,
+        _input: Value,
+        _context: &ToolExecutionContext,
+    ) -> super::error::Result<ToolResult> {
+        Ok(ToolResult::error(
+            "Image analysis isn't set up yet. To enable it, either: (1) set a \
+             multimodal `vision_model` on your active provider in \
+             ~/.opencrabs/config.toml (works for OpenAI-compatible providers), \
+             or (2) add a Google Gemini vision key via the `/onboard:image` \
+             wizard (or an `[image.vision]` section in config.toml). It \
+             hot-reloads, so no restart is needed. Tell the user this."
+                .to_string(),
+        ))
+    }
+}

@@ -21,9 +21,12 @@ pub(crate) fn register_config_dependent_tools(
     config: &crate::config::Config,
 ) {
     use crate::brain::tools::{
-        analyze_image::AnalyzeImageTool, analyze_video::AnalyzeVideoTool,
-        brave_search::BraveSearchTool, exa_search::ExaSearchTool,
-        generate_image::GenerateImageTool, provider_vision::ProviderVisionTool,
+        analyze_image::AnalyzeImageTool,
+        analyze_video::AnalyzeVideoTool,
+        brave_search::BraveSearchTool,
+        exa_search::ExaSearchTool,
+        generate_image::GenerateImageTool,
+        provider_vision::{ProviderVisionTool, VisionSetupHintTool},
     };
 
     // EXA: always available (free via MCP; direct API when a key is set).
@@ -89,7 +92,10 @@ pub(crate) fn register_config_dependent_tools(
             config.image.vision.model.clone(),
         )));
     } else {
-        registry.unregister("analyze_image");
+        // No vision backend at all — register a hint so the agent can tell the
+        // user how to enable it (provider vision_model or a Gemini key) rather
+        // than silently lacking analyze_image.
+        registry.register(Arc::new(VisionSetupHintTool));
     }
 
     // Video (analyze_video): Gemini-native, needs image.vision configured.
