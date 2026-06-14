@@ -371,6 +371,7 @@ pub(crate) fn format_help() -> String {
     let mut lines = vec![
         "📖 *Available Commands*".to_string(),
         String::new(),
+        "`/analytics` Brain, tool & RSI analytics report".to_string(),
         "`/compact`  — Compact context (summarize & trim)".to_string(),
         "`/evolve`   — Download latest release & restart".to_string(),
         "`/help`     — Show this message".to_string(),
@@ -380,7 +381,6 @@ pub(crate) fn format_help() -> String {
         "`/sessions` — Switch between sessions".to_string(),
         "`/stop`     — Abort current operation".to_string(),
         "`/usage`    — Session token & cost stats".to_string(),
-        "`/analytics` Brain, tool & RSI analytics report".to_string(),
     ];
 
     // Append user-defined commands from commands.toml
