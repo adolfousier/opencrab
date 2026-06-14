@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.39] - 2026-06-14
+
+30 commits since v0.3.38. 52 files changed, +3015 / -581 lines.
+
+### ✨ Features
+
+- **Mission Control Analytics** — native analytics panel replacing the external opencrabs-analytics tool. Shows brain file sizes, tool usage with proportional bars, flakiest tools by failure rate, and RSI applied by dimension. Full-height right column with 2x2 grid layout. Enter for detail popup. No external calls, no telemetry, nothing leaves the machine.
+- **`/analytics` command** — TUI opens the Mission Control Analytics panel; channels (Telegram, Slack, Discord, WhatsApp) return the report as a message. Also exposed as `analytics_report` agent tool so you can ask in plain language.
+- **Migrate CLI** — `opencrabs migrate openclaw` and `opencrabs migrate hermes` to migrate config, brain files, memory logs, and skills from other AI agent tools. Scans the system for source instances, shows interactive picker if multiple found, then spawns an agent to handle the migration. Post-migration verification confirms which files were updated.
+- **RTK auto-download** — when RTK is not bundled or on PATH, OpenCrabs downloads the pinned release for your platform on first use. Covers source builds and installs where /evolve stops at "Already on the latest version." Runs in background at startup so bash commands never block.
+- **Clipboard image paste** — paste images copied from the browser or any app directly into TUI input. Raw image bytes from the clipboard (macOS: osascript, Linux: wl-paste/xclip) are saved to a temp file and attached through the existing image pipeline.
+
+### 🔧 Fixes
+
+- **Keyless/local provider vision** — `analyze_image` and `generate_image` tools now register for keyless providers (Xiaomi free window) and local providers (Ollama, llama.cpp, LM Studio). Previously gated on API key, now gates on model field.
+- **Hot-reload tools** — config/key-gated tools (browser, local STT, local TTS, knowledge base, Trello, WhatsApp, X) now register/deregister at runtime when you edit config or add/remove API keys, no daemon restart needed.
+- **Channel /usage cache efficiency** — `/usage` in channels now shows cache efficiency and savings percentage, matching the TUI `/usage` output.
+- **Slash command matching** — channel slash commands now match by dash/underscore-insensitive key, so `/analy-tics` and `/analy_tics` both resolve to `/analytics`.
+- **Onboarding dark theme** — unselected provider list rows are now visible on dark terminal themes. Switched from DarkGray to Gray.
+- **Onboarding vibe check** — health check passes for keyless providers and local endpoints instead of failing "API Key Present."
+- **RTK rewrite normalization** — `find_rtk_binary()` now always returns bare `"rtk"` regardless of discovery path (bundled, PATH, or auto-download). Fixes CI test failures where the full absolute path was prepended instead of just `rtk`.
+- **RTK graceful handler** — `/rtk` shows a friendly message when RTK is not installed instead of crashing.
+- **RTK bundled in evolve** — `/evolve` now extracts the bundled RTK binary from the release archive alongside the opencrabs binary.
+- **Evolve exe path** — strip all stacked "(deleted)" markers from `/proc/self/exe` path, not just the first one. Fixes restart failures when evolve runs multiple times.
+- **Service honest errors** — systemctl/launchctl failures in onboarding now report the actual error. Systemd install as root uses a system unit. macOS launchctl uses `-w` flag.
+- **Analytics layout** — responsive width, 2x2 grid, full-height right column with detail popup.
+
+### 📖 Documentation
+
+- **Migration section** — dedicated section covering both CLI migration (`opencrabs migrate`) and agent-chat migration (ask the agent to research and migrate from any tool).
+- **Analytics** — documented `/analytics` command and `analytics_report` tool in TOOLS.md, README, and commands.toml.example.
+- **Dynamic tools** — documented `$OPENCRABS_PARAMS`, added missing 'omit' coercion rule, expanded executor format examples.
+- **SOUL.md template** — more personality and swagger.
+
+### 🧹 Miscellaneous
+
+- Cargo formatting normalization for telegram agent, xiaomi test, test module ordering.
+
 ## [0.3.38] - 2026-06-12
 
 10 commits since v0.3.37. 25 files changed, +973 / -63 lines.
@@ -5520,3 +5558,4 @@ fixes.
 [0.3.37]: https://github.com/adolfousier/opencrabs/compare/v0.3.36...v0.3.37
 
 [0.3.38]: https://github.com/adolfousier/opencrabs/compare/v0.3.37...v0.3.38
+[0.3.39]: https://github.com/adolfousier/opencrabs/compare/v0.3.38...v0.3.39
