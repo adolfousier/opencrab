@@ -151,6 +151,23 @@ fn user_command_prompt_no_args() {
 }
 
 #[test]
+fn dash_command_matches_underscore_form_from_telegram_menu() {
+    // Telegram's command menu only allows `[a-z0-9_]`, so `/x-engage` is
+    // registered (and tapped) as `/x_engage`. Tapping the menu entry must hit
+    // the same definition as typing the original dash form (issue #196).
+    let cmds = vec![make_cmd("/x-engage", "prompt", "Engage on X")];
+    match match_user_command_inner("/x_engage", &cmds, &[]) {
+        ChannelCommand::UserPrompt(p) => assert_eq!(p, "Engage on X"),
+        other => panic!("expected UserPrompt, got {:?}", variant_name(&other)),
+    }
+    // The original dash form (and args) still works when typed directly.
+    match match_user_command_inner("/x-engage now", &cmds, &[]) {
+        ChannelCommand::UserPrompt(p) => assert_eq!(p, "Engage on X now"),
+        other => panic!("expected UserPrompt, got {:?}", variant_name(&other)),
+    }
+}
+
+#[test]
 fn user_command_prompt_with_args() {
     let cmds = vec![make_cmd("/deploy", "prompt", "Deploy the service")];
     match match_user_command_inner("/deploy staging --dry-run", &cmds, &[]) {

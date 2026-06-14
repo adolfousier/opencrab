@@ -312,6 +312,15 @@ async fn persist_command_to_history(
 
 // ── User-defined commands ───────────────────────────────────────────────────
 
+/// Normalize a slash-command token for matching: lowercase, strip a leading
+/// `/`, and fold `-` to `_`. Telegram's command menu only allows `[a-z0-9_]`,
+/// so `/x-engage` is registered (and tapped) as `/x_engage`; folding both to
+/// the same key lets the menu entry, the dash form, and direct typing all match
+/// the same definition.
+fn norm_command_key(s: &str) -> String {
+    s.trim_start_matches('/').to_lowercase().replace('-', "_")
+}
+
 fn match_user_command(text: &str) -> ChannelCommand {
     let brain_path = crate::brain::BrainLoader::resolve_path();
     let loader = crate::brain::CommandLoader::from_brain_path(&brain_path);
@@ -331,9 +340,16 @@ pub(crate) fn match_user_command_inner(
         .map(|(c, a)| (c, a.trim()))
         .unwrap_or((text, ""));
 
+    // Telegram's bot-command menu can only contain `[a-z0-9_]`, so a command
+    // defined as `/x-engage` is registered (and tapped) as `/x_engage`. Match
+    // on a normalized key — lowercased, leading slash stripped, dashes folded to
+    // underscores — so the menu entry, the dash form, and direct typing all hit
+    // the same definition.
+    let key = norm_command_key(cmd_name);
+
     // 1. Explicit user-defined commands win — they're how a user overrides
     //    a built-in skill (rename, retarget, swap to action=system, etc.).
-    if let Some(cmd) = commands.iter().find(|c| c.name == cmd_name) {
+    if let Some(cmd) = commands.iter().find(|c| norm_command_key(&c.name) == key) {
         let prompt = if args.is_empty() {
             cmd.prompt.clone()
         } else {
@@ -349,7 +365,10 @@ pub(crate) fn match_user_command_inner(
     //    becomes the prompt. Args (anything after the first space) are
     //    appended so callers can pass extra context without writing a
     //    custom commands.toml wrapper.
-    if let Some(skill) = skills.iter().find(|s| s.slash_name == cmd_name) {
+    if let Some(skill) = skills
+        .iter()
+        .find(|s| norm_command_key(&s.slash_name) == key)
+    {
         let prompt = if args.is_empty() {
             skill.body.clone()
         } else {
