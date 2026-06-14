@@ -1718,7 +1718,7 @@ pub(crate) fn build_systemd_unit(
          [Service]\n\
          Type=simple\n\
          {identity}ExecStart={exec_args}\n\
-         Restart=on-failure\n\
+         Restart=always\n\
          RestartSec=5\n\
          \n\
          [Install]\n\

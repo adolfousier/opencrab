@@ -14,7 +14,10 @@ fn system_unit_runs_as_invoking_user_and_boots() {
     assert!(unit.contains("Environment=HOME=/home/me"));
     assert!(unit.contains("WantedBy=multi-user.target"));
     assert!(unit.contains("ExecStart=/home/me/opencrabs daemon"));
-    assert!(unit.contains("Restart=on-failure"));
+    // Restart=always (not on-failure) so a clean exit also auto-recovers,
+    // matching the macOS LaunchAgent's KeepAlive. The daemon exits 0 on a
+    // normal shutdown, which on-failure would leave dead.
+    assert!(unit.contains("Restart=always"));
 }
 
 #[test]
