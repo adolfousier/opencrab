@@ -131,6 +131,20 @@ pub(crate) fn rtk_bin_filename() -> &'static str {
     if cfg!(windows) { "rtk.exe" } else { "rtk" }
 }
 
+/// Ensure a directory is in PATH so bare binary names resolve at exec time.
+/// Called once during `find_rtk_binary` init (single writer via OnceCell).
+fn ensure_dir_in_path(dir: &std::path::Path) {
+    let dir_str = dir.to_string_lossy().to_string();
+    if let Ok(path) = std::env::var("PATH")
+        && !path.split(':').any(|p| p == dir_str)
+    {
+        // SAFETY: called once during OnceCell init; no concurrent writers.
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{}", dir_str, path));
+        }
+    }
+}
+
 /// Find the RTK binary path (async, cached).
 ///
 /// Checks in order:
@@ -154,14 +168,16 @@ async fn find_rtk_binary() -> Option<String> {
                 let bundled_path = exe_dir.join(bin);
                 if bundled_path.exists() && bundled_path.is_file() {
                     tracing::info!("RTK binary found bundled at: {:?}", bundled_path);
-                    return Some(bundled_path.to_string_lossy().to_string());
+                    ensure_dir_in_path(exe_dir);
+                    return Some("rtk".to_string());
                 }
 
                 // Check ./bin/rtk (bin subdirectory)
                 let bin_path = exe_dir.join("bin").join(bin);
                 if bin_path.exists() && bin_path.is_file() {
                     tracing::info!("RTK binary found bundled at: {:?}", bin_path);
-                    return Some(bin_path.to_string_lossy().to_string());
+                    ensure_dir_in_path(&exe_dir.join("bin"));
+                    return Some("rtk".to_string());
                 }
             }
 
@@ -305,7 +321,10 @@ async fn download_and_install_rtk() -> Option<String> {
             }
         }
         tracing::info!(path = %dest.display(), bytes = data.len(), "RTK auto-download: installed");
-        return Some(dest.to_string_lossy().to_string());
+        if let Some(parent) = dest.parent() {
+            ensure_dir_in_path(parent);
+        }
+        return Some("rtk".to_string());
     }
 
     tracing::warn!("RTK auto-download: no writable install location found");
