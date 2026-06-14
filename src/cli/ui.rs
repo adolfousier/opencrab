@@ -400,6 +400,10 @@ async fn cmd_chat_inner(
     let (rsi_tx, mut rsi_rx) = tokio::sync::mpsc::unbounded_channel();
     crate::brain::rsi::spawn_rsi_engine(db.pool().clone(), config, rsi_tx);
 
+    // Resolve RTK in the background (auto-downloads on first use if missing) so
+    // the first bash command never blocks on it.
+    crate::rtk::warm_up();
+
     // Get working directory
     let working_directory = std::env::current_dir().unwrap_or_default();
 

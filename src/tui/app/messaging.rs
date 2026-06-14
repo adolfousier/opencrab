@@ -815,13 +815,7 @@ impl App {
                 #[cfg(feature = "rtk")]
                 {
                     if !crate::rtk::is_rtk_available().await {
-                        self.push_system_message(
-                            "⚡ *Token Optimization (RTK)*\n\n\
-                                Not installed on this machine yet. It was bundled with your \
-                                OpenCrabs release but hasn't been extracted.\n\n\
-                                Run `/evolve` to update and install it automatically."
-                                .to_string(),
-                        );
+                        self.push_system_message(crate::rtk::RTK_NOT_INSTALLED_HELP.to_string());
                     } else {
                         self.push_system_message(
                             "🔍 Fetching RTK token savings statistics...".to_string(),

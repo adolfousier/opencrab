@@ -23,7 +23,7 @@ pub(crate) mod rewrite;
 mod tracker;
 
 #[cfg(feature = "rtk")]
-pub use rewrite::{RtkResult, is_rtk_available, rewrite_command};
+pub use rewrite::{RTK_NOT_INSTALLED_HELP, RtkResult, is_rtk_available, rewrite_command, warm_up};
 #[cfg(feature = "rtk")]
 pub use tracker::{RtkMetrics, RtkTracker, TokenSavings, global_tracker};
 
@@ -36,3 +36,6 @@ pub async fn is_rtk_available() -> bool {
 pub async fn rewrite_command(_command: &str) -> Option<String> {
     None
 }
+
+#[cfg(not(feature = "rtk"))]
+pub fn warm_up() {}

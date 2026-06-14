@@ -6,7 +6,24 @@
 //!
 //! This module maintains the list of supported commands and handles the rewriting.
 
+use std::path::PathBuf;
+use std::time::Duration;
+
 use tokio::sync::OnceCell;
+
+/// RTK release pinned for auto-download. Keep in sync with the version bundled
+/// by `.github/workflows/release.yml` so a source build auto-installs the same
+/// RTK that prebuilt releases ship.
+pub(crate) const RTK_VERSION: &str = "0.40.0";
+
+/// User-facing guidance shown by `/rtk` only when the auto-download itself
+/// failed (no network, GitHub unreachable, unsupported platform). The happy
+/// path installs RTK silently on first use, so this is the rare failure note.
+pub const RTK_NOT_INSTALLED_HELP: &str = "⚡ *Token Optimization (RTK)*\n\n\
+    RTK is not installed and the automatic download did not complete (no \
+    network, GitHub unreachable, or an unsupported platform). OpenCrabs retries \
+    the download on first use, so check connectivity and try `/rtk` again after \
+    a restart. Source: https://github.com/rtk-ai/rtk";
 
 /// Commands that RTK supports as a proxy (from `rtk --help`).
 /// When the first token of a bash command matches one of these, we prepend `rtk`.
@@ -109,31 +126,39 @@ pub struct RtkResult {
 /// combination blocked the worker thread on the first call (issue #125).
 static RTK_BINARY: OnceCell<Option<String>> = OnceCell::const_new();
 
+/// The RTK binary filename for the current platform.
+pub(crate) fn rtk_bin_filename() -> &'static str {
+    if cfg!(windows) { "rtk.exe" } else { "rtk" }
+}
+
 /// Find the RTK binary path (async, cached).
 ///
 /// Checks in order:
 /// 1. Bundled binary in the same directory as the OpenCrabs executable
 /// 2. Bundled binary in `bin/` subdirectory relative to the executable
 /// 3. System PATH via `which rtk` (spawned as a non-blocking tokio child)
+/// 4. Auto-download the pinned RTK release for this platform (first-use install)
 ///
 /// Result is cached after the first call. Concurrent callers await the same
 /// initialization — no thundering herd, no blocking.
 async fn find_rtk_binary() -> Option<String> {
     RTK_BINARY
         .get_or_init(|| async {
+            let bin = rtk_bin_filename();
+
             // Check for bundled binary in the same directory as the executable
             if let Ok(exe_path) = std::env::current_exe()
                 && let Some(exe_dir) = exe_path.parent()
             {
                 // Check ./rtk (same directory)
-                let bundled_path = exe_dir.join("rtk");
+                let bundled_path = exe_dir.join(bin);
                 if bundled_path.exists() && bundled_path.is_file() {
                     tracing::info!("RTK binary found bundled at: {:?}", bundled_path);
                     return Some(bundled_path.to_string_lossy().to_string());
                 }
 
                 // Check ./bin/rtk (bin subdirectory)
-                let bin_path = exe_dir.join("bin").join("rtk");
+                let bin_path = exe_dir.join("bin").join(bin);
                 if bin_path.exists() && bin_path.is_file() {
                     tracing::info!("RTK binary found bundled at: {:?}", bin_path);
                     return Some(bin_path.to_string_lossy().to_string());
@@ -141,7 +166,8 @@ async fn find_rtk_binary() -> Option<String> {
             }
 
             // Fall back to PATH lookup — async so we never block the runtime.
-            match tokio::process::Command::new("which")
+            let which_bin = if cfg!(windows) { "where" } else { "which" };
+            match tokio::process::Command::new(which_bin)
                 .arg("rtk")
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
@@ -152,25 +178,191 @@ async fn find_rtk_binary() -> Option<String> {
                     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     tracing::info!("RTK binary found in PATH: {}", path);
                     // Store the bare name; tokio::process::Command resolves via PATH at exec time.
-                    Some("rtk".to_string())
+                    return Some("rtk".to_string());
                 }
                 Ok(_) => {
-                    tracing::info!("RTK binary not found in PATH or bundled");
-                    None
+                    tracing::info!("RTK binary not found bundled or in PATH; auto-downloading");
                 }
                 Err(_) => {
-                    tracing::warn!("Failed to check for rtk binary availability");
-                    None
+                    tracing::info!("RTK PATH lookup failed; auto-downloading the bundled release");
                 }
             }
+
+            // Last resort: download the pinned RTK release for this platform and
+            // install it next to the executable (or in ~/.local/bin). This is
+            // the "auto-download on first use" path for source builds and any
+            // install where RTK was never bundled.
+            download_and_install_rtk().await
         })
         .await
         .clone()
 }
 
-/// Check if the rtk binary is available (bundled or in PATH). Async + cached.
+/// GitHub release asset name for RTK on the current platform, mirroring the
+/// mapping in `.github/workflows/release.yml`. `None` on an unsupported target.
+pub(crate) fn rtk_asset_name() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("rtk-x86_64-unknown-linux-musl.tar.gz"),
+        ("linux", "aarch64") => Some("rtk-aarch64-unknown-linux-gnu.tar.gz"),
+        ("macos", "x86_64") => Some("rtk-x86_64-apple-darwin.tar.gz"),
+        ("macos", "aarch64") => Some("rtk-aarch64-apple-darwin.tar.gz"),
+        ("windows", "x86_64") => Some("rtk-x86_64-pc-windows-msvc.zip"),
+        _ => None,
+    }
+}
+
+/// Writable install locations for the RTK binary, in preference order: next to
+/// the OpenCrabs executable first (so `find_rtk_binary` picks it up with zero
+/// PATH dependency), then `~/.local/bin` as a PATH-friendly fallback.
+fn rtk_install_targets() -> Vec<PathBuf> {
+    let bin = rtk_bin_filename();
+    let mut targets = Vec::new();
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        targets.push(exe_dir.join(bin));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        targets.push(PathBuf::from(home).join(".local").join("bin").join(bin));
+    }
+    targets
+}
+
+/// Download the pinned RTK release for this platform and install it. Returns
+/// the installed path on success. Best-effort: any failure (network, archive,
+/// permissions) logs and returns `None` so RTK simply stays disabled.
+async fn download_and_install_rtk() -> Option<String> {
+    let Some(asset) = rtk_asset_name() else {
+        tracing::warn!(
+            os = std::env::consts::OS,
+            arch = std::env::consts::ARCH,
+            "RTK auto-download: no release asset for this platform"
+        );
+        return None;
+    };
+    let url = format!("https://github.com/rtk-ai/rtk/releases/download/v{RTK_VERSION}/{asset}");
+    tracing::info!(url = %url, "RTK auto-download: fetching release asset");
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .ok()?;
+    let resp = match client
+        .get(&url)
+        .header("User-Agent", "opencrabs")
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            tracing::warn!(status = %r.status(), url = %url, "RTK auto-download: non-2xx response");
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, url = %url, "RTK auto-download: request failed");
+            return None;
+        }
+    };
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "RTK auto-download: failed to read response body");
+            return None;
+        }
+    };
+
+    let bin = rtk_bin_filename();
+    let extracted = if asset.ends_with(".zip") {
+        extract_zip_member(&bytes, bin)
+    } else {
+        extract_tar_gz_member(&bytes, bin)
+    };
+    let Some(data) = extracted else {
+        tracing::warn!(
+            asset = asset,
+            "RTK auto-download: binary not found inside archive"
+        );
+        return None;
+    };
+
+    for dest in rtk_install_targets() {
+        if let Some(parent) = dest.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            tracing::debug!(dir = %parent.display(), error = %e, "RTK auto-download: mkdir failed, trying next target");
+            continue;
+        }
+        if let Err(e) = tokio::fs::write(&dest, &data).await {
+            tracing::debug!(path = %dest.display(), error = %e, "RTK auto-download: write failed, trying next target");
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+            {
+                tracing::warn!(path = %dest.display(), error = %e, "RTK auto-download: chmod failed");
+            }
+        }
+        tracing::info!(path = %dest.display(), bytes = data.len(), "RTK auto-download: installed");
+        return Some(dest.to_string_lossy().to_string());
+    }
+
+    tracing::warn!("RTK auto-download: no writable install location found");
+    None
+}
+
+/// Extract a named member from an in-memory `.tar.gz` archive (matches on the
+/// entry's file name, so a leading directory in the archive is fine).
+fn extract_tar_gz_member(data: &[u8], file_name: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let decoder = flate2::read::GzDecoder::new(data);
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries().ok()? {
+        let mut entry = entry.ok()?;
+        let path = entry.path().ok()?.to_path_buf();
+        if path.file_name().and_then(|n| n.to_str()) == Some(file_name) {
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf).ok()?;
+            return Some(buf);
+        }
+    }
+    None
+}
+
+/// Extract a named member from an in-memory `.zip` archive.
+fn extract_zip_member(data: &[u8], file_name: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(data)).ok()?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).ok()?;
+        if file.name().ends_with(file_name) {
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf).ok()?;
+            return Some(buf);
+        }
+    }
+    None
+}
+
+/// Check if the rtk binary is available (bundled, in PATH, or auto-downloaded).
+/// Async + cached.
 pub async fn is_rtk_available() -> bool {
     find_rtk_binary().await.is_some()
+}
+
+/// Resolve RTK in the background at startup (triggering the first-use
+/// auto-download if needed) so the first bash command never blocks on it.
+pub fn warm_up() {
+    tokio::spawn(async {
+        if is_rtk_available().await {
+            tracing::debug!("RTK warm-up complete: binary available");
+        } else {
+            tracing::info!(
+                "RTK warm-up: binary unavailable after auto-download attempt; token savings disabled"
+            );
+        }
+    });
 }
 
 /// Extract the first real command token from a shell command string.

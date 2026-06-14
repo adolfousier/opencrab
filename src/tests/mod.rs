@@ -8,6 +8,8 @@ pub mod agent_streaming_usage_test;
 pub mod agent_tool_normalization_test;
 pub mod altgr_input_test;
 pub mod analysis_intent_nudge_test;
+pub mod analytics_command_test;
+pub mod analytics_report_test;
 pub mod analyze_video_fallback_test;
 pub mod auto_title_e2e_test;
 pub mod auto_title_test;
@@ -42,8 +44,6 @@ pub mod bundled_plans_test;
 pub mod candle_whisper_test;
 pub mod channel_search_test;
 pub mod channel_session_resolve_test;
-pub mod analytics_report_test;
-pub mod analytics_command_test;
 pub mod claude_cli_model_test;
 pub mod cli_arg_too_long_test;
 pub mod cli_supported_models_test;
@@ -106,8 +106,8 @@ pub mod rate_limiter_test;
 pub mod recent_paths_test;
 pub mod sanitize_code_edit_block_test;
 pub mod sanitize_redaction_test;
-pub mod tool_execution_stats_test;
 pub mod tool_description_redaction_test;
+pub mod tool_execution_stats_test;
 //pub mod error_scenarios_test;
 pub mod fallback_streak_test;
 pub mod fallback_vision_test;
@@ -159,6 +159,8 @@ pub mod qwen_tool_extractor_test;
 pub mod qwen_tool_marker_strip_test;
 pub mod reasoning_lines_test;
 pub mod rename_session_test;
+#[cfg(feature = "rtk")]
+pub mod rtk_autodownload_test;
 #[cfg(feature = "rtk")]
 pub mod rtk_rewrite_test;
 #[cfg(feature = "rtk")]
