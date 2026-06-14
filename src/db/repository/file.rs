@@ -86,13 +86,14 @@ impl FileRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.execute(
-                    "INSERT INTO files (id, session_id, path, content, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO files (id, session_id, path, content, size, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         f.id.to_string(),
                         f.session_id.to_string(),
                         path_str,
                         f.content,
+                        f.size,
                         f.created_at.timestamp(),
                         f.updated_at.timestamp(),
                     ],
@@ -117,11 +118,12 @@ impl FileRepository {
             .interact(move |conn| {
                 conn.execute(
                     "UPDATE files
-                     SET path = ?1, content = ?2, updated_at = ?3
-                     WHERE id = ?4",
+                     SET path = ?1, content = ?2, size = ?3, updated_at = ?4
+                     WHERE id = ?5",
                     params![
                         path_str,
                         f.content,
+                        f.size,
                         f.updated_at.timestamp(),
                         f.id.to_string(),
                     ],

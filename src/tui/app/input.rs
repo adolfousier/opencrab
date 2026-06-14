@@ -2047,6 +2047,131 @@ impl App {
                     self.selected_session_index = self.sessions.len().saturating_sub(1);
                 }
             }
+        } else if event.code == KeyCode::Char('f') || event.code == KeyCode::Char('F') {
+            // Open session files browser
+            if let Some(session) = self.sessions.get(self.selected_session_index) {
+                let session_id = session.id;
+                match self.file_service.list_files_for_session(session_id).await {
+                    Ok(files) => {
+                        self.session_files = files;
+                        self.selected_file_index = 0;
+                        self.switch_mode(AppMode::SessionFiles).await?;
+                    }
+                    Err(e) => {
+                        self.notification = Some(format!("Failed to load files: {e}"));
+                        self.notification_shown_at = Some(std::time::Instant::now());
+                    }
+                }
+            }
+        } else if event.code == KeyCode::Char('p') || event.code == KeyCode::Char('P') {
+            self.notification = Some("Projects mode coming soon".to_string());
+            self.notification_shown_at = Some(std::time::Instant::now());
+        }
+
+        Ok(())
+    }
+
+    /// Handle keys in session files mode
+    pub(crate) async fn handle_session_files_key(
+        &mut self,
+        event: crossterm::event::KeyEvent,
+    ) -> Result<()> {
+        use super::events::keys;
+        use crossterm::event::KeyCode;
+
+        if keys::is_cancel(&event) {
+            // Back to sessions
+            self.switch_mode(AppMode::Sessions).await?;
+        } else if keys::is_up(&event) {
+            self.selected_file_index = self.selected_file_index.saturating_sub(1);
+        } else if keys::is_down(&event) {
+            self.selected_file_index =
+                (self.selected_file_index + 1).min(self.session_files.len().saturating_sub(1));
+        } else if keys::is_enter(&event) {
+            // Open file with default app
+            if let Some(file) = self.session_files.get(self.selected_file_index) {
+                let path = file.path.clone();
+                let result = {
+                    #[cfg(target_os = "macos")]
+                    {
+                        std::process::Command::new("open").arg(&path).status()
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        std::process::Command::new("xdg-open").arg(&path).status()
+                    }
+                    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                    {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::Unsupported,
+                            "unsupported platform",
+                        ))
+                    }
+                };
+                match result {
+                    Ok(s) if s.success() => {
+                        self.notification = Some(format!("Opened {}", path.display()));
+                    }
+                    Ok(_) | Err(_) => {
+                        // Fallback: copy path to clipboard
+                        self.notification = Some(format!("Path: {}", path.display()));
+                    }
+                }
+                self.notification_shown_at = Some(std::time::Instant::now());
+            }
+        } else if event.code == KeyCode::Char('d') || event.code == KeyCode::Char('D') {
+            // Delete tracking row (non-destructive, DB only)
+            if let Some(file) = self.session_files.get(self.selected_file_index) {
+                let file_id = file.id;
+                let path_display = file.path.display().to_string();
+                match self.file_service.delete_file(file_id).await {
+                    Ok(()) => {
+                        self.session_files.remove(self.selected_file_index);
+                        if self.selected_file_index >= self.session_files.len() {
+                            self.selected_file_index = self.session_files.len().saturating_sub(1);
+                        }
+                        self.notification = Some(format!(
+                            "Removed tracking: {path_display} (file on disk untouched)"
+                        ));
+                    }
+                    Err(e) => {
+                        self.notification = Some(format!("Failed to remove tracking: {e}"));
+                    }
+                }
+                self.notification_shown_at = Some(std::time::Instant::now());
+            }
+        } else if event.code == KeyCode::Char('o') || event.code == KeyCode::Char('O') {
+            // Open containing folder
+            if let Some(file) = self.session_files.get(self.selected_file_index)
+                && let Some(parent) = file.path.parent()
+            {
+                let result = {
+                    #[cfg(target_os = "macos")]
+                    {
+                        std::process::Command::new("open").arg(parent).status()
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        std::process::Command::new("xdg-open").arg(parent).status()
+                    }
+                    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                    {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::Unsupported,
+                            "unsupported platform",
+                        ))
+                    }
+                };
+                match result {
+                    Ok(s) if s.success() => {
+                        self.notification = Some(format!("Opened {}", parent.display()));
+                    }
+                    Ok(_) | Err(_) => {
+                        self.notification = Some(format!("Folder: {}", parent.display()));
+                    }
+                }
+                self.notification_shown_at = Some(std::time::Instant::now());
+            }
         }
 
         Ok(())

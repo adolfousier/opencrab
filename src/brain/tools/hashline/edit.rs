@@ -165,6 +165,14 @@ impl Tool for HashlineEditTool {
             .await
             .map_err(ToolError::Io)?;
 
+        // Track file in session (fire and forget, path-only)
+        if let Some(ref sc) = context.service_context {
+            let fs = crate::services::FileService::new(sc.clone());
+            let _ = fs
+                .get_or_create_file(context.session_id, path.clone(), None)
+                .await;
+        }
+
         let lines_before = original_lines.len();
         let lines_after = new_content.lines().count();
         let diff = build_edit_diff(&content, &new_content);

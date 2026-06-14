@@ -335,6 +335,14 @@ impl Tool for EditTool {
             .await
             .map_err(ToolError::Io)?;
 
+        // Track file in session (fire and forget, path-only)
+        if let Some(ref sc) = context.service_context {
+            let fs = crate::services::FileService::new(sc.clone());
+            let _ = fs
+                .get_or_create_file(context.session_id, path.clone(), None)
+                .await;
+        }
+
         let lines_before = content.lines().count();
         let lines_after = new_content.lines().count();
 

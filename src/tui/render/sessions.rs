@@ -51,6 +51,20 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled("Delete  ", Style::default().fg(Color::Reset)),
         Span::styled(
+            "[F] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Files  ", Style::default().fg(Color::Reset)),
+        Span::styled(
+            "[P] ",
+            Style::default()
+                .fg(Color::Rgb(120, 120, 120))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Projects  ", Style::default().fg(Color::Reset)),
+        Span::styled(
             "[|] ",
             Style::default()
                 .fg(Color::Rgb(80, 200, 120))

@@ -30,11 +30,15 @@ impl FileService {
     ) -> Result<File> {
         let repo = FileRepository::new(self.context.pool());
 
+        // Determine file size from disk if available
+        let size = std::fs::metadata(&path).ok().map(|m| m.len() as i64);
+
         let file = File {
             id: Uuid::new_v4(),
             session_id,
             path: path.clone(),
             content,
+            size,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

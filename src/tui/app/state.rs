@@ -113,7 +113,7 @@ use crate::brain::agent::AgentService;
 use crate::brain::provider::Provider;
 use crate::brain::{BrainLoader, CommandLoader, SelfUpdater, UserCommand};
 use crate::db::models::{Message, Session};
-use crate::services::{MessageService, ServiceContext, SessionService};
+use crate::services::{FileService, MessageService, ServiceContext, SessionService};
 use crate::tui::pane::PaneManager;
 use anyhow::Result;
 use ratatui::text::Line;
@@ -676,6 +676,11 @@ pub struct App {
     pub(crate) agent_service: Arc<AgentService>,
     pub(crate) session_service: SessionService,
     pub(crate) message_service: MessageService,
+    pub(crate) file_service: FileService,
+
+    /// Session files state (populated when F is pressed in /sessions)
+    pub(crate) session_files: Vec<crate::db::models::File>,
+    pub(crate) selected_file_index: usize,
 
     /// Events
     pub(crate) event_handler: EventHandler,
@@ -822,7 +827,10 @@ impl App {
             #[cfg(feature = "whatsapp")]
             whatsapp_state,
             session_service: SessionService::new(context.clone()),
-            message_service: MessageService::new(context),
+            message_service: MessageService::new(context.clone()),
+            file_service: FileService::new(context),
+            session_files: Vec::new(),
+            selected_file_index: 0,
             agent_service,
             event_handler: EventHandler::new(),
             prompt_analyzer: PromptAnalyzer::new(),
@@ -1580,6 +1588,19 @@ impl App {
                         // Read them straight from the OS clipboard and attach.
                         if let Some(att) = Self::attach_clipboard_image() {
                             let label = att.name.clone();
+                            // Track pasted image in file service
+                            if let Some(session) = &self.current_session {
+                                let file_svc = self.file_service.clone();
+                                let sid = session.id;
+                                let path = std::path::PathBuf::from(&att.path);
+                                tokio::spawn(async move {
+                                    if let Err(e) =
+                                        file_svc.get_or_create_file(sid, path, None).await
+                                    {
+                                        tracing::warn!("Failed to track pasted image: {e}");
+                                    }
+                                });
+                            }
                             self.attachments.push(att);
                             self.notification = Some(format!("📎 Attached pasted image: {label}"));
                             self.notification_shown_at = Some(std::time::Instant::now());
@@ -3395,6 +3416,9 @@ impl App {
             }
             AppMode::SkillsList => {
                 crate::tui::app::skills_dialog::input::handle_key(self, event).await;
+            }
+            AppMode::SessionFiles => {
+                self.handle_session_files_key(event).await?;
             }
         }
 

@@ -54,6 +54,7 @@ impl SessionService {
             total_cost: 0.0,
             working_directory: None,
             auto_title_attempted: false,
+            project_id: None,
         };
 
         repo.create(&session)

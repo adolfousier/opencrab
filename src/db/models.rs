@@ -91,6 +91,42 @@ pub fn opt_rfc3339_col(row: &rusqlite::Row, col: &str) -> rusqlite::Result<Optio
     }))
 }
 
+// ─── Project ─────────────────────────────────────────────────────────────────
+
+/// Project model — groups related sessions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Project {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Project {
+    pub fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Project {
+            id: uuid_col(row, "id")?,
+            name: row.get("name")?,
+            description: row.get("description")?,
+            created_at: timestamp_col(row, "created_at")?,
+            updated_at: timestamp_col(row, "updated_at")?,
+        })
+    }
+
+    /// Create a new project
+    pub fn new(name: String, description: Option<String>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            name,
+            description,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
 // ─── Session ─────────────────────────────────────────────────────────────────
 
 /// Session model
@@ -107,6 +143,7 @@ pub struct Session {
     pub total_cost: f64,
     pub working_directory: Option<String>,
     pub auto_title_attempted: bool,
+    pub project_id: Option<Uuid>,
 }
 
 impl Session {
@@ -123,6 +160,11 @@ impl Session {
             total_cost: row.get("total_cost")?,
             working_directory: row.get("working_directory")?,
             auto_title_attempted: row.get::<_, i32>("auto_title_attempted").unwrap_or(0) != 0,
+            project_id: row
+                .get::<_, Option<String>>("project_id")
+                .ok()
+                .flatten()
+                .and_then(|s| Uuid::parse_str(&s).ok()),
         })
     }
 
@@ -145,6 +187,7 @@ impl Session {
             total_cost: 0.0,
             working_directory: None,
             auto_title_attempted: false,
+            project_id: None,
         }
     }
 
@@ -235,6 +278,7 @@ pub struct File {
     pub session_id: Uuid,
     pub path: std::path::PathBuf,
     pub content: Option<String>,
+    pub size: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -246,6 +290,7 @@ impl File {
             session_id: uuid_col(row, "session_id")?,
             path: std::path::PathBuf::from(row.get::<_, String>("path")?),
             content: row.get("content")?,
+            size: row.get("size").ok(),
             created_at: timestamp_col(row, "created_at")?,
             updated_at: timestamp_col(row, "updated_at")?,
         })
@@ -259,6 +304,7 @@ impl File {
             session_id,
             path,
             content,
+            size: None,
             created_at: now,
             updated_at: now,
         }

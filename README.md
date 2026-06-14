@@ -2408,7 +2408,26 @@ Each session shows its provider/model badge (e.g. `[anthropic/claude-sonnet-4-6]
 | `Enter` | Load selected session (auto-restores its provider + model) |
 | `R` | Rename session |
 | `D` | Delete session |
+| `F` | Browse session file artifacts |
+| `P` | Projects (coming soon) |
 | `Esc` | Back to chat |
+
+### Projects & File Artifacts
+
+OpenCrabs automatically tracks files created or edited during your sessions. No manual setup needed: every `write_file`, `edit_file`, and `hashline_edit` call logs the path to the session's file list. Clipboard paste images are tracked too.
+
+**How it works:**
+
+- **Automatic tracking** — when the agent writes or edits a file, the path is recorded in the session's artifact list with file size and timestamp
+- **Clipboard paste** — images pasted from the browser or clipboard are saved to `~/.opencrabs/tmp/` and tracked as session artifacts
+- **Browse with F** — in `/sessions` (Sessions Mode), press `F` on any session to open the file artifacts list
+- **Open files** — select a file and press `Enter` to open it with your system's default app
+- **Open location** — press `O` to open the containing folder in Finder/Explorer
+- **Remove tracking** — press `D` to remove a file from the tracking list. This only removes the DB entry, the file itself stays on disk
+- **Projects directory** — files default to `~/.opencrabs/projects/` (or `~/.opencrabs/profiles/<profile>/projects/` for profile-specific setups)
+- **Cleanup** — stale files can be cleaned up manually from the projects directory at any time
+
+File artifacts are per-session. Switch sessions to see different file lists. The tracking is lightweight: it stores paths and metadata, not file contents (except for ephemeral clipboard pastes that would otherwise vanish).
 
 ### Tool Approval (Inline)
 

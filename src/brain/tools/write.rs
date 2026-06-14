@@ -159,6 +159,14 @@ impl Tool for WriteTool {
             .await
             .map_err(ToolError::Io)?;
 
+        // Track file in session (fire and forget, path-only)
+        if let Some(ref sc) = context.service_context {
+            let fs = crate::services::FileService::new(sc.clone());
+            let _ = fs
+                .get_or_create_file(context.session_id, path.clone(), None)
+                .await;
+        }
+
         let message = format!(
             "Successfully wrote {} bytes to {}",
             input.content.len(),

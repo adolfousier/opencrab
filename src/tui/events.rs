@@ -385,6 +385,8 @@ pub enum AppMode {
     MissionControl,
     /// Skills picker — filterable list of loaded skills (triggered by /skills)
     SkillsList,
+    /// Session files — browse files tracked for a session (triggered by F in /sessions)
+    SessionFiles,
 }
 
 /// Event handler for the TUI
