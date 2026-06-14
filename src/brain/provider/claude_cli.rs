@@ -125,6 +125,8 @@ pub(crate) const DEFAULT_MODEL: &str = "opus-4-8";
 pub struct ClaudeCliProvider {
     claude_path: String,
     default_model: String,
+    /// User override from `providers.claude_cli.context_window` in config.toml.
+    configured_context_window: Option<u32>,
 }
 
 impl ClaudeCliProvider {
@@ -134,7 +136,14 @@ impl ClaudeCliProvider {
         Ok(Self {
             claude_path: path,
             default_model: Self::default_for_alias("sonnet"),
+            configured_context_window: None,
         })
+    }
+
+    /// Override the context-window budget from `providers.claude_cli.context_window`.
+    pub fn with_context_window(mut self, context_window: u32) -> Self {
+        self.configured_context_window = Some(context_window);
+        self
     }
 
     /// Override the default model (e.g. "opus", "haiku", "sonnet").
@@ -1247,6 +1256,10 @@ impl Provider for ClaudeCliProvider {
 
     fn supported_models(&self) -> Vec<String> {
         SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn configured_context_window(&self) -> Option<u32> {
+        self.configured_context_window
     }
 
     fn context_window(&self, _model: &str) -> Option<u32> {

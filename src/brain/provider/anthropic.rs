@@ -41,6 +41,9 @@ pub struct AnthropicProvider {
     api_key: String,
     client: Client,
     custom_default_model: Option<String>,
+    /// User override from `providers.anthropic.context_window` in config.toml.
+    /// When set, becomes the compaction budget (overrides agent.context_limit).
+    configured_context_window: Option<u32>,
 }
 
 impl AnthropicProvider {
@@ -59,6 +62,7 @@ impl AnthropicProvider {
             api_key,
             client,
             custom_default_model: None,
+            configured_context_window: None,
         }
     }
 
@@ -68,12 +72,19 @@ impl AnthropicProvider {
             api_key,
             client,
             custom_default_model: None,
+            configured_context_window: None,
         }
     }
 
     /// Set custom default model
     pub fn with_default_model(mut self, model: String) -> Self {
         self.custom_default_model = Some(model);
+        self
+    }
+
+    /// Override the context-window budget from `providers.anthropic.context_window`.
+    pub fn with_context_window(mut self, context_window: u32) -> Self {
+        self.configured_context_window = Some(context_window);
         self
     }
 
@@ -466,6 +477,10 @@ impl Provider for AnthropicProvider {
             },
             _ => self.supported_models(),
         }
+    }
+
+    fn configured_context_window(&self) -> Option<u32> {
+        self.configured_context_window
     }
 
     fn context_window(&self, model: &str) -> Option<u32> {

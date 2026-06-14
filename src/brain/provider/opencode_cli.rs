@@ -39,6 +39,8 @@ pub(crate) const DEFAULT_MODEL: &str = "opencode/gpt-5-nano";
 pub struct OpenCodeCliProvider {
     opencode_path: String,
     default_model: String,
+    /// User override from `providers.opencode_cli.context_window` in config.toml.
+    configured_context_window: Option<u32>,
 }
 
 impl OpenCodeCliProvider {
@@ -48,7 +50,14 @@ impl OpenCodeCliProvider {
         Ok(Self {
             opencode_path: path,
             default_model: DEFAULT_MODEL.to_string(),
+            configured_context_window: None,
         })
+    }
+
+    /// Override the context-window budget from `providers.opencode_cli.context_window`.
+    pub fn with_context_window(mut self, context_window: u32) -> Self {
+        self.configured_context_window = Some(context_window);
+        self
     }
 
     /// Override the default model.
@@ -752,6 +761,10 @@ impl Provider for OpenCodeCliProvider {
 
     fn supported_models(&self) -> Vec<String> {
         SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn configured_context_window(&self) -> Option<u32> {
+        self.configured_context_window
     }
 
     fn context_window(&self, _model: &str) -> Option<u32> {

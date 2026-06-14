@@ -146,6 +146,7 @@ pub mod prompt_compiled_features_test;
 pub mod prompt_inline_edit_directive_test;
 pub mod prompt_known_paths_test;
 pub mod provider_config_regression_test;
+pub mod provider_context_window_override_test;
 pub mod provider_error_proxy_test;
 pub mod provider_factory_regression_test;
 pub mod provider_picker_setup_hint_test;

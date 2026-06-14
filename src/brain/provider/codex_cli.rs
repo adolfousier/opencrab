@@ -22,6 +22,8 @@ use tokio::io::AsyncWriteExt;
 pub struct CodexCliProvider {
     codex_path: String,
     default_model: String,
+    /// User override from `providers.codex_cli.context_window` in config.toml.
+    configured_context_window: Option<u32>,
 }
 
 impl CodexCliProvider {
@@ -31,7 +33,14 @@ impl CodexCliProvider {
         Ok(Self {
             codex_path: path,
             default_model: "gpt-5.5".to_string(),
+            configured_context_window: None,
         })
+    }
+
+    /// Override the context-window budget from `providers.codex_cli.context_window`.
+    pub fn with_context_window(mut self, context_window: u32) -> Self {
+        self.configured_context_window = Some(context_window);
+        self
     }
 
     /// Override the default model (e.g. "gpt-5.5", "gpt-5.4", "gpt-5.3-codex").
@@ -719,6 +728,10 @@ impl Provider for CodexCliProvider {
             "gpt-5.3-codex-spark".to_string(),
             "gpt-5.2".to_string(),
         ]
+    }
+
+    fn configured_context_window(&self) -> Option<u32> {
+        self.configured_context_window
     }
 
     fn context_window(&self, _model: &str) -> Option<u32> {

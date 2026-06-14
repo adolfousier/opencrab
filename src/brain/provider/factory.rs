@@ -1422,9 +1422,12 @@ fn try_create_gemini(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         .unwrap_or_else(|| "gemini-2.0-flash".to_string());
 
     tracing::info!("Using Gemini provider with model: {}", model);
-    Ok(Some(Arc::new(
-        GeminiProvider::new(api_key).with_model(model),
-    )))
+    let mut provider = GeminiProvider::new(api_key).with_model(model);
+    if let Some(cw) = gemini_config.context_window {
+        tracing::info!("Gemini context window override: {} tokens", cw);
+        provider = provider.with_context_window(cw);
+    }
+    Ok(Some(Arc::new(provider)))
 }
 
 /// Try to create Claude CLI provider if configured and binary is available.
@@ -1438,6 +1441,9 @@ fn try_create_claude_cli(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         Ok(mut provider) => {
             if let Some(model) = &cli_config.default_model {
                 provider = provider.with_default_model(model.clone());
+            }
+            if let Some(cw) = cli_config.context_window {
+                provider = provider.with_context_window(cw);
             }
             tracing::info!("Using Claude CLI provider (Max subscription, no API key needed)");
             Ok(Some(Arc::new(provider)))
@@ -1461,6 +1467,9 @@ fn try_create_opencode_cli(config: &Config) -> Result<Option<Arc<dyn Provider>>>
             if let Some(model) = &cli_config.default_model {
                 provider = provider.with_default_model(model.clone());
             }
+            if let Some(cw) = cli_config.context_window {
+                provider = provider.with_context_window(cw);
+            }
             tracing::info!("Using OpenCode CLI provider (free models, no API key needed)");
             Ok(Some(Arc::new(provider)))
         }
@@ -1482,6 +1491,9 @@ fn try_create_codex_cli(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         Ok(mut provider) => {
             if let Some(model) = &cli_config.default_model {
                 provider = provider.with_default_model(model.clone());
+            }
+            if let Some(cw) = cli_config.context_window {
+                provider = provider.with_context_window(cw);
             }
             tracing::info!(
                 "Using Codex CLI provider (ChatGPT/Codex subscription, no API key needed)"
@@ -1571,6 +1583,10 @@ fn try_create_anthropic(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     if let Some(model) = &anthropic_config.default_model {
         tracing::info!("Using custom default model: {}", model);
         provider = provider.with_default_model(model.clone());
+    }
+    if let Some(cw) = anthropic_config.context_window {
+        tracing::info!("Anthropic context window override: {} tokens", cw);
+        provider = provider.with_context_window(cw);
     }
 
     tracing::info!("Using Anthropic provider");

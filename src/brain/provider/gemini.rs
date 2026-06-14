@@ -45,6 +45,9 @@ pub struct GeminiProvider {
     client: Client,
     model: String,
     cached_content_name: Arc<std::sync::Mutex<Option<String>>>,
+    /// User override from `providers.gemini.context_window` in config.toml.
+    /// When set, becomes the compaction budget (overrides agent.context_limit).
+    configured_context_window: Option<u32>,
 }
 
 /// Strip JSON-Schema keys that Gemini's `function_declarations.parameters`
@@ -100,12 +103,19 @@ impl GeminiProvider {
             client,
             model: "gemini-2.0-flash".to_string(),
             cached_content_name: Arc::new(std::sync::Mutex::new(None)),
+            configured_context_window: None,
         }
     }
 
     /// Set the default model
     pub fn with_model(mut self, model: String) -> Self {
         self.model = model;
+        self
+    }
+
+    /// Override the context-window budget from `providers.gemini.context_window`.
+    pub fn with_context_window(mut self, context_window: u32) -> Self {
+        self.configured_context_window = Some(context_window);
         self
     }
 
@@ -793,6 +803,10 @@ impl Provider for GeminiProvider {
             }
             _ => self.supported_models(),
         }
+    }
+
+    fn configured_context_window(&self) -> Option<u32> {
+        self.configured_context_window
     }
 
     fn context_window(&self, model: &str) -> Option<u32> {
