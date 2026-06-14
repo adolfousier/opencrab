@@ -534,6 +534,19 @@ async fn format_usage(
             format_number(data.summary.call_count),
         ));
 
+        // Cache efficiency — parity with the TUI dashboard's Cache card. Only
+        // shown when there were caching-capable requests in the window.
+        if let Some(cache) = &data.cache
+            && cache.total_input_tokens > 0
+        {
+            lines.push(format!(
+                "💾 Cache: {:.0}% hit · {} of {} input cached",
+                cache.cache_hit_pct,
+                fmt_tokens(cache.cached_tokens),
+                fmt_tokens(cache.total_input_tokens),
+            ));
+        }
+
         if !data.daily.is_empty() && period != Period::Today {
             lines.push(String::new());
             lines.push("*Daily:*".to_string());
