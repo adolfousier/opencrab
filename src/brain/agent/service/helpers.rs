@@ -766,15 +766,11 @@ impl AgentService {
             .filter(|b| !matches!(b, ContentBlock::Text { text } if text.is_empty()))
             .collect();
 
-        // Track provider health + snapshot config on first success.
+        // Track provider health. (last-good config snapshotting moved to the
+        // config watcher, which fires when config actually changes and parses
+        // cleanly — an LLM call succeeding says nothing about config validity,
+        // and the once-per-process gate left the snapshot months stale.)
         crate::config::health::record_success(provider.name());
-        {
-            use std::sync::atomic::{AtomicBool, Ordering};
-            static SAVED: AtomicBool = AtomicBool::new(false);
-            if !SAVED.swap(true, Ordering::Relaxed) {
-                crate::config::save_last_good_config();
-            }
-        }
 
         let reasoning = if reasoning_buf.is_empty() {
             None

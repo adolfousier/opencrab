@@ -103,6 +103,11 @@ pub fn spawn(callbacks: Vec<ReloadCallback>) -> tokio::task::JoinHandle<()> {
                         "ConfigWatcher: reloaded — firing {} callback(s)",
                         callbacks.len()
                     );
+                    // The config just changed AND parsed cleanly — this is the
+                    // real "last known good" moment. Snapshot it now (debounced,
+                    // so once per edit) so recovery always has the latest valid
+                    // config, instead of a months-old once-per-process snapshot.
+                    crate::config::save_last_good_config();
                     for cb in &callbacks {
                         let cb = cb.clone();
                         let cfg = new_config.clone();
