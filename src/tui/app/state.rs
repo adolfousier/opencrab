@@ -1672,144 +1672,6 @@ impl App {
                             });
                         }
                     }
-                } else if self.mode == AppMode::ModelSelector {
-                    let is_custom = self.ps.is_custom();
-                    let is_zhipu = self.ps.is_zhipu();
-                    match (self.ps.focused_field, is_custom, is_zhipu) {
-                        // Zhipu: field 1 = endpoint type — paste auto-advances to API key
-                        (1, false, true) => {
-                            self.ps.focused_field = 2;
-                            self.ps.api_key_input.push_str(&text);
-                            let provider_idx = self.ps.selected_provider;
-                            let api_key = self.ps.api_key_input.clone();
-                            let zhipu_et = self.ps.zhipu_endpoint_str();
-                            let sender = self.event_sender();
-                            tokio::spawn(async move {
-                                let models = super::onboarding::fetch_provider_models(
-                                    provider_idx,
-                                    Some(&api_key),
-                                    zhipu_et.as_deref(),
-                                    None,
-                                )
-                                .await;
-                                let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(
-                                    provider_idx,
-                                    models,
-                                ));
-                            });
-                        }
-                        // Zhipu: field 2 = API key
-                        (2, false, true) => {
-                            if self.ps.has_existing_key_sentinel() {
-                                self.ps.api_key_input.clear();
-                            }
-                            self.ps.api_key_input.push_str(&text);
-                            let provider_idx = self.ps.selected_provider;
-                            let api_key = self.ps.api_key_input.clone();
-                            let zhipu_et = self.ps.zhipu_endpoint_str();
-                            let sender = self.event_sender();
-                            tokio::spawn(async move {
-                                let models = super::onboarding::fetch_provider_models(
-                                    provider_idx,
-                                    Some(&api_key),
-                                    zhipu_et.as_deref(),
-                                    None,
-                                )
-                                .await;
-                                let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(
-                                    provider_idx,
-                                    models,
-                                ));
-                            });
-                        }
-                        // Non-custom non-zhipu: field 1 = API key
-                        (1, false, false) => {
-                            // Clear sentinel so the pasted key replaces it
-                            if self.ps.has_existing_key_sentinel() {
-                                self.ps.api_key_input.clear();
-                            }
-                            self.ps.api_key_input.push_str(&text);
-                            // Trigger model fetch after pasting key
-                            let provider_idx = self.ps.selected_provider;
-                            let api_key = self.ps.api_key_input.clone();
-                            let sender = self.event_sender();
-                            tokio::spawn(async move {
-                                let models = super::onboarding::fetch_provider_models(
-                                    provider_idx,
-                                    Some(&api_key),
-                                    None,
-                                    None,
-                                )
-                                .await;
-                                let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(
-                                    provider_idx,
-                                    models,
-                                ));
-                            });
-                        }
-                        // Custom: field 1 = base URL, field 2 = API key, field 3 = model
-                        (1, true, _) => {
-                            self.ps.base_url.push_str(&text);
-                            // Pasting base_url → trigger model fetch (local endpoints need no key)
-                            if self.ps.supports_model_fetch() {
-                                let provider_idx = self.ps.selected_provider;
-                                let base_url = self.ps.base_url.clone();
-                                let api_key = if self.ps.api_key_input.is_empty() {
-                                    None
-                                } else {
-                                    Some(self.ps.api_key_input.clone())
-                                };
-                                let sender = self.event_sender();
-                                tokio::spawn(async move {
-                                    let models = super::onboarding::fetch_provider_models(
-                                        provider_idx,
-                                        api_key.as_deref(),
-                                        Some(&base_url),
-                                        None,
-                                    )
-                                    .await;
-                                    let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(
-                                        provider_idx,
-                                        models,
-                                    ));
-                                });
-                            }
-                        }
-                        (2, true, _) => {
-                            if self.ps.has_existing_key_sentinel() {
-                                self.ps.api_key_input.clear();
-                            }
-                            self.ps.api_key_input.push_str(&text);
-                            // Pasting API key → trigger model fetch if base_url is set
-                            if self.ps.supports_model_fetch() {
-                                let provider_idx = self.ps.selected_provider;
-                                let api_key = self.ps.api_key_input.clone();
-                                let base_url = self.ps.base_url.clone();
-                                let sender = self.event_sender();
-                                tokio::spawn(async move {
-                                    let models = super::onboarding::fetch_provider_models(
-                                        provider_idx,
-                                        Some(&api_key),
-                                        if base_url.is_empty() {
-                                            None
-                                        } else {
-                                            Some(&base_url)
-                                        },
-                                        None,
-                                    )
-                                    .await;
-                                    let _ = sender.send(TuiEvent::ModelSelectorModelsFetched(
-                                        provider_idx,
-                                        models,
-                                    ));
-                                });
-                            }
-                        }
-                        (3, true, _) => {
-                            self.ps.custom_model.push_str(&text);
-                        }
-                        _ => {}
-                    }
                 }
             }
             TuiEvent::MessageSubmitted(content) => {
@@ -2631,55 +2493,6 @@ impl App {
                     }
                 }
             }
-            TuiEvent::ModelSelectorModelsFetched(provider_idx, models) => {
-                // Discard stale fetches from a previously-selected provider
-                let models = if models.is_empty() {
-                    // Fetch returned empty — fall back to static PROVIDERS models
-                    let provider = self.ps.current_provider();
-                    if !provider.models.is_empty() {
-                        provider.models.iter().map(|s| s.to_string()).collect()
-                    } else {
-                        models
-                    }
-                } else {
-                    models
-                };
-                if self.mode == AppMode::ModelSelector
-                    && !models.is_empty()
-                    && provider_idx == self.ps.selected_provider
-                {
-                    // Read the provider's saved default_model from config
-                    let provider_id = crate::tui::onboarding::PROVIDERS
-                        .get(provider_idx)
-                        .map(|p| p.id)
-                        .unwrap_or("");
-                    let saved_model = crate::config::Config::load().ok().and_then(|c| {
-                        if provider_idx >= crate::tui::provider_selector::CUSTOM_INSTANCES_START {
-                            let ci = provider_idx
-                                - crate::tui::provider_selector::CUSTOM_INSTANCES_START;
-                            self.ps.custom_names.get(ci).and_then(|name| {
-                                c.providers
-                                    .custom_by_name(name)
-                                    .and_then(|p| p.default_model.clone())
-                            })
-                        } else if !provider_id.is_empty() {
-                            crate::utils::providers::config_for(&c.providers, provider_id)
-                                .and_then(|p| p.default_model.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    let target = saved_model.as_deref().unwrap_or(&self.default_model_name);
-                    let selected = models.iter().position(|m| m == target).unwrap_or(0);
-                    self.ps.models = models;
-                    // Merge config-persisted models (user-pasted ones
-                    // that the endpoint doesn't list) on top of the
-                    // fetched results so they survive the next fetch.
-                    self.ps.merge_config_models_into_fetched();
-                    self.ps.selected_model = selected;
-                    self.ps.model_filter.clear();
-                }
-            }
             TuiEvent::GitHubDeviceCode(code) => {
                 if let Some(ref mut wizard) = self.onboarding {
                     wizard.github_user_code = Some(code);
@@ -2725,10 +2538,6 @@ impl App {
                     wizard.ps.codex_user_code = Some(code);
                     wizard.ps.codex_device_flow_status =
                         super::onboarding::CodexDeviceFlowStatus::WaitingForUser;
-                } else if self.mode == crate::tui::events::AppMode::ModelSelector {
-                    self.ps.codex_user_code = Some(code);
-                    self.ps.codex_device_flow_status =
-                        super::onboarding::CodexDeviceFlowStatus::WaitingForUser;
                 }
             }
             TuiEvent::CodexOAuthComplete => {
@@ -2749,31 +2558,6 @@ impl App {
                             super::onboarding::fetch_provider_models(2, None, None, None).await;
                         let _ = sender.send(TuiEvent::OnboardingModelsFetched(models));
                     });
-                } else if self.mode == crate::tui::events::AppMode::ModelSelector {
-                    self.ps.codex_device_flow_status =
-                        super::onboarding::CodexDeviceFlowStatus::Complete;
-                    self.ps.has_existing_key = true;
-                    self.ps.api_key_input = super::onboarding::EXISTING_KEY_SENTINEL.to_string();
-                    self.ps.models.clear();
-                    self.ps.selected_model = 0;
-                    let _ = crate::config::Config::write_key("providers.codex", "enabled", "true");
-                    // Fetch models for the model selector
-                    let provider_idx = self
-                        .ps
-                        .selected_provider
-                        .min(super::onboarding::PROVIDERS.len() - 1);
-                    let sender = self.event_sender();
-                    tokio::spawn(async move {
-                        let models = super::onboarding::fetch_provider_models(
-                            provider_idx,
-                            None,
-                            None,
-                            None,
-                        )
-                        .await;
-                        let _ =
-                            sender.send(TuiEvent::ModelSelectorModelsFetched(provider_idx, models));
-                    });
                 }
             }
             TuiEvent::CodexOAuthError(err) => {
@@ -2781,10 +2565,6 @@ impl App {
                     wizard.ps.codex_device_flow_status =
                         super::onboarding::CodexDeviceFlowStatus::Failed(err);
                     wizard.ps.codex_user_code = None;
-                } else if self.mode == crate::tui::events::AppMode::ModelSelector {
-                    self.ps.codex_device_flow_status =
-                        super::onboarding::CodexDeviceFlowStatus::Failed(err);
-                    self.ps.codex_user_code = None;
                 }
             }
             TuiEvent::WhatsAppQrCode(qr_data) => {
@@ -3330,7 +3110,6 @@ impl App {
             AppMode::Sessions => self.handle_sessions_key(event).await?,
             AppMode::FilePicker => self.handle_file_picker_key(event).await?,
             AppMode::DirectoryPicker => self.handle_directory_picker_key(event).await?,
-            AppMode::ModelSelector => self.handle_model_selector_key(event).await?,
             AppMode::UsageDashboard => {
                 use crossterm::event::KeyCode;
                 match event.code {

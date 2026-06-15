@@ -142,7 +142,6 @@ pub enum TuiEvent {
     OnboardingModelsFetched(Vec<String>),
 
     /// Model selector (/models) received fetched model list (provider_index, models)
-    ModelSelectorModelsFetched(usize, Vec<String>),
 
     /// WhatsApp QR code data received during onboarding pairing
     WhatsAppQrCode(String),
@@ -370,7 +369,6 @@ pub enum AppMode {
     /// File picker dialog (triggered by @)
     FilePicker,
     /// Model selector dialog (triggered by /models)
-    ModelSelector,
     /// Full-screen usage dashboard (triggered by /usage)
     UsageDashboard,
     /// Restart confirmation pending (after successful /rebuild)
