@@ -45,6 +45,23 @@ fn looks_like_failure_log(content: &str) -> Option<&'static str> {
     for line in content.lines() {
         let trimmed = line.trim_start();
         if !trimmed.starts_with('#') {
+            // Check plain-text lines for incident-log patterns.
+            // Catches entries like:
+            //   "ADDED 2026-06-11 (session ba623fd1): Another quoting error..."
+            //   "REPEAT 2026-06-13 (session ca91e02d): SSH quoting violation again..."
+            let lower = trimmed.to_ascii_lowercase();
+            if (lower.starts_with("added ") || lower.starts_with("repeat "))
+                && lower.contains("session ")
+                && trimmed.chars().any(|c| c.is_ascii_digit())
+            {
+                return Some(
+                    "Plain-text incident-log entry detected \
+                     (e.g. 'ADDED YYYY-MM-DD (session ...): ...'). Brain files hold \
+                     derived RULES, not raw incident logs. Use the feedback ledger \
+                     (feedback_analyze) for incident history. Document the rule itself \
+                     and mention the feedback data source, not individual dated entries.",
+                );
+            }
             continue;
         }
         let lower = trimmed.to_ascii_lowercase();
