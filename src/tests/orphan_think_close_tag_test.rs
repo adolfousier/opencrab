@@ -9,9 +9,7 @@
 //! text to the reasoning buffer. The non-streaming stripper
 //! (`strip_think_blocks`) does the same for batch processing.
 
-use crate::brain::provider::custom_openai_compatible::{
-    filter_think_tags, strip_think_blocks,
-};
+use crate::brain::provider::custom_openai_compatible::{filter_think_tags, strip_think_blocks};
 
 // ─── Streaming path: filter_think_tags ────────────────────────────────
 
@@ -109,7 +107,7 @@ fn orphan_close_empty_before() {
     let mut carry = String::new();
 
     let (display, reasoning) = filter_think_tags(
-        "<think>Actual response.",
+        "</think>Actual response.",
         &mut inside,
         &mut close_idx,
         &mut consumed,
@@ -170,5 +168,8 @@ fn html_comment_close_not_treated_as_orphan() {
     );
 
     assert_eq!(display, "Some text --> more text");
-    assert!(reasoning.is_empty(), "--> alone must NOT trigger orphan routing");
+    assert!(
+        reasoning.is_empty(),
+        "--> alone must NOT trigger orphan routing"
+    );
 }

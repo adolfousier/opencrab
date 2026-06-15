@@ -211,12 +211,17 @@ pub(crate) fn filter_think_tags(
                 // models (Mimo, Qwen) occasionally skip the opening think
                 // tag entirely. When a close tag appears without a preceding
                 // open, treat everything before it as reasoning content.
-                // Only check indices 0 and 1 (reasoning-type blocks);
-                // index 2 (`-->`) is too generic for orphan detection.
+                // Skip the bare `-->` candidate (too generic for prose:
+                // arrows, ASCII art) and empty strings — but by VALUE, not by
+                // index, since `-->` also appears inside the index-1 list. The
+                // specific reasoning closers (`</think>`, `<!-- /reasoning -->`)
+                // still trigger orphan routing.
                 let mut orphan: Option<(usize, &str)> = None;
-                for (i, close_candidates) in STRIP_CLOSE_TAGS.iter().enumerate() {
-                    if i >= 2 { break; }
+                for close_candidates in STRIP_CLOSE_TAGS.iter() {
                     for close in close_candidates.iter() {
+                        if *close == "-->" || close.is_empty() {
+                            continue;
+                        }
                         if let Some(pos) = remaining.find(close)
                             && orphan.is_none_or(|(best, _)| pos < best)
                         {
@@ -334,12 +339,14 @@ pub(crate) fn strip_think_blocks(text: &str) -> String {
     // Handle orphan close tags — close tag without a preceding open.
     // Some models (Mimo, Qwen) skip the opening think tag entirely,
     // so we never enter the while-loop above. Strip everything before
-    // the orphan close tag as leaked reasoning.
-    // Only check indices 0 and 1 (reasoning-type blocks);
-    // index 2 (`-->`) is too generic for orphan detection.
-    for (i, close_candidates) in STRIP_CLOSE_TAGS.iter().enumerate() {
-        if i >= 2 { break; }
+    // the orphan close tag as leaked reasoning. Skip the bare `-->`
+    // candidate (too generic for prose) and empty strings by VALUE, not by
+    // index, since `-->` also lives inside the index-1 list.
+    for close_candidates in STRIP_CLOSE_TAGS.iter() {
         for close in close_candidates.iter() {
+            if *close == "-->" || close.is_empty() {
+                continue;
+            }
             if let Some(pos) = result.find(close) {
                 result = result[pos + close.len()..].to_string();
                 break;
