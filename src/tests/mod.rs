@@ -105,6 +105,7 @@ pub mod http_request_test;
 pub mod openai_provider_test;
 pub mod opencode_provider_test;
 pub mod rate_limiter_test;
+pub mod read_media_redirect_test;
 pub mod recent_paths_test;
 pub mod sanitize_code_edit_block_test;
 pub mod sanitize_redaction_test;

@@ -20,6 +20,38 @@ const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
 /// Maximum number of lines to read in a single request
 const MAX_LINES: usize = 100_000;
 
+/// Binary media that must NOT be read as text — reading the raw bytes yields
+/// garbage. Returns the tool the agent should call instead, or `None` for a
+/// normal text file. Keyed on extension so it's cheap and needs no file read.
+fn media_tool_redirect(path: &std::path::Path) -> Option<String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())?;
+    let p = path.display();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "heic" | "heif" | "tiff" => {
+            Some(format!(
+                "'{p}' is an image — reading it as text would be garbage. Call \
+                 analyze_image(image='{p}', question='...') to view it with a vision model."
+            ))
+        }
+        "mp4" | "m4v" | "mov" | "webm" | "mkv" | "avi" | "3gp" | "flv" => Some(format!(
+            "'{p}' is a video. Call analyze_video(path='{p}', question='...') to view it."
+        )),
+        "pdf" | "docx" | "doc" | "pptx" | "xlsx" | "epub" => Some(format!(
+            "'{p}' is a document. Call parse_document(path='{p}') to read its text\
+             {}.",
+            if ext == "pdf" {
+                ", or pdf_to_images then analyze_image for scanned/figure pages"
+            } else {
+                ""
+            }
+        )),
+        _ => None,
+    }
+}
+
 /// Read file tool
 pub struct ReadTool;
 
@@ -100,6 +132,13 @@ impl Tool for ReadTool {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };
+
+        // Bounce binary media (images/video/docs) to the right tool — reading
+        // their bytes as text is meaningless, and the model otherwise loops on
+        // read_file for a dropped screenshot instead of calling analyze_image.
+        if let Some(redirect) = media_tool_redirect(&path) {
+            return Ok(ToolResult::error(redirect));
+        }
 
         // Check file size to prevent memory exhaustion
         let metadata = fs::metadata(&path).await.map_err(ToolError::Io)?;
