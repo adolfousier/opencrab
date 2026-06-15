@@ -5,8 +5,8 @@
 //! per test (the original shared one dir keyed by PID, which races under
 //! cargo's parallel test runner).
 
-use crate::cli::commands::{running_as_root, unit_scope_probe};
-use std::path::Path;
+use crate::cli::commands::{running_as_root, unit_scope_probe, user_home_from};
+use std::path::{Path, PathBuf};
 
 /// Run `f` with a fresh, isolated `system` + `user` dir pair. The temp dir is
 /// auto-removed when it drops.
@@ -80,4 +80,33 @@ fn profiled_service_name() {
         touch(usr, "opencrabs-ops.service");
         assert!(!unit_scope_probe("opencrabs-ops", sys, Some(usr)));
     });
+}
+
+// ── user_home_from: invoking user's home under sudo ─────────────────
+
+#[test]
+fn sudo_user_resolves_to_their_home() {
+    let fallback = Some(PathBuf::from("/root"));
+    assert_eq!(
+        user_home_from(Some("alice"), fallback),
+        Some(PathBuf::from("/home/alice"))
+    );
+}
+
+#[test]
+fn sudo_user_root_uses_fallback() {
+    let fallback = Some(PathBuf::from("/root"));
+    assert_eq!(user_home_from(Some("root"), fallback.clone()), fallback);
+}
+
+#[test]
+fn sudo_user_empty_uses_fallback() {
+    let fallback = Some(PathBuf::from("/root"));
+    assert_eq!(user_home_from(Some(""), fallback.clone()), fallback);
+}
+
+#[test]
+fn no_sudo_user_uses_fallback() {
+    let fallback = Some(PathBuf::from("/home/bob"));
+    assert_eq!(user_home_from(None, fallback.clone()), fallback);
 }

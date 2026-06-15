@@ -1766,8 +1766,33 @@ pub(crate) fn unit_scope_probe(
 #[cfg(target_os = "linux")]
 fn unit_scope(systemd_name: &str) -> bool {
     let system_dir = std::path::PathBuf::from("/etc/systemd/system");
-    let user_dir = dirs::home_dir().map(|h| h.join(".config/systemd/user"));
+    let user_dir = invoking_user_home().map(|h| h.join(".config/systemd/user"));
     unit_scope_probe(systemd_name, &system_dir, user_dir.as_deref())
+}
+
+/// Home of the user who actually owns the units. Under `sudo`,
+/// `dirs::home_dir()` resolves to root's home (`/root`), not the invoking
+/// user's — so a user-scope unit in `~/.config/systemd/user` would be missed
+/// and we'd wrongly try system scope. Prefer `SUDO_USER`'s home, matching the
+/// `/home/<user>` convention `install` already writes into the unit's
+/// `Environment=HOME=`.
+#[cfg(target_os = "linux")]
+fn invoking_user_home() -> Option<std::path::PathBuf> {
+    user_home_from(std::env::var("SUDO_USER").ok().as_deref(), dirs::home_dir())
+}
+
+/// Pure resolution for [`invoking_user_home`]: prefer `SUDO_USER`'s standard
+/// home (`/home/<user>`), otherwise the `fallback`. Split out so it is testable
+/// without touching the environment or filesystem.
+#[cfg(target_os = "linux")]
+pub(crate) fn user_home_from(
+    sudo_user: Option<&str>,
+    fallback: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    match sudo_user.filter(|u| !u.is_empty() && *u != "root") {
+        Some(user) => Some(std::path::PathBuf::from(format!("/home/{user}"))),
+        None => fallback,
+    }
 }
 
 /// Run `systemctl` (system scope, or `--user`) and FAIL on a non-zero exit.
