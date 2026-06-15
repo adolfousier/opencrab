@@ -98,6 +98,27 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         )));
     }
+
+    // Show assign mode banner when assigning sessions to a project
+    if let Some(project_id) = app.assigning_to_project {
+        let project_name = app
+            .project_name_cache
+            .get(&project_id)
+            .map(|s| s.as_str())
+            .unwrap_or("project");
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  ASSIGNING TO: {} ", project_name),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "[Enter] assign  [Esc] done",
+                Style::default().fg(Color::Rgb(120, 120, 120)),
+            ),
+        ]));
+    }
     lines.push(Line::from(""));
 
     for (idx, session) in app.sessions.iter().enumerate() {
@@ -174,6 +195,19 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 spans.push(Span::styled(
                     format!(" [{}/{}]", prov, model_label),
                     Style::default().fg(Color::Rgb(120, 120, 120)),
+                ));
+            }
+
+            // Project badge
+            if let Some(pid) = session.project_id {
+                let project_name = app
+                    .project_name_cache
+                    .get(&pid)
+                    .map(|s| s.as_str())
+                    .unwrap_or("?");
+                spans.push(Span::styled(
+                    format!(" {{.{}}}", project_name),
+                    Style::default().fg(Color::Yellow),
                 ));
             }
 
