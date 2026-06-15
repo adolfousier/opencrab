@@ -1503,10 +1503,10 @@ mod rsi_prompt_text {
     }
 
     #[test]
-    fn prompt_mentions_append_date_session_as_evidence() {
+    fn prompt_mentions_cap_evidence_entries() {
         assert!(
-            RSI_AGENT_PROMPT.contains("Append the new date/session as evidence"),
-            "RSI prompt must instruct appending date/session as evidence for repeat violations"
+            RSI_AGENT_PROMPT.contains("Cap at 2 evidence entries"),
+            "RSI prompt must cap evidence entries to prevent brain-file bloat (issue #197)"
         );
     }
 
