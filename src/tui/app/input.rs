@@ -1731,6 +1731,11 @@ impl App {
             self.focused_attachment = Some(self.attachments.len() - 1);
         } else if keys::is_up(&event)
             && !self.slash_suggestions_active
+            // Only dequeue-for-edit when the input is empty — otherwise the
+            // user is mid-typing their next message and Arrow Up must NOT
+            // clobber it with the queued text (it falls through to normal
+            // history navigation, which stashes the draft instead).
+            && self.input_buffer.is_empty()
             && {
                 let sid = self.current_session.as_ref().map(|s| s.id);
                 sid.is_some()
@@ -1742,8 +1747,8 @@ impl App {
             }
             && self.input_history_index.is_none()
         {
-            // Arrow Up while a message is queued — dequeue it for editing.
-            // Moves it into the input_buffer for editing, removing from the
+            // Arrow Up on EMPTY input while a message is queued — dequeue it
+            // for editing. Moves it into the input_buffer, removing from the
             // per-session queue map.
             if let Some(sid) = self.current_session.as_ref().map(|s| s.id)
                 && let Ok(mut q) = self.queued_messages.lock()

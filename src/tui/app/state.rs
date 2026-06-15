@@ -2171,20 +2171,19 @@ impl App {
                     });
                 }
 
-                // Foreground-only post-hooks: clear the queued-
-                // message preview and input buffer (those are
-                // foreground UI state), reset scroll. Background
-                // sessions' queued_messages get cleared by their
+                // Foreground-only post-hooks: the queued message has now been
+                // echoed into the chat, so drop it from the per-session queue
+                // map, and reset scroll. Do NOT touch input_buffer — it holds
+                // whatever the user has started typing for their NEXT message,
+                // which must survive a queued message entering mid-turn (else
+                // their in-progress text is silently wiped, and arrow-up can't
+                // get it back). Background sessions' queues are cleared by their
                 // own send-loop on the channels side.
                 if is_foreground {
                     if let Some(sid) = self.current_session.as_ref().map(|s| s.id)
                         && let Ok(mut q) = self.queued_messages.lock()
                     {
                         q.remove(&sid);
-                    }
-                    if !self.input_buffer.is_empty() {
-                        self.input_buffer.clear();
-                        self.cursor_position = 0;
                     }
                     if self.auto_scroll {
                         self.scroll_offset = 0;
