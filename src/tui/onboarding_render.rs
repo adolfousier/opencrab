@@ -35,6 +35,14 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
 
     // Header
     let step = wizard.step;
+    // Progress counter is flow-aware: QuickStart shows its own 6-step sequence
+    // (e.g. 4/6), Advanced shows the full 9. Dots only render at all for the
+    // full wizard (entered at Mode Select) — deep-links/`/models` set quick_jump.
+    let (step_current, step_total) = if wizard.mode == WizardMode::QuickStart {
+        (step.quick_number(), OnboardingStep::quick_total())
+    } else {
+        (step.number(), OnboardingStep::total())
+    };
     if step != OnboardingStep::Complete && !wizard.quick_jump {
         // Show logo + tagline on the first step only
         if step == OnboardingStep::ModeSelect {
@@ -60,7 +68,7 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            render_progress_dots(&step),
+            render_progress_dots(step_current, step_total),
             Style::default().fg(BRAND_BLUE),
         )));
         lines.push(Line::from(""));
@@ -329,11 +337,7 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
     } else if wizard.quick_jump {
         format!(" {} ", step.title())
     } else {
-        format!(
-            " OpenCrabs Setup ({}/{}) ",
-            step.number(),
-            OnboardingStep::total()
-        )
+        format!(" OpenCrabs Setup ({}/{}) ", step_current, step_total)
     };
 
     let title_alignment = if wizard.quick_jump {
@@ -428,9 +432,7 @@ fn render_whatsapp_qr_popup(f: &mut Frame, qr_text: &str, area: Rect) {
 }
 
 /// Render progress dots (filled for completed, hollow for remaining)
-fn render_progress_dots(step: &OnboardingStep) -> String {
-    let current = step.number();
-    let total = OnboardingStep::total();
+fn render_progress_dots(current: usize, total: usize) -> String {
     (1..=total)
         .map(|i| if i <= current { "●" } else { "○" })
         .collect::<Vec<_>>()

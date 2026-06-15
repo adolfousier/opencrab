@@ -192,3 +192,19 @@ fn image_field_variants() {
 fn brain_field_variants() {
     assert_ne!(BrainField::AboutMe, BrainField::AboutAgent);
 }
+
+#[test]
+fn quick_flow_numbering_is_consecutive_six_steps() {
+    // QuickStart skips Channels/Voice/Image, so its progress dots use their own
+    // 6-step sequence (no 3→7 jump like the full numbering).
+    assert_eq!(OnboardingStep::quick_total(), 6);
+    assert_eq!(OnboardingStep::ModeSelect.quick_number(), 1);
+    assert_eq!(OnboardingStep::Workspace.quick_number(), 2);
+    assert_eq!(OnboardingStep::ProviderAuth.quick_number(), 3);
+    assert_eq!(OnboardingStep::Daemon.quick_number(), 4);
+    assert_eq!(OnboardingStep::HealthCheck.quick_number(), 5);
+    assert_eq!(OnboardingStep::BrainSetup.quick_number(), 6);
+    // Full (Advanced) numbering is unchanged: 9 steps, Daemon is 7.
+    assert_eq!(OnboardingStep::total(), 9);
+    assert_eq!(OnboardingStep::Daemon.number(), 7);
+}

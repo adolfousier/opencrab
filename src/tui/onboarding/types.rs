@@ -415,6 +415,30 @@ impl OnboardingStep {
         9
     }
 
+    /// Position in the QuickStart sequence, which skips Channels/Voice/Image:
+    /// ModeSelect → Workspace → ProviderAuth → Daemon → HealthCheck → BrainSetup.
+    /// Used for the progress dots so Quick shows its own count (e.g. 4/6) instead
+    /// of the full 1-9 numbering jumping when steps are skipped.
+    pub fn quick_number(&self) -> usize {
+        match self {
+            Self::ModeSelect => 1,
+            Self::Workspace => 2,
+            Self::ProviderAuth => 3,
+            Self::Daemon => 4,
+            Self::HealthCheck => 5,
+            Self::BrainSetup => 6,
+            Self::Complete => 7,
+            // Channels/Voice/Image aren't part of the Quick flow; if one is
+            // somehow rendered under QuickStart, clamp to the nearest position.
+            _ => 3,
+        }
+    }
+
+    /// Total steps in the QuickStart flow (excluding Complete).
+    pub fn quick_total() -> usize {
+        6
+    }
+
     /// Step title
     pub fn title(&self) -> &'static str {
         match self {
