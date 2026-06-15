@@ -74,6 +74,13 @@ fn render_list(list: &List, depth: usize) -> String {
     lines.join("\n")
 }
 
+/// Width (monospace chars) up to which an aligned grid fits a typical phone.
+/// Wider tables render as responsive cards / key-value lists instead, so they
+/// never overflow the narrow Telegram or Web view (where a `<pre>` grid would
+/// horizontal-scroll). The TUI sizes columns to the terminal; Telegram can't,
+/// so this is how a "fits the view" table looks on messengers.
+const NARROW_TABLE_WIDTH: usize = 40;
+
 fn render_table(table: &Table) -> String {
     let cols = table.header.len();
     let header: Vec<String> = table.header.iter().map(|c| plain(c)).collect();
@@ -94,6 +101,22 @@ fn render_table(table: &Table) -> String {
         }
     }
 
+    // Width of one rendered grid line (columns + " | " separators). If it fits
+    // a phone, keep the compact aligned grid; otherwise switch to a layout that
+    // can't overflow: a key/value list for 2-column tables, cards for wider.
+    let grid_width = width.iter().sum::<usize>() + cols.saturating_sub(1) * 3;
+    if grid_width <= NARROW_TABLE_WIDTH {
+        return render_grid(table, &header, &rows, &width);
+    }
+    if cols <= 2 {
+        return render_key_value(table);
+    }
+    render_cards(table)
+}
+
+/// Compact aligned `<pre>` grid — used for tables narrow enough to fit a phone.
+fn render_grid(table: &Table, header: &[String], rows: &[Vec<String>], width: &[usize]) -> String {
+    let cols = width.len();
     let fmt = |cells: &[String]| -> String {
         width
             .iter()
@@ -110,18 +133,60 @@ fn render_table(table: &Table) -> String {
             })
             .collect()
     };
-
     let sep: String = width
         .iter()
         .map(|w| "-".repeat(*w))
         .collect::<Vec<_>>()
         .join("-+-");
-
-    let mut lines = vec![fmt(&header), sep];
-    for row in &rows {
+    let mut lines = vec![fmt(header), sep];
+    for row in rows {
         lines.push(fmt(row));
     }
     format!("<pre>{}</pre>", escape(&lines.join("\n")))
+}
+
+/// One- or two-column table → a `key: value` list. The header row is dropped
+/// because the columns are self-labelling (e.g. "Total commits: 52"). Wraps
+/// naturally on any width; inline formatting is preserved (not inside `<pre>`).
+fn render_key_value(table: &Table) -> String {
+    table
+        .rows
+        .iter()
+        .map(|row| match row.get(1) {
+            Some(val) => format!(
+                "<b>{}</b>: {}",
+                row.first().map(|c| render_inlines(c)).unwrap_or_default(),
+                render_inlines(val)
+            ),
+            None => format!(
+                "<b>{}</b>",
+                row.first().map(|c| render_inlines(c)).unwrap_or_default()
+            ),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 3+ column table → one card per row that never overflows: the first cell is
+/// the bold title, the rest become "Header: value" lines. Inline formatting is
+/// preserved.
+fn render_cards(table: &Table) -> String {
+    table
+        .rows
+        .iter()
+        .map(|row| {
+            let mut card = vec![format!(
+                "<b>{}</b>",
+                row.first().map(|c| render_inlines(c)).unwrap_or_default()
+            )];
+            for (i, cell) in row.iter().enumerate().skip(1) {
+                let label = table.header.get(i).map(|h| plain(h)).unwrap_or_default();
+                card.push(format!("{label}: {}", render_inlines(cell)));
+            }
+            card.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn pad_cell(s: &str, width: usize, align: Align) -> String {

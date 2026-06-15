@@ -212,6 +212,51 @@ fn table_renders_as_aligned_pre_grid() {
 }
 
 #[test]
+fn wide_table_renders_as_cards() {
+    // A 3-column table too wide for a phone becomes one card per row.
+    let md = "| Task | Owner | Status |\n| - | - | - |\n\
+              | Driver App release | Alexander | In progress now |";
+    let html = markdown_to_html(md);
+    assert!(
+        !html.contains("<pre>"),
+        "wide table must not be a grid: {html}"
+    );
+    assert!(
+        html.contains("<b>Driver App release</b>"),
+        "first cell is the bold card title: {html}"
+    );
+    assert!(
+        html.contains("Owner: Alexander"),
+        "field line missing: {html}"
+    );
+    assert!(
+        html.contains("Status: In progress now"),
+        "field line missing: {html}"
+    );
+}
+
+#[test]
+fn wide_two_column_table_renders_as_key_value() {
+    // A wide 2-column table collapses to a `key: value` list (no header row).
+    let md = "| Metric | Value |\n| - | - |\n\
+              | Total commits since the v0.3.40 release | 1052 |";
+    let html = markdown_to_html(md);
+    assert!(
+        !html.contains("<pre>"),
+        "wide 2-col must not be a grid: {html}"
+    );
+    assert!(
+        html.contains("<b>Total commits since the v0.3.40 release</b>: 1052"),
+        "key/value line missing: {html}"
+    );
+    // Header row ("Metric: Value") is dropped — columns are self-labelling.
+    assert!(
+        !html.contains("Metric"),
+        "header row should be dropped: {html}"
+    );
+}
+
+#[test]
 fn heading_renders_bold() {
     assert_eq!(markdown_to_html("# Hi"), "<b>Hi</b>");
     assert_eq!(markdown_to_html("### Deep"), "<b><i>Deep</i></b>");
