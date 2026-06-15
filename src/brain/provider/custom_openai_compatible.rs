@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Custom OpenAI-Compatible Provider Implementation
 //!
 //! Implements the Provider trait for any OpenAI-compatible API, including:
@@ -2435,94 +2434,6 @@ impl OpenAIProvider {
         }
     }
 
-    /// Convert to Anthropic-format request for OpenRouter with prompt caching.
-    /// OpenRouter accepts this format and passes cache_control through to Anthropic
-    /// models, caching the system prompt and tools across turns.
-    fn to_anthropic_or_request(&self, request: LLMRequest) -> AnthropicORRequest {
-        let cache = AnthropicORCacheControl {
-            r#type: "ephemeral".to_string(),
-        };
-
-        // System prompt as cached content blocks
-        let system = request.system.map(|s| {
-            vec![AnthropicORSystemBlock {
-                r#type: "text".to_string(),
-                text: s,
-                cache_control: Some(cache.clone()),
-            }]
-        });
-
-        // Messages with content blocks
-        let messages: Vec<AnthropicORMessage> = request
-            .messages
-            .into_iter()
-            .map(|msg| {
-                let role = match msg.role {
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                    Role::System => "user", // system → user for Anthropic
-                };
-
-                let content: Vec<AnthropicORContentBlock> = msg
-                    .content
-                    .into_iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(AnthropicORContentBlock::Text {
-                            text,
-                            cache_control: None,
-                        }),
-                        ContentBlock::ToolUse { id, name, input } => {
-                            Some(AnthropicORContentBlock::ToolUse { id, name, input })
-                        }
-                        ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                            ..
-                        } => Some(AnthropicORContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                        }),
-                        ContentBlock::Thinking { .. } | ContentBlock::Image { .. } => None,
-                    })
-                    .collect();
-
-                AnthropicORMessage {
-                    role: role.to_string(),
-                    content,
-                }
-            })
-            .collect();
-
-        // Tools with cache_control on the last one
-        let tools = request.tools.map(|tools| {
-            let len = tools.len();
-            tools
-                .into_iter()
-                .enumerate()
-                .map(|(i, t)| AnthropicORTool {
-                    name: t.name,
-                    description: t.description,
-                    input_schema: t.input_schema,
-                    cache_control: if i == len - 1 {
-                        Some(cache.clone())
-                    } else {
-                        None
-                    },
-                })
-                .collect()
-        });
-
-        AnthropicORRequest {
-            model: request.model,
-            messages,
-            system,
-            max_tokens: request.max_tokens.unwrap_or(16384),
-            temperature: request.temperature,
-            tools,
-            stream: Some(request.stream),
-        }
-    }
-
     /// Convert OpenAI response to our generic format
     #[allow(clippy::wrong_self_convention)]
     fn from_openai_response(&self, response: OpenAIResponse) -> LLMResponse {
@@ -2531,7 +2442,6 @@ impl OpenAIProvider {
             .into_iter()
             .next()
             .unwrap_or_else(|| OpenAIChoice {
-                index: 0,
                 message: OpenAIMessage {
                     role: "assistant".to_string(),
                     content: Some(serde_json::Value::String(String::new())),
@@ -2834,375 +2744,6 @@ impl OpenAIProvider {
                 error_type: None,
             }
         }
-    }
-
-    /// Execute an Anthropic-format request (used for OpenRouter prompt caching).
-    /// OpenRouter returns OpenAI-format responses even when sent Anthropic format.
-    async fn complete_with_anthropic_format(
-        &self,
-        model: String,
-        message_count: usize,
-        anthropic_request: AnthropicORRequest,
-        retry_config: crate::utils::retry::RetryConfig,
-    ) -> Result<LLMResponse> {
-        use crate::utils::retry::retry;
-
-        let tool_count = anthropic_request
-            .tools
-            .as_ref()
-            .map(|t| t.len())
-            .unwrap_or(0);
-        tracing::info!(
-            "OpenRouter (Anthropic format): model={}, messages={}, tools={}, cache_control=system+last_tool",
-            model,
-            message_count,
-            tool_count
-        );
-
-        // Proactive pacing
-        if let Some(ref limiter) = self.rate_limiter {
-            let waited = limiter.wait().await;
-            if !waited.is_zero() {
-                tracing::debug!("Rate limiter: waited {:?} before request", waited);
-            }
-        }
-
-        let result = retry(
-            || async {
-                let body = self.encode_body(&anthropic_request)?;
-                let response = self
-                    .client
-                    .post(self.send_url())
-                    .headers(self.headers()?)
-                    .json(&body)
-                    .send()
-                    .await?;
-
-                let status = response.status();
-                if !status.is_success() {
-                    return Err(self.handle_error(response).await);
-                }
-
-                let openai_response: OpenAIResponse = response.json().await?;
-                let llm_response = self.from_openai_response(openai_response);
-
-                // Log cache tokens if present
-                if llm_response.usage.cache_creation_tokens > 0
-                    || llm_response.usage.cache_read_tokens > 0
-                {
-                    tracing::info!(
-                        "Cache: creation={}, read={}, total_cached={}",
-                        llm_response.usage.cache_creation_tokens,
-                        llm_response.usage.cache_read_tokens,
-                        llm_response.usage.cache_creation_tokens
-                            + llm_response.usage.cache_read_tokens
-                    );
-                }
-
-                Ok(llm_response)
-            },
-            &retry_config,
-        )
-        .await;
-
-        // Handle 400 token field mismatch — retry with swapped fields
-        if let Err(ref e) = result
-            && let ProviderError::ApiError {
-                status: 400,
-                message,
-                ..
-            } = e
-            && is_token_field_mismatch(message)
-        {
-            tracing::warn!("Retrying with swapped max_tokens/max_completion_tokens");
-            return Box::pin(self.complete_with_anthropic_format(
-                model,
-                message_count,
-                anthropic_request,
-                retry_config,
-            ))
-            .await;
-        }
-
-        result
-    }
-
-    /// Execute an Anthropic-format streaming request to OpenRouter.
-    /// OpenRouter returns OpenAI-format SSE responses even when sent Anthropic format.
-    async fn stream_with_anthropic_format(
-        &self,
-        model: String,
-        message_count: usize,
-        anthropic_request: AnthropicORRequest,
-    ) -> Result<ProviderStream> {
-        use crate::utils::retry::retry;
-
-        let tool_count = anthropic_request
-            .tools
-            .as_ref()
-            .map(|t| t.len())
-            .unwrap_or(0);
-        tracing::info!(
-            "OpenRouter stream (Anthropic format): model={}, messages={}, tools={}, cache_control=system+last_tool",
-            model,
-            message_count,
-            tool_count
-        );
-
-        // Proactive pacing
-        if let Some(ref limiter) = self.rate_limiter {
-            let waited = limiter.wait().await;
-            if !waited.is_zero() {
-                tracing::debug!("Rate limiter: waited {:?} before streaming request", waited);
-            }
-        }
-
-        let response = retry(
-            || async {
-                let body = self.encode_body(&anthropic_request)?;
-                let response = self
-                    .client
-                    .post(self.send_url())
-                    .headers(self.headers()?)
-                    .json(&body)
-                    .send()
-                    .await?;
-
-                let status = response.status();
-                if !status.is_success() {
-                    return Err(self.handle_error(response).await);
-                }
-
-                Ok(response)
-            },
-            &self.retry_config(&model),
-        )
-        .await?;
-
-        // Parse the SSE stream — OpenRouter returns OpenAI-format SSE.
-        // total_input_tokens=0 since we don't have tiktoken counts for Anthropic format.
-        self.parse_openai_stream(response, 0)
-    }
-
-    /// Parse an OpenAI-compatible SSE stream into a ProviderStream.
-    /// `total_input_tokens` is used as fallback usage on stream end if no real usage arrives.
-    fn parse_openai_stream(
-        &self,
-        response: reqwest::Response,
-        total_input_tokens: usize,
-    ) -> Result<ProviderStream> {
-        use futures::stream::StreamExt;
-
-        let byte_stream = response.bytes_stream();
-        let buffer = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-
-        // Accumulated state for a single streamed tool call
-        #[derive(Debug, Clone, Default)]
-        struct ToolCallAccum {
-            id: String,
-            name: String,
-            arguments: String,
-        }
-
-        /// State persisted across SSE chunks via Arc<Mutex<_>>
-        struct StreamState {
-            emitted_message_start: bool,
-            emitted_content_start: bool,
-            emitted_content_stop: bool,
-            seen_delta_content: bool,
-            tool_calls: std::collections::HashMap<usize, ToolCallAccum>,
-            pending_stop_reason: Option<crate::brain::provider::types::StopReason>,
-        }
-
-        let state = std::sync::Arc::new(std::sync::Mutex::new(StreamState {
-            emitted_message_start: false,
-            emitted_content_start: false,
-            emitted_content_stop: false,
-            seen_delta_content: false,
-            tool_calls: std::collections::HashMap::new(),
-            pending_stop_reason: None,
-        }));
-
-        let event_stream = byte_stream
-            .map(move |chunk_result| -> Vec<std::result::Result<StreamEvent, ProviderError>> {
-                match chunk_result {
-                    Err(e) => vec![Err(ProviderError::StreamError(e.to_string()))],
-                    Ok(chunk) => {
-                        let raw_text = String::from_utf8_lossy(&chunk);
-                        tracing::debug!(
-                            "[OR_STREAM_RAW] chunk ({} bytes): {}",
-                            raw_text.len(),
-                            raw_text.chars().take(500).collect::<String>()
-                        );
-                        let mut buf = buffer.lock().expect("SSE buffer lock poisoned");
-                        buf.push_str(&raw_text);
-
-                        let mut events = Vec::new();
-                        let mut st = state.lock().expect("SSE state lock");
-
-                        while let Some(newline_pos) = buf.find('\n') {
-                            let line = buf[..newline_pos].trim().to_string();
-                            buf.drain(..=newline_pos);
-
-                            if let Some(json_str) = line.strip_prefix("data: ") {
-                                if json_str == "[DONE]" {
-                                    if st.emitted_content_start && !st.emitted_content_stop {
-                                        events.push(Ok(StreamEvent::ContentBlockStop { index: 0 }));
-                                        st.emitted_content_stop = true;
-                                    }
-                                    for (_idx, accum) in st.tool_calls.drain() {
-                                        // parse_or_repair recovers truncated args
-                                        // (network drop / timeout) so partial intent
-                                        // is preserved instead of dropped to {}.
-                                        let input = super::json_repair::parse_or_repair(&accum.arguments);
-                                        let tool_index = _idx + 1;
-                                        events.push(Ok(StreamEvent::ContentBlockStart {
-                                            index: tool_index,
-                                            content_block: ContentBlock::ToolUse {
-                                                id: accum.id,
-                                                name: accum.name,
-                                                input,
-                                            },
-                                        }));
-                                        events.push(Ok(StreamEvent::ContentBlockStop { index: tool_index }));
-                                    }
-                                    if let Some(stop_reason) = st.pending_stop_reason.take() {
-                                        events.push(Ok(StreamEvent::MessageDelta {
-                                            delta: crate::brain::provider::types::MessageDelta {
-                                                stop_reason: Some(stop_reason),
-                                                stop_sequence: None,
-                                            },
-                                            usage: crate::brain::provider::types::TokenUsage {
-                                                input_tokens: total_input_tokens as u32,
-                                                output_tokens: 0, ..Default::default() },
-                                        }));
-                                    }
-                                    events.push(Ok(StreamEvent::MessageStop));
-                                    continue;
-                                }
-
-                                match serde_json::from_str::<OpenAIStreamChunk>(json_str) {
-                                    Ok(chunk) => {
-                                        if !st.emitted_message_start && !chunk.id.is_empty() {
-                                            st.emitted_message_start = true;
-                                            let model = chunk.model.clone().unwrap_or_default();
-                                            events.push(Ok(StreamEvent::MessageStart {
-                                                message: crate::brain::provider::types::StreamMessage {
-                                                    id: chunk.id,
-                                                    model,
-                                                    role: Role::Assistant,
-                                                    usage: crate::brain::provider::types::TokenUsage {
-                                                        input_tokens: 0,
-                                                        output_tokens: 0, ..Default::default() },
-                                                },
-                                            }));
-                                        }
-
-                                        let delta_content = chunk.choices.first()
-                                            .and_then(|c| c.delta.as_ref())
-                                            .and_then(|d| d.content.as_ref());
-
-                                        let finish_reason_str = chunk.choices.first()
-                                            .and_then(|c| c.finish_reason.as_ref());
-
-                                        // Emit content BEFORE handling finish — some providers
-                                        // (OpenRouter Elephant, short responses) send content and
-                                        // finish_reason in the same chunk. The old code did
-                                        // `continue` on finish, silently dropping that content.
-                                        if let Some(text) = delta_content {
-                                            if !st.emitted_content_start {
-                                                st.emitted_content_start = true;
-                                                st.seen_delta_content = true;
-                                                events.push(Ok(StreamEvent::ContentBlockStart {
-                                                    index: 0,
-                                                    content_block: ContentBlock::Text { text: text.clone() },
-                                                }));
-                                            } else {
-                                                events.push(Ok(StreamEvent::ContentBlockDelta {
-                                                    index: 0,
-                                                    delta: ContentDelta::TextDelta { text: text.clone() },
-                                                }));
-                                            }
-                                        }
-
-                                        if finish_reason_str.is_some() {
-                                            if st.emitted_content_start && !st.emitted_content_stop {
-                                                events.push(Ok(StreamEvent::ContentBlockStop { index: 0 }));
-                                                st.emitted_content_stop = true;
-                                            }
-                                            // Convert finish_reason to StopReason for downstream
-                                            let stop_reason = match finish_reason_str.map(|s| s.as_str()) {
-                                                Some("stop") => Some(crate::brain::provider::types::StopReason::EndTurn),
-                                                Some("tool_calls") | Some("function_call") => Some(crate::brain::provider::types::StopReason::ToolUse),
-                                                Some("length") => Some(crate::brain::provider::types::StopReason::MaxTokens),
-                                                Some("content_filter") => Some(crate::brain::provider::types::StopReason::EndTurn),
-                                                _ => Some(crate::brain::provider::types::StopReason::EndTurn),
-                                            };
-                                            st.pending_stop_reason = stop_reason;
-                                            if let Some(usage) = chunk.usage.as_ref() {
-                                                let input = usage.prompt_tokens.unwrap_or(0);
-                                                let output = usage.completion_tokens.unwrap_or(0);
-                                                let mut token_usage = crate::brain::provider::types::TokenUsage {
-                                                    input_tokens: input,
-                                                    output_tokens: output,
-                                                    ..Default::default()
-                                                };
-                                                if let Some(cache_create) = usage.cache_creation_input_tokens {
-                                                    token_usage.cache_creation_tokens = cache_create;
-                                                }
-                                                let cache_read = usage.effective_cache_read();
-                                                if cache_read > 0 {
-                                                    token_usage.cache_read_tokens = cache_read;
-                                                }
-                                                events.push(Ok(StreamEvent::MessageDelta {
-                                                    delta: crate::brain::provider::types::MessageDelta {
-                                                        stop_reason: None,
-                                                        stop_sequence: None,
-                                                    },
-                                                    usage: token_usage,
-                                                }));
-                                            }
-                                            continue;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::debug!("[STREAM_PARSE] Failed to parse SSE chunk: {}", e);
-                                    }
-                                }
-                            }
-                        }
-
-                        // ── Non-streaming fallback ──────────────────
-                        // Some OpenRouter upstreams don't support streaming
-                        // and return a plain JSON blob. Delegate to the
-                        // dedicated nonstream_compat module.
-                        if events.is_empty()
-                            && !st.emitted_message_start
-                            && super::nonstream_compat::is_nonstream_response(&buf)
-                            && let Some(synth) = super::nonstream_compat::synthesize_stream_events(&buf)
-                        {
-                            st.emitted_message_start = true;
-                            st.emitted_content_start = true;
-                            st.emitted_content_stop = true;
-                            buf.clear();
-                            events.extend(synth);
-                        }
-
-                        if events.is_empty() {
-                            vec![]
-                        } else {
-                            events
-                        }
-                    }
-                }
-            })
-            .filter(|events| {
-                let non_empty = !events.is_empty();
-                async move { non_empty }
-            })
-            .flat_map(futures::stream::iter);
-
-        Ok(Box::pin(event_stream))
     }
 }
 
@@ -4624,81 +4165,6 @@ pub(crate) fn uses_max_completion_tokens(model: &str) -> bool {
 }
 
 // ============================================================================
-// OpenAI API Types
-// ============================================================================
-// Anthropic-format request for OpenRouter (enables prompt caching)
-// ============================================================================
-
-/// Anthropic-style request for OpenRouter when routing to Anthropic models.
-/// OpenRouter accepts this format and passes cache_control through to Anthropic.
-#[derive(Debug, Clone, Serialize)]
-struct AnthropicORRequest {
-    model: String,
-    messages: Vec<AnthropicORMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<Vec<AnthropicORSystemBlock>>,
-    max_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<AnthropicORTool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>,
-}
-
-/// System content block with cache_control support.
-#[derive(Debug, Clone, Serialize)]
-struct AnthropicORSystemBlock {
-    r#type: String,
-    text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cache_control: Option<AnthropicORCacheControl>,
-}
-
-/// Message in Anthropic format with content blocks.
-#[derive(Debug, Clone, Serialize)]
-struct AnthropicORMessage {
-    role: String,
-    content: Vec<AnthropicORContentBlock>,
-}
-
-/// Content block for messages (text, tool_use, tool_result).
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum AnthropicORContentBlock {
-    Text {
-        text: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cache_control: Option<AnthropicORCacheControl>,
-    },
-    ToolUse {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-    },
-}
-
-/// Tool definition with cache_control support.
-#[derive(Debug, Clone, Serialize)]
-struct AnthropicORTool {
-    name: String,
-    description: String,
-    input_schema: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cache_control: Option<AnthropicORCacheControl>,
-}
-
-/// Ephemeral cache control marker.
-#[derive(Debug, Clone, Serialize)]
-struct AnthropicORCacheControl {
-    r#type: String,
-}
-
-// ============================================================================
 // OpenAI-compatible request/response types
 // ============================================================================
 
@@ -4805,9 +4271,7 @@ struct OpenAIResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 struct OpenAIChoice {
-    index: u32,
     message: OpenAIMessage,
     finish_reason: Option<String>,
 }
@@ -4868,7 +4332,6 @@ struct OpenAICompletionTokensDetails {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 struct OpenAIStreamChunk {
     id: String,
     model: Option<String>,
@@ -4878,9 +4341,7 @@ struct OpenAIStreamChunk {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 struct OpenAIStreamChoice {
-    index: u32,
     delta: Option<OpenAIMessageDelta>,
     message: Option<OpenAIMessageDelta>,
     finish_reason: Option<String>,
@@ -4907,9 +4368,7 @@ struct StreamingFunctionCall {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 struct OpenAIMessageDelta {
-    role: Option<String>,
     content: Option<String>,
     #[serde(default, alias = "reasoning")]
     reasoning_content: Option<String>,
