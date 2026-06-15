@@ -256,6 +256,12 @@ Images are passed to the active model's vision pipeline if it supports multimoda
 
 Videos uploaded on any channel (mp4, m4v, mov, webm, mkv, avi, 3gp, flv) auto-route to `analyze_video` when `image.vision.enabled = true` with a Gemini API key. The TUI also detects pasted video paths and labels them `Video #N` in the attachment indicator. Provider-side limits to keep in mind: Gemini's inline-bytes mode caps at ~20 MB (we use ≤18 MB), and the resumable Files API supports up to 2 GB / ~1 hour videos. Channel-side limits are tighter — Telegram's Bot API hard-caps `getFile` downloads at **20 MB** even though chats accept larger uploads, so videos over that size will get a friendly "compress to under 20 MB and resend" reply. Slack file downloads use the bot token (`files:read` scope) and inherit the workspace's per-file upload cap. Frame-extraction fallback for non-Gemini providers is not yet wired — without a Gemini key, video uploads return an "unsupported" notice.
 
+#### Telegram rich message formatting
+
+When a Telegram reply carries structured Markdown (tables, headings, lists, `- [ ]` task lists, fenced code, or math), OpenCrabs renders it natively using Telegram's rich messages (Bot API 10.1) instead of plain text or basic HTML. Tables come out as real tables, headings as real section headings, and task items as checkboxes. This is automatic, with no configuration or toggle to enable.
+
+It applies to the agent's streamed reply (only the final completed message is converted, so live token streaming stays smooth) and to proactive `telegram_send` messages. Plain-prose replies are left exactly as before, so incidental characters like a stray `*` or `#` are never reinterpreted. If the rich API is unavailable for any reason, OpenCrabs falls back silently to its HTML formatting, so a message is never dropped.
+
 ### Terminal UI
 | Feature | Description |
 |---------|-------------|
