@@ -76,8 +76,9 @@ fn render_pdf_pages_inner(
     }
 
     Err(
-        "No PDF renderer available. Install poppler-utils (pdftoppm) or enable the \
-         'pdfium-render' feature."
+        "No PDF renderer available. Install poppler — macOS: `brew install poppler`, \
+         Debian/Ubuntu: `apt install poppler-utils`, Fedora: `dnf install poppler-utils` \
+         (or build with the optional `pdfium` feature)."
             .into(),
     )
 }

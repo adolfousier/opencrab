@@ -464,10 +464,24 @@ fn process_pdf_vision(bytes: &[u8], filename: &str) -> FileContent {
         }
     };
 
+    // Render pages into a DEDICATED sub-directory, never the shared
+    // tmp/files/ dir. `render_pdf_pages` wipes its output dir on failure;
+    // pointing it at the PDF's parent would delete the file we just saved
+    // (and every other session's files in there) — the exact reason an
+    // uploaded scanned PDF vanished and the agent's `find` came up empty.
+    let stem = pdf_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("pdf");
+    let render_dir = pdf_path
+        .parent()
+        .map(|p| p.join(format!("{stem}_pages")))
+        .unwrap_or_else(|| pdf_path.with_extension("pages"));
+
     let rendered = super::pdf_vision::render_pdf_pages(
         pdf_path.to_str().unwrap_or(""),
         MAX_PDF_PAGES,
-        pdf_path.parent().map(|p| p.to_str().unwrap()).unwrap_or(""),
+        render_dir.to_str().unwrap_or(""),
     );
 
     match rendered {
@@ -481,19 +495,25 @@ fn process_pdf_vision(bytes: &[u8], filename: &str) -> FileContent {
             FileContent::PdfPages { paths, label }
         }
         other => {
-            // Vision render failed AND text path already failed
-            // (else we wouldn't be here). Surface a clear error so
-            // operators know neither backend worked.
+            // Rendering is unavailable here (no pdfium feature / no
+            // pdftoppm). The saved PDF still exists — DO NOT lose it.
+            // Hand the agent the real path so it can retry with
+            // parse_document / pdf_to_images instead of blindly `find`ing.
             let render_err = match other {
                 Ok(_) => "renderer produced no output".to_string(),
                 Err(e) => e,
             };
             tracing::warn!(
-                "PDF {filename}: vision render failed: {render_err}; text path also empty"
+                "PDF {filename}: vision render failed: {render_err}; text path also empty — \
+                 keeping saved PDF at {}",
+                pdf_path.display()
             );
             FileContent::Unsupported(format!(
-                "[File received: {filename} (PDF) — neither text extraction nor vision render \
-                 produced content. Vision error: {render_err}]"
+                "[User attached a scanned/image PDF: {filename}. Text extraction found nothing and \
+                 page rendering is unavailable in this runtime ({render_err}). The file is saved at \
+                 {p} — call `pdf_to_images(path='{p}', page_range='1-3')` then `analyze_image` to \
+                 view pages, or `parse_document(path='{p}')` to retry text. Do NOT search for it.]",
+                p = pdf_path.display()
             ))
         }
     }
