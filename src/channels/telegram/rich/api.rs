@@ -33,9 +33,33 @@ pub(crate) async fn send_rich_markdown(
     markdown: &str,
 ) -> anyhow::Result<()> {
     let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
-    let body = build_body(chat_id, thread_id, markdown);
+    post_and_check(&url, &build_body(chat_id, thread_id, markdown)).await
+}
 
-    let resp = reqwest::Client::new().post(&url).json(&body).send().await?;
+/// Convert an existing message to a native rich message via `editMessageText`
+/// with the `rich_message` parameter. Used for the final "done" edit of a
+/// streamed reply — the intermediate streaming edits stay on the HTML path, so
+/// only the finished message goes rich. Returns `Err` so the caller can fall
+/// back to the HTML edit.
+pub(crate) async fn edit_rich_markdown(
+    token: &str,
+    chat_id: i64,
+    message_id: i32,
+    markdown: &str,
+) -> anyhow::Result<()> {
+    let url = format!("https://api.telegram.org/bot{token}/editMessageText");
+    let body = serde_json::json!({
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "rich_message": { "markdown": markdown },
+    });
+    post_and_check(&url, &body).await
+}
+
+/// POST `body` to `url` and treat anything other than `{"ok":true,...}` as an
+/// error, surfacing Telegram's `description` so the caller can log and fall back.
+async fn post_and_check(url: &str, body: &serde_json::Value) -> anyhow::Result<()> {
+    let resp = reqwest::Client::new().post(url).json(body).send().await?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
@@ -47,7 +71,7 @@ pub(crate) async fn send_rich_markdown(
             .get("description")
             .and_then(serde_json::Value::as_str)
             .unwrap_or(&text);
-        anyhow::bail!("sendRichMessage failed ({status}): {desc}")
+        anyhow::bail!("Telegram rich API error ({status}): {desc}")
     }
 }
 

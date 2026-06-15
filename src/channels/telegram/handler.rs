@@ -2410,39 +2410,70 @@ pub(crate) async fn handle_message(
                 if chunks.len() == 1
                     && let Some(mid) = streaming_msg_id
                 {
-                    match bot
-                        .edit_message_text(msg.chat.id, mid, &chunks[0])
-                        .parse_mode(ParseMode::Html)
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(teloxide::RequestError::RetryAfter(secs)) => {
-                            tracing::warn!(
-                                "Telegram: edit rate-limited, waiting {}s",
-                                secs.seconds()
-                            );
-                            tokio::time::sleep(secs.duration()).await;
-                            if let Err(e) = bot
-                                .edit_message_text(msg.chat.id, mid, &chunks[0])
-                                .parse_mode(ParseMode::Html)
-                                .await
-                            {
+                    // DONE state goes native rich: the streaming edits above
+                    // stayed on the HTML path; this one final edit converts the
+                    // finished message to rich (tables/headings/lists/math) by
+                    // sending the raw markdown for Telegram to render. The ctx
+                    // footer is plain text, appended as-is. On ANY failure we
+                    // fall through to the existing HTML edit, so the streaming
+                    // path is never regressed.
+                    let rich_md = if footer.is_empty() {
+                        text_only.clone()
+                    } else {
+                        format!("{text_only}\n\n{footer}")
+                    };
+                    let rich_ok = super::rich::api::edit_rich_markdown(
+                        bot.token(),
+                        msg.chat.id.0,
+                        mid.0,
+                        &rich_md,
+                    )
+                    .await
+                    .inspect_err(|e| {
+                        tracing::warn!("Telegram: rich edit failed, using HTML edit: {e}");
+                    })
+                    .is_ok();
+
+                    if !rich_ok {
+                        match bot
+                            .edit_message_text(msg.chat.id, mid, &chunks[0])
+                            .parse_mode(ParseMode::Html)
+                            .await
+                        {
+                            Ok(_) => {}
+                            Err(teloxide::RequestError::RetryAfter(secs)) => {
                                 tracing::warn!(
-                                    "Telegram: edit retry failed ({e}), falling back to delete+send"
+                                    "Telegram: edit rate-limited, waiting {}s",
+                                    secs.seconds()
+                                );
+                                tokio::time::sleep(secs.duration()).await;
+                                if let Err(e) = bot
+                                    .edit_message_text(msg.chat.id, mid, &chunks[0])
+                                    .parse_mode(ParseMode::Html)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Telegram: edit retry failed ({e}), falling back to delete+send"
+                                    );
+                                    let _ = bot.delete_message(msg.chat.id, mid).await;
+                                    let _ = send_html_or_plain(
+                                        &bot,
+                                        msg.chat.id,
+                                        thread_id,
+                                        &chunks[0],
+                                    )
+                                    .await;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Telegram: edit final failed ({e}), falling back to delete+send"
                                 );
                                 let _ = bot.delete_message(msg.chat.id, mid).await;
                                 let _ =
                                     send_html_or_plain(&bot, msg.chat.id, thread_id, &chunks[0])
                                         .await;
                             }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Telegram: edit final failed ({e}), falling back to delete+send"
-                            );
-                            let _ = bot.delete_message(msg.chat.id, mid).await;
-                            let _ =
-                                send_html_or_plain(&bot, msg.chat.id, thread_id, &chunks[0]).await;
                         }
                     }
                 } else {
