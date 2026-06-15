@@ -390,10 +390,10 @@ pub(crate) fn format_help() -> String {
     let mut lines = vec![
         "📖 *Available Commands*".to_string(),
         String::new(),
-        "`/mission-control` Mission control: analytics, activity, inbox & schedule".to_string(),
         "`/compact`  — Compact context (summarize & trim)".to_string(),
         "`/evolve`   — Download latest release & restart".to_string(),
         "`/help`     — Show this message".to_string(),
+        "`/mission-control` Mission control: analytics, activity, inbox & schedule".to_string(),
         "`/models`   — Switch AI model".to_string(),
         "`/new`      — Start a new session".to_string(),
         "`/rtk`      — Show RTK token savings statistics".to_string(),
