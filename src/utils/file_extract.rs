@@ -276,8 +276,24 @@ fn extract_pdf_text(bytes: &[u8], filename: &str) -> FileContent {
         trimmed
     };
 
+    // Text extraction drops embedded figures/screenshots/charts. Point the
+    // agent at the on-demand page renderer for anything visual the text
+    // can't convey (only when we have a saved path to hand it).
+    let visual_hint = saved_path
+        .as_ref()
+        .map(|p| {
+            format!(
+                "\n[If the user asks about figures, diagrams, screenshots, charts, or \
+                 anything visual that the text above doesn't convey, call \
+                 `pdf_to_images(path='{}', page_range='N')` to render those pages, then \
+                 view them with `analyze_image`.]",
+                p.display()
+            )
+        })
+        .unwrap_or_default();
+
     FileContent::Text(format!(
-        "[File: {filename} ({total_pages} pages)]\n```\n{truncated_text}\n```"
+        "[File: {filename} ({total_pages} pages)]\n```\n{truncated_text}\n```{visual_hint}"
     ))
 }
 

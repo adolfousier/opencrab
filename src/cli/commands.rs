@@ -669,8 +669,8 @@ pub(crate) async fn cmd_run(
                 edit::EditTool, exa_search::ExaSearchTool,
                 follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
-                notebook::NotebookEditTool, plan_tool::PlanTool, read::ReadTool,
-                registry::ToolRegistry, rename_session::RenameSessionTool,
+                notebook::NotebookEditTool, pdf_to_images::PdfToImagesTool, plan_tool::PlanTool,
+                read::ReadTool, registry::ToolRegistry, rename_session::RenameSessionTool,
                 session_search::SessionSearchTool, slash_command::SlashCommandTool, task::TaskTool,
                 web_search::WebSearchTool, write::WriteTool,
             },
@@ -704,6 +704,7 @@ pub(crate) async fn cmd_run(
     tool_registry.register(Arc::new(CodeExecTool));
     tool_registry.register(Arc::new(NotebookEditTool));
     tool_registry.register(Arc::new(DocParserTool));
+    tool_registry.register(Arc::new(PdfToImagesTool));
     // Phase 3: Workflow & integration
     tool_registry.register(Arc::new(TaskTool));
     tool_registry.register(Arc::new(ContextTool));
@@ -1061,8 +1062,8 @@ pub(crate) async fn cmd_agent_interactive(
                 edit::EditTool, exa_search::ExaSearchTool,
                 follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, ls::LsTool, memory_search::MemorySearchTool,
-                notebook::NotebookEditTool, plan_tool::PlanTool, read::ReadTool,
-                registry::ToolRegistry, rename_session::RenameSessionTool,
+                notebook::NotebookEditTool, pdf_to_images::PdfToImagesTool, plan_tool::PlanTool,
+                read::ReadTool, registry::ToolRegistry, rename_session::RenameSessionTool,
                 session_search::SessionSearchTool, slash_command::SlashCommandTool, task::TaskTool,
                 web_search::WebSearchTool, write::WriteTool,
             },
@@ -1091,6 +1092,7 @@ pub(crate) async fn cmd_agent_interactive(
     tool_registry.register(Arc::new(CodeExecTool));
     tool_registry.register(Arc::new(NotebookEditTool));
     tool_registry.register(Arc::new(DocParserTool));
+    tool_registry.register(Arc::new(PdfToImagesTool));
     tool_registry.register(Arc::new(TaskTool));
     tool_registry.register(Arc::new(ContextTool));
     tool_registry.register(Arc::new(HttpClientTool));

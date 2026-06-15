@@ -246,6 +246,7 @@ pub mod channel_commands_test;
 pub mod discord_handler_test;
 pub mod pdf_page_range_parser_test;
 pub mod pdf_smart_routing_test;
+pub mod pdf_to_images_test;
 pub mod pdf_vision_test;
 pub mod slack_handler_test;
 mod telegram_caption_test;
