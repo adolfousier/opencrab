@@ -1,0 +1,167 @@
+//! Block-level markdown parsing: the top-level dispatcher that turns lines of
+//! markdown into [`Block`]s, delegating tables to [`super::table`], lists to
+//! [`super::list`], and inline content to [`super::inline`].
+
+use super::ast::Block;
+use super::inline::parse_inlines;
+use super::{list, table};
+
+/// Parse a markdown document into a block list.
+pub(crate) fn parse_markdown(input: &str) -> Vec<Block> {
+    let lines: Vec<String> = input.lines().map(str::to_string).collect();
+    parse_blocks(&lines)
+}
+
+/// Parse a slice of lines into blocks. Used recursively for blockquote bodies
+/// and list-item children.
+pub(super) fn parse_blocks(lines: &[String]) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let t = lines[i].trim();
+        if t.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        // Fenced code block.
+        if is_fence(t) {
+            let lang = fence_lang(t);
+            i += 1;
+            let mut buf = Vec::new();
+            while i < lines.len() && !is_fence(lines[i].trim()) {
+                buf.push(lines[i].clone());
+                i += 1;
+            }
+            i += 1; // consume the closing fence (no-op past EOF)
+            blocks.push(Block::Code {
+                lang,
+                text: buf.join("\n"),
+            });
+            continue;
+        }
+
+        // Pipe table (header row + separator row).
+        if let Some((tbl, next)) = table::try_parse(lines, i) {
+            blocks.push(Block::Table(tbl));
+            i = next;
+            continue;
+        }
+
+        // ATX heading.
+        if let Some((level, content)) = heading(t) {
+            blocks.push(Block::Heading {
+                level,
+                content: parse_inlines(content),
+            });
+            i += 1;
+            continue;
+        }
+
+        // Horizontal rule.
+        if is_divider(t) {
+            blocks.push(Block::Divider);
+            i += 1;
+            continue;
+        }
+
+        // Block math: `$$` fence or a single `$$ ... $$` line.
+        if t == "$$" {
+            i += 1;
+            let mut buf = Vec::new();
+            while i < lines.len() && lines[i].trim() != "$$" {
+                buf.push(lines[i].clone());
+                i += 1;
+            }
+            i += 1; // consume the closing `$$`
+            blocks.push(Block::Math(buf.join("\n")));
+            continue;
+        }
+        if let Some(inner) = t.strip_prefix("$$").and_then(|s| s.strip_suffix("$$"))
+            && !inner.is_empty()
+        {
+            blocks.push(Block::Math(inner.trim().to_string()));
+            i += 1;
+            continue;
+        }
+
+        // Blockquote.
+        if t.starts_with('>') {
+            let mut buf = Vec::new();
+            while i < lines.len() && lines[i].trim_start().starts_with('>') {
+                let l = lines[i].trim_start();
+                let stripped = l.strip_prefix('>').unwrap_or(l);
+                buf.push(stripped.strip_prefix(' ').unwrap_or(stripped).to_string());
+                i += 1;
+            }
+            blocks.push(Block::Quote(parse_blocks(&buf)));
+            continue;
+        }
+
+        // List.
+        if list::is_item(&lines[i]) {
+            blocks.push(Block::List(list::parse_list(lines, &mut i)));
+            continue;
+        }
+
+        // Paragraph: gather soft-wrapped lines until a blank or a new block.
+        let mut buf = Vec::new();
+        while i < lines.len() {
+            if lines[i].trim().is_empty() || starts_block(lines, i) {
+                break;
+            }
+            buf.push(lines[i].trim().to_string());
+            i += 1;
+        }
+        blocks.push(Block::Paragraph(parse_inlines(&buf.join(" "))));
+    }
+
+    blocks
+}
+
+/// Whether line `i` begins any block-level construct (used to terminate a
+/// paragraph run).
+fn starts_block(lines: &[String], i: usize) -> bool {
+    let t = lines[i].trim();
+    t.is_empty()
+        || is_fence(t)
+        || heading(t).is_some()
+        || is_divider(t)
+        || t.starts_with('>')
+        || t == "$$"
+        || list::is_item(&lines[i])
+        || table::try_parse(lines, i).is_some()
+}
+
+/// A fence line: three or more backticks.
+fn is_fence(t: &str) -> bool {
+    t.starts_with("```")
+}
+
+/// The language tag of an opening fence, if any.
+fn fence_lang(t: &str) -> Option<String> {
+    let lang = t.trim_start_matches('`').trim();
+    (!lang.is_empty()).then(|| lang.to_string())
+}
+
+/// Parse an ATX heading, returning `(level, content)`.
+fn heading(t: &str) -> Option<(u8, &str)> {
+    let hashes = t.chars().take_while(|&c| c == '#').count();
+    if (1..=6).contains(&hashes) {
+        let rest = &t[hashes..];
+        if rest.is_empty() || rest.starts_with(' ') {
+            return Some((hashes as u8, rest.trim()));
+        }
+    }
+    None
+}
+
+/// Whether `t` is a horizontal rule (`---`, `***`, `___`, possibly spaced).
+fn is_divider(t: &str) -> bool {
+    let s: String = t.chars().filter(|c| !c.is_whitespace()).collect();
+    s.len() >= 3
+        && (s.bytes().all(|b| b == b'-')
+            || s.bytes().all(|b| b == b'*')
+            || s.bytes().all(|b| b == b'_'))
+}

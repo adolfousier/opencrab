@@ -3629,6 +3629,14 @@ fn strip_html_tags(html: &str) -> String {
 /// footer so the indent and emoji icons render in a clean monospace
 /// box, like a status panel.
 pub(crate) fn markdown_to_telegram_html(text: &str) -> String {
+    // Messages containing a GitHub-flavored table are rendered through the rich
+    // AST so the table comes out as an aligned monospace grid instead of the
+    // raw `| pipes |` the line-based path below would emit. Table-free messages
+    // keep the original path (pinned by the sibling render tests).
+    if super::rich::contains_table(text) {
+        return super::rich::markdown_to_html(text);
+    }
+
     let mut result = String::with_capacity(text.len() + 256);
     let mut in_code_block = false;
     let mut in_plan_block = false;
