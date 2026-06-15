@@ -12,6 +12,27 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
+/// On-brand palette for project badges — variations of orange, cyan, white,
+/// and blue. Each project is mapped to one entry deterministically so the same
+/// project always shows the same colour and different projects stay
+/// distinguishable in the session list.
+const PROJECT_BADGE_COLORS: &[Color] = &[
+    Color::Rgb(215, 100, 20),  // crab orange
+    Color::Rgb(235, 160, 70),  // amber
+    Color::Rgb(80, 200, 200),  // cyan
+    Color::Rgb(90, 200, 160),  // teal
+    Color::Rgb(90, 160, 220),  // blue
+    Color::Rgb(150, 190, 240), // light blue
+    Color::Rgb(220, 220, 220), // soft white
+    Color::Rgb(180, 210, 230), // pale blue-white
+];
+
+/// Pick a stable badge colour for `project_id` from [`PROJECT_BADGE_COLORS`].
+fn project_badge_color(project_id: uuid::Uuid) -> Color {
+    let idx = (project_id.as_u128() % PROJECT_BADGE_COLORS.len() as u128) as usize;
+    PROJECT_BADGE_COLORS[idx]
+}
+
 /// Render the sessions list
 pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
@@ -207,7 +228,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                     .unwrap_or("?");
                 spans.push(Span::styled(
                     format!(" {{.{}}}", project_name),
-                    Style::default().fg(Color::Rgb(215, 100, 20)),
+                    Style::default().fg(project_badge_color(pid)),
                 ));
             }
 
