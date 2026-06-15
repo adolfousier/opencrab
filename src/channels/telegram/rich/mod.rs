@@ -11,6 +11,7 @@
 //! Files are kept small and single-purpose: [`ast`] (types), [`inline`] /
 //! [`table`] / [`list`] / [`parse`] (front-end), [`render_html`] (fallback).
 
+pub(crate) mod api;
 pub(crate) mod ast;
 mod inline;
 mod list;

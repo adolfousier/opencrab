@@ -282,15 +282,26 @@ impl Tool for TelegramSendTool {
                 let thread_id = resolve_thread_id(&input, chat_id).await;
                 let chunks = crate::channels::telegram::handler::split_message(&text, 4096);
                 for chunk in chunks {
-                    if let Err(e) = crate::channels::telegram::send::message_in_thread(
-                        &bot,
-                        ChatId(chat_id),
-                        thread_id,
-                        chunk,
+                    // Rich-first: let Telegram render the markdown natively
+                    // (tables, headings, lists, math). On any failure fall back
+                    // to the prior plain-text send so a rich-API hiccup never
+                    // drops the message.
+                    if let Err(e) = crate::channels::telegram::rich::api::try_send_rich(
+                        &bot, chat_id, thread_id, chunk,
                     )
                     .await
                     {
-                        return Ok(ToolResult::error(format!("Failed to send: {e}")));
+                        tracing::warn!("telegram_send: rich send failed, sending plain: {e}");
+                        if let Err(e) = crate::channels::telegram::send::message_in_thread(
+                            &bot,
+                            ChatId(chat_id),
+                            thread_id,
+                            chunk,
+                        )
+                        .await
+                        {
+                            return Ok(ToolResult::error(format!("Failed to send: {e}")));
+                        }
                     }
                 }
                 Ok(ToolResult::success(format!(

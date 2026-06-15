@@ -191,3 +191,23 @@ fn task_list_renders_checkboxes() {
     assert!(html.contains("☐ todo"), "{html}");
     assert!(html.contains("☑ done"), "{html}");
 }
+
+// ── sendRichMessage request body ────────────────────────────────────
+
+#[test]
+fn rich_request_body_passes_markdown_through() {
+    // InputRichMessage takes the message as a `markdown` string; Telegram
+    // parses it server-side, so we pass the model's markdown verbatim.
+    let body = crate::channels::telegram::rich::api::build_body(
+        12345,
+        None,
+        "# Title\n\n| a | b |\n| - | - |\n| 1 | 2 |",
+    );
+    assert_eq!(body["chat_id"], 12345);
+    assert_eq!(
+        body["rich_message"]["markdown"],
+        "# Title\n\n| a | b |\n| - | - |\n| 1 | 2 |"
+    );
+    // No thread id supplied → field omitted.
+    assert!(body.get("message_thread_id").is_none());
+}
