@@ -208,6 +208,27 @@ fn filter_think_tags(
                 *active_close_tag = tag_idx;
                 *bytes_consumed = 0;
             } else {
+                // Orphan close tag: some models (Mimo, Qwen) sometimes skip
+                // the opening <think> tag and only output the closing tag.
+                // Treat everything before the orphan close as reasoning
+                // instead of display text.
+                // Skip `-->` (too broad — arrow functions, ASCII art) and
+                // empty strings (which match at position 0 infinitely).
+                let orphan_close = STRIP_CLOSE_TAGS
+                    .iter()
+                    .flat_map(|candidates| candidates.iter())
+                    .filter(|c| **c != "-->" && !c.is_empty())
+                    .filter_map(|close| remaining.find(close).map(|pos| (pos, *close)))
+                    .min_by_key(|(pos, _)| *pos);
+
+                if let Some((end, close_tag)) = orphan_close {
+                    reasoning.push_str(&remaining[..end]);
+                    remaining = &remaining[end + close_tag.len()..];
+                    // Continue scanning — content after the orphan close tag
+                    // is normal display text (may contain more open/close pairs).
+                    continue;
+                }
+
                 // Before emitting `remaining` as final output, check if its
                 // tail could be the leading prefix of an open tag that gets
                 // completed by the next chunk. If so, move those bytes to
@@ -306,6 +327,24 @@ fn strip_think_blocks(text: &str) -> String {
                 // Unclosed tag — strip from open tag to end
                 result = result[..start].to_string();
                 break;
+            }
+        }
+    }
+
+    // Handle orphan close tags (close without preceding open tag).
+    // Some models (Mimo, Qwen) skip the opening <think> tag and only output
+    // </think>. Content before the orphan close is reasoning — remove it
+    // from the display output along with the close tag itself.
+    // Skip `-->` (too broad — arrow functions, ASCII art) and empty strings
+    // (which match at position 0 and would loop infinitely).
+    for close_candidates in STRIP_CLOSE_TAGS.iter() {
+        for close in close_candidates.iter() {
+            if *close == "-->" || close.is_empty() {
+                continue;
+            }
+            while let Some(end) = result.find(close) {
+                // Remove everything before and including the orphan close tag
+                result = result[end + close.len()..].to_string();
             }
         }
     }
