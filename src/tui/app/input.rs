@@ -1643,8 +1643,18 @@ impl App {
             if self.scroll_offset == 0 {
                 self.auto_scroll = true;
             }
-        } else if event.code == KeyCode::Backspace && event.modifiers.contains(KeyModifiers::ALT) {
-            // Alt+Backspace — delete last word
+        } else if (event.code == KeyCode::Backspace
+            && event
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL))
+            || (event.code == KeyCode::Char('w') && event.modifiers == KeyModifiers::CONTROL)
+        {
+            // Delete the word before the cursor. Alt+Backspace is the macOS
+            // convention, but it only reaches us when the terminal sends
+            // Option-as-Meta (ESC + DEL); terminals that don't (Warp's
+            // default) never produce the ALT modifier. Ctrl+W (readline's
+            // word-erase, a literal 0x17 every terminal sends) and
+            // Ctrl+Backspace are the cross-terminal fallbacks.
             self.delete_last_word();
         } else if keys::is_up(&event)
             && !self.slash_suggestions_active
