@@ -167,6 +167,40 @@ api_key = "YOUR_GEMINI_KEY"
 
 **Diagnostic:** when vision is unavailable for any reason, `is_vision_available` logs the exact cause at INFO level in `~/.opencrabs/logs/opencrabs.YYYY-MM-DD` — search for `target=vision`.
 
+#### Context window & auto-compaction (effectively unlimited memory)
+
+OpenCrabs never makes you start a fresh session to "clear context." Instead it auto-compacts: as a session's history approaches the model's context window, it summarizes the older turns in place and keeps going. Two tiers:
+
+- **65% — soft trigger:** spawns a background LLM compaction that summarizes history back down to ~65% of the budget. Non-blocking — the conversation keeps streaming.
+- **90% — hard trigger:** synchronous compaction before the next request, so a single turn can never overflow the window.
+
+The triggers are **percentages of the effective window**, so they scale to whatever you set: at the 200k default compaction kicks in around 130k; at a 1M window, around 650k.
+
+It's **transparent** — most of the time you won't notice it happen at all. Occasionally you'll catch a brief inline notice while it summarizes (the agent tends to mention it dynamically, in its own voice), then the conversation carries on with the older turns condensed. You never have to start over or manually clear anything.
+
+**The budget defaults to 200,000 tokens** — the battle-tested sweet spot: large enough for long sessions, small enough to keep each request fast and cheap. Override it **per provider** in `config.toml`:
+
+```toml
+[providers.xiaomi]
+context_window = 1000000   # raise the budget; compaction still triggers at 65% / 90% of it
+
+[providers.anthropic]
+context_window = 1000000   # native providers too — Anthropic, Gemini, and the CLI providers
+```
+
+This override works for **every provider** — OpenAI-compatible (custom, xiaomi, qwen, openrouter, minimax, …) and the native Anthropic, Gemini, and CLI providers. A provider with no override inherits the 200k default.
+
+> **Sizing guidance.** 200k is the battle-tested sweet spot for essentially **every cloud model**. The latest large models (the full, non-`flash` variants) handle bigger windows robustly, so raising it works well when you want more single-session memory — the real downside of going past 200k is simply **cost** (more tokens per request). **Local models want less:** 128k is a good sweet spot, lower if your machine is tight on resources.
+>
+> **Leave auto-compaction on** — it's been battle-tested over months and needs no babysitting. Only run a *manual* compaction (the `/compact` command) if you have a specific, strong reason to summarize early; otherwise let it manage itself.
+
+#### Changing provider settings: edit the file, or just ask
+
+`vision_model`, `context_window`, provider keys, allowlists — any setting — can be changed two ways, and **neither needs a restart**:
+
+- **Edit `config.toml` / `keys.toml` directly.** A file watcher hot-reloads on save, so the running TUI *and* the headless daemon both pick the change up on the next message — provider swap, tool re-registration, context budget, commands, and skills all update live.
+- **Ask OpenCrabs in natural language** — e.g. *"set my context window to 1M"*, *"use mimo-v2-omni for vision on xiaomi"*, *"add my OpenRouter key"*. It writes the change through the `config_manager` tool (`write_config`), and if the automatic hot-reload doesn't pick the save up for any reason, it can run `config_manager reload` to force a fresh load from disk on the spot.
+
 ### Messaging Integrations
 | Feature | Description |
 |---------|-------------|

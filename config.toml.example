@@ -33,7 +33,7 @@ enabled = true
 base_url = "https://xiaomi-collab.opencrabs.com/v1/chat/completions"
 default_model = "mimo-v2.5-pro"
 models = ["mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-flash"]
-context_window = 1000000
+context_window = 1000000  # compaction budget (auto-compacts at 65%/90%); default 200000; works on any provider
 vision_model = "mimo-v2.5-pro"  # MiMo v2.5 is multimodal — analyze_image uses it natively (falls back to Gemini if image.vision is set)
 # enable_thinking = false  # uncomment to disable the model's reasoning output
 
