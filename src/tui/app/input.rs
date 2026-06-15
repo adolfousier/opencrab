@@ -2163,7 +2163,7 @@ impl App {
                     }
                     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                     {
-                        Err(std::io::Error::new(
+                        Err::<std::process::ExitStatus, _>(std::io::Error::new(
                             std::io::ErrorKind::Unsupported,
                             "unsupported platform",
                         ))
@@ -2217,7 +2217,7 @@ impl App {
                     }
                     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                     {
-                        Err(std::io::Error::new(
+                        Err::<std::process::ExitStatus, _>(std::io::Error::new(
                             std::io::ErrorKind::Unsupported,
                             "unsupported platform",
                         ))

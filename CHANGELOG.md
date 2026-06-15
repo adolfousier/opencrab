@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.40] - 2026-06-15
+
+72 commits since v0.3.39. 105 files changed, +6252 / -4121 lines.
+
+### ✨ Features
+
+- `88334c71` `c9fb8c47` `a3ad07ee` `6e476fb2` `9d5ab236` `ad02aac6` `52f1ed6f` **Projects system**: full CRUD UI with ProjectRepository (SQLite), ProjectService, and TUI mode. Assign sessions with A key. Project name badges with per-project colours. Help section with feature checkmark. Session file artifacts for per-project file management.
+- `69e8d21c` `a15d8a5b` `3eb9b694` `d364d662` `76eb93cd` `0e70a8ae` `60947481` `2dd79d3e` **Telegram native rich messages**: full markdown-to-rich rendering gated behind `channels.telegram.rich_messages` (default off). AST parser handles headings, tables with alignment, nested/ordered/task lists, fenced code, blockquotes, and inline+block math. Responsive table rendering with card layout for wide tables. Native `sendRichMessage` for proactive sends via `telegram_send`. Structured intermediate messages render rich during streaming. Final streamed reply converts to rich on completion. Resume session delivery uses rich. Smart gating: only promotes on real block structure, plain prose untouched. Fresh rich message instead of editing placeholder. Any-length replies attempt rich. Silent HTML fallback on any failure.
+- `344176c6` **Prompt formatting instruction**: model instructed to format responses with headings, tables, and fenced code blocks by default.
+- `7657670f` **OpenRouter cache by default**: caching enabled on OpenRouter by default. Prompt Caching docs section with TTL behavior and cost-safety notes.
+- `663dae17` **Context window override**: native and CLI providers honor `context_window` config, letting you cap or expand context for any model. Edit-or-ask config workflow documented.
+- `abf69192` **Per-project badge colours**: stable colour from on-brand palette mapped by project id.
+
+### 🔧 Fixes
+
+- `509bf6d7` **TUI input preservation**: keep in-progress input when a queued message enters mid-turn.
+- `003b8a53` `5f53faf7` `9dcc5c02` `f0be4af3` `a072a979` `2ed18f78` **Telegram rich renderer**: wire into resume_session, send fresh instead of editing placeholder, attempt for any-length replies, restore blank-line spacing, don't italicize intra-word underscores, never collapse allowed_users.
+- `9b43517c` `d0b37547` **Provider orphan tags**: exclude bare `-->` by value, handle orphan think close tags in streaming + non-streaming.
+- `c3daa12f` `183e2550` **Service scope**: resolve invoking user's home under sudo, probe unit file scope (#200).
+- `22f49906` **Config snapshot**: snapshot last_good when config changes and parses.
+- `03c9e1e8` `d9de9d96` `eb5ec1fd` `fbd21804` **Brain dedup hardening**: incident-line stripping, cap evidence entries, extend looks_like_failure_log, normalize timestamps.
+- `3bab6228` `afee75c2` **Onboarding**: Image Handling layout, Quick onboard dot count.
+- `f4a6ea34` `3fab3e20` **Zhipu**: restore newest-first order, merge config.toml models into GLM picker.
+- `b287efac` `f767f4ef` **Vision**: register setup-hint analyze_image, Xiaomi vision_model + Gemini fallback.
+- `0c1ccc0c` **Daemon**: systemd Restart=always.
+- `ff6fbe3f` **Hot-reload**: detect atomic-save config edits.
+- `42446c06` **Help**: keep built-in commands alphabetical.
+- `20fa17cb` **Providers**: clean up custom-provider section on rename.
+- `3cdf160c` **Voice**: surface Voicebox generation failures.
+- `2f3486fe` `0853dbbc` `3b314b7c` **TUI**: remove duplicate /mission-control, badge brand orange, badge real-time update.
+
+### ⚡ Performance
+
+- `b3a77e87` In-memory current-config mirror, refreshed by the watcher.
+- `73588534` Demote per-load config-load logging from info/debug to trace.
+
+### 🧹 Miscellaneous
+
+- `a2236d67` `a11116b1` Remove all item-level `allow(dead_code)` + dead OpenRouter AnthropicOR path.
+- `fdb5fa6f` Delete dead ModelSelector mode.
+- `158532a4` `/models` reuses onboarding provider picker.
+- `f1177669` Replace `/analytics` with `/mission-control`.
+- `54ee96fe` `d652f5b6` `d82b240f` Relocate unit-scope tests, incident log dedup tests, 25 project integration tests.
+- `999957c7` `b12ba129` One-liner install per platform, auto-start service recommendation.
+- `21c29adc` `2d9943ec` `498cffa4` `48392fe4` `ff80a6d1` `8d551dcf` Prompt Caching docs, context window guidance, cost-safety notes.
+- `15b4426a` `b5da3dac` `7b5b3b04` README: Telegram rich formatting, /mission-control, daemon troubleshooting.
+- `935c6bfb` `1804d9e2` Cargo formatting normalization.
+
+### 📊 Stats
+
+- 72 commits since v0.3.39
+- 105 files changed, +6252 / -4121 lines
+- 3,249 tests
+
 ## [0.3.39] - 2026-06-14
 
 30 commits since v0.3.38. 52 files changed, +3015 / -581 lines.
@@ -5559,3 +5613,4 @@ fixes.
 
 [0.3.38]: https://github.com/adolfousier/opencrabs/compare/v0.3.37...v0.3.38
 [0.3.39]: https://github.com/adolfousier/opencrabs/compare/v0.3.38...v0.3.39
+[0.3.40]: https://github.com/adolfousier/opencrabs/compare/v0.3.39...v0.3.40
