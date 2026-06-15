@@ -1692,6 +1692,54 @@ impl App {
 
     /// Text file paths (`.txt`, `.md`, `.json`, source code, etc.) are read from
     /// disk and inlined into the returned text — no attachment needed.
+    /// Resolve a drag-dropped path to its real on-disk form.
+    ///
+    /// Terminals shell-escape dropped paths: spaces become `\ `, and the
+    /// whole thing may be wrapped in quotes. The raw string therefore fails
+    /// `Path::exists()` even though the file is right there — which is why a
+    /// screenshot like `Screenshot\ 2026.png` silently never attached.
+    ///
+    /// We try the raw string first (so Windows backslash *separators* are
+    /// never mangled), then an unquoted form, then a POSIX-unescaped form,
+    /// returning the first that actually exists. `None` means no real file.
+    fn resolve_dropped_path(raw: &str) -> Option<String> {
+        if raw.is_empty() {
+            return None;
+        }
+        if std::path::Path::new(raw).exists() {
+            return Some(raw.to_string());
+        }
+        // Strip one layer of matching surrounding quotes.
+        let unquoted = raw
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| raw.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(raw);
+        if unquoted != raw && std::path::Path::new(unquoted).exists() {
+            return Some(unquoted.to_string());
+        }
+        // POSIX shell unescape: drop the backslash before any escaped char
+        // (`\ `, `\(`, `\&`, …). Only used when the result actually exists,
+        // so a genuine backslash in a path is never wrongly stripped.
+        if unquoted.contains('\\') {
+            let mut unescaped = String::with_capacity(unquoted.len());
+            let mut chars = unquoted.chars();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    if let Some(next) = chars.next() {
+                        unescaped.push(next);
+                    }
+                } else {
+                    unescaped.push(c);
+                }
+            }
+            if std::path::Path::new(&unescaped).exists() {
+                return Some(unescaped);
+            }
+        }
+        None
+    }
+
     pub(crate) fn extract_image_paths(text: &str) -> (String, Vec<ImageAttachment>) {
         let trimmed = text.trim();
         let lower = trimmed.to_lowercase();
@@ -1701,18 +1749,18 @@ impl App {
         let is_image_single = IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
         let is_video_single = VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
         if is_image_single || is_video_single {
-            // Local path
-            let path = std::path::Path::new(trimmed);
-            if path.exists() {
-                let name = path
+            // Local path — resolve the shell-escaped drag-drop form (e.g.
+            // `Screenshot\ 1.png`) to the real file before attaching.
+            if let Some(real) = Self::resolve_dropped_path(trimmed) {
+                let name = std::path::Path::new(&real)
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| trimmed.to_string());
+                    .unwrap_or_else(|| real.clone());
                 return (
                     String::new(),
                     vec![ImageAttachment {
                         name,
-                        path: trimmed.to_string(),
+                        path: real,
                         is_video: is_video_single,
                     }],
                 );
@@ -1731,24 +1779,50 @@ impl App {
             }
         }
 
-        // Case 1b: Entire pasted text is a single text file path (handles spaces in path)
-        if TEXT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
-            let path = std::path::Path::new(trimmed);
-            if path.exists() {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| trimmed.to_string());
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    const LIMIT: usize = 8_000;
-                    let truncated = if content.len() > LIMIT {
-                        let safe: String = content.chars().take(LIMIT).collect();
-                        format!("{}…[truncated]", safe)
-                    } else {
-                        content
-                    };
-                    return (format!("[File: {}]\n```\n{}\n```", name, truncated), vec![]);
-                }
+        // Case 1b: Entire pasted text is a single document path (PDF, DOCX, …).
+        // Binary formats — never inline bytes. Surface the real path and point
+        // the agent at the parsing tools so it can actually read/see it.
+        if DOC_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+            && let Some(real) = Self::resolve_dropped_path(trimmed)
+        {
+            let name = std::path::Path::new(&real)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| real.clone());
+            let is_pdf = real.to_lowercase().ends_with(".pdf");
+            let how = if is_pdf {
+                format!(
+                    "Call `parse_document(path='{real}')` to read its text, or \
+                     `pdf_to_images(path='{real}', page_range='N')` then `analyze_image` \
+                     for figures/screenshots/scanned pages."
+                )
+            } else {
+                format!("Call `parse_document(path='{real}')` to read it.")
+            };
+            return (
+                format!("[User attached a document: {name} ({real}). {how}]"),
+                vec![],
+            );
+        }
+
+        // Case 1c: Entire pasted text is a single text file path (handles spaces in path)
+        if TEXT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+            && let Some(real) = Self::resolve_dropped_path(trimmed)
+        {
+            let path = std::path::Path::new(&real);
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| real.clone());
+            if let Ok(content) = std::fs::read_to_string(path) {
+                const LIMIT: usize = 8_000;
+                let truncated = if content.len() > LIMIT {
+                    let safe: String = content.chars().take(LIMIT).collect();
+                    format!("{}…[truncated]", safe)
+                } else {
+                    content
+                };
+                return (format!("[File: {}]\n```\n{}\n```", name, truncated), vec![]);
             }
         }
 
@@ -1786,6 +1860,29 @@ impl App {
                     });
                     continue;
                 }
+            }
+
+            // Document paths (space-free in mixed-text mode): surface the
+            // path + parsing hint rather than inlining binary bytes.
+            if DOC_EXTENSIONS.iter().any(|ext| word_lower.ends_with(ext))
+                && std::path::Path::new(word).exists()
+            {
+                let name = std::path::Path::new(word)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| word.to_string());
+                let how = if word_lower.ends_with(".pdf") {
+                    format!(
+                        "Call `parse_document(path='{word}')` for text, or \
+                         `pdf_to_images(path='{word}', page_range='N')` + `analyze_image` for visuals."
+                    )
+                } else {
+                    format!("Call `parse_document(path='{word}')` to read it.")
+                };
+                inlined_files.push(format!(
+                    "[User attached a document: {name} ({word}). {how}]"
+                ));
+                continue;
             }
 
             // Check for text file paths (space-free paths only in mixed-text mode)
