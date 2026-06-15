@@ -1987,6 +1987,12 @@ impl App {
                     {
                         Ok(()) => {
                             self.notification = Some(format!("Assigned: {title}"));
+                            // Reflect the assignment in the in-memory list right
+                            // away so the project badge appears in real time,
+                            // without leaving and re-entering the sessions list.
+                            if let Some(s) = self.sessions.iter_mut().find(|s| s.id == session_id) {
+                                s.project_id = Some(project_id);
+                            }
                         }
                         Err(e) => {
                             self.notification = Some(format!("Failed to assign: {e}"));
