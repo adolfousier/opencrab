@@ -219,8 +219,9 @@ async fn cmd_chat_inner(
                 context::ContextTool, doc_parser::DocParserTool, edit::EditTool,
                 follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
                 http::HttpClientTool, load_brain_file::LoadBrainFileTool, ls::LsTool,
-                memory_search::MemorySearchTool, notebook::NotebookEditTool, plan_tool::PlanTool,
-                read::ReadTool, registry::ToolRegistry, rename_session::RenameSessionTool,
+                memory_search::MemorySearchTool, notebook::NotebookEditTool,
+                pdf_to_images::PdfToImagesTool, plan_tool::PlanTool, read::ReadTool,
+                registry::ToolRegistry, rename_session::RenameSessionTool,
                 session_search::SessionSearchTool, slash_command::SlashCommandTool, task::TaskTool,
                 web_search::WebSearchTool, write::WriteTool,
                 write_opencrabs_file::WriteOpenCrabsFileTool,
@@ -285,6 +286,7 @@ async fn cmd_chat_inner(
     tool_registry.register(Arc::new(CodeExecTool));
     tool_registry.register(Arc::new(NotebookEditTool));
     tool_registry.register(Arc::new(DocParserTool));
+    tool_registry.register(Arc::new(PdfToImagesTool));
     // Phase 3: Workflow & integration
     tool_registry.register(Arc::new(TaskTool));
     tool_registry.register(Arc::new(ContextTool));
