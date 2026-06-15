@@ -2072,16 +2072,14 @@ fn render_channel_test_status(lines: &mut Vec<Line<'static>>, wizard: &Onboardin
 }
 
 fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
-    // Provider row
+    // Provider row. Keep it short so it never wraps inside the box — the model
+    // name is shown again in the "Generation model" row below, so it's omitted
+    // here (it used to push "🍌 Nano Banana" onto a wrapped second line).
     lines.push(Line::from(vec![
         Span::styled("  Provider: ".to_string(), Style::default().fg(Color::Gray)),
         Span::styled(
             "[ Google ]".to_string(),
             Style::default().fg(BRAND_GOLD).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "  gemini-3.1-flash-image-preview".to_string(),
-            Style::default().fg(Color::Gray),
         ),
         Span::styled(
             "  🍌 Nano Banana".to_string(),
@@ -2090,15 +2088,13 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
     ]));
     lines.push(Line::from(""));
 
-    // Contextual key hints
+    // Contextual key hints — kept short so they don't wrap onto the box border.
     let hint_text = match wizard.image_field {
         ImageField::VisionToggle | ImageField::GenerationToggle => {
-            "  Space / ↑↓ to toggle  ·  Tab / Enter to continue  ·  Esc to go back"
+            "  Space toggle · Tab/Enter next · Esc back"
         }
-        ImageField::GenerationModel => {
-            "  Type to override model name  ·  Tab / Enter to continue  ·  Esc to go back"
-        }
-        ImageField::ApiKey => "  Enter to continue  ·  BackTab to go back  ·  Esc to go back",
+        ImageField::GenerationModel => "  Type to override · Tab/Enter next · Esc back",
+        ImageField::ApiKey => "  Enter next · BackTab/Esc back",
     };
     lines.push(Line::from(Span::styled(
         hint_text,
@@ -2139,11 +2135,11 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                     Modifier::empty()
                 }),
         ),
-        Span::styled(
-            "   — analyze images the agent receives",
-            Style::default().fg(Color::Gray),
-        ),
     ]));
+    lines.push(Line::from(Span::styled(
+        "        analyze images the agent receives",
+        Style::default().fg(Color::Gray),
+    )));
 
     // Generation toggle
     let gen_focused = wizard.image_field == ImageField::GenerationToggle;
@@ -2178,11 +2174,11 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
                     Modifier::empty()
                 }),
         ),
-        Span::styled(
-            " — generate images from text prompts",
-            Style::default().fg(Color::Gray),
-        ),
     ]));
+    lines.push(Line::from(Span::styled(
+        "        generate images from text prompts",
+        Style::default().fg(Color::Gray),
+    )));
 
     // Generation model override input — only meaningful when generation
     // is enabled. Empty input keeps the seeded
@@ -2197,26 +2193,26 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             (wizard.image_generation_model_input.clone(), false)
         };
         let cursor = if model_focused { "█" } else { "" };
-        lines.push(Line::from(vec![
-            Span::styled(
-                "  Generation model: ",
-                Style::default().fg(if model_focused {
-                    BRAND_BLUE
-                } else {
-                    Color::Gray
-                }),
-            ),
-            Span::styled(
-                format!("{}{}", display, cursor),
-                Style::default().fg(if dim {
-                    Color::Gray
-                } else if model_focused {
-                    Color::White
-                } else {
-                    Color::Cyan
-                }),
-            ),
-        ]));
+        // Label on its own line, value indented below it — the model name is
+        // long enough that "label: value" wrapped onto the box border.
+        lines.push(Line::from(Span::styled(
+            "  Generation model",
+            Style::default().fg(if model_focused {
+                BRAND_BLUE
+            } else {
+                Color::Gray
+            }),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("    {}{}", display, cursor),
+            Style::default().fg(if dim {
+                Color::Gray
+            } else if model_focused {
+                Color::White
+            } else {
+                Color::Cyan
+            }),
+        )));
     }
 
     // API key field (only when either is enabled)
@@ -2246,22 +2242,20 @@ fn render_image_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard)
             ""
         };
 
-        lines.push(Line::from(vec![
-            Span::styled(
-                "  Google API Key: ",
-                Style::default().fg(if key_focused { BRAND_BLUE } else { Color::Gray }),
-            ),
-            Span::styled(
-                format!("{}{}", masked_key, cursor),
-                Style::default().fg(if wizard.has_existing_image_key() {
-                    Color::Cyan
-                } else if key_focused {
-                    Color::White
-                } else {
-                    Color::Gray
-                }),
-            ),
-        ]));
+        lines.push(Line::from(Span::styled(
+            "  Google API Key",
+            Style::default().fg(if key_focused { BRAND_BLUE } else { Color::Gray }),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("    {}{}", masked_key, cursor),
+            Style::default().fg(if wizard.has_existing_image_key() {
+                Color::Cyan
+            } else if key_focused {
+                Color::White
+            } else {
+                Color::Gray
+            }),
+        )));
 
         if !key_hint.is_empty() && key_focused {
             lines.push(Line::from(Span::styled(
