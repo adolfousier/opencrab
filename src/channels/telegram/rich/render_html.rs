@@ -8,68 +8,54 @@
 
 use super::ast::{Align, Block, Inline, List, Table};
 
-/// Render a block list to a Telegram-HTML string.
+/// Render a block list to a Telegram-HTML string. Block-level elements are
+/// separated by a blank line so paragraphs, headings, lists, and tables keep
+/// their breathing room (the source markdown's paragraph breaks); list items
+/// themselves stay single-spaced.
 pub(super) fn render_html(blocks: &[Block]) -> String {
-    let mut out = String::new();
-    for b in blocks {
-        render_block(b, 0, &mut out);
-    }
-    out.trim_end().to_string()
+    blocks
+        .iter()
+        .map(render_block)
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .trim()
+        .to_string()
 }
 
-fn render_block(block: &Block, depth: usize, out: &mut String) {
+fn render_block(block: &Block) -> String {
     match block {
         Block::Heading { level, content } => {
             // No heading tags in Telegram HTML: bold, and italicize deeper
             // headings (level >= 3) so the hierarchy stays visible.
-            let deep = *level >= 3;
-            out.push_str("<b>");
-            if deep {
-                out.push_str("<i>");
+            let inner = render_inlines(content);
+            if *level >= 3 {
+                format!("<b><i>{inner}</i></b>")
+            } else {
+                format!("<b>{inner}</b>")
             }
-            out.push_str(&render_inlines(content));
-            if deep {
-                out.push_str("</i>");
-            }
-            out.push_str("</b>\n");
         }
-        Block::Paragraph(content) => {
-            out.push_str(&render_inlines(content));
-            out.push('\n');
-        }
-        Block::List(list) => render_list(list, depth, out),
-        Block::Table(table) => {
-            out.push_str(&render_table(table));
-            out.push('\n');
-        }
-        Block::Code { lang, text } => {
-            match lang {
-                Some(l) => out.push_str(&format!("<pre><code class=\"language-{}\">", escape(l))),
-                None => out.push_str("<pre><code>"),
-            }
-            out.push_str(&escape(text));
-            out.push_str("</code></pre>\n");
-        }
-        Block::Quote(inner) => {
-            let mut buf = String::new();
-            for ib in inner {
-                render_block(ib, 0, &mut buf);
-            }
-            out.push_str("<blockquote>");
-            out.push_str(buf.trim_end());
-            out.push_str("</blockquote>\n");
-        }
-        Block::Math(expr) => {
-            out.push_str("<pre>");
-            out.push_str(&escape(expr));
-            out.push_str("</pre>\n");
-        }
-        Block::Divider => out.push_str("──────────\n"),
+        Block::Paragraph(content) => render_inlines(content),
+        Block::List(list) => render_list(list, 0),
+        Block::Table(table) => render_table(table),
+        Block::Code { lang, text } => match lang {
+            Some(l) => format!(
+                "<pre><code class=\"language-{}\">{}</code></pre>",
+                escape(l),
+                escape(text)
+            ),
+            None => format!("<pre><code>{}</code></pre>", escape(text)),
+        },
+        Block::Quote(inner) => format!("<blockquote>{}</blockquote>", render_html(inner)),
+        Block::Math(expr) => format!("<pre>{}</pre>", escape(expr)),
+        Block::Divider => "──────────".to_string(),
     }
 }
 
-fn render_list(list: &List, depth: usize, out: &mut String) {
+/// Render a list to single-spaced lines. Nested child blocks (typically a
+/// deeper list) are indented under their item.
+fn render_list(list: &List, depth: usize) -> String {
     let pad = "  ".repeat(depth);
+    let mut lines = Vec::new();
     for (idx, item) in list.items.iter().enumerate() {
         let bullet = match item.task {
             Some(true) => "☑".to_string(),
@@ -77,15 +63,15 @@ fn render_list(list: &List, depth: usize, out: &mut String) {
             None if list.ordered => format!("{}.", idx + 1),
             None => "•".to_string(),
         };
-        out.push_str(&pad);
-        out.push_str(&bullet);
-        out.push(' ');
-        out.push_str(&render_inlines(&item.content));
-        out.push('\n');
+        lines.push(format!("{pad}{bullet} {}", render_inlines(&item.content)));
         for child in &item.children {
-            render_block(child, depth + 1, out);
+            match child {
+                Block::List(inner) => lines.push(render_list(inner, depth + 1)),
+                other => lines.push(format!("{pad}  {}", render_block(other))),
+            }
         }
     }
+    lines.join("\n")
 }
 
 fn render_table(table: &Table) -> String {
