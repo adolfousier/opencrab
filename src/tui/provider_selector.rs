@@ -284,12 +284,14 @@ impl ProviderSelectorState {
                 self.base_url.clear();
                 self.custom_model.clear();
                 self.context_window.clear();
+                self.editing_custom_key = None;
                 false
             } else {
                 // Existing custom provider
                 let custom_idx = self.selected_provider - CUSTOM_INSTANCES_START;
                 if let Some(cname) = self.custom_names.get(custom_idx).cloned() {
                     if let Some(c) = config.providers.custom_by_name(&cname) {
+                        self.editing_custom_key = Some(cname.clone());
                         self.custom_name = cname;
                         self.base_url = c.base_url.clone().unwrap_or_default();
                         self.custom_model = c.default_model.clone().unwrap_or_default();
@@ -335,12 +337,14 @@ impl ProviderSelectorState {
             self.base_url.clear();
             self.custom_model.clear();
             self.context_window.clear();
+            self.editing_custom_key = None;
         } else if self.selected_provider >= CUSTOM_INSTANCES_START {
             let custom_idx = self.selected_provider - CUSTOM_INSTANCES_START;
             if let Some(cname) = self.custom_names.get(custom_idx).cloned()
                 && let Ok(config) = crate::config::Config::load()
                 && let Some(c) = config.providers.custom_by_name(&cname)
             {
+                self.editing_custom_key = Some(cname.clone());
                 self.custom_name = cname;
                 self.base_url = c.base_url.clone().unwrap_or_default();
                 self.custom_model = c.default_model.clone().unwrap_or_default();

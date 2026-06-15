@@ -280,17 +280,25 @@ fn is_first_time_uses_provider_registry_not_hardcoded_list() {
     );
 }
 
-// ── save_provider_selection_internal section routing ────────────────
+// ── apply_config section routing (registry-driven) ──────────────────
+//
+// The save path that /models reuses lives in `OnboardingState::apply_config`.
+// The old ModelSelector resolved sections via a hand-maintained `match
+// provider.id` with one arm per provider — a list that could silently drift
+// out of sync with the providers themselves. The refactor replaced that with
+// the `utils::providers` registry: section resolution goes through
+// `find_provider_meta(id).config_section` and the disable-all sweep iterates
+// `all_config_sections` / `KNOWN_PROVIDERS`. These tests pin the stronger,
+// drift-proof guarantee: the registry routes every provider, and the save
+// path stays registry-driven (never reverts to a hardcoded match).
+
+const SAVE_SRC: &str = include_str!("../tui/onboarding/config.rs");
 
 #[test]
 fn save_provider_section_routing_covers_all_providers() {
-    // Verify that dialogs.rs save_provider_selection_internal has match arms
-    // for every known provider id. This prevents the index-based corruption bug.
-    let source = include_str!("../tui/app/dialogs.rs");
-
-    // Every provider id must appear as a match arm in the section resolution.
-    // Note: provider IDs use hyphens (e.g. "claude-cli") but the match arms
-    // must match the PROVIDERS[].id field, which also uses hyphens.
+    // Every provider id resolves to a TOML section through the registry —
+    // this is what prevents the index-based corruption bug (writing a custom
+    // provider's settings into [providers.anthropic]).
     let required_ids = [
         "anthropic",
         "openai",
@@ -309,28 +317,30 @@ fn save_provider_section_routing_covers_all_providers() {
     ];
 
     for id in &required_ids {
-        // Check that the provider id appears in a match arm context
-        // (either as match arm in config struct creation or section resolution)
-        let pattern = format!("\"{}\"", id);
+        let meta = find_provider_meta(id).unwrap_or_else(|| {
+            panic!("provider '{id}' is missing from the KNOWN_PROVIDERS registry")
+        });
         assert!(
-            source.contains(&pattern),
-            "save_provider_selection_internal is missing match arm for provider '{}'",
-            id
+            meta.config_section.starts_with("providers."),
+            "provider '{id}' resolves to a malformed section '{}'",
+            meta.config_section
         );
     }
 
-    // Verify the section resolution uses provider.id not provider_idx
+    // Pin that the save path resolves sections via the registry, not a
+    // hardcoded `match provider.id` (the drift-prone shape that was removed).
     assert!(
-        source.contains("match provider.id"),
-        "save_provider_selection_internal must route by provider.id, not provider_idx"
+        SAVE_SRC.contains("find_provider_meta(id)"),
+        "apply_config must resolve the provider section via \
+         find_provider_meta(id).config_section, not a hardcoded match"
     );
 }
 
 #[test]
 fn save_provider_disables_all_known_sections() {
-    // Verify the "disable all providers" loop includes every known section
-    let source = include_str!("../tui/app/dialogs.rs");
-
+    // Every built-in section the disable-all sweep must cover is present in the
+    // registry, so iterating KNOWN_PROVIDERS / all_config_sections disables
+    // them all without a hand-maintained list.
     let required_sections = [
         "providers.anthropic",
         "providers.openai",
@@ -348,12 +358,18 @@ fn save_provider_disables_all_known_sections() {
         "providers.ollama",
     ];
 
-    // Find the disable-all block and verify every section is listed
     for section in &required_sections {
         assert!(
-            source.contains(section),
-            "save_provider disable-all loop is missing section '{}'",
-            section
+            KNOWN_PROVIDERS.iter().any(|p| p.config_section == *section),
+            "section '{section}' is missing from the KNOWN_PROVIDERS registry, so the \
+             registry-driven disable-all sweep would skip it"
         );
     }
+
+    // Pin that the disable-all sweep stays registry-driven.
+    assert!(
+        SAVE_SRC.contains("all_config_sections"),
+        "apply_config's disable-all loop must iterate all_config_sections \
+         (registry-driven), not a hardcoded section list"
+    );
 }

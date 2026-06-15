@@ -220,16 +220,18 @@ fn cleanup_no_op_when_keys_toml_does_not_exist() {
 
 #[cfg(unix)]
 #[test]
-fn rename_path_in_dialogs_calls_remove_secret_section() {
+fn rename_path_in_onboarding_save_calls_remove_secret_section() {
     // Anchor the source fix: the custom-provider rename branch in
-    // save_provider_selection_internal MUST call remove_secret_section
-    // on the old section name. Without this, the fix regresses to the
-    // 2026-06-05 ghost-entry shape and only the defensive cleanup
-    // catches it (and only on the next save that triggers cleanup).
-    const DIALOGS_SRC: &str = include_str!("../tui/app/dialogs.rs");
+    // `OnboardingState::apply_config` (the save path /models now reuses)
+    // MUST call remove_secret_section on the old section name. Without it,
+    // the fix regresses to the 2026-06-05 ghost-entry shape and only the
+    // defensive cleanup catches it (and only on the next save that triggers
+    // cleanup). The rename is detected via `editing_custom_key`, which the
+    // provider selector sets when an existing custom entry is loaded.
+    const SAVE_SRC: &str = include_str!("../tui/onboarding/config.rs");
 
     // Strip comments so the regression doc-comment doesn't false-match.
-    let no_comments: String = DIALOGS_SRC
+    let no_comments: String = SAVE_SRC
         .lines()
         .filter(|line| !line.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
@@ -237,9 +239,29 @@ fn rename_path_in_dialogs_calls_remove_secret_section() {
 
     assert!(
         no_comments.contains("Config::remove_secret_section(&old_section)"),
-        "save_provider_selection_internal must call Config::remove_secret_section(&old_section) \
-         in the rename branch. Without it, keys.toml retains the old `[providers.custom.<old>]` \
-         section after a rename and merge_provider_keys resurrects the old name as a phantom \
-         entry on the next Config::load — exactly the 2026-06-05 modelscope-qwen → modelscope bug."
+        "apply_config must call Config::remove_secret_section(&old_section) in the \
+         custom-provider rename branch (gated on editing_custom_key != custom_name). \
+         Without it, keys.toml retains the old `[providers.custom.<old>]` section after a \
+         rename and merge_provider_keys resurrects the old name as a phantom entry on the \
+         next Config::load — exactly the 2026-06-05 modelscope-qwen → modelscope bug."
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn rename_path_in_onboarding_save_removes_old_config_section() {
+    // The config.toml counterpart of the keys.toml cleanup: on rename the old
+    // `[providers.custom.<old>]` table must also be dropped from config.toml,
+    // otherwise it lingers as a disabled phantom provider in /models.
+    const SAVE_SRC: &str = include_str!("../tui/onboarding/config.rs");
+    let no_comments: String = SAVE_SRC
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        no_comments.contains("Config::remove_section(&old_section)"),
+        "apply_config must call Config::remove_section(&old_section) in the custom-provider \
+         rename branch so the old config.toml table doesn't linger as a phantom entry."
     );
 }

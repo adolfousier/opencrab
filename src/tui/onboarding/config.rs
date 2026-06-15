@@ -321,11 +321,21 @@ impl OnboardingWizard {
     /// overwriting unrelated channel/provider settings loaded with defaults.
     pub fn apply_config(&self) -> Result<(), String> {
         // Determine which sections to write based on quick_jump + current step
-        let write_provider = !self.quick_jump
+        let mut write_provider = !self.quick_jump
             || matches!(
                 self.step,
                 OnboardingStep::ProviderAuth | OnboardingStep::Complete
             );
+        // Empty-custom_name guard: a custom provider with no name typed yet
+        // would format the section as `providers.custom.` (empty subkey) and
+        // corrupt config.toml. Skip every provider write until a name exists.
+        if write_provider
+            && self.ps.selected_provider >= CUSTOM_PROVIDER_IDX
+            && self.ps.custom_name.is_empty()
+        {
+            tracing::warn!("Skipping provider write: custom provider selected with an empty name");
+            write_provider = false;
+        }
         let write_channels = !self.quick_jump
             || matches!(
                 self.step,
@@ -801,6 +811,35 @@ impl OnboardingWizard {
                 crate::config::write_secret_key(section, "api_key", &self.ps.api_key_input)
         {
             tracing::warn!("Failed to save API key to keys.toml: {}", e);
+        }
+
+        // Custom-provider RENAME cleanup: the new section was written above
+        // under the current `custom_name`. If the user edited the name of an
+        // existing entry, drop the stale OLD section from BOTH config.toml and
+        // keys.toml — otherwise merge_provider_keys resurrects the old name as
+        // a phantom entry on the next Config::load (the 2026-06-05
+        // modelscope-qwen → modelscope ghost-entry bug).
+        if write_provider
+            && self.ps.selected_provider >= CUSTOM_PROVIDER_IDX
+            && !self.ps.custom_name.is_empty()
+            && let Some(old_name) = self.ps.editing_custom_key.as_deref()
+            && old_name != self.ps.custom_name
+        {
+            let old_section = format!("providers.custom.{}", old_name);
+            if let Err(e) = Config::remove_section(&old_section) {
+                tracing::warn!(
+                    "Failed to remove old config.toml section {} after rename: {}",
+                    old_section,
+                    e
+                );
+            }
+            if let Err(e) = Config::remove_secret_section(&old_section) {
+                tracing::warn!(
+                    "Failed to remove old keys.toml section {} after rename: {}",
+                    old_section,
+                    e
+                );
+            }
         }
 
         // (GitHub Copilot OAuth token is saved directly via the device flow handler)

@@ -26,15 +26,17 @@
 //! Empty `custom_name` means "user is mid-draft, no name typed yet" — the
 //! only safe action is to skip the write.
 
-const DIALOGS_SRC_RAW: &str = include_str!("../tui/app/dialogs.rs");
+// The provider-save resolver moved out of the deleted ModelSelector dialog
+// into the onboarding save path that /models now reuses.
+const SAVE_SRC_RAW: &str = include_str!("../tui/onboarding/config.rs");
 
 /// Strip `//` line comments so source-level invariant scans don't false-
 /// match against the regression doc-comments that describe the bug they're
 /// guarding against. Same approach as the
 /// `approval_requests_are_not_routed_through_session_state_mut` sentinel
 /// in `background_session_test.rs`.
-fn dialogs_src_code() -> String {
-    DIALOGS_SRC_RAW
+fn save_src_code() -> String {
+    SAVE_SRC_RAW
         .lines()
         .map(|line| {
             if let Some(idx) = line.find("//") {
@@ -59,7 +61,7 @@ fn pre_fix_active_custom_fallback_pattern_is_absent() {
     // sentinel — if a future refactor needs `active_custom()` for an
     // unrelated read it won't trip this, but a re-introduction of the
     // fallback would land textually-identical or near-identical code.
-    let src = dialogs_src_code();
+    let src = save_src_code();
     let forbidden_signatures = [
         "else if let Some((name, _)) = config.providers.active_custom()",
         "else if let Some((name, _)) = self.providers.active_custom()",
@@ -78,39 +80,38 @@ fn pre_fix_active_custom_fallback_pattern_is_absent() {
 }
 
 #[test]
-fn empty_custom_name_guard_precedes_section_format_in_resolver_arm() {
-    // The resolver's "" arm has exactly one assignment of the form
-    // `custom_section = format!("providers.custom.{}", self.ps.custom_name);`
-    // — the line that builds the per-key write target. The empty-name
-    // guard MUST appear in the same arm, before that assignment, and end
-    // with `return Ok(())`. Anchor on the assignment string and walk
-    // backwards within a tight window.
-    let src = dialogs_src_code();
+fn empty_custom_name_guard_precedes_section_format() {
+    // `apply_config` builds the custom write target with
+    // `custom_section = format!("providers.custom.{}", self.ps.custom_name);`.
+    // An empty-name guard MUST appear BEFORE that assignment and disable the
+    // provider write (`write_provider = false`) so an empty custom_name can
+    // never format the literal section `providers.custom.` and corrupt
+    // config.toml. Anchor on the first format assignment and require the
+    // guard somewhere ahead of it.
+    let src = save_src_code();
     let format_marker = "custom_section = format!(\"providers.custom.{}\", self.ps.custom_name)";
     let format_idx = src.find(format_marker).unwrap_or_else(|| {
         panic!(
-            "expected resolver's section-format line `{format_marker}` in dialogs.rs — \
-             either the format string moved or the resolver was restructured; update \
+            "expected the section-format line `{format_marker}` in onboarding/config.rs — \
+             either the format string moved or apply_config was restructured; update \
              this test if intentional"
         )
     });
 
-    // Window of ~600 chars preceding the format assignment, bounded at
-    // the previous match-arm divider so we don't scan into unrelated code.
-    let window_start = format_idx.saturating_sub(600);
-    let preceding = &src[window_start..format_idx];
+    let preceding = &src[..format_idx];
 
-    assert!(
-        preceding.contains("self.ps.custom_name.is_empty()"),
-        "empty-custom_name guard must precede the section-format assignment in the \
-         resolver \"\" arm. Without the guard, an empty custom_name falls through to \
-         a section format with `self.ps.custom_name = \"\"`, producing the literal \
-         section name `providers.custom.` (TOML write to an empty-named subkey) — \
-         arguably less harmful than the active_custom() fallback but still corruption."
+    let guard_idx = preceding.find("self.ps.custom_name.is_empty()").expect(
+        "empty-custom_name guard must precede the section-format assignment. Without it, an \
+         empty custom_name falls through to a section format with `self.ps.custom_name = \"\"`, \
+         producing the literal section name `providers.custom.` (a TOML write to an \
+         empty-named subkey).",
     );
+
+    // The guard must turn the provider write off, not merely test the name.
+    let guard_window = &preceding[guard_idx..];
     assert!(
-        preceding.contains("return Ok(())"),
-        "empty-custom_name guard must early-return — without the return, the format \
-         assignment still runs against `self.ps.custom_name = \"\"`."
+        guard_window.contains("write_provider = false"),
+        "the empty-custom_name guard must set `write_provider = false` so the custom \
+         section (and api_key) are not written against an empty name."
     );
 }
