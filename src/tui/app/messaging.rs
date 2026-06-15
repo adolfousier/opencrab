@@ -598,19 +598,20 @@ impl App {
     pub(crate) async fn handle_slash_command(&mut self, input: &str) -> bool {
         let cmd = input.split_whitespace().next().unwrap_or("");
         match cmd {
-            "/models" => {
-                self.open_model_selector().await;
-                true
-            }
             "/usage" => {
                 self.open_usage_dashboard().await;
                 self.mode = AppMode::UsageDashboard;
                 true
             }
-            s if s.starts_with("/onboard") || s == "/doctor" => {
+            // `/models` IS `/onboard:provider` without progress dots — the exact
+            // same shared provider/model picker. One implementation, so a change
+            // to the picker affects both; no separate ModelSelector dialog.
+            s if s.starts_with("/onboard") || s == "/doctor" || s == "/models" => {
                 use crate::tui::onboarding::OnboardingStep;
                 let suffix = if s == "/doctor" {
                     "health"
+                } else if s == "/models" {
+                    "provider"
                 } else {
                     s.strip_prefix("/onboard")
                         .unwrap_or("")
