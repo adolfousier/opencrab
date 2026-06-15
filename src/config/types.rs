@@ -303,6 +303,14 @@ pub struct TelegramConfig {
     /// Idle session timeout in hours for non-owner sessions.
     #[serde(default)]
     pub session_idle_hours: Option<f64>,
+    /// Send structured replies as native Telegram rich messages (Bot API 10.1:
+    /// tables, headings, lists, math). Off by default — rich messages are
+    /// unreadable on Telegram Web and older clients (they show a "not supported"
+    /// placeholder with no fallback). Enable only when the audience is on
+    /// current mobile/desktop clients; otherwise the universal HTML rendering
+    /// (which works on every client) is used.
+    #[serde(default)]
+    pub rich_messages: bool,
 }
 
 /// Discord channel configuration

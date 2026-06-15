@@ -258,9 +258,11 @@ Videos uploaded on any channel (mp4, m4v, mov, webm, mkv, avi, 3gp, flv) auto-ro
 
 #### Telegram rich message formatting
 
-When a Telegram reply carries structured Markdown (tables, headings, lists, `- [ ]` task lists, fenced code, or math), OpenCrabs renders it natively using Telegram's rich messages (Bot API 10.1) instead of plain text or basic HTML. Tables come out as real tables, headings as real section headings, and task items as checkboxes. This is automatic, with no configuration or toggle to enable.
+When a Telegram reply carries structured Markdown (tables, headings, lists, `- [ ]` task lists, fenced code, or math), OpenCrabs can render it natively using Telegram's rich messages (Bot API 10.1) — real tables, real section headings, real checkboxes — instead of plain text or basic HTML.
 
-It applies to the agent's streamed reply (only the final completed message is converted, so live token streaming stays smooth) and to proactive `telegram_send` messages. Plain-prose replies are left exactly as before, so incidental characters like a stray `*` or `#` are never reinterpreted. If the rich API is unavailable for any reason, OpenCrabs falls back silently to its HTML formatting, so a message is never dropped.
+This is **opt-in** via `channels.telegram.rich_messages = true`, and **off by default**, because native rich messages are unreadable on **Telegram Web and older clients**: those clients show a "this message is not supported, update Telegram" placeholder, and the rich API has no text fallback. So enable it only when your audience is on current mobile/desktop apps. With the flag off (the default), the universal HTML rendering is used — and it was improved too: tables come out as aligned monospace grids, task items as `☐`/`☑`, with proper paragraph spacing, so structured replies look decent on every client.
+
+When enabled, native rich applies to the agent's reply (sent as a fresh rich message so it renders cleanly) and to proactive `telegram_send` messages. Plain-prose replies are left untouched, so incidental characters like a stray `*` or `#` are never reinterpreted. If the rich send fails for any reason, OpenCrabs falls back silently to HTML, so a message is never dropped.
 
 ### Terminal UI
 | Feature | Description |

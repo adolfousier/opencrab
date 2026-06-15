@@ -285,7 +285,7 @@ impl Tool for TelegramSendTool {
                 // table would break. Plain prose, and any rich failure, fall back
                 // to the chunked plain-text send so a message is never dropped
                 // and Telegram's parser never reinterprets incidental characters.
-                let sent_rich = crate::channels::telegram::rich::has_rich_structure(&text)
+                let sent_rich = crate::channels::telegram::rich::should_send_native_rich(&text)
                     && crate::channels::telegram::rich::api::try_send_rich(
                         &bot, chat_id, thread_id, &text,
                     )

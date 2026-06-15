@@ -35,12 +35,26 @@ pub(crate) fn contains_table(text: &str) -> bool {
     (0..lines.len()).any(|i| table::try_parse(&lines, i).is_some())
 }
 
+/// Whether a structured reply should be delivered as a native rich message:
+/// the `channels.telegram.rich_messages` config flag is on AND the text has
+/// block structure ([`has_rich_structure`]). Off by default — native rich is
+/// unreadable on Telegram Web and older clients (a "not supported" placeholder
+/// with no fallback), so the universal HTML rendering is used unless a
+/// deployment opts in. Read via the zero-disk config mirror.
+pub(crate) fn should_send_native_rich(text: &str) -> bool {
+    crate::config::Config::current()
+        .channels
+        .telegram
+        .rich_messages
+        && has_rich_structure(text)
+}
+
 /// Whether `text` contains block-level markdown structure that native rich
 /// rendering handles meaningfully better than plain/HTML — a table, ATX
 /// heading, list item, fenced code block, or block math. Plain prose (even
 /// with inline emphasis) returns false, so it stays on the existing path and
 /// is never reinterpreted by Telegram's markdown parser. Gates the native
-/// `sendRichMessage` / rich `editMessageText` paths.
+/// `sendRichMessage` path (together with the config flag).
 pub(crate) fn has_rich_structure(text: &str) -> bool {
     contains_table(text)
         || text.lines().any(|line| {

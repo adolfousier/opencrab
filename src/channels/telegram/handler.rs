@@ -2436,7 +2436,7 @@ pub(crate) async fn handle_message(
                 // to the HTML chunking path below, so the streaming path is
                 // never regressed. Plain prose skips rich entirely so Telegram's
                 // parser never reinterprets incidental characters.
-                let delivered_rich = super::rich::has_rich_structure(&text_only) && {
+                let delivered_rich = super::rich::should_send_native_rich(&text_only) && {
                     let rich_md = if footer.is_empty() {
                         text_only.clone()
                     } else {
@@ -3164,7 +3164,7 @@ pub(crate) async fn resume_session(
                 // is the path the owner's DM session hits after an interrupted
                 // turn, so it must go rich too (handle_message already does), or
                 // DMs keep showing the old HTML while groups show rich.
-                let delivered_rich = super::rich::has_rich_structure(&text_only) && {
+                let delivered_rich = super::rich::should_send_native_rich(&text_only) && {
                     let rich_md = if footer.is_empty() {
                         text_only.clone()
                     } else {
@@ -3697,7 +3697,7 @@ async fn try_send_intermediate_rich(
     thread_id: Option<teloxide::types::ThreadId>,
     text: &str,
 ) -> Option<MessageId> {
-    if !super::rich::has_rich_structure(text) {
+    if !super::rich::should_send_native_rich(text) {
         return None;
     }
     match super::rich::api::send_rich_markdown_id(bot.token(), chat_id.0, thread_id, text).await {
