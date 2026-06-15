@@ -399,6 +399,8 @@ opencrabs -p hermes service uninstall
 
 Multiple profiles can run as simultaneous daemon services with full isolation.
 
+> **Recommended for everyday users.** If you plan to use OpenCrabs daily, ask it to set itself up as a system service that starts on boot. Just say something like *"set yourself up to start with my computer"* or *"install yourself as a system service"* — the agent handles the launchd (macOS) or systemd (Linux) setup for you automatically. This way OpenCrabs is always running in the background, channels stay connected, and cron jobs keep ticking without you having to remember to start it.
+
 **Environment variable:** Set `OPENCRABS_PROFILE=hermes` to select a profile without the `-p` flag. Useful for systemd services, cron jobs, and daemon mode.
 
 **Troubleshooting — daemon stays down after a restart:** the daemon is meant to auto-recover (Linux `Restart=always`, macOS `KeepAlive`). If you installed the service on an older build, its unit file may still use `Restart=on-failure`, which does not restart after a clean exit and can leave the daemon down. Re-generate the unit with `opencrabs -p <name> service install` (then `service start`) to pick up the always-restart policy. Config, keys, commands, and tools hot-reload at runtime, so editing `~/.opencrabs/config.toml` (or `keys.toml`) never needs a daemon restart — if a change isn't taking effect, check the logs for a `ConfigWatcher: reloaded` line rather than restarting.
