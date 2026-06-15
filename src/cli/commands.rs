@@ -1740,6 +1740,36 @@ fn running_as_root() -> bool {
     unsafe { libc::geteuid() == 0 }
 }
 
+/// Core probe logic with explicit paths for testability.
+/// Returns `true` for system scope, `false` for user scope.
+#[cfg(target_os = "linux")]
+fn unit_scope_probe(
+    systemd_name: &str,
+    system_dir: &std::path::Path,
+    user_dir: Option<&std::path::Path>,
+) -> bool {
+    if system_dir.join(format!("{systemd_name}.service")).exists() {
+        return true;
+    }
+    if let Some(dir) = user_dir
+        && dir.join(format!("{systemd_name}.service")).exists()
+    {
+        return false;
+    }
+    // Neither exists — fall back to the old heuristic (covers fresh install).
+    running_as_root()
+}
+
+/// Probe which systemd scope a unit was installed in by checking the unit file
+/// paths. Falls back to `running_as_root()` when neither file exists (e.g. the
+/// unit has not been installed yet — `install` still decides scope on its own).
+#[cfg(target_os = "linux")]
+fn unit_scope(systemd_name: &str) -> bool {
+    let system_dir = std::path::PathBuf::from("/etc/systemd/system");
+    let user_dir = dirs::home_dir().map(|h| h.join(".config/systemd/user"));
+    unit_scope_probe(systemd_name, &system_dir, user_dir.as_deref())
+}
+
 /// Run `systemctl` (system scope, or `--user`) and FAIL on a non-zero exit.
 /// `.status()` alone only catches a spawn failure, so "Failed to connect to
 /// bus" (exit 1) used to slip through and the caller printed a misleading ✅.
@@ -1937,7 +1967,7 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
 
             #[cfg(target_os = "linux")]
             {
-                let system = running_as_root();
+                let system = unit_scope(&systemd_name);
                 // `enable --now` so a system unit also survives reboot; a user
                 // unit just starts (boot-persistence there needs lingering).
                 let res = if system {
@@ -1972,7 +2002,7 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
 
             #[cfg(target_os = "linux")]
             {
-                let system = running_as_root();
+                let system = unit_scope(&systemd_name);
                 if let Err(e) = run_systemctl(system, &["stop", systemd_name.as_str()]) {
                     eprintln!("❌ {e}");
                     if !system {
@@ -2000,7 +2030,7 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
             }
             #[cfg(target_os = "linux")]
             {
-                let system = running_as_root();
+                let system = unit_scope(&systemd_name);
                 if let Err(e) = run_systemctl(system, &["restart", systemd_name.as_str()]) {
                     eprintln!("❌ {e}");
                     if !system {
@@ -2028,7 +2058,7 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
 
             #[cfg(target_os = "linux")]
             {
-                let system = running_as_root();
+                let system = unit_scope(&systemd_name);
                 let mut cmd = std::process::Command::new("systemctl");
                 if !system {
                     cmd.arg("--user");
@@ -2066,7 +2096,7 @@ pub(crate) async fn cmd_service(operation: ServiceCommands) -> Result<()> {
             }
             #[cfg(target_os = "linux")]
             {
-                let system = running_as_root();
+                let system = unit_scope(&systemd_name);
                 // Best-effort stop/disable: failing here (already stopped, no
                 // bus) must not block removing the unit file.
                 let _ = run_systemctl(system, &["stop", systemd_name.as_str()]);
@@ -2212,4 +2242,84 @@ pub(crate) async fn cmd_evolve(check_only: bool) -> Result<()> {
     println!("{}", result.output);
 
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    /// Create a temporary directory with optional service files, run a closure,
+    /// then clean up.
+    fn with_dirs<F: FnOnce(&std::path::Path, &std::path::Path)>(f: F) {
+        let base = std::env::temp_dir().join(format!("opencrabs-test-{}", std::process::id()));
+        let system_dir = base.join("system");
+        let user_dir = base.join("user");
+        std::fs::create_dir_all(&system_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        f(&system_dir, &user_dir);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn touch(dir: &std::path::Path, name: &str) {
+        std::fs::File::create(dir.join(name)).unwrap();
+    }
+
+    #[test]
+    fn system_file_exists_returns_system_scope() {
+        with_dirs(|sys, usr| {
+            touch(sys, "opencrabs.service");
+            assert!(unit_scope_probe("opencrabs", sys, Some(usr)));
+        });
+    }
+
+    #[test]
+    fn only_user_file_exists_returns_user_scope() {
+        with_dirs(|sys, usr| {
+            touch(usr, "opencrabs.service");
+            assert!(!unit_scope_probe("opencrabs", sys, Some(usr)));
+        });
+    }
+
+    #[test]
+    fn both_exist_system_wins() {
+        with_dirs(|sys, usr| {
+            touch(sys, "opencrabs.service");
+            touch(usr, "opencrabs.service");
+            assert!(unit_scope_probe("opencrabs", sys, Some(usr)));
+        });
+    }
+
+    #[test]
+    fn neither_exists_falls_back_to_running_as_root() {
+        with_dirs(|sys, usr| {
+            // No files created — must fall back to `running_as_root()`.
+            let expected = running_as_root();
+            assert_eq!(unit_scope_probe("opencrabs", sys, Some(usr)), expected);
+        });
+    }
+
+    #[test]
+    fn no_user_dir_falls_back_to_running_as_root() {
+        with_dirs(|sys, _usr| {
+            // user_dir = None, no system file — falls back.
+            let expected = running_as_root();
+            assert_eq!(unit_scope_probe("opencrabs", sys, None), expected);
+        });
+    }
+
+    #[test]
+    fn system_file_with_no_user_dir() {
+        with_dirs(|sys, _usr| {
+            touch(sys, "opencrabs.service");
+            assert!(unit_scope_probe("opencrabs", sys, None));
+        });
+    }
+
+    #[test]
+    fn profiled_service_name() {
+        with_dirs(|sys, usr| {
+            touch(usr, "opencrabs-ops.service");
+            assert!(!unit_scope_probe("opencrabs-ops", sys, Some(usr)));
+        });
+    }
 }
