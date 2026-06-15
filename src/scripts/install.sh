@@ -67,5 +67,32 @@ tar xzf "${TMPDIR}/${FILENAME}" -C "$TMPDIR"
 info "Installing to ${INSTALL_DIR}..."
 $SUDO install -m 755 "${TMPDIR}/opencrabs" "${INSTALL_DIR}/opencrabs"
 
+# Poppler (pdftoppm) renders PDF pages to images so the agent can SEE scanned
+# PDFs. Best-effort: install via the system package manager, skip if already
+# present, and just print a hint if we don't recognise the package manager.
+install_poppler() {
+  if command -v pdftoppm >/dev/null 2>&1; then
+    info "poppler (pdftoppm) already installed — PDF rendering ready"
+    return
+  fi
+  info "Installing poppler (pdftoppm) for PDF page rendering..."
+  if command -v brew >/dev/null 2>&1; then
+    brew install poppler || warn "brew install poppler failed — install it manually for PDF rendering"
+  elif command -v apt-get >/dev/null 2>&1; then
+    $SUDO apt-get update -qq && $SUDO apt-get install -y poppler-utils \
+      || warn "apt-get install poppler-utils failed — install it manually for PDF rendering"
+  elif command -v dnf >/dev/null 2>&1; then
+    $SUDO dnf install -y poppler-utils || warn "dnf install poppler-utils failed"
+  elif command -v pacman >/dev/null 2>&1; then
+    $SUDO pacman -S --noconfirm poppler || warn "pacman -S poppler failed"
+  elif command -v apk >/dev/null 2>&1; then
+    $SUDO apk add poppler-utils || warn "apk add poppler-utils failed"
+  else
+    warn "Couldn't detect a package manager. Install poppler manually for PDF rendering:"
+    warn "  macOS: brew install poppler   Debian/Ubuntu: apt install poppler-utils"
+  fi
+}
+install_poppler
+
 info "OpenCrabs ${TAG} installed to ${INSTALL_DIR}/opencrabs"
 info "Run 'opencrabs' to get started!"
