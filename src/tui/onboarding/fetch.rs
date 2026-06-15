@@ -463,7 +463,15 @@ pub async fn fetch_provider_models(
             let api_models: Vec<String> = match req.send().await {
                 Ok(resp) if resp.status().is_success() => {
                     match resp.json::<ModelsResponse>().await {
-                        Ok(body) => body.data.into_iter().map(|m| m.id).collect(),
+                        Ok(body) => {
+                            // Newest first (created desc), matching the common
+                            // fetch path. The earlier merge bypassed this sort and
+                            // surfaced z.ai's raw oldest-first order, pushing new
+                            // GLMs to the bottom (and out of the truncated list).
+                            let mut entries = body.data;
+                            entries.sort_by_key(|e| std::cmp::Reverse(e.created));
+                            entries.into_iter().map(|m| m.id).collect()
+                        }
                         Err(e) => {
                             tracing::warn!("[fetch_provider_models] zhipu parse error: {}", e);
                             Vec::new()
