@@ -111,7 +111,7 @@ fn retry_reason(err: &super::error::ProviderError) -> String {
     }
 }
 
-fn filter_think_tags(
+pub(crate) fn filter_think_tags(
     text: &str,
     inside_think: &mut bool,
     active_close_tag: &mut usize,
@@ -207,6 +207,29 @@ fn filter_think_tags(
                 *active_close_tag = tag_idx;
                 *bytes_consumed = 0;
             } else {
+                // No open tag found. Check for orphan close tags — some
+                // models (Mimo, Qwen) occasionally skip the opening think
+                // tag entirely. When a close tag appears without a preceding
+                // open, treat everything before it as reasoning content.
+                // Only check indices 0 and 1 (reasoning-type blocks);
+                // index 2 (`-->`) is too generic for orphan detection.
+                let mut orphan: Option<(usize, &str)> = None;
+                for (i, close_candidates) in STRIP_CLOSE_TAGS.iter().enumerate() {
+                    if i >= 2 { break; }
+                    for close in close_candidates.iter() {
+                        if let Some(pos) = remaining.find(close)
+                            && orphan.is_none_or(|(best, _)| pos < best)
+                        {
+                            orphan = Some((pos, close));
+                        }
+                    }
+                }
+                if let Some((pos, close)) = orphan {
+                    reasoning.push_str(&remaining[..pos]);
+                    remaining = &remaining[pos + close.len()..];
+                    continue;
+                }
+
                 // Before emitting `remaining` as final output, check if its
                 // tail could be the leading prefix of an open tag that gets
                 // completed by the next chunk. If so, move those bytes to
@@ -285,7 +308,7 @@ fn open_tag_prefix_len(s: &str) -> usize {
 }
 
 /// Strip complete reasoning/markup blocks from non-streaming content.
-fn strip_think_blocks(text: &str) -> String {
+pub(crate) fn strip_think_blocks(text: &str) -> String {
     let mut result = text.to_string();
     for (open, close_candidates) in STRIP_OPEN_TAGS.iter().zip(STRIP_CLOSE_TAGS.iter()) {
         while let Some(start) = result.find(open) {
@@ -308,6 +331,22 @@ fn strip_think_blocks(text: &str) -> String {
             }
         }
     }
+    // Handle orphan close tags — close tag without a preceding open.
+    // Some models (Mimo, Qwen) skip the opening think tag entirely,
+    // so we never enter the while-loop above. Strip everything before
+    // the orphan close tag as leaked reasoning.
+    // Only check indices 0 and 1 (reasoning-type blocks);
+    // index 2 (`-->`) is too generic for orphan detection.
+    for (i, close_candidates) in STRIP_CLOSE_TAGS.iter().enumerate() {
+        if i >= 2 { break; }
+        for close in close_candidates.iter() {
+            if let Some(pos) = result.find(close) {
+                result = result[pos + close.len()..].to_string();
+                break;
+            }
+        }
+    }
+
     result.trim().to_string()
 }
 
