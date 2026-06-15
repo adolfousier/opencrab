@@ -1,10 +1,10 @@
 //! Project repository and service integration tests.
 
-use anyhow::Result;
 use crate::db::Database;
 use crate::db::models::{File, Project, Session};
 use crate::db::repository::{FileRepository, ProjectRepository, SessionRepository};
 use crate::services::{ProjectService, ServiceContext, SessionService};
+use anyhow::Result;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
