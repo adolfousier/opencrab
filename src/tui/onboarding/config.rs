@@ -949,12 +949,18 @@ impl OnboardingWizard {
             // telegram_user_id_input is never a sentinel — write whatever
             // the user left in the field (empty = "allow any user").
             if !self.telegram_user_id_input.is_empty() {
-                try_write_array!(
-                    write_errors,
-                    "channels.telegram",
-                    "allowed_users",
-                    std::slice::from_ref(&self.telegram_user_id_input)
-                );
+                // Union with the existing allowed_users in config.toml (the
+                // source of truth) — NEVER overwrite. The input field only ever
+                // holds one id (the owner, loaded from allowed_users.first()),
+                // so a bare write collapsed the whole allowlist to a single
+                // entry on every re-apply, silently locking out everyone else.
+                let mut users: Vec<String> = Config::load()
+                    .map(|c| c.channels.telegram.allowed_users)
+                    .unwrap_or_default();
+                if !users.contains(&self.telegram_user_id_input) {
+                    users.push(self.telegram_user_id_input.clone());
+                }
+                try_write_array!(write_errors, "channels.telegram", "allowed_users", &users);
             }
             if !self.discord_channel_id_input.is_empty() && !self.has_existing_discord_channel_id()
             {

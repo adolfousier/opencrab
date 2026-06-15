@@ -86,8 +86,18 @@ impl Tool for TelegramConnectTool {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
         let owner_chat_id = allowed_users_raw.first().copied();
-        let allowed_users: Vec<String> =
-            allowed_users_raw.iter().map(|id| id.to_string()).collect();
+        // Union with the existing allowlist in config.toml — never drop users
+        // already authorized. A reconnect with a partial list (e.g. just the
+        // owner) must not lock everyone else out.
+        let mut allowed_users: Vec<String> = crate::config::Config::load()
+            .map(|c| c.channels.telegram.allowed_users)
+            .unwrap_or_default();
+        for id in &allowed_users_raw {
+            let id = id.to_string();
+            if !allowed_users.contains(&id) {
+                allowed_users.push(id);
+            }
+        }
 
         // Save token to keys.toml for persistence
         if let Err(e) = crate::config::write_secret_key("channels.telegram", "token", &token) {
