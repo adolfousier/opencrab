@@ -1818,6 +1818,21 @@ pub(crate) async fn handle_message(
                                         }
                                     }
 
+                                    // Rich-first: a structured intermediate
+                                    // (table / heading / list / math) is sent as
+                                    // a native rich message and tracked by id; no
+                                    // structure or a rich rejection falls through
+                                    // to the HTML chunking path below.
+                                    if let Some(id) =
+                                        try_send_intermediate_rich(&bot, chat, thread_id, &text)
+                                            .await
+                                    {
+                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                        s.sent_intermediates.push(text.clone());
+                                        s.intermediate_msg_ids.push(id);
+                                        continue;
+                                    }
+
                                     let html = markdown_to_telegram_html(&text);
                                     if !html.is_empty() {
                                         // Chunk to 4096 and only record as delivered if every
@@ -2274,6 +2289,17 @@ pub(crate) async fn handle_message(
                         continue;
                     }
                 }
+                // Rich-first: structured intermediates render natively; no
+                // structure or a rich rejection falls through to HTML below.
+                if let Some(id) =
+                    try_send_intermediate_rich(&bot, msg.chat.id, thread_id, &text).await
+                {
+                    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    s.sent_intermediates.push(text.clone());
+                    s.intermediate_msg_ids.push(id);
+                    continue;
+                }
+
                 let html = markdown_to_telegram_html(&text);
                 if !html.is_empty() {
                     // Chunk to Telegram's 4096-char limit and send each chunk.
@@ -2775,6 +2801,15 @@ pub(crate) async fn resume_session(
                                             continue;
                                         }
                                     }
+                                    if let Some(id) =
+                                        try_send_intermediate_rich(&bot, chat_id, thread_id, &text)
+                                            .await
+                                    {
+                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                        s.sent_intermediates.push(text.clone());
+                                        s.intermediate_msg_ids.push(id);
+                                        continue;
+                                    }
                                     let html = markdown_to_telegram_html(&text);
                                     if !html.is_empty() {
                                         let chunks: Vec<String> = split_message(&html, 4096)
@@ -3038,6 +3073,13 @@ pub(crate) async fn resume_session(
                         );
                         continue;
                     }
+                }
+                if let Some(id) = try_send_intermediate_rich(&bot, chat_id, thread_id, &text).await
+                {
+                    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    s.sent_intermediates.push(text.clone());
+                    s.intermediate_msg_ids.push(id);
+                    continue;
                 }
                 let html = markdown_to_telegram_html(&text);
                 if !html.is_empty() {
@@ -3530,6 +3572,12 @@ pub(crate) async fn flush_intermediates(
                     continue;
                 }
             }
+            if let Some(id) = try_send_intermediate_rich(bot, chat, thread_id, &text).await {
+                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                s.sent_intermediates.push(text.clone());
+                s.intermediate_msg_ids.push(id);
+                continue;
+            }
             let html = markdown_to_telegram_html(&text);
             if html.is_empty() {
                 continue;
@@ -3598,6 +3646,27 @@ pub(crate) fn build_last_intermediate_with_footer(
         None
     } else {
         Some(combined)
+    }
+}
+
+/// Send a structured intermediate segment as a native rich message, returning
+/// its id for tracking. Returns `None` when the text carries no rich structure
+/// or the rich API rejects it — the caller then falls back to the HTML path.
+async fn try_send_intermediate_rich(
+    bot: &Bot,
+    chat_id: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    text: &str,
+) -> Option<MessageId> {
+    if !super::rich::has_rich_structure(text) {
+        return None;
+    }
+    match super::rich::api::send_rich_markdown_id(bot.token(), chat_id.0, thread_id, text).await {
+        Ok(id) => Some(MessageId(id)),
+        Err(e) => {
+            tracing::warn!("Telegram: intermediate rich send failed, using HTML: {e}");
+            None
+        }
     }
 }
 

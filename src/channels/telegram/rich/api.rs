@@ -56,16 +56,37 @@ pub(crate) async fn edit_rich_markdown(
     post_and_check(&url, &body).await
 }
 
-/// POST `body` to `url` and treat anything other than `{"ok":true,...}` as an
-/// error, surfacing Telegram's `description` so the caller can log and fall back.
-async fn post_and_check(url: &str, body: &serde_json::Value) -> anyhow::Result<()> {
+/// Send `markdown` as a native rich message and return the new message id.
+/// Used for intermediate streamed segments, which must be tracked for later
+/// footer-append / dedup. Returns `Err` so the caller can fall back to HTML.
+pub(crate) async fn send_rich_markdown_id(
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    markdown: &str,
+) -> anyhow::Result<i32> {
+    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let result = post_rich(&url, &build_body(chat_id, thread_id, markdown)).await?;
+    result
+        .get("message_id")
+        .and_then(serde_json::Value::as_i64)
+        .map(|id| id as i32)
+        .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
+}
+
+/// POST `body` to `url`, treating anything other than `{"ok":true,...}` as an
+/// error (surfacing Telegram's `description`). Returns the `result` object.
+async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
     let resp = reqwest::Client::new().post(url).json(body).send().await?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
 
     if status.is_success() && parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        Ok(())
+        Ok(parsed
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     } else {
         let desc = parsed
             .get("description")
@@ -73,6 +94,11 @@ async fn post_and_check(url: &str, body: &serde_json::Value) -> anyhow::Result<(
             .unwrap_or(&text);
         anyhow::bail!("Telegram rich API error ({status}): {desc}")
     }
+}
+
+/// POST `body` and discard the result — for calls where only success matters.
+async fn post_and_check(url: &str, body: &serde_json::Value) -> anyhow::Result<()> {
+    post_rich(url, body).await.map(|_| ())
 }
 
 /// Build the `sendRichMessage` JSON request body. Split out so the request
