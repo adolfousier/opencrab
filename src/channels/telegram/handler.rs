@@ -2442,31 +2442,32 @@ pub(crate) async fn handle_message(
                     } else {
                         format!("{text_only}\n\n{footer}")
                     };
-                    let result = match streaming_msg_id {
-                        Some(mid) => {
-                            super::rich::api::edit_rich_markdown(
-                                bot.token(),
-                                msg.chat.id.0,
-                                mid.0,
-                                &rich_md,
-                            )
-                            .await
+                    // Send a FRESH rich message rather than editing the streamed
+                    // placeholder into rich. Editing a normal message into a rich
+                    // one glitches the client render — overlap during the
+                    // transition, and a stale pre-edit (HTML) version after a
+                    // refresh / chat switch. A fresh sendRichMessage renders
+                    // clean. Delete the placeholder only AFTER the rich send
+                    // succeeds, so a failure leaves it intact for the HTML path.
+                    match super::rich::api::send_rich_markdown(
+                        bot.token(),
+                        msg.chat.id.0,
+                        thread_id,
+                        &rich_md,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            if let Some(mid) = streaming_msg_id {
+                                let _ = bot.delete_message(msg.chat.id, mid).await;
+                            }
+                            true
                         }
-                        None => {
-                            super::rich::api::send_rich_markdown(
-                                bot.token(),
-                                msg.chat.id.0,
-                                thread_id,
-                                &rich_md,
-                            )
-                            .await
-                        }
-                    };
-                    result
-                        .inspect_err(|e| {
+                        Err(e) => {
                             tracing::warn!("Telegram: rich delivery failed, using HTML: {e}");
-                        })
-                        .is_ok()
+                            false
+                        }
+                    }
                 };
 
                 if !delivered_rich {
