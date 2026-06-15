@@ -33,6 +33,8 @@ struct GenerateResponse {
     audio_path: String,
     #[serde(default)]
     duration: f64,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -91,6 +93,15 @@ impl VoiceboxTts {
             .context("Failed to parse Voicebox TTS response")?;
 
         let generation_id = result.id;
+
+        // Immediate failure: surface the error now instead of polling a dead
+        // generation id until it times out.
+        if result.status == "failed" || result.status == "error" {
+            anyhow::bail!(
+                "Voicebox TTS generation failed: {}",
+                result.error.unwrap_or_else(|| "Unknown error".to_string())
+            );
+        }
 
         // If already completed (sync mode), use the result directly
         if result.status == "completed" && !result.audio_path.is_empty() {
