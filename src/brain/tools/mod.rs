@@ -31,9 +31,9 @@ pub mod web_search;
 
 // Tool implementations - Phase 3: Workflow & Integration
 pub mod a2a_send;
-pub mod mission_control_report;
 pub mod analyze_image;
 pub mod analyze_video;
+pub mod mission_control_report;
 
 // Tool implementations - Recursive Self-Improvement
 pub mod channel_search;

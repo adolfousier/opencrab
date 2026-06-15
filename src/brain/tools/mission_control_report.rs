@@ -10,7 +10,9 @@
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use crate::brain::mission_control::types::{McActivity, McAnalytics, McInboxItem, McScheduleItem};
-use crate::brain::mission_control::{activity_service, analytics_service, inbox_service, schedule_service};
+use crate::brain::mission_control::{
+    activity_service, analytics_service, inbox_service, schedule_service,
+};
 use crate::db::Pool;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -91,11 +93,7 @@ fn inbox_icon(kind: &crate::brain::mission_control::types::McInboxKind) -> &'sta
 
 /// Icon for schedule item kinds.
 fn schedule_icon(item: &McScheduleItem) -> &'static str {
-    if item.awaiting_user {
-        "⏸️"
-    } else {
-        "⏰"
-    }
+    if item.awaiting_user { "⏸️" } else { "⏰" }
 }
 
 /// Render a full Mission Control snapshot as channel-friendly Markdown.
@@ -168,10 +166,7 @@ pub(crate) fn render_markdown(
         s.push_str("\n━━ *Inbox (RSI Proposals)* ━━\n");
         for item in inbox.iter().take(5) {
             let icon = inbox_icon(&item.kind);
-            s.push_str(&format!(
-                "{} {}: {}\n",
-                icon, item.label, item.summary
-            ));
+            s.push_str(&format!("{} {}: {}\n", icon, item.label, item.summary));
         }
     }
 
@@ -190,10 +185,7 @@ pub(crate) fn render_markdown(
         s.push_str("\n━━ *Schedule* ━━\n");
         for item in schedule.iter() {
             let icon = schedule_icon(item);
-            s.push_str(&format!(
-                "{} {} ({})\n",
-                icon, item.label, item.schedule
-            ));
+            s.push_str(&format!("{} {} ({})\n", icon, item.label, item.schedule));
         }
     }
 

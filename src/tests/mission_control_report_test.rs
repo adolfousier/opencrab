@@ -89,17 +89,15 @@ fn report_includes_all_sections() {
     assert!(md.contains("0 9 * * *"));
 
     // No em dashes in channel output
-    assert!(!md.contains('\u{2014}'), "channel output must have no em dashes");
+    assert!(
+        !md.contains('\u{2014}'),
+        "channel output must have no em dashes"
+    );
 }
 
 #[test]
 fn empty_sections_are_omitted() {
-    let md = render_markdown(
-        &McAnalytics::default(),
-        &[],
-        &[],
-        &[],
-    );
+    let md = render_markdown(&McAnalytics::default(), &[], &[], &[]);
     assert!(md.contains("Mission Control"));
     assert!(md.contains("Tools: 0 calls, 0 fails (0.0%)"));
     // Empty sections should not appear
