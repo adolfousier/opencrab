@@ -56,6 +56,44 @@ fn inline_code_is_not_reparsed() {
     assert_eq!(inl, &vec![Inline::Code("**not bold**".to_string())]);
 }
 
+#[test]
+fn snake_case_underscores_stay_literal() {
+    // Intra-word underscores must NOT be treated as italic emphasis, or
+    // `custom_openai_compatible` renders as "customopenaicompatible".
+    let blocks = parse_markdown("the custom_openai_compatible provider");
+    let Block::Paragraph(inl) = &blocks[0] else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(inl, &vec![text("the custom_openai_compatible provider")]);
+}
+
+#[test]
+fn word_bounded_underscore_still_italicizes() {
+    let blocks = parse_markdown("use _this_ word");
+    let Block::Paragraph(inl) = &blocks[0] else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(
+        inl,
+        &vec![
+            text("use "),
+            Inline::Italic(vec![text("this")]),
+            text(" word"),
+        ]
+    );
+}
+
+#[test]
+fn blocks_are_separated_by_blank_lines() {
+    // Paragraph/heading/list spacing must survive the AST renderer, not be
+    // collapsed to single newlines (the cramped-prose regression).
+    let html = markdown_to_html("# Heading\n\nFirst para.\n\n- a\n- b");
+    assert!(
+        html.contains("</b>\n\nFirst para.\n\n• a"),
+        "blocks need blank-line separation: {html:?}"
+    );
+}
+
 // ── headings ────────────────────────────────────────────────────────
 
 #[test]

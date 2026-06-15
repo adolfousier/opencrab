@@ -44,7 +44,11 @@ pub(super) fn parse_inlines(input: &str) -> Vec<Inline> {
             i += span.len() + 4;
             continue;
         }
-        if let Some(span) = paired(rest, "__") {
+        // Underscore emphasis only at word boundaries, so snake_case
+        // identifiers like `custom_openai_compatible` are never italicized
+        // (and their underscores never eaten). CommonMark forbids intra-word
+        // `_` emphasis for exactly this reason.
+        if let Some(span) = paired_word_bounded(input, i, rest, "__") {
             flush(&mut text, &mut out);
             out.push(Inline::Bold(parse_inlines(span)));
             i += span.len() + 4;
@@ -62,7 +66,7 @@ pub(super) fn parse_inlines(input: &str) -> Vec<Inline> {
             i += span.len() + 2;
             continue;
         }
-        if let Some(span) = paired(rest, "_") {
+        if let Some(span) = paired_word_bounded(input, i, rest, "_") {
             flush(&mut text, &mut out);
             out.push(Inline::Italic(parse_inlines(span)));
             i += span.len() + 2;
@@ -98,6 +102,30 @@ fn flush(text: &mut String, out: &mut Vec<Inline>) {
     if !text.is_empty() {
         out.push(Inline::Text(std::mem::take(text)));
     }
+}
+
+/// Like [`paired`], but only matches when the delimiter sits at a word
+/// boundary on both sides — the char immediately before the opening delimiter
+/// and the char immediately after the closing delimiter must not be
+/// alphanumeric. Keeps intra-word underscores (snake_case) literal.
+fn paired_word_bounded<'a>(input: &str, i: usize, rest: &'a str, delim: &str) -> Option<&'a str> {
+    if input[..i]
+        .chars()
+        .next_back()
+        .is_some_and(char::is_alphanumeric)
+    {
+        return None;
+    }
+    let span = paired(rest, delim)?;
+    let after_close = &rest[delim.len() + span.len() + delim.len()..];
+    if after_close
+        .chars()
+        .next()
+        .is_some_and(char::is_alphanumeric)
+    {
+        return None;
+    }
+    Some(span)
 }
 
 /// If `rest` opens with `delim`, return the substring up to (but not
