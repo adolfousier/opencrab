@@ -3159,29 +3159,67 @@ pub(crate) async fn resume_session(
                 format!("{}\n\n{}", html, footer)
             };
             if !display_html.is_empty() {
-                let chunks: Vec<String> = split_message(&display_html, 4096)
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect();
-
-                if chunks.len() == 1
-                    && let Some(mid) = streaming_msg_id
-                {
-                    if let Err(e) = bot
-                        .edit_message_text(chat_id, mid, &chunks[0])
-                        .parse_mode(ParseMode::Html)
-                        .await
+                // Rich-first: deliver a structured reply as a fresh native rich
+                // message and delete the placeholder on success. resume_session
+                // is the path the owner's DM session hits after an interrupted
+                // turn, so it must go rich too (handle_message already does), or
+                // DMs keep showing the old HTML while groups show rich.
+                let delivered_rich = super::rich::has_rich_structure(&text_only) && {
+                    let rich_md = if footer.is_empty() {
+                        text_only.clone()
+                    } else {
+                        format!("{text_only}\n\n{footer}")
+                    };
+                    match super::rich::api::send_rich_markdown(
+                        bot.token(),
+                        chat_id.0,
+                        thread_id,
+                        &rich_md,
+                    )
+                    .await
                     {
-                        tracing::warn!("Telegram resume: edit failed ({e}), falling back to send");
-                        let _ = bot.delete_message(chat_id, mid).await;
-                        let _ = send_html_or_plain(&bot, chat_id, thread_id, &chunks[0]).await;
+                        Ok(()) => {
+                            if let Some(mid) = streaming_msg_id {
+                                let _ = bot.delete_message(chat_id, mid).await;
+                            }
+                            true
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Telegram resume: rich delivery failed, using HTML: {e}"
+                            );
+                            false
+                        }
                     }
-                } else {
-                    if let Some(mid) = streaming_msg_id {
-                        let _ = bot.delete_message(chat_id, mid).await;
-                    }
-                    for chunk in &chunks {
-                        let _ = send_html_or_plain(&bot, chat_id, thread_id, chunk).await;
+                };
+
+                if !delivered_rich {
+                    let chunks: Vec<String> = split_message(&display_html, 4096)
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect();
+
+                    if chunks.len() == 1
+                        && let Some(mid) = streaming_msg_id
+                    {
+                        if let Err(e) = bot
+                            .edit_message_text(chat_id, mid, &chunks[0])
+                            .parse_mode(ParseMode::Html)
+                            .await
+                        {
+                            tracing::warn!(
+                                "Telegram resume: edit failed ({e}), falling back to send"
+                            );
+                            let _ = bot.delete_message(chat_id, mid).await;
+                            let _ = send_html_or_plain(&bot, chat_id, thread_id, &chunks[0]).await;
+                        }
+                    } else {
+                        if let Some(mid) = streaming_msg_id {
+                            let _ = bot.delete_message(chat_id, mid).await;
+                        }
+                        for chunk in &chunks {
+                            let _ = send_html_or_plain(&bot, chat_id, thread_id, chunk).await;
+                        }
                     }
                 }
             } else if let Some(mid) = streaming_msg_id {
