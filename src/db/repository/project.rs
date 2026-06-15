@@ -1,0 +1,497 @@
+//! Project Repository
+//!
+//! Database operations for projects and project-session assignments.
+
+use crate::db::Pool;
+use crate::db::database::interact_err;
+use crate::db::models::{Project, Session};
+use anyhow::{Context, Result};
+use rusqlite::params;
+use uuid::Uuid;
+
+/// Repository for project operations
+#[derive(Clone)]
+pub struct ProjectRepository {
+    pool: Pool,
+}
+
+impl ProjectRepository {
+    /// Create a new project repository
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+
+    /// Find project by ID
+    pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Project>> {
+        let id_str = id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.prepare_cached("SELECT * FROM projects WHERE id = ?1")?
+                    .query_row(params![id_str], Project::from_row)
+                    .optional()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to find project")
+    }
+
+    /// Find project by name (exact match)
+    pub async fn find_by_name(&self, name: &str) -> Result<Option<Project>> {
+        let n = name.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.prepare_cached("SELECT * FROM projects WHERE name = ?1")?
+                    .query_row(params![n], Project::from_row)
+                    .optional()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to find project by name")
+    }
+
+    /// List all projects (most recently updated first)
+    pub async fn list_all(&self) -> Result<Vec<Project>> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let mut stmt =
+                    conn.prepare_cached("SELECT * FROM projects ORDER BY updated_at DESC")?;
+                let rows = stmt.query_map([], Project::from_row)?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to list projects")
+    }
+
+    /// Create a new project
+    pub async fn create(&self, project: &Project) -> Result<()> {
+        let p = project.clone();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "INSERT INTO projects (id, name, description, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        p.id.to_string(),
+                        p.name,
+                        p.description,
+                        p.created_at.timestamp(),
+                        p.updated_at.timestamp(),
+                    ],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to create project")?;
+
+        tracing::debug!("Created project: {} ({})", project.name, project.id);
+        Ok(())
+    }
+
+    /// Update an existing project
+    pub async fn update(&self, project: &Project) -> Result<()> {
+        let p = project.clone();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE projects SET name = ?1, description = ?2, updated_at = ?3
+                     WHERE id = ?4",
+                    params![
+                        p.name,
+                        p.description,
+                        p.updated_at.timestamp(),
+                        p.id.to_string(),
+                    ],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to update project")?;
+
+        tracing::debug!("Updated project: {}", project.id);
+        Ok(())
+    }
+
+    /// Delete a project (sessions get project_id set to NULL via FK ON DELETE SET NULL)
+    pub async fn delete(&self, id: Uuid) -> Result<()> {
+        let id_str = id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute("DELETE FROM projects WHERE id = ?1", params![id_str])
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to delete project")?;
+
+        tracing::debug!("Deleted project: {}", id);
+        Ok(())
+    }
+
+    /// Assign a session to a project
+    pub async fn assign_session(&self, session_id: Uuid, project_id: Uuid) -> Result<()> {
+        let sid = session_id.to_string();
+        let pid = project_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE sessions SET project_id = ?1, updated_at = strftime('%s', 'now')
+                     WHERE id = ?2",
+                    params![pid, sid],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to assign session to project")?;
+
+        tracing::debug!("Assigned session {} to project {}", session_id, project_id);
+        Ok(())
+    }
+
+    /// Remove a session from its project (set project_id to NULL)
+    pub async fn unassign_session(&self, session_id: Uuid) -> Result<()> {
+        let sid = session_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE sessions SET project_id = NULL, updated_at = strftime('%s', 'now')
+                     WHERE id = ?1",
+                    params![sid],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to unassign session from project")?;
+
+        tracing::debug!("Unassigned session {} from project", session_id);
+        Ok(())
+    }
+
+    /// List sessions belonging to a project (most recently updated first)
+    pub async fn find_sessions_by_project(&self, project_id: Uuid) -> Result<Vec<Session>> {
+        let pid = project_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT * FROM sessions WHERE project_id = ?1 AND archived_at IS NULL
+                     ORDER BY updated_at DESC",
+                )?;
+                let rows = stmt.query_map(params![pid], Session::from_row)?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to find sessions by project")
+    }
+
+    /// List sessions not assigned to any project (most recently updated first)
+    pub async fn find_unassigned_sessions(&self) -> Result<Vec<Session>> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT * FROM sessions WHERE project_id IS NULL AND archived_at IS NULL
+                     ORDER BY updated_at DESC",
+                )?;
+                let rows = stmt.query_map([], Session::from_row)?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to find unassigned sessions")
+    }
+
+    /// Count sessions in a project
+    pub async fn count_sessions(&self, project_id: Uuid) -> Result<i64> {
+        let pid = project_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM sessions WHERE project_id = ?1 AND archived_at IS NULL",
+                    params![pid],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to count project sessions")
+    }
+
+    /// Count files tracked across all sessions in a project
+    pub async fn count_files(&self, project_id: Uuid) -> Result<i64> {
+        let pid = project_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM files f
+                     JOIN sessions s ON f.session_id = s.id
+                     WHERE s.project_id = ?1",
+                    params![pid],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to count project files")
+    }
+}
+
+/// Extension trait for rusqlite to add `.optional()` to query results
+trait OptionalExt<T> {
+    fn optional(self) -> rusqlite::Result<Option<T>>;
+}
+
+impl<T> OptionalExt<T> for rusqlite::Result<T> {
+    fn optional(self) -> rusqlite::Result<Option<T>> {
+        match self {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::db::models::Session;
+    use crate::db::repository::SessionRepository;
+
+    #[tokio::test]
+    async fn test_project_crud() {
+        let db = Database::connect_in_memory()
+            .await
+            .expect("Failed to create database");
+        db.run_migrations().await.expect("Failed to run migrations");
+        let repo = ProjectRepository::new(db.pool().clone());
+
+        // Create
+        let project = Project::new("Test Project".to_string(), Some("A test".to_string()));
+        repo.create(&project).await.expect("Failed to create");
+
+        // Read by ID
+        let found = repo.find_by_id(project.id).await.expect("find_by_id");
+        assert!(found.is_some());
+        assert_eq!(found.as_ref().unwrap().name, "Test Project");
+        assert_eq!(
+            found.as_ref().unwrap().description,
+            Some("A test".to_string())
+        );
+
+        // Read by name
+        let found = repo
+            .find_by_name("Test Project")
+            .await
+            .expect("find_by_name");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, project.id);
+
+        // Update
+        let mut updated = project.clone();
+        updated.name = "Updated Project".to_string();
+        repo.update(&updated).await.expect("Failed to update");
+
+        let found = repo.find_by_id(project.id).await.expect("find_by_id");
+        assert_eq!(found.unwrap().name, "Updated Project");
+
+        // Delete
+        repo.delete(project.id).await.expect("Failed to delete");
+        let found = repo.find_by_id(project.id).await.expect("find_by_id");
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_project_list_all() {
+        let db = Database::connect_in_memory()
+            .await
+            .expect("Failed to create database");
+        db.run_migrations().await.expect("Failed to run migrations");
+        let repo = ProjectRepository::new(db.pool().clone());
+
+        for i in 0..3 {
+            let p = Project::new(format!("Project {}", i), None);
+            repo.create(&p).await.expect("Failed to create");
+        }
+
+        let projects = repo.list_all().await.expect("Failed to list");
+        assert_eq!(projects.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_assign_unassign_session() {
+        let db = Database::connect_in_memory()
+            .await
+            .expect("Failed to create database");
+        db.run_migrations().await.expect("Failed to run migrations");
+        let project_repo = ProjectRepository::new(db.pool().clone());
+        let session_repo = SessionRepository::new(db.pool().clone());
+
+        let project = Project::new("Test".to_string(), None);
+        project_repo.create(&project).await.expect("create project");
+
+        let session = Session::new(
+            Some("Test Session".to_string()),
+            Some("model".to_string()),
+            None,
+        );
+        session_repo.create(&session).await.expect("create session");
+
+        // Assign
+        project_repo
+            .assign_session(session.id, project.id)
+            .await
+            .expect("assign");
+
+        // Check session is in project
+        let sessions = project_repo
+            .find_sessions_by_project(project.id)
+            .await
+            .expect("find_sessions");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, session.id);
+
+        // Unassigned should be empty
+        let unassigned = project_repo
+            .find_unassigned_sessions()
+            .await
+            .expect("find_unassigned");
+        assert!(unassigned.is_empty());
+
+        // Unassign
+        project_repo
+            .unassign_session(session.id)
+            .await
+            .expect("unassign");
+
+        let sessions = project_repo
+            .find_sessions_by_project(project.id)
+            .await
+            .expect("find_sessions");
+        assert!(sessions.is_empty());
+
+        let unassigned = project_repo
+            .find_unassigned_sessions()
+            .await
+            .expect("find_unassigned");
+        assert_eq!(unassigned.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_count_sessions_and_files() {
+        let db = Database::connect_in_memory()
+            .await
+            .expect("Failed to create database");
+        db.run_migrations().await.expect("Failed to run migrations");
+        let project_repo = ProjectRepository::new(db.pool().clone());
+        let session_repo = SessionRepository::new(db.pool().clone());
+        let file_repo = crate::db::repository::FileRepository::new(db.pool().clone());
+
+        let project = Project::new("Test".to_string(), None);
+        project_repo.create(&project).await.expect("create project");
+
+        let s1 = Session::new(Some("S1".to_string()), Some("m".to_string()), None);
+        let s2 = Session::new(Some("S2".to_string()), Some("m".to_string()), None);
+        session_repo.create(&s1).await.expect("create s1");
+        session_repo.create(&s2).await.expect("create s2");
+
+        project_repo
+            .assign_session(s1.id, project.id)
+            .await
+            .expect("assign s1");
+        project_repo
+            .assign_session(s2.id, project.id)
+            .await
+            .expect("assign s2");
+
+        assert_eq!(
+            project_repo
+                .count_sessions(project.id)
+                .await
+                .expect("count"),
+            2
+        );
+
+        // Add a file to s1
+        let file =
+            crate::db::models::File::new(s1.id, std::path::PathBuf::from("/test/file.rs"), None);
+        file_repo.create(&file).await.expect("create file");
+
+        assert_eq!(
+            project_repo
+                .count_files(project.id)
+                .await
+                .expect("count files"),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_project_unassigns_sessions() {
+        let db = Database::connect_in_memory()
+            .await
+            .expect("Failed to create database");
+        db.run_migrations().await.expect("Failed to run migrations");
+        let project_repo = ProjectRepository::new(db.pool().clone());
+        let session_repo = SessionRepository::new(db.pool().clone());
+
+        let project = Project::new("Test".to_string(), None);
+        project_repo.create(&project).await.expect("create project");
+
+        let session = Session::new(Some("S".to_string()), Some("m".to_string()), None);
+        session_repo.create(&session).await.expect("create session");
+
+        project_repo
+            .assign_session(session.id, project.id)
+            .await
+            .expect("assign");
+
+        // Delete project
+        project_repo
+            .delete(project.id)
+            .await
+            .expect("delete project");
+
+        // Session should still exist but with NULL project_id
+        let found = session_repo
+            .find_by_id(session.id)
+            .await
+            .expect("find session")
+            .expect("session should exist");
+        assert!(found.project_id.is_none());
+    }
+}
