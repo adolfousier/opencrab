@@ -567,6 +567,13 @@ impl App {
             })
             .await?;
 
+        // Populate project name cache for session list display
+        if let Ok(projects) = self.project_service.list_projects().await {
+            for p in projects {
+                self.project_name_cache.entry(p.id).or_insert(p.name);
+            }
+        }
+
         // Load all-time usage from the ledger (survives session deletes)
         let ledger = UsageLedgerRepository::new(self.session_service.pool());
         self.usage_ledger_stats = ledger.stats_by_model().await.unwrap_or_default();

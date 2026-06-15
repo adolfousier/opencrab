@@ -687,6 +687,11 @@ pub struct App {
     pub(crate) project_detail_view: bool,
     pub(crate) project_name_input: String,
     pub(crate) project_name_input_active: bool,
+    /// When set, we're in "assign session to project" mode.
+    /// The UUID is the target project_id. The user picks from session list.
+    pub(crate) assigning_to_project: Option<uuid::Uuid>,
+    /// Cached project names for session list display: project_id -> name
+    pub(crate) project_name_cache: std::collections::HashMap<uuid::Uuid, String>,
 
     /// Events
     pub(crate) event_handler: EventHandler,
@@ -845,6 +850,8 @@ impl App {
             project_detail_view: false,
             project_name_input: String::new(),
             project_name_input_active: false,
+            assigning_to_project: None,
+            project_name_cache: std::collections::HashMap::new(),
             agent_service,
             event_handler: EventHandler::new(),
             prompt_analyzer: PromptAnalyzer::new(),

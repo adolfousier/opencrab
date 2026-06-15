@@ -1954,7 +1954,17 @@ impl App {
 
         // Normal sessions mode
         if keys::is_cancel(&event) {
-            self.switch_mode(AppMode::Chat).await?;
+            if self.assigning_to_project.is_some() {
+                // Exit assign mode, go back to projects
+                self.assigning_to_project = None;
+                // Refresh projects and switch back
+                if let Ok(projects) = self.project_service.list_projects().await {
+                    self.projects = projects;
+                }
+                self.switch_mode(AppMode::Projects).await?;
+            } else {
+                self.switch_mode(AppMode::Chat).await?;
+            }
         } else if keys::is_up(&event) {
             self.selected_session_index = self.selected_session_index.saturating_sub(1);
         } else if keys::is_down(&event) {
@@ -1964,17 +1974,40 @@ impl App {
             if let Some(session) = self.sessions.get(self.selected_session_index) {
                 let session_id = session.id;
 
-                // If this session is already in another pane, switch focus there
-                let existing_pane = self.pane_manager.panes.iter().find(|p| {
-                    p.session_id == Some(session_id) && p.id != self.pane_manager.focused
-                });
-                if let Some(pane) = existing_pane {
-                    let target_id = pane.id;
-                    self.pane_manager.focused = target_id;
-                }
+                if let Some(project_id) = self.assigning_to_project {
+                    // Assign mode: assign this session to the project, stay in list
+                    let title = session
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "Untitled".to_string());
+                    match self
+                        .project_service
+                        .assign_session(session_id, project_id)
+                        .await
+                    {
+                        Ok(()) => {
+                            self.notification = Some(format!("Assigned: {title}"));
+                        }
+                        Err(e) => {
+                            self.notification = Some(format!("Failed to assign: {e}"));
+                        }
+                    }
+                    self.notification_shown_at = Some(std::time::Instant::now());
+                    // Stay in sessions list for more picks
+                } else {
+                    // Normal mode: load session and go to chat
+                    // If this session is already in another pane, switch focus there
+                    let existing_pane = self.pane_manager.panes.iter().find(|p| {
+                        p.session_id == Some(session_id) && p.id != self.pane_manager.focused
+                    });
+                    if let Some(pane) = existing_pane {
+                        let target_id = pane.id;
+                        self.pane_manager.focused = target_id;
+                    }
 
-                self.load_session(session_id).await?;
-                self.switch_mode(AppMode::Chat).await?;
+                    self.load_session(session_id).await?;
+                    self.switch_mode(AppMode::Chat).await?;
+                }
             }
         } else if event.code == KeyCode::Char('r') || event.code == KeyCode::Char('R') {
             // Start renaming the selected session
@@ -2067,6 +2100,8 @@ impl App {
             // Open projects browser
             match self.project_service.list_projects().await {
                 Ok(projects) => {
+                    self.project_name_cache =
+                        projects.iter().map(|p| (p.id, p.name.clone())).collect();
                     self.projects = projects;
                     self.selected_project_index = 0;
                     self.project_detail_view = false;
@@ -2363,35 +2398,16 @@ impl App {
                     self.notification_shown_at = Some(std::time::Instant::now());
                 }
             } else if event.code == KeyCode::Char('a') || event.code == KeyCode::Char('A') {
-                // Assign current session to selected project
-                if let (Some(project), Some(current_session)) = (
-                    self.projects.get(self.selected_project_index),
-                    self.current_session.as_ref(),
-                ) {
-                    let project_id = project.id;
-                    let session_id = current_session.id;
-                    let project_name = project.name.clone();
-                    match self
-                        .project_service
-                        .assign_session(session_id, project_id)
-                        .await
-                    {
-                        Ok(()) => {
-                            self.notification =
-                                Some(format!("Assigned current session to: {}", project_name));
-                            // Refresh project list
-                            if let Ok(projects) = self.project_service.list_projects().await {
-                                self.projects = projects;
-                            }
-                        }
-                        Err(e) => {
-                            self.notification = Some(format!("Failed to assign: {e}"));
-                        }
-                    }
-                    self.notification_shown_at = Some(std::time::Instant::now());
-                } else if self.current_session.is_none() {
-                    self.notification = Some("No active session to assign".to_string());
-                    self.notification_shown_at = Some(std::time::Instant::now());
+                // Enter assign mode: switch to sessions list so user picks a session
+                if let Some(project) = self.projects.get(self.selected_project_index) {
+                    self.assigning_to_project = Some(project.id);
+                    // Make sure cache has this project name
+                    self.project_name_cache
+                        .entry(project.id)
+                        .or_insert_with(|| project.name.clone());
+                    // Reload sessions so we see the full list
+                    self.load_sessions().await?;
+                    self.switch_mode(AppMode::Sessions).await?;
                 }
             }
         }
