@@ -1039,6 +1039,13 @@ fn try_create_openrouter(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         openrouter_config,
     );
 
+    // OpenRouter caches by default — turn it on unless the user explicitly opted
+    // out, so non-technical users get caching with no flag to discover. (An
+    // explicit cache_enabled value was already applied by configure_openai_compatible.)
+    if openrouter_config.cache_enabled.is_none() {
+        provider = provider.with_cache_enabled(true);
+    }
+
     // Proactive pacing for :free models — per-model rate limiter shared across
     // all provider instances. Enforces 4s between requests per model (~15 req/min,
     // safely under OpenRouter's 20 req/min window with 25% headroom).
