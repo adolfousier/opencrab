@@ -280,32 +280,32 @@ impl Tool for TelegramSendTool {
                 // Explicit `thread_id` wins; auto-lookup is the
                 // fallback for the common case (#130).
                 let thread_id = resolve_thread_id(&input, chat_id).await;
-                let chunks = crate::channels::telegram::handler::split_message(&text, 4096);
-                for chunk in chunks {
-                    // Only structured messages (tables, headings, lists, math)
-                    // take the native rich path; plain prose stays on the prior
-                    // plain-text send so Telegram's markdown parser never
-                    // reinterprets incidental characters. On any rich failure we
-                    // also fall back to plain so a hiccup never drops a message.
-                    let sent_rich = crate::channels::telegram::rich::has_rich_structure(chunk)
-                        && crate::channels::telegram::rich::api::try_send_rich(
-                            &bot, chat_id, thread_id, chunk,
-                        )
-                        .await
-                        .inspect_err(|e| {
-                            tracing::warn!("telegram_send: rich send failed, sending plain: {e}");
-                        })
-                        .is_ok();
-                    if !sent_rich
-                        && let Err(e) = crate::channels::telegram::send::message_in_thread(
+                // Structured messages (tables, headings, lists, math) go through
+                // the native rich path as a whole — never chunked, since a split
+                // table would break. Plain prose, and any rich failure, fall back
+                // to the chunked plain-text send so a message is never dropped
+                // and Telegram's parser never reinterprets incidental characters.
+                let sent_rich = crate::channels::telegram::rich::has_rich_structure(&text)
+                    && crate::channels::telegram::rich::api::try_send_rich(
+                        &bot, chat_id, thread_id, &text,
+                    )
+                    .await
+                    .inspect_err(|e| {
+                        tracing::warn!("telegram_send: rich send failed, sending plain: {e}");
+                    })
+                    .is_ok();
+                if !sent_rich {
+                    for chunk in crate::channels::telegram::handler::split_message(&text, 4096) {
+                        if let Err(e) = crate::channels::telegram::send::message_in_thread(
                             &bot,
                             ChatId(chat_id),
                             thread_id,
                             chunk,
                         )
                         .await
-                    {
-                        return Ok(ToolResult::error(format!("Failed to send: {e}")));
+                        {
+                            return Ok(ToolResult::error(format!("Failed to send: {e}")));
+                        }
                     }
                 }
                 Ok(ToolResult::success(format!(

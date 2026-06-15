@@ -2401,45 +2401,58 @@ pub(crate) async fn handle_message(
                 text_only.lines().last()
             );
             if !display_html.is_empty() {
-                let chunks: Vec<String> = split_message(&display_html, 4096)
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect();
-
-                // If single chunk and we have a streaming message, edit it in-place
-                if chunks.len() == 1
-                    && let Some(mid) = streaming_msg_id
-                {
-                    // DONE state goes native rich: the streaming edits above
-                    // stayed on the HTML path; this one final edit converts the
-                    // finished message to rich (tables/headings/lists/math) by
-                    // sending the raw markdown for Telegram to render. The ctx
-                    // footer is plain text, appended as-is. On ANY failure we
-                    // fall through to the existing HTML edit, so the streaming
-                    // path is never regressed.
-                    // Plain-prose replies keep the HTML edit so Telegram's
-                    // markdown parser never reinterprets incidental characters;
-                    // only structured replies are worth the rich conversion.
-                    let rich_ok = super::rich::has_rich_structure(&text_only) && {
-                        let rich_md = if footer.is_empty() {
-                            text_only.clone()
-                        } else {
-                            format!("{text_only}\n\n{footer}")
-                        };
-                        super::rich::api::edit_rich_markdown(
-                            bot.token(),
-                            msg.chat.id.0,
-                            mid.0,
-                            &rich_md,
-                        )
-                        .await
+                // Rich-first delivery: a structured reply (tables / headings /
+                // lists / math) is delivered as a native Telegram rich message
+                // regardless of length — Telegram renders the raw markdown into
+                // real tables and blocks. Edit the streamed placeholder in place
+                // if we have one, otherwise send a fresh message. The ctx footer
+                // is plain text, appended as-is. On ANY failure we fall through
+                // to the HTML chunking path below, so the streaming path is
+                // never regressed. Plain prose skips rich entirely so Telegram's
+                // parser never reinterprets incidental characters.
+                let delivered_rich = super::rich::has_rich_structure(&text_only) && {
+                    let rich_md = if footer.is_empty() {
+                        text_only.clone()
+                    } else {
+                        format!("{text_only}\n\n{footer}")
+                    };
+                    let result = match streaming_msg_id {
+                        Some(mid) => {
+                            super::rich::api::edit_rich_markdown(
+                                bot.token(),
+                                msg.chat.id.0,
+                                mid.0,
+                                &rich_md,
+                            )
+                            .await
+                        }
+                        None => {
+                            super::rich::api::send_rich_markdown(
+                                bot.token(),
+                                msg.chat.id.0,
+                                thread_id,
+                                &rich_md,
+                            )
+                            .await
+                        }
+                    };
+                    result
                         .inspect_err(|e| {
-                            tracing::warn!("Telegram: rich edit failed, using HTML edit: {e}");
+                            tracing::warn!("Telegram: rich delivery failed, using HTML: {e}");
                         })
                         .is_ok()
-                    };
+                };
 
-                    if !rich_ok {
+                if !delivered_rich {
+                    let chunks: Vec<String> = split_message(&display_html, 4096)
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect();
+
+                    // If single chunk and we have a streaming message, edit it in-place
+                    if chunks.len() == 1
+                        && let Some(mid) = streaming_msg_id
+                    {
                         match bot
                             .edit_message_text(msg.chat.id, mid, &chunks[0])
                             .parse_mode(ParseMode::Html)
@@ -2480,14 +2493,14 @@ pub(crate) async fn handle_message(
                                         .await;
                             }
                         }
-                    }
-                } else {
-                    // Multi-chunk or no streaming message — delete old, send new
-                    if let Some(mid) = streaming_msg_id {
-                        let _ = bot.delete_message(msg.chat.id, mid).await;
-                    }
-                    for chunk in &chunks {
-                        let _ = send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await;
+                    } else {
+                        // Multi-chunk or no streaming message — delete old, send new
+                        if let Some(mid) = streaming_msg_id {
+                            let _ = bot.delete_message(msg.chat.id, mid).await;
+                        }
+                        for chunk in &chunks {
+                            let _ = send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await;
+                        }
                     }
                 }
             } else if let Some(mid) = streaming_msg_id {
