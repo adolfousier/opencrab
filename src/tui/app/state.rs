@@ -215,10 +215,6 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Change working directory",
     },
     SlashCommand {
-        name: "/mission-control",
-        description: "RSI proposals, activity, schedule",
-    },
-    SlashCommand {
         name: "/skills",
         description: "Browse and run loaded skills",
     },
