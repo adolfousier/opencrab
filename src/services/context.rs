@@ -3,7 +3,7 @@
 use crate::db::Pool;
 use std::sync::Arc;
 
-use super::{FileService, MessageService, PlanService, SessionService};
+use super::{FileService, MessageService, PlanService, ProjectService, SessionService};
 
 /// Service context that holds shared resources
 #[derive(Clone)]
@@ -33,6 +33,7 @@ pub struct ServiceManager {
     message_service: MessageService,
     file_service: FileService,
     plan_service: PlanService,
+    project_service: ProjectService,
 }
 
 impl ServiceManager {
@@ -45,6 +46,7 @@ impl ServiceManager {
             message_service: MessageService::new(context.clone()),
             file_service: FileService::new(context.clone()),
             plan_service: PlanService::new(context.clone()),
+            project_service: ProjectService::new(context.clone()),
             context,
         }
     }
@@ -67,6 +69,11 @@ impl ServiceManager {
     /// Get the plan service
     pub fn plans(&self) -> &PlanService {
         &self.plan_service
+    }
+
+    /// Get the project service
+    pub fn projects(&self) -> &ProjectService {
+        &self.project_service
     }
 
     /// Get the service context
@@ -104,6 +111,7 @@ mod tests {
         let _sessions = manager.sessions();
         let _messages = manager.messages();
         let _files = manager.files();
+        let _projects = manager.projects();
         let _context = manager.context();
     }
 }
