@@ -399,7 +399,7 @@ opencrabs -p hermes service uninstall
 
 Multiple profiles can run as simultaneous daemon services with full isolation.
 
-> **Recommended for everyday users.** If you plan to use OpenCrabs daily, ask it to set itself up as a system service that starts on boot. Just say something like *"set yourself up to start with my computer"* or *"install yourself as a system service"* — the agent handles the launchd (macOS) or systemd (Linux) setup for you automatically. This way OpenCrabs is always running in the background, channels stay connected, and cron jobs keep ticking without you having to remember to start it.
+> **Strongly recommended for everyday users.** If you plan to use OpenCrabs daily, ask it to set itself up as a system service that starts and stops with your machine. Just say something like *"set yourself up to start with my computer"* or *"remove the auto-start service"* — the agent handles the launchd (macOS) or systemd (Linux) setup and removal for you automatically. This way OpenCrabs starts on boot, shuts down cleanly with the system, channels stay connected, and cron jobs keep ticking without you having to remember to start or stop it.
 
 **Environment variable:** Set `OPENCRABS_PROFILE=hermes` to select a profile without the `-p` flag. Useful for systemd services, cron jobs, and daemon mode.
 
@@ -1018,12 +1018,22 @@ OpenCrabs supports multi-agent structured debate via the **Bee Colony** protocol
 Grab a pre-built binary from [GitHub Releases](https://github.com/adolfousier/opencrabs/releases) — available for Linux (amd64/arm64), macOS (amd64/arm64), and Windows.
 
 ```bash
-# Download, extract, run
-tar xzf opencrabs-linux-amd64.tar.gz
-./opencrabs
+# macOS (Apple Silicon) — downloads latest, installs to /usr/local/bin
+curl -sL "$(curl -s https://api.github.com/repos/adolfousier/opencrabs/releases/latest | sed -n 's/.*"\(https:\/\/[^"]*macos-arm64\.tar\.gz\)".*/\1/p')" | tar xz && chmod +x opencrabs && sudo mv opencrabs /usr/local/bin/
+
+# macOS (Intel)
+curl -sL "$(curl -s https://api.github.com/repos/adolfousier/opencrabs/releases/latest | sed -n 's/.*"\(https:\/\/[^"]*macos-amd64\.tar\.gz\)".*/\1/p')" | tar xz && chmod +x opencrabs && sudo mv opencrabs /usr/local/bin/
+
+# Linux (x86_64)
+curl -sL "$(curl -s https://api.github.com/repos/adolfousier/opencrabs/releases/latest | sed -n 's/.*"\(https:\/\/[^"]*linux-amd64\.tar\.gz\)".*/\1/p')" | tar xz && chmod +x opencrabs && sudo mv opencrabs /usr/local/bin/
+
+# Linux (ARM64)
+curl -sL "$(curl -s https://api.github.com/repos/adolfousier/opencrabs/releases/latest | sed -n 's/.*"\(https:\/\/[^"]*linux-arm64\.tar\.gz\)".*/\1/p')" | tar xz && chmod +x opencrabs && sudo mv opencrabs /usr/local/bin/
 ```
 
-The onboarding wizard handles everything on first run.
+Then just type `opencrabs` to start. The onboarding wizard handles everything on first run.
+
+> **Strongly recommended for everyday users.** Once installed, ask OpenCrabs to set itself up as a system service — it starts with your machine and shuts down cleanly when you power off. Just say *"set yourself up to start with my computer"* or *"remove the auto-start service"* anytime. OpenCrabs handles the launchd (macOS) or systemd (Linux) setup (and removal) automatically. You can also ask it to set up the `opencrabs` alias if you moved the binary somewhere outside your PATH.
 
 > **Terminal permissions required.** OpenCrabs reads/writes brain files, config, and project files. Your terminal app needs filesystem access or the OS will block operations.
 >
