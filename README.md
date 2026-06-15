@@ -208,7 +208,7 @@ A long context is mostly a **stable prefix** — system prompt, brain files, ear
 How it turns on depends on the provider:
 
 - **Anthropic** — native prompt caching, on by default: the `cache_control: ephemeral` markers and the caching beta header are added automatically to the system prompt and tools.
-- **OpenAI / OpenAI-compatible (OpenRouter, etc.)** — OpenAI caches automatically server-side. For backends that honor Anthropic-style markers (e.g. OpenRouter routing to Claude), set `cache_enabled = true` (and optionally `cache_ttl`, default 300s) to inject `cache_control` on the system message, the last message, and the last tool definition.
+- **OpenAI / OpenAI-compatible (OpenRouter, etc.)** — OpenAI caches automatically server-side. For backends that honor Anthropic-style markers (e.g. OpenRouter routing to Claude), set `cache_enabled = true` to inject `cache_control` on the system message, the last message, and the last tool definition.
 - **Qwen / Alibaba** — auto-enabled, zero-config (detected by endpoint or a `qwen-` model name; unlocks Alibaba's explicit context cache, ~90% off on hits). See the Qwen note further below.
 - **Xiaomi (MiMo)** — caches automatically server-side; nothing to configure.
 
@@ -216,10 +216,11 @@ How it turns on depends on the provider:
 [providers.openrouter]
 enabled = true
 cache_enabled = true   # inject Anthropic-style cache_control (e.g. when routing to Claude)
-cache_ttl = 300        # seconds (default) — see the TTL note below before changing
 ```
 
-**About the 5-minute TTL.** The cache entry has a short time-to-live (300s default; Anthropic's ephemeral cache and Alibaba's both use 5 minutes), but it **renews on every cache hit** — so in an active session each message keeps the prefix warm and it survives for the *whole* session, however long, as long as you're not idle for more than the TTL. It only expires after an idle gap longer than the TTL, at which point the next message simply re-creates it once. A short TTL is deliberate and cost-safe: a long TTL keeps the cache **alive on the provider's servers during idle time**, which you pay to keep stored — that's exactly how caching bills run away (an idle cache left alive for days can rack up serious charges). OpenCrabs keeps the conservative default on your behalf; `cache_ttl` is exposed for advanced users who understand that raising it trades a higher standing cost for fewer re-creations — leave it at 300s unless you have a specific reason.
+**About the TTL — it's system-controlled.** The prompt-prefix caching that drives that ~87% (Anthropic native, Qwen/Alibaba, Xiaomi) uses a **provider-fixed 5-minute TTL that OpenCrabs does not expose** — you can't change it, and you don't need to. It **renews on every cache hit**, so in an active session each message keeps the prefix warm and it survives the *whole* session, however long, as long as you're not idle for more than 5 minutes; only an idle gap longer than that expires it, and the next message simply re-creates it once. The short TTL is the safeguard: a long TTL would keep the cache **alive on the provider's servers during idle time**, which you pay to keep stored — exactly how caching bills run away (an idle cache left alive for days can rack up serious charges). Keeping it fixed protects everyone, especially non-technical users, by default.
+
+The one user-settable TTL is `cache_ttl` (default 300s, 1-86400), and it applies **only** to OpenRouter's separate *response* cache — a distinct opt-in mechanism that caches identical full requests via the `X-OpenRouter-Cache-TTL` header, active only when `cache_enabled = true` on an OpenRouter provider. It does **not** touch the prompt-prefix caches above. Leave it at the default unless you specifically understand OpenRouter response caching.
 
 #### Changing provider settings: edit the file, or just ask
 
