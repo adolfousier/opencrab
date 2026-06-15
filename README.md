@@ -117,6 +117,8 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 | **Multi-Provider** | **Xiaomi (default — free, no key during the launch window)**, Anthropic Claude, OpenAI, GitHub Copilot (uses your Copilot subscription), OpenRouter (400+ models), MiniMax, Google Gemini, z.ai GLM (General API + Coding API), Claude CLI, OpenCode CLI, Codex CLI (uses your ChatGPT/Codex subscription), Qwen Native (free OAuth with multi-account rotation), Qwen Code CLI (1k free req/day), and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly. Custom provider dialog: paste-by-default for API keys, Enter-to-load live models, typed-not-in-list models accepted and merged. Each session remembers its provider + model and restores it on switch |
 | **Fallback Providers** | Configure a chain of fallback providers — if the primary fails, each fallback is tried in sequence automatically. Any configured provider can be a fallback. Config: `[providers.fallback] providers = ["openrouter", "anthropic"]` |
 | **Per-Provider Vision** | Set `vision_model` per provider — the LLM calls `analyze_image` as a tool, which uses the vision model on the same provider API to describe images. The chat model stays the same and gets vision capability via tool call. Gemini vision takes priority when configured. Auto-configured for known providers (e.g. MiniMax) on first run |
+| **Prompt Caching** | Caches the stable context prefix (system prompt, brain files, earlier turns) on every caching-capable provider — Anthropic native (default), OpenAI/OpenRouter (`cache_enabled`), Qwen/Alibaba (zero-config auto), Xiaomi (server-side). Averaging ~87% cache efficiency in real use; watch it live in the Cache Efficiency card of `/usage`. Big reason a larger context window stays affordable |
+| **Context Window & Auto-Compaction** | Per-provider `context_window` override (default 200k, works on every provider); transparent auto-compaction at 65% (soft, background) / 90% (hard) of the window gives effectively unlimited session memory with no manual clearing |
 | **Real-time Streaming** | Character-by-character response streaming with animated spinner showing model name and live text |
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
 | **Usage Dashboard** | Per-message token count and cost displayed in header; `/usage` opens an interactive dashboard with daily activity charts, cost breakdowns by project/model/activity, core tool usage stats, and period filtering (Today/Week/Month/All-Time). Sessions are auto-categorized on startup (Development, Bug Fixes, Features, Refactoring, Testing, Documentation, CI/Deploy, etc.). Estimated costs for historical sessions shown as `~$X.XX` |
@@ -198,6 +200,26 @@ This override works for **every provider** — OpenAI-compatible (custom, xiaomi
 > **Local models want less:** 128k is a good sweet spot — go **lower** if your machine is tight on resources or you start noticing hallucinations/fabrications, and **higher** only if you have more than 32GB of RAM and have tested your model at a larger window. Not sure what fits your setup? Reach out to Adolfo for suggestions/support, or open a [GitHub discussion](https://github.com/adolfousier/opencrabs/discussions).
 >
 > **Leave auto-compaction on** — it's been battle-tested over months and needs no babysitting. Only run a *manual* compaction (the `/compact` command) if you have a specific, strong reason to summarize early; otherwise let it manage itself.
+
+#### Prompt caching (every caching-capable provider)
+
+A long context is mostly a **stable prefix** — system prompt, brain files, earlier turns rarely change between requests. OpenCrabs caches that prefix wherever the provider supports it, so you pay full price for it once and a fraction on every reuse. Across real usage it's currently averaging **~87% cache efficiency**, which you can watch live in the **Cache Efficiency** card of `/usage`. This is the main reason a larger `context_window` costs far less than its raw token count suggests.
+
+How it turns on depends on the provider:
+
+- **Anthropic** — native prompt caching, on by default: the `cache_control: ephemeral` markers and the caching beta header are added automatically to the system prompt and tools.
+- **OpenAI / OpenAI-compatible (OpenRouter, etc.)** — OpenAI caches automatically server-side. For backends that honor Anthropic-style markers (e.g. OpenRouter routing to Claude), set `cache_enabled = true` (and optionally `cache_ttl`, default 300s) to inject `cache_control` on the system message, the last message, and the last tool definition.
+- **Qwen / Alibaba** — auto-enabled, zero-config (detected by endpoint or a `qwen-` model name; unlocks Alibaba's explicit context cache, ~90% off on hits). See the Qwen note further below.
+- **Xiaomi (MiMo)** — caches automatically server-side; nothing to configure.
+
+```toml
+[providers.openrouter]
+enabled = true
+cache_enabled = true   # inject Anthropic-style cache_control (e.g. when routing to Claude)
+cache_ttl = 300        # seconds (default) — see the TTL note below before changing
+```
+
+**About the 5-minute TTL.** The cache entry has a short time-to-live (300s default; Anthropic's ephemeral cache and Alibaba's both use 5 minutes), but it **renews on every cache hit** — so in an active session each message keeps the prefix warm and it survives for the *whole* session, however long, as long as you're not idle for more than the TTL. It only expires after an idle gap longer than the TTL, at which point the next message simply re-creates it once. A short TTL is deliberate and cost-safe: a long TTL keeps the cache **alive on the provider's servers during idle time**, which you pay to keep stored — that's exactly how caching bills run away (an idle cache left alive for days can rack up serious charges). OpenCrabs keeps the conservative default on your behalf; `cache_ttl` is exposed for advanced users who understand that raising it trades a higher standing cost for fewer re-creations — leave it at 300s unless you have a specific reason.
 
 #### Changing provider settings: edit the file, or just ask
 
