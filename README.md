@@ -190,7 +190,7 @@ context_window = 1000000   # native providers too — Anthropic, Gemini, and the
 
 This override works for **every provider** — OpenAI-compatible (custom, xiaomi, qwen, openrouter, minimax, …) and the native Anthropic, Gemini, and CLI providers. A provider with no override inherits the 200k default.
 
-> **Sizing guidance.** 200k is the battle-tested sweet spot for essentially **every cloud model**. The latest large models (the full, non-`flash` variants) handle bigger windows robustly, so raising it works well when you want more single-session memory — the real downside of going past 200k is simply **cost** (more tokens per request). **Local models want less:** 128k is a good sweet spot, lower if your machine is tight on resources.
+> **Sizing guidance.** 200k is the battle-tested sweet spot for essentially **every cloud model**. The latest large models (the full, non-`flash` variants) handle bigger windows robustly, so raising it works well when you want more single-session memory — the real downside of going past 200k is simply **cost** (more tokens per request). And even that is softened: OpenCrabs uses **prompt caching across every caching-capable provider** (currently averaging ~87% cache efficiency), and a long context is mostly an unchanged prefix that gets served from cache — so a bigger window costs far less than the raw token count suggests. **Local models want less:** 128k is a good sweet spot, lower if your machine is tight on resources.
 >
 > **Leave auto-compaction on** — it's been battle-tested over months and needs no babysitting. Only run a *manual* compaction (the `/compact` command) if you have a specific, strong reason to summarize early; otherwise let it manage itself.
 
