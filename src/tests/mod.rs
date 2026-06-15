@@ -74,6 +74,8 @@ pub mod profile_pid_lock_test;
 pub mod rsi_notification_redaction_test;
 pub mod rsi_pruned_test;
 pub mod rsi_sync_cap_bail_test;
+#[cfg(target_os = "linux")]
+pub mod service_scope_test;
 pub mod systemd_unit_test;
 pub mod tools_md_regression_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows

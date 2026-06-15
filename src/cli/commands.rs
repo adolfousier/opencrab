@@ -1735,7 +1735,7 @@ pub(crate) fn build_systemd_unit(
 /// user unit needs a running per-user systemd + D-Bus session that a headless
 /// VPS SSH session lacks ("Failed to connect to bus").
 #[cfg(target_os = "linux")]
-fn running_as_root() -> bool {
+pub(crate) fn running_as_root() -> bool {
     // SAFETY: geteuid() always succeeds and has no preconditions.
     unsafe { libc::geteuid() == 0 }
 }
@@ -1743,7 +1743,7 @@ fn running_as_root() -> bool {
 /// Core probe logic with explicit paths for testability.
 /// Returns `true` for system scope, `false` for user scope.
 #[cfg(target_os = "linux")]
-fn unit_scope_probe(
+pub(crate) fn unit_scope_probe(
     systemd_name: &str,
     system_dir: &std::path::Path,
     user_dir: Option<&std::path::Path>,
@@ -2242,84 +2242,4 @@ pub(crate) async fn cmd_evolve(check_only: bool) -> Result<()> {
     println!("{}", result.output);
 
     Ok(())
-}
-
-#[cfg(all(test, target_os = "linux"))]
-mod tests {
-    use super::*;
-
-    /// Create a temporary directory with optional service files, run a closure,
-    /// then clean up.
-    fn with_dirs<F: FnOnce(&std::path::Path, &std::path::Path)>(f: F) {
-        let base = std::env::temp_dir().join(format!("opencrabs-test-{}", std::process::id()));
-        let system_dir = base.join("system");
-        let user_dir = base.join("user");
-        std::fs::create_dir_all(&system_dir).unwrap();
-        std::fs::create_dir_all(&user_dir).unwrap();
-        f(&system_dir, &user_dir);
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    fn touch(dir: &std::path::Path, name: &str) {
-        std::fs::File::create(dir.join(name)).unwrap();
-    }
-
-    #[test]
-    fn system_file_exists_returns_system_scope() {
-        with_dirs(|sys, usr| {
-            touch(sys, "opencrabs.service");
-            assert!(unit_scope_probe("opencrabs", sys, Some(usr)));
-        });
-    }
-
-    #[test]
-    fn only_user_file_exists_returns_user_scope() {
-        with_dirs(|sys, usr| {
-            touch(usr, "opencrabs.service");
-            assert!(!unit_scope_probe("opencrabs", sys, Some(usr)));
-        });
-    }
-
-    #[test]
-    fn both_exist_system_wins() {
-        with_dirs(|sys, usr| {
-            touch(sys, "opencrabs.service");
-            touch(usr, "opencrabs.service");
-            assert!(unit_scope_probe("opencrabs", sys, Some(usr)));
-        });
-    }
-
-    #[test]
-    fn neither_exists_falls_back_to_running_as_root() {
-        with_dirs(|sys, usr| {
-            // No files created — must fall back to `running_as_root()`.
-            let expected = running_as_root();
-            assert_eq!(unit_scope_probe("opencrabs", sys, Some(usr)), expected);
-        });
-    }
-
-    #[test]
-    fn no_user_dir_falls_back_to_running_as_root() {
-        with_dirs(|sys, _usr| {
-            // user_dir = None, no system file — falls back.
-            let expected = running_as_root();
-            assert_eq!(unit_scope_probe("opencrabs", sys, None), expected);
-        });
-    }
-
-    #[test]
-    fn system_file_with_no_user_dir() {
-        with_dirs(|sys, _usr| {
-            touch(sys, "opencrabs.service");
-            assert!(unit_scope_probe("opencrabs", sys, None));
-        });
-    }
-
-    #[test]
-    fn profiled_service_name() {
-        with_dirs(|sys, usr| {
-            touch(usr, "opencrabs-ops.service");
-            assert!(!unit_scope_probe("opencrabs-ops", sys, Some(usr)));
-        });
-    }
 }
