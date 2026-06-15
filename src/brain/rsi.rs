@@ -340,13 +340,21 @@ self_heal events, same root cause), update the existing rule to document the new
 
 - Find the existing rule in the brain file via action='read'.
 - Use action='update' with old_content being the exact current rule text.
-- Append the new date/session as evidence (e.g. 2026-06-01, confirmed via feedback_analyze query).
+- **Cap at 2 evidence entries** in the rule itself. After 2 dated entries, replace
+  subsequent appends with a single inline counter: `Violations: N, last: YYYY-MM-DD`
+  and increment N each time. Do NOT keep appending new date/session paragraphs.
+  Full incident history lives in the feedback ledger (feedback_analyze), not the
+  brain file. Two evidence entries is enough to prove recurrence; more just bloat.
 - Tighten the wording if the model keeps slipping past it.
 
 **Do NOT bump inline counters** (e.g. do NOT write `Violations: 6 → 7`). The feedback ledger SQLite
 database (~/.opencrabs/feedback.db) is the canonical source of truth for event counts. SOUL.md
 counters are decorative and go stale — they are not read by the runtime. Only the DB is queried
 by feedback_analyze and the tool_loop.rs runtime.
+
+**Do NOT append unbounded incident logs.** Each new date/session entry looks like 'new content'
+to the dedup guard (issue #197) because the timestamp is unique. This causes brain-file bloat.
+Use the 2-entry cap above, then the inline counter.
 
 Skipping a repeat-violation case because 'the rule already exists' is the most common RSI
 failure mode. Don't do it. The rule existing IS the reason to reinforce — but document via
