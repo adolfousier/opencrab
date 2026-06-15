@@ -1315,8 +1315,28 @@ impl App {
 }
 
 /// Download WhisperCrabs binary if not cached, return the path to the binary.
+/// Directory for downloaded helper binaries (whispercrabs, …). Deliberately
+/// NOT the brain dir (`~/.opencrabs`), which is for agent state — executables
+/// don't belong there. Uses `~/.local/bin` on Unix (PATH-friendly and
+/// user-writable) and the platform data dir on Windows.
+fn helper_bin_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("opencrabs")
+            .join("bin")
+    }
+    #[cfg(not(windows))]
+    {
+        dirs::home_dir()
+            .map(|h| h.join(".local").join("bin"))
+            .unwrap_or_else(std::env::temp_dir)
+    }
+}
+
 pub(crate) async fn ensure_whispercrabs() -> Result<PathBuf> {
-    let bin_dir = crate::config::opencrabs_home().join("bin");
+    let bin_dir = helper_bin_dir();
     std::fs::create_dir_all(&bin_dir)?;
 
     let binary_name = if cfg!(target_os = "windows") {
@@ -1328,6 +1348,16 @@ pub(crate) async fn ensure_whispercrabs() -> Result<PathBuf> {
 
     if binary_path.exists() {
         return Ok(binary_path);
+    }
+
+    // An older version may already have a copy in the brain dir
+    // (`~/.opencrabs/bin`). Reuse it in place if present — don't re-download,
+    // and don't touch/move the user's existing files.
+    let legacy = crate::config::opencrabs_home()
+        .join("bin")
+        .join(binary_name);
+    if legacy.exists() {
+        return Ok(legacy);
     }
 
     // Detect platform
