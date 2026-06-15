@@ -240,10 +240,65 @@ fn split_paragraphs(text: &str) -> Vec<String> {
     paragraphs
 }
 
-/// Check if a paragraph already exists in the file. Uses two strategies:
+/// Strip timestamps and session IDs from a line so that two incident-log
+/// entries that differ only in their date/session hash collapse to the
+/// same canonical form.
+///
+/// Handles:
+/// - `ADDED YYYY-MM-DD (session <hex>):` prefixes
+/// - `REPEAT YYYY-MM-DD (session <hex>):` prefixes
+/// - `(session <hex>)` anywhere in the line
+/// - Standalone ISO dates like `2026-06-14` or `2026-06-14T13:45`
+/// - `(confirmed via feedback_analyze query)` suffixes
+pub(crate) fn normalize_incident_line(line: &str) -> String {
+    use regex::Regex;
+    use std::sync::LazyLock;
+
+    // Strip "ADDED YYYY-MM-DD" or "REPEAT YYYY-MM-DD" prefix
+    static RE_DATE_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)^\s*(?:ADDED|REPEAT|UPDATED)\s+\d{4}-\d{2}-\d{2}\b").unwrap()
+    });
+    // Strip "(session <hex>...)" and "(confirmed ...)" fragments
+    static RE_SESSION_ID: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\(session\s+[a-f0-9]+[^)]*\)").unwrap()
+    });
+    static RE_CONFIRMED: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\(confirmed[^)]*\)").unwrap()
+    });
+    // Strip standalone ISO-ish dates and timestamps
+    static RE_DATE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?\b").unwrap()
+    });
+    // Collapse whitespace after stripping
+    static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\s{2,}").unwrap()
+    });
+
+    let mut out = RE_DATE_PREFIX.replace_all(line, "").to_string();
+    out = RE_SESSION_ID.replace_all(&out, "").to_string();
+    out = RE_CONFIRMED.replace_all(&out, "").to_string();
+    out = RE_DATE.replace_all(&out, "").to_string();
+    out = RE_WHITESPACE.replace_all(&out, " ").to_string();
+    out.trim().to_string()
+}
+
+/// Return a set of normalized non-empty lines from `text`, used for
+/// incident-log overlap detection.
+fn normalized_line_set(text: &str) -> std::collections::HashSet<String> {
+    text.lines()
+        .map(|l| normalize_incident_line(l))
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Check if a paragraph already exists in the file. Uses these strategies:
 /// 1. Exact substring match (the whole paragraph appears verbatim)
 /// 2. Header match: if the paragraph starts with ## or ###, check if that
 ///    header already exists in the file
+/// 3. Line-level overlap (>70% of lines exist verbatim)
+/// 4. Normalized incident-log overlap (>70% of lines match after stripping
+///    dates, session IDs, and timestamps) — catches the RSI accumulation
+///    bug where the same rule gets appended repeatedly with new dates.
 fn paragraph_exists(paragraph: &str, existing: &str) -> bool {
     let trimmed = paragraph.trim();
     if trimmed.is_empty() {
@@ -276,6 +331,30 @@ fn paragraph_exists(paragraph: &str, existing: &str) -> bool {
         let ratio = overlap as f64 / para_lines.len() as f64;
         if ratio > 0.7 {
             return true;
+        }
+    }
+
+    // Normalized incident-log overlap: strip timestamps, session IDs,
+    // and dates from both the new paragraph and existing text, then
+    // re-run the 70% check. This catches the RSI accumulation bug where
+    // the same rule gets appended repeatedly with different dates.
+    if para_lines.len() >= 2 {
+        let norm_existing = normalized_line_set(existing);
+        let norm_new: Vec<String> = trimmed
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(normalize_incident_line)
+            .filter(|l| !l.is_empty())
+            .collect();
+        if !norm_new.is_empty() {
+            let overlap = norm_new
+                .iter()
+                .filter(|l| norm_existing.contains(l.as_str()))
+                .count();
+            let ratio = overlap as f64 / norm_new.len() as f64;
+            if ratio > 0.7 {
+                return true;
+            }
         }
     }
 
