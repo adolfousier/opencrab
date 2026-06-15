@@ -385,6 +385,8 @@ pub enum AppMode {
     SkillsList,
     /// Session files — browse files tracked for a session (triggered by F in /sessions)
     SessionFiles,
+    /// Projects — manage projects and assign sessions (triggered by P in /sessions)
+    Projects,
 }
 
 /// Event handler for the TUI

@@ -12,6 +12,7 @@ pub(crate) mod palette;
 mod panes;
 mod plan_widget;
 pub(crate) mod plan_window;
+mod projects;
 mod session_files;
 mod sessions;
 pub(crate) mod skills_dialog;
@@ -50,6 +51,7 @@ use dialogs::{
 use help::{render_help, render_settings};
 use input::{render_emoji_picker, render_input, render_slash_autocomplete, render_status_bar};
 use plan_widget::render_plan_checklist;
+use projects::render_projects;
 use session_files::render_session_files;
 use sessions::render_sessions;
 
@@ -204,6 +206,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let (title_area, content_area) = split_title_area(full_content_area);
             render_app_title(f, title_area);
             render_session_files(f, app, content_area);
+        }
+        AppMode::Projects => {
+            f.render_widget(Clear, full_content_area);
+            let (title_area, content_area) = split_title_area(full_content_area);
+            render_app_title(f, title_area);
+            render_projects(f, app, content_area);
         }
         AppMode::Settings => {
             let (title_area, content_area) = split_title_area(full_content_area);

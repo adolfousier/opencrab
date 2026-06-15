@@ -2064,8 +2064,23 @@ impl App {
                 }
             }
         } else if event.code == KeyCode::Char('p') || event.code == KeyCode::Char('P') {
-            self.notification = Some("Projects mode coming soon".to_string());
-            self.notification_shown_at = Some(std::time::Instant::now());
+            // Open projects browser
+            match self.project_service.list_projects().await {
+                Ok(projects) => {
+                    self.projects = projects;
+                    self.selected_project_index = 0;
+                    self.project_detail_view = false;
+                    self.project_sessions.clear();
+                    self.selected_project_session_index = 0;
+                    self.project_name_input.clear();
+                    self.project_name_input_active = false;
+                    self.switch_mode(AppMode::Projects).await?;
+                }
+                Err(e) => {
+                    self.notification = Some(format!("Failed to load projects: {e}"));
+                    self.notification_shown_at = Some(std::time::Instant::now());
+                }
+            }
         }
 
         Ok(())
@@ -2171,6 +2186,213 @@ impl App {
                     }
                 }
                 self.notification_shown_at = Some(std::time::Instant::now());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle keys in projects mode
+    pub(crate) async fn handle_projects_key(
+        &mut self,
+        event: crossterm::event::KeyEvent,
+    ) -> Result<()> {
+        use super::events::keys;
+        use crossterm::event::KeyCode;
+
+        // If we're in name input mode, handle text input
+        if self.project_name_input_active {
+            match event.code {
+                KeyCode::Esc => {
+                    self.project_name_input_active = false;
+                    self.project_name_input.clear();
+                }
+                KeyCode::Enter => {
+                    let name = self.project_name_input.trim().to_string();
+                    if name.is_empty() {
+                        self.notification = Some("Project name cannot be empty".to_string());
+                        self.notification_shown_at = Some(std::time::Instant::now());
+                    } else {
+                        match self
+                            .project_service
+                            .create_project(name.clone(), None)
+                            .await
+                        {
+                            Ok(_project) => {
+                                self.notification = Some(format!("Created project: {}", name));
+                                // Refresh project list
+                                if let Ok(projects) = self.project_service.list_projects().await {
+                                    self.projects = projects;
+                                    // Select the newly created project
+                                    if let Some(pos) =
+                                        self.projects.iter().position(|p| p.name == name)
+                                    {
+                                        self.selected_project_index = pos;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.notification = Some(format!("Failed to create project: {e}"));
+                            }
+                        }
+                        self.notification_shown_at = Some(std::time::Instant::now());
+                    }
+                    self.project_name_input_active = false;
+                    self.project_name_input.clear();
+                }
+                KeyCode::Char(c) => {
+                    self.project_name_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    self.project_name_input.pop();
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        // Normal navigation mode
+        if keys::is_cancel(&event) {
+            if self.project_detail_view {
+                // Back to project list
+                self.project_detail_view = false;
+                self.project_sessions.clear();
+                self.selected_project_session_index = 0;
+            } else {
+                // Back to sessions
+                self.switch_mode(AppMode::Sessions).await?;
+            }
+        } else if self.project_detail_view {
+            // Detail view: navigate sessions within a project
+            if keys::is_up(&event) {
+                self.selected_project_session_index =
+                    self.selected_project_session_index.saturating_sub(1);
+            } else if keys::is_down(&event) {
+                self.selected_project_session_index = (self.selected_project_session_index + 1)
+                    .min(self.project_sessions.len().saturating_sub(1));
+            } else if event.code == KeyCode::Char('u') || event.code == KeyCode::Char('U') {
+                // Unassign session from project
+                if let Some(session) = self
+                    .project_sessions
+                    .get(self.selected_project_session_index)
+                {
+                    let session_id = session.id;
+                    let title = session
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "Untitled".to_string());
+                    match self.project_service.unassign_session(session_id).await {
+                        Ok(()) => {
+                            self.project_sessions
+                                .remove(self.selected_project_session_index);
+                            if self.selected_project_session_index >= self.project_sessions.len() {
+                                self.selected_project_session_index =
+                                    self.project_sessions.len().saturating_sub(1);
+                            }
+                            // Refresh project list in background to update counts
+                            if let Ok(projects) = self.project_service.list_projects().await {
+                                self.projects = projects;
+                            }
+                            self.notification = Some(format!("Unassigned: {title}"));
+                        }
+                        Err(e) => {
+                            self.notification = Some(format!("Failed to unassign: {e}"));
+                        }
+                    }
+                    self.notification_shown_at = Some(std::time::Instant::now());
+                }
+            } else if keys::is_enter(&event) {
+                // Select this session and go to chat
+                if let Some(session) = self
+                    .project_sessions
+                    .get(self.selected_project_session_index)
+                {
+                    let session_id = session.id;
+                    self.switch_mode(AppMode::Chat).await?;
+                    self.load_session(session_id).await?;
+                }
+            }
+        } else {
+            // List view: navigate projects
+            if keys::is_up(&event) {
+                self.selected_project_index = self.selected_project_index.saturating_sub(1);
+            } else if keys::is_down(&event) {
+                self.selected_project_index =
+                    (self.selected_project_index + 1).min(self.projects.len().saturating_sub(1));
+            } else if keys::is_enter(&event) {
+                // Enter project detail view
+                if let Some(project) = self.projects.get(self.selected_project_index) {
+                    let project_id = project.id;
+                    match self
+                        .project_service
+                        .get_sessions_for_project(project_id)
+                        .await
+                    {
+                        Ok(sessions) => {
+                            self.project_sessions = sessions;
+                            self.selected_project_session_index = 0;
+                            self.project_detail_view = true;
+                        }
+                        Err(e) => {
+                            self.notification = Some(format!("Failed to load sessions: {e}"));
+                            self.notification_shown_at = Some(std::time::Instant::now());
+                        }
+                    }
+                }
+            } else if event.code == KeyCode::Char('n') || event.code == KeyCode::Char('N') {
+                // Create new project
+                self.project_name_input_active = true;
+                self.project_name_input.clear();
+            } else if event.code == KeyCode::Char('d') || event.code == KeyCode::Char('D') {
+                // Delete project
+                if let Some(project) = self.projects.get(self.selected_project_index) {
+                    let project_id = project.id;
+                    let name = project.name.clone();
+                    match self.project_service.delete_project(project_id).await {
+                        Ok(()) => {
+                            self.projects.remove(self.selected_project_index);
+                            if self.selected_project_index >= self.projects.len() {
+                                self.selected_project_index = self.projects.len().saturating_sub(1);
+                            }
+                            self.notification = Some(format!("Deleted project: {name}"));
+                        }
+                        Err(e) => {
+                            self.notification = Some(format!("Failed to delete project: {e}"));
+                        }
+                    }
+                    self.notification_shown_at = Some(std::time::Instant::now());
+                }
+            } else if event.code == KeyCode::Char('a') || event.code == KeyCode::Char('A') {
+                // Assign current session to selected project
+                if let (Some(project), Some(current_session)) = (
+                    self.projects.get(self.selected_project_index),
+                    self.current_session.as_ref(),
+                ) {
+                    let project_id = project.id;
+                    let session_id = current_session.id;
+                    let project_name = project.name.clone();
+                    match self
+                        .project_service
+                        .assign_session(session_id, project_id)
+                        .await
+                    {
+                        Ok(()) => {
+                            self.notification =
+                                Some(format!("Assigned current session to: {}", project_name));
+                            // Refresh project list
+                            if let Ok(projects) = self.project_service.list_projects().await {
+                                self.projects = projects;
+                            }
+                        }
+                        Err(e) => {
+                            self.notification = Some(format!("Failed to assign: {e}"));
+                        }
+                    }
+                    self.notification_shown_at = Some(std::time::Instant::now());
+                } else if self.current_session.is_none() {
+                    self.notification = Some("No active session to assign".to_string());
+                    self.notification_shown_at = Some(std::time::Instant::now());
+                }
             }
         }
 

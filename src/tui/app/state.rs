@@ -682,6 +682,16 @@ pub struct App {
     pub(crate) session_files: Vec<crate::db::models::File>,
     pub(crate) selected_file_index: usize,
 
+    /// Projects state (populated when P is pressed in /sessions)
+    pub(crate) project_service: crate::services::ProjectService,
+    pub(crate) projects: Vec<crate::db::models::Project>,
+    pub(crate) selected_project_index: usize,
+    pub(crate) project_sessions: Vec<crate::db::models::Session>,
+    pub(crate) selected_project_session_index: usize,
+    pub(crate) project_detail_view: bool,
+    pub(crate) project_name_input: String,
+    pub(crate) project_name_input_active: bool,
+
     /// Events
     pub(crate) event_handler: EventHandler,
 
@@ -828,9 +838,17 @@ impl App {
             whatsapp_state,
             session_service: SessionService::new(context.clone()),
             message_service: MessageService::new(context.clone()),
-            file_service: FileService::new(context),
+            file_service: FileService::new(context.clone()),
+            project_service: crate::services::ProjectService::new(context),
             session_files: Vec::new(),
             selected_file_index: 0,
+            projects: Vec::new(),
+            selected_project_index: 0,
+            project_sessions: Vec::new(),
+            selected_project_session_index: 0,
+            project_detail_view: false,
+            project_name_input: String::new(),
+            project_name_input_active: false,
             agent_service,
             event_handler: EventHandler::new(),
             prompt_analyzer: PromptAnalyzer::new(),
@@ -3211,6 +3229,9 @@ impl App {
             }
             AppMode::SessionFiles => {
                 self.handle_session_files_key(event).await?;
+            }
+            AppMode::Projects => {
+                self.handle_projects_key(event).await?;
             }
         }
 
