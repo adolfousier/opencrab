@@ -3,6 +3,7 @@
 //! Handles application configuration loading, validation, and management.
 
 pub mod crabrace;
+mod current;
 pub mod health;
 pub mod profile;
 pub mod secrets;

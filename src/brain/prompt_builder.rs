@@ -182,9 +182,7 @@ impl BrainLoader {
     pub fn load_file(&self, name: &str) -> Option<String> {
         let path = self.workspace_path.join(name);
         let raw = std::fs::read_to_string(&path).ok()?;
-        let strip_enabled = crate::config::Config::load()
-            .map(|c| c.brain.strip_empty_sections)
-            .unwrap_or(true);
+        let strip_enabled = crate::config::Config::current().brain.strip_empty_sections;
         if !strip_enabled {
             return Some(raw);
         }

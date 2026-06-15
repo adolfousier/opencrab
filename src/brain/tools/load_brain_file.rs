@@ -65,9 +65,7 @@ impl Tool for LoadBrainFileTool {
         // Read-time empty-section stripping. Default on; opt out via
         // `[brain] strip_empty_sections = false` in config.toml.
         // Disk stays authoritative — writes never run through this.
-        let strip_enabled = crate::config::Config::load()
-            .map(|c| c.brain.strip_empty_sections)
-            .unwrap_or(true);
+        let strip_enabled = crate::config::Config::current().brain.strip_empty_sections;
         let apply_filter = |raw: String| -> (String, Vec<String>) {
             if !strip_enabled {
                 return (raw, Vec::new());

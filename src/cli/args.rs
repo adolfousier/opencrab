@@ -424,6 +424,8 @@ pub async fn run() -> Result<()> {
 
     // Load configuration
     let config = commands::load_config(cli.config.as_deref()).await?;
+    // Seed the in-memory mirror so Config::current() readers never touch disk.
+    Config::set_current(config.clone());
 
     // Auto-generate config.toml if API keys exist in env but no config file yet.
     // This prevents the onboarding wizard from triggering when .env is already set up.

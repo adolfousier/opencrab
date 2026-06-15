@@ -279,8 +279,8 @@ impl TelegramAgent {
                                     // provider to THIS session so another channel/session
                                     // doesn't get yanked onto it — the model callback's
                                     // switch_model then reads from the same per-session slot.
-                                    if let Ok(config) = crate::config::Config::load()
-                                        && let Ok(new_provider) = crate::brain::provider::factory::create_provider_by_name(&config, provider_name).await
+                                    let config = crate::config::Config::current();
+                                    if let Ok(new_provider) = crate::brain::provider::factory::create_provider_by_name(&config, provider_name).await
                                     {
                                         match session_id {
                                             Some(sid) => agent.swap_provider_for_session(sid, new_provider.clone(), new_provider.default_model().to_string()),

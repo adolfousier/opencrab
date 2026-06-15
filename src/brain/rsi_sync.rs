@@ -546,9 +546,7 @@ async fn sync_single_file(local_path: &Path, filename: &str, _timestamp: &str) -
     // to improvements.md beyond the warning entry below, and the caller
     // sees `bailed_for_cap = Some(...)` so Mission Control can surface
     // the situation distinctly from a transient I/O failure.
-    let brain_cfg = crate::config::Config::load()
-        .map(|c| c.brain)
-        .unwrap_or_default();
+    let brain_cfg = crate::config::Config::current().brain.clone();
     let cap = brain_cfg.cap_for(filename);
     let merged_line_count = local_content.lines().count() + new_sections.lines().count();
     if merged_line_count > cap {

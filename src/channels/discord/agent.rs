@@ -184,13 +184,13 @@ impl EventHandler for Handler {
                 if resp.agent_handled {
                     let session_id = *self.shared_session.lock().await;
                     let display = crate::channels::commands::provider_display_name(provider_name);
-                    if let Ok(config) = crate::config::Config::load()
-                        && let Ok(new_provider) =
-                            crate::brain::provider::factory::create_provider_by_name(
-                                &config,
-                                provider_name,
-                            )
-                            .await
+                    let config = crate::config::Config::current();
+                    if let Ok(new_provider) =
+                        crate::brain::provider::factory::create_provider_by_name(
+                            &config,
+                            provider_name,
+                        )
+                        .await
                     {
                         match session_id {
                             Some(sid) => self.agent.swap_provider_for_session(
