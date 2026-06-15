@@ -20,12 +20,31 @@ mod table;
 
 pub(crate) use parse::parse_markdown;
 
-/// Whether `text` contains a GitHub-flavored pipe table. The legacy line-based
-/// converter renders tables as raw `| pipes |`; messages that contain one are
-/// routed through the AST renderer instead so the table comes out aligned.
+/// Whether `text` is better served by the AST renderer than the legacy
+/// line-based converter: it contains a GitHub-flavored table or a task-list
+/// checkbox, both of which the legacy path renders poorly (raw `| pipes |` and
+/// literal `- [ ]` respectively).
+pub(crate) fn prefers_rich_render(text: &str) -> bool {
+    contains_table(text) || contains_task_list(text)
+}
+
+/// Whether `text` contains a GitHub-flavored pipe table.
 pub(crate) fn contains_table(text: &str) -> bool {
     let lines: Vec<String> = text.lines().map(str::to_string).collect();
     (0..lines.len()).any(|i| table::try_parse(&lines, i).is_some())
+}
+
+/// Whether `text` contains a `- [ ]` / `- [x]` task-list item.
+pub(crate) fn contains_task_list(text: &str) -> bool {
+    text.lines().any(|line| {
+        let t = line.trim_start();
+        let after = t
+            .strip_prefix("- ")
+            .or_else(|| t.strip_prefix("* "))
+            .or_else(|| t.strip_prefix("+ "));
+        matches!(after, Some(rest)
+            if rest.starts_with("[ ]") || rest.starts_with("[x]") || rest.starts_with("[X]"))
+    })
 }
 
 /// Parse `text` and render it as Telegram HTML in one call (the fallback path).

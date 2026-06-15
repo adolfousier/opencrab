@@ -4,7 +4,9 @@
 //! finalized separately against the Bot API field schema and tested there.
 
 use crate::channels::telegram::rich::ast::{Align, Block, Inline};
-use crate::channels::telegram::rich::{contains_table, markdown_to_html, parse_markdown};
+use crate::channels::telegram::rich::{
+    contains_table, markdown_to_html, parse_markdown, prefers_rich_render,
+};
 
 fn text(s: &str) -> Inline {
     Inline::Text(s.to_string())
@@ -140,6 +142,20 @@ fn contains_table_detects_only_real_tables() {
     // A lone pipe line without a separator is not a table.
     assert!(!contains_table("a | b is just prose"));
     assert!(!contains_table("# heading\n\nsome text"));
+}
+
+#[test]
+fn prefers_rich_render_for_tables_and_task_lists() {
+    assert!(prefers_rich_render("| a | b |\n| - | - |\n| 1 | 2 |"));
+    assert!(prefers_rich_render("- [ ] todo\n- [x] done"));
+    assert!(prefers_rich_render("  * [x] indented task"));
+    // Plain prose and ordinary bullet lists stay on the legacy path.
+    assert!(!prefers_rich_render(
+        "# heading\n\n- a normal bullet\n- another"
+    ));
+    assert!(!prefers_rich_render(
+        "just a sentence with [brackets] in it"
+    ));
 }
 
 // ── HTML fallback rendering ─────────────────────────────────────────
