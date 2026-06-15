@@ -466,9 +466,3 @@ pub async fn rewrite_command(command: &str) -> Option<RtkResult> {
         original_command: command.to_string(),
     })
 }
-
-/// Convenience wrapper: returns just the rewritten string or None.
-#[allow(dead_code)]
-pub async fn rewrite_command_string(command: &str) -> Option<String> {
-    rewrite_command(command).await.map(|r| r.rewritten_command)
-}

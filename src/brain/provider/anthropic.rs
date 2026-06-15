@@ -533,9 +533,7 @@ struct AnthropicRequest {
 /// System prompt — either a plain string or a list of content blocks for caching.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-#[allow(dead_code)]
 enum AnthropicSystem {
-    String(String),
     Blocks(Vec<AnthropicSystemBlock>),
 }
 

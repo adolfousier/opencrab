@@ -344,10 +344,7 @@ fn resolve_claude_path() -> Result<String> {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum CliMessage {
-    System {
-        #[allow(dead_code)]
-        model: Option<String>,
-    },
+    System {},
     Assistant {
         message: CliAssistantMessage,
     },
@@ -356,11 +353,7 @@ enum CliMessage {
         event: serde_json::Value,
     },
     /// User turn during multi-turn tool loops (tool_result).
-    User {
-        #[allow(dead_code)]
-        #[serde(default)]
-        message: serde_json::Value,
-    },
+    User {},
     RateLimitEvent {},
     Result {
         stop_reason: Option<String>,

@@ -655,7 +655,6 @@ impl AgentService {
     /// Read current streak without mutating. Used by the fallback
     /// commit site to decide between "rescue this request only" vs
     /// "stick the fallback permanently".
-    #[allow(dead_code)]
     pub fn peek_primary_failure_streak(&self, session_id: Uuid) -> u32 {
         self.session_primary_failure_streak
             .read()

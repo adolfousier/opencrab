@@ -15,7 +15,6 @@ use chrono::Utc;
 use cron::Schedule;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
 /// Name used for the shared cron session.
@@ -153,9 +152,6 @@ pub struct CronScheduler {
     service_context: ServiceContext,
     /// Dedicated session for all cron jobs — isolated from TUI sessions.
     cron_session_id: Option<Uuid>,
-    /// Kept for API compatibility but no longer used for session resolution.
-    #[allow(dead_code)]
-    shared_session_id: Arc<Mutex<Option<Uuid>>>,
 }
 
 impl CronScheduler {
@@ -164,7 +160,6 @@ impl CronScheduler {
         run_repo: CronJobRunRepository,
         factory: Arc<ChannelFactory>,
         service_context: ServiceContext,
-        shared_session_id: Arc<Mutex<Option<Uuid>>>,
     ) -> Self {
         Self {
             repo,
@@ -172,7 +167,6 @@ impl CronScheduler {
             factory,
             service_context,
             cron_session_id: None,
-            shared_session_id,
         }
     }
 

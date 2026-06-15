@@ -479,7 +479,6 @@ impl BrowserManager {
     /// Legacy: take a screenshot of the hardcoded "default" page.
     /// Kept for any non-session-aware caller; session-aware tools
     /// should use `take_screenshot_for_session`.
-    #[allow(dead_code)]
     pub async fn take_screenshot(&self) -> Option<(String, String)> {
         // Same clone-then-drop-lock pattern as
         // `take_screenshot_for_session` to avoid holding the mutex across

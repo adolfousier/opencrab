@@ -28,10 +28,6 @@ fn default_max_results() -> usize {
 // DuckDuckGo Instant Answer API response structure
 #[derive(Debug, Deserialize)]
 struct DuckDuckGoResponse {
-    #[allow(dead_code)]
-    #[serde(rename = "Abstract")]
-    abstract_text: String,
-
     #[serde(rename = "AbstractText")]
     abstract_text_plain: String,
 
@@ -55,9 +51,6 @@ enum RelatedTopic {
         first_url: String,
     },
     TopicGroup {
-        #[allow(dead_code)]
-        #[serde(rename = "Name")]
-        name: String,
         #[serde(rename = "Topics")]
         topics: Vec<TopicItem>,
     },
@@ -204,7 +197,7 @@ impl Tool for WebSearchTool {
                         output.push_str(&format!("   🔗 {}\n\n", first_url));
                         result_count += 1;
                     }
-                    RelatedTopic::TopicGroup { name: _, topics } => {
+                    RelatedTopic::TopicGroup { topics } => {
                         for topic_item in topics {
                             if result_count >= input.max_results {
                                 break;

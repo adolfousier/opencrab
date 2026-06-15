@@ -565,7 +565,7 @@ impl Provider for GeminiProvider {
         let state = std::sync::Arc::new(std::sync::Mutex::new(GeminiStreamState {
             emitted_message_start: false,
             accumulated_text: String::new(),
-            tool_calls: std::collections::HashMap::new(),
+            tool_call_count: 0,
             input_tokens: 0,
             output_tokens: 0,
             cache_read_tokens: 0,
@@ -664,15 +664,8 @@ impl Provider for GeminiProvider {
                                                 "gemini-tc-{}",
                                                 uuid::Uuid::new_v4().simple()
                                             );
-                                            let tool_idx = st.tool_calls.len();
-                                            st.tool_calls.insert(
-                                                tool_idx,
-                                                GeminiToolCall {
-                                                    id: id.clone(),
-                                                    name: name.clone(),
-                                                    args: args.clone(),
-                                                },
-                                            );
+                                            let tool_idx = st.tool_call_count;
+                                            st.tool_call_count += 1;
 
                                             // Emit tool use as a new content block
                                             events.push(Ok(StreamEvent::ContentBlockStop {
@@ -845,38 +838,16 @@ impl Provider for GeminiProvider {
 struct GeminiStreamState {
     emitted_message_start: bool,
     accumulated_text: String,
-    tool_calls: std::collections::HashMap<usize, GeminiToolCall>,
+    /// Count of tool calls emitted so far this stream, used only to index
+    /// successive ContentBlockStart events; the calls themselves are emitted
+    /// inline, never re-read, so we track the count rather than the payloads.
+    tool_call_count: usize,
     input_tokens: u32,
     output_tokens: u32,
     cache_read_tokens: u32,
     cache_creation_tokens: u32,
 }
 
-/// Accumulated tool call from streaming chunks
-#[allow(dead_code)]
-struct GeminiToolCall {
-    id: String,
-    name: String,
-    args: Value,
-}
-
-/// Gemini-specific error response format
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct GeminiError {
-    error: GeminiErrorDetail,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct GeminiErrorDetail {
-    code: u32,
-    message: String,
-    status: String,
-}
-
-// Suppress "unused" warnings on Serialize for the request building helpers
-#[allow(dead_code)]
 #[derive(Serialize)]
 struct GeminiPart {
     text: String,
@@ -913,19 +884,13 @@ struct CachedContentFunctionDecl {
 
 /// Response from POST /v1beta/cachedContents
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct CachedContentResponse {
     name: String,
     #[serde(rename = "usageMetadata")]
     usage_metadata: Option<CachedContentUsageMetadata>,
-    #[serde(rename = "createTime")]
-    create_time: Option<String>,
-    #[serde(rename = "expireTime")]
-    expire_time: Option<String>,
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct CachedContentUsageMetadata {
     #[serde(rename = "totalTokenCount")]
     total_token_count: Option<u32>,

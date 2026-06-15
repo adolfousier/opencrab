@@ -31,10 +31,6 @@ use std::time::{Duration, Instant};
 /// third-party integrations (OpenCode, term-llm, etc.).
 pub const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
-/// OpenAI auth issuer.
-#[allow(dead_code)]
-const AUTH_ISSUER: &str = "https://auth.openai.com";
-
 /// Device code request endpoint.
 const DEVICE_CODE_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/usercode";
 
@@ -173,14 +169,6 @@ pub struct TokenResponse {
     pub account_id: Option<String>,
     #[serde(default)]
     pub expires_in: u64,
-}
-
-/// OAuth polling error response.
-#[derive(Debug, Default, Deserialize)]
-#[allow(dead_code)]
-struct OAuthErrorResponse {
-    #[serde(default)]
-    error: Option<String>,
 }
 
 /// Start the OAuth device flow. Returns device code + user code for display.

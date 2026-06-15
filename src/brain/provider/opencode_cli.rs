@@ -195,10 +195,7 @@ fn resolve_opencode_path() -> Result<String> {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum CliEvent {
-    StepStart {
-        #[allow(dead_code)]
-        part: serde_json::Value,
-    },
+    StepStart {},
     Text {
         part: TextPart,
     },
@@ -206,13 +203,9 @@ enum CliEvent {
         part: ReasoningPart,
     },
     ToolUse {
-        #[allow(dead_code)]
         part: serde_json::Value,
     },
-    ToolResult {
-        #[allow(dead_code)]
-        part: serde_json::Value,
-    },
+    ToolResult {},
     StepFinish {
         part: StepFinishPart,
     },
@@ -254,9 +247,6 @@ struct CliTokens {
 struct CliError {
     #[serde(default)]
     pub data: Option<CliErrorData>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

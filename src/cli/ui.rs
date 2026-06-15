@@ -186,7 +186,6 @@ async fn spawn_cron_scheduler_for_profile(profile_name: String) {
                 CronJobRunRepository::new(db.pool().clone()),
                 factory,
                 service_context,
-                shared_session,
             );
             tracing::info!("Multi-profile daemon: cron scheduler running for profile '{name}'");
             scheduler.run().await; // loops forever
@@ -1441,7 +1440,6 @@ async fn cmd_chat_inner(
             cron_run_repo,
             channel_factory.clone(),
             service_context.clone(),
-            app.shared_session_id(),
         );
         // Detached task; the JoinHandle isn't awaited or aborted anywhere.
         cron_scheduler.spawn();

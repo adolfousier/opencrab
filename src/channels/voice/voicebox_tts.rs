@@ -32,20 +32,13 @@ struct GenerateResponse {
     #[serde(default)]
     audio_path: String,
     #[serde(default)]
-    #[allow(dead_code)]
     duration: f64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    error: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct StatusResponse {
     #[serde(default)]
     status: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    duration: f64,
     #[serde(default)]
     error: Option<String>,
 }

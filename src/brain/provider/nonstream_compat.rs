@@ -24,8 +24,6 @@ struct NonStreamResponse {
 
 #[derive(Debug, Deserialize)]
 struct NonStreamChoice {
-    #[allow(dead_code)]
-    index: u32,
     message: Option<NonStreamMessage>,
     /// Some providers put the message under `delta` even in non-streaming.
     delta: Option<NonStreamMessage>,
@@ -34,8 +32,6 @@ struct NonStreamChoice {
 
 #[derive(Debug, Deserialize)]
 struct NonStreamMessage {
-    #[allow(dead_code)]
-    role: Option<String>,
     #[serde(default)]
     content: Option<String>,
     #[serde(default, alias = "reasoning")]
