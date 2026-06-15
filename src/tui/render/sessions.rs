@@ -207,7 +207,7 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                     .unwrap_or("?");
                 spans.push(Span::styled(
                     format!(" {{.{}}}", project_name),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Rgb(215, 100, 20)),
                 ));
             }
 
