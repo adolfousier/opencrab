@@ -282,26 +282,30 @@ impl Tool for TelegramSendTool {
                 let thread_id = resolve_thread_id(&input, chat_id).await;
                 let chunks = crate::channels::telegram::handler::split_message(&text, 4096);
                 for chunk in chunks {
-                    // Rich-first: let Telegram render the markdown natively
-                    // (tables, headings, lists, math). On any failure fall back
-                    // to the prior plain-text send so a rich-API hiccup never
-                    // drops the message.
-                    if let Err(e) = crate::channels::telegram::rich::api::try_send_rich(
-                        &bot, chat_id, thread_id, chunk,
-                    )
-                    .await
-                    {
-                        tracing::warn!("telegram_send: rich send failed, sending plain: {e}");
-                        if let Err(e) = crate::channels::telegram::send::message_in_thread(
+                    // Only structured messages (tables, headings, lists, math)
+                    // take the native rich path; plain prose stays on the prior
+                    // plain-text send so Telegram's markdown parser never
+                    // reinterprets incidental characters. On any rich failure we
+                    // also fall back to plain so a hiccup never drops a message.
+                    let sent_rich = crate::channels::telegram::rich::has_rich_structure(chunk)
+                        && crate::channels::telegram::rich::api::try_send_rich(
+                            &bot, chat_id, thread_id, chunk,
+                        )
+                        .await
+                        .inspect_err(|e| {
+                            tracing::warn!("telegram_send: rich send failed, sending plain: {e}");
+                        })
+                        .is_ok();
+                    if !sent_rich
+                        && let Err(e) = crate::channels::telegram::send::message_in_thread(
                             &bot,
                             ChatId(chat_id),
                             thread_id,
                             chunk,
                         )
                         .await
-                        {
-                            return Ok(ToolResult::error(format!("Failed to send: {e}")));
-                        }
+                    {
+                        return Ok(ToolResult::error(format!("Failed to send: {e}")));
                     }
                 }
                 Ok(ToolResult::success(format!(

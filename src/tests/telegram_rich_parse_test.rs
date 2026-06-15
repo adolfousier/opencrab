@@ -5,7 +5,7 @@
 
 use crate::channels::telegram::rich::ast::{Align, Block, Inline};
 use crate::channels::telegram::rich::{
-    contains_table, markdown_to_html, parse_markdown, prefers_rich_render,
+    contains_table, has_rich_structure, markdown_to_html, parse_markdown, prefers_rich_render,
 };
 
 fn text(s: &str) -> Inline {
@@ -190,6 +190,25 @@ fn task_list_renders_checkboxes() {
     let html = markdown_to_html("- [ ] todo\n- [x] done");
     assert!(html.contains("☐ todo"), "{html}");
     assert!(html.contains("☑ done"), "{html}");
+}
+
+#[test]
+fn has_rich_structure_gates_native_rich_path() {
+    // Structured content → rich.
+    assert!(has_rich_structure("| a | b |\n| - | - |\n| 1 | 2 |"));
+    assert!(has_rich_structure("# Heading\n\nbody"));
+    assert!(has_rich_structure("intro\n\n- one\n- two"));
+    assert!(has_rich_structure("1. first\n2. second"));
+    assert!(has_rich_structure("- [ ] task"));
+    assert!(has_rich_structure("```\ncode\n```"));
+    assert!(has_rich_structure("$$\nx^2\n$$"));
+    // Plain prose — even with inline emphasis — stays on the existing path.
+    assert!(!has_rich_structure("Just a normal reply."));
+    assert!(!has_rich_structure(
+        "Use the **bold** operator and `code` here."
+    ));
+    assert!(!has_rich_structure("Compute 5 * 3 = 15 and move on."));
+    assert!(!has_rich_structure("A #hashtag is not a heading."));
 }
 
 // ── sendRichMessage request body ────────────────────────────────────

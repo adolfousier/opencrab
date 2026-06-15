@@ -2417,22 +2417,27 @@ pub(crate) async fn handle_message(
                     // footer is plain text, appended as-is. On ANY failure we
                     // fall through to the existing HTML edit, so the streaming
                     // path is never regressed.
-                    let rich_md = if footer.is_empty() {
-                        text_only.clone()
-                    } else {
-                        format!("{text_only}\n\n{footer}")
+                    // Plain-prose replies keep the HTML edit so Telegram's
+                    // markdown parser never reinterprets incidental characters;
+                    // only structured replies are worth the rich conversion.
+                    let rich_ok = super::rich::has_rich_structure(&text_only) && {
+                        let rich_md = if footer.is_empty() {
+                            text_only.clone()
+                        } else {
+                            format!("{text_only}\n\n{footer}")
+                        };
+                        super::rich::api::edit_rich_markdown(
+                            bot.token(),
+                            msg.chat.id.0,
+                            mid.0,
+                            &rich_md,
+                        )
+                        .await
+                        .inspect_err(|e| {
+                            tracing::warn!("Telegram: rich edit failed, using HTML edit: {e}");
+                        })
+                        .is_ok()
                     };
-                    let rich_ok = super::rich::api::edit_rich_markdown(
-                        bot.token(),
-                        msg.chat.id.0,
-                        mid.0,
-                        &rich_md,
-                    )
-                    .await
-                    .inspect_err(|e| {
-                        tracing::warn!("Telegram: rich edit failed, using HTML edit: {e}");
-                    })
-                    .is_ok();
 
                     if !rich_ok {
                         match bot
