@@ -1945,7 +1945,7 @@ fn load_keys_from_file() -> Result<KeysFile> {
         return Ok(KeysFile::default());
     }
 
-    tracing::debug!("Loading keys from: {:?}", keys_path);
+    tracing::trace!("Loading keys from: {:?}", keys_path);
     let content = std::fs::read_to_string(&keys_path)?;
     let keys: KeysFile = toml::from_str(&content)?;
     Ok(keys)
@@ -1982,7 +1982,7 @@ pub(crate) fn merge_provider_keys(
         let entry = base.openrouter.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
-    tracing::debug!(
+    tracing::trace!(
         "merge_provider_keys: minimax keys present={}, base present={}",
         keys.minimax.is_some(),
         base.minimax.is_some()
@@ -2077,7 +2077,7 @@ pub(crate) fn merge_provider_keys(
                 use std::collections::btree_map::Entry;
                 match base_customs.entry(name.clone()) {
                     Entry::Occupied(mut occupied) => {
-                        tracing::info!(
+                        tracing::trace!(
                             "merge_provider_keys: merging api_key for custom '{}'",
                             name
                         );
@@ -2086,7 +2086,7 @@ pub(crate) fn merge_provider_keys(
                     Entry::Vacant(vacant) => {
                         // Key exists in keys.toml but not in config.toml.
                         // Create a minimal entry so the provider can be constructed.
-                        tracing::info!(
+                        tracing::trace!(
                             "merge_provider_keys: custom '{}' has key in keys.toml but no config.toml entry — creating minimal entry",
                             name
                         );
@@ -2170,7 +2170,7 @@ pub(crate) fn merge_provider_keys(
             })
             .map(|(n, _)| n.as_str())
             .collect();
-        tracing::info!(
+        tracing::trace!(
             "merge_provider_keys: custom providers loaded = {} ({} with real api_key); \
              providers missing a real key: {:?}",
             total,
@@ -2468,7 +2468,7 @@ impl Config {
 
     /// Inner load implementation — separated so `load()` can wrap with recovery.
     fn load_inner() -> Result<Self> {
-        tracing::debug!("Loading configuration...");
+        tracing::trace!("Loading configuration...");
 
         // Start with defaults
         let mut config = Self::default();
@@ -2477,14 +2477,14 @@ impl Config {
         if let Some(system_config_path) = Self::system_config_path()
             && system_config_path.exists()
         {
-            tracing::debug!("Loading system config from: {:?}", system_config_path);
+            tracing::trace!("Loading system config from: {:?}", system_config_path);
             config = Self::merge_from_file(config, &system_config_path)?;
         }
 
         // 2. Try to load local config
         let local_config_path = Self::local_config_path();
         if local_config_path.exists() {
-            tracing::debug!("Loading local config from: {:?}", local_config_path);
+            tracing::trace!("Loading local config from: {:?}", local_config_path);
             config = Self::merge_from_file(config, &local_config_path)?;
         }
 
@@ -2580,7 +2580,7 @@ impl Config {
             Self::warn_unknown_keys(&path);
         }
 
-        tracing::debug!("Configuration loaded successfully");
+        tracing::trace!("Configuration loaded successfully");
         Ok(config)
     }
 
