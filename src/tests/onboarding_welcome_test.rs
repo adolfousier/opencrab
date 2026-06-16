@@ -55,7 +55,9 @@ fn welcome_message_contains_heartbeat() {
 #[test]
 fn welcome_message_contains_onboarding_complete() {
     assert!(
-        WELCOME_MESSAGE.to_lowercase().contains("onboarding complete"),
+        WELCOME_MESSAGE
+            .to_lowercase()
+            .contains("onboarding complete"),
         "welcome message should contain 'onboarding complete'"
     );
 }
