@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.41] - 2026-06-16
+
+19 commits since v0.3.40. 30 files changed, +681 / -282 lines.
+
+### ✨ Features
+
+- `4b77b54a` **Session search in TUI**: search filter + viewport scroll
+- `dcc91cf2` **Session search in channels**: `/sessions:<query>` filter for channel commands
+- `cba0daab` **Agent-driven onboarding welcome**: new welcome flow
+- `f9097070` **Assigned session highlight**: green highlight for assigned sessions in assign mode
+
+### 🔧 Fixes
+
+- `38bfbff0` Telegram rich fallback when final reply deduped to zero
+- `56691fb7` Plan summary uses markdown task lists for rich Telegram rendering
+- `517edeae` Preserve rich tables when appending context footer
+- `b332062c` Gracefully handle Kitty keyboard enhancement on Windows (#203)
+- `b39769d8` Extend tmp file cleanup from 3 to 30 days
+- `61e5074c` Add /search to SESSIONS section in help center
+
+### 📖 Documentation
+
+- `009454cb` README: add /sessions search and /sessions:<query>
+- `1b55f05c` Template workflow: /tmp rule, start-with-template recommendation
+- `3c5b23ac` README: add split panes screenshot to images section
+- `c1728a01` Templates/boot: add environment awareness and self-knowledge
+
+### 🧹 Miscellaneous
+
+- `30ce3c07` Update welcome message tests for agent-driven onboarding
+- `e16ed912` Edge-case tests for PR #202 + cleanup
+- `8300936c` Bump JS actions to Node 24 versions
+- `fdf4ab8e` Only publish binaries when crates.io upload also succeeds
+- `0f718230` Cargo formatting normalization
+
+### 📊 Stats
+
+- 19 commits since v0.3.40
+- 30 files changed, +681 / -282 lines
+- 3,270 tests (3,952 passed, 0 failed, 23 ignored)
+
 ## [0.3.40] - 2026-06-15
 
 72 commits since v0.3.39. 105 files changed, +6252 / -4121 lines.
@@ -5614,3 +5655,5 @@ fixes.
 [0.3.38]: https://github.com/adolfousier/opencrabs/compare/v0.3.37...v0.3.38
 [0.3.39]: https://github.com/adolfousier/opencrabs/compare/v0.3.38...v0.3.39
 [0.3.40]: https://github.com/adolfousier/opencrabs/compare/v0.3.39...v0.3.40
+
+[0.3.41]: https://github.com/adolfousier/opencrabs/compare/v0.3.40...v0.3.41
