@@ -264,6 +264,7 @@ async fn test_end_to_end_session_management() -> Result<()> {
             include_archived: false,
             limit: Some(10),
             offset: 0,
+                query: None,
         })
         .await?;
 

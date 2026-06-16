@@ -116,6 +116,7 @@ impl SessionSearchTool {
                 include_archived: false,
                 limit: None,
                 offset: 0,
+                query: None,
             })
             .await
             .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
@@ -164,6 +165,7 @@ impl SessionSearchTool {
                 include_archived: true,
                 limit: None,
                 offset: 0,
+                query: None,
             })
             .await
             .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;

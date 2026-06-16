@@ -19,6 +19,8 @@ pub struct SessionListOptions {
     pub limit: Option<usize>,
     /// Number of sessions to skip
     pub offset: usize,
+    /// Filter by title substring (case-insensitive LIKE match)
+    pub query: Option<String>,
 }
 
 /// Repository for session operations
@@ -208,33 +210,48 @@ impl SessionRepository {
         let include_archived = options.include_archived;
         let limit = options.limit;
         let offset = options.offset;
+        let query = options.query;
 
         self.pool
             .get()
             .await
             .context("Failed to get connection")?
             .interact(move |conn| {
-                let (sql, params_vec): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) =
-                    match (include_archived, limit) {
-                        (true, Some(lim)) => (
-                            "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?1 OFFSET ?2",
-                            vec![Box::new(lim as i64), Box::new(offset as i64)],
-                        ),
-                        (false, Some(lim)) => (
-                            "SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY updated_at DESC LIMIT ?1 OFFSET ?2",
-                            vec![Box::new(lim as i64), Box::new(offset as i64)],
-                        ),
-                        (true, None) => (
-                            "SELECT * FROM sessions ORDER BY updated_at DESC",
-                            vec![],
-                        ),
-                        (false, None) => (
-                            "SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY updated_at DESC",
-                            vec![],
-                        ),
-                    };
+                let mut conditions = Vec::new();
+                let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-                let mut stmt = conn.prepare_cached(sql)?;
+                if !include_archived {
+                    conditions.push("archived_at IS NULL".to_string());
+                }
+
+                if let Some(ref q) = query {
+                    params_vec.push(Box::new(format!("%{}%", q)));
+                    conditions.push(format!("title LIKE ?{}", params_vec.len()));
+                }
+
+                let where_sql = if conditions.is_empty() {
+                    String::new()
+                } else {
+                    format!(" WHERE {}", conditions.join(" AND "))
+                };
+
+                let limit_sql = match limit {
+                    Some(lim) => {
+                        params_vec.push(Box::new(lim as i64));
+                        params_vec.push(Box::new(offset as i64));
+                        let lim_idx = params_vec.len() - 1;
+                        let off_idx = params_vec.len();
+                        format!(" LIMIT ?{} OFFSET ?{}", lim_idx, off_idx)
+                    }
+                    None => String::new(),
+                };
+
+                let sql = format!(
+                    "SELECT * FROM sessions{} ORDER BY updated_at DESC{}",
+                    where_sql, limit_sql
+                );
+
+                let mut stmt = conn.prepare_cached(&sql)?;
                 let params_refs: Vec<&dyn rusqlite::types::ToSql> =
                     params_vec.iter().map(|p| p.as_ref()).collect();
                 let rows = stmt.query_map(params_refs.as_slice(), Session::from_row)?;

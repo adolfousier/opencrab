@@ -242,7 +242,16 @@ pub async fn handle_command(
         "/models" => ChannelCommand::Models(format_providers(agent)),
         "/new" => ChannelCommand::NewSession,
         "/rtk" => ChannelCommand::Rtk(format_rtk().await),
-        "/sessions" => ChannelCommand::Sessions(format_sessions(session_id, session_svc).await),
+        "/sessions" => {
+            ChannelCommand::Sessions(format_sessions(session_id, session_svc, None).await)
+        }
+        cmd if cmd.starts_with("/sessions:") || cmd.starts_with("/sessions ") => {
+            let query = cmd
+                .strip_prefix("/sessions:")
+                .or_else(|| cmd.strip_prefix("/sessions "))
+                .filter(|q| !q.is_empty());
+            ChannelCommand::Sessions(format_sessions(session_id, session_svc, query).await)
+        }
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
         "/mission-control" => ChannelCommand::MissionControl(format_mission_control(agent).await),
@@ -397,7 +406,7 @@ pub(crate) fn format_help() -> String {
         "`/models`   — Switch AI model".to_string(),
         "`/new`      — Start a new session".to_string(),
         "`/rtk`      — Show RTK token savings statistics".to_string(),
-        "`/sessions` — Switch between sessions".to_string(),
+        "`/sessions` — Switch between sessions (`/sessions:<query>` to filter)".to_string(),
         "`/stop`     — Abort current operation".to_string(),
         "`/usage`    — Session token & cost stats".to_string(),
     ];
@@ -651,12 +660,14 @@ pub(crate) fn format_number(n: i64) -> String {
 async fn format_sessions(
     current_session_id: Uuid,
     session_svc: &SessionService,
+    query: Option<&str>,
 ) -> SessionsResponse {
     let sessions = session_svc
         .list_sessions(SessionListOptions {
             include_archived: false,
             limit: Some(10),
             offset: 0,
+            query: query.map(str::to_string),
         })
         .await
         .unwrap_or_default();
@@ -666,6 +677,9 @@ async fn format_sessions(
     // Pure duplication. Strip the body to a header + a one-line current
     // indicator and let the buttons carry the per-session labels.
     let mut text_lines = vec!["📂 *Sessions*".to_string()];
+    if let Some(q) = query {
+        text_lines.push(format!("Filter: `{}`", q));
+    }
     let mut items = Vec::new();
 
     let current = sessions.iter().find(|s| s.id == current_session_id);

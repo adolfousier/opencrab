@@ -564,6 +564,7 @@ impl App {
                 include_archived: false,
                 limit: Some(100),
                 offset: 0,
+                query: None,
             })
             .await?;
 

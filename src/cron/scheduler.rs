@@ -213,6 +213,7 @@ impl CronScheduler {
                 include_archived: false,
                 limit: None,
                 offset: 0,
+                query: None,
             })
             .await?;
         if let Some(existing) = sessions

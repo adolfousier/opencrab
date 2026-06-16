@@ -282,6 +282,7 @@ impl SessionService {
             include_archived: false,
             limit: Some(1),
             offset: 0,
+            query: None,
         };
 
         let sessions = repo.list(options).await?;
@@ -457,6 +458,7 @@ mod tests {
             include_archived: false,
             limit: None,
             offset: 0,
+            query: None,
         };
 
         let sessions = service.list_sessions(options).await.unwrap();
