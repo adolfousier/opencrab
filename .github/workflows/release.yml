@@ -78,9 +78,11 @@ jobs:
         if: steps.check.outputs.published == 'false'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
+      # No continue-on-error: a failed crates.io publish must FAIL this job so
+      # the GitHub Release (binaries) is never dropped while crates.io lags
+      # behind. An already-published version skips this step (job still succeeds).
       - name: Publish
         if: steps.check.outputs.published == 'false'
-        continue-on-error: true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --allow-dirty
@@ -240,7 +242,11 @@ jobs:
   create-release:
     name: Create Release
     needs: [publish-crate, build-release]
-    if: always() && needs.publish-crate.result != 'cancelled' && needs.build-release.result != 'cancelled'
+    # Drop the release binaries ONLY when everything succeeded — every platform
+    # build AND the crates.io publish. Previously this was `always()`, so a
+    # failed publish still shipped binaries: users auto-updated past the version
+    # crates.io actually had, then had to update manually. All-or-nothing now.
+    if: needs.build-release.result == 'success' && needs.publish-crate.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
