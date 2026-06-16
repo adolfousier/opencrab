@@ -244,7 +244,17 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
                 ),
             ]));
         } else {
-            let name_style = if is_selected {
+            // When in assign mode, highlight sessions already assigned to
+            // target project in green so the user has clear visual feedback.
+            let is_assigned_to_target = app
+                .assigning_to_project
+                .is_some_and(|pid| session.project_id == Some(pid));
+
+            let name_style = if is_assigned_to_target {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_selected {
                 Style::default()
                     .fg(Color::Rgb(215, 100, 20))
                     .add_modifier(Modifier::BOLD)
