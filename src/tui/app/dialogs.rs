@@ -6,7 +6,6 @@ use super::*;
 use crate::brain::provider::{ContentBlock, LLMRequest};
 use anyhow::Result;
 use std::path::PathBuf;
-use uuid::Uuid;
 
 impl App {
     /// Handle keys in onboarding wizard mode
@@ -224,33 +223,11 @@ impl App {
                     self.sync_session_to_provider().await;
                     self.switch_mode(AppMode::Chat).await?;
 
-                    // First-time onboard welcome message — only on genuine fresh installs
+                    // First-time onboard — send hidden system prompt to the agent
+                    // so it can check its environment and surprise the user.
+                    // The `[SYSTEM:` prefix hides it from user display.
                     if is_first_time {
-                        let msg_id = Uuid::new_v4();
-                        let display_msg = DisplayMessage {
-                            id: msg_id,
-                            role: "assistant".to_string(),
-                            content: WELCOME_MESSAGE.to_string(),
-                            timestamp: chrono::Utc::now(),
-                            token_count: None,
-                            cost: None,
-                            approval: None,
-                            approve_menu: None,
-                            details: None,
-                            expanded: false,
-                            tool_group: None,
-                        };
-                        self.messages.push(display_msg.clone());
-                        if let Some(ref session) = self.current_session {
-                            let _ = self
-                                .message_service
-                                .create_message(
-                                    session.id,
-                                    "assistant".to_string(),
-                                    WELCOME_MESSAGE.to_string(),
-                                )
-                                .await;
-                        }
+                        let _ = self.send_message(WELCOME_MESSAGE.to_string()).await;
                     }
                 }
                 WizardAction::FetchModels => {
@@ -707,33 +684,10 @@ impl App {
                     self.sync_session_to_provider().await;
                     self.switch_mode(AppMode::Chat).await?;
 
-                    // First-time onboard welcome message — only on genuine fresh installs
+                    // First-time onboard — send hidden system prompt to the agent
+                    // so it can check its environment and surprise the user.
                     if is_first_time {
-                        let msg_id = Uuid::new_v4();
-                        let display_msg = DisplayMessage {
-                            id: msg_id,
-                            role: "assistant".to_string(),
-                            content: WELCOME_MESSAGE.to_string(),
-                            timestamp: chrono::Utc::now(),
-                            token_count: None,
-                            cost: None,
-                            approval: None,
-                            approve_menu: None,
-                            details: None,
-                            expanded: false,
-                            tool_group: None,
-                        };
-                        self.messages.push(display_msg.clone());
-                        if let Some(ref session) = self.current_session {
-                            let _ = self
-                                .message_service
-                                .create_message(
-                                    session.id,
-                                    "assistant".to_string(),
-                                    WELCOME_MESSAGE.to_string(),
-                                )
-                                .await;
-                        }
+                        let _ = self.send_message(WELCOME_MESSAGE.to_string()).await;
                     }
 
                     // Fire brain generation in the background

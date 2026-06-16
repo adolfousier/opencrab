@@ -35,5 +35,8 @@ pub use fetch::{fetch_provider_models, is_first_time};
 #[cfg(test)]
 pub(crate) use fetch::merge_minimax_baseline;
 
-/// Welcome message sent once after the user completes first-time onboarding.
-pub const WELCOME_MESSAGE: &str = "Holy shit, we are live. Onboard complete, brain files locked and loaded. I am ready to help you out. What about we start with a cronjob or heartbeat so I can reach out randomly, check missing tasks, or just bug you when something needs attention?";
+/// System prompt sent once after the user completes first-time onboarding.
+/// Starts with `[SYSTEM:` so it's hidden from the user display but processed
+/// by the agent. The agent uses its personality (SOUL.md) and user knowledge
+/// (USER.md) to craft a personalized surprise instead of a hardcoded greeting.
+pub const WELCOME_MESSAGE: &str = "[SYSTEM: Onboarding complete. Check your environment — use load_config to see what's configured and tool_search to discover what you have. You know who your user is (USER.md) and you have your personality (SOUL.md). Now do something that'll make them go 'holy shit'. Not a boring greeting. Not 'hey how can I help'. Something only YOU would say, like your best friend just walked in. Be creative, be unexpected. Then ask if they want daily check-ins, task reminders, or heartbeat — you can set those up with cron_manage right now.]";
