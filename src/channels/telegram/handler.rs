@@ -3801,20 +3801,20 @@ fn strip_html_tags(html: &str) -> String {
 /// blocks. Escapes HTML entities.
 ///
 /// Plan blocks are emitted by the `plan` tool's `summary` op and
-/// look like:
-///   📊 Plan Summary
-///   Plan: ...
-///   Tasks (N total):
-///     ✅ 1. Foo
-///     ▶️ 2. Bar
-///   Progress: ... — ✅1 ❌0 ...
-///   Success Rate: ...
-/// Without special handling Telegram's HTML mode strips the leading
-/// 2-space task indent and the emoji + number alignment collapses
-/// into one busy line. We wrap the entire block in `<pre>...</pre>`
-/// from the `📊 Plan Summary` header through the `Success Rate:`
-/// footer so the indent and emoji icons render in a clean monospace
-/// box, like a status panel.
+/// use markdown task lists that trigger rich detection. Example:
+///
+/// ```text
+/// ## Plan: My Plan
+/// **Status:** InProgress
+/// - [x] First task
+/// - [>] Second task
+/// - [ ] Third task
+/// **Progress:** 33.3%  ✅1 ❌0 ...
+/// ```
+///
+/// When rich rendering is available, the function returns early via
+/// `prefers_rich_render`. The legacy plan detector below handles
+/// old-format text that doesn't trigger rich detection.
 pub(crate) fn markdown_to_telegram_html(text: &str) -> String {
     // Messages containing a GitHub-flavored table or a task-list are rendered
     // through the rich AST: tables come out as aligned monospace grids (instead

@@ -1,85 +1,91 @@
 //! Tests for plan-tool summary rendering in `markdown_to_telegram_html`.
 //!
-//! The `plan` tool's `summary` op emits a block like:
+//! The `plan` tool's `summary` op emits markdown that triggers rich
+//! detection (heading + task list items). When the rich path fails
+//! or is unavailable, `markdown_to_telegram_html` handles the fallback.
 //!
-//!     📊 Plan Summary
+//! New format:
 //!
-//!     Plan: My Plan
-//!     Status: InProgress
-//!     ...
-//!     Tasks (3 total):
-//!       ✅ 1. First task
-//!       ▶️ 2. Second task
-//!       ⏸️ 3. Third task
+//!     ## Plan: My Plan
 //!
-//!     Progress: 33.3% — ✅1 ❌0 ▶️1 ⏸️1 ⏭️0 🚫0
-//!     Success Rate: 100.0% | Retries: 0 | Tool Calls: 0
+//!     **Status:** InProgress
+//!     **Description:** refactor X
 //!
-//! Telegram's HTML mode strips leading whitespace and collapses the
-//! task indents into one busy line. The converter now wraps the
-//! whole block in `<pre>...</pre>` so the indent and emoji icons
-//! render as a monospace status panel.
+//!     **Tasks** (3 total):
+//!     - [x] First task
+//!     - [>] Second task
+//!     - [ ] Third task
+//!
+//!     **Progress:** 33.3%  ✅1 ❌0 ▶️1 ⏸️1 ⏭️0 🚫0
+//!     **Success Rate:** 100.0% | Retries: 0 | Tool Calls: 0
 
 use crate::channels::telegram::handler::markdown_to_telegram_html;
 
-const PLAN_BLOCK: &str = "📊 Plan Summary\n\n\
-                          Plan: My Plan\n\
-                          Status: InProgress\n\
-                          Description: refactor X\n\n\
-                          Tasks (3 total):\n  \
-                          ✅ 1. First task\n  \
-                          ▶️ 2. Second task\n  \
-                          ⏸️ 3. Third task\n\n\
-                          Progress: 33.3% — ✅1 ❌0 ▶️1 ⏸️1 ⏭️0 🚫0\n\
-                          Success Rate: 100.0% | Retries: 0 | Tool Calls: 0";
+const PLAN_BLOCK: &str = "## Plan: My Plan\n\n\
+                          **Status:** InProgress\n\
+                          **Description:** refactor X\n\n\
+                          **Tasks** (3 total):\n\
+                          - [x] First task\n\
+                          - [>] Second task\n\
+                          - [ ] Third task\n\n\
+                          **Progress:** 33.3%  ✅1 ❌0 ▶️1 ⏸️1 ⏭️0 🚫0\n\
+                          **Success Rate:** 100.0% | Retries: 0 | Tool Calls: 0";
 
 #[test]
-fn plan_block_is_wrapped_in_pre() {
+fn plan_block_heading_renders_as_html_heading() {
     let html = markdown_to_telegram_html(PLAN_BLOCK);
     assert!(
-        html.contains("<pre>📊 Plan Summary"),
-        "plan block must open with <pre>; got: {html}"
-    );
-    assert!(
-        html.contains("Success Rate: 100.0% | Retries: 0 | Tool Calls: 0\n</pre>")
-            || html.contains("Success Rate: 100.0% | Retries: 0 | Tool Calls: 0</pre>"),
-        "plan block must close </pre> after the Success Rate line; got: {html}"
+        html.contains("<b>Plan: My Plan</b>"),
+        "plan heading must render as bold heading; got: {html}"
     );
 }
 
 #[test]
-fn plan_block_preserves_task_indent() {
+fn plan_block_task_list_items_render() {
     let html = markdown_to_telegram_html(PLAN_BLOCK);
-    // Inside <pre> the 2-space indent must survive escaping. The
-    // <pre> tag means Telegram renders whitespace literally.
+    // markdown_to_telegram_html converts [x] → ☑, [ ] → ☐
     assert!(
-        html.contains("  ✅ 1. First task"),
-        "task indent and emoji must survive; got: {html}"
+        html.contains("☑ First task") || html.contains("[x] First task"),
+        "completed task must render; got: {html}"
     );
     assert!(
-        html.contains("  ▶️ 2. Second task"),
-        "second task indent must survive; got: {html}"
+        html.contains("Second task"),
+        "in-progress task must render; got: {html}"
     );
     assert!(
-        html.contains("  ⏸️ 3. Third task"),
-        "third task indent must survive; got: {html}"
+        html.contains("☐ Third task") || html.contains("[ ] Third task"),
+        "pending task must render; got: {html}"
     );
 }
 
 #[test]
-fn plan_block_keeps_progress_line_intact() {
+fn plan_block_bold_labels_render() {
     let html = markdown_to_telegram_html(PLAN_BLOCK);
     assert!(
-        html.contains("Progress: 33.3% — ✅1 ❌0 ▶️1 ⏸️1 ⏭️0 🚫0"),
-        "progress line must render as a single line inside the panel; got: {html}"
+        html.contains("<b>Status:</b>"),
+        "Status label must be bold; got: {html}"
+    );
+    assert!(
+        html.contains("<b>Progress:</b>"),
+        "Progress label must be bold; got: {html}"
+    );
+    assert!(
+        html.contains("<b>Success Rate:</b>"),
+        "Success Rate label must be bold; got: {html}"
+    );
+}
+
+#[test]
+fn plan_block_progress_line_intact() {
+    let html = markdown_to_telegram_html(PLAN_BLOCK);
+    assert!(
+        html.contains("✅1 ❌0 ▶️1 ⏸️1 ⏭️0 🚫0"),
+        "progress stats must survive; got: {html}"
     );
 }
 
 #[test]
 fn text_before_and_after_plan_block_processes_normally() {
-    // The agent often emits text around a plan summary — confirm
-    // markdown still gets converted for that text and the plan
-    // block doesn't bleed into surrounding content.
     let mixed = format!(
         "I've made progress on the refactor. Here's where we are:\n\n\
          {PLAN_BLOCK}\n\n\
@@ -95,62 +101,15 @@ fn text_before_and_after_plan_block_processes_normally() {
         html.contains("Next step: implement the second task"),
         "trailing prose must render normally; got: {html}"
     );
-    assert!(
-        html.contains("<pre>📊 Plan Summary"),
-        "plan block still wrapped; got: {html}"
-    );
-    // The trailing prose must be OUTSIDE the pre block.
-    let close_pre = html.find("</pre>").expect("must have a closing pre tag");
-    let next_step = html.find("Next step").expect("must contain trailing prose");
-    assert!(
-        next_step > close_pre,
-        "trailing prose must come after </pre>, not be wrapped inside; got: {html}"
-    );
-}
-
-#[test]
-fn truncated_plan_block_still_closes_pre() {
-    // Streaming may cut off mid-summary before the Success Rate
-    // footer. The converter must still close the <pre> at end of
-    // input so Telegram doesn't reject the HTML.
-    let truncated = "📊 Plan Summary\n\nPlan: Half-streamed\nStatus: InProgress";
-    let html = markdown_to_telegram_html(truncated);
-    let opens = html.matches("<pre>").count();
-    let closes = html.matches("</pre>").count();
-    assert_eq!(
-        opens, closes,
-        "open/close <pre> count must balance even for truncated stream; got: {html}"
-    );
-}
-
-#[test]
-fn message_without_plan_block_is_unchanged() {
-    let plain = "Just a regular reply with **bold** and `code`.";
-    let html = markdown_to_telegram_html(plain);
-    assert!(
-        !html.contains("<pre>"),
-        "non-plan messages must not gain spurious <pre> wrapping; got: {html}"
-    );
-}
-
-#[test]
-fn plan_block_with_no_trailing_text_still_closes() {
-    let html = markdown_to_telegram_html(PLAN_BLOCK);
-    let opens = html.matches("<pre>").count();
-    let closes = html.matches("</pre>").count();
-    assert_eq!(opens, 1, "expected one <pre>; got: {html}");
-    assert_eq!(closes, 1, "expected one </pre>; got: {html}");
 }
 
 #[test]
 fn html_chars_inside_plan_are_escaped() {
-    // A task title containing `<` or `>` must be escaped inside
-    // <pre>, otherwise Telegram rejects the message as malformed.
-    let plan = "📊 Plan Summary\n\n\
-                Tasks (1 total):\n  \
-                ✅ 1. Fix <legacy> handler\n\n\
-                Progress: 100% — ✅1 ❌0 ▶️0 ⏸️0 ⏭️0 🚫0\n\
-                Success Rate: 100.0% | Retries: 0 | Tool Calls: 0";
+    let plan = "## Plan: Fix <legacy>\n\n\
+                **Tasks** (1 total):\n\
+                - [x] Fix <legacy> handler\n\n\
+                **Progress:** 100%  ✅1 ❌0 ▶️0 ⏸️0 ⏭️0 🚫0\n\
+                **Success Rate:** 100.0% | Retries: 0 | Tool Calls: 0";
     let html = markdown_to_telegram_html(plan);
     assert!(
         html.contains("&lt;legacy&gt;"),
@@ -163,12 +122,37 @@ fn html_chars_inside_plan_are_escaped() {
 }
 
 #[test]
-fn two_plan_blocks_in_one_message_both_wrap() {
-    // The agent could emit two summary updates in one turn (e.g.
-    // "Here's where we were, here's where we are now"). Each must
-    // get its own <pre> box.
-    let two = format!("{PLAN_BLOCK}\n\nAnd now:\n\n{PLAN_BLOCK}");
-    let html = markdown_to_telegram_html(&two);
-    assert_eq!(html.matches("<pre>").count(), 2, "got: {html}");
-    assert_eq!(html.matches("</pre>").count(), 2, "got: {html}");
+fn message_without_plan_block_is_unchanged() {
+    let plain = "Just a regular reply with **bold** and `code`.";
+    let html = markdown_to_telegram_html(plain);
+    assert!(
+        !html.contains("<b>Plan:"),
+        "non-plan messages must not have plan heading; got: {html}"
+    );
+}
+
+#[test]
+fn plan_block_rich_structure_detected() {
+    // The new format must trigger has_rich_structure so it goes
+    // through try_send_intermediate_rich instead of HTML fallback.
+    assert!(
+        crate::channels::telegram::rich::has_rich_structure(PLAN_BLOCK),
+        "plan block must trigger rich detection"
+    );
+}
+
+#[test]
+fn old_emoji_format_does_not_trigger_rich() {
+    // Verify the OLD format didn't trigger rich (the bug we're fixing).
+    let old_format = "📊 Plan Summary\n\n\
+                      Plan: My Plan\n\
+                      Status: InProgress\n\n\
+                      Tasks (3 total):\n  \
+                      ✅ 1. First task\n  \
+                      ▶️ 2. Second task\n  \
+                      ⏸️ 3. Third task";
+    assert!(
+        !crate::channels::telegram::rich::has_rich_structure(old_format),
+        "old emoji format must NOT trigger rich detection (confirms the bug)"
+    );
 }

@@ -1101,29 +1101,27 @@ impl Tool for PlanTool {
                 let task_lines = current_plan
                     .tasks
                     .iter()
-                    .enumerate()
-                    .map(|(i, t)| {
-                        let status_icon = match t.status {
-                            crate::tui::plan::TaskStatus::Completed => "✅",
-                            crate::tui::plan::TaskStatus::Failed => "❌",
-                            crate::tui::plan::TaskStatus::InProgress => "▶️",
-                            crate::tui::plan::TaskStatus::Pending => "⏸️",
-                            crate::tui::plan::TaskStatus::Skipped => "⏭️",
-                            crate::tui::plan::TaskStatus::Blocked(_) => "🚫",
+                    .map(|t| {
+                        let status_marker = match t.status {
+                            crate::tui::plan::TaskStatus::Completed => "- [x]",
+                            crate::tui::plan::TaskStatus::Failed => "- [!]",
+                            crate::tui::plan::TaskStatus::InProgress => "- [>]",
+                            crate::tui::plan::TaskStatus::Pending => "- [ ]",
+                            crate::tui::plan::TaskStatus::Skipped => "- [~]",
+                            crate::tui::plan::TaskStatus::Blocked(_) => "- [x]",
                         };
-                        format!("  {} {}. {}", status_icon, i + 1, t.title)
+                        format!("{} {}", status_marker, t.title)
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
 
                 format!(
-                    "📊 Plan Summary\n\n\
-                     Plan: {}\n\
-                     Status: {:?}\n\
-                     Description: {}\n\n\
-                     Tasks ({} total):\n{}\n\n\
-                     Progress: {:.1}% — ✅{} ❌{} ▶️{} ⏸️{} ⏭️{} 🚫{}\n\
-                     Success Rate: {:.1}% | Retries: {} | Tool Calls: {}",
+                    "## Plan: {}\n\n\
+                     **Status:** {:?}\n\
+                     **Description:** {}\n\n\
+                     **Tasks** ({} total):\n{}\n\n\
+                     **Progress:** {:.1}%  ✅{} ❌{} ▶️{} ⏸️{} ⏭️{} 🚫{}\n\
+                     **Success Rate:** {:.1}% | Retries: {} | Tool Calls: {}",
                     current_plan.title,
                     current_plan.status,
                     current_plan
