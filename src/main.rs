@@ -33,8 +33,9 @@ async fn main() -> Result<()> {
         tracing::info!("🧹 Cleaned up {} old log file(s)", removed);
     }
 
-    // Clean up orphaned channel temp files (tg_photo_*, wa_img_*) older than 3 days
-    if let Ok(removed) = logging::cleanup_old_temp_files(3)
+    // Clean up orphaned channel temp files (tg_photo_*, wa_img_*) older than 30 days.
+    // Never wipe on restart — files may be recoverable or still needed.
+    if let Ok(removed) = logging::cleanup_old_temp_files(30)
         && removed > 0
     {
         tracing::info!("🧹 Cleaned up {} orphaned temp file(s)", removed);
