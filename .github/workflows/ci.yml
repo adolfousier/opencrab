@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
@@ -108,7 +108,7 @@ jobs:
             target: aarch64-apple-darwin
             features: --all-features
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
@@ -161,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
@@ -190,7 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
@@ -224,7 +224,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -251,9 +251,9 @@ jobs:
         # local-tts added when feature lands on main.
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
-          file: ./cobertura.xml
+          files: ./cobertura.xml
 
   # ── Required gate ────────────────────────────────────────────────────────
   # Single status check for branch protection. Internal job structure
