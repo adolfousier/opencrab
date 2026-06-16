@@ -159,6 +159,7 @@ pub(super) fn render_help(f: &mut Frame, app: &App, area: Rect) {
         kv("N", "New session", cyan),
         kv("R", "Rename", cyan),
         kv("D", "Delete", cyan),
+        kv("/", "Search sessions", cyan),
         kv("F", "Session files", cyan),
         kv("P", "Projects", cyan),
         kv("Esc", "Back to chat", cyan),
