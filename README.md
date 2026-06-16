@@ -107,6 +107,10 @@ https://github.com/user-attachments/assets/833dd5e9-3bcc-432a-96ac-3a5bb97b5966
 
 https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 
+## 🖥️ Split Panes
+
+![Split Panes](src/assets/split-panes.png)
+
 ---
 
 ## 🎯 Core Features
