@@ -2546,7 +2546,11 @@ pub(crate) async fn handle_message(
                 };
                 if let Some((inter_id, inter_text)) = last_inter {
                     append_footer_to_last_intermediate(
-                        &bot, msg.chat.id, inter_id, &inter_text, &footer,
+                        &bot,
+                        msg.chat.id,
+                        inter_id,
+                        &inter_text,
+                        &footer,
                     )
                     .await;
                 }
@@ -3230,7 +3234,11 @@ pub(crate) async fn resume_session(
                 };
                 if let Some((inter_id, inter_text)) = last_inter {
                     append_footer_to_last_intermediate(
-                        &bot, chat_id, inter_id, &inter_text, &footer,
+                        &bot,
+                        chat_id,
+                        inter_id,
+                        &inter_text,
+                        &footer,
                     )
                     .await;
                 }
@@ -3696,9 +3704,7 @@ async fn append_footer_to_last_intermediate(
         {
             Ok(()) => return,
             Err(e) => {
-                tracing::warn!(
-                    "Telegram: rich footer edit failed, falling back to HTML ({e})"
-                );
+                tracing::warn!("Telegram: rich footer edit failed, falling back to HTML ({e})");
             }
         }
     }
@@ -4212,4 +4218,3 @@ pub(crate) fn make_approval_callback(
         })
     })
 }
-
