@@ -2458,6 +2458,7 @@ Any tool on your `$PATH` works. If it runs in your terminal, OpenCrabs can use i
 | `/onboard:brain` | Jump to brain/persona setup |
 | `/doctor` | Run connection health check |
 | `/sessions` | Open session manager |
+| `/sessions:<query>` | Filter sessions by name (Telegram/Discord/Slack) |
 | `/approve` | Tool approval policy selector (approve-only / session / yolo) |
 | `/compact` | Compact context (summarize + trim for long sessions) |
 | `/rebuild` | Build from source & hot-restart — streams live compiler output to chat, auto exec() restarts on success (no prompt), auto-clones repo if no source tree found |
@@ -2495,6 +2496,7 @@ Each session shows its provider/model badge (e.g. `[anthropic/claude-sonnet-4-6]
 | Shortcut | Action |
 |----------|--------|
 | `↑` / `↓` | Navigate sessions |
+| `/` | Search sessions by name (filters in real-time) |
 | `Enter` | Load selected session (auto-restores its provider + model) |
 | `R` | Rename session |
 | `D` | Delete session |
