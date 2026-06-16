@@ -1345,6 +1345,8 @@ Two input fields: **About You** (who you are) and **Your OpenCrabs** (how the ag
 - **Overwrite:** Only files with new AI-generated content are overwritten; untouched files keep their current state
 - No extra persistence files — the brain files themselves are the source of truth
 
+> **Start with templates, edit on top.** The default brain files (SOUL.md, USER.md, etc.) are starting points. Copy them from `src/docs/reference/templates/`, customize them to match your style, and paste during the onboarding brain step. Or simply ask OpenCrabs to fetch the latest templates from the repo with *"update my brain files from the repo"* — your personalized edits are always preserved. Template sync only appends new sections, never overwrites your changes.
+
 ### Wizard Navigation
 
 | Key | Action |
@@ -1879,7 +1881,7 @@ For shell tools with many parameters or complex values (spaces, quotes, special 
 name = "send_notification"
 description = "Send a notification via a CLI client"
 executor = "shell"
-command = "/usr/local/bin/notify-send --params-file \"$OPENCRABS_PARAMS\""
+command = "/usr/local/bin/notify-send --params-file "$OPENCRABS_PARAMS""
 timeout_secs = 30
 requires_approval = true
 
@@ -1985,7 +1987,7 @@ For each MCP tool you want to expose, add a `[[tool]]` entry with `executor = "s
 name = "github_search_repos"
 description = "Search GitHub repositories"
 executor = "shell"
-command = "mcp github search_repositories '{\"query\":\"{{query}}\",\"limit\":{{limit}}}'"
+command = "mcp github search_repositories '{"query":"{{query}}","limit":{{limit}}}'"
 timeout_secs = 30
 requires_approval = false
 enabled = true
@@ -2020,7 +2022,7 @@ token = "ghp_YOUR_GITHUB_PAT"
 Reference them via shell variables in the `command`:
 
 ```toml
-command = "GH_TOKEN={{env:github_mcp.token}} mcp github search_repositories '{\"query\":\"{{query}}\",\"limit\":{{limit}}}'"
+command = "GH_TOKEN={{env:github_mcp.token}} mcp github search_repositories '{"query":"{{query}}","limit":{{limit}}}'"
 ```
 
 For testing, you can put the token directly in the command — but don't commit that.
@@ -2048,7 +2050,7 @@ Here's a complete setup for two GitHub tools:
 name = "github_search_repos"
 description = "Search GitHub repositories"
 executor = "shell"
-command = "mcp github search_repositories '{\"query\":\"{{query}}\",\"limit\":{{limit}}}'"
+command = "mcp github search_repositories '{"query":"{{query}}","limit":{{limit}}}'"
 timeout_secs = 30
 requires_approval = false
 enabled = true
@@ -2070,7 +2072,7 @@ default = 10
 name = "github_get_file"
 description = "Get a file from a GitHub repository"
 executor = "shell"
-command = "mcp github get_file '{\"repo\":\"{{repo}}\",\"path\":\"{{path}}\",\"branch\":\"{{branch}}\"}'"
+command = "mcp github get_file '{"repo":"{{repo}}","path":"{{path}}","branch":"{{branch}}"}'"
 timeout_secs = 30
 requires_approval = false
 enabled = true
