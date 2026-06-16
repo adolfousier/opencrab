@@ -45,6 +45,7 @@ const SENSITIVE_KEYS: &[&str] = &[
     "private_key",
     "auth",
     "bearer",
+    "email",
 ];
 
 /// Regex-like patterns in bash commands to redact inline secrets.
@@ -457,6 +458,15 @@ static KEYVAL_SECRET_RE: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// Regex for labeled credentials: `Password: value`, `Token: value`, etc.
+/// Unlike KEYVAL_SECRET_RE (which matches `=`), this catches the `:` separator
+/// used in structured text output, markdown, and shell-style credential lists.
+static LABELED_CRED_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?i)\b(password|passwd|pass|token|secret|api[_ ]?key|credential|auth|email)\s*:\s*"?([^\s"',;`]+)"?"#
+    ).unwrap()
+});
+
 /// Regex for credentials embedded in a URL authority:
 /// `scheme://user:PASSWORD@host`. Redacts the password, keeps the rest so
 /// the URL stays recognizable. ENV/prefix passes don't see these.
@@ -657,6 +667,16 @@ pub fn redact_secrets(text: &str) -> String {
         .replace_all(&result, |caps: &regex::Captures| {
             let key = caps.get(1).unwrap().as_str();
             format!("{key}=[REDACTED]")
+        })
+        .into_owned();
+
+    // 5b2. Redact labeled credentials: `Password: value`, `Token: value`, etc.
+    //      Unlike KEYVAL_SECRET_RE (which matches `=`), this catches `:` separator
+    //      used in structured text, markdown, and shell-style credential lists.
+    result = LABELED_CRED_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let key = caps.get(1).unwrap().as_str();
+            format!("{key}: [REDACTED]")
         })
         .into_owned();
 

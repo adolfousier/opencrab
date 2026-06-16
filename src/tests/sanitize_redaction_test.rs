@@ -4,6 +4,7 @@
 //! Covers: env var assignments, piped secrets, IPv4 addresses,
 //! known key prefixes, hex tokens, and mixed alphanumeric tokens.
 
+use crate::utils::redact_tool_input;
 use crate::utils::sanitize::redact_secrets;
 
 // ── Environment variable assignments ───────────────────────────────
@@ -336,4 +337,47 @@ fn redact_secrets_keyval_preserves_existing_placeholder() {
         !out.contains("[REDACTED]]"),
         "placeholder got mangled: {out}"
     );
+}
+
+#[test]
+fn redacts_labeled_password_with_colon() {
+    let text = "The credentials are:\n- Email: ace@badireto.pt\n- Password: g3Jklf2!&bF6";
+    let out = redact_secrets(text);
+    assert!(!out.contains("ace@badireto.pt"), "email leaked: {out}");
+    assert!(!out.contains("g3Jklf2!&bF6"), "password leaked: {out}");
+    assert!(
+        out.contains("Email: [REDACTED]"),
+        "email not redacted: {out}"
+    );
+    assert!(
+        out.contains("Password: [REDACTED]"),
+        "password not redacted: {out}"
+    );
+}
+
+#[test]
+fn redacts_labeled_token_with_colon() {
+    let text = "Token: abc123def456ghi789";
+    let out = redact_secrets(text);
+    assert!(
+        out.contains("Token: [REDACTED]"),
+        "token not redacted: {out}"
+    );
+    assert!(!out.contains("abc123def456"), "token leaked: {out}");
+}
+
+#[test]
+fn redacts_labeled_api_key_with_colon() {
+    let text = "API Key: sk-proj-mrRb3y9swLqHv8ZzB9lPH0_V7RPruzdbnXJf34DxU2RCdQnhCYjS99Tj";
+    let out = redact_secrets(text);
+    assert!(out.contains("[REDACTED]"), "api key not redacted: {out}");
+    assert!(!out.contains("mrRb3y"), "api key leaked: {out}");
+}
+
+#[test]
+fn redacts_email_in_sensitive_key_json() {
+    let input = serde_json::json!({"email": "user@example.com", "name": "John"});
+    let out = redact_tool_input(&input);
+    assert_eq!(out["email"], "[REDACTED]");
+    assert_eq!(out["name"], "John");
 }
