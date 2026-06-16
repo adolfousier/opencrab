@@ -2364,6 +2364,7 @@ pub(crate) async fn handle_message(
                 text_only.len(),
                 sent.len(),
             );
+            let pre_dedup_text = text_only.clone();
             let text_only = if !sent.is_empty() {
                 let mut remaining = text_only.clone();
                 for intermediate in &sent {
@@ -2407,6 +2408,55 @@ pub(crate) async fn handle_message(
                     }
                 }
             }
+
+            // Rich fallback: when all content was sent as HTML intermediates
+            // during streaming, the dedup step strips text_only to empty. If
+            // the original response had rich structure (tables, headings,
+            // lists), replace the HTML intermediates with a single native rich
+            // message so Telegram renders proper tables and blocks.
+            let text_only = if text_only.is_empty()
+                && !sent.is_empty()
+                && super::rich::should_send_native_rich(&pre_dedup_text)
+            {
+                let rich_md = if footer.is_empty() {
+                    pre_dedup_text.clone()
+                } else {
+                    format!("{pre_dedup_text}\n\n{footer}")
+                };
+                match super::rich::api::send_rich_markdown(
+                    bot.token(),
+                    msg.chat.id.0,
+                    thread_id,
+                    &rich_md,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        // Delete the HTML intermediates now that rich message succeeded
+                        let intermediate_ids = {
+                            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                            s.intermediate_msg_ids.clone()
+                        };
+                        for mid in &intermediate_ids {
+                            let _ = bot.delete_message(msg.chat.id, *mid).await;
+                        }
+                        tracing::info!(
+                            "Telegram: rich fallback delivered ({} chars), deleted {} HTML intermediates",
+                            rich_md.len(),
+                            intermediate_ids.len()
+                        );
+                        text_only
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Telegram: rich fallback failed, keeping HTML intermediates: {e}"
+                        );
+                        text_only
+                    }
+                }
+            } else {
+                text_only
+            };
 
             // Deliver final response — prefer editing the streaming message in-place
             // to avoid the delete+send race that causes duplicates.
@@ -3126,6 +3176,7 @@ pub(crate) async fn resume_session(
                 let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 s.sent_intermediates.clone()
             };
+            let pre_dedup_text = text_only.clone();
             let text_only = if !sent.is_empty() {
                 let mut remaining = text_only.clone();
                 for intermediate in &sent {
@@ -3150,6 +3201,52 @@ pub(crate) async fn resume_session(
                         photo_in_thread(&bot, chat_id, thread_id, InputFile::memory(bytes)).await;
                 }
             }
+
+            // Rich fallback: same logic as handle_message — when all content
+            // was sent as HTML intermediates during streaming, replace them
+            // with a single native rich message.
+            let text_only = if text_only.is_empty()
+                && !sent.is_empty()
+                && super::rich::should_send_native_rich(&pre_dedup_text)
+            {
+                let rich_md = if footer.is_empty() {
+                    pre_dedup_text.clone()
+                } else {
+                    format!("{pre_dedup_text}\n\n{footer}")
+                };
+                match super::rich::api::send_rich_markdown(
+                    bot.token(),
+                    chat_id.0,
+                    thread_id,
+                    &rich_md,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        let intermediate_ids = {
+                            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                            s.intermediate_msg_ids.clone()
+                        };
+                        for mid in &intermediate_ids {
+                            let _ = bot.delete_message(chat_id, *mid).await;
+                        }
+                        tracing::info!(
+                            "Telegram resume: rich fallback delivered ({} chars), deleted {} HTML intermediates",
+                            rich_md.len(),
+                            intermediate_ids.len()
+                        );
+                        text_only
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Telegram resume: rich fallback failed, keeping HTML intermediates: {e}"
+                        );
+                        text_only
+                    }
+                }
+            } else {
+                text_only
+            };
 
             let html = markdown_to_telegram_html(&text_only);
             let display_html = if html.is_empty() {
