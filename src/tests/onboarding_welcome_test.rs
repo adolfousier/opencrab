@@ -37,10 +37,10 @@ fn welcome_message_is_non_empty() {
 }
 
 #[test]
-fn welcome_message_contains_cronjob() {
+fn welcome_message_contains_cron_manage() {
     assert!(
-        WELCOME_MESSAGE.to_lowercase().contains("cronjob"),
-        "welcome message should mention cronjob"
+        WELCOME_MESSAGE.to_lowercase().contains("cron_manage"),
+        "welcome message should mention cron_manage for task scheduling"
     );
 }
 
@@ -53,33 +53,25 @@ fn welcome_message_contains_heartbeat() {
 }
 
 #[test]
-fn welcome_message_contains_onboard_complete() {
+fn welcome_message_contains_onboarding_complete() {
     assert!(
-        WELCOME_MESSAGE.to_lowercase().contains("onboard complete"),
-        "welcome message should contain 'onboard complete'"
+        WELCOME_MESSAGE.to_lowercase().contains("onboarding complete"),
+        "welcome message should contain 'onboarding complete'"
     );
 }
 
 #[test]
-fn welcome_message_contains_brain_files() {
+fn welcome_message_mentions_personality() {
     assert!(
-        WELCOME_MESSAGE.to_lowercase().contains("brain files"),
-        "welcome message should mention brain files"
+        WELCOME_MESSAGE.contains("SOUL.md") && WELCOME_MESSAGE.contains("USER.md"),
+        "welcome message should reference SOUL.md and USER.md for personality"
     );
 }
 
 #[test]
-fn welcome_message_starts_with_expected_phrase() {
+fn welcome_message_is_system_prompt() {
     assert!(
-        WELCOME_MESSAGE.starts_with("Holy shit, we are live."),
-        "welcome message should open with the expected phrase"
-    );
-}
-
-#[test]
-fn welcome_message_ends_with_question() {
-    assert!(
-        WELCOME_MESSAGE.ends_with('?'),
-        "welcome message should end with a question mark"
+        WELCOME_MESSAGE.starts_with("[SYSTEM:"),
+        "welcome message should start with [SYSTEM: to be hidden from user display"
     );
 }
