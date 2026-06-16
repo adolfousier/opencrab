@@ -482,6 +482,12 @@ pub struct App {
     pub session_renaming: bool,
     pub session_rename_buffer: String,
 
+    /// Session search/filter state (activated with `/` in /sessions)
+    pub session_search: String,
+    pub session_search_active: bool,
+    /// Viewport scroll offset for session list (first visible session index)
+    pub sessions_scroll: usize,
+
     /// Model selector state (shared with onboarding via ProviderSelectorState)
     pub ps: crate::tui::provider_selector::ProviderSelectorState,
 
@@ -775,6 +781,9 @@ impl App {
             emoji_colon_offset: 0,
             session_renaming: false,
             session_rename_buffer: String::new(),
+            session_search: String::new(),
+            session_search_active: false,
+            sessions_scroll: 0,
             ps: crate::tui::provider_selector::ProviderSelectorState::default(),
             input_history: Self::load_history(),
             input_history_index: None,
@@ -882,6 +891,25 @@ impl App {
     /// Check if a session_id matches the currently active session
     pub(crate) fn is_current_session(&self, session_id: Uuid) -> bool {
         self.current_session.as_ref().map(|s| s.id) == Some(session_id)
+    }
+
+    /// Returns indices into `self.sessions` that match the current search filter.
+    /// When no search is active, returns all indices.
+    pub(crate) fn visible_session_indices(&self) -> Vec<usize> {
+        if self.session_search.is_empty() {
+            (0..self.sessions.len()).collect()
+        } else {
+            let search = self.session_search.to_lowercase();
+            self.sessions
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    let name = s.title.as_deref().unwrap_or("New Chat").to_lowercase();
+                    name.contains(&search)
+                })
+                .map(|(i, _)| i)
+                .collect()
+        }
     }
 
     /// Route a per-session mutator to either the foreground

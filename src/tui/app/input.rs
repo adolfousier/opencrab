@@ -1967,6 +1967,76 @@ impl App {
             return Ok(());
         }
 
+        // Search mode: typing to filter sessions
+        if self.session_search_active {
+            match event.code {
+                KeyCode::Esc => {
+                    self.session_search_active = false;
+                    self.session_search.clear();
+                    self.selected_session_index = 0;
+                }
+                KeyCode::Backspace => {
+                    if self.session_search.is_empty() {
+                        self.session_search_active = false;
+                    } else {
+                        self.session_search.pop();
+                        self.selected_session_index = 0;
+                    }
+                }
+                KeyCode::Enter => {
+                    let visible = self.visible_session_indices();
+                    if let Some(&actual_idx) = visible.get(self.selected_session_index)
+                        && let Some(session) = self.sessions.get(actual_idx)
+                    {
+                        let session_id = session.id;
+                        if let Some(project_id) = self.assigning_to_project {
+                            let title = session
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| "Untitled".to_string());
+                            match self
+                                .project_service
+                                .assign_session(session_id, project_id)
+                                .await
+                            {
+                                Ok(()) => {
+                                    self.notification = Some(format!("Assigned: {title}"));
+                                    if let Some(s) =
+                                        self.sessions.iter_mut().find(|s| s.id == session_id)
+                                    {
+                                        s.project_id = Some(project_id);
+                                    }
+                                }
+                                Err(e) => {
+                                    self.notification = Some(format!("Failed to assign: {e}"));
+                                }
+                            }
+                            self.notification_shown_at = Some(std::time::Instant::now());
+                        } else {
+                            self.load_session(session_id).await?;
+                            self.session_search_active = false;
+                            self.session_search.clear();
+                            self.switch_mode(AppMode::Chat).await?;
+                        }
+                    }
+                }
+                KeyCode::Char(c) if !c.is_control() => {
+                    self.session_search.push(c);
+                    self.selected_session_index = 0;
+                }
+                KeyCode::Up => {
+                    self.selected_session_index = self.selected_session_index.saturating_sub(1);
+                }
+                KeyCode::Down => {
+                    let count = self.visible_session_indices().len();
+                    self.selected_session_index =
+                        (self.selected_session_index + 1).min(count.saturating_sub(1));
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
         // Normal sessions mode
         if keys::is_cancel(&event) {
             if self.assigning_to_project.is_some() {
@@ -2137,6 +2207,11 @@ impl App {
                     self.notification_shown_at = Some(std::time::Instant::now());
                 }
             }
+        } else if event.code == KeyCode::Char('/') {
+            // Activate session search
+            self.session_search_active = true;
+            self.session_search.clear();
+            self.selected_session_index = 0;
         }
 
         Ok(())

@@ -37,6 +37,22 @@ fn project_badge_color(project_id: uuid::Uuid) -> Color {
 pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
+    // Compute filtered session indices based on search
+    let visible_indices: Vec<usize> = if app.session_search.is_empty() {
+        (0..app.sessions.len()).collect()
+    } else {
+        let search = app.session_search.to_lowercase();
+        app.sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                let name = s.title.as_deref().unwrap_or("New Chat").to_lowercase();
+                name.contains(&search)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    };
+
     lines.push(Line::from(vec![
         Span::styled(
             "  [↑↓] ",
@@ -100,6 +116,13 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled("Split V  ", Style::default().fg(Color::Reset)),
         Span::styled(
+            "[/] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Search  ", Style::default().fg(Color::Reset)),
+        Span::styled(
             "[Esc] ",
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
@@ -142,8 +165,37 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
     }
     lines.push(Line::from(""));
 
-    for (idx, session) in app.sessions.iter().enumerate() {
-        let is_selected = idx == app.selected_session_index;
+    // Search input line
+    if app.session_search_active {
+        lines.push(Line::from(vec![
+            Span::styled("  🔍 ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{}█", app.session_search),
+                Style::default()
+                    .fg(Color::Reset)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  [type to filter]  [Enter] open  [Esc] clear",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Track header line count for viewport scroll calculation
+    let header_line_count = lines.len();
+
+    if visible_indices.is_empty() && !app.session_search.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  No matching sessions",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    for (display_idx, &session_idx) in visible_indices.iter().enumerate() {
+        let session = &app.sessions[session_idx];
+        let is_selected = display_idx == app.selected_session_index;
         let is_current = app
             .current_session
             .as_ref()
@@ -330,9 +382,19 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    // Viewport scroll: keep the selected session visible
+    let visible_height = area.height.saturating_sub(2) as usize; // inside borders
+    let selected_line = header_line_count + app.selected_session_index;
+    let scroll = if selected_line >= visible_height {
+        (selected_line.saturating_sub(visible_height) + 1) as u16
+    } else {
+        0u16
+    };
+
     let sessions = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(" Sessions "))
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
 
     f.render_widget(sessions, area);
 }
