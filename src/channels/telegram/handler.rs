@@ -2544,16 +2544,11 @@ pub(crate) async fn handle_message(
                         .copied()
                         .zip(s.sent_intermediates.last().cloned())
                 };
-                if let Some((inter_id, inter_text)) = last_inter
-                    && let Some(edited) = build_last_intermediate_with_footer(&inter_text, &footer)
-                    && let Err(e) = bot
-                        .edit_message_text(msg.chat.id, inter_id, &edited)
-                        .parse_mode(ParseMode::Html)
-                        .await
-                {
-                    tracing::warn!(
-                        "Telegram: failed to append ctx footer to last intermediate ({e})"
-                    );
+                if let Some((inter_id, inter_text)) = last_inter {
+                    append_footer_to_last_intermediate(
+                        &bot, msg.chat.id, inter_id, &inter_text, &footer,
+                    )
+                    .await;
                 }
                 let _ = bot.delete_message(msg.chat.id, mid).await;
             }
@@ -3233,16 +3228,11 @@ pub(crate) async fn resume_session(
                         .copied()
                         .zip(s.sent_intermediates.last().cloned())
                 };
-                if let Some((inter_id, inter_text)) = last_inter
-                    && let Some(edited) = build_last_intermediate_with_footer(&inter_text, &footer)
-                    && let Err(e) = bot
-                        .edit_message_text(chat_id, inter_id, &edited)
-                        .parse_mode(ParseMode::Html)
-                        .await
-                {
-                    tracing::warn!(
-                        "Telegram resume: failed to append ctx footer to last intermediate ({e})"
-                    );
+                if let Some((inter_id, inter_text)) = last_inter {
+                    append_footer_to_last_intermediate(
+                        &bot, chat_id, inter_id, &inter_text, &footer,
+                    )
+                    .await;
                 }
                 let _ = bot.delete_message(chat_id, mid).await;
             }
@@ -3685,6 +3675,40 @@ pub(crate) fn build_last_intermediate_with_footer(
         None
     } else {
         Some(combined)
+    }
+}
+
+/// Append a footer to the last intermediate message, preserving rich format
+/// when the intermediate was sent as a native rich message. Editing with
+/// ParseMode::Html would downgrade rich tables to card view — this helper
+/// tries the rich edit first and falls back to HTML only on failure.
+async fn append_footer_to_last_intermediate(
+    bot: &Bot,
+    chat_id: ChatId,
+    inter_id: MessageId,
+    inter_text: &str,
+    footer: &str,
+) {
+    if super::rich::should_send_native_rich(inter_text) {
+        let rich_md = format!("{inter_text}\n\n{footer}");
+        match super::rich::api::edit_rich_markdown(bot.token(), chat_id.0, inter_id.0, &rich_md)
+            .await
+        {
+            Ok(()) => return,
+            Err(e) => {
+                tracing::warn!(
+                    "Telegram: rich footer edit failed, falling back to HTML ({e})"
+                );
+            }
+        }
+    }
+    if let Some(edited) = build_last_intermediate_with_footer(inter_text, footer)
+        && let Err(e) = bot
+            .edit_message_text(chat_id, inter_id, &edited)
+            .parse_mode(ParseMode::Html)
+            .await
+    {
+        tracing::warn!("Telegram: failed to append ctx footer to last intermediate ({e})");
     }
 }
 
@@ -4188,3 +4212,4 @@ pub(crate) fn make_approval_callback(
         })
     })
 }
+
