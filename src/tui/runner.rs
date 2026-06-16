@@ -148,12 +148,17 @@ pub async fn run(mut app: App) -> Result<()> {
         EnterAlternateScreen,
         EnableBracketedPaste,
         EnableFocusChange,
-        EnableMouseCapture,
-        // Kitty keyboard protocol: enables unambiguous modifier reporting
-        // so Shift+Enter is distinguishable from plain Enter. Silently
-        // ignored by terminals that don't support it (no-op, no errors).
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        EnableMouseCapture
     )?;
+    // Kitty keyboard protocol: enables unambiguous modifier reporting
+    // so Shift+Enter is distinguishable from plain Enter. Silently
+    // ignored by terminals that don't support it (no-op, no errors).
+    // On Windows, the legacy Console API errors instead of ignoring, so
+    // we deliberately discard the result.
+    let _ = execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
