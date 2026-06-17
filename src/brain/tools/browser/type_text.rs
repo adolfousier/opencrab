@@ -24,7 +24,11 @@ impl Tool for BrowserTypeTool {
     }
 
     fn description(&self) -> &str {
-        "Type text into a focused element or an element found by CSS selector. Returns an automatic screenshot after typing."
+        "Type text into an input found by CSS selector (or the focused element if no selector). \
+         REPLACES the field's value (does not append) and dispatches input/change events so \
+         framework-controlled forms (React/Vue/Svelte, e.g. NextAuth) update their internal \
+         state — then a normal browser_click on the submit button works. Returns a screenshot \
+         after typing."
     }
 
     fn input_schema(&self) -> Value {
@@ -68,58 +72,76 @@ impl Tool for BrowserTypeTool {
             Err(e) => return Ok(ToolResult::error(format!("Browser error: {e}"))),
         };
 
-        if let Some(sel) = selector {
-            let element = match page.find_element(sel).await {
-                Ok(el) => el,
-                Err(e) => return Ok(ToolResult::error(format!("Element '{sel}' not found: {e}"))),
-            };
+        // JSON-encode both values so any quotes/backslashes/newlines in the
+        // text or selector are injected into the script safely.
+        let sel_js = selector
+            .map(|s| serde_json::to_string(s).unwrap_or_else(|_| "null".into()))
+            .unwrap_or_else(|| "null".into());
+        let val_js = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
 
-            // Click to focus, then type
-            if let Err(e) = element.click().await {
-                return Ok(ToolResult::error(format!("Failed to focus element: {e}")));
+        // React/Vue/Svelte controlled inputs ignore a plain `el.value = x`
+        // assignment — the framework overrides the value setter, so its
+        // internal state never updates and a later submit sees an empty
+        // field. We must: (1) REPLACE the value via the *native* setter so
+        // the framework's value tracker registers the change, then (2)
+        // dispatch bubbling `input` + `change` events so onChange fires.
+        // `+=` (the old behaviour) also appended to placeholder/stale text,
+        // producing the "placeholder + credentials" garbage. This replaces.
+        let js = format!(
+            r#"(function(){{
+  var sel = {sel_js};
+  var val = {val_js};
+  var el = sel ? document.querySelector(sel) : document.activeElement;
+  if (!el) return "no_element";
+  var editable = el.isContentEditable;
+  if (el.value === undefined && !editable) return "not_input";
+  try {{ el.focus(); }} catch (e) {{}}
+  if (editable) {{
+    el.textContent = val;
+    el.dispatchEvent(new InputEvent("input", {{bubbles:true}}));
+    el.dispatchEvent(new Event("change", {{bubbles:true}}));
+    return "ok";
+  }}
+  var proto = el.tagName === "TEXTAREA"
+    ? window.HTMLTextAreaElement.prototype
+    : window.HTMLInputElement.prototype;
+  var desc = Object.getOwnPropertyDescriptor(proto, "value");
+  if (desc && desc.set) {{ desc.set.call(el, val); }} else {{ el.value = val; }}
+  el.dispatchEvent(new Event("input", {{bubbles:true}}));
+  el.dispatchEvent(new Event("change", {{bubbles:true}}));
+  return "ok";
+}})()"#
+        );
+
+        let outcome = match page.evaluate(js.as_str()).await {
+            Ok(r) => r
+                .value()
+                .and_then(|v: &serde_json::Value| v.as_str().map(String::from))
+                .unwrap_or_default(),
+            Err(e) => return Ok(ToolResult::error(format!("Typing failed: {e}"))),
+        };
+
+        let target = selector
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "focused element".into());
+        match outcome.as_str() {
+            "ok" => {
+                let mut result = ToolResult::success(format!("Typed into {target}"));
+                // Auto-screenshot: give the model vision after typing.
+                self.manager
+                    .attach_screenshot(context.session_id, &mut result)
+                    .await;
+                Ok(result)
             }
-
-            if let Err(e) = element.type_str(text).await {
-                return Ok(ToolResult::error(format!("Typing failed: {e}")));
-            }
-
-            let mut result = ToolResult::success(format!("Typed '{}' into {}", text, sel));
-
-            // Auto-screenshot: give the model vision after typing
-            self.manager
-                .attach_screenshot(context.session_id, &mut result)
-                .await;
-
-            Ok(result)
-        } else {
-            // Type into the currently focused element via JS
-            let js = format!(
-                "document.activeElement && document.activeElement.value !== undefined ? \
-                 (document.activeElement.value += '{}', true) : false",
-                text.replace('\\', "\\\\").replace('\'', "\\'")
-            );
-            match page.evaluate(js.as_str()).await {
-                Ok(result) => {
-                    let ok = result
-                        .value()
-                        .and_then(|v: &serde_json::Value| v.as_bool())
-                        .unwrap_or(false);
-                    if ok {
-                        let mut result =
-                            ToolResult::success(format!("Typed '{}' into focused element", text));
-                        self.manager
-                            .attach_screenshot(context.session_id, &mut result)
-                            .await;
-                        Ok(result)
-                    } else {
-                        Ok(ToolResult::error(
-                            "No focused input element found. Use 'selector' to target an element."
-                                .into(),
-                        ))
-                    }
-                }
-                Err(e) => Ok(ToolResult::error(format!("Typing failed: {e}"))),
-            }
+            "no_element" => Ok(ToolResult::error(if selector.is_some() {
+                format!("Element '{target}' not found")
+            } else {
+                "No focused element. Pass a 'selector' to target an input.".into()
+            })),
+            "not_input" => Ok(ToolResult::error(format!(
+                "'{target}' is not an editable input/textarea. Pick the input element itself."
+            ))),
+            _ => Ok(ToolResult::error("Typing failed: unexpected result".into())),
         }
     }
 }
