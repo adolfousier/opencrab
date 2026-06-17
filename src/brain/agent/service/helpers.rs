@@ -243,6 +243,9 @@ impl AgentService {
         }
         let mut block_states: Vec<BlockState> = Vec::new();
         let mut reasoning_buf = String::new();
+        let mut reasoning_window = String::new(); // rolling window for reasoning repetition
+        const REASONING_REPEAT_WINDOW: usize = 4096; // reasoning can legitimately be longer
+        const REASONING_REPEAT_MIN_MATCH: usize = 300; // min substring to detect reasoning loops
         let is_cli = provider.cli_handles_tools();
         // CLI: track unflushed text so we can emit IntermediateText at tool
         // boundaries, giving the TUI real-time text→tools→text interleaving
@@ -431,6 +434,30 @@ impl AgentService {
                                 }
                                 // Always accumulate for DB persistence
                                 reasoning_buf.push_str(&text);
+                                reasoning_window.push_str(&text);
+                                if reasoning_window.len() > REASONING_REPEAT_WINDOW {
+                                    let mut drain =
+                                        reasoning_window.len() - REASONING_REPEAT_WINDOW;
+                                    while !reasoning_window.is_char_boundary(drain)
+                                        && drain < reasoning_window.len()
+                                    {
+                                        drain += 1;
+                                    }
+                                    reasoning_window.drain(..drain);
+                                }
+                                if detect_text_repetition(
+                                    &reasoning_window,
+                                    REASONING_REPEAT_MIN_MATCH,
+                                ) {
+                                    tracing::warn!(
+                                        "🔁 Repetition detected in reasoning after {} bytes. \
+                                         Model appears to be looping in its thinking. \
+                                         Terminating stream.",
+                                        reasoning_buf.len(),
+                                    );
+                                    stop_reason = Some(StopReason::EndTurn);
+                                    break;
+                                }
                             }
                             ContentDelta::ThinkingDelta { thinking } => {
                                 // Anthropic native thinking_delta — same as reasoning
@@ -443,6 +470,30 @@ impl AgentService {
                                     );
                                 }
                                 reasoning_buf.push_str(&thinking);
+                                reasoning_window.push_str(&thinking);
+                                if reasoning_window.len() > REASONING_REPEAT_WINDOW {
+                                    let mut drain =
+                                        reasoning_window.len() - REASONING_REPEAT_WINDOW;
+                                    while !reasoning_window.is_char_boundary(drain)
+                                        && drain < reasoning_window.len()
+                                    {
+                                        drain += 1;
+                                    }
+                                    reasoning_window.drain(..drain);
+                                }
+                                if detect_text_repetition(
+                                    &reasoning_window,
+                                    REASONING_REPEAT_MIN_MATCH,
+                                ) {
+                                    tracing::warn!(
+                                        "🔁 Repetition detected in thinking after {} bytes. \
+                                         Model appears to be looping in its thinking. \
+                                         Terminating stream.",
+                                        reasoning_buf.len(),
+                                    );
+                                    stop_reason = Some(StopReason::EndTurn);
+                                    break;
+                                }
                             }
                         }
                     }
