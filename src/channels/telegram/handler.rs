@@ -236,6 +236,19 @@ async fn save_incoming_files_to_tmp(bot: &Bot, msg: &Message, bot_token: &str) {
         )
         .await;
     }
+    // Photos (largest size) — so an image shared without @mentioning the bot
+    // can still be picked up when the user tags it in a follow-up message.
+    // Telegram orders sizes smallest→largest, so the last entry is the best.
+    if let Some(largest) = msg.photo().and_then(|sizes| sizes.last()) {
+        save_telegram_file(
+            bot,
+            bot_token,
+            largest.file.id.clone(),
+            &tmp_dir,
+            &format!("photo-{chat_id}-{ts}.jpg"),
+        )
+        .await;
+    }
 }
 
 /// Download a file from Telegram by file_id and save to the given path.
@@ -280,6 +293,18 @@ pub(crate) fn find_recent_voice_in_tmp(
     chat_id: i64,
     max_age_secs: i64,
 ) -> Option<std::path::PathBuf> {
+    find_recent_tmp_file(chat_id, "voice", max_age_secs)
+}
+
+/// Find the newest `~/.opencrabs/tmp/{kind}-{chat_id}-{ts}.*` file within
+/// `max_age_secs`. Used to pick up a voice/photo a user sent to a mention-only
+/// group *before* tagging the bot (the file was stored fire-and-forget on
+/// arrival; this retrieves it when the follow-up @mention finally triggers us).
+pub(crate) fn find_recent_tmp_file(
+    chat_id: i64,
+    kind: &str,
+    max_age_secs: i64,
+) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
 
     let tmp_dir: PathBuf = dirs::home_dir()
@@ -288,7 +313,7 @@ pub(crate) fn find_recent_voice_in_tmp(
         .join("tmp");
 
     let now = chrono::Utc::now().timestamp();
-    let prefix = format!("voice-{chat_id}-");
+    let prefix = format!("{kind}-{chat_id}-");
 
     let mut best: Option<(i64, PathBuf)> = None;
 
@@ -733,6 +758,24 @@ pub(crate) async fn handle_message(
             }
             Err(e) => tracing::warn!("Telegram: failed to read tmp voice file: {e}"),
         }
+    }
+
+    // Pick up a recent photo from tmp: the user shared an image in a
+    // mention-only group, then tagged the bot in a follow-up WITHOUT
+    // re-attaching it. Inject it as an `<<IMG:path>>` marker so
+    // build_user_message inlines it for vision. The file is left on disk —
+    // the periodic tmp purge cleans it; deleting here would race
+    // build_user_message, which reads the bytes when assembling the message.
+    let mut tmp_photo_marker: Option<String> = None;
+    if !is_dm
+        && msg.photo().is_none()
+        && let Some(photo_path) = find_recent_tmp_file(msg.chat.id.0, "photo", 300)
+    {
+        tracing::info!(
+            "Telegram: picked up recent photo from tmp: {}",
+            photo_path.display()
+        );
+        tmp_photo_marker = Some(format!("<<IMG:{}>>", photo_path.display()));
     }
 
     // Extract text from either text message or voice note (via STT)
@@ -1218,6 +1261,16 @@ pub(crate) async fn handle_message(
         } else {
             text = format!("[Voice note]: {vt}\n\n{text}");
         }
+    }
+
+    // Append any image picked up from tmp so the agent can actually see it
+    // (the <<IMG:>> marker is base64-inlined for vision by build_user_message).
+    if let Some(marker) = tmp_photo_marker {
+        text = if text.is_empty() {
+            marker
+        } else {
+            format!("{text}\n{marker}")
+        };
     }
 
     // Log ALL processed messages (voice transcripts, photo captions, doc text) for group context.
