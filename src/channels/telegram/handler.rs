@@ -339,6 +339,10 @@ pub(crate) async fn handle_message(
     // and non-forum groups.
     let thread_id = msg.thread_id;
 
+    // Read latest config from watch channel — single source of truth
+    // (moved before /start so we can check allowlist for group silencing)
+    let cfg = config_rx.borrow().clone();
+
     // /start command -- check for cowork startgroup param, else show user ID
     if let Some(text) = msg.text()
         && text.starts_with("/start")
@@ -350,6 +354,26 @@ pub(crate) async fn handle_message(
             super::cowork::handle_cowork_group_join(&bot, &msg, &telegram_state, param, thread_id)
                 .await?;
             return Ok(());
+        }
+
+        let is_group = !matches!(msg.chat.kind, ChatKind::Private { .. });
+        if is_group && cfg.channels.telegram.silence_group_start {
+            // In groups, silently ignore /start from non-allowed users
+            let allowed: HashSet<i64> = cfg
+                .channels
+                .telegram
+                .allowed_users
+                .iter()
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            if !allowed.is_empty() && !allowed.contains(&user_id) {
+                tracing::info!(
+                    "Telegram: silent /start from non-allowed user {} ({}) in group",
+                    user_id,
+                    user.first_name
+                );
+                return Ok(());
+            }
         }
 
         let reply = format!(
@@ -364,9 +388,6 @@ pub(crate) async fn handle_message(
         );
         return Ok(());
     }
-
-    // Read latest config from watch channel — single source of truth
-    let cfg = config_rx.borrow().clone();
 
     // ── Service message: member join detection ──────────────────────────
     // Capture new_chat_members BEFORE the allowlist check so bot/user IDs
@@ -484,9 +505,32 @@ pub(crate) async fn handle_message(
     let voice_config = cfg.voice_config();
 
     // Allowlist check — read from config (hot-reloaded via watch channel)
+    // In groups, only reply "not authorized" when the bot is @mentioned or
+    // replied-to. Silently drop all other messages from non-allowed users.
+    // In DMs, always reply so the user knows to add their ID.
     if !allowed.is_empty() && !allowed.contains(&user_id) {
+        let is_group = !matches!(msg.chat.kind, ChatKind::Private { .. });
+        if is_group {
+            // Only reply if the bot was actually mentioned or replied-to
+            let bot_username = telegram_state.bot_username().await;
+            let text_content = msg.text().or(msg.caption()).unwrap_or("");
+            let mentioned = bot_username
+                .as_ref()
+                .is_some_and(|uname| text_content.contains(&format!("@{}", uname)));
+            let replied_to_bot = msg
+                .reply_to_message()
+                .is_some_and(|reply| reply.from.as_ref().is_some_and(|u| u.is_bot));
+            if !mentioned && !replied_to_bot {
+                tracing::info!(
+                    "Telegram: silently ignoring non-allowed user {} ({}) in group",
+                    user_id,
+                    user.username.as_deref().unwrap_or("unknown"),
+                );
+                return Ok(());
+            }
+        }
         tracing::info!(
-            "Telegram: ignoring message from non-allowed user {} (username={})",
+            "Telegram: rejecting non-allowed user {} (username={})",
             user_id,
             user.username.as_deref().unwrap_or("unknown"),
         );
