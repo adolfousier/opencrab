@@ -283,6 +283,28 @@ The `/cowork` command creates a team workspace directly from Telegram. It is **T
 
 **Cross-channel behavior:** If `/cowork` is sent from Discord, Slack, WhatsApp, or the TUI, it is treated as a regular message (the agent handles it naturally). The feature only activates in Telegram DMs.
 
+#### Telegram group security model
+
+When `allowed_users` is configured, the bot enforces a strict allowlist on all incoming messages. The behavior differs between DMs and groups:
+
+**In DMs:**
+- Non-allowed users always get a reply: *"You are not authorized. Send /start to get your user ID."* — so they know what to do.
+
+**In groups:**
+- Non-allowed users get **silently dropped** (no reply, no processing) for normal messages.
+- If the user explicitly **@mentions** or **replies to** the bot, they get the "not authorized" reply — so they know they need to be added.
+- `/start` from non-allowed users is silently ignored when `silence_group_start = true` (default). Set to `false` to show the user ID reply in groups.
+
+This prevents the bot from spamming "not authorized" in active groups where most members aren't on the allowlist. The bot only engages with non-allowed users when they explicitly reach out.
+
+**Config:**
+```toml
+[channels.telegram]
+allowed_users = ["123456789"]    # Only these users can interact
+respond_to = "mention"           # Bot only responds to @mentions in groups
+silence_group_start = true       # Silently ignore /start from non-allowed users in groups
+```
+
 ### Terminal UI
 | Feature | Description |
 |---------|-------------|
@@ -1719,6 +1741,7 @@ redact_sensitive_data = true     # redact IPs, tokens, passwords from tool outpu
 enabled = true
 allowed_users = ["123456789"]    # Telegram user IDs (get yours via /start)
 respond_to = "all"               # all | mention | dm_only
+silence_group_start = true       # true (default): silently ignore /start from non-allowed users in groups
 
 [channels.discord]
 enabled = true
