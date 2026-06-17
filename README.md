@@ -240,7 +240,7 @@ The one user-settable TTL is `cache_ttl` (default 300s, range 1-86400), which se
 | Feature | Description |
 |---------|-------------|
 | **Telegram Bot** | Full-featured Telegram bot — owner DMs share TUI session, groups get isolated per-group sessions (keyed by chat ID). Photo/voice support (STT transcribes incoming voice notes; TTS replies as OGG/Opus voice notes via `send_voice` when input was audio). Allowed user IDs, allowed chat/group IDs, `respond_to` filter (`all`/`dm_only`/`mention`). Passive group message capture — all messages stored for context even when bot isn't mentioned |
-| **WhatsApp** | Connect via QR code pairing at runtime or from onboarding wizard. Text + image + voice (STT transcribes incoming voice notes; TTS replies as voice notes when input was audio and `tts_enabled=true`). Shared session with TUI, phone allowlist (`allowed_phones`), session persists across restarts |
+| **WhatsApp** | Connect via QR code pairing at runtime or from onboarding wizard. The pairing QR renders as a scannable PNG image in channels (not just unicode blocks), so you can scan it directly from Telegram/Discord/Slack. Text + image + voice (STT transcribes incoming voice notes; TTS replies as voice notes when input was audio and `tts_enabled=true`). Shared session with TUI, phone allowlist (`allowed_phones`), session persists across restarts |
 | **Discord** | Full Discord bot — text + image + voice. Owner DMs share TUI session, guild channels get isolated per-channel sessions. Allowed user IDs, allowed channel IDs, `respond_to` filter. Full proactive control via `discord_send` (17 actions): `send`, `reply`, `react`, `unreact`, `edit`, `delete`, `pin`, `unpin`, `create_thread`, `send_embed`, `get_messages`, `list_channels`, `add_role`, `remove_role`, `kick`, `ban`, `send_file`. Generated images sent as native Discord file attachments |
 | **Slack** | Full Slack bot via Socket Mode — owner DMs share TUI session, channels get isolated per-channel sessions. Text + image + voice (STT transcribes incoming audio attachments; TTS replies upload an OGG/Opus audio file via `files.upload` — renders inline with waveform UI — when input was audio and `tts_enabled=true`). Allowed user IDs, allowed channel IDs, `respond_to` filter. Full proactive control via `slack_send` (17 actions): `send`, `reply`, `react`, `unreact`, `edit`, `delete`, `pin`, `unpin`, `get_messages`, `get_channel`, `list_channels`, `get_user`, `list_members`, `kick_user`, `set_topic`, `send_blocks`, `send_file`. Generated images sent as native Slack file uploads. Bot token + app token from `api.slack.com/apps` (Socket Mode required). **Required Bot Token Scopes:** `chat:write`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `users:read`, `files:read`, `files:write`, `reactions:write`, `app_mentions:read` |
 | **Trello** | Tool-only by default — the AI acts on Trello only when explicitly asked via `trello_send`. Opt-in polling via `poll_interval_secs` in config; when enabled, only `@bot_username` mentions from allowed users trigger a response. Full card management via `trello_send` (22 actions): `add_comment`, `create_card`, `move_card`, `find_cards`, `list_boards`, `get_card`, `get_card_comments`, `update_card`, `archive_card`, `add_member_to_card`, `remove_member_from_card`, `add_label_to_card`, `remove_label_from_card`, `add_checklist`, `add_checklist_item`, `complete_checklist_item`, `list_lists`, `get_board_members`, `search`, `get_notifications`, `mark_notifications_read`, `add_attachment`. API Key + Token from `trello.com/power-ups/admin`, board IDs and member-ID allowlist configurable |
@@ -283,7 +283,7 @@ The `/cowork` command creates a team workspace directly from Telegram. It is **T
 4. Bot detects the startgroup parameter → generates an invite link, creates a QR code PNG, sends it to the user's DM
 5. New members who join the group via the invite link auto-register in `config.telegram.allowed_users` — the owner gets a confirmation message
 
-**Cross-channel behavior:** If `/cowork` is sent from Discord, Slack, WhatsApp, or the TUI, it is treated as a regular message (the agent handles it naturally). The feature only activates in Telegram DMs.
+**Cross-channel behavior:** `/cowork` works from any surface. In Telegram DMs, the native flow activates directly. From the TUI, Discord, Slack, or WhatsApp, the agent calls the `cowork_connect` tool which mints a session, registers it with the bot, and returns the `t.me` deep link plus a scannable QR code PNG. The TUI shows the clickable link; channels deliver the QR as a photo.
 
 #### Telegram group security model
 
@@ -306,6 +306,17 @@ allowed_users = ["123456789"]    # Only these users can interact
 respond_to = "mention"           # Bot only responds to @mentions in groups
 silence_group_start = true       # Silently ignore /start from non-allowed users in groups
 ```
+
+#### Voice and file pickup in groups
+
+In mention-only groups (`respond_to = "mention"`), users can now share files and voice messages even when the bot isn't directly tagged in the same message. Here's how it works:
+
+1. **Fire-and-forget file capture** — The bot downloads ALL incoming voice, video, document, and audio files from group messages to `~/.opencrabs/tmp/`, regardless of whether the bot was mentioned. This happens silently in the background.
+2. **Tag-then-ask** — A user sends a voice message, then tags the bot in a follow-up message (e.g. `@bot what did I just say?`). The bot scans the tmp directory for recent voice files from that chat (5-minute window), transcribes the most recent one, and prepends the transcript to the user's message.
+
+This solves the core UX problem in mention-only groups: previously, tagging the bot in the *same* message as a voice note didn't work because Telegram sends voice and text as separate messages.
+
+**Supported file types:** `.ogg` (voice notes), `.mp4` (video notes), documents, and audio files.
 
 ### Terminal UI
 | Feature | Description |
@@ -1308,7 +1319,7 @@ First-time users are guided through a 9-step setup wizard that appears automatic
 
 **QuickStart mode** skips steps 4-8 with sensible defaults. **Advanced mode** lets you configure everything.
 
-Type `/onboard:voice` or `/onboard:image` in chat to jump directly to Voice or Image setup anytime.
+Type `/onboard:voice` or `/onboard:image` in chat to jump directly to Voice or Image setup anytime. These work from any channel (Telegram, Discord, Slack, WhatsApp) via text-driven handlers — not just the TUI. From a channel, the agent walks you through each step interactively. You can also pass arguments directly: `/onboard:channels telegram <BOT_TOKEN> <YOUR_NUMERIC_ID>` to set up Telegram in one line, or `/onboard:image gemini <API_KEY>` to configure vision with Google.
 
 #### Local STT (whisper.cpp)
 
@@ -2525,6 +2536,9 @@ When connected via messaging channels, the following slash commands are availabl
 | `/rtk` | Show RTK token savings statistics |
 | `/new` | Start a new session |
 | `/rename <title>` | Rename the current session |
+| `/onboard:channels` | Channel setup wizard — configure Telegram, Discord, WhatsApp, Slack, or Trello from chat |
+| `/onboard:voice` | Voice STT/TTS setup — pick provider, model, and credentials |
+| `/onboard:image` | Image handling setup — configure vision analysis and image generation |
 
 Model switching via `/models` changes the model within the current provider and takes effect immediately (no restart needed). The selection persists to `config.toml`.
 
