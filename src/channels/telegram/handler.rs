@@ -2477,7 +2477,7 @@ pub(crate) async fn handle_message(
     // _typing_guard drop cancels typing loop
 
     // Grab streaming message id and clean up status message
-    let (streaming_msg_id, status_msg_id, remaining_display) = {
+    let (mut streaming_msg_id, status_msg_id, remaining_display) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
         (s.msg_id, s.status_msg_id, display)
@@ -2777,9 +2777,17 @@ pub(crate) async fn handle_message(
                     // placeholder into rich. Editing a normal message into a rich
                     // one glitches the client render — overlap during the
                     // transition, and a stale pre-edit (HTML) version after a
-                    // refresh / chat switch. A fresh sendRichMessage renders
-                    // clean. Delete the placeholder only AFTER the rich send
-                    // succeeds, so a failure leaves it intact for the HTML path.
+                    // refresh / chat switch. A fresh sendRichMessage renders clean.
+                    //
+                    // Delete the placeholder FIRST so the fresh rich message is
+                    // the LAST thing added to the chat — deleting it AFTER the
+                    // send pulls the content up and leaves the view mid-chat
+                    // instead of scrolling to the bottom on completion. `.take()`
+                    // clears the id so the HTML fallback below sends a fresh
+                    // message (not an edit of a deleted one) if the rich send fails.
+                    if let Some(mid) = streaming_msg_id.take() {
+                        let _ = bot.delete_message(msg.chat.id, mid).await;
+                    }
                     match super::rich::api::send_rich_markdown(
                         bot.token(),
                         msg.chat.id.0,
@@ -2788,12 +2796,7 @@ pub(crate) async fn handle_message(
                     )
                     .await
                     {
-                        Ok(()) => {
-                            if let Some(mid) = streaming_msg_id {
-                                let _ = bot.delete_message(msg.chat.id, mid).await;
-                            }
-                            true
-                        }
+                        Ok(()) => true,
                         Err(e) => {
                             tracing::warn!("Telegram: rich delivery failed, using HTML: {e}");
                             false
@@ -3338,7 +3341,7 @@ pub(crate) async fn resume_session(
     let _ = edit_loop_handle.await;
 
     // ── Final delivery ─────────────────────────────────────────────────────
-    let (streaming_msg_id, status_msg_id, remaining_display) = {
+    let (mut streaming_msg_id, status_msg_id, remaining_display) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
         (s.msg_id, s.status_msg_id, display)
@@ -3547,6 +3550,13 @@ pub(crate) async fn resume_session(
                     } else {
                         format!("{text_only}\n\n{footer}")
                     };
+                    // Delete the placeholder FIRST so the fresh rich send is the
+                    // last message — deleting it after pulls content up and the
+                    // view ends mid-chat instead of at the bottom. `.take()`
+                    // clears the id so the HTML fallback sends fresh on failure.
+                    if let Some(mid) = streaming_msg_id.take() {
+                        let _ = bot.delete_message(chat_id, mid).await;
+                    }
                     match super::rich::api::send_rich_markdown(
                         bot.token(),
                         chat_id.0,
@@ -3555,12 +3565,7 @@ pub(crate) async fn resume_session(
                     )
                     .await
                     {
-                        Ok(()) => {
-                            if let Some(mid) = streaming_msg_id {
-                                let _ = bot.delete_message(chat_id, mid).await;
-                            }
-                            true
-                        }
+                        Ok(()) => true,
                         Err(e) => {
                             tracing::warn!(
                                 "Telegram resume: rich delivery failed, using HTML: {e}"
