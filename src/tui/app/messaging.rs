@@ -2129,6 +2129,41 @@ impl App {
             self.auto_scroll = true;
             self.scroll_offset = 0;
 
+            // ── Fast-cancel: "stop" / "/stop" exact match kills active task immediately ──
+            // Same logic as Esc×2 but triggered by the user typing stop.
+            // Runs BEFORE spawning a new agent task so nothing else fires.
+            {
+                let trimmed = transformed_content.trim();
+                if self.is_processing
+                    && (trimmed.eq_ignore_ascii_case("stop") || trimmed == "/stop")
+                {
+                    if let Some(ref session) = self.current_session {
+                        self.persist_streaming_state(session.id).await;
+                    }
+                    if let Some(token) = self.cancel_token.take() {
+                        token.cancel();
+                    }
+                    if let Some(handle) = self.task_abort_handle.take() {
+                        handle.abort();
+                    }
+                    if let Some(ref session) = self.current_session {
+                        if let Some(stashed) = self.session_cancel_tokens.remove(&session.id) {
+                            stashed.cancel();
+                        }
+                        self.processing_sessions.remove(&session.id);
+                    }
+                    self.is_processing = false;
+                    self.processing_started_at = None;
+                    self.streaming_response = None;
+                    self.streaming_reasoning = None;
+                    self.streaming_render_cache = None;
+                    self.cancel_token = None;
+                    self.task_abort_handle = None;
+                    tracing::info!("Fast-cancel: active task killed by stop command");
+                    return Ok(());
+                }
+            }
+
             // Create cancellation token for this request
             let token = CancellationToken::new();
             self.cancel_token = Some(token.clone());

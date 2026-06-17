@@ -17,7 +17,7 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
     ChatAction, ChatKind, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId,
-    ParseMode,
+    ParseMode, ReplyParameters,
 };
 
 use super::send::{chat_action_in_thread, message_in_thread, photo_in_thread};
@@ -1512,6 +1512,18 @@ pub(crate) async fn handle_message(
 
     // Follow-up interrupt: cancel any in-flight agent for this session
     telegram_state.cancel_session(session_id).await;
+
+    // Fast-cancel: "/stop" or "stop" exact match — cancel and reply immediately.
+    // Prevents the agent from receiving the stop message and running more tool calls.
+    if let Some(text) = msg.text() {
+        let trimmed = text.trim();
+        if trimmed.eq_ignore_ascii_case("/stop") || trimmed.eq_ignore_ascii_case("stop") {
+            bot.send_message(msg.chat.id, "Operation cancelled.")
+                .reply_parameters(ReplyParameters::new(msg.id))
+                .await?;
+            return Ok(());
+        }
+    }
 
     tracing::info!(
         "Telegram: resolved session={} for {} in {} \"{}\" (chat_id={})",

@@ -1216,6 +1216,20 @@ async fn handle_message(
         format!("{user_name}: {content}")
     };
 
+    // Fast-cancel: "stop" exact match — cancel and reply immediately.
+    // MUST run before content is moved into agent_input below.
+    if content.trim().eq_ignore_ascii_case("stop") {
+        state.slack_state.cancel_session(session_id).await;
+        let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
+        let session = client.open_session(&token);
+        let request = SlackApiChatPostMessageRequest::new(
+            SlackChannelId::new(channel_id),
+            SlackMessageContent::new().with_text("Operation cancelled.".to_string()),
+        );
+        let _ = session.chat_post_message(&request).await;
+        return;
+    }
+
     // For non-owner users, prepend sender identity so the agent knows who
     // it's talking to and doesn't assume it's the owner.
     let agent_input = if !is_owner {

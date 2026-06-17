@@ -553,6 +553,16 @@ pub(crate) async fn handle_message(
     // Follow-up interrupt: cancel any in-flight agent for this session
     wa_state.cancel_session(session_id).await;
 
+    // Fast-cancel: "stop" exact match — cancel and reply immediately
+    if content.trim().eq_ignore_ascii_case("stop") {
+        let reply = waproto::whatsapp::Message {
+            conversation: Some("Operation cancelled.".to_string()),
+            ..Default::default()
+        };
+        let _ = client.send_message(info.source.chat.clone(), reply).await;
+        return;
+    }
+
     // Restore session's own provider (each session keeps its provider independently)
     let session_meta = session_svc.get_session(session_id).await.ok().flatten();
     crate::channels::commands::sync_provider_for_session(

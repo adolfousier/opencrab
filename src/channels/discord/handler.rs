@@ -297,6 +297,12 @@ pub(crate) async fn handle_message(
     // so the new message replaces the old one (like pressing ESC twice)
     discord_state.cancel_session(session_id).await;
 
+    // Fast-cancel: "stop" exact match — cancel and reply immediately
+    if msg.content.trim().eq_ignore_ascii_case("stop") {
+        let _ = msg.channel_id.say(&ctx.http, "Operation cancelled.").await;
+        return;
+    }
+
     // Restore session's own provider (each session keeps its provider independently)
     let session_meta = session_svc.get_session(session_id).await.ok().flatten();
     crate::channels::commands::sync_provider_for_session(
