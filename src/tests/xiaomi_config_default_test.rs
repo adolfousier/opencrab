@@ -27,6 +27,13 @@ fn missing_xiaomi_section_deserializes_to_canonical_defaults() {
     // MiMo v2.5 is multimodal, so vision (analyze_image) routes to it natively
     // via ProviderVisionTool — no Gemini key required for the keyless promo.
     assert_eq!(xiaomi.vision_model.as_deref(), Some("mimo-v2.5-pro"));
+    // Capped at 200k despite MiMo's ~1M — quality degrades past ~200-300k and
+    // transparent compaction already gives effectively-infinite memory.
+    assert_eq!(
+        xiaomi.context_window,
+        Some(200_000),
+        "Xiaomi must default to a 200k context window"
+    );
 }
 
 #[test]

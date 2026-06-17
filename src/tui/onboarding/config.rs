@@ -450,6 +450,14 @@ impl OnboardingWizard {
                     };
                     try_write!(write_errors, section, "endpoint_type", endpoint_type);
                 }
+                "xiaomi" => {
+                    // Cap MiMo at 200k. It advertises ~1M but degrades past
+                    // ~200-300k, and OpenCrabs' transparent compaction already
+                    // gives effectively-infinite memory — the extra window only
+                    // hurts. Pin it on the written section so it survives even
+                    // when the keyless default isn't materialized.
+                    try_write!(write_errors, section, "context_window", "200000");
+                }
                 "" => {
                     if !self.ps.base_url.is_empty() {
                         try_write!(write_errors, section, "base_url", &self.ps.base_url);

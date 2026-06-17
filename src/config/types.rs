@@ -993,6 +993,11 @@ pub fn xiaomi_provider_defaults() -> ProviderConfig {
         // (via ProviderVisionTool) instead of needing a Gemini key. Falls back
         // to Gemini at call time if the proxy ever rejects image content.
         vision_model: Some("mimo-v2.5-pro".to_string()),
+        // Cap at 200k even though MiMo advertises ~1M: quality degrades past
+        // ~200-300k, and OpenCrabs already provides effectively-infinite memory
+        // via transparent compaction, so the extra window buys nothing but
+        // worse responses. Users can raise it manually if they really want it.
+        context_window: Some(200_000),
         ..Default::default()
     }
 }
