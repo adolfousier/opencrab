@@ -792,6 +792,13 @@ async fn cmd_chat_inner(
         crate::brain::tools::telegram_send::TelegramSendTool::new(telegram_state.clone()),
     ));
 
+    // Register cowork tool — launch a Telegram cowork workspace from anywhere
+    // (TUI included); generates the deep link + QR and registers the session.
+    #[cfg(feature = "telegram")]
+    tool_registry.register(Arc::new(
+        crate::brain::tools::cowork_connect::CoworkConnectTool::new(telegram_state.clone()),
+    ));
+
     // Register WhatsApp connect tool (agent-callable QR pairing)
     #[cfg(feature = "whatsapp")]
     tool_registry.register(Arc::new(

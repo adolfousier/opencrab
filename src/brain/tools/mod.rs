@@ -75,6 +75,8 @@ pub mod tool_manage;
 pub mod browser;
 
 // Tool implementations - Phase 4: Channel Integrations
+#[cfg(feature = "telegram")]
+pub mod cowork_connect;
 #[cfg(feature = "discord")]
 pub mod discord_connect;
 #[cfg(feature = "discord")]

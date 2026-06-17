@@ -611,6 +611,27 @@ impl App {
                 self.mode = AppMode::UsageDashboard;
                 true
             }
+            "/cowork" => {
+                // Cowork is a Telegram-group feature but launchable from here:
+                // hand it to the agent so it calls the cowork_connect tool,
+                // which builds the deep link + QR and registers the session.
+                let name = input.strip_prefix("/cowork").unwrap_or("").trim();
+                let prompt = if name.is_empty() {
+                    "[SYSTEM: The user wants to create a Telegram cowork workspace. Ask them \
+                     for a workspace name, then call the cowork_connect tool with it and show \
+                     them the deep link it returns.]"
+                        .to_string()
+                } else {
+                    format!(
+                        "[SYSTEM: Create a Telegram cowork workspace named '{name}': call the \
+                         cowork_connect tool with workspace_name='{name}', then show the user \
+                         the deep link it returns so they can tap it to create the group.]"
+                    )
+                };
+                let sender = self.event_sender();
+                let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
+                true
+            }
             // `/models` IS `/onboard:provider` without progress dots — the exact
             // same shared provider/model picker. One implementation, so a change
             // to the picker affects both; no separate ModelSelector dialog.

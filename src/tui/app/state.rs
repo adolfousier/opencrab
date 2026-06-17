@@ -183,6 +183,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Run connection health check",
     },
     SlashCommand {
+        name: "/cowork",
+        description: "Create a Telegram cowork workspace (QR + deep link)",
+    },
+    SlashCommand {
         name: "/new",
         description: "Start a new session",
     },
