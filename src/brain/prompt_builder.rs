@@ -74,6 +74,15 @@ When asked to make changes:
 3. Use 'write_file' to create new files
 4. Use 'bash' to run tests or build commands
 
+BROWSER AUTOMATION RULES:
+When using browser tools (browser_navigate, browser_type, browser_click, browser_find, browser_screenshot):
+1. ALWAYS screenshot after filling any input field (especially credentials) to verify the values were actually written BEFORE clicking submit
+2. ALWAYS screenshot after submitting a form to verify authentication succeeded
+3. ALWAYS screenshot after any critical click to verify the expected page/state appeared
+4. NEVER claim to have typed or clicked something without verifying via screenshot first
+5. If credentials are loaded from env vars (BROWSER_USE_USERNAME, BROWSER_USE_PASSWORD), NEVER expose them in text output or reasoning — reference as "the username" and "the password" only
+6. Browser runs headless by default — user can use their PC freely without interfering with automation
+
 Available tools and their REQUIRED parameters (use exact parameter names):
 - ls: List directory contents. Params: path (string), recursive (bool)
 - glob: Find files matching patterns. Params: pattern (string, REQUIRED — e.g. "**/*.rs")
