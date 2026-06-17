@@ -445,6 +445,7 @@ enabled = false
 allowed_users = [123456789]             # Who the bot replies to (numeric user ID, empty = everyone)
 # allowed_channels = ["-100123456789"]  # Chat/group IDs to restrict to (empty = all chats)
 # respond_to = "all"                    # "all" | "dm_only" | "mention"
+# silence_group_start = true            # Silently ignore /start from non-allowed users in groups (default: true)
 # session_idle_hours = 24.0             # Archive inactive non-owner sessions after N hours (default: never)
 # rich_messages = true                  # Native rich messages (tables/headings/lists/math). Default false:
                                         # rich is unreadable on Telegram Web and older clients (no fallback),

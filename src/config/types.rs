@@ -111,6 +111,10 @@ pub struct BrainConfig {
     pub default_cap: usize,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_strip_empty_sections() -> bool {
     true
 }
@@ -311,6 +315,11 @@ pub struct TelegramConfig {
     /// (which works on every client) is used.
     #[serde(default)]
     pub rich_messages: bool,
+    /// Silently ignore /start commands from non-allowed users in group chats.
+    /// When true (default), the bot does NOT reply with user ID in groups.
+    /// Users who need their ID can DM the bot instead.
+    #[serde(default = "default_true")]
+    pub silence_group_start: bool,
 }
 
 /// Discord channel configuration
