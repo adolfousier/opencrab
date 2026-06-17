@@ -268,6 +268,21 @@ This is **opt-in** via `channels.telegram.rich_messages = true`, and **off by de
 
 When enabled, native rich applies to the agent's reply (sent as a fresh rich message so it renders cleanly) and to proactive `telegram_send` messages. Plain-prose replies are left untouched, so incidental characters like a stray `*` or `#` are never reinterpreted. If the rich send fails for any reason, OpenCrabs falls back silently to HTML, so a message is never dropped.
 
+#### /cowork — Telegram-only workspace creation
+
+The `/cowork` command creates a team workspace directly from Telegram. It is **Telegram-only** because it relies on Telegram-specific primitives: group creation via `?startgroup` deep links, invite links, QR codes from `t.me` URLs, and `new_chat_members` service messages for auto-registration. None of these exist in Discord, Slack, or WhatsApp.
+
+**Prerequisite:** Telegram must be configured (bot token set via `/onboard:channels telegram` or manual `config.toml` setup).
+
+**Flow:**
+1. User sends `/cowork` in DM → bot asks for workspace name
+2. User sends workspace name → bot generates a `?startgroup=cowork_<id>` deep link as an inline button
+3. User taps the button → Telegram's native "create group" UI opens — user names the group, Telegram creates it and adds the bot
+4. Bot detects the startgroup parameter → generates an invite link, creates a QR code PNG, sends it to the user's DM
+5. New members who join the group via the invite link auto-register in `config.telegram.allowed_users` — the owner gets a confirmation message
+
+**Cross-channel behavior:** If `/cowork` is sent from Discord, Slack, WhatsApp, or the TUI, it is treated as a regular message (the agent handles it naturally). The feature only activates in Telegram DMs.
+
 ### Terminal UI
 | Feature | Description |
 |---------|-------------|
@@ -3543,6 +3558,21 @@ See [BUILD_NOTES.md](src/docs/guides/BUILD_NOTES.md) for detailed troubleshootin
 ---
 
 ## 🔧 Troubleshooting
+
+### Telegram Won't Connect / Reconnect
+
+If the Telegram bot stops responding or you need to re-link it, re-run the channels setup and re-confirm the token + your numeric user ID.
+
+**Fix:**
+
+1. Run `/onboard:channels` (TUI: opens the wizard; on a channel: the agent walks you through it).
+2. Paste your **bot token** again if it's missing (get it from [@BotFather](https://t.me/BotFather)).
+3. Paste your **numeric user ID** and hit Enter to confirm.
+4. If the bot sends you a message on Telegram, it worked.
+
+On a channel you can do it in one line: `/onboard:channels telegram <BOT_TOKEN> <YOUR_NUMERIC_ID>`.
+
+**Why you have to provide your numeric ID:** Telegram's Bot API exposes only the *bot's* identity from a token (via `getMe`) — it has **no way to reveal who created the bot** in BotFather. A bot only learns a human's ID when that human messages it (the incoming update carries the sender's ID). The onboarding wizard auto-detects your ID via `getUpdates` when you leave the field blank, **but** that only works if (a) you've already messaged the bot and (b) the bot isn't already running and consuming those updates — which is exactly the case during a *reconnect*. So on reconnect, message the bot first, or just paste the ID (get it from [@userinfobot](https://t.me/userinfobot)).
 
 ### Agent Hallucinating Tool Calls
 

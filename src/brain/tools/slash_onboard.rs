@@ -233,11 +233,43 @@ fn onboard_voice_tts(rest: &str) -> Result<ToolResult> {
     }
 }
 
+const TELEGRAM_NO_TOKEN_HELP: &str = "Telegram setup — create a bot on @BotFather:\n\
+    1. Open @BotFather in Telegram (https://t.me/BotFather)\n\
+    2. Send /newbot\n\
+    3. Choose a display name for your bot\n\
+    4. Choose a username (must end with 'bot', e.g. myteam_crab_bot)\n\
+    5. Copy the token BotFather gives you (looks like: 123456789:ABCdef...)\n\
+    6. Send it here: `/onboard:channels telegram <TOKEN>`\n\n\
+    Once the token is saved, the bot starts automatically.";
+
 const CHANNELS_MENU: &str = "Channel setup — connect a messenger:\n\
-    • `/onboard:channels telegram <BOT_TOKEN>`\n\
+    • `/onboard:channels telegram <BOT_TOKEN> [YOUR_NUMERIC_ID]` — or just `/onboard:channels telegram` for setup steps\n\
     • `/onboard:channels discord <BOT_TOKEN>`\n\
     • `/onboard:channels whatsapp` — starts pairing; I'll send you a QR to scan.\n\
     Ask the user which channel + token, then re-run with the argument.";
+
+/// Validate a Telegram bot token format: "numbers:alphanumeric" with key >= 30 chars.
+fn validate_telegram_token(token: &str) -> std::result::Result<(), String> {
+    if token.is_empty() {
+        return Err("Token is empty.".into());
+    }
+    if !token.contains(':') {
+        return Err("Token missing ':' separator. Expected format: 123456789:ABCdef...".into());
+    }
+    let parts: Vec<&str> = token.splitn(2, ':').collect();
+    if parts.len() != 2 {
+        return Err("Token has invalid format. Expected: 123456789:ABCdef...".into());
+    }
+    if parts[0].parse::<u64>().is_err() {
+        return Err("Token bot ID (before ':') must be numeric.".into());
+    }
+    if parts[1].len() < 30 {
+        return Err(
+            "Token API key (after ':') is too short. Expected at least 30 characters.".into(),
+        );
+    }
+    Ok(())
+}
 
 /// `/onboard:channels [telegram <token> | discord <token> | whatsapp]`
 pub(crate) fn onboard_channels(args: &str) -> Result<ToolResult> {
@@ -248,19 +280,51 @@ pub(crate) fn onboard_channels(args: &str) -> Result<ToolResult> {
     let (channel, params) = split_first(args);
     match channel.to_lowercase().as_str() {
         "telegram" => {
-            let token = params.trim();
+            // `<token> [numeric_user_id]` — the token has no spaces, so the
+            // optional second word is the owner's numeric ID.
+            let parts: Vec<&str> = params.split_whitespace().collect();
+            let token = parts.first().copied().unwrap_or("");
             if token.is_empty() {
-                return Ok(ToolResult::error(
-                    "Need the bot token: `/onboard:channels telegram <BOT_TOKEN>`.".into(),
-                ));
+                // No token provided — show BotFather setup instructions
+                return Ok(ToolResult::success(TELEGRAM_NO_TOKEN_HELP.into()));
+            }
+            if let Err(e) = validate_telegram_token(token) {
+                return Ok(ToolResult::error(format!("Invalid token: {e}")));
             }
             set_flags(&[("channels.telegram", "enabled", "true")])?;
             if let Err(e) = crate::config::write_secret_key("channels.telegram", "token", token) {
                 return Ok(ToolResult::error(format!("Failed to save token: {e}")));
             }
-            Ok(ToolResult::success(
-                "Telegram enabled. Restart (or hot-reload) to start the bot.".into(),
-            ))
+            // Optional numeric user ID → allowlist. Telegram's Bot API can't
+            // reveal who owns the bot from the token, so the owner's ID has to
+            // be supplied (or the bot learns it when the owner messages it).
+            let id_note = match parts.get(1) {
+                Some(id)
+                    if id
+                        .trim_start_matches('-')
+                        .chars()
+                        .all(|c| c.is_ascii_digit()) =>
+                {
+                    if let Err(e) =
+                        Config::write_array("channels.telegram", "allowed_users", &[id.to_string()])
+                    {
+                        return Ok(ToolResult::error(format!("Failed to save user ID: {e}")));
+                    }
+                    format!(" Allowed user set to {id}.")
+                }
+                Some(bad) => {
+                    return Ok(ToolResult::error(format!(
+                        "User ID '{bad}' must be numeric — get it from @userinfobot on Telegram."
+                    )));
+                }
+                None => " No numeric user ID given — message the bot so it learns your ID, or \
+                         pass it: `/onboard:channels telegram <token> <numeric_id>`."
+                    .to_string(),
+            };
+            Ok(ToolResult::success(format!(
+                "Telegram enabled.{id_note} The bot starts on next restart or hot-reload — \
+                 message it to confirm it replies."
+            )))
         }
         "discord" => {
             let token = params.trim();
