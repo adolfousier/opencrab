@@ -463,7 +463,7 @@ static KEYVAL_SECRET_RE: Lazy<Regex> = Lazy::new(|| {
 /// used in structured text output, markdown, and shell-style credential lists.
 static LABELED_CRED_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r#"(?i)\b(password|passwd|pass|token|secret|api[_ ]?key|credential|auth|email)\s*:\s*"?([^\s"',;`]+)"?"#
+        r#"(?i)\b(password|passwd|pass|token|secret|api[_ ]?key|credential|auth|email)\s*:\s*"?([^\s"',;`\[]+)"?"#
     ).unwrap()
 });
 
@@ -676,6 +676,17 @@ pub fn redact_secrets(text: &str) -> String {
     result = LABELED_CRED_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let key = caps.get(1).unwrap().as_str();
+            // Don't redact if the value looks like a key prefix fragment
+            // left over from earlier redaction passes (short alphanumeric
+            // blobs like `eyJ`, `xoxb-`, `shpat_`). Real credentials are
+            // almost always 8+ chars. This prevents double-redacting values
+            // already handled by KEY_PREFIXES or the mixed-alnum pass.
+            if let Some(val) = caps.get(2) {
+                let v = val.as_str();
+                if v.len() < 8 {
+                    return caps.get(0).unwrap().as_str().to_string();
+                }
+            }
             format!("{key}: [REDACTED]")
         })
         .into_owned();
