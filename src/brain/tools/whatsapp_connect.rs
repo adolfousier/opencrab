@@ -60,6 +60,21 @@ pub fn render_qr_unicode(data: &str) -> Option<String> {
     Some(out)
 }
 
+/// Render a QR code as a scannable PNG (raw bytes). Uses a generous module
+/// size + quiet zone so a phone camera reads it reliably from a chat photo —
+/// unlike the unicode block QR, which only scans on a terminal.
+pub fn render_qr_png(data: &str) -> Option<Vec<u8>> {
+    let code = QrCode::new(data.as_bytes()).ok()?;
+    let img = code
+        .render::<image::Luma<u8>>()
+        .quiet_zone(true)
+        .module_dimensions(10, 10)
+        .build();
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut bytes, image::ImageFormat::Png).ok()?;
+    Some(bytes.into_inner())
+}
+
 /// Handle returned by `subscribe_whatsapp_pairing` for QR / connection events.
 /// No bot is created — subscribes to the single agent bot via WhatsAppState.
 pub struct WhatsAppConnectHandle {
@@ -187,15 +202,26 @@ impl Tool for WhatsAppConnectTool {
 
         match qr_displayed {
             Ok(Ok(qr_code)) => {
-                if let Some(qr_text) = render_qr_unicode(&qr_code)
-                    && let Some(ref cb) = self.progress
-                {
+                if let Some(ref cb) = self.progress {
+                    // Scannable PNG for channels — the Telegram/etc. handler
+                    // turns a `<<IMG:path>>` marker into a sent photo. Keep the
+                    // unicode QR appended so the TUI terminal stays scannable.
+                    let img_marker = render_qr_png(&qr_code)
+                        .and_then(|bytes| {
+                            let dir = opencrabs_home().join("tmp");
+                            let _ = std::fs::create_dir_all(&dir);
+                            let path = dir.join("whatsapp_qr.png");
+                            std::fs::write(&path, &bytes).ok().map(|_| path)
+                        })
+                        .map(|p| format!("\n\n<<IMG:{}>>", p.display()))
+                        .unwrap_or_default();
+                    let unicode = render_qr_unicode(&qr_code).unwrap_or_default();
                     cb(
                         sid,
                         ProgressEvent::IntermediateText {
                             text: format!(
-                                "Scan this QR code with WhatsApp on your phone:\n\n{}",
-                                qr_text
+                                "Scan this QR code with WhatsApp (Linked Devices → Link a \
+                                 Device):{img_marker}\n\n{unicode}"
                             ),
                             reasoning: None,
                         },

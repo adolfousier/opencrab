@@ -1,6 +1,21 @@
 //! Tests for QR code Unicode rendering.
 
-use crate::brain::tools::whatsapp_connect::render_qr_unicode;
+use crate::brain::tools::whatsapp_connect::{render_qr_png, render_qr_unicode};
+
+#[test]
+fn render_qr_png_returns_valid_png_bytes() {
+    let bytes = render_qr_png("https://example.com/whatsapp-pair").expect("png");
+    assert!(!bytes.is_empty());
+    // PNG magic number.
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "should be a real PNG");
+}
+
+#[test]
+fn render_qr_png_differs_for_different_data() {
+    let a = render_qr_png("pair-code-a").unwrap();
+    let b = render_qr_png("pair-code-b").unwrap();
+    assert_ne!(a, b);
+}
 
 #[test]
 fn render_qr_returns_some_for_valid_data() {
