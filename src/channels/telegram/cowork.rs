@@ -119,7 +119,7 @@ pub async fn handle_cowork_command(
         let deep_link = build_cowork_deep_link(&bot_username, &existing.session_id);
 
         let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
-            "🦀 Create Group".to_string(),
+            "🦀 Add to Group".to_string(),
             deep_link.parse().unwrap(),
         )]]);
 
@@ -127,7 +127,8 @@ pub async fn handle_cowork_command(
             "You have a pending /cowork setup. What should we call your workspace?".to_string()
         } else {
             format!(
-                "Workspace: **{}**\n\nTap below to create the group:",
+                "Workspace: **{}**\n\nTap below to add me to any group with your friends.\n\
+                 Don't have one yet? Create a group in Telegram, invite your friends, then come back and tap this button.",
                 existing.workspace_name
             )
         };
@@ -173,15 +174,15 @@ pub async fn handle_workspace_name(
     let deep_link = build_cowork_deep_link(&bot_username, &cowork.session_id);
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
-        "🦀 Create Group".to_string(),
+        "🦀 Add to Group".to_string(),
         deep_link.parse().unwrap(),
     )]]);
 
     let text = format!(
-        "Workspace: **{}**\n\nTap below to create the group. \
-         Name it '{}' when Telegram asks.\n\n\
-         Once created, I'll generate an invite QR for your team.",
-        workspace_name, workspace_name
+        "Workspace: **{}**\n\nTap below to add me to any group with your friends.\n\
+         Don't have one yet? Create a group in Telegram, invite your friends, then come back and tap this button.\n\n\
+         I'll auto-register everyone when they send a message.",
+        workspace_name
     );
 
     message_in_thread(bot, ChatId(chat_id), thread_id, text)
