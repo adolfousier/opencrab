@@ -828,6 +828,10 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("sessions", "List and switch sessions"),
         BotCommand::new("stop", "Cancel the current operation"),
         BotCommand::new("compact", "Compact conversation context"),
+        BotCommand::new(
+            "cowork",
+            "Create a cowork workspace with QR invite (Telegram only)",
+        ),
         BotCommand::new("doctor", "Run connection health check"),
         BotCommand::new("evolve", "Check for updates"),
         BotCommand::new("rtk", "Show RTK token savings statistics"),

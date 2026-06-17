@@ -417,6 +417,7 @@ pub(crate) fn format_help() -> String {
         "📖 *Available Commands*".to_string(),
         String::new(),
         "`/compact`  — Compact context (summarize & trim)".to_string(),
+        "`/cowork`   — Create a cowork workspace with QR invite (Telegram only)".to_string(),
         "`/evolve`   — Download latest release & restart".to_string(),
         "`/help`     — Show this message".to_string(),
         "`/mission-control` Mission control: analytics, activity, inbox & schedule".to_string(),

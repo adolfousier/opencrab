@@ -4,6 +4,7 @@
 //! allowlisted users to the AgentService and replying with responses.
 
 mod agent;
+pub(crate) mod cowork;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod rich;
@@ -69,6 +70,12 @@ pub struct TelegramState {
     /// Photo debounce tokens: (chat_id, user_id, media_group_id) → CancellationToken
     /// Each new photo in the same album cancels the previous timer and starts a new 3s one.
     photo_debounce: Mutex<HashMap<PhotoBufferKey, CancellationToken>>,
+    /// Active /cowork conversations: user_id → CoworkState
+    cowork_conversations: Mutex<HashMap<i64, cowork::CoworkState>>,
+    /// Cowork session lookup: session_id → CoworkState (for startgroup detection)
+    cowork_sessions: Mutex<HashMap<String, cowork::CoworkState>>,
+    /// Set of chat_ids that are cowork groups (for auto-register on join)
+    cowork_groups: tokio::sync::Mutex<std::collections::HashSet<i64>>,
 }
 
 impl Default for TelegramState {
@@ -90,6 +97,9 @@ impl TelegramState {
             cancel_tokens: Mutex::new(HashMap::new()),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
+            cowork_conversations: Mutex::new(HashMap::new()),
+            cowork_sessions: Mutex::new(HashMap::new()),
+            cowork_groups: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -298,5 +308,74 @@ impl TelegramState {
     pub async fn cleanup_photo_debounce(&self, chat_id: i64, user_id: i64, media_group_id: &str) {
         let key = (chat_id, user_id, media_group_id.to_string());
         self.photo_debounce.lock().await.remove(&key);
+    }
+
+    // ── Cowork state management ──────────────────────────────────────────
+
+    /// Start a new /cowork conversation for a user.
+    pub async fn start_cowork(&self, user_id: i64, chat_id: i64, session_id: String) {
+        let state = cowork::CoworkState::new(user_id, chat_id, session_id.clone());
+        self.cowork_sessions
+            .lock()
+            .await
+            .insert(session_id, state.clone());
+        self.cowork_conversations
+            .lock()
+            .await
+            .insert(user_id, state);
+    }
+
+    /// Get the active /cowork state for a user (if any).
+    pub async fn get_cowork_state(&self, user_id: i64) -> Option<cowork::CoworkState> {
+        self.cowork_conversations
+            .lock()
+            .await
+            .get(&user_id)
+            .cloned()
+    }
+
+    /// Set the workspace name for an active /cowork conversation.
+    /// Returns the updated state, or None if no active conversation.
+    pub async fn set_workspace_name(
+        &self,
+        user_id: i64,
+        name: &str,
+    ) -> Option<cowork::CoworkState> {
+        let mut convos = self.cowork_conversations.lock().await;
+        if let Some(state) = convos.get_mut(&user_id) {
+            state.workspace_name = name.to_string();
+            // Also update the session lookup
+            let mut sessions = self.cowork_sessions.lock().await;
+            sessions.insert(state.session_id.clone(), state.clone());
+            Some(state.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Take (remove) a cowork state by session_id. Used when bot joins a group.
+    pub async fn take_cowork_by_session(&self, session_id: &str) -> Option<cowork::CoworkState> {
+        let state = self.cowork_sessions.lock().await.remove(session_id);
+        if let Some(ref s) = state {
+            self.cowork_conversations.lock().await.remove(&s.user_id);
+        }
+        state
+    }
+
+    /// Clear the cowork state for a user.
+    pub async fn clear_cowork(&self, user_id: i64) {
+        if let Some(state) = self.cowork_conversations.lock().await.remove(&user_id) {
+            self.cowork_sessions.lock().await.remove(&state.session_id);
+        }
+    }
+
+    /// Add a chat_id to the tracked cowork groups set.
+    pub async fn add_cowork_group(&self, chat_id: i64) {
+        self.cowork_groups.lock().await.insert(chat_id);
+    }
+
+    /// Check if a chat_id is a tracked cowork group.
+    pub async fn is_cowork_group(&self, chat_id: i64) -> bool {
+        self.cowork_groups.lock().await.contains(&chat_id)
     }
 }

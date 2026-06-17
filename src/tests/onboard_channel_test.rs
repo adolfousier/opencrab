@@ -64,11 +64,36 @@ fn voice_menu_and_subcommand_validation() {
 }
 
 #[test]
-fn channels_menu_and_missing_token() {
+fn channels_menu_and_no_token_shows_instructions() {
     assert!(onboard_channels("").unwrap().success);
+    // telegram without token now shows BotFather instructions instead of error
     let r = onboard_channels("telegram").unwrap();
+    assert!(r.success);
+    assert!(r.output.contains("BotFather"));
+    assert!(r.output.contains("/newbot"));
+}
+
+#[test]
+fn channels_telegram_invalid_token_errors() {
+    // Missing colon
+    let r = onboard_channels("telegram abc123").unwrap();
     assert!(!r.success);
-    assert!(r.error.unwrap().to_lowercase().contains("token"));
+    assert!(r.error.unwrap().contains("missing ':'"));
+}
+
+#[test]
+fn channels_telegram_short_key_errors() {
+    // Valid format but key too short
+    let r = onboard_channels("telegram 123456:abc").unwrap();
+    assert!(!r.success);
+    assert!(r.error.unwrap().contains("too short"));
+}
+
+#[test]
+fn channels_telegram_non_numeric_id_errors() {
+    let r = onboard_channels("telegram notanumber:ABCdefGHIjklMNOpqrsTUVwxyz123456").unwrap();
+    assert!(!r.success);
+    assert!(r.error.unwrap().contains("numeric"));
 }
 
 #[test]
