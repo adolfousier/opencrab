@@ -58,6 +58,7 @@ pub mod rsi_propose;
 pub mod self_improve;
 pub mod session_search;
 pub mod slash_command;
+pub mod slash_onboard;
 pub mod task;
 pub mod tool_search;
 pub mod write_opencrabs_file;

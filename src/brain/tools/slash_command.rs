@@ -189,6 +189,13 @@ impl Tool for SlashCommandTool {
             )));
         }
 
+        // `/onboard:<step>` — channel-capable onboarding (image/voice/channels).
+        // The TUI wizard is interactive; these text handlers write the same
+        // config so setup works over Telegram/Discord/etc.
+        if let Some(step) = command.strip_prefix("/onboard:") {
+            return super::slash_onboard::dispatch(step, args);
+        }
+
         match command {
             "/cd" => self.handle_cd(args, context),
             "/compact" => Ok(ToolResult::success(
