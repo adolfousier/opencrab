@@ -146,6 +146,8 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 
 #### Vision setup — two paths, pick one
 
+> **Using Xiaomi during the collab?** Share images and OpenCrabs automatically routes to a vision-capable model. No setup needed.
+
 **Path A (preferred, simpler).** Set `vision_model = "<model>"` on your active `[providers.<name>]` block in `config.toml`. Works for every built-in and custom provider — the agent calls the vision model on the **same provider endpoint** via the `analyze_image` tool, so no second API key is needed. Pick a vision-capable model on that provider (DeepSeek chat models like `deepseek-v4-flash` reject `image_url` content, so point `vision_model` at a vision-capable variant of the same family — every provider has at least one).
 
 ```toml
@@ -2503,7 +2505,7 @@ Any tool on your `$PATH` works. If it runs in your terminal, OpenCrabs can use i
 | `/whisper` | Voice-to-text — speak anywhere, pastes to clipboard |
 | `/cd` | Change working directory (directory picker) |
 | `/settings` or `S` | Open Settings screen (provider, approval, commands, paths) |
-| `/stop` | Abort in-progress agent operation (channels only — TUI uses `Escape` x2) |
+| `/stop` | Abort in-progress agent operation immediately (type `stop` or `/stop` in any channel or TUI) |
 | `/new` | Start a new session |
 | `/evolve` | Check for updates and install latest release |
 | `/rtk` | Show RTK token savings statistics |
@@ -2522,6 +2524,7 @@ When connected via messaging channels, the following slash commands are availabl
 | `/stop` | Abort the current agent operation immediately — cancels streaming, tool execution, and any pending approvals. Equivalent to double-Escape in the TUI |
 | `/rtk` | Show RTK token savings statistics |
 | `/new` | Start a new session |
+| `/rename <title>` | Rename the current session |
 
 Model switching via `/models` changes the model within the current provider and takes effect immediately (no restart needed). The selection persists to `config.toml`.
 
