@@ -185,6 +185,8 @@ pub enum ChannelCommand {
     UserSystem(String),
     /// Unknown slash command — warn the user, don't forward to agent
     UnknownCommand(String),
+    /// `/rename <title>` — rename the current session
+    Rename(String),
     /// Not a recognised command — pass through to agent
     NotACommand,
 }
@@ -255,6 +257,20 @@ pub async fn handle_command(
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
         "/mission-control" => ChannelCommand::MissionControl(format_mission_control(agent).await),
+        cmd if cmd.starts_with("/rename ") => {
+            let title = cmd.strip_prefix("/rename ").unwrap_or("").trim();
+            if title.is_empty() {
+                ChannelCommand::Rename("Usage: `/rename <new title>`".to_string())
+            } else {
+                match session_svc
+                    .update_session_title(session_id, Some(title.to_string()))
+                    .await
+                {
+                    Ok(()) => ChannelCommand::Rename(format!("✅ Session renamed to: `{}`", title)),
+                    Err(e) => ChannelCommand::Rename(format!("⚠️ Failed to rename: {}", e)),
+                }
+            }
+        }
         _ if trimmed.starts_with('/') && !crate::utils::string::looks_like_file_path(trimmed) => {
             match_user_command(trimmed)
         }
@@ -265,7 +281,8 @@ pub async fn handle_command(
     let response_text = match &result {
         ChannelCommand::Help(body)
         | ChannelCommand::Usage(body)
-        | ChannelCommand::MissionControl(body) => Some(body.clone()),
+        | ChannelCommand::MissionControl(body)
+        | ChannelCommand::Rename(body) => Some(body.clone()),
         ChannelCommand::Models(resp) => Some(resp.text.clone()),
         ChannelCommand::Sessions(resp) => Some(resp.text.clone()),
         ChannelCommand::NewSession => Some("New session started.".to_string()),
@@ -405,6 +422,7 @@ pub(crate) fn format_help() -> String {
         "`/mission-control` Mission control: analytics, activity, inbox & schedule".to_string(),
         "`/models`   — Switch AI model".to_string(),
         "`/new`      — Start a new session".to_string(),
+        "`/rename`   — Rename current session (`/rename <new title>`)".to_string(),
         "`/rtk`      — Show RTK token savings statistics".to_string(),
         "`/sessions` — Switch between sessions (`/sessions:<query>` to filter)".to_string(),
         "`/stop`     — Abort current operation".to_string(),
