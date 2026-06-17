@@ -1363,7 +1363,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     // User ID input — NOT a secret, always show the real value.
     let uid_focused = wizard.telegram_field == TelegramField::UserID;
     let uid_display = if wizard.telegram_user_id_input.is_empty() {
-        "your numeric chat ID".to_string()
+        "your numeric user ID (required)".to_string()
     } else {
         wizard.telegram_user_id_input.clone()
     };
@@ -1371,7 +1371,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
 
     lines.push(Line::from(vec![
         Span::styled(
-            "  Chat ID:   ",
+            "  User ID:   ",
             Style::default().fg(if uid_focused { BRAND_BLUE } else { Color::Gray }),
         ),
         Span::styled(
@@ -1388,7 +1388,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  To get your chat ID: open Telegram, message @userinfobot",
+        "  To get your User ID: open Telegram, message @userinfobot",
         Style::default()
             .fg(Color::Gray)
             .add_modifier(Modifier::ITALIC),

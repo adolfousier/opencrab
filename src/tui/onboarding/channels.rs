@@ -192,9 +192,23 @@ impl OnboardingWizard {
                 }
                 KeyCode::Enter => {
                     let has_token = !self.telegram_token_input.is_empty();
+                    let has_id = !self.telegram_user_id_input.is_empty();
+                    if has_token && !has_id {
+                        // Require BOTH. The Bot API can't derive the owner from
+                        // the token, and auto-detect via getUpdates silently
+                        // fails on reconnect (the running bot already consumed
+                        // the updates) — leaving the bot unable to reply. Block
+                        // confirmation rather than "succeed" into a mute bot.
+                        self.channel_test_status = ChannelTestStatus::Failed(
+                            "Enter your numeric User ID first (message @userinfobot to get it) \
+                             — Telegram needs it so the bot knows who to reply to."
+                                .to_string(),
+                        );
+                        return WizardAction::None;
+                    }
                     if has_token {
-                        // Token present — test connection. User ID is optional;
-                        // test_telegram_connection auto-detects it via getUpdates.
+                        // Token + ID present — test connection (sends a live
+                        // confirmation message; success only if it's delivered).
                         return WizardAction::TestTelegram;
                     }
                     self.next_step();
