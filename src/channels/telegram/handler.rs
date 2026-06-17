@@ -162,6 +162,157 @@ pub(crate) fn prepend_caption(caption: &str, body: String) -> String {
     }
 }
 
+/// Fire-and-forget: save any incoming voice/document/audio file to
+/// `~/.opencrabs/tmp/` so the agent can pick them up later when tagged.
+/// This runs for ALL incoming messages regardless of mention-only status.
+async fn save_incoming_files_to_tmp(bot: &Bot, msg: &Message, bot_token: &str) {
+    use std::path::PathBuf;
+
+    // Skip private chats — the bot will process those directly
+    if matches!(msg.chat.kind, teloxide::types::ChatKind::Private { .. }) {
+        return;
+    }
+
+    let tmp_dir: PathBuf = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".opencrabs")
+        .join("tmp");
+    let _ = std::fs::create_dir_all(&tmp_dir);
+
+    let chat_id = msg.chat.id.0;
+    let ts = chrono::Utc::now().timestamp();
+
+    // Voice messages (.ogg)
+    if let Some(voice) = msg.voice() {
+        save_telegram_file(
+            bot,
+            bot_token,
+            voice.file.id.clone(),
+            &tmp_dir,
+            &format!("voice-{chat_id}-{ts}.ogg"),
+        )
+        .await;
+    }
+    // Video notes (.mp4)
+    if let Some(vn) = msg.video_note() {
+        save_telegram_file(
+            bot,
+            bot_token,
+            vn.file.id.clone(),
+            &tmp_dir,
+            &format!("video_note-{chat_id}-{ts}.mp4"),
+        )
+        .await;
+    }
+    // Documents (preserve original extension)
+    if let Some(doc) = msg.document() {
+        let ext = doc
+            .file_name
+            .as_deref()
+            .and_then(|n| n.rsplit('.').next())
+            .unwrap_or("bin");
+        save_telegram_file(
+            bot,
+            bot_token,
+            doc.file.id.clone(),
+            &tmp_dir,
+            &format!("doc-{chat_id}-{ts}.{ext}"),
+        )
+        .await;
+    }
+    // Audio files (.mp3/.ogg/.wav etc)
+    if let Some(audio) = msg.audio() {
+        let ext = audio
+            .file_name
+            .as_deref()
+            .and_then(|n| n.rsplit('.').next())
+            .unwrap_or("ogg");
+        save_telegram_file(
+            bot,
+            bot_token,
+            audio.file.id.clone(),
+            &tmp_dir,
+            &format!("audio-{chat_id}-{ts}.{ext}"),
+        )
+        .await;
+    }
+}
+
+/// Download a file from Telegram by file_id and save to the given path.
+async fn save_telegram_file(
+    bot: &Bot,
+    bot_token: &str,
+    file_id: teloxide::types::FileId,
+    dir: &std::path::Path,
+    filename: &str,
+) {
+    let file = match bot.get_file(file_id).await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!("Telegram: tmp save: get_file failed: {e}");
+            return;
+        }
+    };
+    let url = format!("https://api.telegram.org/file/bot{bot_token}/{}", file.path);
+    let bytes = match reqwest::get(&url).await {
+        Ok(r) => match r.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("Telegram: tmp save: read bytes failed: {e}");
+                return;
+            }
+        },
+        Err(e) => {
+            tracing::warn!("Telegram: tmp save: download failed: {e}");
+            return;
+        }
+    };
+    let path = dir.join(filename);
+    match std::fs::write(&path, &bytes) {
+        Ok(()) => tracing::info!("Telegram: saved incoming file → {}", path.display()),
+        Err(e) => tracing::warn!("Telegram: tmp save: write failed: {e}"),
+    }
+}
+
+/// Check `~/.opencrabs/tmp/` for the most recent voice/audio file from a
+/// specific chat (within `max_age_secs`). Returns the path if found.
+pub(crate) fn find_recent_voice_in_tmp(
+    chat_id: i64,
+    max_age_secs: i64,
+) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let tmp_dir: PathBuf = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".opencrabs")
+        .join("tmp");
+
+    let now = chrono::Utc::now().timestamp();
+    let prefix = format!("voice-{chat_id}-");
+
+    let mut best: Option<(i64, PathBuf)> = None;
+
+    let entries = std::fs::read_dir(&tmp_dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with(&prefix) {
+            continue;
+        }
+        // Extract timestamp from filename: voice-{chat_id}-{ts}.ogg
+        let ts_str = name_str.strip_prefix(&prefix)?.split('.').next()?;
+        let ts: i64 = ts_str.parse().ok()?;
+        if now - ts > max_age_secs {
+            continue;
+        }
+        match &best {
+            Some((best_ts, _)) if ts <= *best_ts => {}
+            _ => best = Some((ts, entry.path())),
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_message(
     bot: Bot,
@@ -188,10 +339,19 @@ pub(crate) async fn handle_message(
     // and non-forum groups.
     let thread_id = msg.thread_id;
 
-    // /start command -- always respond with user ID (for allowlist setup)
+    // /start command -- check for cowork startgroup param, else show user ID
     if let Some(text) = msg.text()
         && text.starts_with("/start")
     {
+        // Cowork startgroup: /start cowork_<id> (bot added to group via deep link)
+        if let Some(param) = text.strip_prefix("/start ")
+            && super::cowork::is_cowork_session(param)
+        {
+            super::cowork::handle_cowork_group_join(&bot, &msg, &telegram_state, param, thread_id)
+                .await?;
+            return Ok(());
+        }
+
         let reply = format!(
             "OpenCrabs Telegram Bot\n\nYour user ID: {}\n\nAdd this ID to your config.toml under [channels.telegram] allowed_users to get started.",
             user_id
@@ -247,6 +407,37 @@ pub(crate) async fn handle_message(
                     .await;
                 }
             }
+
+            // Auto-register non-bot members in cowork groups
+            if !is_bot && super::cowork::is_cowork_group(chat_id, &telegram_state).await {
+                match super::cowork::auto_register_user(uid as i64) {
+                    Ok(true) => {
+                        tracing::info!(
+                            "[cowork] Auto-registered user {} ({}) in group {}",
+                            uid,
+                            name,
+                            chat_id
+                        );
+                        if let Some(owner_id_str) = cfg.channels.telegram.allowed_users.first()
+                            && let Ok(owner_id) = owner_id_str.parse::<i64>()
+                        {
+                            let _ = crate::channels::telegram::send::message_in_thread(
+                                &bot,
+                                teloxide::types::ChatId(owner_id),
+                                None,
+                                format!("✅ New member joined workspace: {} ({})", name, uid),
+                            )
+                            .await;
+                        }
+                    }
+                    Ok(false) => {
+                        tracing::debug!("[cowork] User {} already registered", uid);
+                    }
+                    Err(e) => {
+                        tracing::warn!("[cowork] Failed to auto-register user {}: {}", uid, e);
+                    }
+                }
+            }
         }
         // Service messages have no further content to process
         return Ok(());
@@ -270,6 +461,18 @@ pub(crate) async fn handle_message(
     }
 
     let tg_cfg = &cfg.channels.telegram;
+
+    // Fire-and-forget: save incoming voice/document/audio files to tmp
+    // so the agent can pick them up later when tagged in mention-only groups.
+    {
+        let bot_c = bot.clone();
+        let msg_c = msg.clone();
+        let bt = bot_token.to_string();
+        tokio::spawn(async move {
+            save_incoming_files_to_tmp(&bot_c, &msg_c, &bt).await;
+        });
+    }
+
     let allowed: HashSet<i64> = tg_cfg
         .allowed_users
         .iter()
@@ -463,9 +666,34 @@ pub(crate) async fn handle_message(
         store_channel_msg(msg.text().or(msg.caption()).unwrap_or("").to_string()).await;
     }
 
+    // Pick up recent voice files from tmp (user sent audio then tagged bot)
+    let mut tmp_voice_transcript: Option<String> = None;
+    if !is_dm
+        && msg.voice().is_none()
+        && voice_config.stt_enabled
+        && let Some(voice_path) = find_recent_voice_in_tmp(msg.chat.id.0, 300)
+    {
+        match std::fs::read(&voice_path) {
+            Ok(audio_bytes) => {
+                match crate::channels::voice::transcribe(audio_bytes, &voice_config).await {
+                    Ok(transcript) => {
+                        tracing::info!(
+                            "Telegram: picked up voice from tmp: {}",
+                            truncate_str(&transcript, 80)
+                        );
+                        tmp_voice_transcript = Some(transcript);
+                        let _ = std::fs::remove_file(&voice_path);
+                    }
+                    Err(e) => tracing::warn!("Telegram: tmp voice transcription failed: {e}"),
+                }
+            }
+            Err(e) => tracing::warn!("Telegram: failed to read tmp voice file: {e}"),
+        }
+    }
+
     // Extract text from either text message or voice note (via STT)
-    let (text, is_voice) = if let Some(t) = msg.text() {
-        if t.is_empty() {
+    let (mut text, is_voice) = if let Some(t) = msg.text() {
+        if t.is_empty() && tmp_voice_transcript.is_none() {
             return Ok(());
         }
         (t.to_string(), false)
@@ -939,6 +1167,15 @@ pub(crate) async fn handle_message(
         return Ok(());
     };
 
+    // Prepend any voice transcript picked up from tmp
+    if let Some(vt) = tmp_voice_transcript {
+        if text.is_empty() {
+            text = vt;
+        } else {
+            text = format!("[Voice note]: {vt}\n\n{text}");
+        }
+    }
+
     // Log ALL processed messages (voice transcripts, photo captions, doc text) for group context.
     // Text-only messages in groups were already logged above during respond_to filtering;
     // this catches voice, photo, and document messages that bypassed the early return paths.
@@ -970,6 +1207,38 @@ pub(crate) async fn handle_message(
     } else {
         text
     };
+
+    // ── Cowork command handling (DM only) ─────────────────────────────
+    if is_dm && text == "/cowork" {
+        super::cowork::handle_cowork_command(
+            &bot,
+            &msg,
+            &telegram_state,
+            user_id,
+            msg.chat.id.0,
+            thread_id,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // Workspace name input: active cowork conversation + non-command text
+    if is_dm
+        && !text.starts_with('/')
+        && !text.is_empty()
+        && telegram_state.get_cowork_state(user_id).await.is_some()
+    {
+        super::cowork::handle_workspace_name(
+            &bot,
+            &telegram_state,
+            user_id,
+            msg.chat.id.0,
+            &text,
+            thread_id,
+        )
+        .await?;
+        return Ok(());
+    }
 
     tracing::info!(
         "Telegram: {} from user {} ({}): {}",
