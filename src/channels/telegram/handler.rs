@@ -165,6 +165,42 @@ pub(crate) fn prepend_caption(caption: &str, body: String) -> String {
 /// Fire-and-forget: save any incoming voice/document/audio file to
 /// `~/.opencrabs/tmp/` so the agent can pick them up later when tagged.
 /// This runs for ALL incoming messages regardless of mention-only status.
+/// Rewrite `<<IMG:local_path>>` markers in `text` to their archived location
+/// under the session's project files dir. Each local image is tracked via
+/// `FileService`, which copies it into `projects/<name>/files/` when the
+/// session belongs to a project; for non-project sessions (or URLs) the path
+/// is returned unchanged, so the marker is left as-is.
+async fn archive_image_markers(
+    text: &str,
+    session_id: uuid::Uuid,
+    fs: &crate::services::FileService,
+) -> String {
+    use std::path::PathBuf;
+    let mut replacements: Vec<(String, String)> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("<<IMG:") {
+        let after = &rest[start + 6..];
+        let Some(end) = after.find(">>") else { break };
+        let path = &after[..end];
+        if !path.starts_with("http")
+            && let Ok(file) = fs
+                .get_or_create_file(session_id, PathBuf::from(path), None)
+                .await
+        {
+            let new = file.path.to_string_lossy().to_string();
+            if new != path {
+                replacements.push((path.to_string(), new));
+            }
+        }
+        rest = &after[end + 2..];
+    }
+    let mut out = text.to_string();
+    for (old, new) in replacements {
+        out = out.replace(&format!("<<IMG:{old}>>"), &format!("<<IMG:{new}>>"));
+    }
+    out
+}
+
 async fn save_incoming_files_to_tmp(bot: &Bot, msg: &Message, bot_token: &str) {
     use std::path::PathBuf;
 
@@ -1635,6 +1671,17 @@ pub(crate) async fn handle_message(
     telegram_state
         .register_session_chat(session_id, msg.chat.id.0)
         .await;
+
+    // Archive any shared images under the session's project files dir (when the
+    // session is assigned to a project) so a project's media lives together and
+    // survives the tmp purge. Rewrites the <<IMG:tmp>> marker to the archived
+    // path; no-op for non-project sessions and URLs.
+    let text = if text.contains("<<IMG:") {
+        let fs = crate::services::FileService::new(agent.context().clone());
+        archive_image_markers(&text, session_id, &fs).await
+    } else {
+        text
+    };
 
     // Restore session's own provider (each session keeps its provider independently)
     let session_meta = session_svc.get_session(session_id).await.ok().flatten();
