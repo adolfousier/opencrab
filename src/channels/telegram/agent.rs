@@ -864,6 +864,17 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         commands.push(BotCommand::new(name, description));
     }
 
+    // Normalize EVERY command name to Telegram's rules (a-z 0-9 _, 1-32 chars).
+    // Telegram rejects the ENTIRE setMyCommands call if a single name is
+    // invalid, so one hyphenated built-in (e.g. "mission-control") silently
+    // nuked the whole menu — it kept showing the stale list (analytics, no
+    // mission-control) because nothing ever registered. The built-ins weren't
+    // sanitized like user commands/skills were.
+    for c in &mut commands {
+        c.command = sanitize_command_name(&c.command);
+    }
+    commands.retain(|c| !c.command.is_empty() && c.command.len() <= 32);
+
     // Telegram limit: max 100 commands
     commands.truncate(100);
 

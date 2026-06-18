@@ -44,6 +44,20 @@ fn sanitize_handles_single_character() {
 }
 
 #[test]
+fn mission_control_becomes_valid_telegram_name() {
+    // Regression: the hardcoded built-in `mission-control` wasn't sanitized,
+    // so its hyphen made the WHOLE setMyCommands call fail (BOT_COMMAND_INVALID)
+    // and the menu froze on the stale list (analytics, no mission-control).
+    let name = sanitize_command_name("mission-control");
+    assert_eq!(name, "mission_control");
+    assert!(
+        name.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+        "sanitized name must contain no hyphens or other invalid chars"
+    );
+}
+
+#[test]
 fn truncate_preserves_short_descriptions() {
     assert_eq!(truncate_description("Short desc", 256), "Short desc");
     assert_eq!(truncate_description("", 256), "");

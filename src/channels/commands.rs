@@ -256,7 +256,12 @@ pub async fn handle_command(
         }
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
-        "/mission-control" => ChannelCommand::MissionControl(format_mission_control(agent).await),
+        // Telegram registers the hyphen-free `mission_control` (its command
+        // names allow no hyphens), so a menu tap sends `/mission_control`;
+        // accept both that and the typed `/mission-control`.
+        "/mission-control" | "/mission_control" => {
+            ChannelCommand::MissionControl(format_mission_control(agent).await)
+        }
         cmd if cmd.starts_with("/rename ") => {
             let title = cmd.strip_prefix("/rename ").unwrap_or("").trim();
             if title.is_empty() {
