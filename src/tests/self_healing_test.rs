@@ -1512,35 +1512,48 @@ fn phantom_no_tools_ignores_conversational_past_tense() {
 #[test]
 fn stuck_loop_catches_let_me_repetitions() {
     use crate::brain::agent::service::{count_intent_line_starts, is_stuck_in_intent_loop};
+    // The SAME line repeated 5 times — genuine phantom loop.
     let text = "\
         Let me fetch issue #81 to understand what it's about.\n\n\
-        Let me pull up the issue to see what's really being reported.\n\n\
-        Let me fetch issue #81.\n\n\
-        OK, let me fetch issue #81 from GitHub.\n\n\
-        Let me pull up issue #81.";
+        Let me fetch issue #81 to understand what it's about.\n\n\
+        Let me fetch issue #81 to understand what it's about.\n\n\
+        Let me fetch issue #81 to understand what it's about.\n\n\
+        Let me fetch issue #81 to understand what it's about.";
     assert_eq!(count_intent_line_starts(text), 5);
     assert!(is_stuck_in_intent_loop(text));
 }
 
 #[test]
 fn stuck_loop_threshold_is_three() {
-    use crate::brain::agent::service::{count_intent_line_starts, is_stuck_in_intent_loop};
+    use crate::brain::agent::service::is_stuck_in_intent_loop;
 
-    let two = "Let me check the logs.\nI'll look at the diff.";
-    assert_eq!(count_intent_line_starts(two), 2);
+    let two = "Let me check the logs.\nLet me check the logs.";
     assert!(!is_stuck_in_intent_loop(two), "2 reps is normal narration");
 
-    let three = "Let me check the logs.\nI'll look at the diff.\nNow let me run the tests.";
-    assert_eq!(count_intent_line_starts(three), 3);
-    assert!(is_stuck_in_intent_loop(three), "3 reps is stuck");
+    let three = "Let me check the logs.\nLet me check the logs.\nLet me check the logs.";
+    assert!(
+        is_stuck_in_intent_loop(three),
+        "3 reps of the same line is stuck"
+    );
+
+    // 3 DISTINCT intent lines is NOT stuck — that's a legitimate plan.
+    let distinct = "Let me check the logs.\nI'll look at the diff.\nNow let me run the tests.";
+    assert!(
+        !is_stuck_in_intent_loop(distinct),
+        "distinct lines are not a loop"
+    );
 }
 
 #[test]
 fn stuck_loop_recognizes_mixed_openers() {
     use crate::brain::agent::service::is_stuck_in_intent_loop;
-    // `let me`, `i'll`, `let's`, `now <verb>` all count.
+    // Mixed openers ("let me", "i'll", "let's", "now") are DISTINCT lines —
+    // that's a legitimate multi-step plan, NOT a phantom loop.
     let text = "Let me try one thing.\nI'll attempt the fetch.\nLet's pull the issue.\nNow check the issue.";
-    assert!(is_stuck_in_intent_loop(text));
+    assert!(
+        !is_stuck_in_intent_loop(text),
+        "distinct openers are not a loop"
+    );
 }
 
 #[test]
