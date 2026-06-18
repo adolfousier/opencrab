@@ -146,6 +146,7 @@ pub mod phantom_deferment_test;
 pub mod phantom_post_success_exemption_test;
 pub mod phantom_pronoun_drop_test;
 pub mod plan_document_test;
+pub mod plan_reminder_test;
 pub mod plan_tool_description_test;
 pub mod plan_tool_test;
 pub mod plan_window_test;

@@ -9,6 +9,20 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 impl AgentService {
+    /// A compact reminder of the session's actively-executing plan, to pin at
+    /// the end of the prompt each turn. `None` when there's no plan, the plan
+    /// isn't executing (Draft / PendingApproval / Rejected / Cancelled), or it's
+    /// already finished. Read straight from the plan file the plan tool writes.
+    fn active_plan_reminder(session_id: Uuid) -> Option<String> {
+        let path = crate::config::opencrabs_home()
+            .join("agents")
+            .join("session")
+            .join(format!(".opencrabs_plan_{session_id}.json"));
+        let content = std::fs::read_to_string(&path).ok()?;
+        let plan: crate::tui::plan::PlanDocument = serde_json::from_str(&content).ok()?;
+        format_plan_reminder(&plan)
+    }
+
     /// Helper to prepare message context for LLM requests
     ///
     /// This extracts the common setup logic shared between send_message() and
@@ -53,8 +67,17 @@ impl AgentService {
             context.system_brain = Some(brain.clone());
         }
 
-        // Add user message
-        let user_msg = Message::user(user_message.clone());
+        // Add user message. If a plan is actively executing, append a compact
+        // reminder of its incomplete tasks so it rides at the END of the prompt
+        // (best recall) every turn — without it the plan scrolls out of the
+        // recency window in a long conversation and the model forgets it was
+        // mid-plan (discussion #177). Regenerated each turn from the plan file;
+        // the DB only ever stores the clean user message, so it never piles up.
+        let context_user_message = match Self::active_plan_reminder(session_id) {
+            Some(reminder) => format!("{user_message}\n\n{reminder}"),
+            None => user_message.clone(),
+        };
+        let user_msg = Message::user(context_user_message);
         context.add_message(user_msg);
 
         // Save user message to database
@@ -666,4 +689,55 @@ The summary above is NOT sufficient for implementation work.
         tracing::info!("Saved compaction summary to {}", memory_path.display());
         Ok(())
     }
+}
+
+/// Build the pinned plan reminder from a plan document. `None` unless the plan
+/// is actively executing (Approved/InProgress) and has unresolved tasks. Pure
+/// (no IO) so it's unit-testable; `active_plan_reminder` does the file load.
+pub(crate) fn format_plan_reminder(plan: &crate::tui::plan::PlanDocument) -> Option<String> {
+    use crate::tui::plan::{PlanStatus, TaskStatus};
+
+    if !matches!(plan.status, PlanStatus::Approved | PlanStatus::InProgress) {
+        return None;
+    }
+    let total = plan.tasks.len();
+    if total == 0 {
+        return None;
+    }
+    let done = plan
+        .tasks
+        .iter()
+        .filter(|t| matches!(t.status, TaskStatus::Completed))
+        .count();
+    // Skipped tasks are intentionally resolved; once every task is done or
+    // skipped there's nothing left to nag about.
+    let resolved = plan
+        .tasks
+        .iter()
+        .filter(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
+        .count();
+    if resolved == total {
+        return None;
+    }
+
+    let mut out = format!(
+        "[ACTIVE PLAN REMINDER — injected by the harness, not from the user]\n\
+         You are partway through a plan ({done}/{total} tasks done). Keep executing it; do not \
+         abandon or forget it. Mark each task complete via the plan tool as you finish, and \
+         finalize the plan once ALL tasks are done.\n\
+         Plan: \"{}\"\n",
+        plan.title
+    );
+    let mut tasks: Vec<&crate::tui::plan::PlanTask> = plan.tasks.iter().collect();
+    tasks.sort_by_key(|t| t.order);
+    for t in &tasks {
+        match &t.status {
+            TaskStatus::InProgress => out.push_str(&format!("→ In progress: {}\n", t.title)),
+            TaskStatus::Pending => out.push_str(&format!("☐ {}\n", t.title)),
+            TaskStatus::Failed => out.push_str(&format!("✗ Failed (retry/fix): {}\n", t.title)),
+            TaskStatus::Blocked(_) => out.push_str(&format!("⊘ Blocked: {}\n", t.title)),
+            TaskStatus::Completed | TaskStatus::Skipped => {}
+        }
+    }
+    Some(out)
 }

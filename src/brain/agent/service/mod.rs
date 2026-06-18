@@ -7,6 +7,7 @@ mod builder;
 mod compaction;
 pub(crate) mod compaction_prompts;
 mod context;
+pub(crate) use context::format_plan_reminder;
 pub(crate) mod feedback;
 mod gaslighting;
 pub(crate) mod helpers;
