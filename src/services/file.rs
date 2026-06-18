@@ -9,6 +9,22 @@ use chrono::Utc;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Whether `path` lives inside a git repository — walk up its parents looking
+/// for a `.git` entry. Repository code is excluded from project archiving: it's
+/// already version-controlled and changes on the repo, so copying it elsewhere
+/// is pointless. Everything outside a repo (shared uploads, generated artifacts)
+/// is fair game to archive.
+fn is_inside_git_repo(path: &Path) -> bool {
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        if d.join(".git").exists() {
+            return true;
+        }
+        dir = d.parent();
+    }
+    false
+}
+
 /// Turn a project name into a filesystem-safe directory slug
 /// (lowercase alphanumerics, runs of other chars collapsed to a single dash).
 pub(crate) fn slugify_project_name(name: &str) -> String {
@@ -207,19 +223,18 @@ impl FileService {
     }
 
     /// Copy `path` into the session's project files dir (best-effort). Returns
-    /// the archived path on success, otherwise the original path unchanged
-    /// (no project, missing source, already archived, copy failed, or — the
-    /// important guard — the file isn't ephemeral).
+    /// the archived path on success, otherwise the original path unchanged.
     ///
-    /// We ONLY archive **ephemeral** files that live in the tmp area: shared
-    /// uploads (channel images/docs), generated images, and clipboard pastes —
-    /// things the periodic purge would otherwise delete. Files the agent
-    /// writes/edits in a real working directory (code in a repo, etc.) are
-    /// already persistent; copying them just duplicates them and points the
-    /// tracked path at a stale copy. Those get tracked at their real path.
+    /// Archive everything that's a project ARTIFACT — files the user shares
+    /// (photos, documents, videos, audio) and files the agent produces
+    /// (generated images, PDFs, research, `.md`, plans) — so a project's
+    /// deliverables live together. The ONE exclusion is **repository code**:
+    /// a file inside a git repo loads from and changes on the repo (already
+    /// persistent + version-controlled), so copying it just duplicates it and
+    /// points the tracked path at a stale copy. Repo files are tracked at their
+    /// real path, never archived.
     async fn archive_into_project(&self, session_id: Uuid, path: PathBuf) -> PathBuf {
-        let tmp_root = crate::config::opencrabs_home().join("tmp");
-        if !path.starts_with(&tmp_root) {
+        if is_inside_git_repo(&path) {
             return path;
         }
         let Some(dir) = self.project_files_dir(session_id).await else {

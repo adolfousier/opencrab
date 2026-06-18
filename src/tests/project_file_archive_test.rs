@@ -8,7 +8,7 @@ use crate::db::Database;
 use crate::services::{FileService, ProjectService, ServiceContext, SessionService};
 
 #[tokio::test]
-async fn non_tmp_file_is_tracked_in_place_not_archived() {
+async fn repo_code_is_tracked_in_place_not_archived() {
     let db = Database::connect_in_memory().await.unwrap();
     db.run_migrations().await.unwrap();
     let ctx = ServiceContext::new(db.pool().clone());
@@ -29,11 +29,13 @@ async fn non_tmp_file_is_tracked_in_place_not_archived() {
         .await
         .unwrap();
 
-    // A file OUTSIDE ~/.opencrabs/tmp (a plain working-dir file, like agent-
-    // edited code) must be tracked at its original path — not copied into the
-    // project files dir.
-    let dir = tempfile::tempdir().unwrap();
-    let src = dir.path().join("auth_service.dart");
+    // Agent-edited code inside a git repo must be tracked at its original path,
+    // never copied into the project files dir — it lives in (and changes on)
+    // the repo. A `.git` dir marks the repo.
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir(repo.path().join(".git")).unwrap();
+    let src = repo.path().join("lib").join("auth_service.dart");
+    std::fs::create_dir_all(src.parent().unwrap()).unwrap();
     std::fs::write(&src, b"class AuthService {}").unwrap();
 
     let tracked = files
@@ -43,6 +45,6 @@ async fn non_tmp_file_is_tracked_in_place_not_archived() {
 
     assert_eq!(
         tracked.path, src,
-        "a persistent working-dir file must be tracked in place, not archived into the project dir"
+        "repository code must be tracked in place, not archived into the project dir"
     );
 }
