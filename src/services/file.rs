@@ -9,6 +9,28 @@ use chrono::Utc;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Turn a project name into a filesystem-safe directory slug
+/// (lowercase alphanumerics, runs of other chars collapsed to a single dash).
+pub(crate) fn slugify_project_name(name: &str) -> String {
+    let mut slug = String::with_capacity(name.len());
+    let mut prev_dash = false;
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        "project".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Service for managing file tracking
 #[derive(Clone)]
 pub struct FileService {
@@ -150,6 +172,11 @@ impl FileService {
         path: PathBuf,
         content: Option<String>,
     ) -> Result<File> {
+        // If the session belongs to a project, archive the file under
+        // `projects/<name>/files/` so a project's artifacts live together.
+        // Dedup + tracking then key off the archived path.
+        let path = self.archive_into_project(session_id, path).await;
+
         // Try to find existing file
         if let Some(file) = self.find_file_by_path(session_id, &path).await? {
             return Ok(file);
@@ -157,6 +184,56 @@ impl FileService {
 
         // Create new file if not found
         self.track_file(session_id, path, content).await
+    }
+
+    /// `~/.opencrabs/projects/<slug>/files/` for the session's project, or
+    /// `None` when the session has no project. Creates the directory.
+    pub async fn project_files_dir(&self, session_id: Uuid) -> Option<PathBuf> {
+        use crate::db::repository::{ProjectRepository, SessionRepository};
+        let session = SessionRepository::new(self.context.pool())
+            .find_by_id(session_id)
+            .await
+            .ok()??;
+        let project_id = session.project_id?;
+        let project = ProjectRepository::new(self.context.pool())
+            .find_by_id(project_id)
+            .await
+            .ok()??;
+        let dir = crate::services::ProjectService::projects_dir()
+            .join(slugify_project_name(&project.name))
+            .join("files");
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(dir)
+    }
+
+    /// Copy `path` into the session's project files dir (best-effort). Returns
+    /// the archived path on success, otherwise the original path unchanged
+    /// (no project, missing source, already archived, or copy failed).
+    async fn archive_into_project(&self, session_id: Uuid, path: PathBuf) -> PathBuf {
+        let Some(dir) = self.project_files_dir(session_id).await else {
+            return path;
+        };
+        if !path.is_file() || path.starts_with(&dir) {
+            return path;
+        }
+        let Some(name) = path.file_name() else {
+            return path;
+        };
+        let dest = dir.join(name);
+        match std::fs::copy(&path, &dest) {
+            Ok(_) => {
+                tracing::info!(
+                    "Archived file to project: {} -> {}",
+                    path.display(),
+                    dest.display()
+                );
+                dest
+            }
+            Err(e) => {
+                tracing::warn!("Failed to archive file to project dir: {e}");
+                path
+            }
+        }
     }
 
     /// Get files with content

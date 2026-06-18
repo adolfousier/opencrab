@@ -244,7 +244,7 @@ impl AgentService {
         let mut block_states: Vec<BlockState> = Vec::new();
         let mut reasoning_buf = String::new();
         let mut reasoning_window = String::new(); // rolling window for reasoning repetition
-        const REASONING_REPEAT_WINDOW: usize = 4096; // reasoning can legitimately be longer
+        const REASONING_REPEAT_WINDOW: usize = 8192; // reasoning can legitimately be longer
         const REASONING_REPEAT_MIN_MATCH: usize = 300; // min substring to detect reasoning loops
         let is_cli = provider.cli_handles_tools();
         // CLI: track unflushed text so we can emit IntermediateText at tool

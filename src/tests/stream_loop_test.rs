@@ -154,7 +154,11 @@ fn reasoning_repetition_detected() {
                            Then we need to verify the output matches expectations for all \
                            possible inputs. Let me reconsider the approach from scratch. \
                            I should also check the error handling paths. ";
-    assert!(reasoning_chunk.len() >= 300, "chunk={}", reasoning_chunk.len());
+    assert!(
+        reasoning_chunk.len() >= 300,
+        "chunk={}",
+        reasoning_chunk.len()
+    );
     let window = format!("{}{}", reasoning_chunk, reasoning_chunk);
     assert!(detect_text_repetition(&window, 300));
 }
@@ -191,7 +195,11 @@ fn reasoning_repetition_with_300_byte_threshold() {
                  we haven't missed any edge cases in the implementation. \
                  Also need to check the error handling paths and make sure \
                  we properly propagate errors up the call stack. ";
-    assert!(chunk.len() >= 300, "chunk must exceed min_match, got {}", chunk.len());
+    assert!(
+        chunk.len() >= 300,
+        "chunk must exceed min_match, got {}",
+        chunk.len()
+    );
     let window = format!("{}{}", chunk, chunk);
     assert!(detect_text_repetition(&window, 300));
 }
