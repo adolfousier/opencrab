@@ -320,7 +320,7 @@ impl Tool for WriteOpenCrabsFileTool {
                     Ok(s) => s,
                     Err(_) => {
                         return Ok(ToolResult::error(format!(
-                            "~/.opencrabs/{} not found. Use overwrite to create it.",
+                            "{} not found in your OpenCrabs home. Use overwrite to create it.",
                             path_str
                         )));
                     }

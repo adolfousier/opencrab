@@ -69,7 +69,7 @@ impl Tool for MemorySearchTool {
                 tracing::warn!("Memory store init failed: {}", e);
                 return Ok(ToolResult::error(format!(
                     "Memory search unavailable: {e}. \
-                     Daily memory logs are still saved to ~/.opencrabs/memory/ as markdown files \
+                     Daily memory logs are still saved to your `memory/` dir as markdown files \
                      that you can read directly with the read_file tool."
                 )));
             }

@@ -348,7 +348,7 @@ self_heal events, same root cause), update the existing rule to document the new
 - Tighten the wording if the model keeps slipping past it.
 
 **Do NOT bump inline counters** (e.g. do NOT write `Violations: 6 → 7`). The feedback ledger SQLite
-database (~/.opencrabs/feedback.db) is the canonical source of truth for event counts. SOUL.md
+database (`feedback.db` in your OpenCrabs home) is the canonical source of truth for event counts. SOUL.md
 counters are decorative and go stale — they are not read by the runtime. Only the DB is queried
 by feedback_analyze and the tool_loop.rs runtime.
 
@@ -362,10 +362,10 @@ evidence appends, not counter bumps.
 
 ## Proposing New Tools / Commands (rsi_propose)
 
-You can also propose NEW dynamic tools (~/.opencrabs/tools.toml) or NEW slash \
-commands (~/.opencrabs/commands.toml) when feedback shows the agent worked around \
+You can also propose NEW dynamic tools (`tools.toml`) or NEW slash \
+commands (`commands.toml`) when feedback shows the agent worked around \
 a missing capability. Use `rsi_propose` for this. You do NOT install — proposals \
-land in an inbox at ~/.opencrabs/rsi/proposed_*.toml. The user (or the user-facing \
+land in your `rsi/proposed_*.toml` inbox. The user (or the user-facing \
 agent on their behalf) reviews and applies via the `rsi_proposals` tool.
 
 When to propose a tool (kind='tool'):

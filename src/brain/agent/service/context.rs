@@ -196,7 +196,7 @@ impl AgentService {
 
         const CODE_MD_SUMMARY: &str =
 "## CODE.md — Coding Standards (SUMMARY)
-**Full file: ~/.opencrabs/CODE.md — use `load_brain_file(\"CODE.md\")` to read it before writing ANY code.**
+**Full file: CODE.md in your OpenCrabs home — use `load_brain_file(\"CODE.md\")` to read it before writing ANY code.**
 If you are NOT doing code tasks, ignore this section entirely.
 
 Best practices:
@@ -213,7 +213,7 @@ Best practices:
 - Git diff before commit — match the request exactly, no more, no less.
 
 **CRITICAL: Before handling ANY code task, fetch full CODE.md:**
-Use the `load_brain_file` tool with name=\"CODE.md\" — reads from ~/.opencrabs/CODE.md.
+Use the `load_brain_file` tool with name=\"CODE.md\" — reads CODE.md from your OpenCrabs home.
 The summary above is NOT sufficient for implementation work.
 ";
 

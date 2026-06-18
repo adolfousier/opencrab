@@ -2909,7 +2909,7 @@ impl AgentService {
                     let drop_msg = format!(
                         "Provider stream dropped {} times consecutively. \
                          The request could not be completed. \
-                         Check logs at ~/.opencrabs/logs/ for details.",
+                         Check the logs (see Known paths) for details.",
                         MAX_STREAM_RETRIES,
                     );
                     tracing::error!(

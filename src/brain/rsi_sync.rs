@@ -451,7 +451,7 @@ fn log_cap_bail_to_improvements(report: &CapBailReport) {
          **Merged would be:** {merged} lines\n\
          **Top new sections that would have been added:**\n{top}\n\n\
          To resolve: raise `[brain.caps].{filename}` in config.toml, prune \
-         the file, or add the offending headers to ~/.opencrabs/rsi/pruned.toml.\n",
+         the file, or add the offending headers to your `rsi/pruned.toml`.\n",
         filename = report.filename,
         date = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
         cap = report.cap,

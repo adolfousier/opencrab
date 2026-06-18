@@ -124,7 +124,7 @@ impl Tool for SelfImproveTool {
     fn description(&self) -> &str {
         "Autonomously apply self-improvements based on feedback analysis. \
          Modifies brain files (SOUL.md, AGENTS.md, etc.) and logs changes to \
-         ~/.opencrabs/rsi/improvements.md. No human approval needed — the agent \
+         your `rsi/improvements.md`. No human approval needed — the agent \
          identifies patterns via feedback_analyze and applies fixes directly. \
          Use feedback_analyze first to identify what needs improvement."
     }

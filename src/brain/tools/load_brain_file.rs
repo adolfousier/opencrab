@@ -21,7 +21,7 @@ impl Tool for LoadBrainFileTool {
     }
 
     fn description(&self) -> &str {
-        "Load any .md file from the OpenCrabs home directory (~/.opencrabs/). \
+        "Load any .md file from your OpenCrabs home directory (see Known paths — profile-scoped). \
          Works with built-in files (USER.md, MEMORY.md, AGENTS.md, TOOLS.md, SECURITY.md) \
          and user-created files (VOICE.md, custom notes, etc.). \
          Pass name=\"all\" to load all .md files at once. \
@@ -176,7 +176,7 @@ impl Tool for LoadBrainFileTool {
                 }
             }
             Err(_) => Ok(ToolResult::success(format!(
-                "{} not found at ~/.opencrabs/{}. No content available.",
+                "{} not found in your OpenCrabs home ({}). No content available.",
                 canonical, canonical
             ))),
         }

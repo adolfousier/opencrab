@@ -377,7 +377,7 @@ fn format_brain_dedup_proposal(p: &BrainDedupProposal) -> String {
 fn format_skill_proposal(p: &SkillProposal) -> String {
     let body_lines = p.skill.body.lines().count();
     format!(
-        "- **{id}** — `{name}`\n  {desc}\n  Body: {lines} lines (lands at ~/.opencrabs/skills/{name}/SKILL.md)\n  Why: {why}\n  Filed: {when}\n\n",
+        "- **{id}** — `{name}`\n  {desc}\n  Body: {lines} lines (lands at skills/{name}/SKILL.md in your OpenCrabs home)\n  Why: {why}\n  Filed: {when}\n\n",
         id = p.id,
         name = p.skill.name,
         desc = p.skill.description,
@@ -397,7 +397,7 @@ impl Tool for RsiProposalsTool {
         "List, apply, or reject tools/commands proposed by the autonomous RSI loop. \
          Use 'list' to show pending proposals, 'apply' to install one (or 'all') into \
          the live tools.toml/commands.toml, 'reject' to discard with an optional reason. \
-         Applied/rejected entries archive to ~/.opencrabs/rsi/{applied,rejected}/."
+         Applied/rejected entries archive under `rsi/{applied,rejected}/` in your OpenCrabs home."
     }
 
     fn input_schema(&self) -> Value {
