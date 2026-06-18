@@ -367,11 +367,10 @@ pub fn cleanup_old_logs(max_age_days: u64) -> Result<usize, Box<dyn std::error::
 /// All channel image uploads (Telegram, WhatsApp, Slack, Trello) are saved here
 /// via process_file_with_vision. This single purge replaces per-channel cleanup spawns.
 pub fn cleanup_old_temp_files(max_age_days: u64) -> Result<usize, Box<dyn std::error::Error>> {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return Ok(0),
-    };
-    let tmp_dir = home.join(".opencrabs").join("tmp").join("files");
+    // Profile-aware: purge the active profile's tmp/files (where save_to_temp
+    // writes), not the default root — otherwise a profile's temp files never
+    // get cleaned.
+    let tmp_dir = crate::config::opencrabs_home().join("tmp").join("files");
     if !tmp_dir.exists() {
         return Ok(0);
     }

@@ -572,17 +572,14 @@ pub fn spawn_rsi_engine(
         // restarted before the interval elapsed (e.g. dev recompile every
         // ~20 min), only sleep the remaining time instead of a full hour.
         // Without this, frequent restarts prevent RSI from ever firing.
-        let last_cycle_path = dirs::home_dir()
-            .unwrap_or_default()
-            .join(".opencrabs/rsi/last_cycle");
+        let last_cycle_path = crate::config::opencrabs_home().join("rsi/last_cycle");
         // Hash of the previous cycle's `opportunities` Vec. When the new
         // cycle's hash matches, the RSI engine skips re-emitting the same
         // top-N corrections / errors / tool-failure descriptions to the
         // TUI and channels, and skips the autonomous agent run (the LLM
         // would just write "Converged. No improvements applied." again).
-        let opportunities_hash_path = dirs::home_dir()
-            .unwrap_or_default()
-            .join(".opencrabs/rsi/last_opportunities_hash");
+        let opportunities_hash_path =
+            crate::config::opencrabs_home().join("rsi/last_opportunities_hash");
         let initial_delay = if let Ok(meta) = std::fs::metadata(&last_cycle_path) {
             let elapsed = meta
                 .modified()
@@ -606,9 +603,7 @@ pub fn spawn_rsi_engine(
             initial_delay % 60
         );
 
-        let cycle_number_path = dirs::home_dir()
-            .unwrap_or_default()
-            .join(".opencrabs/rsi/cycle_number");
+        let cycle_number_path = crate::config::opencrabs_home().join("rsi/cycle_number");
 
         let mut first_iteration = true;
         let mut last_seen_count: i64 = 0;

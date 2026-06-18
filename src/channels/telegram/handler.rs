@@ -209,10 +209,9 @@ async fn save_incoming_files_to_tmp(bot: &Bot, msg: &Message, bot_token: &str) {
         return;
     }
 
-    let tmp_dir: PathBuf = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".opencrabs")
-        .join("tmp");
+    // Profile-aware: same tmp dir save_to_temp uses, so saves and pickups
+    // agree and a profile's files stay under that profile.
+    let tmp_dir: PathBuf = crate::config::opencrabs_home().join("tmp");
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let chat_id = msg.chat.id.0;
@@ -343,10 +342,9 @@ pub(crate) fn find_recent_tmp_file(
 ) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
 
-    let tmp_dir: PathBuf = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".opencrabs")
-        .join("tmp");
+    // Profile-aware: same tmp dir save_to_temp uses, so saves and pickups
+    // agree and a profile's files stay under that profile.
+    let tmp_dir: PathBuf = crate::config::opencrabs_home().join("tmp");
 
     let now = chrono::Utc::now().timestamp();
     let prefix = format!("{kind}-{chat_id}-");
