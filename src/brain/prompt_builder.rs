@@ -585,18 +585,33 @@ pub(crate) fn push_compiled_features(prompt: &mut String) {
 /// question stays out; the goal is "next time you're told 'check
 /// the logs' you don't grep .git/".
 pub(crate) fn push_known_paths(prompt: &mut String) {
-    let home = crate::config::opencrabs_home();
+    // Anchor EVERY path on the active profile's home, not a hardcoded
+    // `~/.opencrabs/`. Under `-p devops` the home is
+    // `~/.opencrabs/profiles/devops/`, so config/keys/logs all live there —
+    // telling the agent the default root made it edit the wrong profile's
+    // config when asked to change settings.
+    // Collapse to `~/…` so default renders `~/.opencrabs/` and a profile
+    // renders `~/.opencrabs/profiles/<name>/` — readable and profile-correct.
+    let home = crate::brain::tools::error::collapse_home(&crate::config::opencrabs_home());
+    let profile_note = match crate::config::profile::active_profile() {
+        Some(name) => format!(
+            " (this instance runs under profile '{name}' — the paths below are \
+             profile-scoped; do NOT touch the default ~/.opencrabs/ root)"
+        ),
+        None => String::new(),
+    };
     prompt.push_str(&format!(
-        "\nKnown paths:\n\
-         - Logs: ~/.opencrabs/logs/opencrabs.YYYY-MM-DD (daily, today is the most relevant)\n\
-         - Config: ~/.opencrabs/config.toml\n\
-         - Keys: ~/.opencrabs/keys.toml\n\
+        "\nKnown paths{profile_note}:\n\
+         - Logs: {home}/logs/opencrabs.YYYY-MM-DD (daily, today is the most relevant)\n\
+         - Config: {home}/config.toml\n\
+         - Keys: {home}/keys.toml\n\
          - Brain files: {home}/{{SOUL,USER,AGENTS,TOOLS,MEMORY,CODE}}.md\n\
          - Plans: {home}/agents/session/.opencrabs_plan_<session-id>.json\n\
          When the user asks to check logs, read today's file at \
-         ~/.opencrabs/logs/opencrabs.<today UTC date>. Do NOT grep the repo \
-         working directory for log files — opencrabs never writes logs there.\n",
-        home = home.display(),
+         {home}/logs/opencrabs.<today UTC date>. Do NOT grep the repo \
+         working directory for log files — opencrabs never writes logs there. \
+         When changing settings, prefer the `config_manager` tool (it writes the \
+         correct profile's config.toml) over editing the file by path.\n",
     ));
 }
 
