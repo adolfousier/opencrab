@@ -2571,10 +2571,10 @@ OpenCrabs automatically tracks files created or edited during your sessions. No 
 - **Open files** — select a file and press `Enter` to open it with your system's default app
 - **Open location** — press `O` to open the containing folder in Finder/Explorer
 - **Remove tracking** — press `D` to remove a file from the tracking list. This only removes the DB entry, the file itself stays on disk
-- **Projects directory** — files default to `~/.opencrabs/projects/` (or `~/.opencrabs/profiles/<profile>/projects/` for profile-specific setups)
+- **Project archiving** — when a session is **assigned to a project**, its tracked files are copied into `~/.opencrabs/projects/<project-name>/files/` so a project's artifacts live together (and survive the `tmp` purge). This includes images shared on channels: a photo sent to a project-assigned Telegram session is archived there too — even one shared without @mentioning the bot and picked up when you tag it later. Sessions **not** assigned to a project leave their files in place (e.g. `~/.opencrabs/tmp/`) and just track the path.
 - **Cleanup** — stale files can be cleaned up manually from the projects directory at any time
 
-File artifacts are per-session. Switch sessions to see different file lists. The tracking is lightweight: it stores paths and metadata, not file contents (except for ephemeral clipboard pastes that would otherwise vanish).
+File artifacts are per-session. Switch sessions to see different file lists. The tracking is lightweight: it stores paths and metadata, not file contents (except for ephemeral clipboard pastes and project-archived files that would otherwise vanish).
 
 ### Tool Approval (Inline)
 
