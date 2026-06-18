@@ -3434,9 +3434,9 @@ impl AgentService {
                 let stuck_loop_now =
                     phantom_eligible && super::phantom::is_stuck_in_intent_loop(&iteration_text);
                 if stuck_loop_now {
-                    let reps = super::phantom::count_intent_line_starts(&iteration_text);
+                    let reps = super::phantom::max_repeated_intent_line(&iteration_text);
                     tracing::warn!(
-                        "Phantom intent-loop detected ({} line-start repetitions) — escalating \
+                        "Phantom intent-loop detected (same intent line repeated {}x) — escalating \
                          self-heal (nudge + fast-escalate to sticky fallback if budget half-burned).",
                         reps
                     );

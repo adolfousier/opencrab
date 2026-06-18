@@ -148,14 +148,50 @@ pub fn count_intent_line_starts(text: &str) -> usize {
     re.find_iter(text).count()
 }
 
-/// Threshold above which a single iteration's intent-phrase repetitions
-/// are treated as "model stuck in a phantom loop".
+/// Threshold above which a repeated intent line is treated as "model stuck in
+/// a phantom loop".
 pub const STUCK_INTENT_LOOP_THRESHOLD: usize = 3;
 
-/// Convenience predicate: does the text show 3+ line-start intent
-/// repetitions?
+/// The highest number of times the SAME intent line-start appears (normalized:
+/// trimmed, lowercased, whitespace collapsed). A genuine phantom loop repeats
+/// the *same* line ("Let me check the file." over and over); a legitimate
+/// multi-step plan ("check X… then Y… actually Z first") has many DISTINCT
+/// intent lines, which must NOT be mistaken for a loop.
+pub fn max_repeated_intent_line(text: &str) -> usize {
+    let lang = phantom_lang::detect_language(text);
+    if lang.line_start_re.is_empty() {
+        return 0;
+    }
+    let Ok(re) = Regex::new(&lang.line_start_re) else {
+        return 0;
+    };
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut max = 0;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Only lines that START with an intent phrase count.
+        if re.find(trimmed).map(|m| m.start() == 0).unwrap_or(false) {
+            let norm = trimmed
+                .to_lowercase()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let c = counts.entry(norm).or_insert(0);
+            *c += 1;
+            max = max.max(*c);
+        }
+    }
+    max
+}
+
+/// Whether the text shows a genuine phantom loop: the SAME intent line repeated
+/// `STUCK_INTENT_LOOP_THRESHOLD`+ times. Distinct intent lines (a varied plan)
+/// are NOT a loop — that false positive used to kill legitimate planful replies.
 pub fn is_stuck_in_intent_loop(text: &str) -> bool {
-    count_intent_line_starts(text) >= STUCK_INTENT_LOOP_THRESHOLD
+    max_repeated_intent_line(text) >= STUCK_INTENT_LOOP_THRESHOLD
 }
 
 pub fn has_phantom_tool_intent(text: &str) -> bool {
@@ -502,8 +538,17 @@ mod tests {
 
     #[test]
     fn stuck_in_intent_loop_english() {
-        let text = "Let me check the logs\nLet me verify the config\nLet me read the file\n";
+        // A genuine loop: the SAME intent line repeated.
+        let text = "Let me check the logs\nLet me check the logs\nLet me check the logs\n";
         assert!(is_stuck_in_intent_loop(text));
+    }
+
+    #[test]
+    fn varied_multistep_plan_is_not_a_loop() {
+        // Distinct intent lines = a legitimate plan, NOT a phantom loop. This
+        // is the false positive that killed planful replies (Telegram 16:13).
+        let text = "Let me check the logs\nLet me verify the config\nLet me read the file\n";
+        assert!(!is_stuck_in_intent_loop(text));
     }
 
     #[test]
