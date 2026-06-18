@@ -150,6 +150,7 @@ pub mod plan_tool_description_test;
 pub mod plan_tool_test;
 pub mod plan_window_test;
 pub mod post_evolve_test;
+pub mod project_file_archive_test;
 pub mod project_file_slug_test;
 pub mod project_test;
 pub mod prompt_compiled_features_test;

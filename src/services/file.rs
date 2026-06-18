@@ -208,8 +208,20 @@ impl FileService {
 
     /// Copy `path` into the session's project files dir (best-effort). Returns
     /// the archived path on success, otherwise the original path unchanged
-    /// (no project, missing source, already archived, or copy failed).
+    /// (no project, missing source, already archived, copy failed, or — the
+    /// important guard — the file isn't ephemeral).
+    ///
+    /// We ONLY archive **ephemeral** files that live in the tmp area: shared
+    /// uploads (channel images/docs), generated images, and clipboard pastes —
+    /// things the periodic purge would otherwise delete. Files the agent
+    /// writes/edits in a real working directory (code in a repo, etc.) are
+    /// already persistent; copying them just duplicates them and points the
+    /// tracked path at a stale copy. Those get tracked at their real path.
     async fn archive_into_project(&self, session_id: Uuid, path: PathBuf) -> PathBuf {
+        let tmp_root = crate::config::opencrabs_home().join("tmp");
+        if !path.starts_with(&tmp_root) {
+            return path;
+        }
         let Some(dir) = self.project_files_dir(session_id).await else {
             return path;
         };
