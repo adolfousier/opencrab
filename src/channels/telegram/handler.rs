@@ -3830,22 +3830,37 @@ pub(crate) fn format_reply_context(
 
 /// Convert simple markdown (`*bold*`, `` `code` ``) to Telegram HTML.
 pub(crate) fn md_to_html(s: &str) -> String {
-    // Replace `code` with <code>code</code>, then *bold* with <b>bold</b>
+    // Replace `code` with <code>code</code>, then *bold* with <b>bold</b>.
+    // CRITICAL: HTML-escape all text content (including inside code/bold) so a
+    // literal `<...>` placeholder — e.g. `/rename <new title>` in /help — never
+    // reaches Telegram as a tag. Unescaped, Telegram's HTML parser rejected the
+    // whole message ("Unsupported start tag 'new'") and the reply silently
+    // vanished. Only the <code>/<b> tags we emit are real HTML.
+    fn esc(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '`' {
             let code: String = chars.by_ref().take_while(|&ch| ch != '`').collect();
             out.push_str("<code>");
-            out.push_str(&code);
+            out.push_str(&esc(&code));
             out.push_str("</code>");
         } else if c == '*' {
             let bold: String = chars.by_ref().take_while(|&ch| ch != '*').collect();
             out.push_str("<b>");
-            out.push_str(&bold);
+            out.push_str(&esc(&bold));
             out.push_str("</b>");
         } else {
-            out.push(c);
+            match c {
+                '&' => out.push_str("&amp;"),
+                '<' => out.push_str("&lt;"),
+                '>' => out.push_str("&gt;"),
+                _ => out.push(c),
+            }
         }
     }
     out

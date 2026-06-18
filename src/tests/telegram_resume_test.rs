@@ -282,6 +282,27 @@ fn md_to_html_empty() {
     assert_eq!(result, "");
 }
 
+#[test]
+fn md_to_html_escapes_angle_bracket_placeholder() {
+    // The bug: /help's `/rename <new title>` reached Telegram as a `<new>` tag,
+    // so the HTML parser rejected the whole message and the reply vanished.
+    let result = crate::channels::telegram::handler::md_to_html("`/rename <new title>`");
+    assert!(
+        result.contains("&lt;new title&gt;"),
+        "placeholder must be escaped; got: {result}"
+    );
+    assert!(
+        !result.contains("<new"),
+        "raw <new tag must not leak; got: {result}"
+    );
+}
+
+#[test]
+fn md_to_html_escapes_plain_html_metacharacters() {
+    let result = crate::channels::telegram::handler::md_to_html("a < b & c > d");
+    assert_eq!(result, "a &lt; b &amp; c &gt; d");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper functions — markdown_to_telegram_html
 // ─────────────────────────────────────────────────────────────────────────────
