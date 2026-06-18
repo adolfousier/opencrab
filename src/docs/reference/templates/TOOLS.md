@@ -70,6 +70,13 @@ never assume the capability is missing before searching.
 - `/check` — Run `cargo clippy` and `cargo test`
 - `/evolve` — Download latest release binary
 
+## Voice & Audio
+
+STT providers: `voicebox` (local server) > `openai_compatible` > `groq` (Whisper API) > `local` (rwhisper, `local-stt` feature). Override with `stt_fallback_chain`.
+TTS providers: `voicebox` (local server) > `openai_compatible` > `openai` (OpenAI TTS) > `local` (Piper, `local-tts` feature). Override with `tts_fallback_chain`.
+Config: `[providers.stt.*]` / `[providers.tts.*]` in config.toml. Piper voices: `ryan`(default), `amy`, `lessac`, `kristin`, `joe`, `cori`. Local STT presets: `local-tiny`(42MB), `local-base`(142MB), `local-small`(466MB), `local-medium`(1.5GB).
+Audio: all output OGG/Opus via ffmpeg. Models: whisper in `~/.local/share/opencrabs/models/whisper/`, piper in `~/.local/share/opencrabs/models/piper/`. Setup: `/onboard:voice`.
+
 ## Reporting
 
 - `/mission-control`: analytics (tool usage, failure rates, RSI improvements, brain files), activity feed, inbox proposals, and scheduled cron jobs.
