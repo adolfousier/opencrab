@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.43] - 2026-06-18
+
+8 commits since v0.3.42. 15 files changed, +559 / -29 lines.
+
+### ✨ Features
+
+- `9b21cca9` **Plan pinning**: Pin the active plan at the end of the prompt each turn so the agent never loses track.
+
+### 🔧 Fixes
+
+- `b3dd4398` **Telegram bot-command registration**: Fix bot-command registration failing entirely due to 'mission-control' hyphen in command name.
+- `52f4097b` **Telegram /help and text commands**: Fix /help and all text commands silently failing — escaped loop on bot commands.
+- `5ef56c12` **Stuck-loop detection precision**: Only flag a stuck loop when the SAME intent line repeats, not for distinct lines.
+- `2a509fed` **Project file archiving**: Archive all artifacts, exclude only repository code.
+- `4d1c607d` **Project file archiving scope**: Only archive ephemeral tmp files, not persistent work.
+
+### 📖 Documentation
+
+- `3ad5c243` Update multi-agent skill
+
+### 📊 Stats
+
+- 8 commits since v0.3.42
+- 15 files changed, +559 / -29 lines
+- 3,992 tests (3,992 passed, 0 failed, 27 ignored)
+
 ## [0.3.42] - 2026-06-18
 
 31 commits since v0.3.41. 51 files changed, +2,284 / -142 lines.
@@ -5708,3 +5734,4 @@ fixes.
 
 [0.3.41]: https://github.com/adolfousier/opencrabs/compare/v0.3.40...v0.3.41
 [0.3.42]: https://github.com/adolfousier/opencrabs/compare/v0.3.41...v0.3.42
+[0.3.43]: https://github.com/adolfousier/opencrabs/compare/v0.3.42...v0.3.43
