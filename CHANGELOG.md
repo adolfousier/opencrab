@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.42] - 2026-06-18
+
+31 commits since v0.3.41. 51 files changed, +2,284 / -142 lines.
+
+### ✨ Features
+
+- `b534340b` **Project file archiving**: Archive shared images and session files into the assigned project's files directory.
+- `8c86a807` **Project session file archiving**: Archive a project-assigned session's files under projects/<name>/files/.
+- `31f0223c` **Reasoning repetition loop detection**: Detect and break reasoning loops that cause infinite thinking cycles.
+- `fc93dc26` **silence_group_start config param**: Add Telegram config param to silence /start responses in groups.
+- `19e3a18e` **TUI /cowork launch**: Launch /cowork from the TUI via a cowork_connect agent tool.
+- `5a7823f5` **MiMo 200k context window**: Default MiMo context window to 200k tokens.
+- `ca282fba` **/cowork workspace creation**: Create cowork workspaces with auto-registration for Telegram groups.
+- `2df99270` **Fast-cancel on stop**: Kill active tasks immediately on 'stop' or '/stop' command.
+- `efe20161` **Numeric ID in /onboard:channels**: Accept owner numeric ID in Telegram channel onboarding.
+- `ca205403` **Group file tracking**: Track incoming files in groups and pick them up when the bot is tagged.
+- `903382d6` **WhatsApp pairing QR**: Render pairing QR as a scannable PNG for WhatsApp channels.
+- `0609e766` **Channel-capable onboarding**: Channel-capable /onboard:image|voice|channels with OpenAI-compatible vision.
+- `c81dfd59` **/rename command**: /rename command for Telegram, Discord, Slack, and WhatsApp.
+- `f202e65c` **Browser automation rules**: Add browser automation rules to the system prompt.
+
+### 🔧 Fixes
+
+- `dc41bfd6` **Remove hardcoded paths**: Remove hardcoded ~/.opencrabs/ from agent-facing strings.
+- `ac79a7b8` **Drop hardcoded paths from prompt**: Drop hardcoded ~/.opencrabs/ from system prompt and vision hint.
+- `3c68f14f` **Profile-aware RSI and tmp**: Route RSI state, tmp purge, and Telegram tmp through the profile home.
+- `2e58db90` **Profile-aware projects_dir**: Make projects_dir profile-aware under the active profile's home.
+- `849159b2` **Profile-aware known-paths**: Make known-paths profile-aware so config edits hit the right profile.
+- `53486685` **Store untagged group photos**: Store untagged group photos to tmp and pick them up when tagged.
+- `693a3b7d` **Cowork UX copy**: Update UX copy for the cowork group creation flow.
+- `f4df8561` **Silence non-allowed users in groups**: Only reply to non-allowed users in groups when mentioned.
+- `e2308d39` **Rich completion scroll fix**: Scroll to bottom on rich completion by deleting placeholder before fresh send.
+- `91d57b75` **Onboard Telegram field label**: Label Telegram field as 'User ID' and require it before confirming.
+- `c4ff0be6` **React-safe browser_type**: Replace value and dispatch input/change events for React forms.
+- `18e2e621` **LABELED_CRED_RE prefix fix**: Skip key-prefix fragments shorter than 8 chars in credential redaction.
+- `5ffe893b` **Labeled credential redaction**: Redact labeled credentials with colon separator (Password: xxx, Token: xxx).
+
+### 📖 Documentation
+
+- `d9293ea5` Document project file archiving under projects/<name>/files/
+- `b106abb2` Note Xiaomi vision routing during collaboration window
+- `f76d0d48` Document Telegram group security model + silence_group_start
+- `2b367c18` Document /rename, fast-cancel, file pickup, TUI cowork, onboard channel improvements
+
+### 📊 Stats
+
+- 31 commits since v0.3.41
+- 51 files changed, +2,284 / -142 lines
+- 3,992 tests (3,992 passed, 0 failed, 27 ignored)
+
 ## [0.3.41] - 2026-06-16
 
 19 commits since v0.3.40. 30 files changed, +681 / -282 lines.
@@ -5657,3 +5707,4 @@ fixes.
 [0.3.40]: https://github.com/adolfousier/opencrabs/compare/v0.3.39...v0.3.40
 
 [0.3.41]: https://github.com/adolfousier/opencrabs/compare/v0.3.40...v0.3.41
+[0.3.42]: https://github.com/adolfousier/opencrabs/compare/v0.3.41...v0.3.42
