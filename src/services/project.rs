@@ -29,10 +29,12 @@ impl ProjectService {
         Self { context }
     }
 
-    /// Get the projects directory path (~/.opencrabs/projects or profile-specific)
+    /// Get the projects directory path — profile-aware: `~/.opencrabs/projects`
+    /// for the default, `~/.opencrabs/profiles/<name>/projects` under `-p`.
+    /// Uses `opencrabs_home()` (not the root `base_opencrabs_dir`) so a
+    /// profile's project files live entirely under that profile.
     pub fn projects_dir() -> std::path::PathBuf {
-        let base = crate::config::profile::base_opencrabs_dir();
-        base.join("projects")
+        crate::config::opencrabs_home().join("projects")
     }
 
     /// Ensure the projects directory exists on disk
