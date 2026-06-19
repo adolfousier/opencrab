@@ -435,6 +435,25 @@ impl EvolveTool {
     }
 }
 
+/// Set while a real (non-check-only) evolve is downloading/swapping the binary.
+/// Prevents two evolves — e.g. a manual `evolve` and the background
+/// auto-updater — from running at once and clobbering each other's temp binary
+/// (observed on a VPS: concurrent runs collided on the shared temp path, one
+/// failing with ETXTBSY mid-write, the other with ENOENT after the sibling
+/// deleted it).
+static EVOLVE_IN_PROGRESS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// RAII guard that clears [`EVOLVE_IN_PROGRESS`] when an evolve finishes,
+/// however it returns.
+struct EvolveInProgressGuard;
+
+impl Drop for EvolveInProgressGuard {
+    fn drop(&mut self) {
+        EVOLVE_IN_PROGRESS.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 #[async_trait]
 impl Tool for EvolveTool {
     fn name(&self) -> &str {
@@ -481,6 +500,34 @@ impl Tool for EvolveTool {
         let current_version = crate::VERSION;
         let sid = context.session_id;
         let install_method = InstallMethod::detect();
+
+        // Single-flight: a real evolve downloads and swaps the binary. If one is
+        // already running, don't start a second — concurrent runs race on the
+        // temp binary and both fail. `check_only` runs are read-only, so they're
+        // exempt. The guard clears the flag on every return path.
+        let _evolve_guard = if check_only {
+            None
+        } else if EVOLVE_IN_PROGRESS
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_err()
+        {
+            tracing::warn!(
+                target: "evolve",
+                session_id = %sid,
+                "evolve: another evolve is already in progress — skipping this concurrent run"
+            );
+            return Ok(ToolResult::error(
+                "An update is already in progress; skipping this concurrent evolve run."
+                    .to_string(),
+            ));
+        } else {
+            Some(EvolveInProgressGuard)
+        };
 
         // Emit progress
         if let Some(ref cb) = self.progress {
@@ -921,8 +968,12 @@ impl EvolveTool {
             }
         };
 
-        // Write temp file
-        let tmp_path = exe_path.with_extension("evolve_tmp");
+        // Write temp file. The temp name is process-unique so a second
+        // opencrabs process evolving at the same time (the in-process
+        // single-flight guard can't see other processes) doesn't write to and
+        // exec the same file — that collision produced the ETXTBSY/ENOENT
+        // health-check failures.
+        let tmp_path = exe_path.with_extension(format!("evolve_tmp.{}", std::process::id()));
         if let Err(e) = tokio::fs::write(&tmp_path, &binary_data).await {
             tracing::warn!(
                 target: "evolve",
