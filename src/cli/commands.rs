@@ -2249,15 +2249,13 @@ pub(crate) async fn cmd_evolve(config: &crate::config::Config, check_only: bool)
         let db_path = &config.database.path;
         if db_path.exists() {
             match crate::db::Database::connect(db_path).await {
-                Ok(db) => {
-                    match db.get_user_version().await {
-                        Ok(ver) => Some(ver),
-                        Err(e) => {
-                            tracing::warn!("evolve: could not read user_version: {e}");
-                            None
-                        }
+                Ok(db) => match db.get_user_version().await {
+                    Ok(ver) => Some(ver),
+                    Err(e) => {
+                        tracing::warn!("evolve: could not read user_version: {e}");
+                        None
                     }
-                }
+                },
                 Err(e) => {
                     tracing::warn!("evolve: could not open database: {e}");
                     None
