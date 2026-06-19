@@ -376,11 +376,10 @@ async fn get_binary_migration_count(path: &std::path::Path) -> std::result::Resu
     match result {
         Ok(Ok(output)) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let count = stdout.trim().parse::<usize>().map_err(|e| {
-                format!(
-                    "could not parse migration count from '{stdout}': {e}"
-                )
-            })?;
+            let count = stdout
+                .trim()
+                .parse::<usize>()
+                .map_err(|e| format!("could not parse migration count from '{stdout}': {e}"))?;
             Ok(count)
         }
         Ok(Ok(output)) => {
@@ -389,7 +388,11 @@ async fn get_binary_migration_count(path: &std::path::Path) -> std::result::Resu
             Err(format!(
                 "print-migration-count exited with {}: {}",
                 output.status,
-                if snippet.is_empty() { "no stderr" } else { &snippet }
+                if snippet.is_empty() {
+                    "no stderr"
+                } else {
+                    &snippet
+                }
             ))
         }
         Ok(Err(e)) => Err(format!("failed to spawn binary: {e}")),
@@ -447,9 +450,8 @@ impl Tool for EvolveTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let current_user_version: Option<i64> = input
-            .get("current_user_version")
-            .and_then(|v| v.as_i64());
+        let current_user_version: Option<i64> =
+            input.get("current_user_version").and_then(|v| v.as_i64());
 
         let current_version = crate::VERSION;
         let sid = context.session_id;
@@ -700,6 +702,7 @@ impl EvolveTool {
     }
 
     /// Update by downloading a pre-built binary from GitHub releases.
+    #[allow(clippy::too_many_arguments)]
     async fn evolve_via_binary_download(
         &self,
         sid: uuid::Uuid,
