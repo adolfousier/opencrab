@@ -723,8 +723,8 @@ impl AgentService {
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 
-        // Manual /compact: force compaction and return summary directly — no second LLM call.
-        // The summary already contains next steps and follow-ups, so it IS the response.
+        // Manual /compact: force compaction, persist summary to DB, return a brief
+        // confirmation to the user. The full summary is for the agent, not the user.
         if is_manual_compact {
             match self
                 .compact_context(session_id, &mut context, &model_name, None)
@@ -742,7 +742,7 @@ impl AgentService {
                         .await
                         .map_err(|e| AgentError::Database(e.to_string()))?;
 
-                    // Persist summary as the assistant response
+                    // Persist summary as the assistant response (for DB/search continuity)
                     message_service
                         .append_content(assistant_db_msg.id, &summary)
                         .await
@@ -752,9 +752,15 @@ impl AgentService {
                         cb(session_id, ProgressEvent::TokenCount(context.token_count));
                     }
 
+                    // Return a brief confirmation to the user — not the full internal summary.
+                    let pct = context.usage_percentage() as u32;
+                    let confirmation = format!(
+                        "✅ Context compacted — now at {}% ({} tokens).",
+                        pct, context.token_count
+                    );
                     return Ok(AgentResponse {
                         message_id: assistant_db_msg.id,
-                        content: summary,
+                        content: confirmation,
                         stop_reason: Some(crate::brain::provider::StopReason::EndTurn),
                         usage: crate::brain::provider::TokenUsage {
                             input_tokens: 0,
