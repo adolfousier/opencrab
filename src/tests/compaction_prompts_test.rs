@@ -166,12 +166,13 @@ fn default_agent_config_is_fun_mode() {
 fn session_recovery_hint_present_in_all_variants() {
     // After compaction the agent must check for an active plan and,
     // if coding, load CODE.md. This hint is appended to ALL variants
-    // (fun + silent, all 4 kinds) so it never gets lost.
+    // (fun + silent, all 5 kinds) so it never gets lost.
     for kind in [
         CompactionKind::Regular,
         CompactionKind::MidLoop,
         CompactionKind::Emergency,
         CompactionKind::PostTool,
+        CompactionKind::Manual,
     ] {
         for silent in [false, true] {
             let body = build_continuation(kind, silent, true);
@@ -188,5 +189,26 @@ fn session_recovery_hint_present_in_all_variants() {
                 "{kind:?} silent={silent} must mention CODE.md for coding sessions: {body}"
             );
         }
+    }
+}
+
+#[test]
+fn manual_compaction_is_brief() {
+    // Manual /compact uses a short sentence, not the full POST-COMPACTION
+    // PROTOCOL with numbered steps. The user explicitly triggered it.
+    for silent in [false, true] {
+        let body = build_continuation(CompactionKind::Manual, silent, true);
+        assert!(
+            !body.contains("POST-COMPACTION PROTOCOL"),
+            "Manual compaction must NOT use the full protocol: {body}"
+        );
+        assert!(
+            !body.contains("session_search"),
+            "Manual compaction must NOT instruct session_search (brief only): {body}"
+        );
+        assert!(
+            body.contains("IMMEDIATE TASK"),
+            "Manual compaction must still reference the IMMEDIATE TASK: {body}"
+        );
     }
 }

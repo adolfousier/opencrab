@@ -46,6 +46,10 @@ pub enum CompactionKind {
     /// model about to receive the result. Same shape as MidLoop but
     /// the recovered state already includes the tool result.
     PostTool,
+    /// User-triggered `/compact` command. Brief continuation — the
+    /// user explicitly asked for compaction, so the agent just needs
+    /// a short "resume from summary" hint, not the full protocol.
+    Manual,
 }
 
 /// Build the continuation text appended after a compaction marker.
@@ -131,6 +135,11 @@ fn fun_body(kind: CompactionKind) -> &'static str {
              Do NOT start a new topic. Do NOT deviate to unrelated work. \
              Do NOT re-do completed work.]"
         }
+        CompactionKind::Manual => {
+            "[SYSTEM: Context was manually compacted. The summary above is your memory of \
+             everything before this point. Resume the IMMEDIATE TASK from the summary. \
+             Do NOT acknowledge the compaction to the user — they already know.]"
+        }
     }
 }
 
@@ -181,6 +190,11 @@ fn silent_body(kind: CompactionKind) -> &'static str {
              or narrate the compaction. Do NOT start a new topic. Do NOT deviate to \
              unrelated work. Do NOT re-do completed work.\n\n\
              Use `session_search` with keywords if you need older context.]"
+        }
+        CompactionKind::Manual => {
+            "[SYSTEM: Context was manually compacted. Silently resume the IMMEDIATE \
+             TASK from the summary. Do not acknowledge the compaction — the user \
+             triggered it intentionally and already sees the confirmation.]"
         }
     }
 }

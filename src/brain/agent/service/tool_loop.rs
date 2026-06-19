@@ -748,6 +748,21 @@ impl AgentService {
                         .await
                         .map_err(|e| AgentError::Database(e.to_string()))?;
 
+                    // Add a brief continuation prompt to context — matches
+                    // auto-compaction behavior but uses a short sentence instead
+                    // of the full POST-COMPACTION PROTOCOL. Persisted to DB so
+                    // the next turn sees it.
+                    let cont_text = super::compaction_prompts::build_continuation(
+                        super::compaction_prompts::CompactionKind::Manual,
+                        self.silent_compaction,
+                        self.auto_approve_tools,
+                    );
+                    message_service
+                        .create_message(session_id, "user".to_string(), cont_text.clone())
+                        .await
+                        .map_err(|e| AgentError::Database(e.to_string()))?;
+                    context.add_message(Message::user(cont_text));
+
                     if let Some(ref cb) = progress_callback {
                         cb(session_id, ProgressEvent::TokenCount(context.token_count));
                     }
