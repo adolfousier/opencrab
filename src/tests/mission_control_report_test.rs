@@ -59,6 +59,16 @@ fn report_includes_all_sections() {
         schedule: "0 9 * * * (UTC)".into(),
         kind: McScheduleKind::Cron,
         awaiting_user: false,
+        prompt: "Run backup script daily".into(),
+        deliver_to: None,
+        last_run_at: None,
+        next_run_at: None,
+        created_at: Utc::now(),
+        enabled: true,
+        profile_name: None,
+        last_run_status: None,
+        last_run_cost: None,
+        last_run_duration_secs: None,
     }];
 
     let md = render_markdown(&analytics, &activity, &inbox, &schedule);

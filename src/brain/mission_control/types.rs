@@ -104,6 +104,26 @@ pub struct McScheduleItem {
     /// `true` when the item is actively waiting on the user (e.g. a
     /// pending tool approval or a paused cron). Renders highlighted.
     pub awaiting_user: bool,
+    /// The agent prompt / description — what this job actually does.
+    pub prompt: String,
+    /// Where results are delivered (e.g. "telegram:7711740248").
+    pub deliver_to: Option<String>,
+    /// When this job last ran.
+    pub last_run_at: Option<DateTime<Utc>>,
+    /// When this job is scheduled to run next.
+    pub next_run_at: Option<DateTime<Utc>>,
+    /// When this job was created.
+    pub created_at: DateTime<Utc>,
+    /// Whether the job is enabled (not paused).
+    pub enabled: bool,
+    /// Profile this job belongs to.
+    pub profile_name: Option<String>,
+    /// Status of the last run ("success", "error", "running").
+    pub last_run_status: Option<String>,
+    /// Cost of the last run in USD.
+    pub last_run_cost: Option<f64>,
+    /// Duration of the last run in seconds.
+    pub last_run_duration_secs: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -12,14 +12,18 @@
 
 use super::types::{McScheduleItem, McScheduleKind};
 use crate::db::Pool;
-use crate::db::models::CronJob;
-use crate::db::repository::CronJobRepository;
+use crate::db::models::{CronJob, CronJobRun};
+use crate::db::repository::{CronJobRepository, CronJobRunRepository};
 
 /// Read every cron job (enabled + paused), sorted by name. Returns an
 /// empty list on DB error so a transient SQLite blip doesn't bring
 /// the whole MC down.
+///
+/// Also fetches the most recent run for each job so the detail popup
+/// can show status, cost, and duration.
 pub async fn list(pool: Pool) -> Vec<McScheduleItem> {
-    let repo = CronJobRepository::new(pool);
+    let repo = CronJobRepository::new(pool.clone());
+    let run_repo = CronJobRunRepository::new(pool);
     let jobs = match repo.list_all().await {
         Ok(j) => j,
         Err(e) => {
@@ -33,13 +37,39 @@ pub async fn list(pool: Pool) -> Vec<McScheduleItem> {
             return Vec::new();
         }
     };
-    jobs.into_iter().map(item_from_cron).collect()
+
+    // Fetch recent runs (last 100) and group by job_id to get the
+    // latest run for each job. This avoids N+1 queries.
+    let recent_runs = run_repo.list_recent(100).await.unwrap_or_default();
+    let mut last_runs: std::collections::HashMap<String, &CronJobRun> =
+        std::collections::HashMap::new();
+    for run in &recent_runs {
+        let job_id = run.job_id.to_string();
+        // Keep only the most recent run per job (list_recent is
+        // ordered by created_at DESC, so first seen = most recent).
+        last_runs.entry(job_id).or_insert(run);
+    }
+
+    jobs.into_iter()
+        .map(|job| item_from_cron(job, &last_runs))
+        .collect()
 }
 
-fn item_from_cron(job: CronJob) -> McScheduleItem {
+fn item_from_cron(
+    job: CronJob,
+    last_runs: &std::collections::HashMap<String, &CronJobRun>,
+) -> McScheduleItem {
     let schedule = format_cron_schedule(&job);
+    let job_id_str = job.id.to_string();
+    let last_run = last_runs.get(&job_id_str);
+
+    let last_run_status = last_run.map(|r| r.status.clone());
+    let last_run_cost = last_run.map(|r| r.cost);
+    let last_run_duration_secs =
+        last_run.and_then(|r| r.completed_at.map(|c| (c - r.started_at).num_seconds()));
+
     McScheduleItem {
-        id: job.id.to_string(),
+        id: job_id_str,
         label: job.name,
         schedule,
         kind: McScheduleKind::Cron,
@@ -47,6 +77,16 @@ fn item_from_cron(job: CronJob) -> McScheduleItem {
         // them from the UI later, but they're flagged as "awaiting
         // user" so the renderer can dim or badge them differently.
         awaiting_user: !job.enabled,
+        prompt: job.prompt,
+        deliver_to: job.deliver_to,
+        last_run_at: job.last_run_at,
+        next_run_at: job.next_run_at,
+        created_at: job.created_at,
+        enabled: job.enabled,
+        profile_name: job.profile_name,
+        last_run_status,
+        last_run_cost,
+        last_run_duration_secs,
     }
 }
 

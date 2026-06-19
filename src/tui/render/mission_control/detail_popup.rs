@@ -191,6 +191,8 @@ fn render_schedule(item: &McScheduleItem) -> Vec<Line<'static>> {
     };
     let state = if item.awaiting_user {
         "awaiting user"
+    } else if !item.enabled {
+        "paused"
     } else {
         "active"
     };
@@ -199,13 +201,80 @@ fn render_schedule(item: &McScheduleItem) -> Vec<Line<'static>> {
         kv("Kind", kind),
         kv("Label", &item.label),
         kv("State", state),
-        blank(),
-        section_heading("Schedule"),
     ];
-    for s in wrap_paragraph(&item.schedule) {
-        lines.push(body_line(s));
+
+    // Schedule + next run
+    lines.push(blank());
+    lines.push(section_heading("Schedule"));
+    lines.push(kv("Cron", &item.schedule));
+    if let Some(next) = &item.next_run_at {
+        lines.push(kv("Next", &next.format("%Y-%m-%d %H:%M UTC").to_string()));
+    } else {
+        lines.push(kv("Next", "not scheduled"));
     }
-    lines.extend([blank(), kv("ID", &item.id)]);
+
+    // Last run
+    lines.push(blank());
+    lines.push(section_heading("Last run"));
+    if let Some(last) = &item.last_run_at {
+        lines.push(kv("At", &last.format("%Y-%m-%d %H:%M UTC").to_string()));
+    } else {
+        lines.push(kv("At", "never"));
+    }
+    if let Some(status) = &item.last_run_status {
+        let status_display = match status.as_str() {
+            "success" => "success",
+            "error" => "error",
+            "running" => "running...",
+            _ => status.as_str(),
+        };
+        lines.push(kv("Status", status_display));
+    }
+    if let Some(cost) = &item.last_run_cost {
+        lines.push(kv("Cost", &format!("${:.4}", cost)));
+    }
+    if let Some(secs) = &item.last_run_duration_secs {
+        let dur = if *secs < 60 {
+            format!("{}s", secs)
+        } else {
+            format!("{}m {}s", secs / 60, secs % 60)
+        };
+        lines.push(kv("Duration", &dur));
+    }
+
+    // Delivery target
+    if let Some(target) = &item.deliver_to {
+        lines.push(blank());
+        lines.push(section_heading("Delivery"));
+        lines.push(kv("Target", target));
+    }
+
+    // Prompt / description
+    if !item.prompt.is_empty() {
+        lines.push(blank());
+        lines.push(section_heading("Prompt"));
+        let preview = if item.prompt.len() > 300 {
+            format!("{}...", &item.prompt[..300])
+        } else {
+            item.prompt.clone()
+        };
+        for s in wrap_paragraph(&preview) {
+            lines.push(body_line(s));
+        }
+    }
+
+    // Meta
+    lines.push(blank());
+    lines.push(section_heading("Meta"));
+    lines.push(kv(
+        "Created",
+        &item.created_at.format("%Y-%m-%d %H:%M UTC").to_string(),
+    ));
+    if let Some(profile) = &item.profile_name {
+        lines.push(kv("Profile", profile));
+    }
+    lines.push(kv("ID", &item.id));
+
     lines
 }
 
