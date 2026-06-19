@@ -25,43 +25,11 @@ fn default_max_results() -> usize {
     5
 }
 
-// DuckDuckGo Instant Answer API response structure
+// DuckDuckGo HTML search result
 #[derive(Debug, Deserialize)]
-struct DuckDuckGoResponse {
-    #[serde(rename = "AbstractText")]
-    abstract_text_plain: String,
-
-    #[serde(rename = "AbstractSource")]
-    abstract_source: String,
-
-    #[serde(rename = "AbstractURL")]
-    abstract_url: String,
-
-    #[serde(rename = "RelatedTopics")]
-    related_topics: Vec<RelatedTopic>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum RelatedTopic {
-    Topic {
-        #[serde(rename = "Text")]
-        text: String,
-        #[serde(rename = "FirstURL")]
-        first_url: String,
-    },
-    TopicGroup {
-        #[serde(rename = "Topics")]
-        topics: Vec<TopicItem>,
-    },
-}
-
-#[derive(Debug, Deserialize)]
-struct TopicItem {
-    #[serde(rename = "Text")]
-    text: String,
-    #[serde(rename = "FirstURL")]
-    first_url: String,
+struct SearchResult {
+    title: String,
+    url: String,
 }
 
 #[async_trait]
@@ -133,15 +101,16 @@ impl Tool for WebSearchTool {
     async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
         let input: SearchInput = serde_json::from_value(input)?;
 
-        // Use DuckDuckGo Instant Answer API (no API key required)
+        // Use DuckDuckGo Lite endpoint which returns actual web search results
         let url = format!(
-            "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
+            "https://lite.duckduckgo.com/lite/?q={}",
             urlencoding::encode(&input.query)
         );
 
         // Make HTTP request
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .build()
             .map_err(|e| ToolError::Execution(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -158,73 +127,76 @@ impl Tool for WebSearchTool {
             )));
         }
 
-        let ddg_response: DuckDuckGoResponse = response
-            .json()
+        let html = response
+            .text()
             .await
-            .map_err(|e| ToolError::Execution(format!("Failed to parse search results: {}", e)))?;
+            .map_err(|e| ToolError::Execution(format!("Failed to read response: {}", e)))?;
+
+        // Parse results from HTML
+        let results = parse_lite_results(&html, input.max_results);
 
         // Build formatted output
         let mut output = String::new();
         output.push_str(&format!("🔍 Search results for: \"{}\"\n\n", input.query));
 
-        // Add main abstract if available
-        if !ddg_response.abstract_text_plain.is_empty() {
-            output.push_str("📄 Summary:\n");
-            output.push_str(&ddg_response.abstract_text_plain);
-            output.push_str("\n\n");
-
-            if !ddg_response.abstract_url.is_empty() {
-                output.push_str(&format!(
-                    "Source: {} - {}\n\n",
-                    ddg_response.abstract_source, ddg_response.abstract_url
-                ));
-            }
-        }
-
-        // Add related topics
-        let mut result_count = 0;
-        if !ddg_response.related_topics.is_empty() {
-            output.push_str("📌 Related Results:\n\n");
-
-            for topic in ddg_response.related_topics {
-                if result_count >= input.max_results {
-                    break;
-                }
-
-                match topic {
-                    RelatedTopic::Topic { text, first_url } => {
-                        output.push_str(&format!("{}. {}\n", result_count + 1, text));
-                        output.push_str(&format!("   🔗 {}\n\n", first_url));
-                        result_count += 1;
-                    }
-                    RelatedTopic::TopicGroup { topics } => {
-                        for topic_item in topics {
-                            if result_count >= input.max_results {
-                                break;
-                            }
-                            output.push_str(&format!(
-                                "{}. {}\n",
-                                result_count + 1,
-                                topic_item.text
-                            ));
-                            output.push_str(&format!("   🔗 {}\n\n", topic_item.first_url));
-                            result_count += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        if output.len() <= 100 {
-            // Very little content returned
-            output.clear();
-            output.push_str(&format!("🔍 Search results for: \"{}\"\n\n", input.query));
-            output.push_str("ℹ️  No detailed results found. Try:\n");
+        if results.is_empty() {
+            output.push_str("ℹ️  No results found. Try:\n");
             output.push_str("  • Rephrasing your query\n");
             output.push_str("  • Using more specific keywords\n");
             output.push_str("  • Searching for a different topic\n");
+        } else {
+            for (i, result) in results.iter().enumerate() {
+                output.push_str(&format!("{}. {}\n", i + 1, result.title));
+                output.push_str(&format!("   🔗 {}\n\n", result.url));
+            }
         }
 
         Ok(ToolResult::success(output))
     }
+}
+
+/// Parse DuckDuckGo Lite HTML response to extract search results
+fn parse_lite_results(html: &str, max_results: usize) -> Vec<SearchResult> {
+    let mut results = Vec::new();
+
+    // Find result links in the HTML
+    // DDG Lite uses <a> tags with class "result-link" for search results
+    let link_regex = regex::Regex::new(r#"<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#)
+        .unwrap_or_else(|_| regex::Regex::new(r#"<a[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#).unwrap());
+
+    for cap in link_regex.captures_iter(html) {
+        if results.len() >= max_results {
+            break;
+        }
+
+        let url = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+        let title = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+
+        // Skip non-http links and empty titles
+        if url.starts_with("http") && !title.trim().is_empty() {
+            results.push(SearchResult { title, url });
+        }
+    }
+
+    // Fallback: if no results found with class="result-link", try generic link parsing
+    if results.is_empty() {
+        let generic_regex = regex::Regex::new(r#"<a[^>]*href="(https?://[^"]*)"[^>]*>([^<]{10,})</a>"#)
+            .unwrap();
+
+        for cap in generic_regex.captures_iter(html) {
+            if results.len() >= max_results {
+                break;
+            }
+
+            let url = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let title = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+
+            // Skip duckduckgo own links
+            if !url.contains("duckduckgo.com") && !title.trim().is_empty() {
+                results.push(SearchResult { title, url });
+            }
+        }
+    }
+
+    results
 }
