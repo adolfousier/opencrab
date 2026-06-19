@@ -2227,7 +2227,7 @@ pub(crate) async fn cmd_profile(operation: ProfileCommands) -> Result<()> {
 }
 
 /// Check for and install the latest OpenCrabs release
-pub(crate) async fn cmd_evolve(check_only: bool) -> Result<()> {
+pub(crate) async fn cmd_evolve(config: &crate::config::Config, check_only: bool) -> Result<()> {
     let current_version = crate::VERSION;
     println!("🔄 OpenCrabs v{current_version} — checking for updates...\n");
 
@@ -2244,6 +2244,30 @@ pub(crate) async fn cmd_evolve(check_only: bool) -> Result<()> {
         return Ok(());
     }
 
+    // Read the current database user_version for migration compatibility check
+    let current_user_version: Option<i64> = {
+        let db_path = &config.database.path;
+        if db_path.exists() {
+            match crate::db::Database::connect(db_path).await {
+                Ok(db) => {
+                    match db.get_user_version().await {
+                        Ok(ver) => Some(ver),
+                        Err(e) => {
+                            tracing::warn!("evolve: could not read user_version: {e}");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("evolve: could not open database: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
     // Full evolve — instantiate the tool and execute
     use crate::brain::tools::evolve::EvolveTool;
     use crate::brain::tools::{Tool, ToolExecutionContext};
@@ -2251,7 +2275,10 @@ pub(crate) async fn cmd_evolve(check_only: bool) -> Result<()> {
     use std::collections::HashMap;
 
     let tool = EvolveTool::new(None);
-    let input = json!({"check_only": false});
+    let input = json!({
+        "check_only": false,
+        "current_user_version": current_user_version
+    });
     let context = ToolExecutionContext {
         session_id: uuid::Uuid::new_v4(),
         working_directory: std::env::current_dir().unwrap_or_default(),
