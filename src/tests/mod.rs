@@ -1,3 +1,9 @@
+/// Process-wide lock for tests that override the global `$HOME` env var. Each
+/// such test file used to keep its own Mutex, which only serialized within that
+/// file — across files they raced, one test's HOME override clobbering another's
+/// mid-run. Every HOME-mutating test must take THIS shared lock.
+pub static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub mod agent_approval_policies_test;
 pub mod agent_basic_test;
 pub mod agent_context_tracking_test;

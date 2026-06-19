@@ -15,11 +15,6 @@
 //! exercise the contract via a temp-config + HOME-override harness.
 
 use crate::channels::commands::models_for_provider;
-use std::sync::Mutex;
-
-// Serialize tests that mutate $HOME so they don't race with each other
-// or with other tests in the suite that touch Config::load.
-static HOME_LOCK: Mutex<()> = Mutex::new(());
 
 struct HomeGuard {
     prev_home: Option<std::ffi::OsString>,
@@ -29,10 +24,12 @@ struct HomeGuard {
 
 impl HomeGuard {
     fn new(temp_home: &std::path::Path) -> Self {
-        let lock = HOME_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let lock = crate::tests::HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let prev_home = std::env::var_os("HOME");
         let prev_userprofile = std::env::var_os("USERPROFILE");
-        // SAFETY: HOME_LOCK serializes access for the duration of `_lock`.
+        // SAFETY: HOME_ENV_LOCK serializes access for the duration of `_lock`.
         // `dirs::home_dir()` reads HOME on Unix and USERPROFILE on Windows
         // (with registry fallback) — set both so the override works on both.
         // Without USERPROFILE the Windows CI test reads the runner's real

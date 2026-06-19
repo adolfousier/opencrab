@@ -14,10 +14,6 @@
 //! parse, and the watcher skips the snapshot when the load was a recovery.
 
 use crate::config::{Config, load_last_good_config, opencrabs_home, save_last_good_config};
-use std::sync::Mutex;
-
-// Serialize tests that mutate $HOME so they don't race.
-static HOME_LOCK: Mutex<()> = Mutex::new(());
 
 struct HomeGuard {
     prev_home: Option<std::ffi::OsString>,
@@ -27,7 +23,9 @@ struct HomeGuard {
 
 impl HomeGuard {
     fn new(temp_home: &std::path::Path) -> Self {
-        let lock = HOME_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let lock = crate::tests::HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let prev_home = std::env::var_os("HOME");
         let prev_userprofile = std::env::var_os("USERPROFILE");
         // SAFETY: HOME_LOCK serializes access for the duration of `_lock`.
