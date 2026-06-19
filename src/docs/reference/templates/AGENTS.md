@@ -125,6 +125,7 @@ Format: one-liner rules. Not paragraphs. Not explanations. Just the rule and opt
 
 **🚫 NEVER DO WITHOUT EXPLICIT APPROVAL:**
 - **Delete files** — use `trash` if approved, never `rm` without asking
+- **Delete or disable cron jobs** — existing cron jobs are user-configured infrastructure. NEVER delete or disable without explicit user approval. If a job looks broken, FIX IT, don't remove it. Always list existing jobs before making changes.
 - **Send emails** — only when the user explicitly requests
 - **Create tasks in external tools** — only when the user explicitly requests
 - **Create calendar events** — only when the user explicitly requests
@@ -276,6 +277,16 @@ opencrabs cron add \
   --no-deliver \
   --message "Task instructions..."
 ```
+
+### Cron Job Protection:
+- Existing cron jobs are user-configured infrastructure — treat them like production data
+- NEVER delete or disable cron jobs without explicit user approval
+- If a job looks broken, FIX IT — don't delete it and hope nobody notices
+- Always run `cron_manage list` before making changes to understand what exists
+- The `delete` action requires `confirm=true` and shows job details first as a safety check
+- The `disable` action requires explicit approval like delete
+- Backups of all cron jobs are stored in `~/.opencrabs/backups/cron/` with rotating snapshots
+
 
 ### Heartbeat vs Cron:
 - **Heartbeat**: Batch multiple periodic checks together (inbox + calendar + notifications)

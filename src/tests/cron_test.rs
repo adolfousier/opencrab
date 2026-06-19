@@ -650,11 +650,18 @@ mod tool {
             .unwrap()
             .trim()
             .to_string();
-
-        // Delete
+        // Delete without confirm - should show warning
         let input = serde_json::json!({"action": "delete", "job_id": id});
         let result = tool.execute(input, &ctx()).await.unwrap();
         assert!(result.success);
+        assert!(result.output.contains("DELETE REQUEST"));
+        assert!(result.output.contains("confirm=true"));
+
+        // Delete with confirm - should actually delete
+        let input = serde_json::json!({"action": "delete", "job_id": id, "confirm": true});
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("deleted"));
         assert!(result.output.contains("deleted"));
 
         // List should be empty
@@ -749,7 +756,7 @@ mod tool {
         assert!(!tool.requires_approval_for_input(&enable_input));
 
         let disable_input = serde_json::json!({"action": "disable"});
-        assert!(!tool.requires_approval_for_input(&disable_input));
+        assert!(tool.requires_approval_for_input(&disable_input)); // disable requires approval now
     }
 
     #[tokio::test]

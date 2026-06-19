@@ -90,6 +90,10 @@ impl Tool for CronManageTool {
                 "enabled": {
                     "type": "boolean",
                     "description": "Whether the job is enabled (for create, default: true)"
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually delete a job. Without it, delete only shows job details as a safety check."
                 }
             },
             "required": ["action"]
@@ -101,10 +105,10 @@ impl Tool for CronManageTool {
     }
 
     fn requires_approval_for_input(&self, input: &Value) -> bool {
-        // Only create and delete need approval; list/enable/disable are safe
+        // create, delete, and disable need approval; list/enable/test are safe
         matches!(
             input.get("action").and_then(|v| v.as_str()),
-            Some("create") | Some("delete") | Some("test")
+            Some("create") | Some("delete") | Some("disable") | Some("test")
         )
     }
 
@@ -284,18 +288,109 @@ impl CronManageTool {
             }
         };
 
+        // Step 1: Look up the job to show what will be deleted
+        let job = match self.repo.find_by_id(job_id).await {
+            Ok(Some(j)) => j,
+            Ok(None) => {
+                // Try by name
+                match self.repo.find_by_name(job_id).await {
+                    Ok(Some(j)) => j,
+                    _ => {
+                        return Ok(ToolResult::error(format!(
+                            "No cron job found with ID or name '{job_id}'."
+                        )));
+                    }
+                }
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!("Error looking up cron job: {e}")));
+            }
+        };
+
+        let confirm = input
+            .get("confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if !confirm {
+            // Safety check: show job details, do NOT delete
+            let deliver = job.deliver_to.as_deref().unwrap_or("none");
+            return Ok(ToolResult::success(format!(
+                "⚠️  DELETE REQUEST (not yet executed)\n\n\
+                 Job: {} (id={})\n\
+                 Schedule: {} ({})\n\
+                 Deliver: {}\n\
+                 Prompt: {}\n\n\
+                 To confirm deletion, call again with confirm=true.\n\
+                 Use 'disable' to temporarily pause without losing the job.",
+                job.name,
+                job.id,
+                job.cron_expr,
+                job.timezone,
+                deliver,
+                truncate(&job.prompt, 120)
+            )));
+        }
+
+        // Step 2: Back up all jobs before deleting
+        if let Ok(all_jobs) = self.repo.list_all().await {
+            self.backup_jobs(&all_jobs).await;
+        }
+
+        // Step 3: Actually delete
         let deleted = self
             .repo
-            .delete(job_id)
+            .delete(&job.id.to_string())
             .await
             .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
 
         if deleted {
-            Ok(ToolResult::success(format!("Cron job {job_id} deleted.")))
+            Ok(ToolResult::success(format!(
+                "Cron job '{}' (id={}) deleted. Backup saved to ~/.opencrabs/backups/cron/",
+                job.name, job.id
+            )))
         } else {
             Ok(ToolResult::error(format!(
-                "No cron job found with ID '{job_id}'."
+                "Failed to delete cron job '{}' (id={}).",
+                job.name, job.id
             )))
+        }
+    }
+
+    async fn backup_jobs(&self, jobs: &[CronJob]) {
+        use std::fs;
+        use std::path::PathBuf;
+
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let backup_dir = home.join(".opencrabs/backups/cron");
+        if fs::create_dir_all(&backup_dir).is_err() {
+            return;
+        }
+
+        let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+        let backup_path = backup_dir.join(format!("cron-jobs-{timestamp}.json"));
+
+        if let Ok(json) = serde_json::to_string_pretty(jobs) {
+            let _ = fs::write(&backup_path, json);
+        }
+
+        // Rotate: keep only the 10 most recent backups
+        if let Ok(entries) = fs::read_dir(&backup_dir) {
+            let mut files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .map(|n| n.starts_with("cron-jobs-") && n.ends_with(".json"))
+                        .unwrap_or(false)
+                })
+                .collect();
+            files.sort_by_key(|e| e.file_name());
+            if files.len() > 10 {
+                for old in &files[..files.len() - 10] {
+                    let _ = fs::remove_file(old.path());
+                }
+            }
         }
     }
 
