@@ -1,0 +1,626 @@
+//! Filesystem IO for config and keys: profile home, daily backups,
+//! last-known-good snapshots, keys.toml read/write, and key merging.
+//!
+//! Split out of `types.rs` to keep config *data definitions* separate from
+//! the *file IO* that loads and persists them.
+
+use super::*;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// Canonical base directory for the active profile.
+///
+/// - Default profile: `~/.opencrabs/`
+/// - Named profile: `~/.opencrabs/profiles/<name>/`
+///
+/// Selection priority: `set_active_profile()` > `OPENCRABS_PROFILE` env > default.
+pub fn opencrabs_home() -> PathBuf {
+    let p = crate::config::profile::resolve_profile_home();
+    if !p.exists()
+        && let Err(e) = std::fs::create_dir_all(&p)
+    {
+        tracing::error!("Failed to create opencrabs home directory {p:?}: {e}");
+    }
+    p
+}
+
+/// Daily backup of a config file. One copy per day, keeps `max_days` days.
+///
+/// Names backups `file.YYYY-MM-DD.bak`. If today's backup already exists,
+/// skips (avoids overwriting a clean daily snapshot with mid-day edits).
+/// Prunes backups older than `max_days`. Silently ignores errors — backup
+/// failure must never block a config write.
+pub fn daily_backup(path: &Path, max_days: usize) {
+    if !path.exists() {
+        return;
+    }
+    let parent = match path.parent() {
+        Some(p) => p,
+        None => return,
+    };
+    let stem = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let today_backup = parent.join(format!("{stem}.{today}.bak"));
+
+    // Skip if today's backup already exists (preserve the day's first snapshot)
+    if today_backup.exists() {
+        return;
+    }
+
+    // Create today's backup
+    if let Err(e) = fs::copy(path, &today_backup) {
+        tracing::warn!("Failed to back up {} before write: {e}", path.display());
+        return;
+    }
+    tracing::debug!("Daily backup: {}", today_backup.display());
+
+    // Prune old backups beyond max_days
+    let prefix = format!("{stem}.");
+    let suffix = ".bak";
+    if let Ok(entries) = fs::read_dir(parent) {
+        let mut backups: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with(&prefix) && name.ends_with(suffix) && name != stem {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        backups.sort();
+        backups.reverse(); // newest first
+        for old in backups.iter().skip(max_days) {
+            let _ = fs::remove_file(parent.join(old));
+            tracing::debug!("Pruned old backup: {old}");
+        }
+    }
+}
+
+/// Snapshot current config + keys as "last known good".
+///
+/// Called after a successful provider response proves the config works.
+/// On config parse failure, `Config::load()` falls back to these files.
+/// Silently ignores errors — must never block normal operation.
+pub fn save_last_good_config() {
+    let home = opencrabs_home();
+
+    let config_path = home.join("config.toml");
+    let keys_path_src = home.join("keys.toml");
+    let config_good = home.join("config.last_good.toml");
+    let keys_good = home.join("keys.last_good.toml");
+
+    if config_path.exists() {
+        // NEVER snapshot a config that doesn't parse. A raw copy of a broken
+        // config.toml poisons the last-good snapshot and defeats recovery
+        // entirely — the whole point of the snapshot is to be loadable.
+        if let Err(e) = Config::load_from_path(&config_path) {
+            tracing::warn!("Refusing last-good snapshot: config.toml does not parse: {e}");
+            return;
+        }
+        if let Err(e) = fs::copy(&config_path, &config_good) {
+            tracing::debug!("Failed to save last-good config: {e}");
+        }
+    }
+    if keys_path_src.exists()
+        && let Err(e) = fs::copy(&keys_path_src, &keys_good)
+    {
+        tracing::debug!("Failed to save last-good keys: {e}");
+    }
+}
+
+/// Try loading config from last-known-good snapshot.
+///
+/// Returns None if no snapshot exists or if it also fails to parse.
+pub fn load_last_good_config() -> Option<Config> {
+    let home = opencrabs_home();
+    let config_good = home.join("config.last_good.toml");
+
+    if !config_good.exists() {
+        return None;
+    }
+
+    tracing::warn!("Attempting recovery from last-known-good config");
+
+    // Load base config from the good snapshot
+    let mut config = match Config::load_from_path(&config_good) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Last-good config also failed: {e}");
+            return None;
+        }
+    };
+
+    // Try loading keys from good snapshot
+    let keys_good = home.join("keys.last_good.toml");
+    if keys_good.exists()
+        && let Ok(content) = fs::read_to_string(&keys_good)
+        && let Ok(keys) = toml::from_str::<KeysFile>(&content)
+    {
+        config.providers = merge_provider_keys(config.providers, keys.providers);
+        config.channels = merge_channel_keys(config.channels, keys.channels);
+    }
+
+    tracing::warn!("Recovered config from last-known-good snapshot");
+    Some(config)
+}
+
+/// Get path to keys.toml - separate file for sensitive API keys
+pub fn keys_path() -> PathBuf {
+    opencrabs_home().join("keys.toml")
+}
+
+/// Read the RAW set of custom provider names from config.toml — no merge,
+/// no keys.toml fallback. Used by `cleanup_keys_custom_providers` to break
+/// the circular dependency where `Config::load()` (the loader) re-creates
+/// missing config entries from keys.toml itself, which then made the
+/// "orphan in keys.toml" check pass and skip removal.
+///
+/// Returns an empty set on any read / parse failure — the cleanup path
+/// treats "can't read config" as "nothing in config", which means it
+/// won't remove anything destructively from keys.toml.
+pub(crate) fn raw_config_custom_provider_names() -> std::collections::HashSet<String> {
+    use toml_edit::DocumentMut;
+    let path = Config::system_config_path().unwrap_or_else(|| opencrabs_home().join("config.toml"));
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return std::collections::HashSet::new();
+    };
+    let Ok(doc) = content.parse::<DocumentMut>() else {
+        return std::collections::HashSet::new();
+    };
+    doc.as_table()
+        .get("providers")
+        .and_then(|t| t.as_table())
+        .and_then(|t| t.get("custom"))
+        .and_then(|t| t.as_table())
+        .map(|t| t.iter().map(|(k, _)| k.to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// Save API keys to keys.toml using merge (preserves existing keys).
+/// Only writes non-empty api_key values; never deletes other providers' keys.
+pub fn save_keys(keys: &ProviderConfigs) -> Result<()> {
+    // Merge each provider key individually via write_secret_key (read-modify-write)
+    let providers: &[(&str, Option<&ProviderConfig>)] = &[
+        ("providers.anthropic", keys.anthropic.as_ref()),
+        ("providers.openai", keys.openai.as_ref()),
+        ("providers.openrouter", keys.openrouter.as_ref()),
+        ("providers.minimax", keys.minimax.as_ref()),
+        ("providers.gemini", keys.gemini.as_ref()),
+    ];
+
+    for (section, provider) in providers {
+        if let Some(p) = provider
+            && let Some(key) = &p.api_key
+            && !key.is_empty()
+        {
+            write_secret_key(section, "api_key", key)?;
+        }
+    }
+
+    // Handle custom providers (flat "default" and named)
+    if let Some(customs) = &keys.custom {
+        for (name, p) in customs {
+            if let Some(key) = &p.api_key
+                && !key.is_empty()
+            {
+                let section = if name == "default" {
+                    "providers.custom".to_string()
+                } else {
+                    format!("providers.custom.{}", name)
+                };
+                write_secret_key(&section, "api_key", key)?;
+            }
+        }
+    }
+
+    tracing::info!("Saved API keys to: {:?}", keys_path());
+    Ok(())
+}
+
+/// Write a single key-value pair into keys.toml at the given dotted section path.
+///
+/// Equivalent to `Config::write_key` but targets `~/.opencrabs/keys.toml`.
+/// Use for persisting secrets (tokens, API keys) that must not go into config.toml.
+///
+/// Normalize a TOML section key: lowercase, replace dots/underscores/spaces
+/// with hyphens, strip non-alphanumeric chars (except hyphen).
+/// e.g. "Qwen_2.5_4B" → "qwen-2-5-4b", "My Provider" → "my-provider"
+pub fn normalize_toml_key(key: &str) -> String {
+    key.trim()
+        .to_lowercase()
+        .replace(['.', '_', ' '], "-")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-')
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
+}
+
+/// # Example
+/// ```no_run
+/// # fn main() -> anyhow::Result<()> {
+/// use opencrabs::config::write_secret_key;
+/// write_secret_key("channels.telegram", "token", "123456:ABC...")?;
+/// // results in keys.toml: [channels.telegram] token = "123456:ABC..."
+/// # Ok(())
+/// # }
+/// ```
+pub fn write_secret_key(section: &str, key: &str, value: &str) -> Result<()> {
+    use toml_edit::DocumentMut;
+
+    // Sanitize: strip carriage returns, take only first token (reject pasted URLs/junk after key)
+    let value = value.split(['\r', '\n']).next().unwrap_or("").trim();
+    if value.is_empty() {
+        return Ok(()); // Don't write empty values
+    }
+
+    // Hold lock for entire read-modify-write to prevent races
+    let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let path = keys_path();
+
+    let mut doc: DocumentMut = if path.exists() {
+        fs::read_to_string(&path)?.parse()?
+    } else {
+        DocumentMut::new()
+    };
+
+    // Normalize custom provider names (e.g. "Qwen_2.5_4B" → "qwen-2-5-4b")
+    let parts: Vec<String> = section
+        .split('.')
+        .enumerate()
+        .map(|(i, p)| {
+            if i >= 2 && section.starts_with("providers.custom") {
+                normalize_toml_key(p)
+            } else {
+                p.to_string()
+            }
+        })
+        .collect();
+
+    // Navigate/create nested tables
+    let mut current = doc.as_table_mut();
+    for part in &parts {
+        if current.get(part.as_str()).is_none() {
+            current.insert(part, toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+        current = current
+            .get_mut(part.as_str())
+            .context("section not found after insert")?
+            .as_table_mut()
+            .with_context(|| format!("'{}' is not a table", part))?;
+    }
+    current.insert(key, toml_edit::value(value));
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    daily_backup(&path, 7);
+    fs::write(&path, doc.to_string())?;
+    tracing::info!("Wrote secret key [{section}].{key}");
+    Ok(())
+}
+
+/// Keys file structure (keys.toml) - contains sensitive keys and tokens
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KeysFile {
+    #[serde(default)]
+    pub providers: ProviderConfigs,
+    #[serde(default)]
+    pub channels: ChannelsConfig,
+    #[serde(default)]
+    pub a2a: Option<KeysA2a>,
+    #[serde(default)]
+    pub image: Option<ImageKeys>,
+}
+
+/// Image keys section in keys.toml
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ImageKeys {
+    pub api_key: Option<String>,
+}
+
+/// A2A keys section in keys.toml
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KeysA2a {
+    pub api_key: Option<String>,
+}
+
+/// Load API keys from keys.toml
+/// This file should be chmod 600 for security
+pub(crate) fn load_keys_from_file() -> Result<KeysFile> {
+    let keys_path = keys_path();
+    if !keys_path.exists() {
+        return Ok(KeysFile::default());
+    }
+
+    tracing::trace!("Loading keys from: {:?}", keys_path);
+    let content = std::fs::read_to_string(&keys_path)?;
+    let keys: KeysFile = toml::from_str(&content)?;
+    Ok(keys)
+}
+
+/// Merge API keys from keys.toml into existing provider configs
+/// Keys from keys.toml override values in config.toml
+pub(crate) fn merge_provider_keys(
+    mut base: ProviderConfigs,
+    keys: ProviderConfigs,
+) -> ProviderConfigs {
+    // Guard: never merge the sentinel placeholder that /models uses internally
+    let is_real_key = |k: &str| !k.is_empty() && k != "__EXISTING_KEY__";
+
+    // Merge each provider's api_key if present in keys
+    if let Some(k) = keys.anthropic
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.anthropic.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    if let Some(k) = keys.openai
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.openai.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    if let Some(k) = keys.openrouter
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.openrouter.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    tracing::trace!(
+        "merge_provider_keys: minimax keys present={}, base present={}",
+        keys.minimax.is_some(),
+        base.minimax.is_some()
+    );
+    if let Some(k) = keys.minimax
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.minimax.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    // Xiaomi: keyless during the free collab window, but if a user supplies
+    // their own key (e.g. after the cutoff) merge it like any other provider.
+    if let Some(k) = keys.xiaomi
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.xiaomi.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    if let Some(k) = keys.gemini
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.gemini.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    if let Some(k) = keys.github
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.github.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    // Merge zhipu
+    if let Some(k) = keys.zhipu
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.zhipu.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    // Merge qwen (DashScope API key). Auto-enable + create the entry if
+    // keys.toml has a key but config.toml doesn't — the user authenticated
+    // through onboarding and wants Qwen on.
+    if let Some(k) = keys.qwen
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.qwen.get_or_insert_with(|| ProviderConfig {
+            enabled: true,
+            ..Default::default()
+        });
+        entry.api_key = Some(key);
+        if entry.default_model.is_none() && k.default_model.is_some() {
+            entry.default_model = k.default_model;
+        }
+        if entry.base_url.is_none() && k.base_url.is_some() {
+            entry.base_url = k.base_url;
+        }
+    }
+    // Merge opencode (Go/Zen plan API key). Same auto-enable logic as
+    // qwen — `/models` writes the key under `[providers.opencode]` in
+    // keys.toml, and without this merge the runtime config never sees
+    // it (factory.rs reports "API key missing" and the picker's
+    // selection silently fails to take effect).
+    if let Some(k) = keys.opencode
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.opencode.get_or_insert_with(|| ProviderConfig {
+            enabled: true,
+            ..Default::default()
+        });
+        entry.api_key = Some(key);
+        if entry.default_model.is_none() && k.default_model.is_some() {
+            entry.default_model = k.default_model;
+        }
+        if entry.base_url.is_none() && k.base_url.is_some() {
+            entry.base_url = k.base_url;
+        }
+    }
+    // Merge custom provider keys. Both config.toml and keys.toml go through
+    // deserialize_custom_providers which normalizes keys via normalize_toml_key,
+    // so names should match exactly (e.g. "opencodeiolo-qwen").
+    if let Some(custom_keys) = keys.custom {
+        let base_customs = base.custom.get_or_insert_with(BTreeMap::default);
+        for (name, key_cfg) in custom_keys {
+            if let Some(key) = key_cfg.api_key
+                && is_real_key(&key)
+            {
+                use std::collections::btree_map::Entry;
+                match base_customs.entry(name.clone()) {
+                    Entry::Occupied(mut occupied) => {
+                        tracing::trace!(
+                            "merge_provider_keys: merging api_key for custom '{}'",
+                            name
+                        );
+                        occupied.get_mut().api_key = Some(key);
+                    }
+                    Entry::Vacant(vacant) => {
+                        // Key exists in keys.toml but not in config.toml.
+                        // Create a minimal entry so the provider can be constructed.
+                        tracing::trace!(
+                            "merge_provider_keys: custom '{}' has key in keys.toml but no config.toml entry — creating minimal entry",
+                            name
+                        );
+                        vacant.insert(ProviderConfig {
+                            api_key: Some(key),
+                            base_url: key_cfg.base_url,
+                            default_model: key_cfg.default_model,
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+        }
+    }
+    // Also handle STT/TTS keys
+    if let Some(stt) = keys.stt
+        && let Some(groq) = stt.groq
+        && let Some(key) = groq.api_key
+    {
+        let base_stt = base.stt.get_or_insert_with(SttProviders::default);
+        let entry = base_stt.groq.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    if let Some(tts) = keys.tts
+        && let Some(openai) = tts.openai
+        && let Some(key) = openai.api_key
+    {
+        let base_tts = base.tts.get_or_insert_with(TtsProviders::default);
+        let entry = base_tts.openai.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
+    if let Some(ws) = keys.web_search {
+        let base_ws = base
+            .web_search
+            .get_or_insert_with(WebSearchProviders::default);
+        if let Some(exa) = ws.exa
+            && let Some(key) = exa.api_key
+            && !key.is_empty()
+        {
+            let entry = base_ws.exa.get_or_insert_with(ProviderConfig::default);
+            entry.api_key = Some(key);
+        }
+        if let Some(brave) = ws.brave
+            && let Some(key) = brave.api_key
+            && !key.is_empty()
+        {
+            let entry = base_ws.brave.get_or_insert_with(ProviderConfig::default);
+            entry.api_key = Some(key);
+        }
+    }
+    // Merge image provider keys (e.g. [providers.image.gemini])
+    if let Some(img) = keys.image {
+        let base_img = base.image.get_or_insert_with(ImageProviders::default);
+        if let Some(gemini) = img.gemini
+            && let Some(key) = gemini.api_key
+            && !key.is_empty()
+        {
+            let entry = base_img.gemini.get_or_insert_with(ProviderConfig::default);
+            entry.api_key = Some(key);
+        }
+    }
+    // Summarise custom-provider key merge at INFO so "auth errors on
+    // startup" always have a ground-truth log to correlate with: how
+    // many customs exist, which have real keys, which don't.
+    if let Some(ref customs) = base.custom {
+        let total = customs.len();
+        let with_key = customs
+            .values()
+            .filter(|c| {
+                c.api_key
+                    .as_ref()
+                    .is_some_and(|k| !k.is_empty() && k != "__EXISTING_KEY__")
+            })
+            .count();
+        let missing: Vec<&str> = customs
+            .iter()
+            .filter(|(_, c)| {
+                !c.api_key
+                    .as_ref()
+                    .is_some_and(|k| !k.is_empty() && k != "__EXISTING_KEY__")
+            })
+            .map(|(n, _)| n.as_str())
+            .collect();
+        tracing::trace!(
+            "merge_provider_keys: custom providers loaded = {} ({} with real api_key); \
+             providers missing a real key: {:?}",
+            total,
+            with_key,
+            missing,
+        );
+    }
+    base
+}
+
+/// Merge channel tokens from keys.toml into existing channels config
+/// Tokens from keys.toml override values in config.toml
+pub(crate) fn merge_channel_keys(mut base: ChannelsConfig, keys: ChannelsConfig) -> ChannelsConfig {
+    // Telegram
+    if let Some(ref token) = keys.telegram.token
+        && !token.is_empty()
+    {
+        base.telegram.token = Some(token.clone());
+    }
+
+    // Discord
+    if let Some(ref token) = keys.discord.token
+        && !token.is_empty()
+    {
+        base.discord.token = Some(token.clone());
+    }
+
+    // Slack
+    if let Some(ref token) = keys.slack.token
+        && !token.is_empty()
+    {
+        base.slack.token = Some(token.clone());
+    }
+    if let Some(ref app_token) = keys.slack.app_token
+        && !app_token.is_empty()
+    {
+        base.slack.app_token = Some(app_token.clone());
+    }
+
+    // WhatsApp uses QR-code pairing stored in session.db — no token to merge.
+
+    // Trello (app_token = API Key, token = API Token)
+    if let Some(ref app_token) = keys.trello.app_token
+        && !app_token.is_empty()
+    {
+        base.trello.app_token = Some(app_token.clone());
+    }
+    if let Some(ref token) = keys.trello.token
+        && !token.is_empty()
+    {
+        base.trello.token = Some(token.clone());
+    }
+
+    base
+}
