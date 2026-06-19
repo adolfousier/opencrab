@@ -167,7 +167,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    const MIGRATION_COUNT: usize = 27;
+    pub const MIGRATION_COUNT: usize = 27;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
@@ -319,6 +319,23 @@ impl Database {
     pub fn close(&self) {
         self.pool.close();
         tracing::info!("Database connection closed");
+    }
+
+    /// Get the current database user_version (migration level).
+    ///
+    /// This is used by the evolve tool to check if the current binary
+    /// can handle the database before swapping.
+    pub async fn get_user_version(&self) -> Result<i64> {
+        let version = self
+            .pool
+            .get()
+            .await
+            .context("Failed to get connection for user_version")?
+            .interact(|conn| conn.pragma_query_value(None, "user_version", |r| r.get(0)))
+            .await
+            .map_err(interact_err)?
+            .context("Failed to read user_version")?;
+        Ok(version)
     }
 }
 
