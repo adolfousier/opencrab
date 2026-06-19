@@ -161,16 +161,25 @@ fn parse_lite_results(html: &str, max_results: usize) -> Vec<SearchResult> {
 
     // Find result links in the HTML
     // DDG Lite uses <a> tags with class "result-link" for search results
-    let link_regex = regex::Regex::new(r#"<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#)
-        .unwrap_or_else(|_| regex::Regex::new(r#"<a[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#).unwrap());
+    let link_regex =
+        regex::Regex::new(r#"<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#)
+            .unwrap_or_else(|_| {
+                regex::Regex::new(r#"<a[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#).unwrap()
+            });
 
     for cap in link_regex.captures_iter(html) {
         if results.len() >= max_results {
             break;
         }
 
-        let url = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-        let title = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+        let url = cap
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let title = cap
+            .get(2)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
 
         // Skip non-http links and empty titles
         if url.starts_with("http") && !title.trim().is_empty() {
@@ -180,16 +189,22 @@ fn parse_lite_results(html: &str, max_results: usize) -> Vec<SearchResult> {
 
     // Fallback: if no results found with class="result-link", try generic link parsing
     if results.is_empty() {
-        let generic_regex = regex::Regex::new(r#"<a[^>]*href="(https?://[^"]*)"[^>]*>([^<]{10,})</a>"#)
-            .unwrap();
+        let generic_regex =
+            regex::Regex::new(r#"<a[^>]*href="(https?://[^"]*)"[^>]*>([^<]{10,})</a>"#).unwrap();
 
         for cap in generic_regex.captures_iter(html) {
             if results.len() >= max_results {
                 break;
             }
 
-            let url = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-            let title = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let url = cap
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let title = cap
+                .get(2)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
 
             // Skip duckduckgo own links
             if !url.contains("duckduckgo.com") && !title.trim().is_empty() {
