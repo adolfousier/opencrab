@@ -1027,11 +1027,16 @@ impl App {
             serde_json::from_str::<crate::tui::plan::PlanDocument>(&content).ok()
         });
 
-        // Clean up stale plans that shouldn't be displayed
+        // Clean up stale plans that shouldn't be displayed.
+        //
+        // IMPORTANT: Completed plans are intentionally KEPT. They serve as
+        // execution history the agent can reference, and the plan file is
+        // session-scoped (auto-cleaned with the session).  Only rejected or
+        // cancelled plans are discarded, and InProgress plans from stale runs.
         if let Some(ref plan) = self.plan_document {
             use crate::tui::plan::PlanStatus;
             let should_discard = match plan.status {
-                PlanStatus::Completed | PlanStatus::Rejected | PlanStatus::Cancelled => true,
+                PlanStatus::Rejected | PlanStatus::Cancelled => true,
                 PlanStatus::InProgress => {
                     // If the agent isn't actively processing, this plan is stale
                     // (left over from a previous run or a failed tool call)

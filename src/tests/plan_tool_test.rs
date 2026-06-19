@@ -416,3 +416,156 @@ async fn import_rejects_symlink_at_target() {
         "expected symlink rejection, got: {msg}"
     );
 }
+
+// ── start_task auto-completion ─────────────────────────────────────
+
+#[tokio::test]
+async fn start_task_auto_completes_previous_in_progress_task() {
+    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+    let tool = PlanTool;
+
+    // Create a plan with 3 tasks
+    tool.execute(
+        serde_json::json!({
+            "operation": "create",
+            "title": "Auto-complete test",
+            "description": "Testing auto-completion of previous task"
+        }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    for i in 1..=3 {
+        tool.execute(
+            serde_json::json!({
+                "operation": "add_task",
+                "title": format!("Task {}", i),
+                "description": format!("Description {}", i),
+                "task_type": "edit"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    }
+
+    tool.execute(serde_json::json!({ "operation": "finalize" }), &ctx)
+        .await
+        .unwrap();
+
+    // Start task 1
+    tool.execute(
+        serde_json::json!({ "operation": "start_task", "task_order": 1 }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    // Start task 2 WITHOUT completing task 1 first.
+    // This should auto-complete task 1.
+    let result = tool
+        .execute(
+            serde_json::json!({ "operation": "start_task", "task_order": 2 }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        result.output.contains("Auto-completed"),
+        "should auto-complete previous task, got: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("Task 1"),
+        "should mention the auto-completed task name, got: {}",
+        result.output
+    );
+
+    // Verify task 1 is now completed via summary
+    let summary = tool
+        .execute(serde_json::json!({ "operation": "summary" }), &ctx)
+        .await
+        .unwrap();
+    assert!(
+        summary.output.contains("[x] Task 1"),
+        "task 1 should be completed, got: {}",
+        summary.output
+    );
+    assert!(
+        summary.output.contains("[>] Task 2"),
+        "task 2 should be in progress, got: {}",
+        summary.output
+    );
+}
+
+#[tokio::test]
+async fn start_task_no_auto_complete_when_no_previous_in_progress() {
+    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+    let tool = PlanTool;
+
+    tool.execute(
+        serde_json::json!({
+            "operation": "create",
+            "title": "No auto-complete test",
+            "description": "Normal flow"
+        }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    for i in 1..=2 {
+        tool.execute(
+            serde_json::json!({
+                "operation": "add_task",
+                "title": format!("Task {}", i),
+                "description": format!("Desc {}", i),
+                "task_type": "edit"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    }
+
+    tool.execute(serde_json::json!({ "operation": "finalize" }), &ctx)
+        .await
+        .unwrap();
+
+    // Start task 1, complete it properly
+    tool.execute(
+        serde_json::json!({ "operation": "start_task", "task_order": 1 }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    tool.execute(
+        serde_json::json!({
+            "operation": "complete_task",
+            "task_order": 1,
+            "success": true,
+            "output": "Done"
+        }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    // Start task 2 - no auto-complete should happen since task 1 is already completed
+    let result = tool
+        .execute(
+            serde_json::json!({ "operation": "start_task", "task_order": 2 }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        !result.output.contains("Auto-completed"),
+        "should NOT auto-complete when previous task is already done, got: {}",
+        result.output
+    );
+}

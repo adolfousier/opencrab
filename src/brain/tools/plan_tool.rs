@@ -891,6 +891,27 @@ impl Tool for PlanTool {
                     )));
                 }
 
+                // Auto-complete any other InProgress task. The model sometimes
+                // moves on to the next task without calling complete_task on
+                // the previous one (especially after long tool sequences).
+                // This prevents the plan from getting stuck at "2/3 tasks done"
+                // when all work is actually finished.
+                let auto_completed_title = current_plan
+                    .tasks
+                    .iter_mut()
+                    .find(|t| {
+                        t.status == crate::tui::plan::TaskStatus::InProgress
+                            && t.order != task_order
+                    })
+                    .map(|t| {
+                        let title = t.title.clone();
+                        t.complete_execution(
+                            "Auto-completed: agent moved to next task.".to_string(),
+                            true,
+                        );
+                        title
+                    });
+
                 // Now get mutable reference and update (verified to exist above)
                 let task = current_plan
                     .get_task_by_order_mut(task_order)
@@ -902,15 +923,28 @@ impl Tool for PlanTool {
 
                 current_plan.status = PlanStatus::InProgress;
 
-                format!(
-                    "▶️ Started Task #{}: {}\n\n\
-                     Now execute the task by:\n\
-                     1. Using appropriate tools (read_file, write_file, bash, etc.)\n\
-                     2. Recording tool calls with 'record_tool_call'\n\
-                     3. Completing with 'complete_task' when done\n\
-                     4. Reflecting on results with 'reflect'",
-                    task_order, task_title
-                )
+                if let Some(prev_title) = auto_completed_title {
+                    format!(
+                        "⚠️ Auto-completed previous task '{}' (it was still marked InProgress).\n\n\
+                         ▶️ Started Task #{}: {}\n\n\
+                         Now execute the task by:\n\
+                         1. Using appropriate tools (read_file, write_file, bash, etc.)\n\
+                         2. Recording tool calls with 'record_tool_call'\n\
+                         3. Completing with 'complete_task' when done\n\
+                         4. Reflecting on results with 'reflect'",
+                        prev_title, task_order, task_title
+                    )
+                } else {
+                    format!(
+                        "▶️ Started Task #{}: {}\n\n\
+                         Now execute the task by:\n\
+                         1. Using appropriate tools (read_file, write_file, bash, etc.)\n\
+                         2. Recording tool calls with 'record_tool_call'\n\
+                         3. Completing with 'complete_task' when done\n\
+                         4. Reflecting on results with 'reflect'",
+                        task_order, task_title
+                    )
+                }
             }
 
             PlanOperation::CompleteTask {
