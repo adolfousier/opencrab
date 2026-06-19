@@ -295,16 +295,41 @@ async fn health_check_binary(path: &std::path::Path) -> std::result::Result<(), 
         "evolve: running `<binary> --version` health check"
     );
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        tokio::process::Command::new(path)
-            .arg("--version")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output(),
-    )
-    .await;
+    // A binary written moments ago can briefly fail to exec even though it is
+    // perfectly valid: ETXTBSY (os 26 — kernel still treats it as open for
+    // write) or a transient ENOENT (os 2) before the write fully settles. This
+    // broke evolve on a VPS — one run failed to spawn with os 2, the next with
+    // os 26, both on the same 79MB binary. Retry the spawn a few times with
+    // backoff before treating it as a real failure.
+    let mut attempt = 0u32;
+    let result = loop {
+        attempt += 1;
+        let r = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio::process::Command::new(path)
+                .arg("--version")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .output(),
+        )
+        .await;
+
+        if let Ok(Err(ref e)) = r
+            && attempt < 5
+            && matches!(e.raw_os_error(), Some(2) | Some(26))
+        {
+            tracing::warn!(
+                target: "evolve",
+                attempt,
+                os_error = ?e.raw_os_error(),
+                "evolve: fresh binary not exec-able yet, retrying health check"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64)).await;
+            continue;
+        }
+        break r;
+    };
 
     match result {
         Ok(Ok(output)) if output.status.success() => Ok(()),
