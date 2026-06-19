@@ -239,7 +239,9 @@ cargo test --all-features
 | Tests — TOOLS.md Slim Regression | 9 | `src/tests/tools_md_regression_test.rs` |
 | Tests — Telegram Command Sanitize | 10 | `src/tests/telegram_command_sanitize_test.rs` |
 | Tests — Usage Cache | 13 | `src/tests/usage_cache_test.rs` |
-| **Total** | **3,746** | Authoritative count from `cargo test --all-features` (lib test binary). The per-category rows above are a maintained snapshot from the v0.3.25 baseline; v0.3.36 added ~863 tests across 35+ new modules (retry resilience + consolidation, tool-name self-heal #176, secret redaction across tool summaries/RSI/channels, HTML-page 4xx retry, atomic provider+model pairing, streaming tok/s guard, footer/branch/video fallbacks). Re-run `cargo test` for the live number. |
+| Tests — Config Auto-Repair | 7 | `src/tests/config_repair_test.rs` — closes unterminated arrays/inline tables in a broken `config.toml`, gated on the result re-parsing; leaves valid/nested/string cases and unfixable errors alone |
+| Tests — Config Last-Good Recovery | 3 | `src/tests/config_last_good_recovery_test.rs` — a broken config never poisons the last-good snapshot; fixable configs auto-repair in place; unfixable ones recover from last-good (preserves auto-always so yolo mode survives a typo) |
+| **Total** | **4,033** | Authoritative count from `cargo test --all-features` (lib test binary): 4,010 run by default + 23 `#[ignore]`d. The per-category rows above are a maintained snapshot; recent additions include config resilience tests (auto-repair + last-good recovery) and the `config/types.rs` split into `types/loader.rs` (load/merge/repair) and `types/io.rs` (file IO). Re-run `cargo test` for the live number. |
 
 ---
 
