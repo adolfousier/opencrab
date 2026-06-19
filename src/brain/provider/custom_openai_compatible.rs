@@ -3280,11 +3280,14 @@ impl Provider for OpenAIProvider {
                 match chunk_result {
                     Err(e) => vec![Err(ProviderError::StreamError(e.to_string()))],
                     Ok(chunk) => {
-                        // GRANULAR LOG: Raw SSE chunk
+                        // GRANULAR LOG: Raw SSE chunk. This fires once PER chunk —
+                        // a firehose that floods debug-mode log files on every
+                        // streamed response. Keep it at trace, not debug, so it's
+                        // opt-in for deep diagnostics only.
                         let raw_text = String::from_utf8_lossy(&chunk);
-                        tracing::debug!("[STREAM_RAW] SSE chunk: {}", raw_text.chars().take(500).collect::<String>());
+                        tracing::trace!("[STREAM_RAW] SSE chunk: {}", raw_text.chars().take(500).collect::<String>());
                         if raw_text.contains("tool_calls") {
-                            tracing::debug!("[STREAM_RAW] SSE chunk with tool_calls: {}", raw_text.chars().take(500).collect::<String>());
+                            tracing::trace!("[STREAM_RAW] SSE chunk with tool_calls: {}", raw_text.chars().take(500).collect::<String>());
                         }
 
                         let mut buf = buffer.lock().expect("SSE buffer lock poisoned");
