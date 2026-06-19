@@ -358,6 +358,45 @@ async fn health_check_binary(path: &std::path::Path) -> std::result::Result<(), 
     }
 }
 
+/// Run the binary with `print-migration-count` and return the parsed count.
+/// Returns an error if the binary doesn't support this flag or the output
+/// can't be parsed.
+async fn get_binary_migration_count(path: &std::path::Path) -> std::result::Result<usize, String> {
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new(path)
+            .arg("print-migration-count")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output(),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let count = stdout.trim().parse::<usize>().map_err(|e| {
+                format!(
+                    "could not parse migration count from '{stdout}': {e}"
+                )
+            })?;
+            Ok(count)
+        }
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let snippet: String = stderr.chars().take(200).collect();
+            Err(format!(
+                "print-migration-count exited with {}: {}",
+                output.status,
+                if snippet.is_empty() { "no stderr" } else { &snippet }
+            ))
+        }
+        Ok(Err(e)) => Err(format!("failed to spawn binary: {e}")),
+        Err(_) => Err("timed out after 10s".into()),
+    }
+}
+
 pub struct EvolveTool {
     progress: Option<ProgressCallback>,
 }
@@ -407,6 +446,10 @@ impl Tool for EvolveTool {
             .get("check_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+
+        let current_user_version: Option<i64> = input
+            .get("current_user_version")
+            .and_then(|v| v.as_i64());
 
         let current_version = crate::VERSION;
         let sid = context.session_id;
@@ -568,6 +611,7 @@ impl Tool for EvolveTool {
                         current_version,
                         latest_tag,
                         latest_version,
+                        current_user_version,
                     )
                     .await;
             }
@@ -664,6 +708,7 @@ impl EvolveTool {
         current_version: &str,
         latest_tag: &str,
         latest_version: &str,
+        current_user_version: Option<i64>,
     ) -> Result<ToolResult> {
         let suffix = match platform_suffix() {
             Some(s) => s,
@@ -907,6 +952,43 @@ impl EvolveTool {
             return Ok(ToolResult::error(format!(
                 "Health check failed ({reason}). Keeping current v{current_version}."
             )));
+        }
+
+        // Migration compatibility check: ensure new binary can handle the current DB schema
+        if let Some(db_version) = current_user_version {
+            match get_binary_migration_count(&tmp_path).await {
+                Ok(new_migration_count) => {
+                    let db_migration = db_version as usize;
+                    if db_migration > new_migration_count {
+                        tracing::warn!(
+                            target: "evolve",
+                            db_user_version = db_version,
+                            new_binary_migration_count = new_migration_count,
+                            session_id = %sid,
+                            "evolve: database schema v{} is newer than new binary's migration \
+                             count v{} — refusing to swap",
+                            db_migration,
+                            new_migration_count,
+                        );
+                        let _ = std::fs::remove_file(&tmp_path);
+                        return Ok(ToolResult::error(format!(
+                            "Database schema v{db_migration} is newer than v{latest_version}'s \
+                             migration support (v{new_migration_count}). \
+                             Keeping current v{current_version}. \
+                             This usually means the release predates your database schema."
+                        )));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "evolve",
+                        error = %e,
+                        session_id = %sid,
+                        "evolve: could not determine new binary's migration count, \
+                         skipping compatibility check"
+                    );
+                }
+            }
         }
 
         // Backup
