@@ -74,7 +74,10 @@ impl Tool for HttpClientTool {
     }
 
     fn description(&self) -> &str {
-        "Make HTTP requests to external APIs. Supports GET, POST, PUT, PATCH, DELETE methods with headers, query parameters, and JSON bodies. Useful for integrating with GitHub, Slack, Jira, databases, and other web services."
+        "Make HTTP requests to any HTTP/HTTPS URL — plain web pages and REST APIs alike. Supports GET, POST, PUT, PATCH, DELETE with headers, query parameters, and JSON bodies. \
+         Use a GET to FETCH AND READ THE CONTENT of a specific web page or URL: the response body is returned as text/HTML, so this is the right tool when the user gives you a link and asks to check / read / summarize what's on it — far cheaper than browser_navigate. \
+         (If a GET returns a JS-only shell with no real content, or the page needs login/clicking/JS-rendered data, THEN fall back to browser_navigate.) \
+         Also useful for integrating with GitHub, Slack, Jira, databases, and other web services."
     }
 
     fn input_schema(&self) -> Value {

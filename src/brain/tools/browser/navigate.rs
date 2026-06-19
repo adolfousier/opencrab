@@ -56,9 +56,12 @@ impl Tool for BrowserNavigateTool {
          documentation, checking package versions, looking up Stack \
          Overflow answers, or any GitHub operation (issues, PRs, \
          releases, comments, file contents, search) — those route \
-         through the search tools or `gh` CLI. Browser is slow, \
+         through the search tools or `gh` CLI. To simply read / check \
+         the content of a specific URL the user gave you, GET it with \
+         `http_request` (the response body is the page text/HTML) — \
+         that is NOT a reason to open the browser. Browser is slow, \
          visible to the user (steals window focus in headed mode), \
-         and consumes far more tokens than a search call."
+         and consumes far more tokens than a search or fetch call."
     }
 
     fn input_schema(&self) -> Value {

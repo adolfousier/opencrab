@@ -27,6 +27,7 @@ use crate::brain::tools::Tool;
 use crate::brain::tools::bash::BashTool;
 use crate::brain::tools::brave_search::BraveSearchTool;
 use crate::brain::tools::exa_search::ExaSearchTool;
+use crate::brain::tools::http::HttpClientTool;
 use crate::brain::tools::web_search::WebSearchTool;
 
 const BROWSER_NAVIGATE_SRC: &str = include_str!("../brain/tools/browser/navigate.rs");
@@ -121,6 +122,53 @@ fn brave_search_description_announces_preference_over_web_search() {
         desc.contains("current events") || desc.contains("news"),
         "brave_search must surface its strength (current events / news) \
          so the model knows when to pick it over exa: {desc}"
+    );
+}
+
+#[test]
+fn brain_preamble_routes_specific_url_content_to_http_request() {
+    // Regression (2026-06-19): the agent reached for `browser_navigate` when
+    // the user "just said to check the website content". Research routing
+    // covered open-ended queries, but reading a SPECIFIC URL the user handed
+    // over had no documented home, so the model defaulted to the browser.
+    assert!(
+        BRAIN_PREAMBLE.contains("http_request"),
+        "preamble must name http_request as the surface for fetching a \
+         specific URL's content"
+    );
+    assert!(
+        BRAIN_PREAMBLE.contains("check the website content"),
+        "preamble must explicitly route the 'check the website content' \
+         phrasing away from the browser"
+    );
+}
+
+#[test]
+fn http_request_description_advertises_page_content_fetch() {
+    // The model only routes "read this URL" to http_request if the tool's
+    // own description says it fetches page content — otherwise it reads as
+    // an API-only tool and the model falls back to the browser.
+    let desc = HttpClientTool.description();
+    assert!(
+        desc.contains("web page") || desc.contains("URL"),
+        "http_request must advertise that it fetches a web page / URL's \
+         content, not just 'external APIs': {desc}"
+    );
+    assert!(
+        desc.contains("browser_navigate"),
+        "http_request must point at browser_navigate as the escalation for \
+         JS-rendered / interactive pages: {desc}"
+    );
+}
+
+#[test]
+fn browser_navigate_redirects_url_reads_to_http_request() {
+    // The browser's own description must redirect "just read this URL" to
+    // http_request so the model has a concrete cheaper alternative.
+    assert!(
+        BROWSER_NAVIGATE_SRC.contains("http_request"),
+        "browser_navigate description must point at http_request for \
+         reading a specific URL's content"
     );
 }
 
