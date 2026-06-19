@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.44] - 2026-06-19
+
+15 commits since v0.3.43. 31 files changed, +3,373 / -2,205 lines.
+
+### ✨ Features
+
+- `ca266e98` **Evolve migration guard**: Check migration count compatibility before swapping binary. Prevents DB schema mismatch after evolve.
+- `6c2c1a27` **Manual /compact continuation**: Manual /compact now adds a brief continuation to context, matching auto-compaction behavior.
+
+### 🔧 Fixes
+
+- `4b51303e` **web_search DDG Lite**: DuckDuckGo Instant Answer API is dead. Switched to DDG Lite HTML parsing.
+- `2e6e4f77` **Plan tool double bug**: Completed plans were getting deleted from disk by TUI reload_plan. start_task now auto-completes stale InProgress tasks so plans no longer get stuck.
+- `d6a9ae1a` **/compact brief confirmation**: Return a clean confirmation instead of dumping the raw compaction summary (#208).
+- `777ccba3` **Config auto-repair**: Auto-repair broken config.toml and never poison the last-good config.
+- `960f67cb` **Plan TaskType round-trip**: TaskType was serializing as a map instead of a string, breaking plan file round-trip.
+- `1e488d5e` **Routing fix**: "check the website content" now routes to http_request instead of browser.
+- `9db55ff7` **Clippy fix**: too_many_arguments on evolve_via_binary_download.
+
+### 📖 Documentation
+
+- `5c4e3e3c` Add Voice and Audio reference section to tools docs
+- `b5f1292a` Refresh test counts and document config resilience tests
+
+### 🧹 Miscellaneous
+
+- `cf55d016` Extract config/keys file IO into types/io.rs
+- `00711b82` Split impl Config out of types.rs into types/loader.rs
+- `5e81cac0` cargo fmt, collapse nested match in cmd_evolve
+- `42e26831` fmt after web_search DDG Lite merge
+
+### 📊 Stats
+
+- 15 commits since v0.3.43
+- 31 files changed, +3,373 / -2,205 lines
+- 4,018 tests (4,018 passed, 0 failed, 23 ignored)
+
 ## [0.3.43] - 2026-06-18
 
 8 commits since v0.3.42. 15 files changed, +559 / -29 lines.
@@ -5735,3 +5772,4 @@ fixes.
 [0.3.41]: https://github.com/adolfousier/opencrabs/compare/v0.3.40...v0.3.41
 [0.3.42]: https://github.com/adolfousier/opencrabs/compare/v0.3.41...v0.3.42
 [0.3.43]: https://github.com/adolfousier/opencrabs/compare/v0.3.42...v0.3.43
+[0.3.44]: https://github.com/adolfousier/opencrabs/compare/v0.3.43...v0.3.44
