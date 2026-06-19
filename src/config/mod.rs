@@ -6,6 +6,7 @@ pub mod crabrace;
 mod current;
 pub mod health;
 pub mod profile;
+pub mod repair;
 pub mod secrets;
 mod types;
 pub mod update;

@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 /// Flag set when Config::load() recovered from a last-known-good snapshot.
 static CONFIG_RECOVERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Flag set when Config::load() mechanically repaired a broken config file
+/// in place (e.g. closed an unterminated array) and re-loaded it.
+static CONFIG_AUTOFIXED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Unknown top-level keys found in config.toml (possible typos).
 static CONFIG_TYPO_WARNINGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
@@ -1729,10 +1733,17 @@ pub fn save_last_good_config() {
     let config_good = home.join("config.last_good.toml");
     let keys_good = home.join("keys.last_good.toml");
 
-    if config_path.exists()
-        && let Err(e) = fs::copy(&config_path, &config_good)
-    {
-        tracing::debug!("Failed to save last-good config: {e}");
+    if config_path.exists() {
+        // NEVER snapshot a config that doesn't parse. A raw copy of a broken
+        // config.toml poisons the last-good snapshot and defeats recovery
+        // entirely — the whole point of the snapshot is to be loadable.
+        if let Err(e) = Config::load_from_path(&config_path) {
+            tracing::warn!("Refusing last-good snapshot: config.toml does not parse: {e}");
+            return;
+        }
+        if let Err(e) = fs::copy(&config_path, &config_good) {
+            tracing::debug!("Failed to save last-good config: {e}");
+        }
     }
     if keys_path_src.exists()
         && let Err(e) = fs::copy(&keys_path_src, &keys_good)
@@ -2472,7 +2483,19 @@ impl Config {
         match Self::load_inner() {
             Ok(config) => Ok(config),
             Err(e) => {
-                tracing::error!("Config load failed: {e} — trying last-known-good");
+                tracing::error!("Config load failed: {e} — attempting auto-repair");
+                // First: try to mechanically fix a syntactically-broken config
+                // file (e.g. an unterminated array left by a hand edit), save
+                // the fix back to disk, and re-load. This heals the typo on
+                // disk instead of silently running on a stale copy.
+                if let Some(fixed) = Self::try_autofix_configs() {
+                    CONFIG_AUTOFIXED.store(true, std::sync::atomic::Ordering::Relaxed);
+                    return Ok(fixed);
+                }
+                // If we can't safely auto-fix it, fall back to last-known-good
+                // so a typo never changes behaviour (e.g. flipping auto-always
+                // approvals into prompts).
+                tracing::error!("Auto-repair did not resolve it — trying last-known-good");
                 if let Some(good) = load_last_good_config() {
                     CONFIG_RECOVERED.store(true, std::sync::atomic::Ordering::Relaxed);
                     Ok(good)
@@ -2481,6 +2504,41 @@ impl Config {
                 }
             }
         }
+    }
+
+    /// On a parse failure, mechanically repair the broken config file(s) in
+    /// place (see [`crate::config::repair`]) and re-load. Returns the loaded
+    /// Config only if a repair was written AND loading then succeeds.
+    fn try_autofix_configs() -> Option<Self> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Some(p) = Self::system_config_path() {
+            candidates.push(p);
+        }
+        candidates.push(Self::local_config_path());
+
+        // Hold the file lock only for the read/repair/write; it is released
+        // before re-entering load_inner (which re-locks via migrate_if_needed)
+        // to avoid a self-deadlock.
+        let repaired_any = {
+            let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            crate::config::repair::autofix_config_files(&candidates)
+        };
+        if !repaired_any {
+            return None;
+        }
+        match Self::load_inner() {
+            Ok(cfg) => Some(cfg),
+            Err(e) => {
+                tracing::error!("Auto-fix wrote repairs but config still fails to load: {e}");
+                None
+            }
+        }
+    }
+
+    /// Returns true (once) if the last `Config::load()` auto-repaired a broken
+    /// config file in place.
+    pub fn was_autofixed() -> bool {
+        CONFIG_AUTOFIXED.swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Returns true (once) if the last `Config::load()` fell back to a last-known-good snapshot.

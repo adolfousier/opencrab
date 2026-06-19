@@ -103,11 +103,27 @@ pub fn spawn(callbacks: Vec<ReloadCallback>) -> tokio::task::JoinHandle<()> {
                         "ConfigWatcher: reloaded — firing {} callback(s)",
                         callbacks.len()
                     );
-                    // The config just changed AND parsed cleanly — this is the
-                    // real "last known good" moment. Snapshot it now (debounced,
-                    // so once per edit) so recovery always has the latest valid
-                    // config, instead of a months-old once-per-process snapshot.
-                    crate::config::save_last_good_config();
+                    // If load() had to FALL BACK to last-known-good, config.toml
+                    // itself is broken right now. Do NOT snapshot it over the good
+                    // copy — a raw copy of a broken config poisons recovery, which
+                    // is exactly how a malformed edit flipped auto-always (yolo)
+                    // users into tool-approval prompts: the broken file AND its
+                    // snapshot both failed to load, so the approval check had no
+                    // valid config and defaulted to "ask". Keep the existing
+                    // snapshot and run on the recovered values until config.toml
+                    // parses cleanly again.
+                    if Config::was_recovered() {
+                        tracing::warn!(
+                            "ConfigWatcher: config.toml failed to parse — running on \
+                             last-known-good, snapshot left untouched"
+                        );
+                    } else {
+                        // config.toml changed AND parsed cleanly — the real
+                        // "last known good" moment. Snapshot it now (debounced, so
+                        // once per edit) so recovery always has the latest valid
+                        // config, instead of a once-per-process snapshot.
+                        crate::config::save_last_good_config();
+                    }
                     // Refresh the in-memory mirror so Config::current() readers
                     // see the new values without touching disk.
                     Config::set_current(new_config.clone());
