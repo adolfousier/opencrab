@@ -128,6 +128,26 @@ where
     deserializer.deserialize_seq(TaskDepVisitor)
 }
 
+/// Custom serializer for task type — writes lowercase string, matching the deserializer
+pub fn serialize_task_type<S>(task_type: &TaskType, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let s = match task_type {
+        TaskType::Research => "research",
+        TaskType::Edit => "edit",
+        TaskType::Create => "create",
+        TaskType::Delete => "delete",
+        TaskType::Test => "test",
+        TaskType::Refactor => "refactor",
+        TaskType::Documentation => "documentation",
+        TaskType::Configuration => "configuration",
+        TaskType::Build => "build",
+        TaskType::Other(s) => s.as_str(),
+    };
+    serializer.serialize_str(s)
+}
+
 /// Custom deserializer for task type - case-insensitive
 pub fn deserialize_task_type<'de, D>(deserializer: D) -> Result<TaskType, D::Error>
 where
@@ -678,7 +698,10 @@ pub struct PlanTask {
     pub description: String,
 
     /// Task type (for categorization)
-    #[serde(deserialize_with = "deserialize_task_type")]
+    #[serde(
+        deserialize_with = "deserialize_task_type",
+        serialize_with = "serialize_task_type"
+    )]
     pub task_type: TaskType,
 
     /// Dependencies (task IDs or 1-based indices; indices resolved to UUIDs on import)

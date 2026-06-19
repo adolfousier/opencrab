@@ -438,6 +438,48 @@ mod tests {
     }
 
     #[test]
+    fn test_task_type_serializes_as_string_not_map() {
+        // Bug fix: TaskType::Other("merge") was serializing as {"Other":"merge"}
+        // instead of "merge", breaking plan file round-trips.
+        let task = PlanTask::new(
+            1,
+            "Test".to_string(),
+            "Desc".to_string(),
+            TaskType::Other("merge".to_string()),
+        );
+        let json = serde_json::to_string(&task).expect("serialize");
+        assert!(
+            json.contains(r#""task_type":"merge""#),
+            "expected string, got: {json}"
+        );
+        // Also verify round-trip: deserialize back and compare
+        let back: PlanTask = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.task_type, TaskType::Other("merge".to_string()));
+    }
+
+    #[test]
+    fn test_task_type_known_variants_roundtrip() {
+        // All known variants should serialize as lowercase strings and survive round-trip
+        let variants = [
+            TaskType::Research,
+            TaskType::Edit,
+            TaskType::Create,
+            TaskType::Delete,
+            TaskType::Test,
+            TaskType::Refactor,
+            TaskType::Documentation,
+            TaskType::Configuration,
+            TaskType::Build,
+        ];
+        for v in variants {
+            let task = PlanTask::new(1, "T".to_string(), "D".to_string(), v.clone());
+            let json = serde_json::to_string(&task).unwrap();
+            let back: PlanTask = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.task_type, v, "round-trip failed for {v:?}");
+        }
+    }
+
+    #[test]
     fn test_task_status_display() {
         assert_eq!(format!("{}", TaskStatus::Pending), "Pending");
         assert_eq!(format!("{}", TaskStatus::InProgress), "In Progress");
