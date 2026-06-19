@@ -22,19 +22,19 @@ use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-/// Render a centred popup occupying ~60% × 70% of `area`.
+/// Render a centred popup that fits its content (max ~60% × 70% of `area`).
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let pw = (area.width * 60 / 100).max(40);
-    let ph = (area.height * 70 / 100).max(12);
-    let px = area.x + area.width.saturating_sub(pw) / 2;
-    let py = area.y + area.height.saturating_sub(ph) / 2;
-    let popup = Rect::new(px, py, pw, ph);
-
-    frame.render_widget(Clear, popup);
+    let max_ph = (area.height * 70 / 100).max(12);
 
     // Analytics renders its own rich 2x2 + full-width Top tools view (the same
     // renderer as the panel, just larger) rather than a flat text body.
     if app.mc.focused_panel == McPanel::Analytics {
+        let ph = max_ph;
+        let px = area.x + area.width.saturating_sub(pw) / 2;
+        let py = area.y + area.height.saturating_sub(ph) / 2;
+        let popup = Rect::new(px, py, pw, ph);
+        frame.render_widget(Clear, popup);
         super::analytics_panel::render(frame, &app.mc.analytics, popup, true);
         return;
     }
@@ -45,6 +45,28 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         McPanel::Schedule => schedule_detail(app),
         McPanel::Analytics => unreachable!("analytics handled above"),
     };
+
+    // Estimate content height: count visual lines accounting for soft-wrapping.
+    let content_width = pw.saturating_sub(4) as usize; // borders + inner padding
+    let mut visual_lines: u16 = 0;
+    for line in &lines {
+        let line_width: usize = line.spans.iter().map(|s| s.width()).sum();
+        let wrapped = if content_width > 0 {
+            line_width.div_ceil(content_width).max(1)
+        } else {
+            1
+        };
+        visual_lines += wrapped as u16;
+    }
+    // +2 for top/bottom border, +1 for breathing room
+    let content_height = visual_lines.saturating_add(3);
+    let ph = content_height.min(max_ph).max(12);
+
+    let px = area.x + area.width.saturating_sub(pw) / 2;
+    let py = area.y + area.height.saturating_sub(ph) / 2;
+    let popup = Rect::new(px, py, pw, ph);
+
+    frame.render_widget(Clear, popup);
 
     let block = Block::default()
         .title(title)
