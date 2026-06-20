@@ -25,6 +25,33 @@ fn is_inside_git_repo(path: &Path) -> bool {
     false
 }
 
+/// True when `path` is an ephemeral share — a channel (Telegram/WhatsApp/...) or
+/// clipboard/web download that landed under `~/.opencrabs/tmp/`. That directory
+/// is the convention for incoming files across channels and the clipboard, and
+/// it's periodically cleaned up — so such a file must be COPIED into a project
+/// rather than symlinked (the source won't be there later). Anything else (a
+/// real local path the user shared, or a file the agent produced) is persistent
+/// and gets symlinked.
+fn is_ephemeral_share(path: &Path) -> bool {
+    path.starts_with(crate::config::opencrabs_home().join("tmp"))
+}
+
+/// Create a symlink `dest` -> `target`. Unix only; on other platforms it signals
+/// failure so the caller falls back to copying.
+#[cfg(unix)]
+fn symlink_file(target: &Path, dest: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, dest)
+}
+
+#[cfg(not(unix))]
+fn symlink_file(_target: &Path, _dest: &Path) -> std::io::Result<()> {
+    // Windows symlinks require elevated privileges; let the caller copy instead.
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "symlink not supported on this platform",
+    ))
+}
+
 /// Turn a project name into a filesystem-safe directory slug
 /// (lowercase alphanumerics, runs of other chars collapsed to a single dash).
 pub(crate) fn slugify_project_name(name: &str) -> String {
@@ -222,17 +249,23 @@ impl FileService {
         Some(dir)
     }
 
-    /// Copy `path` into the session's project files dir (best-effort). Returns
+    /// Bring `path` into the session's project files dir (best-effort). Returns
     /// the archived path on success, otherwise the original path unchanged.
     ///
-    /// Archive everything that's a project ARTIFACT — files the user shares
-    /// (photos, documents, videos, audio) and files the agent produces
-    /// (generated images, PDFs, research, `.md`, plans) — so a project's
-    /// deliverables live together. The ONE exclusion is **repository code**:
-    /// a file inside a git repo loads from and changes on the repo (already
-    /// persistent + version-controlled), so copying it just duplicates it and
-    /// points the tracked path at a stale copy. Repo files are tracked at their
-    /// real path, never archived.
+    /// Archive everything that's a project ARTIFACT so a project's deliverables
+    /// live together — but HOW depends on the source:
+    /// - **Ephemeral share** (clipboard / WhatsApp / Telegram / web download —
+    ///   anything under `~/.opencrabs/tmp/`): **copy** it in, because the source
+    ///   is cleaned up and would otherwise be lost.
+    /// - **Persistent local file** (a path the user dragged in, or a file the
+    ///   agent produced in the working dir): **symlink** it in, so we don't
+    ///   duplicate the user's file and the project entry stays in sync with the
+    ///   original. Falls back to copy if symlinking isn't available (Windows) or
+    ///   fails.
+    ///
+    /// The ONE exclusion is **repository code**: a file inside a git repo is
+    /// already persistent + version-controlled, so it's tracked at its real path
+    /// and never archived (copying would duplicate it and point at a stale copy).
     async fn archive_into_project(&self, session_id: Uuid, path: PathBuf) -> PathBuf {
         if is_inside_git_repo(&path) {
             return path;
@@ -247,18 +280,57 @@ impl FileService {
             return path;
         };
         let dest = dir.join(name);
-        match std::fs::copy(&path, &dest) {
-            Ok(_) => {
-                tracing::info!(
-                    "Archived file to project: {} -> {}",
-                    path.display(),
-                    dest.display()
-                );
-                dest
+        if dest.exists() {
+            // Already archived under this name — don't clobber or re-link.
+            return dest;
+        }
+
+        if is_ephemeral_share(&path) {
+            // Downloaded from a channel / clipboard / web — the tmp source is
+            // cleaned up, so COPY so the artifact persists in the project.
+            match std::fs::copy(&path, &dest) {
+                Ok(_) => {
+                    tracing::info!(
+                        "Copied shared file into project: {} -> {}",
+                        path.display(),
+                        dest.display()
+                    );
+                    dest
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to copy shared file into project dir: {e}");
+                    path
+                }
             }
-            Err(e) => {
-                tracing::warn!("Failed to archive file to project dir: {e}");
-                path
+        } else {
+            // A persistent local file (user drag-drop or agent-produced) —
+            // SYMLINK so we don't duplicate it and it stays in sync with the
+            // original. Point the link at the canonical absolute path so it
+            // resolves from inside the project dir.
+            let target = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            match symlink_file(&target, &dest) {
+                Ok(()) => {
+                    tracing::info!(
+                        "Linked local file into project: {} -> {}",
+                        dest.display(),
+                        target.display()
+                    );
+                    dest
+                }
+                Err(link_err) => match std::fs::copy(&path, &dest) {
+                    Ok(_) => {
+                        tracing::info!(
+                            "Symlink unavailable ({link_err}); copied local file into project: {} -> {}",
+                            path.display(),
+                            dest.display()
+                        );
+                        dest
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to link or copy local file into project dir: {e}");
+                        path
+                    }
+                },
             }
         }
     }
