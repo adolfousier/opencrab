@@ -326,7 +326,7 @@ impl BrainLoader {
         prompt.push_str(BRAIN_PREAMBLE);
         prompt.push_str("\n\n");
 
-        // 2. Core files only (SOUL.md + USER.md)
+        // 2. Core files only (USER.md; SOUL.md injected last)
         for (filename, label) in CORE_BRAIN_FILES {
             if let Some(content) = self.load_file(filename) {
                 let trimmed = content.trim();

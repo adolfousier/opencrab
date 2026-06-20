@@ -1,8 +1,8 @@
 //! Tests for `BrainLoader::build_core_brain()`.
 //!
-//! Verifies the lean-injection model: SOUL.md + USER.md are baked into
-//! every request; all other files appear only as an index so the agent can
-//! retrieve them on demand via `load_brain_file`.
+//! Verifies the lean-injection model: USER.md is baked into every request;
+//! SOUL.md is injected last (after slash commands); all other files appear
+//! only as an index so the agent can retrieve them on demand via `load_brain_file`.
 
 use super::*;
 use tempfile::TempDir;
@@ -246,6 +246,28 @@ fn test_slash_commands_included_in_core_brain() {
     assert!(
         brain.contains("/help"),
         "slash commands must be present in core brain"
+    );
+}
+
+/// SOUL.md must appear AFTER slash commands (last position) to combat
+/// "lost in the middle" attention decay.
+#[test]
+fn test_soul_md_appears_after_slash_commands() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "SOUL.md", "PERSONALITY_MARKER_UNIQUE_12345");
+    let commands = "/help - show help\n/clear - clear screen\n";
+    let brain = loader(&dir).build_core_brain(None, Some(commands));
+    let soul_pos = brain
+        .find("PERSONALITY_MARKER_UNIQUE_12345")
+        .expect("SOUL.md must be in prompt");
+    let slash_pos = brain
+        .find("/help")
+        .expect("slash commands must be in prompt");
+    assert!(
+        soul_pos > slash_pos,
+        "SOUL.md must appear AFTER slash commands (soul at {}, slash at {})",
+        soul_pos,
+        slash_pos
     );
 }
 
