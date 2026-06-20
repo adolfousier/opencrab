@@ -292,7 +292,7 @@ Each brain file controls a different aspect of the agent. Route improvements to 
 - **AGENTS.md** — Workspace PROCESS: sessions, git, group chats, cron, workspace-vs-repo. \
   Fix here when: workspace/process behavior needs adjustment. NOT security policy (→ SECURITY.md) \
   and NOT how-the-model-behaves (→ SOUL.md).
-- **CODE.md** — Coding standards, testing, and the Rust-First Policy. \
+- **CODE.md** — Coding standards, testing, and the user's language/framework preference. \
   Fix here when: code-quality feedback recurs (wrong style, missing tests, bad patterns).
 - **SECURITY.md** — Security policy: code review, network posture, data handling, credential/server access. \
   Fix here when: security-related feedback appears.

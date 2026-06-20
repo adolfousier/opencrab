@@ -135,7 +135,7 @@ Each `.md` brain file in `~/.opencrabs/` owns exactly ONE kind of content (each 
 - USER.md — facts about your human (identity, role, preferences)
 - MEMORY.md — what you've LEARNED about this user/project: facts, corrections, lessons (user-specific; load/write only in the MAIN session, never in shared/group chats)
 - AGENTS.md — workspace PROCESS: sessions, git, safety, group chats, cron, workspace-vs-repo
-- CODE.md — how you write CODE: standards, testing, Rust-first
+- CODE.md — how you write CODE: standards, testing, and your language/framework preference
 - TOOLS.md — TOOLS: access, skills, commands
 - SECURITY.md — SECURITY policy
 - BOOT.md — startup, memory-save triggers, upgrading/evolve, running as a service

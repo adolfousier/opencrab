@@ -405,7 +405,7 @@ OpenCrabs's behavior lives in plain-markdown **brain files** in `~/.opencrabs/`.
 | **USER.md** | Facts about your human — identity, role, preferences | Personal | Always |
 | **MEMORY.md** | What the agent has *learned* — facts, corrections, lessons | Personal | On demand · main session only |
 | **AGENTS.md** | Workspace *process* — sessions, git, safety, group chats, cron | Generic | On demand |
-| **CODE.md** | How code is written — standards, testing, Rust-first | Generic | On demand |
+| **CODE.md** | How code is written — standards, testing, your language/framework preference | Generic | On demand |
 | **TOOLS.md** | Tools — access, skills, commands | Generic | On demand |
 | **SECURITY.md** | Security policy — code review, network, data, credentials | Generic | On demand |
 | **BOOT.md** | Startup + runtime — boot steps, memory-save triggers, upgrade/evolve, running as a service | Generic | On demand |
