@@ -187,6 +187,8 @@ pub enum ChannelCommand {
     UnknownCommand(String),
     /// `/rename <title>` — rename the current session
     Rename(String),
+    /// `/cd [path]` — directory browser (inline keyboard)
+    ChangeDir(DirBrowserResponse),
     /// Not a recognised command — pass through to agent
     NotACommand,
 }
@@ -226,6 +228,32 @@ pub struct ModelsResponse {
     pub agent_handled: bool,
 }
 
+/// Entry in the directory browser — either a directory or a file.
+pub struct DirBrowserEntry {
+    pub name: String,
+    pub is_dir: bool,
+    /// Index in the full (sorted) entry list — used in callback data
+    pub index: usize,
+}
+
+/// Data for rendering a directory browser on the channel platform.
+pub struct DirBrowserResponse {
+    /// Current path being browsed
+    pub current_path: String,
+    /// Entries on the current page
+    pub entries: Vec<DirBrowserEntry>,
+    /// Current page (0-indexed)
+    pub page: usize,
+    /// Total number of pages
+    pub total_pages: usize,
+    /// Active filter text (if any)
+    pub filter: Option<String>,
+    /// Number of total entries (before paging)
+    pub total_entries: usize,
+    /// Fallback text when platform buttons are unavailable.
+    pub text: String,
+}
+
 /// Check if a message is a known channel command and return the response.
 /// Commands that produce output are persisted to session history so they
 /// appear in TUI and give the agent context about what happened.
@@ -256,6 +284,10 @@ pub async fn handle_command(
         }
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
+        cmd if cmd == "/cd" || cmd.starts_with("/cd ") => {
+            let path_arg = cmd.strip_prefix("/cd").unwrap_or("").trim();
+            ChannelCommand::ChangeDir(format_cd_browser(path_arg, session_id, session_svc).await)
+        }
         // Telegram registers the hyphen-free `mission_control` (its command
         // names allow no hyphens), so a menu tap sends `/mission_control`;
         // accept both that and the typed `/mission-control`.
@@ -296,6 +328,7 @@ pub async fn handle_command(
         ChannelCommand::Doctor => Some("Running health check...".to_string()),
         ChannelCommand::Evolve => Some("Checking for updates...".to_string()),
         ChannelCommand::Rtk(body) => Some(body.clone()),
+        ChannelCommand::ChangeDir(resp) => Some(resp.text.clone()),
         ChannelCommand::Compact
         | ChannelCommand::UserPrompt(_)
         | ChannelCommand::NotACommand
@@ -421,6 +454,7 @@ pub(crate) fn format_help() -> String {
     let mut lines = vec![
         "📖 *Available Commands*".to_string(),
         String::new(),
+        "`/cd`       — Browse and change working directory".to_string(),
         "`/compact`  — Compact context (summarize & trim)".to_string(),
         "`/cowork`   — Create a cowork workspace with QR invite (Telegram only)".to_string(),
         "`/evolve`   — Download latest release & restart".to_string(),
@@ -676,6 +710,223 @@ pub(crate) fn format_number(n: i64) -> String {
         format!("{:.1}K", n as f64 / 1_000.0)
     } else {
         n.to_string()
+    }
+}
+
+// ── /cd directory browser ──────────────────────────────────────────────────
+
+/// Number of entries per page in the directory browser
+const CD_PAGE_SIZE: usize = 6;
+
+/// Directories and file names to skip in the browser (auto-hidden)
+const CD_SKIP_DIRS: &[&str] = &["node_modules", ".git", "target", ".DS_Store", "__pycache__"];
+
+/// Build a directory listing for the `/cd` command.
+///
+/// - `path_arg` is the raw text after `/cd` (may be empty → use session WD or home).
+/// - Results are sorted: directories first, then files, both alphabetical.
+/// - Hidden dotfiles are excluded unless the filter starts with `.`.
+/// - Returns page 0 of the listing.
+pub(crate) async fn format_cd_browser(
+    path_arg: &str,
+    session_id: Uuid,
+    session_svc: &SessionService,
+) -> DirBrowserResponse {
+    // Resolve the target path
+    let target = if path_arg.is_empty() {
+        // Try session working directory, fall back to home
+        session_svc
+            .get_session(session_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.working_directory)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"))
+            })
+    } else {
+        let expanded = crate::brain::tools::error::expand_tilde(path_arg);
+        if expanded.is_dir() {
+            expanded
+        } else {
+            // Try as partial path — go to parent and filter
+            return DirBrowserResponse {
+                current_path: path_arg.to_string(),
+                entries: vec![],
+                page: 0,
+                total_pages: 0,
+                filter: None,
+                total_entries: 0,
+                text: format!("❌ Not a directory: {}", path_arg),
+            };
+        }
+    };
+
+    let canonical = target.canonicalize().unwrap_or(target);
+    let (entries, err) = read_dir_entries(&canonical, None);
+    let total = entries.len();
+    let total_pages = total.div_ceil(CD_PAGE_SIZE).max(1);
+    let page_entries: Vec<DirBrowserEntry> = entries
+        .into_iter()
+        .take(CD_PAGE_SIZE)
+        .collect();
+
+    let mut text_lines = vec![format!("📂 *{}*", canonical.display())];
+    if let Some(e) = &err {
+        text_lines.push(format!("⚠️ {}", e));
+    }
+    if total == 0 && err.is_none() {
+        text_lines.push("(empty directory)".to_string());
+    } else if total > 0 {
+        text_lines.push(format!(
+            "{} item{} · Page 1/{}",
+            total,
+            if total == 1 { "" } else { "s" },
+            total_pages
+        ));
+    }
+
+    DirBrowserResponse {
+        current_path: canonical.to_string_lossy().to_string(),
+        entries: page_entries,
+        page: 0,
+        total_pages,
+        filter: None,
+        total_entries: total,
+        text: text_lines.join("\n"),
+    }
+}
+
+/// Maximum directory depth to prevent symlink cycles
+const CD_MAX_DEPTH: usize = 30;
+
+/// Read directory entries, sorted dirs-first then alphabetical, skipping
+/// hidden dotfiles and known junk dirs. Optional filter applies substring
+/// match on filename.
+///
+/// Returns `(entries, error_message)`. If the directory can't be read,
+/// `error_message` contains the reason (e.g. "Permission denied").
+pub(crate) fn read_dir_entries(
+    dir: &std::path::Path,
+    filter: Option<&str>,
+) -> (Vec<DirBrowserEntry>, Option<String>) {
+    let mut error_msg: Option<String> = None;
+    let mut entries: Vec<(String, bool)> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                // Skip hidden unless filter starts with '.'
+                if name.starts_with('.')
+                    && !filter.is_some_and(|f| f.starts_with('.'))
+                {
+                    return None;
+                }
+                // Skip known junk dirs
+                if CD_SKIP_DIRS.contains(&name.as_str()) {
+                    return None;
+                }
+                // Skip symlinks to prevent cycles
+                let ft = match e.file_type() {
+                    Ok(ft) => ft,
+                    Err(_) => return None,
+                };
+                if ft.is_symlink() {
+                    return None;
+                }
+                Some((name, ft.is_dir()))
+            })
+            .collect(),
+        Err(e) => {
+            error_msg = Some(format!("Cannot read directory: {}", e));
+            vec![]
+        }
+    };
+
+    // Apply filter
+    if let Some(f) = filter {
+        let f_lower = f.to_lowercase();
+        entries.retain(|(name, _)| name.to_lowercase().contains(&f_lower));
+    }
+
+    // Sort: directories first, then alphabetical
+    entries.sort_by(|a, b| match (a.1, b.1) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
+    });
+
+    let result: Vec<DirBrowserEntry> = entries
+        .into_iter()
+        .enumerate()
+        .map(|(i, (name, is_dir))| DirBrowserEntry {
+            name,
+            is_dir,
+            index: i,
+        })
+        .collect();
+    (result, error_msg)
+}
+
+/// Rebuild a `DirBrowserResponse` for a specific page and optional filter.
+/// Used by the callback handler after the user navigates or filters.
+pub fn rebuild_cd_browser(
+    path: &str,
+    page: usize,
+    filter: Option<&str>,
+) -> DirBrowserResponse {
+    let dir = std::path::PathBuf::from(path);
+    let depth = path.matches('/').count();
+    if depth > CD_MAX_DEPTH {
+        return DirBrowserResponse {
+            current_path: path.to_string(),
+            entries: vec![],
+            page: 0,
+            total_pages: 0,
+            filter: filter.map(str::to_string),
+            total_entries: 0,
+            text: format!("⚠️ Directory too deep ({} levels). Possible symlink cycle.", depth),
+        };
+    }
+    let (entries, err) = read_dir_entries(&dir, filter);
+    let total = entries.len();
+    let total_pages = total.div_ceil(CD_PAGE_SIZE).max(1);
+    let page = page.min(total_pages.saturating_sub(1));
+    let start = page * CD_PAGE_SIZE;
+    let page_entries: Vec<DirBrowserEntry> = entries
+        .into_iter()
+        .skip(start)
+        .take(CD_PAGE_SIZE)
+        .collect();
+
+    let mut text_lines = vec![format!("📂 *{}*", dir.display())];
+    if let Some(f) = filter {
+        text_lines.push(format!("🔍 Filter: `{}`", f));
+    }
+    if let Some(e) = &err {
+        text_lines.push(format!("⚠️ {}", e));
+    }
+    if total == 0 && err.is_none() {
+        text_lines.push("(no matches)".to_string());
+    } else if total > 0 {
+        text_lines.push(format!(
+            "{} item{} · Page {}/{}",
+            total,
+            if total == 1 { "" } else { "s" },
+            page + 1,
+            total_pages
+        ));
+    }
+
+    DirBrowserResponse {
+        current_path: path.to_string(),
+        entries: page_entries,
+        page,
+        total_pages,
+        filter: filter.map(str::to_string),
+        total_entries: total,
+        text: text_lines.join("\n"),
     }
 }
 
