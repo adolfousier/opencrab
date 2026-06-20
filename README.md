@@ -84,6 +84,7 @@ OpenCrabs runs as a **single binary on your terminal** — no server, no gateway
 - [Configuration](#-configuration)
 - [Tool System](#-tool-system)
 - [Keyboard Shortcuts](#-keyboard-shortcuts)
+- [Brain System & 3-Tier Memory](#-brain-system--3-tier-memory)
 - [Debug and Logging](#-debug-and-logging)
 - [Cron Jobs & Heartbeats](#-cron-jobs--heartbeats)
 - [Architecture](#-architecture)
@@ -2829,6 +2830,33 @@ The agent writes important knowledge to `~/.opencrabs/` brain files as it works:
 
 **3. Cross-session recall — hybrid search**
 The `memory_search` and `session_search` tools use hybrid FTS5 + vector semantic search (Reciprocal Rank Fusion) to find relevant context from past sessions and memory files. Supports local embeddings (embeddinggemma-300M), OpenAI-compatible API embeddings, or FTS5-only mode.
+
+### RSI Engine
+
+OpenCrabs runs a background RSI (Recursive Self-Improvement) cycle that analyzes feedback and applies targeted fixes to brain files. Every tool execution, user correction, and provider error is logged to a SQLite feedback ledger. The cycle runs every hour, detects patterns (tool failure rates >20%, repeated user corrections, provider errors), and spawns a lightweight agent to apply fixes.
+
+**Brain File Taxonomy** — RSI routes improvements to the correct brain file based on what went wrong:
+
+| Brain File | What It Controls | When RSI Writes Here |
+|---|---|---|
+| `SOUL.md` | Behavior, tone, reasoning patterns | Phantom tool calls, verbose responses, wrong tone |
+| `TOOLS.md` | Tool usage, argument formats, pitfalls | Repeated tool failures with similar args |
+| `USER.md` | User preferences and corrections | Repeated user corrections |
+| `MEMORY.md` | Persistent knowledge and context | Agent lacks context it should retain |
+| `AGENTS.md` | Workspace rules, safety policies | Agent-level behavior issues |
+| `CODE.md` | Coding standards | Code quality feedback |
+| `SECURITY.md` | Security policies | Security-related feedback |
+
+**RSI Proposals** — the RSI loop can propose new dynamic tools, slash commands, and skills based on gaps it observes. Proposals land in TOML inboxes at `~/.opencrabs/rsi/` and require human approval via Mission Control. Only safe-by-default tools are proposed (read-only verbs, GET requests). Every proposal cites the feedback events that drove it.
+
+**RSI Hardening:**
+- **Append-only brain files** — brain files are append-only with backup-before-write. The agent can only add new content, never delete or overwrite existing lines.
+- **Brain dedup scan** — runs every 24 RSI cycles (~daily), clusters duplicate lines across all brain files, and files dedup proposals for human approval. Never auto-applies.
+- **Repeat-violation escalation** — RSI tracks violation counters inline in brain file rules. When a rule keeps getting broken across sessions, the counter increases and the agent prioritizes fixing that pattern.
+- **Brain file hygiene** — rejects raw failure-event logs from being written to brain files. Feedback dimensions are sanitized before persisting.
+- **Backup rotation** — max 5 backups per file, max 7 days old. Prevents unbounded `.bak` accumulation.
+
+> Full RSI documentation: [docs.opencrabs.com/self-improvement](https://docs.opencrabs.com/features/self-improvement.html)
 
 **Key difference from cloud-based "self-improving" agents:** Your memory files, commands, and brain files are 100% local and belong to you. With local models (LM Studio, Ollama), everything stays on your machine. With cloud providers (Anthropic, MiniMax, OpenRouter), conversations go through their APIs — but these providers are privacy-first by default per their ToS, and you can opt out of logging and training data in their settings. Either way, your self-improvement data (skills, memory, commands) never leaves your machine.
 
