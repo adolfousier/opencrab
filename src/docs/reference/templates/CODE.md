@@ -195,6 +195,12 @@ Build artifacts are temporary. Don't commit them. Don't leave them. The repo sho
 - **No mock tests.** Unit tests and e2e tests hit real implementations (real DB, real structs). Mocks hide bugs — if the mock passes but prod breaks, the test was worthless.
 - All tests live in `src/tests/` as dedicated `*_test.rs` files — not inline, not scattered.
 
+### Rust-First Policy
+
+This is the single home for the Rust-first rule (AGENTS.md and BOOT.md point here).
+
+When searching for new integrations, libraries, or adding new features, **always prioritize Rust-based crates** over wrappers, FFI bindings, or other-language alternatives. Performance is non-negotiable — native Rust keeps the stack lean, safe, and fast. Only fall back to non-Rust solutions when no viable crate exists.
+
 ---
 
 ## Architecture Principles

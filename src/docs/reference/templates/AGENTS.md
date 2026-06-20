@@ -58,48 +58,9 @@ Compaction triggers automatically at 80% context usage. The system generates a c
 - You can **read, edit, and update** MEMORY.md freely in main sessions
 - This is your curated memory — the distilled essence, not raw logs
 
-### 🔥 MANDATORY Memory Triggers — Write to MEMORY.md Immediately When:
+### 🔥 When to write to memory
 
-**User corrects you or gives feedback:**
-- "Don't do X" → store as a rule with WHY so you never repeat it
-- "Always do Y" → store as a preference
-- "That's wrong because Z" → store the lesson learned
-- This is the #1 use of memory. If you get corrected and don't store it, you WILL repeat the mistake.
-
-**User states a preference or workflow rule:**
-- Build commands, CI patterns, deploy steps, naming conventions
-- "Use clippy not cargo check" → memory. "Never push without asking" → memory.
-
-**You make a mistake worth avoiding:**
-- Silent errors you missed, wrong assumptions, broken patterns
-- Store the root cause and the correct approach — not the fix itself (that's in git)
-
-**User shares context about people, services, or environments:**
-- "The staging server is at X" → memory
-- "Talk to Y about Z" → memory
-- Credentials locations, API endpoints, team roles
-
-**CRITICAL RULE: Write BEFORE you respond.** When a trigger fires (correction, preference, mistake), append to MEMORY.md FIRST, then reply to the user. Not after. Not later. Not "I'll remember that." WRITE IT. If you say "noted" or "got it" without writing to MEMORY.md, you lied — you'll forget it next session.
-
-Format: one-liner rules. Not paragraphs. Not explanations. Just the rule and optionally why.
-```
-- NEVER push without explicit user approval — violated this twice, user was furious
-- Use cargo clippy --all-features, NEVER cargo check or cargo build
-- Config write inside ConfigWatcher callback = infinite reload loop → crash
-```
-
-**What does NOT go in memory:**
-- Commit hashes, file lists, release notes — that's git history
-- Architecture docs, design decisions — those go in dedicated docs
-- Debugging steps — the fix is in the code, the context is in the commit message
-
-### 📝 Write It Down - No "Mental Notes"!
-- **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
-- "Mental notes" don't survive session restarts. Files do.
-- When someone says "remember this" → update `memory/YYYY-MM-DD.md` or relevant file
-- When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
-- When you make a mistake → document it so future-you doesn't repeat it
-- **Text > Brain** 📝
+→ See **BOOT.md → Auto-Save Important Memories** for the full trigger list and rules (it's the single source of truth). The short version: when the user corrects you, states a preference/workflow rule, when you make an avoidable mistake, or when durable context is shared — append it to memory **before you reply**, as a one-liner. "Mental notes" don't survive a restart; files do. **Text > Brain** 📝
 
 ## Safety
 
@@ -214,18 +175,7 @@ All custom skills, tools, plugins, and implementations go in your **workspace**,
 
 ### Upgrading OpenCrabs
 
-**Option 1 — Binary update (recommended):**
-Type `/evolve` in the TUI or any channel. The agent downloads the latest release binary from GitHub and hot-restarts. No Rust toolchain needed.
-
-**Option 2 — Build from source:**
-```bash
-cd /srv/rs/opencrabs    # or wherever your source lives
-git pull origin main
-cargo build --release
-# Or type /rebuild in the TUI
-```
-
-Both options leave your workspace at `~/.opencrabs/` untouched.
+→ See **BOOT.md → Upgrading OpenCrabs / Post-Evolve** for the full procedure (`/evolve` for a binary update, or `git pull` + rebuild from source). Either way your workspace at `~/.opencrabs/` is untouched.
 
 ### Creating Custom Skills/Tools
 When you build something custom:
@@ -234,13 +184,11 @@ When you build something custom:
 3. **Never** put custom code in the repo directory — it'll get wiped on upgrade
 
 ### Rust-First Policy
-When searching for new integrations, libraries, or adding new features, **always prioritize Rust-based crates** over wrappers, FFI bindings, or other-language alternatives. Performance is non-negotiable — native Rust keeps the stack lean, safe, and fast. Only fall back to non-Rust solutions when no viable crate exists.
+→ See **CODE.md** (single source of truth): always prefer native Rust crates over wrappers/FFI/other-language alternatives.
 
 ## Tools
 
-Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
-
-`/cd` changes the working directory for all tool execution. You can also change it via `config_manager` with `set_working_directory` — both persist to config.toml.
+→ See **TOOLS.md** for tool access, skills, and routing. Skills provide your tools — check each skill's `SKILL.md`; keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
 
 ## Cron Jobs — Best Practices
 

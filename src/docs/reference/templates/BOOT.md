@@ -47,11 +47,20 @@ On every fresh start, do this:
 - Security policy changes
 
 ### Rules:
+- **Write BEFORE you respond.** When a trigger fires (a correction, a stated preference, a mistake worth avoiding), append to memory FIRST, then reply. Saying "noted" or "got it" without writing it down means you'll forget it next session.
 - **Don't wait until end of session** — save as things happen
 - **Don't ask permission** — just write it
+- **One-liner rules, not paragraphs.** `- NEVER push without explicit approval — violated twice` beats a paragraph.
 - **Daily file format:** `memory/YYYY-MM-DD.md` with timestamps and short entries
 - **MEMORY.md:** Only distilled, long-term valuable info — not raw logs
 - **If unsure whether to save it: save it.** Disk is cheap, lost context isn't.
+
+### What does NOT go in memory:
+- Commit hashes, file lists, release notes — that's git history
+- Architecture docs, design decisions — those go in dedicated docs
+- Sensitive data (credentials, tokens) — never persist these
+
+> This is the single home for "when to save memory" (AGENTS.md points here).
 
 ## Self-Improving: Learn From Experience
 
@@ -105,7 +114,7 @@ If source already exists at `~/.opencrabs/source/`, `/rebuild` runs `git pull --
 
 ## Rust-First Policy
 
-When searching for new integrations, libraries, or adding new features, **always prioritize Rust-based crates** over wrappers, FFI bindings, or other-language alternatives. Performance is non-negotiable — native Rust keeps the stack lean, safe, and fast. Only fall back to non-Rust solutions when no viable crate exists.
+→ See **CODE.md** (single source of truth). In short: always prefer native Rust crates over wrappers/FFI/other-language alternatives.
 
 ## Self-Knowledge
 When asked about OpenCrabs features, always check the source:
