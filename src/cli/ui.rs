@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 
 use crate::brain::prompt_builder::RuntimeInfo;
-use crate::brain::{BrainLoader, CommandLoader};
+use crate::brain::BrainLoader;
 
 /// Register (or unregister) the tools whose availability depends on config /
 /// keys: EXA, Brave, image generation, and vision/video. Idempotent — calling
@@ -165,7 +165,7 @@ async fn spawn_cron_scheduler_for_profile(profile_name: String) {
             let service_context = ServiceContext::new(db.pool().clone());
             let provider = crate::brain::provider::create_provider(&config).await?;
             let home = crate::config::opencrabs_home();
-            let system_brain = BrainLoader::new(home.clone()).build_core_brain(None, None);
+            let system_brain = BrainLoader::new(home.clone()).build_core_brain(None);
             // ChannelFactory wants a watch::Receiver<Config>, but every reader
             // on the cron path only calls config_rx.borrow() (never .changed()),
             // so we keep just the receiver and let the sender drop right here.
@@ -456,8 +456,6 @@ async fn cmd_chat_inner(
     // Build dynamic system brain from workspace files
     let brain_path = BrainLoader::resolve_path();
     let brain_loader = BrainLoader::new(brain_path.clone());
-    let command_loader = CommandLoader::from_brain_path(&brain_path);
-    let user_commands = command_loader.load();
 
     let runtime_info = RuntimeInfo {
         model: Some(provider.default_model().to_string()),
@@ -470,19 +468,13 @@ async fn cmd_chat_inner(
         )),
     };
 
-    let builtin_commands: Vec<(&str, &str)> = crate::tui::app::SLASH_COMMANDS
-        .iter()
-        .map(|c| (c.name, c.description))
-        .collect();
-    let commands_section = CommandLoader::commands_section(&builtin_commands, &user_commands);
-
     // The feedback/performance digest is a maintenance WARNING surface — it
     // lives in ~/.opencrabs/rsi/digest.md (written by write_startup_digest),
     // NOT in the LLM context. Injecting it here put unrelated tool-failure
     // stats into every session's system prompt (and into the context token
     // count) for no benefit to the conversation.
     let mut system_brain =
-        brain_loader.build_core_brain(Some(&runtime_info), Some(&commands_section));
+        brain_loader.build_core_brain(Some(&runtime_info));
 
     // Lazy-tools mode: the model only sees the CORE tool schemas + `tool_search`.
     // Tell it explicitly so it reaches for `tool_search` instead of assuming a

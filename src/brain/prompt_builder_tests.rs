@@ -1,7 +1,7 @@
 //! Tests for `BrainLoader::build_core_brain()`.
 //!
 //! Verifies the lean-injection model: USER.md is baked into every request;
-//! SOUL.md is injected last (after slash commands); all other files appear
+//! SOUL.md is injected last to combat "lost in the middle" attention decay;
 //! only as an index so the agent can retrieve them on demand via `load_brain_file`.
 
 use super::*;
@@ -22,7 +22,7 @@ fn write(dir: &TempDir, name: &str, content: &str) {
 #[test]
 fn test_core_brain_contains_preamble() {
     let dir = TempDir::new().unwrap();
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         brain.contains("You are OpenCrabs"),
         "preamble must always be present"
@@ -33,7 +33,7 @@ fn test_core_brain_contains_preamble() {
 fn test_soul_md_is_injected_in_core() {
     let dir = TempDir::new().unwrap();
     write(&dir, "SOUL.md", "Be helpful and precise.");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         brain.contains("Be helpful and precise."),
         "SOUL.md must be injected in core brain"
@@ -44,7 +44,7 @@ fn test_soul_md_is_injected_in_core() {
 fn test_user_md_is_injected_in_core() {
     let dir = TempDir::new().unwrap();
     write(&dir, "USER.md", "Name: Alice\nRole: Engineer");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         brain.contains("Name: Alice"),
         "USER.md must be injected in core brain"
@@ -59,7 +59,7 @@ fn test_user_md_is_injected_in_core() {
 #[test]
 fn test_identity_md_not_injected_in_core_brain() {
     let dir = TempDir::new().unwrap();
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(!brain.contains("I am OpenCrabs the crab."),);
 }
 
@@ -67,7 +67,7 @@ fn test_identity_md_not_injected_in_core_brain() {
 fn test_memory_md_not_injected_in_core_brain() {
     let dir = TempDir::new().unwrap();
     write(&dir, "MEMORY.md", "SECRET_PROJECT_NOTES: do not leak.");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         !brain.contains("SECRET_PROJECT_NOTES"),
         "MEMORY.md content must NOT be injected inline — only listed in the memory index"
@@ -78,7 +78,7 @@ fn test_memory_md_not_injected_in_core_brain() {
 fn test_agents_md_not_injected_in_core_brain() {
     let dir = TempDir::new().unwrap();
     write(&dir, "AGENTS.md", "WORKSPACE_RULE: always commit");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         !brain.contains("WORKSPACE_RULE"),
         "AGENTS.md content must NOT be injected inline"
@@ -92,7 +92,7 @@ fn test_tools_md_not_injected_in_core_brain() {
     // index so the agent retrieves it via `load_brain_file` when relevant.
     let dir = TempDir::new().unwrap();
     write(&dir, "TOOLS.md", "TOOL_NOTE: use cargo test");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         !brain.contains("TOOL_NOTE"),
         "TOOLS.md content must NOT be injected inline (it is contextual)"
@@ -107,7 +107,7 @@ fn test_tools_md_not_injected_in_core_brain() {
 fn test_security_md_not_injected_in_core_brain() {
     let dir = TempDir::new().unwrap();
     write(&dir, "SECURITY.md", "POLICY: never expose keys");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         !brain.contains("POLICY: never expose keys"),
         "SECURITY.md content must NOT be injected inline"
@@ -118,7 +118,7 @@ fn test_security_md_not_injected_in_core_brain() {
 fn test_code_md_not_injected_in_core_brain() {
     let dir = TempDir::new().unwrap();
     write(&dir, "CODE.md", "RULE: use snake_case");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         !brain.contains("RULE: use snake_case"),
         "CODE.md content must NOT be injected inline"
@@ -133,7 +133,7 @@ fn test_code_md_not_injected_in_core_brain() {
 fn test_memory_index_present_when_contextual_files_exist() {
     let dir = TempDir::new().unwrap();
     write(&dir, "MEMORY.md", "some notes");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         brain.contains("Available Context Files"),
         "memory index section must appear when contextual files exist"
@@ -148,7 +148,7 @@ fn test_memory_index_present_when_contextual_files_exist() {
 fn test_memory_index_lists_existing_files_only() {
     let dir = TempDir::new().unwrap();
     // MEMORY.md does NOT exist
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         !brain.contains("MEMORY.md"),
         "index must NOT list MEMORY.md (does not exist)"
@@ -161,7 +161,7 @@ fn test_memory_index_absent_when_no_contextual_files_exist() {
     // Only SOUL.md and USER.md — no contextual files
     write(&dir, "SOUL.md", "I am a crab.");
     write(&dir, "USER.md", "Name: Alice");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         !brain.contains("Available Context Files"),
         "memory index must be absent when no contextual files exist"
@@ -179,7 +179,7 @@ fn test_memory_index_absent_when_no_contextual_files_exist() {
 fn test_memory_index_exposes_brain_directory_path() {
     let dir = TempDir::new().unwrap();
     write(&dir, "MEMORY.md", "notes");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     let dir_str = dir.path().display().to_string();
     assert!(
         brain.contains(&format!("Brain directory: {}/", dir_str))
@@ -195,7 +195,7 @@ fn test_memory_index_lists_user_created_md_files() {
     let dir = TempDir::new().unwrap();
     write(&dir, "MEMORY.md", "notes");
     write(&dir, "AGENTVERSE.md", "user notes about agentverse");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         brain.contains("AGENTVERSE.md"),
         "user-created brain files must be discoverable in the index"
@@ -212,7 +212,7 @@ fn test_memory_index_lists_user_created_md_files() {
 fn test_load_guidance_tells_agent_when_to_retrieve() {
     let dir = TempDir::new().unwrap();
     write(&dir, "MEMORY.md", "notes");
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     // Agent must know WHEN to call load_brain_file
     assert!(
         brain.contains("Load proactively when"),
@@ -230,44 +230,34 @@ fn test_runtime_info_included_in_core_brain() {
         provider: Some("anthropic".to_string()),
         working_directory: Some("/home/user/project".to_string()),
     };
-    let brain = loader(&dir).build_core_brain(Some(&info), None);
+    let brain = loader(&dir).build_core_brain(Some(&info));
     assert!(brain.contains("claude-sonnet-4-6"));
     assert!(brain.contains("anthropic"));
     assert!(brain.contains("/home/user/project"));
 }
 
-// ── slash commands ────────────────────────────────────────────────────────────
+// ── SOUL.md position ─────────────────────────────────────────────────────────
 
+/// SOUL.md must appear as the LAST section in the system prompt to combat
+/// "lost in the middle" attention decay. Slash commands are no longer in
+/// the system prompt (moved to contextual on-demand loading).
 #[test]
-fn test_slash_commands_included_in_core_brain() {
-    let dir = TempDir::new().unwrap();
-    let commands = "/help - show help\n/clear - clear screen\n";
-    let brain = loader(&dir).build_core_brain(None, Some(commands));
-    assert!(
-        brain.contains("/help"),
-        "slash commands must be present in core brain"
-    );
-}
-
-/// SOUL.md must appear AFTER slash commands (last position) to combat
-/// "lost in the middle" attention decay.
-#[test]
-fn test_soul_md_appears_after_slash_commands() {
+fn test_soul_md_is_last_section() {
     let dir = TempDir::new().unwrap();
     write(&dir, "SOUL.md", "PERSONALITY_MARKER_UNIQUE_12345");
-    let commands = "/help - show help\n/clear - clear screen\n";
-    let brain = loader(&dir).build_core_brain(None, Some(commands));
+    write(&dir, "USER.md", "Name: Alice");
+    let brain = loader(&dir).build_core_brain(None);
     let soul_pos = brain
         .find("PERSONALITY_MARKER_UNIQUE_12345")
         .expect("SOUL.md must be in prompt");
-    let slash_pos = brain
-        .find("/help")
-        .expect("slash commands must be in prompt");
+    // SOUL.md should be the last brain file in the prompt
+    let after_soul = &brain[soul_pos..];
+    let trimmed = after_soul.trim();
     assert!(
-        soul_pos > slash_pos,
-        "SOUL.md must appear AFTER slash commands (soul at {}, slash at {})",
-        soul_pos,
-        slash_pos
+        trimmed.ends_with("PERSONALITY_MARKER_UNIQUE_12345")
+            || trimmed.ends_with("---"),
+        "SOUL.md should be the last section in the system prompt, got trailing: {:?}",
+        &trimmed[trimmed.len().saturating_sub(100)..]
     );
 }
 
@@ -280,7 +270,7 @@ fn test_soul_md_appears_after_slash_commands() {
 #[test]
 fn test_skills_section_absent_from_core_brain() {
     let dir = TempDir::new().unwrap();
-    let brain = loader(&dir).build_core_brain(None, None);
+    let brain = loader(&dir).build_core_brain(None);
     assert!(
         !brain.contains("--- Available Skills ---"),
         "skills section must NOT appear in core brain (moved to on-demand via TOOLS.md pointer)"
@@ -290,7 +280,7 @@ fn test_skills_section_absent_from_core_brain() {
 #[test]
 fn test_skills_section_absent_from_full_brain() {
     let dir = TempDir::new().unwrap();
-    let brain = loader(&dir).build_system_brain(None, None);
+    let brain = loader(&dir).build_system_brain(None);
     assert!(
         !brain.contains("--- Available Skills ---"),
         "skills section must NOT appear in full brain (moved to on-demand via TOOLS.md pointer)"
@@ -305,7 +295,7 @@ fn test_full_brain_still_injects_all_files() {
     write(&dir, "SOUL.md", "core soul");
     write(&dir, "USER.md", "Name: Alice");
     write(&dir, "MEMORY.md", "long term memory content");
-    let brain = loader(&dir).build_system_brain(None, None);
+    let brain = loader(&dir).build_system_brain(None);
     assert!(
         brain.contains("Name: Alice"),
         "full brain must include USER.md"
@@ -328,8 +318,8 @@ fn test_core_brain_is_smaller_than_full_brain_when_contextual_files_exist() {
     write(&dir, "MEMORY.md", "project notes\n".repeat(200).as_str()); // 2 800 chars
     write(&dir, "AGENTS.md", "workspace rules\n".repeat(50).as_str());
 
-    let core_len = loader(&dir).build_core_brain(None, None).len();
-    let full_len = loader(&dir).build_system_brain(None, None).len();
+    let core_len = loader(&dir).build_core_brain(None).len();
+    let full_len = loader(&dir).build_system_brain(None).len();
 
     assert!(
         core_len < full_len,

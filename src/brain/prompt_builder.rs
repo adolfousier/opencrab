@@ -8,7 +8,7 @@ use std::path::PathBuf;
 /// Core brain files — always injected (user context).
 ///
 /// SOUL.md is intentionally excluded here — it's injected at the END
-/// of the system prompt (after slash commands) to combat the
+/// of the system prompt to combat the
 /// "lost in the middle" attention problem. See `build_core_brain`.
 const CORE_BRAIN_FILES: &[(&str, &str)] = &[("USER.md", "user profile")];
 
@@ -26,7 +26,7 @@ pub(crate) const CONTEXTUAL_BRAIN_FILES: &[(&str, &str)] = &[
 ];
 
 /// All brain files in assembly order — kept for `build_system_brain` (full mode).
-/// SOUL.md intentionally excluded — injected at the END (after slash commands)
+/// SOUL.md intentionally excluded — injected at the END
 /// to combat "lost in the middle" attention decay.
 /// TOOLS.md and CODE.md excluded — they're contextual now.
 const BRAIN_FILES: &[(&str, &str)] = &[
@@ -224,12 +224,10 @@ impl BrainLoader {
     /// 5. MEMORY.md — long-term context
     /// 6. BOOT/BOOTSTRAP/HEARTBEAT — startup config
     /// 7. Runtime info — model, provider, working directory, OS, timestamp
-    /// 8. Slash commands list (provided externally)
-    /// 9. SOUL.md — personality, tone, hard rules (LAST — "lost in the middle" fix)
+    /// 8. SOUL.md — personality, tone, hard rules (LAST — "lost in the middle" fix)
     pub fn build_system_brain(
         &self,
         runtime_info: Option<&RuntimeInfo>,
-        slash_commands_section: Option<&str>,
     ) -> String {
         let mut prompt = String::with_capacity(8192);
 
@@ -250,7 +248,7 @@ impl BrainLoader {
             }
         }
 
-        // 8. Runtime info
+        // 7. Runtime info
         if let Some(info) = runtime_info {
             prompt.push_str("--- Runtime Info ---\n");
             if let Some(ref model) = info.model {
@@ -278,16 +276,7 @@ impl BrainLoader {
             prompt.push('\n');
         }
 
-        // 9. Slash commands list
-        if let Some(commands_section) = slash_commands_section
-            && !commands_section.is_empty()
-        {
-            prompt.push_str("--- Available Slash Commands ---\n");
-            prompt.push_str(commands_section);
-            prompt.push_str("\n\n");
-        }
-
-        // 10. SOUL.md — injected LAST to combat "lost in the middle" attention
+        // 8. SOUL.md — injected LAST to combat "lost in the middle" attention
         //     decay. Critical personality and hard rules sit at the bottom of
         //     the system prompt, closest to the model's generation point.
         if let Some(content) = self.load_file("SOUL.md") {
@@ -305,7 +294,7 @@ impl BrainLoader {
 
     /// Build a lean "core" system brain: only USER.md is injected early.
     ///
-    /// SOUL.md is injected LAST (after slash commands) to combat the
+    /// SOUL.md is injected LAST to combat the
     /// "lost in the middle" attention decay — critical personality and
     /// hard rules sit closest to the model's generation point.
     ///
@@ -318,7 +307,6 @@ impl BrainLoader {
     pub fn build_core_brain(
         &self,
         runtime_info: Option<&RuntimeInfo>,
-        slash_commands_section: Option<&str>,
     ) -> String {
         let mut prompt = String::with_capacity(4096);
 
@@ -467,16 +455,7 @@ impl BrainLoader {
             prompt.push('\n');
         }
 
-        // 5. Slash commands list
-        if let Some(commands_section) = slash_commands_section
-            && !commands_section.is_empty()
-        {
-            prompt.push_str("--- Available Slash Commands ---\n");
-            prompt.push_str(commands_section);
-            prompt.push_str("\n\n");
-        }
-
-        // 6. SOUL.md — injected LAST to combat "lost in the middle" attention
+        // 5. SOUL.md — injected LAST to combat "lost in the middle" attention
         //    decay. Critical personality and hard rules sit at the bottom of
         //    the system prompt, closest to the model's generation point.
         if let Some(content) = self.load_file("SOUL.md") {
@@ -663,7 +642,7 @@ mod tests {
     fn test_build_prompt_no_files() {
         let dir = TempDir::new().unwrap();
         let loader = BrainLoader::new(dir.path().to_path_buf());
-        let prompt = loader.build_system_brain(None, None);
+        let prompt = loader.build_system_brain(None);
 
         // Should contain brain preamble even with no brain files
         assert!(prompt.contains("You are OpenCrabs"));
@@ -676,7 +655,7 @@ mod tests {
         std::fs::write(dir.path().join("SOUL.md"), "I am a helpful crab.").unwrap();
 
         let loader = BrainLoader::new(dir.path().to_path_buf());
-        let prompt = loader.build_system_brain(None, None);
+        let prompt = loader.build_system_brain(None);
 
         assert!(prompt.contains("You are OpenCrabs"));
         assert!(prompt.contains("I am a helpful crab."));
@@ -692,7 +671,7 @@ mod tests {
             provider: Some("anthropic".to_string()),
             working_directory: Some("/home/user/project".to_string()),
         };
-        let prompt = loader.build_system_brain(Some(&info), None);
+        let prompt = loader.build_system_brain(Some(&info));
 
         assert!(prompt.contains("claude-sonnet-4-20250514"));
         assert!(prompt.contains("anthropic"));
@@ -705,7 +684,7 @@ mod tests {
         std::fs::write(dir.path().join("SOUL.md"), "  \n  ").unwrap();
 
         let loader = BrainLoader::new(dir.path().to_path_buf());
-        let prompt = loader.build_system_brain(None, None);
+        let prompt = loader.build_system_brain(None);
 
         // Should NOT contain SOUL.md section header for empty content
         // (the filename may appear in BRAIN_PREAMBLE tool docs, so check for the section format)

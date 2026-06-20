@@ -35,7 +35,7 @@ fn runtime_info_with_collapsed_wd() -> RuntimeInfo {
 fn full_brain_renders_home_anchor_when_wd_present() {
     let (_dir, loader) = loader();
     let info = runtime_info_with_collapsed_wd();
-    let prompt = loader.build_system_brain(Some(&info), None);
+    let prompt = loader.build_system_brain(Some(&info));
 
     // The collapsed wd is still visible (the original feature)
     assert!(prompt.contains("Working directory: ~/srv/rs/opencrabs"));
@@ -57,7 +57,7 @@ fn full_brain_renders_home_anchor_when_wd_present() {
 fn full_brain_renders_path_expansion_rule() {
     let (_dir, loader) = loader();
     let info = runtime_info_with_collapsed_wd();
-    let prompt = loader.build_system_brain(Some(&info), None);
+    let prompt = loader.build_system_brain(Some(&info));
 
     // The actual rule the model needs to follow.
     assert!(
@@ -82,7 +82,7 @@ fn core_brain_renders_home_anchor_when_wd_present() {
     // sometimes via the agent service) regresses.
     let (_dir, loader) = loader();
     let info = runtime_info_with_collapsed_wd();
-    let prompt = loader.build_core_brain(Some(&info), None);
+    let prompt = loader.build_core_brain(Some(&info));
 
     assert!(prompt.contains("Working directory: ~/srv/rs/opencrabs"));
     let home = dirs::home_dir().expect("home dir");
@@ -102,7 +102,7 @@ fn no_anchor_when_working_directory_is_none() {
         provider: None,
         working_directory: None,
     };
-    let prompt = loader.build_system_brain(Some(&info), None);
+    let prompt = loader.build_system_brain(Some(&info));
 
     assert!(
         !prompt.contains("Home: "),
@@ -119,7 +119,7 @@ fn no_anchor_when_runtime_info_absent() {
     // When the caller passes None for runtime_info we shouldn't render
     // the section at all (let alone the anchor).
     let (_dir, loader) = loader();
-    let prompt = loader.build_system_brain(None, None);
+    let prompt = loader.build_system_brain(None);
 
     assert!(!prompt.contains("--- Runtime Info ---"));
     assert!(!prompt.contains("Home: "));
@@ -136,13 +136,13 @@ fn both_render_paths_include_the_binary_version() {
     let info = runtime_info_with_collapsed_wd();
     let version = env!("CARGO_PKG_VERSION");
 
-    let system = loader.build_system_brain(Some(&info), None);
+    let system = loader.build_system_brain(Some(&info));
     assert!(
         system.contains(&format!("OpenCrabs version: v{version}")),
         "build_system_brain must surface the running binary's version (#183)"
     );
 
-    let core = loader.build_core_brain(Some(&info), None);
+    let core = loader.build_core_brain(Some(&info));
     assert!(
         core.contains(&format!("OpenCrabs version: v{version}")),
         "build_core_brain (lean prompt) must surface the version too (#183)"

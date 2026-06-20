@@ -821,7 +821,7 @@ pub(crate) async fn cmd_run(
     ));
     // Feedback/performance digest stays out of the LLM context — it's a
     // maintenance warning in ~/.opencrabs/rsi/digest.md, not conversation input.
-    let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info), None);
+    let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info));
     if config.agent.lazy_tools {
         system_brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
     }
@@ -1197,7 +1197,7 @@ pub(crate) async fn cmd_agent_interactive(
     ));
     // Feedback/performance digest stays out of the LLM context — it's a
     // maintenance warning in ~/.opencrabs/rsi/digest.md, not conversation input.
-    let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info), None);
+    let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info));
     if config.agent.lazy_tools {
         system_brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
     }
