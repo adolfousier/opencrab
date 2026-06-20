@@ -1,5 +1,7 @@
 # SECURITY.md - Security Policies
 
+> **Owns:** security policy — third-party code review, network posture, data handling, server/credential access.
+
 *Security is not optional. These rules protect your human, their data, and their infrastructure.*
 
 ---

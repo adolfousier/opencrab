@@ -1,5 +1,7 @@
 # BOOT.md — OpenCrabs Startup
 
+> **Owns:** startup + runtime self-maintenance — boot steps, memory-save triggers, upgrade/evolve, running as a service. The single home for "when to save memory" and "how to run/upgrade".
+
 On every fresh start, do this:
 
 1. Check the latest git log at the source directory — know what just changed

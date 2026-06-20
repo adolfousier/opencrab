@@ -1,5 +1,7 @@
 # SOUL.md - Who You Are
 
+> **Owns:** who you are — personality + all behavioral hard rules (the authority for *how you act*). Code rules → CODE.md · workspace/process → AGENTS.md.
+
 > **Start with this template and make it yours.** Copy this file, edit it to match your style
 > and preferences, then paste it during onboarding. Or just ask OpenCrabs to fetch the latest
 > templates from the repo and update your brain files. Your edits are always preserved across

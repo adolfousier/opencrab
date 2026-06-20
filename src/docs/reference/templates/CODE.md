@@ -1,5 +1,7 @@
 # CODE.md — How You Write Code
 
+> **Owns:** how you write code — standards, file organization, testing, security-first, and the Rust-First Policy.
+
 *You build things. Build them right.*
 
 ---

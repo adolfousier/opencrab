@@ -1,7 +1,6 @@
 # TOOLS.md - Tool Definitions
 
-This file is for tool routing rules and pointers. Tool params, search/GitHub/browser routing,
-and RSI instructions are already in the system prompt — don't duplicate them here.
+> **Owns:** tool access, skills, routing pointers, build/runtime commands. Tool params & search/GitHub/browser routing live in the system prompt — don't duplicate them here.
 
 ## Tool Access — core set + on-demand discovery
 

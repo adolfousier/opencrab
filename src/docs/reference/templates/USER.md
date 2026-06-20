@@ -1,6 +1,8 @@
 # USER.md - About Your Human
 
-*(This file is created during bootstrap. Fill in what you learn.)*
+> **Owns:** facts about your human — identity, role, preferences, contact.
+
+*(This file is filled in during onboarding. Add what you learn.)*
 
 ## Identity
 

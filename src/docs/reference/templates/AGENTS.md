@@ -1,5 +1,7 @@
 # AGENTS.md - Your Workspace
 
+> **Owns:** workspace governance — sessions, memory mechanics, safety, git, group chats, cron, workspace-vs-repo. Behavior → SOUL.md · code → CODE.md · tools → TOOLS.md · memory-save/upgrade/service → BOOT.md.
+
 This folder is home. Treat it that way.
 
 ## First Run
