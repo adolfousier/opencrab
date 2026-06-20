@@ -152,6 +152,61 @@ fn boot_md_is_seeded_and_dead_files_are_not() {
     }
 }
 
+// ── the ownership model reaches the system prompt and RSI ────────────────────
+
+#[test]
+fn preamble_carries_brain_file_ownership_map() {
+    use crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    assert!(
+        BRAIN_PREAMBLE.contains("BRAIN FILE OWNERSHIP"),
+        "the system preamble must teach the agent the brain-file ownership map"
+    );
+    for f in [
+        "SOUL.md",
+        "MEMORY.md",
+        "CODE.md",
+        "TOOLS.md",
+        "SECURITY.md",
+        "BOOT.md",
+    ] {
+        assert!(
+            BRAIN_PREAMBLE.contains(f),
+            "preamble ownership map must name {f}"
+        );
+    }
+    assert!(
+        BRAIN_PREAMBLE.contains("never") && BRAIN_PREAMBLE.contains("duplicat"),
+        "preamble must state that a rule is never duplicated across files"
+    );
+}
+
+#[test]
+fn rsi_taxonomy_routes_to_all_core_brain_files() {
+    // Source-level check: the RSI improvement prompt must route to each core
+    // brain file — including BOOT.md, which took over memory-save triggers,
+    // upgrade, and service setup — and forbid cross-file duplication.
+    const RSI_SRC: &str = include_str!("../brain/rsi.rs");
+    for f in [
+        "SOUL.md",
+        "USER.md",
+        "MEMORY.md",
+        "AGENTS.md",
+        "CODE.md",
+        "TOOLS.md",
+        "SECURITY.md",
+        "BOOT.md",
+    ] {
+        assert!(
+            RSI_SRC.contains(f),
+            "RSI Target File Taxonomy must route improvements to {f}"
+        );
+    }
+    assert!(
+        RSI_SRC.contains("One kind of content per file"),
+        "RSI must state the one-kind-per-file ownership principle"
+    );
+}
+
 #[test]
 fn memory_index_excludes_dead_files() {
     use crate::memory::BRAIN_FILES;

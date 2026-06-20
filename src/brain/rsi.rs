@@ -289,11 +289,20 @@ Each brain file controls a different aspect of the agent. Route improvements to 
   Fix here when: user_correction events show a repeated preference the agent keeps violating.
 - **MEMORY.md** — Persistent KNOWLEDGE: facts, context, project state, integrations. \
   Fix here when: the agent repeatedly lacks context it should have retained across sessions.
-- **AGENTS.md** — Agent configuration, workspace rules, safety policies. \
-  Fix here when: agent-level behavior (approval flow, context handling) needs adjustment.
-- **CODE.md** — Coding standards and patterns. \
+- **AGENTS.md** — Workspace PROCESS: sessions, git, group chats, cron, workspace-vs-repo. \
+  Fix here when: workspace/process behavior needs adjustment. NOT security policy (→ SECURITY.md) \
+  and NOT how-the-model-behaves (→ SOUL.md).
+- **CODE.md** — Coding standards, testing, and the Rust-First Policy. \
   Fix here when: code-quality feedback recurs (wrong style, missing tests, bad patterns).
-- **SECURITY.md** — Security policies. Fix here when: security-related feedback appears.
+- **SECURITY.md** — Security policy: code review, network posture, data handling, credential/server access. \
+  Fix here when: security-related feedback appears.
+- **BOOT.md** — Startup + runtime self-maintenance: boot steps, memory-save triggers, upgrade/evolve, \
+  running as a service. Fix here when: startup/persistence guidance or the memory-save triggers \
+  need updating.
+
+One kind of content per file — never duplicate a rule across files (copies drift and go stale), \
+and match each file's `**Owns:**` header. SOUL/AGENTS/CODE/TOOLS/SECURITY/BOOT are generic (same for \
+everyone); USER/MEMORY are user-specific.
 
 ### Custom Reference Files
 

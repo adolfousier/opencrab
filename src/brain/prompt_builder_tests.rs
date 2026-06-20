@@ -149,9 +149,13 @@ fn test_memory_index_lists_existing_files_only() {
     let dir = TempDir::new().unwrap();
     // MEMORY.md does NOT exist
     let brain = loader(&dir).build_core_brain(None);
+    // The dynamic "Available Context Files" index must not OFFER MEMORY.md as
+    // loadable when it's absent. Match the index-entry format (`- **MEMORY.md**`)
+    // rather than the bare name, since the preamble's brain-file ownership map
+    // legitimately references file names regardless of which exist on disk.
     assert!(
-        !brain.contains("MEMORY.md"),
-        "index must NOT list MEMORY.md (does not exist)"
+        !brain.contains("- **MEMORY.md**"),
+        "index must NOT list MEMORY.md as loadable (does not exist)"
     );
 }
 
