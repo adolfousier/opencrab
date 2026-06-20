@@ -10,10 +10,14 @@ use tokio::time::{Duration, sleep};
 
 use super::openai_tts::build_endpoint_url;
 
-/// Maximum time to wait for Voicebox generation to complete.
-const POLL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Interval between status polls.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Estimated processing time per character (empirical: Kokoro ~60ms/char on Apple Silicon).
+const MS_PER_CHAR: u64 = 60;
+/// Floor timeout: never wait less than this.
+const MIN_TIMEOUT: Duration = Duration::from_secs(120);
+/// Ceiling timeout: cap at 10 minutes.
+const MAX_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Voicebox TTS client.
 pub struct VoiceboxTts {
@@ -59,10 +63,26 @@ impl VoiceboxTts {
     /// Synthesize speech using Voicebox.
     ///
     /// Flow: POST /generate → poll /generate/{id}/status → fetch audio via HTTP.
+    /// Timeout scales with text length: longer text needs more processing time.
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
         if text.is_empty() {
             anyhow::bail!("Cannot synthesize empty text");
         }
+
+        // Scale timeout with text length. Kokoro on Apple Silicon processes
+        // ~16 chars/sec (60ms/char). Clamp between 120s and 600s.
+        let estimated_ms = (text.len() as u64) * MS_PER_CHAR;
+        let poll_timeout = Duration::from_millis(
+            estimated_ms
+                .max(MIN_TIMEOUT.as_millis() as u64)
+                .min(MAX_TIMEOUT.as_millis() as u64),
+        );
+
+        tracing::info!(
+            "Voicebox TTS: synthesizing {} chars (timeout={}s)",
+            text.len(),
+            poll_timeout.as_secs()
+        );
 
         let generate_url = build_endpoint_url(&self.base_url, "generate")?;
 
@@ -109,24 +129,29 @@ impl VoiceboxTts {
         }
 
         // Async mode: poll until completed, then fetch audio by generation ID
-        self.poll_until_completed(&generation_id).await?;
+        self.poll_until_completed(&generation_id, poll_timeout)
+            .await?;
         self.fetch_audio_by_id(&generation_id).await
     }
 
     /// Poll `/generate/{id}/status` until the generation completes.
-    async fn poll_until_completed(&self, generation_id: &str) -> Result<StatusResponse> {
+    async fn poll_until_completed(
+        &self,
+        generation_id: &str,
+        timeout: Duration,
+    ) -> Result<StatusResponse> {
         let status_url = build_endpoint_url(
             &self.base_url,
             &format!("generate/{}/status", generation_id),
         )?;
 
-        let deadline = tokio::time::Instant::now() + POLL_TIMEOUT;
+        let deadline = tokio::time::Instant::now() + timeout;
 
         loop {
             if tokio::time::Instant::now() > deadline {
                 anyhow::bail!(
                     "Voicebox TTS timed out after {}s waiting for generation {}",
-                    POLL_TIMEOUT.as_secs(),
+                    timeout.as_secs(),
                     generation_id
                 );
             }

@@ -300,6 +300,11 @@ pub(crate) async fn transcribe_audio_with_url(
     Ok(result.text)
 }
 
+/// Maximum characters per TTS chunk. Empirically, Voicebox (Kokoro) handles
+/// up to ~3000 chars in ~90s. Using 1500 keeps each chunk well under the
+/// timeout and avoids quality degradation from very long synthesis.
+const MAX_TTS_CHUNK_CHARS: usize = 1500;
+
 /// Dispatch TTS synthesis based on config.
 ///
 /// - Voicebox TTS (voicebox_tts_enabled)
@@ -307,11 +312,31 @@ pub(crate) async fn transcribe_audio_with_url(
 /// - OpenAI TTS API (tts_provider)
 /// - Local Piper TTS (local-tts feature)
 ///
-/// All audio is converted to OGG/Opus before returning, since Telegram's
-/// `send_voice` only accepts Opus format.
+/// Long text is cleaned of markdown, chunked at sentence boundaries, and
+/// synthesized in pieces that are concatenated into a single audio stream.
+/// All audio is converted to OGG/Opus before returning.
 pub async fn synthesize(text: &str, voice_config: &VoiceConfig) -> Result<Vec<u8>> {
     if text.is_empty() {
         anyhow::bail!("Cannot synthesize empty text");
+    }
+
+    // Clean markdown from text for ALL providers (not just Piper).
+    // This prevents TTS engines from reading out loud code fences,
+    // asterisks, headers, URLs, etc.
+    let cleaned = super::local_tts::clean_for_tts(text);
+    if cleaned.is_empty() {
+        anyhow::bail!("No speakable text after cleaning markdown");
+    }
+
+    let chunks = split_for_tts(&cleaned, MAX_TTS_CHUNK_CHARS);
+
+    if chunks.len() > 1 {
+        tracing::info!(
+            "TTS: text split into {} chunks ({} chars total, max {}/chunk)",
+            chunks.len(),
+            cleaned.len(),
+            MAX_TTS_CHUNK_CHARS,
+        );
     }
 
     let primary = resolve_primary_tts(voice_config);
@@ -322,7 +347,7 @@ pub async fn synthesize(text: &str, voice_config: &VoiceConfig) -> Result<Vec<u8
     let mut audio: Option<Vec<u8>> = None;
     for kind in &candidates {
         attempts.push(kind.label());
-        match try_tts(*kind, text, voice_config).await {
+        match try_tts_chunked(*kind, &chunks, voice_config).await {
             Ok(bytes) => {
                 if attempts.len() > 1 {
                     tracing::info!(
@@ -356,6 +381,94 @@ pub async fn synthesize(text: &str, voice_config: &VoiceConfig) -> Result<Vec<u8
 
     // Ensure Opus format for Telegram — converts WAV/MP3 if needed
     Ok(ensure_opus(audio).await)
+}
+
+/// Synthesize each chunk with the given provider and concatenate audio.
+///
+/// For single-chunk text (the common case), this is a direct passthrough.
+/// For multi-chunk, each piece is synthesized independently and the resulting
+/// audio bytes are concatenated. OGG/Opus concatenation works because
+/// decoders handle back-to-back OGG streams.
+async fn try_tts_chunked(
+    kind: TtsProviderKind,
+    chunks: &[String],
+    cfg: &VoiceConfig,
+) -> Result<Vec<u8>> {
+    if chunks.len() == 1 {
+        return try_tts(kind, &chunks[0], cfg).await;
+    }
+
+    let mut all_audio = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        tracing::info!(
+            "TTS chunk {}/{} ({} chars) via {}",
+            i + 1,
+            chunks.len(),
+            chunk.len(),
+            kind.label(),
+        );
+        let audio = try_tts(kind, chunk, cfg).await?;
+        all_audio.extend_from_slice(&audio);
+    }
+
+    tracing::info!(
+        "TTS: concatenated {} chunks into {} bytes of audio",
+        chunks.len(),
+        all_audio.len(),
+    );
+    Ok(all_audio)
+}
+
+/// Split text into chunks at sentence boundaries.
+///
+/// Tries to break at `. `, `! `, `? `, or `\n` to keep sentences intact.
+/// Each chunk is at most `max_chars` characters. Falls back to hard split
+/// at word boundaries if no sentence break is found.
+fn split_for_tts(text: &str, max_chars: usize) -> Vec<String> {
+    if text.len() <= max_chars {
+        return vec![text.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        if remaining.len() <= max_chars {
+            chunks.push(remaining.to_string());
+            break;
+        }
+
+        // Find the best split point within max_chars
+        let search_area = &remaining[..max_chars];
+        let split_pos = find_sentence_break(search_area)
+            .or_else(|| find_word_break(search_area))
+            .unwrap_or(max_chars);
+
+        chunks.push(remaining[..split_pos].trim().to_string());
+        remaining = remaining[split_pos..].trim_start();
+    }
+
+    chunks
+}
+
+/// Find the last sentence-ending punctuation within text.
+fn find_sentence_break(text: &str) -> Option<usize> {
+    let candidates = [". ", "! ", "? ", ".\n", "!\n", "?\n", "\n\n", "\n"];
+    let mut best = None;
+    for delim in &candidates {
+        if let Some(pos) = text.rfind(delim) {
+            let end = pos + delim.len();
+            if best.is_none_or(|(b, _): (usize, &str)| end > b) {
+                best = Some((end, *delim));
+            }
+        }
+    }
+    best.map(|(pos, _)| pos)
+}
+
+/// Find the last word boundary within text.
+fn find_word_break(text: &str) -> Option<usize> {
+    text.rfind(char::is_whitespace).map(|pos| pos + 1)
 }
 
 /// Resolve which TTS provider runs first based on current config flags.
@@ -788,6 +901,110 @@ pub async fn transcribe_audio_local(audio_bytes: Vec<u8>, model_id: String) -> R
         Err(_) => {
             tracing::error!("Local STT: transcription timed out after 300s");
             anyhow::bail!("Local STT transcription timed out (300s)")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_short_text_returns_single_chunk() {
+        let text = "Hello world, this is short.";
+        let chunks = split_for_tts(text, 1500);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], text);
+    }
+
+    #[test]
+    fn split_long_text_breaks_at_sentences() {
+        let text = "First sentence here. Second sentence here. Third sentence is much longer and goes on for a while to push us over the limit.";
+        let chunks = split_for_tts(text, 50);
+        assert!(chunks.len() > 1);
+        // Each chunk should be under the limit
+        for chunk in &chunks {
+            assert!(chunk.len() <= 50, "chunk too long: {} chars", chunk.len());
+        }
+        // All content should be preserved
+        let rejoined: String = chunks.join(" ");
+        assert!(rejoined.contains("First sentence"));
+        assert!(rejoined.contains("Second sentence"));
+        assert!(rejoined.contains("Third sentence"));
+    }
+
+    #[test]
+    fn split_respects_question_and_exclamation() {
+        let text = "Is this working? Yes it is! Great news indeed. Another sentence.";
+        let chunks = split_for_tts(text, 30);
+        assert!(chunks.len() > 1);
+        for chunk in &chunks {
+            assert!(chunk.len() <= 30, "chunk too long: {} chars", chunk.len());
+        }
+    }
+
+    #[test]
+    fn split_falls_back_to_word_boundary() {
+        // No sentence breaks, just one long sentence
+        let text = "word ".repeat(100); // 500 chars, no periods
+        let chunks = split_for_tts(&text, 100);
+        assert!(chunks.len() > 1);
+        for chunk in &chunks {
+            assert!(chunk.len() <= 100, "chunk too long: {} chars", chunk.len());
+        }
+    }
+
+    #[test]
+    fn find_sentence_break_finds_last_period() {
+        assert_eq!(find_sentence_break("Hello. World"), Some(7)); // ". " is 2 chars
+        assert_eq!(find_sentence_break("Hello! World"), Some(7));
+        assert_eq!(find_sentence_break("Hello? World"), Some(7));
+        assert_eq!(find_sentence_break("No break here"), None);
+    }
+
+    #[test]
+    fn split_preserves_newlines() {
+        let text =
+            "Paragraph one.\n\nParagraph two.\n\nParagraph three with more text to exceed limit.";
+        let chunks = split_for_tts(text, 30);
+        assert!(chunks.len() > 1);
+    }
+
+    #[test]
+    fn split_empty_text() {
+        let chunks = split_for_tts("", 1500);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "");
+    }
+
+    #[test]
+    fn split_exactly_at_limit() {
+        let text = "a".repeat(1500);
+        let chunks = split_for_tts(&text, 1500);
+        assert_eq!(chunks.len(), 1);
+    }
+
+    #[test]
+    fn split_one_over_limit() {
+        let text = "a".repeat(1501);
+        let chunks = split_for_tts(&text, 1500);
+        assert_eq!(chunks.len(), 2);
+    }
+
+    #[test]
+    fn split_realistic_long_response() {
+        // Simulate a long assistant response by repeating meaningful text
+        let base = "Here is a detailed explanation of how Rust's borrow checker works. The borrow checker is a compile-time feature that ensures memory safety. It tracks the lifetime of references and ensures they don't outlive the data they point to. ";
+        let text = base.repeat(10); // ~2500 chars
+        let chunks = split_for_tts(&text, 1500);
+        assert!(
+            chunks.len() >= 2,
+            "expected >= 2 chunks, got {}",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            assert!(chunk.len() <= 1500, "chunk too long: {} chars", chunk.len());
+            assert!(!chunk.trim().is_empty(), "empty chunk");
         }
     }
 }
