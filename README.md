@@ -128,7 +128,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
 | **Usage Dashboard** | Per-message token count and cost displayed in header; `/usage` opens an interactive dashboard with daily activity charts, cost breakdowns by project/model/activity, core tool usage stats, and period filtering (Today/Week/Month/All-Time). Sessions are auto-categorized on startup (Development, Bug Fixes, Features, Refactoring, Testing, Documentation, CI/Deploy, etc.). Estimated costs for historical sessions shown as `~$X.XX` |
 | **Context Awareness** | Live context usage indicator showing actual token counts (e.g. `ctx: 45K/200K (23%)`); auto-compaction at 70% with tool overhead budgeting; accurate tiktoken-based counting calibrated against API actuals |
-| **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory loaded every turn, (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Hybrid Memory Search** — FTS5 keyword search + vector embeddings combined via Reciprocal Rank Fusion. Three modes: **Local** (embeddinggemma-300M, 768-dim, no API key, works offline), **API** (any OpenAI-compatible `/v1/embeddings` endpoint: OpenAI, Ollama, Jina, etc.), or **FTS5-only** (no embeddings, VPS-friendly, ~0 RAM overhead). Auto-detects VPS environments and disables local embeddings |
+| **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory, loaded on demand in the main session (see [Brain Files](#brain-files--one-file-one-job)), (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Hybrid Memory Search** — FTS5 keyword search + vector embeddings combined via Reciprocal Rank Fusion. Three modes: **Local** (embeddinggemma-300M, 768-dim, no API key, works offline), **API** (any OpenAI-compatible `/v1/embeddings` endpoint: OpenAI, Ollama, Jina, etc.), or **FTS5-only** (no embeddings, VPS-friendly, ~0 RAM overhead). Auto-detects VPS environments and disables local embeddings |
 | **Dynamic Brain System** | System brain assembled from workspace MD files (SOUL, USER, AGENTS, TOOLS, MEMORY) — all editable live between turns |
 | **Multi-Agent Orchestration** | Spawn typed child agents (General, Explore, Plan, Code, Research) for parallel task execution. Five tools: `spawn_agent`, `wait_agent`, `send_input`, `close_agent`, `resume_agent`. Each type gets a role-specific system prompt and filtered tool registry. Configurable subagent provider/model. Children run in isolated sessions with auto-approve — no recursive spawning |
 | **Recursive Self-Improvement** | ⚠️ Experimental. Automatic feedback ledger tracks every tool execution, user correction, and provider error. Three tools: `feedback_record` (log observations), `feedback_analyze` (query patterns), `self_improve` (autonomously apply brain file changes — no human approval). Changes logged to `~/.opencrabs/rsi/improvements.md` with daily archives. Startup digest injects performance summary into system prompt. **Upstream template sync** — automatically detects new releases, fetches updated brain file templates from the repo, diffs against local files, and appends only new sections (never overwrites user customizations). Backups created before every merge. Zero tokens spent when version unchanged. Zero setup — works out of the box via auto-migration |
@@ -394,6 +394,25 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | `opencrabs version` | Print version and exit |
 
 Global flags: `--debug` (enable file logging), `--config <path>` (custom config file), `--profile <name>` / `-p <name>` (run as a named profile).
+
+### Brain Files — One File, One Job
+
+OpenCrabs's behavior lives in plain-markdown **brain files** in `~/.opencrabs/`. Each file owns exactly **one kind of content**, so a rule lives in one place and never drifts out of sync. The agent — and its self-improvement engine — route every learning to the file that owns it.
+
+| File | Owns | Scope | In context |
+|------|------|-------|-----------|
+| **SOUL.md** | Who you are — personality + behavioral hard rules (how the agent *acts*) | Generic | Always |
+| **USER.md** | Facts about your human — identity, role, preferences | Personal | Always |
+| **MEMORY.md** | What the agent has *learned* — facts, corrections, lessons | Personal | On demand · main session only |
+| **AGENTS.md** | Workspace *process* — sessions, git, safety, group chats, cron | Generic | On demand |
+| **CODE.md** | How code is written — standards, testing, Rust-first | Generic | On demand |
+| **TOOLS.md** | Tools — access, skills, commands | Generic | On demand |
+| **SECURITY.md** | Security policy — code review, network, data, credentials | Generic | On demand |
+| **BOOT.md** | Startup + runtime — boot steps, memory-save triggers, upgrade/evolve, running as a service | Generic | On demand |
+
+**Loading is lazy.** Only `SOUL.md` + `USER.md` are injected on every turn; the rest are listed in an "Available Context Files" index and pulled with the `load_brain_file` tool only when a task actually needs them — saving 10–20k tokens per turn. `MEMORY.md` and `USER.md` are personal and load only in your **main session**, never in shared/group chats.
+
+**Generic vs. personal.** The generic files (SOUL/AGENTS/CODE/TOOLS/SECURITY/BOOT) ship as the same templates for everyone (you then customize them); `USER.md` and `MEMORY.md` accumulate per user and stay private. Each file declares its scope in a `> **Owns:**` header at the top, and the discipline is simple: **one kind of content per file, never duplicated across files** — copies drift and go stale. (`HEARTBEAT.md` is a small periodic-task checklist, empty by default.)
 
 ### Profiles — Multi-Instance Crab Agents
 
