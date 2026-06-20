@@ -277,9 +277,10 @@ Your job is to analyze system feedback and autonomously apply improvements to br
 
 Each brain file controls a different aspect of the agent. Route improvements to the RIGHT file:
 
-- **SOUL.md** — How the model BEHAVES: response style, reasoning patterns, personality. \
+- **SOUL.md** — PERSONALITY / voice: response style, tone, reasoning patterns. \
   Fix here when: phantom_tool_call events (model narrates instead of acting), gaslighting \
-  preambles, verbose/repetitive responses, wrong tone.
+  preambles, verbose/repetitive responses, wrong tone. \
+  NOT the hard rules / safety gates — those go in AGENTS.md (always-loaded).
 - **TOOLS.md** — Tool DEFINITIONS: parameter formats, executor types, usage docs. \
   This is a reference file, NOT a dumping ground for failure logs or error notes. \
   Tool failure patterns are tracked by the feedback system (feedback_record, feedback_analyze). \
@@ -289,9 +290,12 @@ Each brain file controls a different aspect of the agent. Route improvements to 
   Fix here when: user_correction events show a repeated preference the agent keeps violating.
 - **MEMORY.md** — Persistent KNOWLEDGE: facts, context, project state, integrations. \
   Fix here when: the agent repeatedly lacks context it should have retained across sessions.
-- **AGENTS.md** — Workspace PROCESS: sessions, git, group chats, cron, workspace-vs-repo. \
-  Fix here when: workspace/process behavior needs adjustment. NOT security policy (→ SECURITY.md) \
-  and NOT how-the-model-behaves (→ SOUL.md).
+- **AGENTS.md** — Workspace PROCESS + the **enforced hard rules / safety gates** (never \
+  delete/push/email/post without approval). It is ALWAYS-LOADED, so any must-always-respect \
+  rule a user/feedback teaches goes HERE — never in an on-demand file (MEMORY/TOOLS/CODE) where \
+  it wouldn't be enforced on a cold session or after compaction. \
+  Fix here when: workspace/process behavior needs adjustment, or a new hard rule is learned. \
+  NOT security policy (→ SECURITY.md), NOT personality/tone (→ SOUL.md).
 - **CODE.md** — Coding standards, testing, and the user's language/framework preference. \
   Fix here when: code-quality feedback recurs (wrong style, missing tests, bad patterns).
 - **SECURITY.md** — Security policy: code review, network posture, data handling, credential/server access. \

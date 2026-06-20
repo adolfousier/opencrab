@@ -43,6 +43,44 @@ fn every_rule_template_has_ownership_header() {
     }
 }
 
+// ── hard rules live in AGENTS (always-loaded), SOUL is personality ───────────
+
+#[test]
+fn enforced_gates_live_in_agents_not_soul() {
+    let soul = read_template("SOUL.md");
+    let agents = read_template("AGENTS.md");
+    // AGENTS owns the enforced permission/commit gates (it's always-loaded).
+    assert!(
+        agents.contains("create PRs only") && agents.contains("NEVER DO WITHOUT EXPLICIT APPROVAL"),
+        "AGENTS.md must own the enforced hard rules / permission gates"
+    );
+    // SOUL no longer carries the full gate list — it just points to AGENTS.
+    assert!(
+        !soul.contains("create PRs only"),
+        "SOUL.md must NOT duplicate the commit/push gate — it lives in AGENTS.md"
+    );
+    assert!(
+        soul.contains("AGENTS.md"),
+        "SOUL.md must point to AGENTS.md for the hard rules"
+    );
+}
+
+#[test]
+fn preamble_and_rsi_route_hard_rules_to_agents() {
+    use crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    assert!(
+        BRAIN_PREAMBLE.contains("AGENTS.md")
+            && BRAIN_PREAMBLE.contains("hard rules")
+            && BRAIN_PREAMBLE.contains("Always-loaded"),
+        "preamble must route hard rules to the always-loaded AGENTS.md"
+    );
+    const RSI_SRC: &str = include_str!("../brain/rsi.rs");
+    assert!(
+        RSI_SRC.contains("ALWAYS-LOADED") && RSI_SRC.contains("hard rules"),
+        "RSI taxonomy must route learned hard rules to the always-loaded AGENTS.md"
+    );
+}
+
 // ── single source of truth (no rule duplicated across files) ─────────────────
 
 #[test]

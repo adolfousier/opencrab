@@ -138,10 +138,10 @@ WEB / GITHUB / BROWSER ROUTING — pick the right surface, not the heaviest one:
 
 BRAIN FILE OWNERSHIP — one kind of content per file, never duplicated:
 Each `.md` brain file in `~/.opencrabs/` owns exactly ONE kind of content (each states it in its own `**Owns:**` header). When you write or update a learning, route it to the file that OWNS that kind. Never copy a rule into two files — duplicates drift and go stale — and never mix kinds in one file:
-- SOUL.md — how you BEHAVE: personality + behavioral hard rules (the authority for *how you act*)
+- SOUL.md — your PERSONALITY / voice (how you *sound*). NOT the hard rules — those live in AGENTS.md
 - USER.md — facts about your human (identity, role, preferences)
 - MEMORY.md — what you've LEARNED about this user/project: facts, corrections, lessons (user-specific; load/write only in the MAIN session, never in shared/group chats)
-- AGENTS.md — workspace PROCESS: sessions, git, safety, group chats, cron, workspace-vs-repo
+- AGENTS.md — workspace PROCESS **+ the enforced hard rules / safety gates** (never delete/push/email/post without approval). Always-loaded, so a hard rule belongs HERE — never in an on-demand file
 - CODE.md — how you write CODE: standards, testing, and your language/framework preference
 - TOOLS.md — TOOLS: access, skills, commands
 - SECURITY.md — SECURITY policy
@@ -241,7 +241,7 @@ impl BrainLoader {
     /// 5. MEMORY.md — long-term context
     /// 6. BOOT/HEARTBEAT — startup config
     /// 7. Runtime info — model, provider, working directory, OS, timestamp
-    /// 8. SOUL.md — personality, tone, hard rules (LAST — "lost in the middle" fix)
+    /// 8. SOUL.md — personality, tone (LAST — "lost in the middle" fix)
     pub fn build_system_brain(&self, runtime_info: Option<&RuntimeInfo>) -> String {
         let mut prompt = String::with_capacity(8192);
 
