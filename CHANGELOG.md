@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.45] - 2026-06-20
+
+6 commits since v0.3.44. 9 files changed, +394 / -41 lines.
+
+### ✨ Features
+
+- `92687c73` **Cron job deletion safeguard**: Two-step delete (shows details first, requires `confirm=true`), `disable` now requires approval, auto-backup to `~/.opencrabs/backups/cron/` with rotation (last 10 snapshots). Updated AGENTS.md template with Cron Job Protection section.
+- `dbbfcaaa` **Rich schedule detail popup**: Mission Control schedule detail now shows prompt, delivery target, next/last run, execution history (status, cost, duration), profile, and created date. Schedule service fetches recent runs to avoid N+1 queries.
+
+### 🔧 Fixes
+
+- `fc0bd4d8` **Mission Control popup sizing**: Detail popup now measures actual content height (including soft-wrap estimation) instead of fixed 70% of screen. Short entries get a small popup, long prompts get up to 70%.
+- `3236c913` **Evolve health-check spawn retry**: Retry health-check spawn up to 5 times with backoff on transient ETXTBSY (kernel still writing) or ENOENT (write not settled) instead of failing and rolling back.
+- `7fa01ec9` **Evolve concurrent-run guard**: Single-flight guard prevents two evolves from racing on the same temp file. Process-unique temp names (`evolve_tmp.<pid>`) eliminate file collisions.
+- `f9194af2` **SSE stream log demotion**: Per-SSE-chunk `[STREAM_RAW]` logs moved from debug to trace. Prevents hundreds of raw-chunk lines flooding log files in debug mode.
+
+### 📊 Stats
+
+- 6 commits since v0.3.44
+- 9 files changed, +394 / -41 lines
+- 4,019 tests (4,019 passed, 0 failed, 27 ignored)
+
+
 ## [0.3.44] - 2026-06-19
 
 15 commits since v0.3.43. 31 files changed, +3,373 / -2,205 lines.
@@ -5773,3 +5796,4 @@ fixes.
 [0.3.42]: https://github.com/adolfousier/opencrabs/compare/v0.3.41...v0.3.42
 [0.3.43]: https://github.com/adolfousier/opencrabs/compare/v0.3.42...v0.3.43
 [0.3.44]: https://github.com/adolfousier/opencrabs/compare/v0.3.43...v0.3.44
+[0.3.45]: https://github.com/adolfousier/opencrabs/compare/v0.3.44...v0.3.45
