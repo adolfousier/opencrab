@@ -1843,6 +1843,24 @@ pub(crate) async fn handle_message(
                 message_in_thread(&bot, msg.chat.id, thread_id, reply).await?;
                 return Ok(());
             }
+            ChannelCommand::ChangeDir(resp) => {
+                // Store the browsing state for this chat
+                telegram_state
+                    .set_dir_browser(
+                        msg.chat.id.0,
+                        resp.current_path.clone(),
+                        resp.filter.clone(),
+                    )
+                    .await;
+
+                let rows = build_cd_keyboard(&resp);
+                let keyboard = InlineKeyboardMarkup::new(rows);
+                message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&resp.text))
+                    .parse_mode(ParseMode::Html)
+                    .reply_markup(keyboard)
+                    .await?;
+                return Ok(());
+            }
             ChannelCommand::Compact => {
                 message_in_thread(&bot, msg.chat.id, thread_id, "⏳ Compacting context...").await?;
                 text = "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
@@ -4757,4 +4775,66 @@ pub(crate) fn make_approval_callback(
             }
         })
     })
+}
+
+/// Build inline keyboard rows for the /cd directory browser.
+///
+/// Layout:
+/// - One row per entry (dir with 📁, file with 📄)
+/// - [⬆️ Parent] row if not at root
+/// - [◀️ Prev] [Page N/M] [Next ▶️] pagination row (if >1 page)
+/// - [✅ Select this directory] confirm row
+pub(crate) fn build_cd_keyboard(
+    resp: &crate::channels::commands::DirBrowserResponse,
+) -> Vec<Vec<InlineKeyboardButton>> {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+
+    // Entry buttons — each entry gets its own row for readability
+    for entry in &resp.entries {
+        let icon = if entry.is_dir { "📁" } else { "📄" };
+        let display = format!("{} {}", icon, entry.name);
+        rows.push(vec![InlineKeyboardButton::callback(
+            display,
+            format!("cd:sel:{}", entry.index),
+        )]);
+    }
+
+    // Parent directory button (unless at filesystem root)
+    let is_root = resp.current_path == "/" || resp.current_path.len() <= 1;
+    if !is_root {
+        rows.push(vec![InlineKeyboardButton::callback(
+            "⬆️ Parent",
+            "cd:up".to_string(),
+        )]);
+    }
+
+    // Pagination row (only if >1 page)
+    if resp.total_pages > 1 {
+        let mut pag_row = Vec::new();
+        if resp.page > 0 {
+            pag_row.push(InlineKeyboardButton::callback(
+                "◀️ Prev",
+                format!("cd:pg:{}", resp.page - 1),
+            ));
+        }
+        pag_row.push(InlineKeyboardButton::callback(
+            format!("📄 {}/{}", resp.page + 1, resp.total_pages),
+            "cd:noop".to_string(),
+        ));
+        if resp.page + 1 < resp.total_pages {
+            pag_row.push(InlineKeyboardButton::callback(
+                "Next ▶️",
+                format!("cd:pg:{}", resp.page + 1),
+            ));
+        }
+        rows.push(pag_row);
+    }
+
+    // Confirm button
+    rows.push(vec![InlineKeyboardButton::callback(
+        "✅ Select this directory",
+        "cd:here".to_string(),
+    )]);
+
+    rows
 }
