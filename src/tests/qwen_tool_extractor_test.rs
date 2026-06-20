@@ -626,12 +626,12 @@ fn invoke_style_user_screenshot_2026_05_27_malformed() {
     //       `<invoke name="read_file">`
     let text = r#"<qwen:tool_call>
 invoke name="read_file">
-<parameter name="path">~/srv/dart/heyiolo/lib/presentation/buyer_intent_screen/widgets/iolo_chat_widget.dart</parameter>
+<parameter name="path">~/srv/dart/myapp/lib/presentation/buyer_intent_screen/widgets/chat_widget.dart</parameter>
 <parameter name="start_line">1888</parameter>
 <parameter name="line_count">50</parameter>
 </invoke>
 <parameter name="read_file">
-<parameter name="path">~/srv/dart/heyiolo/lib/presentation/propositions_screen/propositions_screen.dart</parameter>
+<parameter name="path">~/srv/dart/myapp/lib/presentation/propositions_screen/propositions_screen.dart</parameter>
 <parameter name="start_line">360</parameter>
 <parameter name="line_count">30</parameter>
 </invoke>
@@ -653,7 +653,7 @@ invoke name="read_file">
         calls[0].1["path"]
             .as_str()
             .unwrap()
-            .ends_with("iolo_chat_widget.dart"),
+            .ends_with("chat_widget.dart"),
     );
     assert_eq!(calls[0].1["start_line"], 1888);
     assert_eq!(calls[0].1["line_count"], 50);

@@ -127,7 +127,7 @@ impl AgentService {
         // cancelled fallback that bypassed its Drop guard, stale
         // session_providers entry, upstream bug — so the HTTP call
         // always goes out with a valid pair. 2026-04-18 18:14:
-        // zhipu was sent `model=qwen3.6-plus` (opencodeiolo's model)
+        // zhipu was sent `model=qwen3.6-plus` (a custom provider's model)
         // because the session's provider got stuck on a fallback
         // after a cancelled turn. That exact case is now prevented
         // at the stream site regardless of the cached state.

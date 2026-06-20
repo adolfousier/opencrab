@@ -4,7 +4,7 @@
 //! The store is keyed on `(working_directory, path)` (both in `~/...`
 //! collapsed form) so a new session on the same project can re-anchor
 //! on real paths the agent already verified, instead of hallucinating
-//! directory layouts (the 2026-04-26 heyiolo `lib/screens` failure
+//! directory layouts (the 2026-04-26 myapp `lib/screens` failure
 //! pattern that drove this feature).
 
 mod repository {
@@ -24,7 +24,7 @@ mod repository {
     async fn empty_dir_returns_empty_vec() {
         let (_db, repo) = setup().await;
         let got = repo
-            .top_for_dir("~/srv/dart/heyiolo", 12)
+            .top_for_dir("~/srv/dart/myapp", 12)
             .await
             .expect("query");
         assert!(got.is_empty());
@@ -33,9 +33,9 @@ mod repository {
     #[tokio::test]
     async fn record_then_read_round_trip() {
         let (_db, repo) = setup().await;
-        let wd = "~/srv/dart/heyiolo";
+        let wd = "~/srv/dart/myapp";
         let path =
-            "~/srv/dart/heyiolo/lib/presentation/propositions_screen/propositions_screen.dart";
+            "~/srv/dart/myapp/lib/presentation/propositions_screen/propositions_screen.dart";
         repo.record(wd, path).await.expect("record");
         let got = repo.top_for_dir(wd, 12).await.expect("query");
         assert_eq!(got, vec![path.to_string()]);
@@ -178,11 +178,11 @@ mod augment {
 
     #[test]
     fn surfaces_path_when_not_in_messages() {
-        // Cold start: prior session figured out the heyiolo layout,
+        // Cold start: prior session figured out the myapp layout,
         // but this fresh session has no messages mentioning it yet.
         // The buffer should be surfaced.
         let recent = vec![
-            "~/srv/dart/heyiolo/lib/presentation/propositions_screen/propositions_screen.dart"
+            "~/srv/dart/myapp/lib/presentation/propositions_screen/propositions_screen.dart"
                 .to_string(),
         ];
         let got = AgentService::augment_system_with_recent_paths(Some("BASE".into()), &recent, &[])
@@ -190,7 +190,7 @@ mod augment {
         assert!(got.starts_with("BASE"));
         assert!(got.contains("Recently accessed in this project"));
         assert!(got.contains(
-            "~/srv/dart/heyiolo/lib/presentation/propositions_screen/propositions_screen.dart"
+            "~/srv/dart/myapp/lib/presentation/propositions_screen/propositions_screen.dart"
         ));
     }
 

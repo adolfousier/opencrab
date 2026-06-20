@@ -98,7 +98,7 @@ fn does_not_strip_dot_gguf_in_middle_of_name() {
 
 // --- sql_normalize_model: provider-namespace prefix handling ---
 // 2026-05-17: `dialagram:qwen-3.6-max-preview` and
-// `opencodeiolo-qwen:qwen3.6-plus` rendered as their own dashboard
+// `customprovider-qwen:qwen3.6-plus` rendered as their own dashboard
 // rows ($8.49 / $2.18) instead of folding under the canonical
 // `qwen3.6-max-preview` / `qwen3.6-plus` aggregations. Root cause:
 // the SQL+Rust normalizer split on `/` but not on `:`.
@@ -116,9 +116,9 @@ fn sql_normalize_strips_dialagram_colon_prefix() {
 }
 
 #[test]
-fn sql_normalize_strips_opencodeiolo_colon_prefix() {
+fn sql_normalize_strips_customprovider_colon_prefix() {
     assert_eq!(
-        sql_normalize_model("opencodeiolo-qwen:qwen3.6-plus"),
+        sql_normalize_model("customprovider-qwen:qwen3.6-plus"),
         "qwen-3.6-plus"
     );
 }

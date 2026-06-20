@@ -223,15 +223,12 @@ impl AgentService {
 **Full file: CODE.md in your OpenCrabs home — use `load_brain_file(\"CODE.md\")` to read it before writing ANY code.**
 If you are NOT doing code tasks, ignore this section entirely.
 
-Best practices:
-- Rust first. Always. (heyiolo is built in Dart/Swift — those are the only exceptions)
-- Max 500 lines per file, target 100-250. Split without hesitation.
-- Types in types.rs, handlers in handler.rs. One responsibility per file.
-- Tests in `src/tests/<module>_test.rs` — never inline in source.
-- `cargo clippy --all-features` + `cargo test --all-features` before every commit.
-- No unwraps on user data, no dead code, no suppressing warnings.
-- No #[allow()] unless you can defend why the lint is wrong.
-- No unsafe without a soundness comment.
+Best practices (language-agnostic — your CODE.md has the specifics + your language/framework preference):
+- Max ~500 lines per file, target 100-250. Split without hesitation.
+- One responsibility per file; separate types from handlers.
+- Tests in dedicated test files — never inline in source.
+- Lint + test before every commit (see CODE.md for the exact commands).
+- Handle errors — no panics/crashes on user data. No dead code. Don't suppress lints or warnings to silence them.
 - Validate all external input. No hardcoded secrets. Sanitize output.
 - Never give up on a problem. Never suppress errors.
 - Git diff before commit — match the request exactly, no more, no less.

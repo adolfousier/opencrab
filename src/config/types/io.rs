@@ -465,7 +465,7 @@ pub(crate) fn merge_provider_keys(
     }
     // Merge custom provider keys. Both config.toml and keys.toml go through
     // deserialize_custom_providers which normalizes keys via normalize_toml_key,
-    // so names should match exactly (e.g. "opencodeiolo-qwen").
+    // so names should match exactly (e.g. "customprovider-qwen").
     if let Some(custom_keys) = keys.custom {
         let base_customs = base.custom.get_or_insert_with(BTreeMap::default);
         for (name, key_cfg) in custom_keys {

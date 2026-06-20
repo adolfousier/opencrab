@@ -1386,7 +1386,7 @@ impl AgentService {
                     // the same bad key is pointless) but perfectly
                     // fallback-able: the next provider in the chain has
                     // its own key and may work fine. The 2026-04-18
-                    // 13:52 log caught opencodeiolo returning 401
+                    // a custom provider was caught returning 401
                     // "Missing API key" and falling straight through
                     // to the terminal AgentError — no retry, no
                     // fallback, user saw a raw error string in

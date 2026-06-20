@@ -245,9 +245,9 @@ mod chained_commands {
 
     #[test]
     fn detects_interactive_in_second_segment_of_chain() {
-        // The 2026-04-26 case: `cd ~/srv/dart/heyiolo && git add -p ...`.
+        // The 2026-04-26 case: `cd ~/srv/dart/myapp && git add -p ...`.
         // The chain prefix is fine but the segment after `&&` is not.
-        let cmd = "cd ~/srv/dart/heyiolo && git add -p lib/foo.dart";
+        let cmd = "cd ~/srv/dart/myapp && git add -p lib/foo.dart";
         assert!(check_interactive_command(cmd).is_some());
     }
 

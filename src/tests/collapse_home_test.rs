@@ -12,8 +12,8 @@ fn home() -> PathBuf {
 
 #[test]
 fn collapses_path_directly_under_home() {
-    let p = home().join("srv/dart/heyiolo/lib/main.dart");
-    assert_eq!(collapse_home(&p), "~/srv/dart/heyiolo/lib/main.dart");
+    let p = home().join("srv/dart/myapp/lib/main.dart");
+    assert_eq!(collapse_home(&p), "~/srv/dart/myapp/lib/main.dart");
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn passes_through_relative_path_unchanged() {
 fn round_trips_with_expand_tilde() {
     // collapse_home and expand_tilde are inverses: expanding what we
     // collapsed should give back the original absolute PathBuf.
-    for relative in ["srv/dart/heyiolo", ".opencrabs", ".config/nvim/init.lua"] {
+    for relative in ["srv/dart/myapp", ".opencrabs", ".config/nvim/init.lua"] {
         let original = home().join(relative);
         let collapsed = collapse_home(&original);
         let re_expanded = expand_tilde(&collapsed);
@@ -78,7 +78,7 @@ fn collapsed_string_is_strictly_shorter_for_home_paths() {
     // The whole point of this helper, beyond privacy, is fewer
     // tokens. Pin that the home-prefixed render is at least 1 char
     // shorter than the absolute one (it's typically much more).
-    let p = home().join("srv/dart/heyiolo/lib/data/services/iolo_service.dart");
+    let p = home().join("srv/dart/myapp/lib/data/services/app_service.dart");
     let absolute = p.display().to_string();
     let collapsed = collapse_home(&p);
     assert!(

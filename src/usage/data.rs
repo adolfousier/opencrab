@@ -481,7 +481,7 @@ pub(crate) fn sql_normalize_model(raw: &str) -> String {
     // Strip provider-namespace prefix separated by `:`. Examples:
     //   `dialagram:qwen-3.6-max-preview-thinking` → `qwen-3.6-max-preview`
     //     (after the `-thinking` strip above runs first)
-    //   `opencodeiolo-qwen:qwen3.6-plus` → `qwen3.6-plus`
+    //   `customprovider-qwen:qwen3.6-plus` → `qwen3.6-plus`
     // Splits on the FIRST colon so a hypothetical `provider:family:variant`
     // still keeps `family:variant` intact. `:free` suffix was already
     // stripped above before reaching this step.

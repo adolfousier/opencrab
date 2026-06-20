@@ -277,7 +277,7 @@ impl App {
                 // global provider as its "live name" and overwrite
                 // session.provider_name in memory (and, on next save,
                 // in DB). 2026-04-18 incident: a session saved on
-                // "opencodeiolo" came back as "opencode" after restart
+                // "customprovider" came back as "opencode" after restart
                 // because the global default at load time was
                 // "opencode" (first custom alphabetically) and this
                 // code stamped it over the user's saved choice.

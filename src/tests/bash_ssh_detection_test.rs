@@ -30,8 +30,8 @@ fn detects_ssh_with_only_hostname() {
 #[test]
 fn detects_ssh_with_identity_flag() {
     assert_eq!(
-        parse_ssh_invocation("ssh -i ~/.ssh/heyiolo root@178.104.111.93"),
-        Some("root@178.104.111.93".to_string())
+        parse_ssh_invocation("ssh -i ~/.ssh/mykey root@203.0.113.5"),
+        Some("root@203.0.113.5".to_string())
     );
 }
 

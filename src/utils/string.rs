@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_truncate_middle_preserves_tail() {
-        let s = "/Users/alice/srv/dart/heyiolo/lib/presentation/pages/some_really_long_widget_name.dart";
+        let s = "/Users/alice/srv/myapp/lib/presentation/pages/some_really_long_widget_name.dart";
         let out = truncate_middle(s, 40);
         // The filename must survive — that's the whole point of middle-elide.
         assert!(

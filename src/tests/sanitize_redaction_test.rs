@@ -115,9 +115,9 @@ fn does_not_redact_short_echo_values() {
 
 #[test]
 fn redacts_server_ip() {
-    let input = "Connected to 138.68.166.23 on port 443";
+    let input = "Connected to 198.51.100.23 on port 443";
     let out = redact_secrets(input);
-    assert!(!out.contains("138.68.166.23"), "server IP leaked: {out}");
+    assert!(!out.contains("198.51.100.23"), "server IP leaked: {out}");
     assert!(
         out.contains("[IP_REDACTED]"),
         "IP should be replaced with [IP_REDACTED]: {out}"
@@ -198,11 +198,11 @@ fn redacts_long_hex_token() {
 
 #[test]
 fn redacts_mixed_output_with_ips_and_secrets() {
-    let input = r#"Deploying to 209.97.180.4 with ADMIN_PASS="fuNZEIYc2isz0txisiWTKg8A" and token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef12"#;
+    let input = r#"Deploying to 203.0.113.4 with ADMIN_PASS="EXAMPLE_pw_a1b2c3d4e5" and token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef12"#;
     let out = redact_secrets(input);
-    assert!(!out.contains("209.97.180.4"), "IP leaked: {out}");
+    assert!(!out.contains("203.0.113.4"), "IP leaked: {out}");
     assert!(
-        !out.contains("fuNZEIYc2isz0txisiWTKg8A"),
+        !out.contains("EXAMPLE_pw_a1b2c3d4e5"),
         "password leaked: {out}"
     );
     assert!(
