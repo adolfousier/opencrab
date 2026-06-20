@@ -588,6 +588,124 @@ impl TelegramAgent {
                                 return ResponseResult::Ok(());
                             }
 
+                            // Directory browser callbacks: cd:sel:{idx}, cd:up, cd:pg:{n}, cd:here, cd:noop
+                            if data.starts_with("cd:") {
+                                let chat_id = query.message.as_ref().map(|m| m.chat().id.0).unwrap_or(0);
+                                // Answer callback query — deferred to each branch
+                                // to allow custom text popups (cd:sel on files).
+
+                                // Handle cd:noop (page indicator, no action)
+                                if data == "cd:noop" {
+                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    return ResponseResult::Ok(());
+                                }
+
+                                // Get current browser state
+                                let browser_state = state.get_dir_browser(chat_id).await;
+                                let (current_path, current_filter) = browser_state.unwrap_or_else(|| {
+                                    let home = dirs::home_dir()
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "/".to_string());
+                                    (home, None)
+                                });
+
+                                let new_state: Option<crate::channels::commands::DirBrowserResponse> = if data == "cd:up" {
+                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    // Navigate to parent
+                                    let parent = std::path::PathBuf::from(&current_path)
+                                        .parent()
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "/".to_string());
+                                    Some(crate::channels::commands::rebuild_cd_browser(&parent, 0, current_filter.as_deref()))
+                                } else if data == "cd:here" {
+                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    // Confirm directory — set as working dir
+                                    let session_id = resolve_callback_session(&query, &state, &shared_session).await;
+                                    if let Some(sid) = session_id {
+                                        // Update runtime working directory
+                                        let wd = agent.shared_working_directory();
+                                        *wd.write().expect("working_directory lock poisoned") = std::path::PathBuf::from(&current_path);
+                                        // Persist to session DB
+                                        let svc = crate::services::SessionService::new(agent.context().clone());
+                                        let _ = svc.update_session_working_directory(sid, Some(current_path.clone())).await;
+                                    }
+                                    state.clear_dir_browser(chat_id).await;
+                                    // Edit the message to confirm
+                                    if let Some(msg) = &query.message {
+                                        use teloxide::payloads::EditMessageTextSetters;
+                                        use teloxide::prelude::Requester;
+                                        let confirm_text = format!("✅ Working directory set to:\n<code>{}</code>", current_path);
+                                        if let Err(e) = bot
+                                            .edit_message_text(msg.chat().id, msg.id(), &confirm_text)
+                                            .parse_mode(teloxide::types::ParseMode::Html)
+                                            .reply_markup(teloxide::types::InlineKeyboardMarkup::default())
+                                            .await
+                                        {
+                                            tracing::warn!("cd:here: failed to edit message: {}", e);
+                                        }
+                                    }
+                                    return ResponseResult::Ok(());
+                                } else if let Some(idx_str) = data.strip_prefix("cd:sel:") {
+                                    // Select entry by index from full listing
+                                    let idx: usize = idx_str.parse().unwrap_or(0);
+                                    let all_entries = crate::channels::commands::read_dir_entries(
+                                        &std::path::PathBuf::from(&current_path),
+                                        current_filter.as_deref(),
+                                    ).0;
+                                    if let Some(entry) = all_entries.get(idx) {
+                                        if entry.is_dir {
+                                            let _ = bot.answer_callback_query(query.id.clone()).await;
+                                            // Navigate into directory
+                                            let new_path = std::path::PathBuf::from(&current_path)
+                                                .join(&entry.name)
+                                                .to_string_lossy()
+                                                .to_string();
+                                            Some(crate::channels::commands::rebuild_cd_browser(&new_path, 0, current_filter.as_deref()))
+                                        } else {
+                                            // File selected — just show info, stay in same dir
+                                            let file_path = std::path::PathBuf::from(&current_path)
+                                                .join(&entry.name);
+                                            // Answer with a popup showing the file path
+                                            let _ = bot.answer_callback_query(query.id.clone())
+                                                .text(format!("📄 {}", file_path.display()))
+                                                .show_alert(true)
+                                                .await;
+                                            Some(crate::channels::commands::rebuild_cd_browser(&current_path, 0, current_filter.as_deref()))
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else if let Some(pg_str) = data.strip_prefix("cd:pg:") {
+                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    // Page navigation
+                                    let page: usize = pg_str.parse().unwrap_or(0);
+                                    Some(crate::channels::commands::rebuild_cd_browser(&current_path, page, current_filter.as_deref()))
+                                } else {
+                                    let _ = bot.answer_callback_query(query.id.clone()).await;
+                                    None
+                                };
+
+                                if let Some(resp) = new_state {
+                                    state.set_dir_browser(chat_id, resp.current_path.clone(), resp.filter.clone()).await;
+                                    let rows = crate::channels::telegram::handler::build_cd_keyboard(&resp);
+                                    let keyboard = teloxide::types::InlineKeyboardMarkup::new(rows);
+                                    if let Some(msg) = &query.message {
+                                        use teloxide::payloads::EditMessageTextSetters;
+                                        use teloxide::prelude::Requester;
+                                        let html = crate::channels::telegram::handler::md_to_html(&resp.text);
+                                        if let Err(e) = bot
+                                            .edit_message_text(msg.chat().id, msg.id(), &html)
+                                            .parse_mode(teloxide::types::ParseMode::Html)
+                                            .reply_markup(keyboard)
+                                            .await
+                                        {
+                                            tracing::warn!("cd:navigate: failed to edit message: {}", e);
+                                        }
+                                    }
+                                }
+                                return ResponseResult::Ok(());
+                            }
+
                             let (approved, always, yolo, id) =
                                 if let Some(id) = data.strip_prefix("approve:") {
                                     (true, false, false, id.to_string())
@@ -828,6 +946,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("sessions", "List and switch sessions"),
         BotCommand::new("stop", "Cancel the current operation"),
         BotCommand::new("compact", "Compact conversation context"),
+        BotCommand::new("cd", "Change working directory"),
         BotCommand::new(
             "cowork",
             "Create a cowork workspace with QR invite (Telegram only)",
