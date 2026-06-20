@@ -212,8 +212,9 @@ impl AgentService {
     /// agent MUST fetch the full file. Non-code tasks can ignore this section.
     ///
     /// Skipped: MEMORY.md (summary replaces it), BOOT/HEARTBEAT (rarely
-    /// needed mid-task), SECURITY.md/AGENTS.md (loaded on demand if flagged in
-    /// summary), IDENTITY.md (only for cron/social sessions).
+    /// needed mid-task), SECURITY.md (loaded on demand if flagged in summary),
+    /// IDENTITY.md (only for cron/social sessions). AGENTS.md is NOT skipped —
+    /// it carries the always-enforced hard rules and is re-injected on recovery.
     fn build_recovered_brain_context() -> String {
         use std::path::PathBuf;
 
@@ -243,6 +244,7 @@ The summary above is NOT sufficient for implementation work.
         let full_files = [
             ("SOUL.md", "personality"),
             ("USER.md", "user profile"),
+            ("AGENTS.md", "workspace governance + enforced hard rules"),
             ("TOOLS.md", "tool notes"),
         ];
 

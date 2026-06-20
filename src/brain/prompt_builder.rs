@@ -12,10 +12,17 @@ use std::path::PathBuf;
 /// "lost in the middle" attention problem. See `build_core_brain`.
 const CORE_BRAIN_FILES: &[(&str, &str)] = &[("USER.md", "user profile")];
 
+/// Always-loaded brain files beyond USER.md (which is in CORE_BRAIN_FILES) and
+/// SOUL.md (injected at the very end). AGENTS.md lives here because it owns the
+/// enforced hard rules (safety/permission gates) — those MUST be in context on
+/// every turn and survive compaction, so AGENTS.md is injected near the end
+/// (next to SOUL) rather than loaded on demand.
+const ALWAYS_LOADED_FILES: &[(&str, &str)] = &[("AGENTS.md", "workspace governance + hard rules")];
+
 /// Contextual brain files — loaded on demand via the `load_brain_file` tool.
-/// TOOLS.md and CODE.md moved here (2026-05) to slim core prompt.
+/// TOOLS.md and CODE.md moved here (2026-05) to slim core prompt; AGENTS.md
+/// moved OUT (it's always-loaded now — see ALWAYS_LOADED_FILES).
 pub(crate) const CONTEXTUAL_BRAIN_FILES: &[(&str, &str)] = &[
-    ("AGENTS.md", "workspace rules"),
     ("CODE.md", "coding standards"),
     ("TOOLS.md", "tool notes & config"),
     ("SECURITY.md", "security policies"),
@@ -340,6 +347,7 @@ impl BrainLoader {
         let mut known: std::collections::HashSet<String> = CORE_BRAIN_FILES
             .iter()
             .chain(CONTEXTUAL_BRAIN_FILES.iter())
+            .chain(ALWAYS_LOADED_FILES.iter())
             .map(|(n, _)| n.to_lowercase())
             .collect();
         // SOUL.md is always injected (at the end) but lives outside
@@ -394,14 +402,14 @@ impl BrainLoader {
                     "- Starting a project session or recalling past work → load MEMORY.md\n",
                 );
             }
-            if has("AGENTS.md") || has("SECURITY.md") || has("CODE.md") {
-                let files: Vec<&str> = ["AGENTS.md", "SECURITY.md", "CODE.md"]
+            if has("SECURITY.md") || has("CODE.md") {
+                let files: Vec<&str> = ["SECURITY.md", "CODE.md"]
                     .iter()
                     .copied()
                     .filter(|n| has(n))
                     .collect();
                 prompt.push_str(&format!(
-                    "- Policy / rule / safety / coding standards check → load {}\n",
+                    "- Security policy / coding standards check → load {}\n",
                     files.join(", ")
                 ));
             }
@@ -456,9 +464,25 @@ impl BrainLoader {
             prompt.push('\n');
         }
 
-        // 5. SOUL.md — injected LAST to combat "lost in the middle" attention
-        //    decay. Critical personality and hard rules sit at the bottom of
-        //    the system prompt, closest to the model's generation point.
+        // 5. AGENTS.md — workspace governance + the enforced hard rules.
+        //    Always-loaded (not on demand) and injected near the END so the
+        //    safety/permission gates are in context every turn and survive
+        //    compaction, closest to the model's generation point.
+        for (filename, _label) in ALWAYS_LOADED_FILES {
+            if let Some(content) = self.load_file(filename) {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    prompt.push_str(&format!(
+                        "--- {} (workspace governance + enforced hard rules) ---\n{}\n\n",
+                        filename, trimmed
+                    ));
+                }
+            }
+        }
+
+        // 6. SOUL.md — injected LAST to combat "lost in the middle" attention
+        //    decay. Personality sits at the very bottom, closest to the
+        //    model's generation point.
         if let Some(content) = self.load_file("SOUL.md") {
             let trimmed = content.trim();
             if !trimmed.is_empty() {

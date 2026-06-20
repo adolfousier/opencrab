@@ -75,13 +75,16 @@ fn test_memory_md_not_injected_in_core_brain() {
 }
 
 #[test]
-fn test_agents_md_not_injected_in_core_brain() {
+fn test_agents_md_injected_in_core_brain() {
+    // AGENTS.md is always-loaded (it owns the enforced hard rules) — its content
+    // MUST be injected inline so the safety/permission gates are in context every
+    // turn and survive compaction, not merely listed in the on-demand index.
     let dir = TempDir::new().unwrap();
     write(&dir, "AGENTS.md", "WORKSPACE_RULE: always commit");
     let brain = loader(&dir).build_core_brain(None);
     assert!(
-        !brain.contains("WORKSPACE_RULE"),
-        "AGENTS.md content must NOT be injected inline"
+        brain.contains("WORKSPACE_RULE"),
+        "AGENTS.md content MUST be injected inline (always-loaded hard rules)"
     );
 }
 
