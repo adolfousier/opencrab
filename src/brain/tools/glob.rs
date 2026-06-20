@@ -105,46 +105,103 @@ impl Tool for GlobTool {
             )));
         }
 
-        // Build full pattern with base directory
-        let full_pattern = base_dir.join(&input.pattern);
-        let pattern_str = full_pattern
-            .to_str()
-            .ok_or_else(|| ToolError::InvalidInput("Invalid path encoding".to_string()))?;
-
-        // Use glob crate to find matches
-        let glob_result = glob::glob(pattern_str)
+        // Compile the pattern once and match it against each walked path,
+        // rather than letting the `glob` crate drive the filesystem walk. The
+        // crate's walk follows symlinks (a loop hangs forever), has no time or
+        // entry bound, and runs synchronously on the async executor — a `**`
+        // from a large home dir once hung for 16+ minutes in production.
+        let pattern = glob::Pattern::new(&input.pattern)
             .map_err(|e| ToolError::InvalidInput(format!("Invalid glob pattern: {}", e)))?;
 
-        let mut matches: Vec<PathBuf> = Vec::new();
+        let include_hidden = input.include_hidden;
+        let limit = input.limit;
+        let base = base_dir.clone();
 
-        for entry in glob_result {
-            match entry {
-                Ok(path) => {
-                    // Filter hidden files if not requested
-                    if !input.include_hidden
-                        && let Some(file_name) = path.file_name()
-                        && file_name
-                            .to_str()
-                            .map(|s| s.starts_with('.'))
-                            .unwrap_or(false)
-                    {
+        // Hard bounds so a pathological tree can't hang the agent.
+        const MAX_ENTRIES: usize = 500_000;
+        const WALK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+        // The walk is blocking — run it off the async executor.
+        let walk = tokio::task::spawn_blocking(move || {
+            use ignore::WalkBuilder;
+            let mut builder = WalkBuilder::new(&base);
+            builder
+                // NEVER follow symlinks — this is the loop that hung for minutes.
+                .follow_links(false)
+                // Descend into dotdirs (the target may live under ~/.opencrabs),
+                // but disable all gitignore handling so a `.gitignore` (e.g. the
+                // `*` one in ~/.opencrabs) doesn't hide the very files we seek.
+                .hidden(false)
+                .git_ignore(false)
+                .git_global(false)
+                .git_exclude(false)
+                .ignore(false)
+                .parents(false)
+                // Prune notorious heavyweight dirs that blow up walk time and are
+                // never what a file-find wants.
+                .filter_entry(|e| {
+                    !matches!(
+                        e.file_name().to_str(),
+                        Some("node_modules" | ".git" | "target" | ".cache")
+                    )
+                });
+
+            let mut matches: Vec<PathBuf> = Vec::new();
+            let mut scanned = 0usize;
+            let mut truncated = false;
+            for dent in builder.build() {
+                scanned += 1;
+                if scanned > MAX_ENTRIES {
+                    truncated = true;
+                    break;
+                }
+                let dent = match dent {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::warn!("glob: error reading entry: {}", e);
                         continue;
                     }
-
-                    matches.push(path);
-
-                    // Apply limit
-                    if let Some(limit) = input.limit
-                        && matches.len() >= limit
-                    {
-                        break;
-                    }
+                };
+                let path = dent.path();
+                let rel = path.strip_prefix(&base).unwrap_or(path);
+                if !pattern.matches_path(rel) {
+                    continue;
                 }
-                Err(e) => {
-                    tracing::warn!("Error reading glob entry: {}", e);
+                // Preserve the original "skip dot-FILES unless include_hidden"
+                // behaviour (filters the final component only, not parent dirs).
+                if !include_hidden
+                    && path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.starts_with('.'))
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
+                matches.push(path.to_path_buf());
+                if let Some(limit) = limit
+                    && matches.len() >= limit
+                {
+                    break;
                 }
             }
-        }
+            (matches, truncated)
+        });
+
+        let (mut matches, truncated) = match tokio::time::timeout(WALK_TIMEOUT, walk).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => {
+                return Ok(ToolResult::error(format!("glob walk failed: {e}")));
+            }
+            Err(_) => {
+                return Ok(ToolResult::error(format!(
+                    "glob timed out after {}s scanning '{}'. The tree is too large — \
+                     narrow the pattern or pass a more specific `base_dir`.",
+                    WALK_TIMEOUT.as_secs(),
+                    base_dir.display()
+                )));
+            }
+        };
 
         if matches.is_empty() {
             return Ok(ToolResult::success(format!(
@@ -177,6 +234,13 @@ impl Tool for GlobTool {
             && matches.len() >= limit
         {
             output.push_str(&format!("\n(Limited to {} results)", limit));
+        }
+
+        if truncated {
+            output.push_str(&format!(
+                "\n(Stopped after scanning {MAX_ENTRIES} entries — tree too large; \
+                 narrow the pattern or pass a more specific base_dir)"
+            ));
         }
 
         Ok(ToolResult::success(output))
