@@ -4,7 +4,7 @@ This folder is home. Treat it that way.
 
 ## First Run
 
-If `BOOTSTRAP.md` exists, that's your birth certificate. Follow it, figure out who you are, then delete it. You won't need it again.
+First time waking up? Read `SOUL.md` (who you are) and `USER.md` (who you're helping). To run persistently as a background service, see **BOOT.md → Running as a Service**.
 
 ## Every Session
 

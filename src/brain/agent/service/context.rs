@@ -211,7 +211,7 @@ impl AgentService {
     /// CODE.md is injected as a compact summary only. Before ANY code task the
     /// agent MUST fetch the full file. Non-code tasks can ignore this section.
     ///
-    /// Skipped: MEMORY.md (summary replaces it), BOOT/BOOTSTRAP/HEARTBEAT (rarely
+    /// Skipped: MEMORY.md (summary replaces it), BOOT/HEARTBEAT (rarely
     /// needed mid-task), SECURITY.md/AGENTS.md (loaded on demand if flagged in
     /// summary), IDENTITY.md (only for cron/social sessions).
     fn build_recovered_brain_context() -> String {

@@ -42,7 +42,6 @@ const TRACKED_FILES: &[&str] = &[
     "SECURITY.md",
     "MEMORY.md",
     "BOOT.md",
-    "BOOTSTRAP.md",
     "HEARTBEAT.md",
 ];
 

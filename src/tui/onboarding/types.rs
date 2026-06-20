@@ -366,6 +366,10 @@ pub const TEMPLATE_FILES: &[(&str, &str)] = &[
         "SECURITY.md",
         include_str!("../../docs/reference/templates/SECURITY.md"),
     ),
+    (
+        "BOOT.md",
+        include_str!("../../docs/reference/templates/BOOT.md"),
+    ),
 ];
 
 /// Current step in the onboarding wizard

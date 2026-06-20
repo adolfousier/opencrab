@@ -26,7 +26,6 @@ const BRAIN_FILES_TO_SCAN: &[&str] = &[
     "SECURITY.md",
     "MEMORY.md",
     "BOOT.md",
-    "BOOTSTRAP.md",
     "HEARTBEAT.md",
 ];
 

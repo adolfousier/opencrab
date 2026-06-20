@@ -64,12 +64,9 @@ never assume the capability is missing before searching.
 | Command | A slash shortcut defined in commands.toml | `/check`, `/rebuild`, `/status` |
 | Skill | A workflow template loaded on demand | `/browser-cdp`, `/channels` |
 
-## Working Directory
+## Build & Runtime Commands
 
-`/cd <path>` changes the working directory for all tool execution. You can also set it via `config_tool` with `set_working_directory` — both persist to config.toml.
-
-## Build Commands
-
+- `/cd <path>` — change the working directory for all tool execution (or `config_tool` `set_working_directory`); persists to config.toml
 - `/rebuild` — Build, test, and hot-restart from source
 - `/check` — Run `cargo clippy` and `cargo test`
 - `/evolve` — Download latest release binary (full procedure → BOOT.md)

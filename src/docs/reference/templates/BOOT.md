@@ -112,6 +112,21 @@ If source already exists at `~/.opencrabs/source/`, `/rebuild` runs `git pull --
 
 **Key:** Binary users CAN modify code — they just need the source fetched first. `/rebuild` handles this automatically.
 
+## Running as a Service (Daemon)
+
+To keep OpenCrabs running in the background — surviving reboots, SSH disconnects, and crashes — install it as an OS service. You do NOT hand-write systemd units or run `systemctl enable` yourself; the CLI does it:
+
+```bash
+opencrabs service install   # systemd unit on Linux, launchd plist on macOS
+opencrabs service start
+```
+
+- **`service install`** writes the service definition and enables it on boot. On a **root / VPS** install it creates a **system** unit at `/etc/systemd/system/opencrabs.service` that runs as your login user and reads that user's `~/.opencrabs/`; a **non-root** install creates a **user** unit at `~/.config/systemd/user/opencrabs.service`.
+- The unit runs `opencrabs daemon`, restarts on failure (`Restart=always`, `RestartSec=5`), and starts on boot.
+- Manage it with **`opencrabs service start | stop | restart | uninstall`**.
+- Each profile gets its own unit (`opencrabs-<profile>.service`), so multiple agents can run side by side.
+- After a successful `/evolve` or `/rebuild`, the running service is scheduled to restart automatically onto the new binary.
+
 ## Rust-First Policy
 
 → See **CODE.md** (single source of truth). In short: always prefer native Rust crates over wrappers/FFI/other-language alternatives.

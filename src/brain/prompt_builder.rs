@@ -21,7 +21,6 @@ pub(crate) const CONTEXTUAL_BRAIN_FILES: &[(&str, &str)] = &[
     ("SECURITY.md", "security policies"),
     ("MEMORY.md", "long-term memory"),
     ("BOOT.md", "startup config"),
-    ("BOOTSTRAP.md", "bootstrap config"),
     ("HEARTBEAT.md", "heartbeat config"),
 ];
 
@@ -35,7 +34,6 @@ const BRAIN_FILES: &[(&str, &str)] = &[
     ("SECURITY.md", "security"),
     ("MEMORY.md", "memory"),
     ("BOOT.md", "boot"),
-    ("BOOTSTRAP.md", "bootstrap"),
     ("HEARTBEAT.md", "heartbeat"),
 ];
 
@@ -222,7 +220,7 @@ impl BrainLoader {
     /// 3. AGENTS.md — workspace rules, memory system, safety
     /// 4. SECURITY.md — security policies
     /// 5. MEMORY.md — long-term context
-    /// 6. BOOT/BOOTSTRAP/HEARTBEAT — startup config
+    /// 6. BOOT/HEARTBEAT — startup config
     /// 7. Runtime info — model, provider, working directory, OS, timestamp
     /// 8. SOUL.md — personality, tone, hard rules (LAST — "lost in the middle" fix)
     pub fn build_system_brain(&self, runtime_info: Option<&RuntimeInfo>) -> String {
