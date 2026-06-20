@@ -297,8 +297,8 @@ Each brain file controls a different aspect of the agent. Route improvements to 
 
 ### Custom Reference Files
 
-Additional `.md` files may exist alongside the core brain files (e.g., VOICE.md, AGENTVERSE.md, \
-skill-specific docs). These are NOT core brain files. They are user-curated reference material \
+Additional `.md` files may exist alongside the core brain files (the user's own custom \
+notes or skill-specific docs). These are NOT core brain files. They are user-curated reference material \
 loaded on demand via `load_brain_file` for inflight context. \
 You may read them for context, but do NOT autonomously write to them via self_improve. \
 If feedback relates to content in a custom file, suggest the change to the user instead.

@@ -44,7 +44,6 @@ const TRACKED_FILES: &[&str] = &[
     "BOOT.md",
     "BOOTSTRAP.md",
     "HEARTBEAT.md",
-    "VOICE.md",
 ];
 
 /// Parsed state from `rsi/state.toml`.

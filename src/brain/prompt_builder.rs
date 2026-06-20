@@ -225,10 +225,7 @@ impl BrainLoader {
     /// 6. BOOT/BOOTSTRAP/HEARTBEAT — startup config
     /// 7. Runtime info — model, provider, working directory, OS, timestamp
     /// 8. SOUL.md — personality, tone, hard rules (LAST — "lost in the middle" fix)
-    pub fn build_system_brain(
-        &self,
-        runtime_info: Option<&RuntimeInfo>,
-    ) -> String {
+    pub fn build_system_brain(&self, runtime_info: Option<&RuntimeInfo>) -> String {
         let mut prompt = String::with_capacity(8192);
 
         // 1. Brain preamble — always present
@@ -282,10 +279,7 @@ impl BrainLoader {
         if let Some(content) = self.load_file("SOUL.md") {
             let trimmed = content.trim();
             if !trimmed.is_empty() {
-                prompt.push_str(&format!(
-                    "--- SOUL.md (personality) ---\n{}\n\n",
-                    trimmed
-                ));
+                prompt.push_str(&format!("--- SOUL.md (personality) ---\n{}\n\n", trimmed));
             }
         }
 
@@ -304,10 +298,7 @@ impl BrainLoader {
     ///
     /// This eliminates 10–20k token overhead from requests that don't need user profile,
     /// long-term memory, or policy files.
-    pub fn build_core_brain(
-        &self,
-        runtime_info: Option<&RuntimeInfo>,
-    ) -> String {
+    pub fn build_core_brain(&self, runtime_info: Option<&RuntimeInfo>) -> String {
         let mut prompt = String::with_capacity(4096);
 
         // 1. Brain preamble — always present
@@ -335,7 +326,7 @@ impl BrainLoader {
             .collect();
 
         // Discover user-created .md files not in the hardcoded list so the
-        // agent knows the full brain layout (AGENTVERSE.md, VOICE.md, etc.)
+        // agent knows the full brain layout (any custom files the user added).
         let mut known: std::collections::HashSet<String> = CORE_BRAIN_FILES
             .iter()
             .chain(CONTEXTUAL_BRAIN_FILES.iter())
@@ -461,10 +452,7 @@ impl BrainLoader {
         if let Some(content) = self.load_file("SOUL.md") {
             let trimmed = content.trim();
             if !trimmed.is_empty() {
-                prompt.push_str(&format!(
-                    "--- SOUL.md (personality) ---\n{}\n\n",
-                    trimmed
-                ));
+                prompt.push_str(&format!("--- SOUL.md (personality) ---\n{}\n\n", trimmed));
             }
         }
 

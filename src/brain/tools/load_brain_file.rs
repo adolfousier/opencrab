@@ -23,7 +23,7 @@ impl Tool for LoadBrainFileTool {
     fn description(&self) -> &str {
         "Load any .md file from your OpenCrabs home directory (see Known paths — profile-scoped). \
          Works with built-in files (USER.md, MEMORY.md, AGENTS.md, TOOLS.md, SECURITY.md) \
-         and user-created files (VOICE.md, custom notes, etc.). \
+         and any custom .md files you have created in your workspace. \
          Pass name=\"all\" to load all .md files at once. \
          To edit or update brain files, use the `write_opencrabs_file` tool."
     }
@@ -138,7 +138,7 @@ impl Tool for LoadBrainFileTool {
         // Validate filename: must be a simple .md name (no path traversal)
         if name.contains('/') || name.contains('\\') || name.contains("..") {
             return Ok(ToolResult::error(format!(
-                "Invalid brain file name '{}'. Must be a simple filename (e.g. VOICE.md)",
+                "Invalid brain file name '{}'. Must be a simple filename with no path separators",
                 name
             )));
         }

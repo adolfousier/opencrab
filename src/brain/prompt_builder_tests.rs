@@ -194,11 +194,11 @@ fn test_memory_index_exposes_brain_directory_path() {
 fn test_memory_index_lists_user_created_md_files() {
     let dir = TempDir::new().unwrap();
     write(&dir, "MEMORY.md", "notes");
-    write(&dir, "AGENTVERSE.md", "user notes about agentverse");
+    write(&dir, "custom.md", "some user-created notes");
     let brain = loader(&dir).build_core_brain(None);
     assert!(
-        brain.contains("AGENTVERSE.md"),
-        "user-created brain files must be discoverable in the index"
+        brain.contains("custom.md"),
+        "user-created .md files must be discoverable in the index"
     );
     assert!(
         !brain.contains("user notes about agentverse"),
@@ -254,8 +254,7 @@ fn test_soul_md_is_last_section() {
     let after_soul = &brain[soul_pos..];
     let trimmed = after_soul.trim();
     assert!(
-        trimmed.ends_with("PERSONALITY_MARKER_UNIQUE_12345")
-            || trimmed.ends_with("---"),
+        trimmed.ends_with("PERSONALITY_MARKER_UNIQUE_12345") || trimmed.ends_with("---"),
         "SOUL.md should be the last section in the system prompt, got trailing: {:?}",
         &trimmed[trimmed.len().saturating_sub(100)..]
     );

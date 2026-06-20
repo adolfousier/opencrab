@@ -98,9 +98,11 @@ async fn test_slash_in_name_rejected() {
 
 #[tokio::test]
 async fn test_custom_user_file_accepted() {
-    // User-created files like VOICE.md must be loadable — not rejected by an allowlist
+    // An arbitrary user-created .md name must be loadable — not rejected by an allowlist.
+    // (The tool reads from real ~/.opencrabs/, so a missing file returns a graceful
+    // not-found, never an allowlist rejection.)
     let result = tool()
-        .execute(serde_json::json!({"name": "VOICE.md"}), &ctx())
+        .execute(serde_json::json!({"name": "custom.md"}), &ctx())
         .await
         .unwrap();
     // Should succeed (file found) or gracefully report not found — never error

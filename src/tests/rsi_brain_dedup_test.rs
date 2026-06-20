@@ -425,8 +425,8 @@ fn canonical_file_rank_orders_soul_first() {
     assert!(canonical_file_rank("CODE.md") < canonical_file_rank("SECURITY.md"));
     assert!(canonical_file_rank("SECURITY.md") < canonical_file_rank("MEMORY.md"));
     assert!(canonical_file_rank("MEMORY.md") < canonical_file_rank("USER.md"));
-    // Unknown files fall to the bottom of the order.
-    assert!(canonical_file_rank("USER.md") < canonical_file_rank("VOICE.md"));
+    // Any non-core file (a user's own .md) falls to the bottom of the order.
+    assert!(canonical_file_rank("USER.md") < canonical_file_rank("some-user-file.md"));
 }
 
 #[test]
