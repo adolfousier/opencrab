@@ -5,13 +5,12 @@
 
 use std::path::PathBuf;
 
-/// Core brain files — always injected (personality + user context).
+/// Core brain files — always injected (user context).
 ///
-/// Kept lean (~8 KB) so always-injecting is cheap. TOOLS.md and CODE.md
-/// moved to contextual (on-demand via `load_brain_file`) to avoid ~44k
-/// first-request bloat.
-const CORE_BRAIN_FILES: &[(&str, &str)] =
-    &[("SOUL.md", "personality"), ("USER.md", "user profile")];
+/// SOUL.md is intentionally excluded here — it's injected at the END
+/// of the system prompt (after slash commands) to combat the
+/// "lost in the middle" attention problem. See `build_core_brain`.
+const CORE_BRAIN_FILES: &[(&str, &str)] = &[("USER.md", "user profile")];
 
 /// Contextual brain files — loaded on demand via the `load_brain_file` tool.
 /// TOOLS.md and CODE.md moved here (2026-05) to slim core prompt.
@@ -27,9 +26,10 @@ pub(crate) const CONTEXTUAL_BRAIN_FILES: &[(&str, &str)] = &[
 ];
 
 /// All brain files in assembly order — kept for `build_system_brain` (full mode).
-/// TOOLS.md and CODE.md excluded from full mode — they're contextual now.
+/// SOUL.md intentionally excluded — injected at the END (after slash commands)
+/// to combat "lost in the middle" attention decay.
+/// TOOLS.md and CODE.md excluded — they're contextual now.
 const BRAIN_FILES: &[(&str, &str)] = &[
-    ("SOUL.md", "personality"),
     ("USER.md", "user"),
     ("AGENTS.md", "agents"),
     ("SECURITY.md", "security"),
@@ -218,14 +218,14 @@ impl BrainLoader {
     ///
     /// Assembly order:
     /// 1. Brain preamble (hardcoded, always present)
-    /// 2. SOUL.md — personality, tone, hard rules
-    /// 3. IDENTITY.md — agent name, vibe, emoji
-    /// 4. USER.md — who the human is
-    /// 5. AGENTS.md — workspace rules, memory system, safety
-    /// 6. TOOLS.md — environment-specific notes
-    /// 7. MEMORY.md — long-term context
-    /// 8. Runtime info — model, provider, working directory, OS, timestamp
-    /// 9. Slash commands list (provided externally)
+    /// 2. USER.md — who the human is
+    /// 3. AGENTS.md — workspace rules, memory system, safety
+    /// 4. SECURITY.md — security policies
+    /// 5. MEMORY.md — long-term context
+    /// 6. BOOT/BOOTSTRAP/HEARTBEAT — startup config
+    /// 7. Runtime info — model, provider, working directory, OS, timestamp
+    /// 8. Slash commands list (provided externally)
+    /// 9. SOUL.md — personality, tone, hard rules (LAST — "lost in the middle" fix)
     pub fn build_system_brain(
         &self,
         runtime_info: Option<&RuntimeInfo>,
@@ -287,10 +287,27 @@ impl BrainLoader {
             prompt.push_str("\n\n");
         }
 
+        // 10. SOUL.md — injected LAST to combat "lost in the middle" attention
+        //     decay. Critical personality and hard rules sit at the bottom of
+        //     the system prompt, closest to the model's generation point.
+        if let Some(content) = self.load_file("SOUL.md") {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                prompt.push_str(&format!(
+                    "--- SOUL.md (personality) ---\n{}\n\n",
+                    trimmed
+                ));
+            }
+        }
+
         prompt
     }
 
-    /// Build a lean "core" system brain: only SOUL.md + USER.md are injected.
+    /// Build a lean "core" system brain: only USER.md is injected early.
+    ///
+    /// SOUL.md is injected LAST (after slash commands) to combat the
+    /// "lost in the middle" attention decay — critical personality and
+    /// hard rules sit closest to the model's generation point.
     ///
     /// All other brain files (MEMORY.md, AGENTS.md, etc.) are listed in a
     /// "Available Context Files" index section so the agent knows they exist and can
@@ -331,11 +348,15 @@ impl BrainLoader {
 
         // Discover user-created .md files not in the hardcoded list so the
         // agent knows the full brain layout (AGENTVERSE.md, VOICE.md, etc.)
-        let known: std::collections::HashSet<String> = CORE_BRAIN_FILES
+        let mut known: std::collections::HashSet<String> = CORE_BRAIN_FILES
             .iter()
             .chain(CONTEXTUAL_BRAIN_FILES.iter())
             .map(|(n, _)| n.to_lowercase())
             .collect();
+        // SOUL.md is always injected (at the end) but lives outside
+        // CORE_BRAIN_FILES for ordering reasons — mark it known so the
+        // directory scanner doesn't list it as user-created.
+        known.insert("soul.md".to_string());
         let mut extras: Vec<String> = std::fs::read_dir(&self.workspace_path)
             .ok()
             .map(|entries| {
@@ -453,6 +474,19 @@ impl BrainLoader {
             prompt.push_str("--- Available Slash Commands ---\n");
             prompt.push_str(commands_section);
             prompt.push_str("\n\n");
+        }
+
+        // 6. SOUL.md — injected LAST to combat "lost in the middle" attention
+        //    decay. Critical personality and hard rules sit at the bottom of
+        //    the system prompt, closest to the model's generation point.
+        if let Some(content) = self.load_file("SOUL.md") {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                prompt.push_str(&format!(
+                    "--- SOUL.md (personality) ---\n{}\n\n",
+                    trimmed
+                ));
+            }
         }
 
         prompt
