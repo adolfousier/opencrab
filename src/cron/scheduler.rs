@@ -380,8 +380,8 @@ async fn resolve_job_agent(
     let (config, brain, home) = crate::config::profile::with_profile_home(profile, || {
         let config = Config::load()?;
         let home = crate::config::opencrabs_home();
-        let brain = crate::brain::prompt_builder::BrainLoader::new(home.clone())
-            .build_core_brain(None);
+        let brain =
+            crate::brain::prompt_builder::BrainLoader::new(home.clone()).build_core_brain(None);
         anyhow::Ok((config, brain, home))
     })?;
 

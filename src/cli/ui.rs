@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
-use crate::brain::prompt_builder::RuntimeInfo;
 use crate::brain::BrainLoader;
+use crate::brain::prompt_builder::RuntimeInfo;
 
 /// Register (or unregister) the tools whose availability depends on config /
 /// keys: EXA, Brave, image generation, and vision/video. Idempotent — calling
@@ -473,8 +473,7 @@ async fn cmd_chat_inner(
     // NOT in the LLM context. Injecting it here put unrelated tool-failure
     // stats into every session's system prompt (and into the context token
     // count) for no benefit to the conversation.
-    let mut system_brain =
-        brain_loader.build_core_brain(Some(&runtime_info));
+    let mut system_brain = brain_loader.build_core_brain(Some(&runtime_info));
 
     // Lazy-tools mode: the model only sees the CORE tool schemas + `tool_search`.
     // Tell it explicitly so it reaches for `tool_search` instead of assuming a
