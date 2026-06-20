@@ -401,16 +401,16 @@ OpenCrabs's behavior lives in plain-markdown **brain files** in `~/.opencrabs/`.
 
 | File | Owns | Scope | In context |
 |------|------|-------|-----------|
-| **SOUL.md** | Who you are — personality + behavioral hard rules (how the agent *acts*) | Generic | Always |
+| **SOUL.md** | Who you are — **personality / voice** (how the agent *sounds*) | Generic | Always |
 | **USER.md** | Facts about your human — identity, role, preferences | Personal | Always |
+| **AGENTS.md** | Workspace process **+ the enforced hard rules** (safety/permission gates: never delete/push/email without approval) | Generic | **Always** |
 | **MEMORY.md** | What the agent has *learned* — facts, corrections, lessons | Personal | On demand · main session only |
-| **AGENTS.md** | Workspace *process* — sessions, git, safety, group chats, cron | Generic | On demand |
 | **CODE.md** | How code is written — standards, testing, your language/framework preference | Generic | On demand |
 | **TOOLS.md** | Tools — access, skills, commands | Generic | On demand |
 | **SECURITY.md** | Security policy — code review, network, data, credentials | Generic | On demand |
 | **BOOT.md** | Startup + runtime — boot steps, memory-save triggers, upgrade/evolve, running as a service | Generic | On demand |
 
-**Loading is lazy.** Only `SOUL.md` + `USER.md` are injected on every turn; the rest are listed in an "Available Context Files" index and pulled with the `load_brain_file` tool only when a task actually needs them — saving 10–20k tokens per turn. `MEMORY.md` and `USER.md` are personal and load only in your **main session**, never in shared/group chats.
+**Loading is lazy, but the gates are always on.** Three files are injected on every turn — and survive new sessions and context compaction: `SOUL.md` (personality), `USER.md` (who you're helping), and `AGENTS.md` (the enforced hard rules). Everything else is listed in an "Available Context Files" index and pulled with the `load_brain_file` tool only when a task needs it — saving 10–20k tokens per turn. The hard rules live in always-loaded AGENTS (not in on-demand files) precisely so they can never be silently dropped; `MEMORY.md` is personal and loads only in your **main session**, never in shared/group chats.
 
 **Generic vs. personal.** The generic files (SOUL/AGENTS/CODE/TOOLS/SECURITY/BOOT) ship as the same templates for everyone (you then customize them); `USER.md` and `MEMORY.md` accumulate per user and stay private. Each file declares its scope in a `> **Owns:**` header at the top, and the discipline is simple: **one kind of content per file, never duplicated across files** — copies drift and go stale. (`HEARTBEAT.md` is a small periodic-task checklist, empty by default.)
 
