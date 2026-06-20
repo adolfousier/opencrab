@@ -290,6 +290,9 @@ impl BrainLoader {
             prompt.push('\n');
         }
 
+        // 7.5 Available commands & skills (awareness layer — see the method).
+        self.push_commands_and_skills(&mut prompt);
+
         // 8. SOUL.md — injected LAST to combat "lost in the middle" attention
         //     decay. Critical personality and hard rules sit at the bottom of
         //     the system prompt, closest to the model's generation point.
@@ -434,6 +437,10 @@ impl BrainLoader {
             }
         }
 
+        // 3.5 Available commands & skills — the always-on awareness layer for
+        // runtime-added slash commands / skills (see push_commands_and_skills).
+        self.push_commands_and_skills(&mut prompt);
+
         // 4. Runtime info
         if let Some(info) = runtime_info {
             prompt.push_str("--- Runtime Info ---\n");
@@ -491,6 +498,60 @@ impl BrainLoader {
         }
 
         prompt
+    }
+
+    /// Append a compact, render-time index of the user's available slash
+    /// commands (`commands.toml`) and skills (`skills/<name>/SKILL.md`). Gated
+    /// on existence — nothing is added when there are none.
+    ///
+    /// This is the always-on AWARENESS layer: in lazy-tools mode the agent
+    /// otherwise can't know about commands/skills added at runtime — they're
+    /// not tools (so `tool_search` won't surface them), and TOOLS.md is
+    /// on-demand and lists only built-ins. The skill `description` is exactly
+    /// what "the LLM reads to decide when to invoke", so it has to be here.
+    fn push_commands_and_skills(&self, prompt: &mut String) {
+        let commands =
+            crate::brain::commands::CommandLoader::from_brain_path(&self.workspace_path).load();
+        let skills = crate::brain::skills::load_all_skills();
+        if commands.is_empty() && skills.is_empty() {
+            return;
+        }
+
+        let clip = |s: &str, n: usize| -> String {
+            let s = s.trim();
+            if s.chars().count() <= n {
+                s.to_string()
+            } else {
+                format!("{}…", s.chars().take(n).collect::<String>())
+            }
+        };
+
+        prompt.push_str("--- Available Commands & Skills ---\n");
+        if !commands.is_empty() {
+            prompt.push_str("User slash commands — run with the `slash_command` tool:\n");
+            for c in &commands {
+                let desc = c.description.trim();
+                if desc.is_empty() {
+                    prompt.push_str(&format!("- {}\n", c.name));
+                } else {
+                    prompt.push_str(&format!("- {}: {}\n", c.name, clip(desc, 100)));
+                }
+            }
+        }
+        if !skills.is_empty() {
+            prompt.push_str(
+                "Skills — saved workflows triggered by `<slash>`. When a skill's description \
+                 matches the task, run/offer it:\n",
+            );
+            for s in &skills {
+                prompt.push_str(&format!(
+                    "- {}: {}\n",
+                    s.slash_name,
+                    clip(&s.description, 120)
+                ));
+            }
+        }
+        prompt.push('\n');
     }
 }
 

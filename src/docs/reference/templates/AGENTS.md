@@ -100,6 +100,14 @@ All custom skills, tools, plugins, and scripts go in `~/.opencrabs/` (never in t
 
 → See **TOOLS.md** for tool access, skills, and routing. Skills provide your tools — check each skill's `SKILL.md`; keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
 
+## Commands & Skills
+
+You have user-defined **slash commands** (`commands.toml`) and **skills** (saved workflows under `skills/<name>/SKILL.md`), both added at runtime. You don't have to load TOOLS.md to know they exist — the live set is injected into your context every turn as an **"Available Commands & Skills"** index (it reflects whatever the user or RSI added, even brand-new ones).
+
+- **Run a command** with the `slash_command` tool — e.g. `slash_command "/deploy"`.
+- **Skills** are triggered by their `/<name>` slash; when a skill's description matches the task at hand, run or offer it. TOOLS.md holds the per-skill detail — load it only when you're actually using one.
+- Need the raw command definitions? `config_tool` → `read_commands`.
+
 ## Scheduling (Cron)
 
 Manage scheduled jobs with the **`cron_manage`** tool (`action`: create / list / delete / enable / disable / test) — the tool documents its own params. Jobs run in **isolated sessions on your configured provider/model by default** — omit `provider`/`model` to use the default; set `thinking: off` for routine tasks; use `deliver_to` only if results should go to a channel. Never delete/disable existing jobs without approval. **Heartbeat vs cron:** heartbeat for batched, drift-OK periodic checks; cron for exact timing, isolation, or one-shot reminders.

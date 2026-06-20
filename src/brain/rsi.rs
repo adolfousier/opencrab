@@ -381,6 +381,12 @@ a missing capability. Use `rsi_propose` for this. You do NOT install — proposa
 land in your `rsi/proposed_*.toml` inbox. The user (or the user-facing \
 agent on their behalf) reviews and applies via the `rsi_proposals` tool.
 
+Once applied, a new slash command or skill is **discoverable automatically** — the \
+agent's system prompt injects a live Available Commands & Skills index every turn \
+(built from `commands.toml` + `skills/`), so you do NOT need to also document it in a \
+brain file for the agent to find it. Write a clear `description` — that's what the \
+agent reads to decide when to run it.
+
 When to propose a tool (kind='tool'):
 - A specific bash invocation appears repeatedly across sessions (e.g. `gh issue list`, \
   `docker ps`, a curl to a private API). Wrap it as a shell tool with named params.

@@ -81,6 +81,32 @@ fn preamble_and_rsi_route_hard_rules_to_agents() {
     );
 }
 
+// ── commands & skills discovery ──────────────────────────────────────────────
+
+#[test]
+fn agents_documents_command_and_skill_discovery() {
+    let agents = read_template("AGENTS.md");
+    assert!(
+        agents.contains("Commands & Skills") && agents.contains("slash_command"),
+        "AGENTS.md must document how to discover/run user commands & skills"
+    );
+    assert!(
+        agents.contains("Available Commands & Skills"),
+        "AGENTS.md must reference the always-injected live commands/skills index"
+    );
+}
+
+#[test]
+fn rsi_notes_new_commands_skills_are_auto_discoverable() {
+    const RSI_SRC: &str = include_str!("../brain/rsi.rs");
+    assert!(
+        RSI_SRC.contains("Available Commands & Skills")
+            || RSI_SRC.contains("discoverable automatically"),
+        "RSI must note that a newly-applied command/skill is auto-discoverable via \
+         the injected index, so it isn't re-documented in a brain file"
+    );
+}
+
 // ── single source of truth (no rule duplicated across files) ─────────────────
 
 #[test]

@@ -17,6 +17,39 @@ fn write(dir: &TempDir, name: &str, content: &str) {
     std::fs::write(dir.path().join(name), content).unwrap();
 }
 
+// ── commands & skills awareness index ─────────────────────────────────────────
+
+#[test]
+fn core_brain_lists_user_commands_and_skills() {
+    let dir = TempDir::new().unwrap();
+    // A user-defined slash command in commands.toml (the runtime-added case).
+    write(
+        &dir,
+        "commands.toml",
+        "[[commands]]\nname = \"/deploy\"\ndescription = \"Build and ship to prod\"\nprompt = \"deploy now\"\n",
+    );
+    let brain = loader(&dir).build_core_brain(None);
+
+    // In lazy-tools mode this index is the only way the agent learns a
+    // runtime-added command/skill exists — it must be injected inline.
+    assert!(
+        brain.contains("Available Commands & Skills"),
+        "commands/skills index header missing"
+    );
+    assert!(
+        brain.contains("/deploy") && brain.contains("Build and ship to prod"),
+        "user command + description must be listed: {brain}"
+    );
+    // The agent must run a command via the slash_command tool — say so.
+    assert!(
+        brain.contains("slash_command"),
+        "index must tell the agent how to run a command"
+    );
+    // Built-in skills are always available (embedded) and must be surfaced too,
+    // since their description is what the LLM reads to decide when to invoke.
+    assert!(brain.contains("Skills —"), "skills section missing");
+}
+
 // ── core files are injected ───────────────────────────────────────────────────
 
 #[test]
