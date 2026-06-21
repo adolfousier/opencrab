@@ -203,57 +203,38 @@ impl AgentService {
     /// core identity, user context, tool documentation, and coding standards so it
     /// doesn't wake up with only a lossy LLM summary.
     ///
-    /// Full files injected (~1-2k tokens total):
-    /// - SOUL.md — personality, tone, hard rules
+    /// Full files injected (~1-2k tokens total) — identity + always-enforced
+    /// rules ONLY:
+    /// - SOUL.md — personality / voice
     /// - USER.md — who the human is, preferences
-    /// - TOOLS.md — environment-specific tool notes
+    /// - AGENTS.md — workspace governance + the always-enforced hard rules
     ///
-    /// CODE.md is injected as a compact summary only. Before ANY code task the
-    /// agent MUST fetch the full file. Non-code tasks can ignore this section.
-    ///
-    /// Skipped: MEMORY.md (summary replaces it), BOOT/HEARTBEAT (rarely
-    /// needed mid-task), SECURITY.md (loaded on demand if flagged in summary),
-    /// IDENTITY.md (only for cron/social sessions). AGENTS.md is NOT skipped —
-    /// it carries the always-enforced hard rules and is re-injected on recovery.
+    /// Everything else is contextual and loaded ON DEMAND via `load_brain_file`,
+    /// exactly as during a normal turn: CODE.md (before code tasks), TOOLS.md
+    /// (environment/tool specifics), SECURITY.md, MEMORY.md, BOOT/HEARTBEAT.
+    /// They are NOT pre-injected here — the system prompt's "Available Context
+    /// Files" index (reassembled fresh every turn) keeps them discoverable, so
+    /// re-injecting them after compaction would just burn tokens on context the
+    /// task may not need. A one-line pointer below reminds the agent to fetch
+    /// them when relevant.
     fn build_recovered_brain_context() -> String {
         use std::path::PathBuf;
 
-        const CODE_MD_SUMMARY: &str =
-"## CODE.md — Coding Standards (SUMMARY)
-**Full file: CODE.md in your OpenCrabs home — use `load_brain_file(\"CODE.md\")` to read it before writing ANY code.**
-If you are NOT doing code tasks, ignore this section entirely.
-
-Best practices (language-agnostic — your CODE.md has the specifics + your language/framework preference):
-- Max ~500 lines per file, target 100-250. Split without hesitation.
-- One responsibility per file; separate types from handlers.
-- Tests in dedicated test files — never inline in source.
-- Lint + test before every commit (see CODE.md for the exact commands).
-- Handle errors — no panics/crashes on user data. No dead code. Don't suppress lints or warnings to silence them.
-- Validate all external input. No hardcoded secrets. Sanitize output.
-- Never give up on a problem. Never suppress errors.
-- Git diff before commit — match the request exactly, no more, no less.
-
-**CRITICAL: Before handling ANY code task, fetch full CODE.md:**
-Use the `load_brain_file` tool with name=\"CODE.md\" — reads CODE.md from your OpenCrabs home.
-The summary above is NOT sufficient for implementation work.
-";
-
         let full_files = [
-            ("SOUL.md", "personality"),
+            ("SOUL.md", "personality / voice"),
             ("USER.md", "user profile"),
             ("AGENTS.md", "workspace governance + enforced hard rules"),
-            ("TOOLS.md", "tool notes"),
         ];
 
         let opencrabs_home = crate::config::opencrabs_home();
-        let mut result = String::new();
+        let mut files_block = String::new();
 
         for (filename, label) in full_files {
             let path: PathBuf = opencrabs_home.join(filename);
             if let Ok(content) = std::fs::read_to_string(&path) {
                 let trimmed = content.trim();
                 if !trimmed.is_empty() {
-                    result.push_str(&format!(
+                    files_block.push_str(&format!(
                         "--- {} ({}) ---\n{}\n\n",
                         filename, label, trimmed
                     ));
@@ -261,16 +242,22 @@ The summary above is NOT sufficient for implementation work.
             }
         }
 
-        result.push_str(CODE_MD_SUMMARY);
-
-        if result.is_empty() {
-            String::from("[No brain files found — agent context limited]\n\n")
-        } else {
-            format!(
-                "[RECOVERED BRAIN CONTEXT — these files define your identity, the user, your tools, and your coding standards. They take priority over any contradictory inference from the summary.]\n\n{}\n",
-                result
-            )
+        if files_block.is_empty() {
+            return String::from("[No brain files found — agent context limited]\n\n");
         }
+
+        // Contextual files are NOT re-injected after compaction — they load on
+        // demand, like any other turn. A one-line pointer keeps them top of mind
+        // without spending the tokens to inline their content.
+        let pointer = "Contextual files — load with `load_brain_file` ONLY when the task needs them \
+                       (not pre-loaded): CODE.md before writing ANY code, TOOLS.md for \
+                       environment/tool specifics, SECURITY.md, MEMORY.md, BOOT.md, HEARTBEAT.md.\n";
+
+        format!(
+            "[RECOVERED BRAIN CONTEXT — these files define your identity, the user, and your \
+             always-enforced rules. They take priority over any contradictory inference from the \
+             summary.]\n\n{files_block}{pointer}\n"
+        )
     }
 
     /// Synchronous compaction: compute a summary and apply it to `context` in place.
