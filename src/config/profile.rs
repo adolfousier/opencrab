@@ -727,6 +727,199 @@ pub fn hash_token(token: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// A live, OTHER instance of the active profile that was holding channel
+/// token locks when the interactive TUI started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreemptedInstance {
+    /// PID of the background instance (e.g. an `opencrabs daemon`).
+    pub pid: u32,
+    /// Channels whose token lock it was holding (e.g. `["telegram"]`).
+    pub channels: Vec<String>,
+    /// Whether it had released its locks (process gone) by the time we
+    /// stopped waiting. `false` means it may still contend for the
+    /// credential — the caller should say so in the warning.
+    pub stopped: bool,
+}
+
+/// Map every *live, foreign* lock owner for the active profile to the
+/// channels it holds. "Foreign" = a PID other than this process. Used by
+/// the TUI-priority preemption and by tests; pure file inspection, no
+/// side effects.
+fn foreign_lock_owners() -> std::collections::BTreeMap<u32, Vec<String>> {
+    let lock_dir = base_opencrabs_dir().join("locks");
+    let current_profile = active_profile().unwrap_or("default");
+    let self_pid = std::process::id();
+    let mut owners: std::collections::BTreeMap<u32, Vec<String>> = Default::default();
+
+    let entries = match fs::read_dir(&lock_dir) {
+        Ok(e) => e,
+        Err(_) => return owners,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let fname = match path.file_name().and_then(|n| n.to_str()) {
+            Some(f) if f.ends_with(".lock") => f.to_string(),
+            _ => continue,
+        };
+        let contents = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let (profile, pid_field) = match contents.trim().split_once(':') {
+            Some(p) => p,
+            None => continue,
+        };
+        if profile != current_profile {
+            continue;
+        }
+        let pid = match parse_lock_owner_pid(pid_field) {
+            Some(p) => p,
+            None => continue,
+        };
+        if pid == self_pid || !is_pid_alive(pid) {
+            continue;
+        }
+        // Lock file is `<channel>_<hash>.lock` — channel is everything
+        // before the final '_'.
+        let channel = fname
+            .strip_suffix(".lock")
+            .and_then(|s| s.rsplit_once('_'))
+            .map(|(c, _)| c.to_string())
+            .unwrap_or(fname);
+        owners.entry(pid).or_default().push(channel);
+    }
+    owners
+}
+
+/// TUI priority: shut down any OTHER live instance of the active profile
+/// that currently holds channel token locks, so the interactive session
+/// can take over the channels.
+///
+/// When a user opens the TUI while a background `opencrabs daemon` (or
+/// systemd service) for the same profile is already running, both try to
+/// own the same bot credentials. Only one process can hold a Telegram
+/// `getUpdates` long-poll, so they fight (HTTP 409) and the channel keeps
+/// dropping. The interactive session is the one the user is looking at,
+/// so it wins.
+///
+/// We ask the other instance to stop two ways, then wait briefly for it
+/// to release its locks:
+///   * stop its systemd unit (`systemctl [--user] stop opencrabs*.service`)
+///     so a `Restart=always` policy doesn't immediately resurrect it;
+///   * SIGTERM the PID directly, covering a bare `opencrabs daemon`
+///     launched in a terminal with no systemd unit behind it.
+///
+/// Per the chosen behavior we do NOT restart the daemon afterwards — it
+/// stays down until the user starts it again. Best-effort and quick
+/// (~3s cap); returns the instances we preempted so the caller can warn
+/// the user. Blocks while waiting, so callers on an async runtime should
+/// invoke it via `spawn_blocking`.
+pub fn preempt_other_profile_instances() -> Vec<PreemptedInstance> {
+    let owners = foreign_lock_owners();
+    if owners.is_empty() {
+        return Vec::new();
+    }
+
+    // Stop a systemd-managed daemon first, so its unit's Restart policy
+    // doesn't bring it straight back after the SIGTERM. The glob covers
+    // every profile's unit; harmless (just non-zero exit) when there's no
+    // systemd or no matching unit. Both scopes, since the daemon may be a
+    // system OR a user service.
+    for user in [false, true] {
+        let mut cmd = std::process::Command::new("systemctl");
+        if user {
+            cmd.arg("--user");
+        }
+        cmd.arg("stop")
+            .arg("opencrabs*.service")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Err(e) = cmd.status() {
+            tracing::debug!(user, error = %e, "preempt: systemctl stop spawn failed (likely no systemd)");
+        }
+    }
+
+    // SIGTERM each foreign PID directly — covers a bare `opencrabs daemon`
+    // running in a terminal with no unit behind it.
+    #[cfg(unix)]
+    for &pid in owners.keys() {
+        let ret = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            tracing::debug!(pid, error = %err, "preempt: SIGTERM to background instance failed");
+        }
+    }
+
+    let mut results: Vec<PreemptedInstance> = owners
+        .into_iter()
+        .map(|(pid, mut channels)| {
+            channels.sort();
+            channels.dedup();
+            PreemptedInstance {
+                pid,
+                channels,
+                stopped: false,
+            }
+        })
+        .collect();
+
+    // Wait up to ~3s for the instances to exit and release their locks.
+    for _ in 0..30 {
+        if results.iter().all(|r| !is_pid_alive(r.pid)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // Escalate to SIGKILL for anything that ignored SIGTERM. The TUI must
+    // win the credential outright: if a stubborn daemon stays alive, its
+    // same-profile lock would still block `acquire_token_lock` and the TUI
+    // would silently get no Telegram — the exact "I had to reconnect"
+    // symptom we're fixing. A cross-user daemon (root vs user) may still
+    // resist (EPERM); that we can only warn about.
+    #[cfg(unix)]
+    {
+        let stragglers: Vec<u32> = results
+            .iter()
+            .filter(|r| is_pid_alive(r.pid))
+            .map(|r| r.pid)
+            .collect();
+        if !stragglers.is_empty() {
+            for pid in &stragglers {
+                let ret = unsafe { libc::kill(*pid as i32, libc::SIGKILL) };
+                if ret != 0 {
+                    let err = std::io::Error::last_os_error();
+                    tracing::warn!(pid = *pid, error = %err, "preempt: SIGKILL to stubborn instance failed");
+                }
+            }
+            for _ in 0..10 {
+                if stragglers.iter().all(|p| !is_pid_alive(*p)) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+
+    for r in &mut results {
+        r.stopped = !is_pid_alive(r.pid);
+        if r.stopped {
+            tracing::info!(
+                pid = r.pid,
+                channels = ?r.channels,
+                "TUI priority: stopped background instance that held channel locks"
+            );
+        } else {
+            tracing::warn!(
+                pid = r.pid,
+                channels = ?r.channels,
+                "TUI priority: background instance still alive after stop request — its channel locks may still contend"
+            );
+        }
+    }
+    results
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 pub fn validate_profile_name(name: &str) -> Result<()> {

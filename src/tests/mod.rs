@@ -82,6 +82,7 @@ pub mod new_session_pane_binding_test;
 pub mod phantom_going_to_test;
 pub mod phantom_work_announcement_test;
 pub mod profile_pid_lock_test;
+pub mod profile_preempt_test;
 pub mod rsi_notification_redaction_test;
 pub mod rsi_pruned_test;
 pub mod rsi_sync_cap_bail_test;

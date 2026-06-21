@@ -1330,6 +1330,47 @@ async fn cmd_chat_inner(
         trello_state.clone(),
     ));
 
+    // TUI priority: before we start any channel, shut down any background
+    // instance of this profile (e.g. an `opencrabs daemon` auto-started by
+    // systemd on boot) that is already holding the channel token locks.
+    // Otherwise the TUI's `acquire_token_lock` is denied and the user
+    // silently gets no Telegram — the "I had to reconnect Telegram" bug.
+    // The interactive session always wins; the daemon stays down until the
+    // user starts it again. Headless/daemon launches skip this so a daemon
+    // never preempts another daemon.
+    if !headless {
+        let preempted =
+            tokio::task::spawn_blocking(crate::config::profile::preempt_other_profile_instances)
+                .await
+                .unwrap_or_default();
+        if !preempted.is_empty() {
+            use crate::tui::events::TuiEvent;
+            let mut lines = Vec::new();
+            for inst in &preempted {
+                let chans = if inst.channels.is_empty() {
+                    "channels".to_string()
+                } else {
+                    inst.channels.join(", ")
+                };
+                if inst.stopped {
+                    lines.push(format!(
+                        "Shut down a background instance (PID {}) that was holding {} so this session can own them. It will stay down until you start the daemon again.",
+                        inst.pid, chans
+                    ));
+                } else {
+                    lines.push(format!(
+                        "A background instance (PID {}) holding {} did not stop (likely running as another user) — it may still contend for the connection. Stop it manually so this session can take over.",
+                        inst.pid, chans
+                    ));
+                }
+            }
+            let _ = app.event_sender().send(TuiEvent::SystemMessage {
+                session_id: uuid::Uuid::nil(),
+                text: lines.join("\n"),
+            });
+        }
+    }
+
     // Initial channel spawn — reconcile against current config
     channel_manager.reconcile(config).await;
 
