@@ -742,9 +742,7 @@ pub(crate) async fn format_cd_browser(
             .flatten()
             .and_then(|s| s.working_directory)
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"))
-            })
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")))
     } else {
         let expanded = crate::brain::tools::error::expand_tilde(path_arg);
         if expanded.is_dir() {
@@ -767,10 +765,7 @@ pub(crate) async fn format_cd_browser(
     let (entries, err) = read_dir_entries(&canonical, None);
     let total = entries.len();
     let total_pages = total.div_ceil(CD_PAGE_SIZE).max(1);
-    let page_entries: Vec<DirBrowserEntry> = entries
-        .into_iter()
-        .take(CD_PAGE_SIZE)
-        .collect();
+    let page_entries: Vec<DirBrowserEntry> = entries.into_iter().take(CD_PAGE_SIZE).collect();
 
     let mut text_lines = vec![format!("📂 *{}*", canonical.display())];
     if let Some(e) = &err {
@@ -818,9 +813,7 @@ pub(crate) fn read_dir_entries(
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
                 // Skip hidden unless filter starts with '.'
-                if name.starts_with('.')
-                    && !filter.is_some_and(|f| f.starts_with('.'))
-                {
+                if name.starts_with('.') && !filter.is_some_and(|f| f.starts_with('.')) {
                     return None;
                 }
                 // Skip known junk dirs
@@ -871,11 +864,7 @@ pub(crate) fn read_dir_entries(
 
 /// Rebuild a `DirBrowserResponse` for a specific page and optional filter.
 /// Used by the callback handler after the user navigates or filters.
-pub fn rebuild_cd_browser(
-    path: &str,
-    page: usize,
-    filter: Option<&str>,
-) -> DirBrowserResponse {
+pub fn rebuild_cd_browser(path: &str, page: usize, filter: Option<&str>) -> DirBrowserResponse {
     let dir = std::path::PathBuf::from(path);
     let depth = path.matches('/').count();
     if depth > CD_MAX_DEPTH {
@@ -886,7 +875,10 @@ pub fn rebuild_cd_browser(
             total_pages: 0,
             filter: filter.map(str::to_string),
             total_entries: 0,
-            text: format!("⚠️ Directory too deep ({} levels). Possible symlink cycle.", depth),
+            text: format!(
+                "⚠️ Directory too deep ({} levels). Possible symlink cycle.",
+                depth
+            ),
         };
     }
     let (entries, err) = read_dir_entries(&dir, filter);
@@ -894,11 +886,8 @@ pub fn rebuild_cd_browser(
     let total_pages = total.div_ceil(CD_PAGE_SIZE).max(1);
     let page = page.min(total_pages.saturating_sub(1));
     let start = page * CD_PAGE_SIZE;
-    let page_entries: Vec<DirBrowserEntry> = entries
-        .into_iter()
-        .skip(start)
-        .take(CD_PAGE_SIZE)
-        .collect();
+    let page_entries: Vec<DirBrowserEntry> =
+        entries.into_iter().skip(start).take(CD_PAGE_SIZE).collect();
 
     let mut text_lines = vec![format!("📂 *{}*", dir.display())];
     if let Some(f) = filter {

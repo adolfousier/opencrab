@@ -388,7 +388,10 @@ impl TelegramState {
 
     /// Set the browsing path for a chat (called on /cd and navigation).
     pub async fn set_dir_browser(&self, chat_id: i64, path: String, filter: Option<String>) {
-        self.dir_browsers.lock().await.insert(chat_id, (path, filter));
+        self.dir_browsers
+            .lock()
+            .await
+            .insert(chat_id, (path, filter));
     }
 
     /// Get the current browsing path and filter for a chat.
