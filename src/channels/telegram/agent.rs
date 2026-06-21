@@ -478,15 +478,8 @@ impl TelegramAgent {
                                 if let Ok(new_id) = session_id_str.parse::<Uuid>() {
                                     // Determine if caller is owner
                                     let cfg = config_rx.borrow().clone();
-                                    let caller_id = query.from.id.0 as i64;
-                                    let owner_id = cfg
-                                        .channels
-                                        .telegram
-                                        .allowed_users
-                                        .first()
-                                        .and_then(|s| s.parse::<i64>().ok());
-                                    let is_owner = cfg.channels.telegram.allowed_users.is_empty()
-                                        || owner_id == Some(caller_id);
+                                    let caller_id_raw = query.from.id.0;
+                                    let is_owner = cfg.channels.telegram.is_owner(&caller_id_raw.to_string());
 
                                     if is_owner {
                                         *shared_session.lock().await = Some(new_id);
@@ -498,7 +491,7 @@ impl TelegramAgent {
                                         .message
                                         .as_ref()
                                         .map(|m| m.chat().id.0)
-                                        .unwrap_or(caller_id);
+                                        .unwrap_or(caller_id_raw as i64);
                                     state.register_session_chat(new_id, switch_chat_id).await;
 
                                     // Touch updated_at so find_session_by_title_suffix returns this session on next message
@@ -703,6 +696,255 @@ impl TelegramAgent {
                                         }
                                     }
                                 }
+                                return ResponseResult::Ok(());
+                            }
+
+                            // Profile manager callbacks: prof:sel:{name}, prof:create,
+                            // prof:migrate:{name}, prof:del:{name}, prof:confirm_migrate:{name},
+                            // prof:confirm_del:{name}, prof:back
+                            if data.starts_with("prof:") {
+                                use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+                                let chat_id = query.message.as_ref().map(|m| m.chat().id.0).unwrap_or(0);
+                                let _ = bot.answer_callback_query(query.id.clone()).await;
+
+                                if let Some(name) = data.strip_prefix("prof:sel:") {
+                                    // Show profile detail view with action buttons
+                                    let profiles = crate::config::profile::list_profiles().unwrap_or_default();
+                                    let active = crate::config::profile::active_profile().unwrap_or("default");
+                                    if let Some(entry) = profiles.iter().find(|p| p.name == name) {
+                                        let is_active = entry.name == active;
+                                        let mut text = format!("👤 *Profile:* `{}`\n", entry.name);
+                                        if let Some(desc) = &entry.description {
+                                            text.push_str(&format!("📝 {}\n", desc));
+                                        }
+                                        text.push_str(&format!("📅 Created: {}\n", entry.created_at));
+                                        if let Some(used) = &entry.last_used {
+                                            text.push_str(&format!("⏰ Last used: {}\n", used));
+                                        }
+                                        if is_active {
+                                            text.push_str("\n✅ *This is the active profile*");
+                                        }
+
+                                        let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+                                        if !is_active {
+                                            rows.push(vec![InlineKeyboardButton::callback(
+                                                "🔄 Migrate from current",
+                                                format!("prof:migrate:{}", entry.name),
+                                            )]);
+                                        }
+                                        if entry.name != "default" && !is_active {
+                                            rows.push(vec![InlineKeyboardButton::callback(
+                                                "🗑️ Delete",
+                                                format!("prof:del:{}", entry.name),
+                                            )]);
+                                        }
+                                        rows.push(vec![InlineKeyboardButton::callback(
+                                            "◀️ Back to Profiles",
+                                            "prof:back".to_string(),
+                                        )]);
+
+                                        let keyboard = InlineKeyboardMarkup::new(rows);
+                                        if let Some(msg) = &query.message {
+                                            use teloxide::payloads::EditMessageTextSetters;
+                                            use teloxide::prelude::Requester;
+                                            let html = crate::channels::telegram::handler::md_to_html(&text);
+                                            if let Err(e) = bot
+                                                .edit_message_text(msg.chat().id, msg.id(), &html)
+                                                .parse_mode(teloxide::types::ParseMode::Html)
+                                                .reply_markup(keyboard)
+                                                .await
+                                            {
+                                                tracing::warn!("prof:sel: failed to edit message: {}", e);
+                                            }
+                                        }
+                                    }
+                                    return ResponseResult::Ok(());
+                                }
+
+                                if data == "prof:create" {
+                                    // Prompt user for new profile name
+                                    // Store the create state for this chat
+                                    state.set_prof_create(chat_id, true).await;
+                                    if let Some(msg) = &query.message {
+                                        use teloxide::payloads::SendMessageSetters;
+                                        use teloxide::prelude::Requester;
+                                        let prompt = "✏️ Send me the name for the new profile:\n\n\
+                                            (Letters, numbers, hyphens, underscores. 1-64 chars.)";
+                                        let sent = bot
+                                            .send_message(msg.chat().id, prompt)
+                                            .reply_markup(InlineKeyboardMarkup::new(vec![vec![
+                                                InlineKeyboardButton::callback("❌ Cancel", "prof:back"),
+                                            ]]))
+                                            .await;
+                                        if let Err(e) = sent {
+                                            tracing::warn!("prof:create: failed to send prompt: {}", e);
+                                        }
+                                    }
+                                    return ResponseResult::Ok(());
+                                }
+
+                                if let Some(name) = data.strip_prefix("prof:migrate:") {
+                                    // Show migration confirmation
+                                    let active = crate::config::profile::active_profile().unwrap_or("default");
+                                    let text = format!(
+                                        "🔄 *Migrate Profile*\n\n\
+                                        This will copy all brain files, config, keys, and memory from \
+                                        `{}` → `{}`.\n\n\
+                                        Existing files in `{}` will be overwritten (force=true).\n\n\
+                                        Confirm?",
+                                        active, name, name
+                                    );
+                                    let keyboard = InlineKeyboardMarkup::new(vec![
+                                        vec![InlineKeyboardButton::callback(
+                                            "✅ Confirm migration",
+                                            format!("prof:confirm_migrate:{}", name),
+                                        )],
+                                        vec![InlineKeyboardButton::callback(
+                                            "❌ Cancel",
+                                            format!("prof:sel:{}", name),
+                                        )],
+                                    ]);
+                                    if let Some(msg) = &query.message {
+                                        use teloxide::payloads::EditMessageTextSetters;
+                                        use teloxide::prelude::Requester;
+                                        let html = crate::channels::telegram::handler::md_to_html(&text);
+                                        if let Err(e) = bot
+                                            .edit_message_text(msg.chat().id, msg.id(), &html)
+                                            .parse_mode(teloxide::types::ParseMode::Html)
+                                            .reply_markup(keyboard)
+                                            .await
+                                        {
+                                            tracing::warn!("prof:migrate: failed to edit message: {}", e);
+                                        }
+                                    }
+                                    return ResponseResult::Ok(());
+                                }
+
+                                if let Some(name) = data.strip_prefix("prof:confirm_migrate:") {
+                                    let active = crate::config::profile::active_profile().unwrap_or("default");
+                                    match crate::config::profile::migrate_profile(active, name, true) {
+                                        Ok(files) => {
+                                            let text = format!(
+                                                "✅ Migration complete!\n\n\
+                                                Copied {} files from `{}` → `{}`.\n\n\
+                                                Restart with `-p {}` to switch profiles.",
+                                                files.len(), active, name, name
+                                            );
+                                            if let Some(msg) = &query.message {
+                                                use teloxide::payloads::EditMessageTextSetters;
+                                                use teloxide::prelude::Requester;
+                                                let html = crate::channels::telegram::handler::md_to_html(&text);
+                                                let _ = bot
+                                                    .edit_message_text(msg.chat().id, msg.id(), &html)
+                                                    .parse_mode(teloxide::types::ParseMode::Html)
+                                                    .reply_markup(InlineKeyboardMarkup::default())
+                                                    .await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let text = format!("❌ Migration failed: {}", e);
+                                            if let Some(msg) = &query.message {
+                                                use teloxide::payloads::EditMessageTextSetters;
+                                                use teloxide::prelude::Requester;
+                                                if let Err(e2) = bot
+                                                    .edit_message_text(msg.chat().id, msg.id(), &text)
+                                                    .reply_markup(InlineKeyboardMarkup::default())
+                                                    .await
+                                                {
+                                                    tracing::warn!("prof:confirm_migrate: failed to edit: {}", e2);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    return ResponseResult::Ok(());
+                                }
+
+                                if let Some(name) = data.strip_prefix("prof:del:") {
+                                    let text = format!(
+                                        "🗑️ *Delete Profile*\n\n\
+                                        Are you sure you want to delete `{}`?\n\
+                                        This removes all files in the profile directory.\n\n\
+                                        This cannot be undone.",
+                                        name
+                                    );
+                                    let keyboard = InlineKeyboardMarkup::new(vec![
+                                        vec![InlineKeyboardButton::callback(
+                                            "✅ Confirm delete",
+                                            format!("prof:confirm_del:{}", name),
+                                        )],
+                                        vec![InlineKeyboardButton::callback(
+                                            "❌ Cancel",
+                                            "prof:back".to_string(),
+                                        )],
+                                    ]);
+                                    if let Some(msg) = &query.message {
+                                        use teloxide::payloads::EditMessageTextSetters;
+                                        use teloxide::prelude::Requester;
+                                        let html = crate::channels::telegram::handler::md_to_html(&text);
+                                        if let Err(e) = bot
+                                            .edit_message_text(msg.chat().id, msg.id(), &html)
+                                            .parse_mode(teloxide::types::ParseMode::Html)
+                                            .reply_markup(keyboard)
+                                            .await
+                                        {
+                                            tracing::warn!("prof:del: failed to edit message: {}", e);
+                                        }
+                                    }
+                                    return ResponseResult::Ok(());
+                                }
+
+                                if let Some(name) = data.strip_prefix("prof:confirm_del:") {
+                                    match crate::config::profile::delete_profile(name) {
+                                        Ok(()) => {
+                                            let text = format!("✅ Profile `{}` deleted.", name);
+                                            if let Some(msg) = &query.message {
+                                                use teloxide::payloads::EditMessageTextSetters;
+                                                use teloxide::prelude::Requester;
+                                                let html = crate::channels::telegram::handler::md_to_html(&text);
+                                                let _ = bot
+                                                    .edit_message_text(msg.chat().id, msg.id(), &html)
+                                                    .parse_mode(teloxide::types::ParseMode::Html)
+                                                    .reply_markup(InlineKeyboardMarkup::default())
+                                                    .await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let text = format!("❌ Delete failed: {}", e);
+                                            if let Some(msg) = &query.message {
+                                                use teloxide::payloads::EditMessageTextSetters;
+                                                use teloxide::prelude::Requester;
+                                                let _ = bot
+                                                    .edit_message_text(msg.chat().id, msg.id(), &text)
+                                                    .reply_markup(InlineKeyboardMarkup::default())
+                                                    .await;
+                                            }
+                                        }
+                                    }
+                                    return ResponseResult::Ok(());
+                                }
+
+                                if data == "prof:back" {
+                                    // Return to profiles list
+                                    let resp = crate::channels::commands::format_profiles_browser().await;
+                                    let rows = crate::channels::telegram::handler::build_profiles_keyboard(&resp);
+                                    let keyboard = InlineKeyboardMarkup::new(rows);
+                                    if let Some(msg) = &query.message {
+                                        use teloxide::payloads::EditMessageTextSetters;
+                                        use teloxide::prelude::Requester;
+                                        let html = crate::channels::telegram::handler::md_to_html(&resp.text);
+                                        if let Err(e) = bot
+                                            .edit_message_text(msg.chat().id, msg.id(), &html)
+                                            .parse_mode(teloxide::types::ParseMode::Html)
+                                            .reply_markup(keyboard)
+                                            .await
+                                        {
+                                            tracing::warn!("prof:back: failed to edit message: {}", e);
+                                        }
+                                    }
+                                    return ResponseResult::Ok(());
+                                }
+
+                                let _ = bot.answer_callback_query(query.id.clone()).await;
                                 return ResponseResult::Ok(());
                             }
 
@@ -947,6 +1189,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("stop", "Cancel the current operation"),
         BotCommand::new("compact", "Compact conversation context"),
         BotCommand::new("cd", "Change working directory"),
+        BotCommand::new("profiles", "Manage profiles (create, switch, migrate)"),
         BotCommand::new(
             "cowork",
             "Create a cowork workspace with QR invite (Telegram only)",

@@ -324,6 +324,29 @@ pub struct TelegramConfig {
     /// Users who need their ID can DM the bot instead.
     #[serde(default = "default_true")]
     pub silence_group_start: bool,
+    /// Bot owner user IDs. Owners can access gated commands, see hidden files
+    /// in /cd, and manage profiles. When unset, defaults to the first entry
+    /// in `allowed_users`. Accepts int or string arrays.
+    #[serde(default, deserialize_with = "deser_users_compat")]
+    pub bot_owner: Vec<String>,
+}
+
+impl TelegramConfig {
+    /// Check if a user ID is a bot owner.
+    ///
+    /// Uses `bot_owner` list if configured, otherwise falls back to the
+    /// first entry in `allowed_users`. Returns true when `allowed_users`
+    /// is empty (open mode — everyone is treated as owner).
+    pub fn is_owner(&self, user_id: &str) -> bool {
+        if self.allowed_users.is_empty() {
+            return true;
+        }
+        if !self.bot_owner.is_empty() {
+            self.bot_owner.contains(&user_id.to_string())
+        } else {
+            self.allowed_users.first().is_some_and(|o| o == user_id)
+        }
+    }
 }
 
 /// Discord channel configuration
