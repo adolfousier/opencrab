@@ -80,6 +80,8 @@ pub struct TelegramState {
     /// Used by /cd inline-keyboard callbacks to know which directory
     /// is being browsed without encoding full paths in callback data.
     dir_browsers: Mutex<HashMap<i64, (String, Option<String>)>>,
+    /// Profile create flow state: chat_id → true when awaiting a profile name
+    prof_create_states: Mutex<HashMap<i64, bool>>,
 }
 
 impl Default for TelegramState {
@@ -105,6 +107,7 @@ impl TelegramState {
             cowork_sessions: Mutex::new(HashMap::new()),
             cowork_groups: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             dir_browsers: Mutex::new(HashMap::new()),
+            prof_create_states: Mutex::new(HashMap::new()),
         }
     }
 
@@ -402,5 +405,24 @@ impl TelegramState {
     /// Clear the directory browser state for a chat (after confirming).
     pub async fn clear_dir_browser(&self, chat_id: i64) {
         self.dir_browsers.lock().await.remove(&chat_id);
+    }
+
+    /// Set the profile-create flow state for a chat.
+    pub async fn set_prof_create(&self, chat_id: i64, active: bool) {
+        if active {
+            self.prof_create_states.lock().await.insert(chat_id, true);
+        } else {
+            self.prof_create_states.lock().await.remove(&chat_id);
+        }
+    }
+
+    /// Check if a chat is in the profile-create flow.
+    pub async fn is_prof_create(&self, chat_id: i64) -> bool {
+        self.prof_create_states.lock().await.get(&chat_id).copied().unwrap_or(false)
+    }
+
+    /// Clear the profile-create flow state.
+    pub async fn clear_prof_create(&self, chat_id: i64) {
+        self.prof_create_states.lock().await.remove(&chat_id);
     }
 }

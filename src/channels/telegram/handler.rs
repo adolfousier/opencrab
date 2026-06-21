@@ -1404,12 +1404,7 @@ pub(crate) async fn handle_message(
         }
     });
 
-    // Owner = first user in the config's allowed_users list (Vec order, not HashSet).
-    let owner_id = tg_cfg
-        .allowed_users
-        .first()
-        .and_then(|s| s.parse::<i64>().ok());
-    let is_owner = allowed.is_empty() || owner_id == Some(user_id);
+    let is_owner = tg_cfg.is_owner(&user_id.to_string());
 
     tracing::info!(
         "Telegram: session resolve — is_owner={}, is_dm={}, chat=\"{}\" ({}), user={} ({})",
@@ -1873,6 +1868,15 @@ pub(crate) async fn handle_message(
                     .await?;
                 return Ok(());
             }
+            ChannelCommand::Profiles(resp) => {
+                let rows = build_profiles_keyboard(&resp);
+                let keyboard = InlineKeyboardMarkup::new(rows);
+                message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&resp.text))
+                    .parse_mode(ParseMode::Html)
+                    .reply_markup(keyboard)
+                    .await?;
+                return Ok(());
+            }
             ChannelCommand::Compact => {
                 message_in_thread(&bot, msg.chat.id, thread_id, "⏳ Compacting context...").await?;
                 text = "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
@@ -1886,6 +1890,30 @@ pub(crate) async fn handle_message(
             ChannelCommand::NotACommand => {} // fall through to agent
             // Help, Usage, Evolve, Doctor, UserSystem handled by try_execute_text_command above
             _ => {}
+        }
+    }
+
+    // ── Profile create flow: intercept text input when awaiting a profile name ──
+    if !text.is_empty() && telegram_state.is_prof_create(msg.chat.id.0).await {
+        telegram_state.clear_prof_create(msg.chat.id.0).await;
+        let name = text.trim();
+        match crate::config::profile::create_profile(name, None) {
+            Ok(path) => {
+                let resp = crate::channels::commands::format_profiles_browser().await;
+                let rows = crate::channels::telegram::handler::build_profiles_keyboard(&resp);
+                let keyboard = InlineKeyboardMarkup::new(rows);
+                let success_text = format!("✅ Profile `{}` created at `{}`\n\n{}", name, path.display(), resp.text);
+                message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&success_text))
+                    .parse_mode(ParseMode::Html)
+                    .reply_markup(keyboard)
+                    .await?;
+                return Ok(());
+            }
+            Err(e) => {
+                let err_text = format!("❌ Failed to create profile: {}\n\nTry again with /profiles", e);
+                message_in_thread(&bot, msg.chat.id, thread_id, &err_text).await?;
+                return Ok(());
+            }
         }
     }
 
@@ -4851,6 +4879,31 @@ pub(crate) fn build_cd_keyboard(
     rows.push(vec![InlineKeyboardButton::callback(
         "✅ Select this directory",
         "cd:here".to_string(),
+    )]);
+
+    rows
+}
+
+pub(crate) fn build_profiles_keyboard(
+    resp: &crate::channels::commands::ProfilesResponse,
+) -> Vec<Vec<InlineKeyboardButton>> {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+
+    // Each profile gets its own row
+    for entry in &resp.entries {
+        let icon = if entry.is_active { "▸" } else { "•" };
+        let active_tag = if entry.is_active { " ✓" } else { "" };
+        let display = format!("{} {}{}", icon, entry.name, active_tag);
+        rows.push(vec![InlineKeyboardButton::callback(
+            display,
+            format!("prof:sel:{}", entry.name),
+        )]);
+    }
+
+    // Action row: create new profile
+    rows.push(vec![InlineKeyboardButton::callback(
+        "➕ New Profile",
+        "prof:create".to_string(),
     )]);
 
     rows

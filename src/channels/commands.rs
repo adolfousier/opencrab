@@ -189,6 +189,8 @@ pub enum ChannelCommand {
     Rename(String),
     /// `/cd [path]` — directory browser (inline keyboard)
     ChangeDir(DirBrowserResponse),
+    /// `/profiles` — profile manager (inline keyboard)
+    Profiles(ProfilesResponse),
     /// Not a recognised command — pass through to agent
     NotACommand,
 }
@@ -254,6 +256,32 @@ pub struct DirBrowserResponse {
     pub text: String,
 }
 
+/// Entry in the profiles browser.
+pub struct ProfileBrowserEntry {
+    /// Profile name (key in registry)
+    pub name: String,
+    /// Optional description
+    pub description: Option<String>,
+    /// Whether this is the currently active profile
+    pub is_active: bool,
+    /// Whether this is the default (root ~/.opencrabs/) profile
+    pub is_default: bool,
+    /// When it was created
+    pub created_at: String,
+    /// Last time it was used (if ever)
+    pub last_used: Option<String>,
+}
+
+/// Data for rendering a profile manager on the channel platform.
+pub struct ProfilesResponse {
+    /// Currently active profile name
+    pub active_profile: String,
+    /// All profiles
+    pub entries: Vec<ProfileBrowserEntry>,
+    /// Fallback text when platform buttons are unavailable.
+    pub text: String,
+}
+
 /// Check if a message is a known channel command and return the response.
 /// Commands that produce output are persisted to session history so they
 /// appear in TUI and give the agent context about what happened.
@@ -297,6 +325,7 @@ pub async fn handle_command(
             let path_arg = cmd.strip_prefix("/cd").unwrap_or("").trim();
             ChannelCommand::ChangeDir(format_cd_browser(path_arg, session_id, session_svc).await)
         }
+        "/profiles" => ChannelCommand::Profiles(format_profiles_browser().await),
         // Telegram registers the hyphen-free `mission_control` (its command
         // names allow no hyphens), so a menu tap sends `/mission_control`;
         // accept both that and the typed `/mission-control`.
@@ -338,6 +367,7 @@ pub async fn handle_command(
         ChannelCommand::Evolve => Some("Checking for updates...".to_string()),
         ChannelCommand::Rtk(body) => Some(body.clone()),
         ChannelCommand::ChangeDir(resp) => Some(resp.text.clone()),
+        ChannelCommand::Profiles(resp) => Some(resp.text.clone()),
         ChannelCommand::Compact
         | ChannelCommand::UserPrompt(_)
         | ChannelCommand::NotACommand
@@ -471,6 +501,7 @@ pub(crate) fn format_help() -> String {
         "`/mission-control` Mission control: analytics, activity, inbox & schedule".to_string(),
         "`/models`   — Switch AI model".to_string(),
         "`/new`      — Start a new session".to_string(),
+        "`/profiles` — Manage profiles (create, switch, migrate)".to_string(),
         "`/rename`   — Rename current session (`/rename <new title>`)".to_string(),
         "`/rtk`      — Show RTK token savings statistics".to_string(),
         "`/sessions` — Switch between sessions (`/sessions:<query>` to filter)".to_string(),
@@ -924,6 +955,55 @@ pub fn rebuild_cd_browser(path: &str, page: usize, filter: Option<&str>) -> DirB
         total_pages,
         filter: filter.map(str::to_string),
         total_entries: total,
+        text: text_lines.join("\n"),
+    }
+}
+
+// ── /profiles ───────────────────────────────────────────────────────────────
+
+/// Build a profiles listing for the `/profiles` command.
+pub(crate) async fn format_profiles_browser() -> ProfilesResponse {
+    let active = crate::config::profile::active_profile().unwrap_or("default");
+    let profiles = crate::config::profile::list_profiles().unwrap_or_default();
+
+    let mut entries = Vec::new();
+    let mut text_lines = vec!["👤 *Profiles*".to_string(), String::new()];
+
+    for p in &profiles {
+        let is_active = p.name == active;
+        let is_default = p.name == "default";
+        let marker = if is_active { "▸ " } else { "• " };
+        let desc = p.description.as_deref().unwrap_or("");
+        let suffix = if is_active { " ✓" } else { "" };
+
+        text_lines.push(format!(
+            "{}`{}`{} {}",
+            marker,
+            p.name,
+            suffix,
+            if desc.is_empty() { String::new() } else { format!("— {}", desc) }
+        ));
+
+        entries.push(ProfileBrowserEntry {
+            name: p.name.clone(),
+            description: p.description.clone(),
+            is_active,
+            is_default,
+            created_at: p.created_at.clone(),
+            last_used: p.last_used.clone(),
+        });
+    }
+
+    if entries.is_empty() {
+        text_lines.push("No profiles found.".to_string());
+    }
+
+    text_lines.push(String::new());
+    text_lines.push("Tap a profile for details. Use buttons below to manage.".to_string());
+
+    ProfilesResponse {
+        active_profile: active.to_string(),
+        entries,
         text: text_lines.join("\n"),
     }
 }
