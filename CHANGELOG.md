@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.46] - 2026-06-21
+
+36 commits since v0.3.45. 81 files changed, +3799 / -1972 lines.
+
+> **⚠️ EXISTING USERS NOTE:** The brain-file ownership model has changed. **SOUL.md** is now personality/voice ONLY. **AGENTS.md** is always-loaded and holds all hard rules and governance. Ask your OpenCrabs to fetch the latest templates (`src/docs/reference/templates/`) and update your brain files on top of them. If you have hard rules in SOUL.md, move them to AGENTS.md.
+
+### ✨ Features
+
+- `bc40d32a` **Cron Discord and Slack delivery**: wire result delivery to Discord and Slack channels
+- `8e0e36d5` **Cron timezone and validation**: honor timezone, validate schedule with next-run feedback, document format
+- `d0c4779f` **Runtime commands index**: inject a live commands and skills index so the agent sees runtime ones
+- `eb75c3d3` **Project file shares**: symlink local shares, copy ephemeral ones into project files
+- `887ef8b4` **AGENTS always-loaded**: preamble + RSI route hard rules to always-loaded AGENTS.md
+- `7ffdf2d5` **Brain hard rules**: promote AGENTS.md to always-loaded so hard rules are enforced
+- `1b9616ea` **Telegram /cd routing**: add /cd callback routing for directory navigation
+- `56d446cd` **Telegram /cd browser**: render /cd directory browser with inline keyboard
+- `53ad0b67` **Telegram /cd state**: add directory browser state to TelegramState
+- `ee108af6` **/cd directory browser**: add /cd directory browser core
+- `98ca35d3` **Brain-file ownership**: teach brain-file ownership in preamble and RSI
+
+### 🔧 Fixes
+
+- `9206c346` **Test preemption safety**: never run instance preemption against real workspace from tests
+- `e32fd4b1` **Phantom detection**: catch work announcements ending with colon after 'now'
+- `aa6ebaab` **TUI channel priority**: TUI takes priority over running daemon for channel locks
+- `571ab10a` **Evolve cleanup**: sweep stale transient restart units before scheduling
+- `187d689e` **Voicebox TTS timeout**: prevent timeout on long text with dynamic scaling and chunking
+- `ecce87b0` **Compaction language**: make post-compaction CODE summary language-agnostic
+- `f67750a8` **Language agnostic preamble**: don't impose Rust, language pref is CODE.md's
+- `a97df0c7` **Template cleanup**: drop dead BOOTSTRAP.md, seed BOOT.md, document service setup
+- `a5eac082` **Template cleanup**: remove unused VOICE.md template and personal-file references
+- `4f4c00bd` **Glob safety**: bound the walk with symlink-safe, off-executor, capped, with timeout
+
+### 📖 Documentation
+
+- `c084c690` Explain TUI vs daemon run modes and the TUI-priority rule
+- `9ca6182b` SOUL.md: personality/voice only
+- `c4006ed5` Brain structure: SOUL=personality, AGENTS=always-loaded hard rules
+- `29da49fb` Slim AGENTS.md to lean governance + gates
+- `18a87392` Document the brain-file ownership model
+- `0bb76c9b` Add ownership-map headers to each brain file
+- `dd64fa12` Single-source-of-truth the seed brain files
+- `ca5f42bb` Add RSI Engine section + Brain System TOC entry
+
+### 🧹 Miscellaneous
+
+- `b5ffb799` cargo fmt for cron + plan-tool changes
+- `8d6d3f7c` Update plan test suite for 4-command plan tool
+- `623debb9` Redesign plan tool to 4 commands, kill dead pipelines
+- `12e23bfe` Governance guards for brain-file structure
+- `979afb76` cargo fmt (import order + line wrapping)
+- `32c3df00` Move slash commands to contextual on-demand loading
+- `0d5fdae1` Verify SOUL.md ordering + fix stale comments
+- `04a4581b` Move SOUL.md to end of system prompt
+
+### 📊 Stats
+
+- 36 commits since v0.3.45
+- 81 files changed, +3799 / -1972 lines
+- 4,073 tests (4,073 passed, 0 failed, 24 ignored)
+
 ## [0.3.45] - 2026-06-20
 
 6 commits since v0.3.44. 9 files changed, +394 / -41 lines.
@@ -5797,3 +5858,4 @@ fixes.
 [0.3.43]: https://github.com/adolfousier/opencrabs/compare/v0.3.42...v0.3.43
 [0.3.44]: https://github.com/adolfousier/opencrabs/compare/v0.3.43...v0.3.44
 [0.3.45]: https://github.com/adolfousier/opencrabs/compare/v0.3.44...v0.3.45
+[0.3.46]: https://github.com/adolfousier/opencrabs/compare/v0.3.45...v0.3.46
