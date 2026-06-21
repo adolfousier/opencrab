@@ -742,16 +742,16 @@ pub struct PreemptedInstance {
 }
 
 /// Map every *live, foreign* lock owner for the active profile to the
-/// channels it holds. "Foreign" = a PID other than this process. Used by
-/// the TUI-priority preemption and by tests; pure file inspection, no
-/// side effects.
-fn foreign_lock_owners() -> std::collections::BTreeMap<u32, Vec<String>> {
-    let lock_dir = base_opencrabs_dir().join("locks");
+/// channels it holds, reading lock files from `lock_dir`. "Foreign" = a PID
+/// other than this process. Pure file inspection, no side effects. The dir is
+/// a parameter so tests can point it at a TempDir and never read the real
+/// workspace.
+fn foreign_lock_owners(lock_dir: &Path) -> std::collections::BTreeMap<u32, Vec<String>> {
     let current_profile = active_profile().unwrap_or("default");
     let self_pid = std::process::id();
     let mut owners: std::collections::BTreeMap<u32, Vec<String>> = Default::default();
 
-    let entries = match fs::read_dir(&lock_dir) {
+    let entries = match fs::read_dir(lock_dir) {
         Ok(e) => e,
         Err(_) => return owners,
     };
@@ -815,7 +815,18 @@ fn foreign_lock_owners() -> std::collections::BTreeMap<u32, Vec<String>> {
 /// the user. Blocks while waiting, so callers on an async runtime should
 /// invoke it via `spawn_blocking`.
 pub fn preempt_other_profile_instances() -> Vec<PreemptedInstance> {
-    let owners = foreign_lock_owners();
+    // The ONLY caller that may touch the real lock dir and real services.
+    preempt_instances_in(&base_opencrabs_dir().join("locks"), true)
+}
+
+/// Core of [`preempt_other_profile_instances`], parameterized by the lock
+/// directory and whether to stop systemd services. This separation exists for
+/// SAFETY: this function sends real SIGTERM/SIGKILL to whatever live PIDs it
+/// finds in `lock_dir`, so it must NEVER run against the real
+/// `~/.opencrabs/locks/` from a test (doing so kills the user's running
+/// instances). Tests call this with a TempDir and `stop_services = false`.
+pub(crate) fn preempt_instances_in(lock_dir: &Path, stop_services: bool) -> Vec<PreemptedInstance> {
+    let owners = foreign_lock_owners(lock_dir);
     if owners.is_empty() {
         return Vec::new();
     }
@@ -824,18 +835,21 @@ pub fn preempt_other_profile_instances() -> Vec<PreemptedInstance> {
     // doesn't bring it straight back after the SIGTERM. The glob covers
     // every profile's unit; harmless (just non-zero exit) when there's no
     // systemd or no matching unit. Both scopes, since the daemon may be a
-    // system OR a user service.
-    for user in [false, true] {
-        let mut cmd = std::process::Command::new("systemctl");
-        if user {
-            cmd.arg("--user");
-        }
-        cmd.arg("stop")
-            .arg("opencrabs*.service")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        if let Err(e) = cmd.status() {
-            tracing::debug!(user, error = %e, "preempt: systemctl stop spawn failed (likely no systemd)");
+    // system OR a user service. Skipped under tests (`stop_services = false`)
+    // so a test can never stop a real service on a CI host.
+    if stop_services {
+        for user in [false, true] {
+            let mut cmd = std::process::Command::new("systemctl");
+            if user {
+                cmd.arg("--user");
+            }
+            cmd.arg("stop")
+                .arg("opencrabs*.service")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            if let Err(e) = cmd.status() {
+                tracing::debug!(user, error = %e, "preempt: systemctl stop spawn failed (likely no systemd)");
+            }
         }
     }
 
