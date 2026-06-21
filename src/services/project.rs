@@ -49,6 +49,33 @@ impl ProjectService {
         Ok(dir)
     }
 
+    /// `~/.opencrabs/projects/<slug>/` (the project ROOT, not `/files`) for the
+    /// session's project, plus the project name for labelling. `None` when the
+    /// session has no project, the project row is gone, or the lookup fails.
+    ///
+    /// This is the hook point for per-project brain overlays: a project may
+    /// carry its own `AGENTS.md`, `SOUL.md`, etc. that load ON TOP of the
+    /// profile's brain. Read-only resolution, the directory is NOT created here
+    /// (overlays are optional; absence just means "no overlay").
+    pub async fn project_brain_dir(
+        &self,
+        session_id: Uuid,
+    ) -> Option<(String, std::path::PathBuf)> {
+        use crate::db::repository::SessionRepository;
+        let session = SessionRepository::new(self.context.pool())
+            .find_by_id(session_id)
+            .await
+            .ok()??;
+        let project_id = session.project_id?;
+        let project = ProjectRepository::new(self.context.pool())
+            .find_by_id(project_id)
+            .await
+            .ok()??;
+        let dir =
+            Self::projects_dir().join(crate::services::file::slugify_project_name(&project.name));
+        Some((project.name, dir))
+    }
+
     /// Create a new project
     pub async fn create_project(
         &self,

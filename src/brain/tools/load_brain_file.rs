@@ -49,7 +49,7 @@ impl Tool for LoadBrainFileTool {
         false
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolExecutionContext) -> Result<ToolResult> {
+    async fn execute(&self, input: Value, ctx: &ToolExecutionContext) -> Result<ToolResult> {
         let name = input
             .get("name")
             .and_then(|v| v.as_str())
@@ -74,6 +74,39 @@ impl Tool for LoadBrainFileTool {
             (res.content, res.stripped_headers)
         };
 
+        // Per-project brain overlay. If this session belongs to a project that
+        // carries its own brain file, it loads ON TOP of the profile's file
+        // (append, never replace) so a project can ADD context without ever
+        // silently dropping a profile-level hard rule. `None` for sessions with
+        // no project, CLI one-shots, or tests without a service_context.
+        let project_overlay: Option<(String, std::path::PathBuf)> = match &ctx.service_context {
+            Some(svc) => {
+                crate::services::ProjectService::new(svc.clone())
+                    .project_brain_dir(ctx.session_id)
+                    .await
+            }
+            None => None,
+        };
+        // Format a project overlay section for `fname`, or `None` if no project,
+        // no such overlay file, or it filters down to empty.
+        let overlay_section = |fname: &str| -> Option<String> {
+            let (pname, dir) = project_overlay.as_ref()?;
+            let raw = std::fs::read_to_string(dir.join(fname)).ok()?;
+            let filtered = if strip_enabled {
+                crate::brain::filter::strip_empty_sections(&raw).content
+            } else {
+                raw
+            };
+            let trimmed = filtered.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            Some(format!(
+                "--- {} (project: {} overlay) ---\n{}\n\n",
+                fname, pname, trimmed
+            ))
+        };
+
         if name == "all" {
             let mut out = String::new();
             let mut stripped_all: Vec<String> = Vec::new();
@@ -92,6 +125,10 @@ impl Tool for LoadBrainFileTool {
                     for h in stripped {
                         stripped_all.push(format!("{}: {}", fname, h));
                     }
+                }
+                // Project overlay rides ON TOP, right after the profile file.
+                if let Some(ov) = overlay_section(fname) {
+                    out.push_str(&ov);
                 }
             }
 
@@ -117,6 +154,32 @@ impl Tool for LoadBrainFileTool {
                             stripped_all.push(format!("{}: {}", fname, h));
                         }
                     }
+                    // Project overlay rides ON TOP, right after the profile file.
+                    if let Some(ov) = overlay_section(&fname) {
+                        out.push_str(&ov);
+                    }
+                    seen.insert(fname.to_lowercase());
+                }
+            }
+
+            // Project-only brain files (no profile counterpart) still ride ON TOP.
+            if let Some((_, dir)) = &project_overlay
+                && let Ok(entries) = std::fs::read_dir(dir)
+            {
+                let mut extras: Vec<_> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| {
+                        let n = e.file_name().to_string_lossy().to_string();
+                        n.ends_with(".md") && !seen.contains(&n.to_lowercase())
+                    })
+                    .collect();
+                extras.sort_by_key(|e| e.file_name());
+                for entry in extras {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    if let Some(ov) = overlay_section(&fname) {
+                        out.push_str(&ov);
+                    }
+                    seen.insert(fname.to_lowercase());
                 }
             }
 
@@ -151,6 +214,7 @@ impl Tool for LoadBrainFileTool {
             .unwrap_or(name);
 
         let path = home.join(canonical);
+        let overlay = overlay_section(canonical);
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 let (filtered, stripped) = apply_filter(content);
@@ -163,22 +227,34 @@ impl Tool for LoadBrainFileTool {
                     );
                 }
                 let trimmed = filtered.trim();
-                if trimmed.is_empty() {
+                let mut out = if trimmed.is_empty() {
+                    String::new()
+                } else {
+                    format!("--- {} ---\n{}", canonical, trimmed)
+                };
+                if let Some(ov) = overlay {
+                    if !out.is_empty() {
+                        out.push_str("\n\n");
+                    }
+                    out.push_str(ov.trim_end());
+                }
+                if out.is_empty() {
                     Ok(ToolResult::success(format!(
                         "{} exists but is empty.",
                         canonical
                     )))
                 } else {
-                    Ok(ToolResult::success(format!(
-                        "--- {} ---\n{}",
-                        canonical, trimmed
-                    )))
+                    Ok(ToolResult::success(out))
                 }
             }
-            Err(_) => Ok(ToolResult::success(format!(
-                "{} not found in your OpenCrabs home ({}). No content available.",
-                canonical, canonical
-            ))),
+            // Profile file missing — still surface a project overlay if one exists.
+            Err(_) => match overlay {
+                Some(ov) => Ok(ToolResult::success(ov.trim_end().to_string())),
+                None => Ok(ToolResult::success(format!(
+                    "{} not found in your OpenCrabs home ({}). No content available.",
+                    canonical, canonical
+                ))),
+            },
         }
     }
 }
