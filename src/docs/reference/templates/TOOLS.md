@@ -70,6 +70,12 @@ never assume the capability is missing before searching.
 - `/check` — Run `cargo clippy` and `cargo test`
 - `/evolve` — Download latest release binary (full procedure → BOOT.md)
 
+## Scheduling (Cron)
+
+Manage scheduled jobs with the **`cron_manage`** tool (`action`: create / list / delete / enable / disable / test). Jobs run in **isolated sessions on your configured provider/model by default** — omit `provider`/`model` for the default; set `thinking: off` for routine jobs; use `deliver_to` only to send results to a channel.
+
+**Cron expression format (the common trap):** 5 fields `min hour dom mon dow`. Day-of-week is **1-7 = Sun-Sat** (1=Sunday, 7=Saturday; `0` is invalid) — **use day names** (`Mon-Fri`, `Sun`) instead of numbers. No `@daily`/`@hourly` macros. Set `tz` (IANA, e.g. `America/New_York`) and the job runs in that zone's local time, DST-aware. **Validate before you confirm:** `create` echoes the next run times — read them back; a wrong day-of-week parses fine but the next-run list exposes it. Fix and recreate before telling the user it's set.
+
 ## Voice & Audio
 
 STT providers: `voicebox` (local server) > `openai_compatible` > `groq` (Whisper API) > `local` (rwhisper, `local-stt` feature). Override with `stt_fallback_chain`.
