@@ -248,8 +248,7 @@ impl CronManageTool {
         // timezone so the agent (and user) can verify the schedule means what
         // they intended before treating it as done — this is what catches a
         // day-of-week mistake that still parses fine.
-        let next_runs =
-            crate::cron::format_upcoming(cron_expr, parsed_tz, 3, chrono::Utc::now());
+        let next_runs = crate::cron::format_upcoming(cron_expr, parsed_tz, 3, chrono::Utc::now());
 
         Ok(ToolResult::success(format!(
             "Cron job created:\n  ID: {job_id}\n  Name: {name}\n  Schedule: {cron_expr}\n  Timezone: {}\n  Deliver to: {delivery}\n  Enabled: true\n  Next runs:\n{next_runs}\n\nVerify the Next runs match what you intended (day-of-week is Sun-Sat, DST handled) before confirming to the user.",

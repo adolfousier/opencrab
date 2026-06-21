@@ -147,7 +147,9 @@ fn add_task_to_plan(
             ));
         }
         let dep_task = plan.tasks.get(*dep_order - 1).ok_or_else(|| {
-            ToolError::InvalidInput(format!("Invalid dependency: task {dep_order} does not exist"))
+            ToolError::InvalidInput(format!(
+                "Invalid dependency: task {dep_order} does not exist"
+            ))
         })?;
         task.dependencies.push(TaskDep::Id(dep_task.id));
     }
@@ -563,7 +565,9 @@ impl Tool for PlanTool {
                     }
 
                     imported.validate_dependencies().map_err(|e| {
-                        ToolError::InvalidInput(format!("Imported plan has invalid dependencies: {e}"))
+                        ToolError::InvalidInput(format!(
+                            "Imported plan has invalid dependencies: {e}"
+                        ))
                     })?;
 
                     let count = imported.tasks.len();
@@ -662,7 +666,11 @@ impl Tool for PlanTool {
                     acceptance_criteria,
                 )?;
                 let total = current_plan.tasks.len();
-                let ttype = current_plan.get_task_by_order(order).unwrap().task_type.clone();
+                let ttype = current_plan
+                    .get_task_by_order(order)
+                    .unwrap()
+                    .task_type
+                    .clone();
                 format!(
                     "✓ Added task #{order}: {title}\n  Type: {ttype} | Complexity: {}★\n  Position: {order} of {total}",
                     complexity.clamp(1, 5)
@@ -701,13 +709,14 @@ impl Tool for PlanTool {
 
                 match target_order {
                     None => {
-                        if current_plan
-                            .tasks
-                            .iter()
-                            .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
-                        {
+                        if current_plan.tasks.iter().all(|t| {
+                            matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped)
+                        }) {
                             current_plan.complete();
-                            format!("✅ Plan complete. All {} tasks done.", current_plan.tasks.len())
+                            format!(
+                                "✅ Plan complete. All {} tasks done.",
+                                current_plan.tasks.len()
+                            )
                         } else {
                             let blocked = current_plan
                                 .tasks
@@ -723,7 +732,11 @@ impl Tool for PlanTool {
                         }
                     }
                     Some(order) => {
-                        let status = current_plan.get_task_by_order(order).unwrap().status.clone();
+                        let status = current_plan
+                            .get_task_by_order(order)
+                            .unwrap()
+                            .status
+                            .clone();
                         // Starting a pending task requires its dependencies done.
                         if matches!(status, TaskStatus::Pending) {
                             let task = current_plan.get_task_by_order(order).unwrap();
@@ -842,7 +855,10 @@ impl Tool for PlanTool {
                     current_plan.status = PlanStatus::InProgress;
                     let next = current_plan.get_task_by_order(no).unwrap();
                     let details = render_task_details(current_plan, next);
-                    msg.push_str(&format!("\n\n▶️ Started Task #{no}: {}\n{details}", next.title));
+                    msg.push_str(&format!(
+                        "\n\n▶️ Started Task #{no}: {}\n{details}",
+                        next.title
+                    ));
                 } else if current_plan
                     .tasks
                     .iter()

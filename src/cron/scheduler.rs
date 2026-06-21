@@ -820,7 +820,9 @@ async fn deliver_telegram(chat_id: &str, message: &str) {
         }
     }
     if delivered > 0 {
-        tracing::info!("Cron result delivered to Telegram chat {chat_id} (HTML, {delivered} part(s))");
+        tracing::info!(
+            "Cron result delivered to Telegram chat {chat_id} (HTML, {delivered} part(s))"
+        );
     }
 }
 
@@ -860,7 +862,9 @@ async fn deliver_discord(channel_id: &str, message: &str) {
         }
     }
     if delivered > 0 {
-        tracing::info!("Cron result delivered to Discord channel {channel_id} ({delivered} part(s))");
+        tracing::info!(
+            "Cron result delivered to Discord channel {channel_id} ({delivered} part(s))"
+        );
     }
 }
 

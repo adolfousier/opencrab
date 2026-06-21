@@ -774,9 +774,10 @@ pub(crate) fn format_plan_reminder(plan: &crate::tui::plan::PlanDocument) -> Opt
                     ));
                 }
             }
-            TaskStatus::Failed => {
-                out.push_str(&format!("✗ Task {}: {} {meta} (failed — retry/fix)\n", t.order, t.title))
-            }
+            TaskStatus::Failed => out.push_str(&format!(
+                "✗ Task {}: {} {meta} (failed — retry/fix)\n",
+                t.order, t.title
+            )),
             TaskStatus::Blocked(reason) => out.push_str(&format!(
                 "⊘ Task {}: {} {meta} (blocked: {reason})\n",
                 t.order, t.title

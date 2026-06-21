@@ -36,7 +36,12 @@ fn parse_schedule(cron_expr: &str) -> Option<Schedule> {
 /// The next `n` fire times for a 5-field cron expression, interpreted in
 /// `tz`'s wall clock (DST-aware), returned as tz-local datetimes for
 /// display. Empty if the expression is malformed or has no future runs.
-pub fn upcoming_in_tz(cron_expr: &str, tz: Tz, n: usize, after: DateTime<Utc>) -> Vec<DateTime<Tz>> {
+pub fn upcoming_in_tz(
+    cron_expr: &str,
+    tz: Tz,
+    n: usize,
+    after: DateTime<Utc>,
+) -> Vec<DateTime<Tz>> {
     match parse_schedule(cron_expr) {
         Some(s) => s.after(&after.with_timezone(&tz)).take(n).collect(),
         None => Vec::new(),
