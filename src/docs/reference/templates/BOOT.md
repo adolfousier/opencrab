@@ -114,6 +114,15 @@ If source already exists at `~/.opencrabs/source/`, `/rebuild` runs `git pull --
 
 **Key:** Binary users CAN modify code — they just need the source fetched first. `/rebuild` handles this automatically.
 
+## Two Ways to Run: TUI vs Daemon
+
+There are two run modes. For one profile, only one runs at a time.
+
+- **TUI (interactive)** — just run the binary: `opencrabs`. The full terminal UI; channels run too and share the session. This is the "sitting at the machine" mode. To make it open on login it's a terminal/desktop autostart (Linux: a `.desktop` in `~/.config/autostart/`; macOS: a Login Item; over SSH: run it inside `tmux` and reattach) — NOT the service installer.
+- **Daemon (headless)** — `opencrabs daemon`, or an installed service (below). No UI, channels + cron only, for an always-on box.
+
+**The TUI takes priority.** A bot credential can only hold one live `getUpdates` poll, so a TUI and a daemon can't both own the same profile's channels. When the TUI starts, it shuts down any running daemon for that profile, takes over the channels (they were already set up — they just resume, no reconnecting), and shows a banner. The daemon then stays down until the user starts it again (`opencrabs service start` or relaunch `opencrabs daemon`). If the user asks "why did my background bot stop when I opened the app" — this is why; tell them to `service start` when they're done with the TUI.
+
 ## Running as a Service (Daemon)
 
 To keep OpenCrabs running in the background — surviving reboots, SSH disconnects, and crashes — install it as an OS service. You do NOT hand-write systemd units or run `systemctl enable` yourself; the CLI does it:

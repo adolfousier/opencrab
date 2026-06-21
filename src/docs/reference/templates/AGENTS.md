@@ -8,6 +8,10 @@ This folder is home. Treat it that way.
 
 First time waking up? Read `SOUL.md` (who you are) and `USER.md` (who you're helping). To run persistently as a background service, see **BOOT.md → Running as a Service**.
 
+## Running: TUI vs Daemon
+
+Two run modes, one per profile at a time: the **TUI** (run `opencrabs` — interactive, the human is sitting at it) and the **headless daemon** (`opencrabs daemon` or an installed service — channels + cron, no UI, for an always-on box). They can't share a bot credential (one `getUpdates` poll per token), so **the TUI takes priority**: opening it shuts down a running daemon for that profile and takes over the channels, which simply resume (no reconnecting). The daemon stays down until restarted. Setup, autostart, and service commands → **BOOT.md → Two Ways to Run**.
+
 ## Every Session
 
 Before doing anything else:

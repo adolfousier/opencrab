@@ -454,6 +454,26 @@ Run multiple isolated OpenCrabs instances from the same installation. Each profi
 
 **Profile migration:** Use `opencrabs profile migrate --from default --to hermes` to copy all `.md` brain files, `.toml` config files, and `memory/` entries to a new profile. Sessions and database are not copied — the new profile starts clean. Add `--force` to overwrite existing files in the target profile. After migrating, customize the new profile's `SOUL.md`, `IDENTITY.md`, and `config.toml` to give it a different personality and provider setup.
 
+### Running OpenCrabs — TUI vs Daemon
+
+OpenCrabs runs in one of two modes. Pick the one that fits the machine, and **for any one profile run only one at a time**.
+
+| Mode | How you start it | What it is | Use it on |
+|------|------------------|------------|-----------|
+| **TUI (interactive)** | Just run the binary: `opencrabs` | The full terminal UI — chat panes, sessions, settings. Your channels run too and share your session. | A machine you sit at (laptop / desktop) |
+| **Daemon (headless)** | `opencrabs daemon`, or install it as a service: `opencrabs service install && opencrabs service start` | No UI. Channels only (Telegram / Discord / Slack / WhatsApp) + cron. Survives reboots, SSH disconnects, and crashes. | An always-on box / VPS |
+
+**Why not both at once?** A bot credential (e.g. a Telegram token) can only hold one live `getUpdates` poll. If a daemon and a TUI both own the same profile's token they fight (HTTP 409) and the channel drops.
+
+**The TUI always wins.** When you open the TUI while a daemon for the *same profile* is running, the TUI shuts that daemon down first, takes over the channels, and shows a banner saying so — your channels were already set up, so they just resume, **no reconnecting**. The daemon stays down until you start it again (`opencrabs service start`, or relaunch `opencrabs daemon`). So on a box where the daemon usually runs, the everyday flow is simply: open `opencrabs` when you want to sit down with it; close the TUI and `opencrabs service start` when you want it headless again.
+
+**Auto-start on boot:**
+- **Daemon** — use the service installer (`opencrabs service install`); it wires up systemd (Linux) / launchd (macOS) to start on boot and restart on crash. This is the recommended always-on setup, and what most people want.
+- **TUI** — to have the terminal UI open automatically on login, that's a terminal / desktop autostart, *not* the service installer:
+  - **Linux desktop:** drop a `.desktop` file in `~/.config/autostart/` with `Exec=x-terminal-emulator -e opencrabs`.
+  - **macOS:** System Settings → General → Login Items → add a small `.command` script that runs `opencrabs` (or one that tells Terminal to open it).
+  - **VPS over SSH:** a TUI needs a live terminal, so run it inside `tmux`/`screen` and reattach — e.g. a `@reboot` cron or user service that runs `tmux new-session -d -s crab 'opencrabs'`, then `tmux attach -t crab` when you SSH in. On a headless VPS you usually want the daemon, not the TUI.
+
 ### Daemon & Service
 
 Run profiles as background services:
@@ -479,7 +499,7 @@ Multiple profiles can run as simultaneous daemon services with full isolation.
 
 **Environment variable:** Set `OPENCRABS_PROFILE=hermes` to select a profile without the `-p` flag. Useful for systemd services, cron jobs, and daemon mode.
 
-**Troubleshooting — daemon stays down after a restart:** the daemon is meant to auto-recover (Linux `Restart=always`, macOS `KeepAlive`). If you installed the service on an older build, its unit file may still use `Restart=on-failure`, which does not restart after a clean exit and can leave the daemon down. Re-generate the unit with `opencrabs -p <name> service install` (then `service start`) to pick up the always-restart policy. Config, keys, commands, and tools hot-reload at runtime, so editing `~/.opencrabs/config.toml` (or `keys.toml`) never needs a daemon restart — if a change isn't taking effect, check the logs for a `ConfigWatcher: reloaded` line rather than restarting.
+**Troubleshooting — daemon stays down:** first, did you open the TUI on this box? Opening `opencrabs` deliberately shuts the daemon down so the interactive session can own the channels (see **Running OpenCrabs — TUI vs Daemon** above) — it stays down until you `opencrabs service start` again. If that's not it: the daemon is meant to auto-recover (Linux `Restart=always`, macOS `KeepAlive`). If you installed the service on an older build, its unit file may still use `Restart=on-failure`, which does not restart after a clean exit and can leave the daemon down. Re-generate the unit with `opencrabs -p <name> service install` (then `service start`) to pick up the always-restart policy. Config, keys, commands, and tools hot-reload at runtime, so editing `~/.opencrabs/config.toml` (or `keys.toml`) never needs a daemon restart — if a change isn't taking effect, check the logs for a `ConfigWatcher: reloaded` line rather than restarting.
 
 ---
 
