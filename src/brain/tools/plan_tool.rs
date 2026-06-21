@@ -4,9 +4,7 @@
 
 use super::error::{Result, ToolError};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
-use crate::tui::plan::{
-    PlanDocument, PlanStatus, PlanTask, TaskDep, TaskType, ToolCall as PlanToolCall,
-};
+use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskDep, TaskStatus, TaskType};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -19,10 +17,14 @@ pub struct PlanTool;
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 enum PlanOperation {
-    /// Create a new plan
-    Create {
-        title: String,
-        description: String,
+    /// Create a new plan (from a title, optionally with inline tasks) OR
+    /// import one from a JSON file. Replaces any existing plan in the session.
+    Init {
+        /// Plan title (create mode). One of `title` / `file_path` is required.
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
         #[serde(default)]
         context: String,
         #[serde(default)]
@@ -31,16 +33,20 @@ enum PlanOperation {
         test_strategy: String,
         #[serde(default)]
         technical_stack: Vec<String>,
+        /// Import mode: absolute path to a plan JSON file on disk. Takes
+        /// precedence over `title` when both are present.
+        #[serde(default)]
+        file_path: Option<String>,
+        /// Optional inline task definitions (create mode) — plan + tasks in one call.
+        #[serde(default)]
+        tasks: Vec<InlineTask>,
     },
-    /// Import a pre-defined plan from a JSON file. Replaces any existing plan in this session.
-    Import {
-        /// Absolute path to the plan JSON file on disk
-        file_path: String,
-    },
-    /// Add a task to the current plan
+    /// Add a task to the current plan (appended at the end).
     AddTask {
         title: String,
+        #[serde(default)]
         description: String,
+        #[serde(default = "default_task_type")]
         task_type: String,
         #[serde(default)]
         dependencies: Vec<usize>, // Task order numbers
@@ -48,79 +54,160 @@ enum PlanOperation {
         complexity: u8,
         #[serde(default)]
         acceptance_criteria: Vec<String>,
-        /// Insert after this task number (1-based). If omitted, appends at end.
-        /// Existing tasks are renumbered sequentially after insert.
+    },
+    /// Find and start the next task — or a specific one via `task_order`.
+    /// Returns full task details. Idempotent on an in-progress task (re-surfaces
+    /// its details after a compaction); resets a failed task for retry. The
+    /// first start auto-approves the plan for execution.
+    Start {
         #[serde(default)]
-        insert_after: Option<usize>,
+        task_order: Option<usize>,
     },
-    /// Update plan metadata
-    UpdatePlan {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        title: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        context: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        risks: Option<Vec<String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        test_strategy: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        technical_stack: Option<Vec<String>>,
-    },
-    /// Mark plan as ready for review
-    Finalize,
-    /// Get current plan status
-    Status,
-    /// Get the next task to execute
-    NextTask,
-    /// Start executing a specific task
-    StartTask { task_order: usize },
-    /// Complete a task execution with results
-    CompleteTask {
+    /// Finish a task and auto-start the next one (returning its full details).
+    Complete {
         task_order: usize,
-        #[serde(default = "default_true")]
-        success: bool,
+        /// "success" (default), "fail", or "skip".
+        #[serde(default = "default_action")]
+        action: String,
         #[serde(default)]
         output: String,
-        #[serde(default)]
-        artifacts: Vec<String>,
     },
-    /// Add reflection notes after task execution
-    Reflect {
-        task_order: usize,
-        reflection: String,
-        #[serde(default)]
-        should_retry: bool,
-        #[serde(default)]
-        adjustment_needed: Option<String>,
-    },
-    /// Record a tool call for the current task
-    RecordToolCall {
-        task_order: usize,
-        tool_name: String,
-        #[serde(default)]
-        input: serde_json::Value,
-        output: Option<String>,
-        #[serde(default = "default_true")]
-        success: bool,
-    },
-    /// Skip a task with reason
-    SkipTask {
-        task_order: usize,
-        #[serde(default)]
-        reason: String,
-    },
-    /// Get execution summary
-    Summary,
+}
+
+/// Inline task definition accepted by `init` so a plan and its tasks can be
+/// created in a single call.
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct InlineTask {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_task_type")]
+    pub task_type: String,
+    #[serde(default)]
+    pub dependencies: Vec<usize>,
+    #[serde(default = "default_complexity")]
+    pub complexity: u8,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
 }
 
 pub(crate) fn default_complexity() -> u8 {
     3
 }
 
-fn default_true() -> bool {
-    true
+fn default_task_type() -> String {
+    "other".to_string()
+}
+
+fn default_action() -> String {
+    "success".to_string()
+}
+
+/// Parse a task-type string into a `TaskType`, mapping anything unrecognized
+/// to `Other`.
+fn parse_task_type(s: &str) -> TaskType {
+    match s.to_lowercase().as_str() {
+        "research" => TaskType::Research,
+        "edit" => TaskType::Edit,
+        "create" => TaskType::Create,
+        "delete" => TaskType::Delete,
+        "test" => TaskType::Test,
+        "refactor" => TaskType::Refactor,
+        "documentation" => TaskType::Documentation,
+        "configuration" => TaskType::Configuration,
+        "build" => TaskType::Build,
+        other => TaskType::Other(other.to_string()),
+    }
+}
+
+/// Append a task to `plan`, resolving 1-based dependency order numbers to the
+/// referenced tasks' UUIDs. Returns the new task's order. Shared by `add_task`
+/// and `init`'s inline tasks.
+fn add_task_to_plan(
+    plan: &mut PlanDocument,
+    title: String,
+    description: String,
+    task_type: &str,
+    dependencies: &[usize],
+    complexity: u8,
+    acceptance_criteria: Vec<String>,
+) -> Result<usize> {
+    validate_string(&title, MAX_TITLE_LENGTH, "Task title")?;
+    if !description.is_empty() {
+        validate_string(&description, MAX_DESCRIPTION_LENGTH, "Task description")?;
+    }
+    let order = plan.tasks.len() + 1;
+    let mut task = PlanTask::new(order, title, description, parse_task_type(task_type));
+    task.complexity = complexity.clamp(1, 5);
+    task.acceptance_criteria = acceptance_criteria;
+    for dep_order in dependencies {
+        if *dep_order == 0 {
+            return Err(ToolError::InvalidInput(
+                "Task numbers start at 1, not 0".to_string(),
+            ));
+        }
+        let dep_task = plan.tasks.get(*dep_order - 1).ok_or_else(|| {
+            ToolError::InvalidInput(format!("Invalid dependency: task {dep_order} does not exist"))
+        })?;
+        task.dependencies.push(TaskDep::Id(dep_task.id));
+    }
+    plan.tasks.push(task);
+    Ok(order)
+}
+
+/// One-line-per-task list (order, title, type) for the `init` confirmation.
+fn render_task_list(plan: &PlanDocument) -> String {
+    plan.tasks
+        .iter()
+        .map(|t| format!("  {}. {} [{}]", t.order, t.title, t.task_type))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Full task details (type, complexity, description, acceptance criteria,
+/// dependency state, status) for `start` and `complete`'s next-task preview.
+/// This is the recovery payload that survives a context compaction.
+fn render_task_details(plan: &PlanDocument, task: &PlanTask) -> String {
+    let criteria = if task.acceptance_criteria.is_empty() {
+        String::new()
+    } else {
+        let lines = task
+            .acceptance_criteria
+            .iter()
+            .map(|c| format!("  • {c}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("\nAcceptance Criteria:\n{lines}")
+    };
+    let deps = if task.dependencies.is_empty() {
+        String::new()
+    } else {
+        let parts = task
+            .dependencies
+            .iter()
+            .filter_map(|d| d.as_uuid())
+            .filter_map(|id| plan.get_task(&id))
+            .map(|t| {
+                let mark = if matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped) {
+                    "✓"
+                } else {
+                    "✗"
+                };
+                format!("Task {} {}", t.order, mark)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("\nDependencies: {parts}")
+    };
+    format!(
+        "Type: {} | Complexity: {}\nDescription: {}{}{}\nStatus: {:?}",
+        task.task_type,
+        task.complexity_stars(),
+        task.description,
+        criteria,
+        deps,
+        task.status
+    )
 }
 
 /// Validate plan file path for security
@@ -200,27 +287,27 @@ impl Tool for PlanTool {
     }
 
     fn description(&self) -> &str {
-        "Manage structured task plans with full plan-and-execute capabilities. Create plans, add tasks, \
-         import a pre-defined plan from a JSON file, execute them step-by-step, reflect on results, \
-         and adjust as needed. Supports dependency tracking, execution history, and automatic retry logic. \
-         \n\nWHEN TO USE: call `plan` BEFORE starting any task that has 3+ distinct steps, dependencies \
-         between steps, or touches multiple files. Always plan when: \
-         (a) the user explicitly asks for a plan or roadmap, \
-         (b) a request describes >2 deliverables (\"add X, then refactor Y, then test Z\"), \
-         (c) the work spans multiple files or commits, \
-         (d) you need to retry steps independently if some fail, \
-         (e) the user is going to step away while you work. \
-         Skip planning only for trivial single-tool answers (one read, one search, one edit). \
-         The plan stays visible across compactions, so it doubles as memory for long sessions. \
-         \n\nBUNDLED REFERENCE PLANS: Source at `src/docs/reference/plans/` (embedded in binary). \
-         Runtime path: `~/.opencrabs/profiles/<profile>/plans/` (e.g., `~/.opencrabs/profiles/ops/plans/`). \
-         See `coding-plans/rust-fast.json`, `coding-plans/rust-medium.json`, `coding-plans/rust-full.json`, \
-         `coding-plans/python-fast.json`, `coding-plans/python-medium.json`, `coding-plans/python-full.json`, \
-         and `coding-plans/sample-minimal-plan.json`. Also see `plan-json-spec.md` for schema documentation. \
-         Minimal import format: only 6 fields required (title, description + 3 per task: title, description, task_type). \
-         \n\nRE-TESTING AFTER BUG FIX: Plans are forward-only. A completed task stays completed. \
-         If a later task introduces a bug caught by an earlier test, add a new task (e.g., \"Re-run tests after fix\") \
-         rather than re-opening the completed one. Use `add_task` with task_type \"test\" and reference the fixed task."
+        "Manage a structured task plan for multi-step work. FOUR operations: \
+         `init` (create a plan from a title — optionally with inline `tasks` — or import one from a \
+         JSON `file_path`), `add_task` (append a task), `start` (begin the next task, or a specific \
+         one via `task_order`), and `complete` (finish a task and auto-start the next). \
+         \n\nFLOW: init → add_task… → start → (do the work) → complete → (auto-starts next) → complete → … \
+         `start` and `complete` return the FULL task details (description, acceptance criteria, \
+         dependencies), so the plan doubles as durable memory across context compactions — call \
+         `start` with no args to re-surface the in-progress task's details after a compaction. \
+         \n\nWHEN TO USE: call `plan` BEFORE starting any task with 3+ distinct steps, dependencies \
+         between steps, or that touches multiple files; when the user asks for a plan/roadmap; when a \
+         request describes >2 deliverables; or when the user will step away while you work. Skip \
+         planning for trivial single-tool answers. \
+         \n\nDETAILS: `start` is idempotent on an in-progress task and resets a failed task for retry; \
+         the first `start` auto-approves the plan. `complete` takes action=\"success\" (default), \
+         \"fail\", or \"skip\". Day-of-week of dependencies is by task order number (1-based). \
+         \n\nBUNDLED REFERENCE PLANS for import: source at `src/docs/reference/plans/` (embedded), \
+         runtime at `~/.opencrabs/profiles/<profile>/plans/`. See `coding-plans/rust-fast.json` etc. \
+         and `plan-json-spec.md`. \
+         \n\nRE-TESTING AFTER BUG FIX: plans are forward-only — a completed task stays completed. If a \
+         later task introduces a bug an earlier test would catch, `add_task` a new test task rather \
+         than re-opening the completed one."
     }
 
     fn input_schema(&self) -> Value {
@@ -229,107 +316,79 @@ impl Tool for PlanTool {
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["create", "add_task", "update_plan", "finalize", "status", "next_task", "start_task", "complete_task", "reflect", "record_tool_call", "skip_task", "summary", "import"],
-                    "description": "Operation to perform: create/add_task/update_plan for planning, next_task/start_task/complete_task/reflect for execution, summary for status, import to load a pre-defined plan from a JSON file"
+                    "enum": ["init", "add_task", "start", "complete"],
+                    "description": "init (create/import a plan), add_task (append a task), start (begin next/specific task), complete (finish a task, auto-start next)"
                 },
                 "title": {
                     "type": "string",
-                    "description": "Plan or task title (for create/add_task)"
+                    "description": "Plan title (init create mode) or task title (add_task)"
                 },
                 "description": {
                     "type": "string",
-                    "description": "Plan or task description (for create/add_task/update_plan)"
+                    "description": "Plan or task description (init / add_task)"
                 },
                 "context": {
                     "type": "string",
-                    "description": "Context and assumptions (for create/update_plan)"
+                    "description": "Context and assumptions (init create mode)"
                 },
                 "risks": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Identified risks and unknowns (for create/update_plan)"
+                    "description": "Identified risks and unknowns (init create mode)"
                 },
                 "test_strategy": {
                     "type": "string",
-                    "description": "Testing strategy and approach for the plan (for create/update_plan)"
+                    "description": "Testing strategy and approach (init create mode)"
                 },
                 "technical_stack": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Technologies, frameworks, and tools used (for create/update_plan)"
+                    "description": "Technologies, frameworks, and tools used (init create mode)"
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Import mode: absolute path to a plan JSON file on disk (init). Takes precedence over title."
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": { "type": "object" },
+                    "description": "Optional inline task definitions for init create mode — each: {title, description?, task_type?, complexity?, dependencies?, acceptance_criteria?}. Lets you create the plan and all tasks in one call."
                 },
                 "task_type": {
                     "type": "string",
                     "enum": ["research", "edit", "create", "delete", "test", "refactor", "documentation", "configuration", "build"],
-                    "description": "Type of task (for add_task)"
+                    "description": "Type of task (add_task; defaults to other)"
                 },
                 "dependencies": {
                     "type": "array",
                     "items": { "type": "integer" },
-                    "description": "Task order numbers that must complete first (for add_task)"
+                    "description": "Task order numbers (1-based) that must complete first (add_task)"
                 },
                 "complexity": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 5,
                     "default": 3,
-                    "description": "Task complexity from 1 (simple) to 5 (very complex)"
+                    "description": "Task complexity from 1 (simple) to 5 (very complex) (add_task)"
                 },
                 "acceptance_criteria": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Acceptance criteria for task completion (for add_task)"
-                },
-                "insert_after": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Insert new task after this task number (for add_task). 0 = insert at beginning. If omitted, appends at end. Existing tasks are renumbered."
+                    "description": "Acceptance criteria for task completion (add_task)"
                 },
                 "task_order": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Task number to operate on (for start_task/complete_task/reflect/skip_task)"
+                    "description": "Task number (1-based). Required for complete; optional for start (omit to pick the next task)."
                 },
-                "success": {
-                    "type": "boolean",
-                    "description": "Whether the task execution was successful (for complete_task)"
+                "action": {
+                    "type": "string",
+                    "enum": ["success", "fail", "skip"],
+                    "description": "How a task finished (complete): success (default), fail (retry later via start), or skip"
                 },
                 "output": {
                     "type": "string",
-                    "description": "Output/result of task execution (for complete_task)"
-                },
-                "artifacts": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "File paths or other artifacts produced (for complete_task)"
-                },
-                "reflection": {
-                    "type": "string",
-                    "description": "LLM reflection on task execution results (for reflect)"
-                },
-                "should_retry": {
-                    "type": "boolean",
-                    "description": "Whether to retry the task (for reflect)"
-                },
-                "adjustment_needed": {
-                    "type": "string",
-                    "description": "Description of plan adjustment needed (for reflect)"
-                },
-                "tool_name": {
-                    "type": "string",
-                    "description": "Name of tool that was called (for record_tool_call)"
-                },
-                "input": {
-                    "type": "object",
-                    "description": "Input passed to the tool (for record_tool_call)"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Reason for skipping task (for skip_task)"
-                },
-                "file_path": {
-                    "type": "string",
-                    "description": "Absolute path to a plan JSON file on disk (for import)"
+                    "description": "Task result / output, stored on the task (complete)"
                 }
             },
             "required": ["operation"]
@@ -345,12 +404,14 @@ impl Tool for PlanTool {
     }
 
     fn requires_approval_for_input(&self, input: &Value) -> bool {
-        // Only finalize needs approval — it's the one user-visible gate before execution.
-        // start_task no longer requires per-task approval; the finalize approval covers the plan.
+        // `init` is the one user-visible gate: it establishes (creates or imports)
+        // the plan the agent is about to execute, the same role the old
+        // create/import/finalize approval served. `start`/`complete` then flow
+        // without per-task prompts.
         input
             .get("operation")
             .and_then(|v| v.as_str())
-            .map(|op| op == "finalize" || op == "import")
+            .map(|op| op == "init")
             .unwrap_or(false)
     }
 
@@ -401,183 +462,181 @@ impl Tool for PlanTool {
         };
 
         let result = match operation {
-            PlanOperation::Create {
+            PlanOperation::Init {
                 title,
                 description,
                 context: ctx,
                 risks,
                 test_strategy,
                 technical_stack,
+                file_path,
+                tasks,
             } => {
-                // Validate inputs
-                validate_string(&title, MAX_TITLE_LENGTH, "Plan title")?;
-                validate_string(&description, MAX_DESCRIPTION_LENGTH, "Plan description")?;
-                if !ctx.is_empty() {
-                    validate_string(&ctx, MAX_CONTEXT_LENGTH, "Plan context")?;
-                }
-
-                // The plan file is session-scoped (filename = session_id), so any loaded
-                // plan belongs to this session. Always allow overwriting stale plans —
-                // different sessions automatically use different files.
-                if let Some(existing_plan) = plan.as_ref() {
-                    tracing::info!(
-                        "📝 Overwriting existing plan '{}' ({:?}, {} tasks) with new plan '{}'",
-                        existing_plan.title,
-                        existing_plan.status,
-                        existing_plan.tasks.len(),
-                        title
-                    );
-                }
-
-                let mut new_plan =
-                    PlanDocument::new(context.session_id, title.clone(), description);
-                new_plan.context = ctx;
-                new_plan.risks = risks;
-                new_plan.test_strategy = test_strategy;
-                new_plan.technical_stack = technical_stack;
-                new_plan.status = PlanStatus::Draft;
-
-                plan = Some(new_plan.clone());
-
-                format!(
-                    "✓ Created new plan: '{}'\n\nNext steps:\n\
-                     1. Use 'add_task' to add tasks to the plan\n\
-                     2. Use 'finalize' when ready for user review",
-                    title
-                )
-            }
-
-            PlanOperation::Import { file_path } => {
-                let import_path = std::path::Path::new(&file_path);
-
-                // Must be absolute
-                if !import_path.is_absolute() {
-                    return Err(ToolError::InvalidInput(
-                        "Import path must be absolute".to_string(),
-                    ));
-                }
-
-                // Check if the import target itself is a symlink (security).
-                // We only check the file, not ancestors — on macOS /var is a
-                // symlink to /private/var, so ancestor-walking would reject
-                // every TempDir path.
-                if import_path.exists() {
-                    let meta = std::fs::symlink_metadata(import_path).map_err(ToolError::Io)?;
-                    if meta.is_symlink() {
+                if let Some(path) = file_path {
+                    // ===== import mode =====
+                    let import_path = std::path::Path::new(&path);
+                    if !import_path.is_absolute() {
                         return Err(ToolError::InvalidInput(
-                            "Import path contains a symlink (security restriction)".to_string(),
+                            "Import path must be absolute".to_string(),
                         ));
                     }
-                }
-
-                // Check file size before reading
-                let metadata = tokio::fs::metadata(&import_path)
-                    .await
-                    .map_err(ToolError::Io)?;
-                if metadata.len() > MAX_PLAN_FILE_SIZE {
-                    return Err(ToolError::InvalidInput(format!(
-                        "Import file too large: {} bytes (max: {} bytes)",
-                        metadata.len(),
-                        MAX_PLAN_FILE_SIZE
-                    )));
-                }
-
-                // Read and deserialize plan JSON
-                let content = tokio::fs::read_to_string(&import_path)
-                    .await
-                    .map_err(ToolError::Io)?;
-
-                let mut imported: PlanDocument = serde_json::from_str(&content)
-                    .map_err(|e| ToolError::InvalidInput(format!("Invalid plan JSON: {}", e)))?;
-
-                // Log overwrite if a plan already exists
-                if let Some(existing_plan) = plan.as_ref() {
-                    tracing::info!(
-                        "📝 Importing plan '{}' over existing plan '{}'",
-                        imported.title,
-                        existing_plan.title
-                    );
-                }
-
-                // Build a mapping of old UUIDs → new UUIDs so we can remap
-                // task dependency references after reassignment.
-                let old_to_new: std::collections::HashMap<uuid::Uuid, uuid::Uuid> = imported
-                    .tasks
-                    .iter()
-                    .map(|t| (t.id, uuid::Uuid::new_v4()))
-                    .collect();
-
-                // Stamp the plan with fresh IDs and this session's context
-                imported.id = uuid::Uuid::new_v4();
-                imported.session_id = context.session_id;
-                imported.status = PlanStatus::Draft;
-                imported.created_at = chrono::Utc::now();
-                imported.updated_at = chrono::Utc::now();
-                imported.approved_at = None;
-
-                // Resolve integer index dependencies to UUIDs before any validation
-                imported.resolve_index_deps();
-
-                // Validate no orphan dependencies before remapping — a dep
-                // pointing at a UUID not in the imported task set is a
-                // malformed plan and must be rejected explicitly rather
-                // than silently dropped.
-                for task in &imported.tasks {
-                    for dep in &task.dependencies {
-                        if let Some(dep_id) = dep.as_uuid()
-                            && !old_to_new.contains_key(&dep_id)
-                        {
-                            return Err(ToolError::InvalidInput(format!(
-                                "Task '{}' depends on unknown task id {}",
-                                task.title, dep_id
-                            )));
+                    // Reject a symlink AT the target (don't walk ancestors — on
+                    // macOS /var is a symlink and would reject every temp path).
+                    if import_path.exists() {
+                        let meta = std::fs::symlink_metadata(import_path).map_err(ToolError::Io)?;
+                        if meta.is_symlink() {
+                            return Err(ToolError::InvalidInput(
+                                "Import path contains a symlink (security restriction)".to_string(),
+                            ));
                         }
                     }
-                }
+                    let metadata = tokio::fs::metadata(&import_path)
+                        .await
+                        .map_err(ToolError::Io)?;
+                    if metadata.len() > MAX_PLAN_FILE_SIZE {
+                        return Err(ToolError::InvalidInput(format!(
+                            "Import file too large: {} bytes (max: {} bytes)",
+                            metadata.len(),
+                            MAX_PLAN_FILE_SIZE
+                        )));
+                    }
+                    let content = tokio::fs::read_to_string(&import_path)
+                        .await
+                        .map_err(ToolError::Io)?;
+                    let mut imported: PlanDocument = serde_json::from_str(&content)
+                        .map_err(|e| ToolError::InvalidInput(format!("Invalid plan JSON: {e}")))?;
 
-                // Reset all task state — imported tasks start fresh
-                for task in &mut imported.tasks {
-                    let new_id = old_to_new[&task.id];
-                    task.id = new_id;
-                    task.status = crate::tui::plan::TaskStatus::Pending;
-                    task.completed_at = None;
-                    task.retry_count = 0;
-                    task.execution_history.clear();
-                    task.reflection = None;
-                    task.notes = None;
+                    if let Some(existing_plan) = plan.as_ref() {
+                        tracing::info!(
+                            "Importing plan '{}' over existing plan '{}'",
+                            imported.title,
+                            existing_plan.title
+                        );
+                    }
 
-                    // Remap dependency UUIDs to their new values
-                    task.dependencies = task
-                        .dependencies
+                    // Reassign fresh UUIDs and remap dependency references.
+                    let old_to_new: std::collections::HashMap<uuid::Uuid, uuid::Uuid> = imported
+                        .tasks
                         .iter()
-                        .filter_map(|dep| {
-                            dep.as_uuid()
-                                .and_then(|old_id| old_to_new.get(&old_id).copied())
-                                .map(TaskDep::Id)
-                        })
+                        .map(|t| (t.id, uuid::Uuid::new_v4()))
                         .collect();
+
+                    imported.id = uuid::Uuid::new_v4();
+                    imported.session_id = context.session_id;
+                    imported.status = PlanStatus::Draft;
+                    imported.created_at = Utc::now();
+                    imported.updated_at = Utc::now();
+                    imported.approved_at = None;
+
+                    imported.resolve_index_deps();
+
+                    for task in &imported.tasks {
+                        for dep in &task.dependencies {
+                            if let Some(dep_id) = dep.as_uuid()
+                                && !old_to_new.contains_key(&dep_id)
+                            {
+                                return Err(ToolError::InvalidInput(format!(
+                                    "Task '{}' depends on unknown task id {}",
+                                    task.title, dep_id
+                                )));
+                            }
+                        }
+                    }
+
+                    // Imported tasks start fresh.
+                    for task in &mut imported.tasks {
+                        let new_id = old_to_new[&task.id];
+                        task.id = new_id;
+                        task.status = TaskStatus::Pending;
+                        task.completed_at = None;
+                        task.retry_count = 0;
+                        task.notes = None;
+                        task.dependencies = task
+                            .dependencies
+                            .iter()
+                            .filter_map(|dep| {
+                                dep.as_uuid()
+                                    .and_then(|old_id| old_to_new.get(&old_id).copied())
+                                    .map(TaskDep::Id)
+                            })
+                            .collect();
+                    }
+
+                    imported.validate_dependencies().map_err(|e| {
+                        ToolError::InvalidInput(format!("Imported plan has invalid dependencies: {e}"))
+                    })?;
+
+                    let count = imported.tasks.len();
+                    let plan_title = imported.title.clone();
+                    let list = render_task_list(&imported);
+                    plan = Some(imported);
+
+                    format!(
+                        "📋 Imported plan: {plan_title} ({count} tasks)\n\n{list}\n\n\
+                         Call 'start' to begin — it returns the first task's full details."
+                    )
+                } else {
+                    // ===== create mode =====
+                    let title = title.ok_or_else(|| {
+                        ToolError::InvalidInput(
+                            "init requires either 'title' (create) or 'file_path' (import)"
+                                .to_string(),
+                        )
+                    })?;
+                    validate_string(&title, MAX_TITLE_LENGTH, "Plan title")?;
+                    let description = description.unwrap_or_default();
+                    if !description.is_empty() {
+                        validate_string(&description, MAX_DESCRIPTION_LENGTH, "Plan description")?;
+                    }
+                    if !ctx.is_empty() {
+                        validate_string(&ctx, MAX_CONTEXT_LENGTH, "Plan context")?;
+                    }
+
+                    if let Some(existing_plan) = plan.as_ref() {
+                        tracing::info!(
+                            "Replacing existing plan '{}' ({} tasks) with new plan '{}'",
+                            existing_plan.title,
+                            existing_plan.tasks.len(),
+                            title
+                        );
+                    }
+
+                    let mut new_plan =
+                        PlanDocument::new(context.session_id, title.clone(), description);
+                    new_plan.context = ctx;
+                    new_plan.risks = risks;
+                    new_plan.test_strategy = test_strategy;
+                    new_plan.technical_stack = technical_stack;
+                    new_plan.status = PlanStatus::Draft;
+
+                    for it in tasks {
+                        add_task_to_plan(
+                            &mut new_plan,
+                            it.title,
+                            it.description,
+                            &it.task_type,
+                            &it.dependencies,
+                            it.complexity,
+                            it.acceptance_criteria,
+                        )?;
+                    }
+
+                    let count = new_plan.tasks.len();
+                    let list = render_task_list(&new_plan);
+                    plan = Some(new_plan);
+
+                    if count == 0 {
+                        format!(
+                            "📋 Created plan: {title} (no tasks yet)\n\n\
+                             Add tasks with 'add_task', then 'start' to begin."
+                        )
+                    } else {
+                        format!(
+                            "📋 Created plan: {title} ({count} tasks)\n\n{list}\n\n\
+                             Call 'start' to begin — it returns the first task's full details."
+                        )
+                    }
                 }
-
-                // Validate the dependency graph is intact after remapping
-                imported.validate_dependencies().map_err(|e| {
-                    ToolError::InvalidInput(format!(
-                        "Imported plan has invalid dependencies: {}",
-                        e
-                    ))
-                })?;
-
-                plan = Some(imported.clone());
-
-                format!(
-                    "✓ Imported plan: '{}'\n  {} tasks loaded\n  Status: {:?}\n\n\
-                     Next steps:\n\
-                     1. Review with 'status'\n\
-                     2. Finalize with 'finalize'\n\
-                     3. Execute tasks with 'next_task' / 'start_task'",
-                    imported.title,
-                    imported.tasks.len(),
-                    imported.status
-                )
             }
 
             PlanOperation::AddTask {
@@ -587,595 +646,220 @@ impl Tool for PlanTool {
                 dependencies,
                 complexity,
                 acceptance_criteria,
-                insert_after,
             } => {
-                // Validate inputs
-                validate_string(&title, MAX_TITLE_LENGTH, "Task title")?;
-                validate_string(&description, MAX_DESCRIPTION_LENGTH, "Task description")?;
-
                 let current_plan = plan.as_mut().ok_or_else(|| {
                     ToolError::InvalidInput(
-                        "No active plan. Create a plan first with 'create' operation.".to_string(),
+                        "No active plan. Create one with 'init' first.".to_string(),
                     )
                 })?;
-
-                // Parse task type
-                let parsed_type = match task_type.to_lowercase().as_str() {
-                    "research" => TaskType::Research,
-                    "edit" => TaskType::Edit,
-                    "create" => TaskType::Create,
-                    "delete" => TaskType::Delete,
-                    "test" => TaskType::Test,
-                    "refactor" => TaskType::Refactor,
-                    "documentation" => TaskType::Documentation,
-                    "configuration" => TaskType::Configuration,
-                    "build" => TaskType::Build,
-                    other => TaskType::Other(other.to_string()),
-                };
-
-                let task_order = current_plan.tasks.len() + 1;
-                let mut task =
-                    PlanTask::new(task_order, title.clone(), description, parsed_type.clone());
-                task.complexity = complexity.clamp(1, 5);
-                task.acceptance_criteria = acceptance_criteria;
-
-                // Validate dependencies against existing tasks
-                for dep_order in &dependencies {
-                    if *dep_order == 0 {
-                        return Err(ToolError::InvalidInput(
-                            "Task numbers start at 1, not 0".to_string(),
-                        ));
-                    }
-                    if *dep_order > current_plan.tasks.len() {
-                        return Err(ToolError::InvalidInput(format!(
-                            "Invalid dependency: task {} does not exist",
-                            dep_order
-                        )));
-                    }
-                    let dep_task = current_plan.tasks.get(*dep_order - 1).ok_or_else(|| {
-                        ToolError::InvalidInput(format!(
-                            "Invalid dependency: task {} does not exist",
-                            dep_order
-                        ))
-                    })?;
-                    task.dependencies
-                        .push(crate::tui::plan::TaskDep::Id(dep_task.id));
-                }
-
-                // Determine insert position and renumber
-                let insert_idx = if let Some(after) = insert_after {
-                    if after > current_plan.tasks.len() {
-                        return Err(ToolError::InvalidInput(format!(
-                            "insert_after {} is beyond the {} tasks in the plan",
-                            after,
-                            current_plan.tasks.len()
-                        )));
-                    }
-                    after // 0 = beginning, 1 = after task 1, etc.
-                } else {
-                    current_plan.tasks.len() // append at end
-                };
-
-                current_plan.tasks.insert(insert_idx, task);
-
-                // Renumber all tasks sequentially after insert
-                for (i, t) in current_plan.tasks.iter_mut().enumerate() {
-                    t.order = i + 1;
-                }
-
-                let new_task_order = insert_idx + 1;
-                format!(
-                    "✓ Added task #{}: '{}'\n  Type: {:?} | Complexity: {}★\n  Inserted at position {} | Total tasks: {}\n  All tasks renumbered sequentially.",
-                    new_task_order,
-                    title,
-                    parsed_type,
+                let order = add_task_to_plan(
+                    current_plan,
+                    title.clone(),
+                    description,
+                    &task_type,
+                    &dependencies,
                     complexity,
-                    new_task_order,
-                    current_plan.tasks.len()
+                    acceptance_criteria,
+                )?;
+                let total = current_plan.tasks.len();
+                let ttype = current_plan.get_task_by_order(order).unwrap().task_type.clone();
+                format!(
+                    "✓ Added task #{order}: {title}\n  Type: {ttype} | Complexity: {}★\n  Position: {order} of {total}",
+                    complexity.clamp(1, 5)
                 )
             }
 
-            PlanOperation::UpdatePlan {
-                title,
-                description,
-                context: ctx,
-                risks,
-                test_strategy,
-                technical_stack,
-            } => {
+            PlanOperation::Start { task_order } => {
                 let current_plan = plan.as_mut().ok_or_else(|| {
-                    ToolError::InvalidInput("No active plan to update.".to_string())
+                    ToolError::InvalidInput(
+                        "No active plan. Create one with 'init' first.".to_string(),
+                    )
                 })?;
-
-                if let Some(t) = title {
-                    current_plan.title = t;
-                }
-                if let Some(d) = description {
-                    current_plan.description = d;
-                }
-                if let Some(c) = ctx {
-                    current_plan.context = c;
-                }
-                if let Some(r) = risks {
-                    current_plan.risks = r;
-                }
-                if let Some(ts) = test_strategy {
-                    current_plan.test_strategy = ts;
-                }
-                if let Some(stack) = technical_stack {
-                    current_plan.technical_stack = stack;
-                }
-                current_plan.updated_at = Utc::now();
-
-                "✓ Plan updated successfully".to_string()
-            }
-
-            PlanOperation::Finalize => {
-                tracing::info!("🔧 Finalize operation starting...");
-
-                let current_plan = plan.as_mut().ok_or_else(|| {
-                    tracing::error!("❌ Finalize failed: No active plan");
-                    ToolError::InvalidInput("No active plan to finalize.".to_string())
-                })?;
-
                 if current_plan.tasks.is_empty() {
-                    tracing::warn!("⚠️ Cannot finalize: Plan has no tasks");
                     return Ok(ToolResult::error(
-                        "Cannot finalize plan with no tasks. Add tasks first.".to_string(),
+                        "Plan has no tasks yet. Add tasks with 'add_task' first.".to_string(),
                     ));
                 }
 
-                tracing::debug!(
-                    "📋 Finalizing plan: title='{}', tasks={}, status={:?}",
-                    current_plan.title,
-                    current_plan.tasks.len(),
-                    current_plan.status
-                );
-
-                // Validate dependencies before finalizing
-                if let Err(e) = current_plan.validate_dependencies() {
-                    tracing::error!("❌ Dependency validation failed: {}", e);
-                    return Ok(ToolResult::error(format!(
-                        "Cannot finalize plan: {}\n\n\
-                         Please fix the dependency issues before finalizing.",
-                        e
-                    )));
-                }
-
-                // Get validation warnings
-                let warnings = current_plan.get_validation_warnings();
-                let warning_text = if !warnings.is_empty() {
-                    let warning_list = warnings
-                        .iter()
-                        .map(|w| format!("  {}", w))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    format!("\n\n📊 Plan Quality Notes:\n{}\n", warning_list)
-                } else {
-                    String::new()
-                };
-
-                // Auto-approve: the tool-call approval dialog is the user's gate.
-                // No second "waiting for approval" step needed.
-                let old_status = current_plan.status.clone();
-                current_plan.status = PlanStatus::Approved;
-                current_plan.updated_at = Utc::now();
-
-                tracing::info!(
-                    "✅ Plan status changed: {:?} → {:?}",
-                    old_status,
-                    current_plan.status
-                );
-
-                // Build task list summary
-                let task_list = current_plan
-                    .tasks
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| format!("  {}. {} — {}", i + 1, t.title, t.description))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                format!(
-                    "✓ Plan approved! Proceed to execute tasks in order using 'start_task' and 'complete_task'.\n\n\
-                     📋 Plan: {}\n\
-                     📝 Description: {}\n\n\
-                     Tasks ({} total):\n{}{}\n\n\
-                     Start executing now — begin with task #1.",
-                    current_plan.title,
-                    current_plan
-                        .description
-                        .chars()
-                        .take(200)
-                        .collect::<String>(),
-                    current_plan.tasks.len(),
-                    task_list,
-                    warning_text
-                )
-            }
-
-            PlanOperation::Status => {
-                if let Some(current_plan) = &plan {
-                    format!(
-                        "📋 Current Plan Status\n\n\
-                         Title: {}\n\
-                         Status: {:?}\n\
-                         Tasks: {}\n\
-                         Created: {}\n\
-                         Updated: {}",
-                        current_plan.title,
-                        current_plan.status,
-                        current_plan.tasks.len(),
-                        current_plan.created_at.format("%Y-%m-%d %H:%M:%S"),
-                        current_plan.updated_at.format("%Y-%m-%d %H:%M:%S")
-                    )
-                } else {
-                    "No active plan. Create one with 'create' operation.".to_string()
-                }
-            }
-
-            PlanOperation::NextTask => {
-                let current_plan = plan
-                    .as_ref()
-                    .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
-
-                if let Some(next_task) = current_plan.next_executable_task() {
-                    format!(
-                        "🎯 Next Task to Execute\n\n\
-                         Task #{}: {}\n\
-                         Type: {:?}\n\
-                         Complexity: {}\n\
-                         Description: {}\n\n\
-                         Acceptance Criteria:\n{}\n\n\
-                         Use 'start_task' with task_order={} to begin execution.",
-                        next_task.order,
-                        next_task.title,
-                        next_task.task_type,
-                        next_task.complexity_stars(),
-                        next_task.description,
-                        next_task
-                            .acceptance_criteria
-                            .iter()
-                            .map(|c| format!("  • {}", c))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        next_task.order
-                    )
-                } else {
-                    let summary = current_plan.execution_summary();
-                    if summary.pending == 0 && summary.in_progress == 0 {
-                        "✅ All tasks completed! No more tasks to execute.".to_string()
-                    } else if summary.in_progress > 0 {
-                        format!(
-                            "⏳ {} task(s) currently in progress. Complete them before starting new ones.",
-                            summary.in_progress
-                        )
-                    } else {
-                        "⚠️ No tasks ready. Check for blocked dependencies or failed tasks."
-                            .to_string()
+                // Resolve which task to start.
+                let target_order: Option<usize> = match task_order {
+                    Some(o) => {
+                        if current_plan.get_task_by_order(o).is_none() {
+                            return Ok(ToolResult::error(format!("Task #{o} does not exist.")));
+                        }
+                        Some(o)
                     }
-                }
-            }
-
-            PlanOperation::StartTask { task_order } => {
-                let current_plan = plan
-                    .as_mut()
-                    .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
-
-                // Check if task exists and get its status
-                let task_status = current_plan
-                    .get_task_by_order(task_order)
-                    .ok_or_else(|| {
-                        ToolError::InvalidInput(format!("Task #{} not found.", task_order))
-                    })?
-                    .status
-                    .clone();
-
-                if !matches!(task_status, crate::tui::plan::TaskStatus::Pending) {
-                    return Ok(ToolResult::error(format!(
-                        "Task #{} is not pending (current status: {:?})",
-                        task_order, task_status
-                    )));
-                }
-
-                // Check dependencies
-                let deps_satisfied = current_plan
-                    .get_task_by_order(task_order)
-                    .map(|t| current_plan.dependencies_satisfied(t))
-                    .unwrap_or(false);
-
-                if !deps_satisfied {
-                    return Ok(ToolResult::error(format!(
-                        "Cannot start task #{}: dependencies not satisfied.",
-                        task_order
-                    )));
-                }
-
-                // Auto-complete any other InProgress task. The model sometimes
-                // moves on to the next task without calling complete_task on
-                // the previous one (especially after long tool sequences).
-                // This prevents the plan from getting stuck at "2/3 tasks done"
-                // when all work is actually finished.
-                let auto_completed_title = current_plan
-                    .tasks
-                    .iter_mut()
-                    .find(|t| {
-                        t.status == crate::tui::plan::TaskStatus::InProgress
-                            && t.order != task_order
-                    })
-                    .map(|t| {
-                        let title = t.title.clone();
-                        t.complete_execution(
-                            "Auto-completed: agent moved to next task.".to_string(),
-                            true,
-                        );
-                        title
-                    });
-
-                // Now get mutable reference and update (verified to exist above)
-                let task = current_plan
-                    .get_task_by_order_mut(task_order)
-                    .ok_or_else(|| {
-                        ToolError::InvalidInput(format!("Task #{} not found.", task_order))
-                    })?;
-                task.start_execution();
-                let task_title = task.title.clone();
-
-                current_plan.status = PlanStatus::InProgress;
-
-                if let Some(prev_title) = auto_completed_title {
-                    format!(
-                        "⚠️ Auto-completed previous task '{}' (it was still marked InProgress).\n\n\
-                         ▶️ Started Task #{}: {}\n\n\
-                         Now execute the task by:\n\
-                         1. Using appropriate tools (read_file, write_file, bash, etc.)\n\
-                         2. Recording tool calls with 'record_tool_call'\n\
-                         3. Completing with 'complete_task' when done\n\
-                         4. Reflecting on results with 'reflect'",
-                        prev_title, task_order, task_title
-                    )
-                } else {
-                    format!(
-                        "▶️ Started Task #{}: {}\n\n\
-                         Now execute the task by:\n\
-                         1. Using appropriate tools (read_file, write_file, bash, etc.)\n\
-                         2. Recording tool calls with 'record_tool_call'\n\
-                         3. Completing with 'complete_task' when done\n\
-                         4. Reflecting on results with 'reflect'",
-                        task_order, task_title
-                    )
-                }
-            }
-
-            PlanOperation::CompleteTask {
-                task_order,
-                success,
-                output,
-                artifacts,
-            } => {
-                let current_plan = plan
-                    .as_mut()
-                    .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
-
-                let task = current_plan
-                    .get_task_by_order_mut(task_order)
-                    .ok_or_else(|| {
-                        ToolError::InvalidInput(format!("Task #{} not found.", task_order))
-                    })?;
-
-                // Guard: prevent re-completing an already-completed task (model confusion).
-                // Tell the model which task is actually in progress so it can self-correct.
-                if task.status == crate::tui::plan::TaskStatus::Completed {
-                    let in_progress = current_plan
+                    // No arg: resume an in-progress task first (compaction
+                    // recovery), otherwise pick the next pending task.
+                    None => current_plan
                         .tasks
                         .iter()
-                        .find(|t| t.status == crate::tui::plan::TaskStatus::InProgress)
-                        .map(|t| {
+                        .find(|t| matches!(t.status, TaskStatus::InProgress))
+                        .map(|t| t.order)
+                        .or_else(|| current_plan.next_executable_task().map(|t| t.order)),
+                };
+
+                match target_order {
+                    None => {
+                        if current_plan
+                            .tasks
+                            .iter()
+                            .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
+                        {
+                            current_plan.complete();
+                            format!("✅ Plan complete. All {} tasks done.", current_plan.tasks.len())
+                        } else {
+                            let blocked = current_plan
+                                .tasks
+                                .iter()
+                                .filter(|t| matches!(t.status, TaskStatus::Pending))
+                                .map(|t| format!("  ⊘ Task #{}: {}", t.order, t.title))
+                                .collect::<Vec<_>>()
+                                .join("\n");
                             format!(
-                                "Task #{} ('{}') is currently in progress.",
-                                t.order, t.title
+                                "No task is ready to start — remaining tasks are blocked by \
+                                 incomplete dependencies or failed tasks:\n{blocked}"
                             )
-                        });
-                    let hint = in_progress.unwrap_or_else(|| {
-                        "No task is currently in progress. Use 'next_task' to advance.".to_string()
-                    });
-                    return Err(ToolError::InvalidInput(format!(
-                        "Task #{} is already completed. {}",
-                        task_order, hint
+                        }
+                    }
+                    Some(order) => {
+                        let status = current_plan.get_task_by_order(order).unwrap().status.clone();
+                        // Starting a pending task requires its dependencies done.
+                        if matches!(status, TaskStatus::Pending) {
+                            let task = current_plan.get_task_by_order(order).unwrap();
+                            if !current_plan.dependencies_satisfied(task) {
+                                let unmet = task
+                                    .dependencies
+                                    .iter()
+                                    .filter_map(|d| d.as_uuid())
+                                    .filter_map(|id| current_plan.get_task(&id))
+                                    .filter(|dep| {
+                                        !matches!(
+                                            dep.status,
+                                            TaskStatus::Completed | TaskStatus::Skipped
+                                        )
+                                    })
+                                    .map(|dep| format!("Task {}", dep.order))
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                return Ok(ToolResult::error(format!(
+                                    "⊘ Task #{order} blocked: waiting on {unmet}."
+                                )));
+                            }
+                        }
+
+                        let already_done =
+                            matches!(status, TaskStatus::Completed | TaskStatus::Skipped);
+                        if !already_done {
+                            // start() sets InProgress (also resets a Failed task for retry).
+                            current_plan.get_task_by_order_mut(order).unwrap().start();
+                            current_plan.status = PlanStatus::InProgress;
+                        }
+
+                        let done = current_plan
+                            .tasks
+                            .iter()
+                            .filter(|t| matches!(t.status, TaskStatus::Completed))
+                            .count();
+                        let total = current_plan.tasks.len();
+                        let task = current_plan.get_task_by_order(order).unwrap();
+                        let details = render_task_details(current_plan, task);
+                        if already_done {
+                            format!(
+                                "Task #{order}: {} — already {status:?}.\n\n{details}\n\n\
+                                 Progress: {done}/{total} done.",
+                                task.title
+                            )
+                        } else {
+                            format!(
+                                "▶️ Task #{order}: {}\n\n{details}\n\n\
+                                 Progress: {done}/{total} done. Do the work, then call 'complete' \
+                                 with task_order={order}.",
+                                task.title
+                            )
+                        }
+                    }
+                }
+            }
+
+            PlanOperation::Complete {
+                task_order,
+                action,
+                output,
+            } => {
+                let current_plan = plan
+                    .as_mut()
+                    .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
+                if current_plan.get_task_by_order(task_order).is_none() {
+                    return Ok(ToolResult::error(format!(
+                        "Task #{task_order} does not exist."
                     )));
                 }
 
-                for artifact in artifacts {
-                    task.add_artifact(artifact);
-                }
-
-                // Use a default output message when the LLM omits the output field
-                let output = if output.is_empty() {
-                    if success {
-                        "Task completed.".to_string()
-                    } else {
-                        "Task failed.".to_string()
-                    }
+                let out = if output.trim().is_empty() {
+                    None
                 } else {
-                    output
+                    Some(output.clone())
                 };
 
-                task.complete_execution(output.clone(), success);
-
-                let status_msg = if success {
-                    format!(
-                        "✅ Task #{} completed successfully!\n\nOutput: {}\n\n\
-                         Next: Use 'reflect' to analyze the results, then 'next_task' to continue.",
-                        task_order, output
-                    )
-                } else {
-                    let can_retry = task.can_retry();
-                    format!(
-                        "❌ Task #{} failed (attempt {}/{})\n\nOutput: {}\n\n{}",
-                        task_order,
-                        task.retry_count,
-                        task.max_retries,
-                        output,
-                        if can_retry {
-                            "Next: Use 'reflect' to analyze what went wrong, then retry if appropriate."
-                        } else {
-                            "Max retries reached. Use 'reflect' to document the failure."
+                let (verb, emoji) = {
+                    let task = current_plan.get_task_by_order_mut(task_order).unwrap();
+                    match action.to_lowercase().as_str() {
+                        "skip" => {
+                            task.skip(out.clone());
+                            ("skipped", "⏭️")
                         }
-                    )
+                        "fail" => {
+                            task.fail(out.clone().unwrap_or_else(|| "Task failed.".to_string()));
+                            ("failed", "❌")
+                        }
+                        "success" => {
+                            task.complete(out.clone());
+                            ("completed", "✅")
+                        }
+                        other => {
+                            return Ok(ToolResult::error(format!(
+                                "Unknown action '{other}'. Use 'success', 'fail', or 'skip'."
+                            )));
+                        }
+                    }
                 };
 
-                // Check if all tasks are complete
-                if current_plan.is_complete() {
-                    current_plan.complete();
+                let title = current_plan
+                    .get_task_by_order(task_order)
+                    .unwrap()
+                    .title
+                    .clone();
+                let mut msg = format!("{emoji} Task #{task_order} ({title}) {verb}.");
+                if let Some(o) = &out {
+                    msg.push_str(&format!("\nOutput: {o}"));
                 }
 
-                status_msg
-            }
-
-            PlanOperation::Reflect {
-                task_order,
-                reflection,
-                should_retry,
-                adjustment_needed,
-            } => {
-                let current_plan = plan
-                    .as_mut()
-                    .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
-
-                let task = current_plan
-                    .get_task_by_order_mut(task_order)
-                    .ok_or_else(|| {
-                        ToolError::InvalidInput(format!("Task #{} not found.", task_order))
-                    })?;
-
-                task.add_reflection(reflection.clone());
-
-                let mut response = format!(
-                    "🤔 Reflection recorded for Task #{}:\n\n{}\n\n",
-                    task_order, reflection
-                );
-
-                if should_retry && task.can_retry() {
-                    // Reset to pending for retry
-                    task.status = crate::tui::plan::TaskStatus::Pending;
-                    response.push_str("🔄 Task marked for retry. Use 'start_task' to retry.\n");
-                }
-
-                if let Some(adjustment) = adjustment_needed {
-                    response.push_str(&format!(
-                        "⚙️ Plan adjustment needed: {}\n\
-                         Consider using 'add_task' to add corrective tasks or 'update_plan' to revise the plan.",
-                        adjustment
-                    ));
-                }
-
-                response
-            }
-
-            PlanOperation::RecordToolCall {
-                task_order,
-                tool_name,
-                input,
-                output,
-                success,
-            } => {
-                let current_plan = plan
-                    .as_mut()
-                    .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
-
-                let task = current_plan
-                    .get_task_by_order_mut(task_order)
-                    .ok_or_else(|| {
-                        ToolError::InvalidInput(format!("Task #{} not found.", task_order))
-                    })?;
-
-                let tool_call = PlanToolCall {
-                    tool_name: tool_name.clone(),
-                    input,
-                    output: output.clone(),
-                    success,
-                    timestamp: Utc::now(),
-                };
-
-                task.record_tool_call(tool_call);
-
-                format!(
-                    "📝 Recorded tool call: {} ({})",
-                    tool_name,
-                    if success { "success" } else { "failed" }
-                )
-            }
-
-            PlanOperation::SkipTask { task_order, reason } => {
-                let current_plan = plan
-                    .as_mut()
-                    .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
-
-                let task = current_plan
-                    .get_task_by_order_mut(task_order)
-                    .ok_or_else(|| {
-                        ToolError::InvalidInput(format!("Task #{} not found.", task_order))
-                    })?;
-
-                task.skip(Some(reason.clone()));
-
-                format!(
-                    "⏭️ Skipped Task #{}: {}\nReason: {}",
-                    task_order, task.title, reason
-                )
-            }
-
-            PlanOperation::Summary => {
-                let current_plan = plan
-                    .as_ref()
-                    .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
-
-                let summary = current_plan.execution_summary();
-
-                let task_lines = current_plan
+                // Auto-start the next executable task and surface its details.
+                let next_order = current_plan.next_executable_task().map(|t| t.order);
+                if let Some(no) = next_order {
+                    current_plan.get_task_by_order_mut(no).unwrap().start();
+                    current_plan.status = PlanStatus::InProgress;
+                    let next = current_plan.get_task_by_order(no).unwrap();
+                    let details = render_task_details(current_plan, next);
+                    msg.push_str(&format!("\n\n▶️ Started Task #{no}: {}\n{details}", next.title));
+                } else if current_plan
                     .tasks
                     .iter()
-                    .map(|t| {
-                        let status_marker = match t.status {
-                            crate::tui::plan::TaskStatus::Completed => "- [x]",
-                            crate::tui::plan::TaskStatus::Failed => "- [!]",
-                            crate::tui::plan::TaskStatus::InProgress => "- [>]",
-                            crate::tui::plan::TaskStatus::Pending => "- [ ]",
-                            crate::tui::plan::TaskStatus::Skipped => "- [~]",
-                            crate::tui::plan::TaskStatus::Blocked(_) => "- [x]",
-                        };
-                        format!("{} {}", status_marker, t.title)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                format!(
-                    "## Plan: {}\n\n\
-                     **Status:** {:?}\n\
-                     **Description:** {}\n\n\
-                     **Tasks** ({} total):\n{}\n\n\
-                     **Progress:** {:.1}%  ✅{} ❌{} ▶️{} ⏸️{} ⏭️{} 🚫{}\n\
-                     **Success Rate:** {:.1}% | Retries: {} | Tool Calls: {}",
-                    current_plan.title,
-                    current_plan.status,
-                    current_plan
-                        .description
-                        .chars()
-                        .take(200)
-                        .collect::<String>(),
-                    summary.total_tasks,
-                    task_lines,
-                    current_plan.progress_percentage(),
-                    summary.completed,
-                    summary.failed,
-                    summary.in_progress,
-                    summary.pending,
-                    summary.skipped,
-                    summary.blocked,
-                    summary.success_rate,
-                    summary.total_retries,
-                    summary.total_tool_calls
-                )
+                    .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
+                {
+                    current_plan.complete();
+                    msg.push_str(&format!(
+                        "\n\n✅ Plan complete. All {} tasks done.",
+                        current_plan.tasks.len()
+                    ));
+                } else {
+                    msg.push_str(
+                        "\n\nNo unblocked task is ready next — remaining tasks are blocked or \
+                         failed. Use 'start' with a task_order to retry a failed task.",
+                    );
+                }
+                msg
             }
         };
 

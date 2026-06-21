@@ -721,20 +721,66 @@ pub(crate) fn format_plan_reminder(plan: &crate::tui::plan::PlanDocument) -> Opt
 
     let mut out = format!(
         "[ACTIVE PLAN REMINDER — injected by the harness, not from the user]\n\
-         You are partway through a plan ({done}/{total} tasks done). Keep executing it; do not \
-         abandon or forget it. Mark each task complete via the plan tool as you finish, and \
-         finalize the plan once ALL tasks are done.\n\
-         Plan: \"{}\"\n",
+         📋 Plan: \"{}\" ({done}/{total} done). Keep executing it; do not abandon it. \
+         Use the plan tool's `complete` as you finish each task (it auto-starts the next), and \
+         `start` to (re)surface a task's full details.\n",
         plan.title
     );
     let mut tasks: Vec<&crate::tui::plan::PlanTask> = plan.tasks.iter().collect();
     tasks.sort_by_key(|t| t.order);
+    // Resolve the set of completed/skipped task ids once, so we can name a
+    // blocked task's specific unmet dependencies.
+    let resolved_ids: std::collections::HashSet<uuid::Uuid> = plan
+        .tasks
+        .iter()
+        .filter(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
+        .map(|t| t.id)
+        .collect();
     for t in &tasks {
+        // [Type, N★] suffix gives the model the task shape at a glance.
+        let meta = format!("[{}, {}★]", t.task_type, t.complexity.clamp(1, 5));
         match &t.status {
-            TaskStatus::InProgress => out.push_str(&format!("→ In progress: {}\n", t.title)),
-            TaskStatus::Pending => out.push_str(&format!("☐ {}\n", t.title)),
-            TaskStatus::Failed => out.push_str(&format!("✗ Failed (retry/fix): {}\n", t.title)),
-            TaskStatus::Blocked(_) => out.push_str(&format!("⊘ Blocked: {}\n", t.title)),
+            TaskStatus::InProgress => {
+                out.push_str(&format!("→ Task {}: {} {meta}\n", t.order, t.title));
+                if !t.description.is_empty() {
+                    let desc: String = t.description.chars().take(160).collect();
+                    out.push_str(&format!("  {desc}\n"));
+                }
+                if !t.acceptance_criteria.is_empty() {
+                    let crit = t.acceptance_criteria.join(" • ");
+                    out.push_str(&format!("  Criteria: • {crit}\n"));
+                }
+            }
+            TaskStatus::Pending => {
+                // Pending but with unmet deps → call it out as blocked, naming them.
+                let unmet: Vec<usize> = t
+                    .dependencies
+                    .iter()
+                    .filter_map(|d| d.as_uuid())
+                    .filter(|id| !resolved_ids.contains(id))
+                    .filter_map(|id| plan.tasks.iter().find(|x| x.id == id).map(|x| x.order))
+                    .collect();
+                if unmet.is_empty() {
+                    out.push_str(&format!("☐ Task {}: {} {meta}\n", t.order, t.title));
+                } else {
+                    let blockers = unmet
+                        .iter()
+                        .map(|o| o.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!(
+                        "⊘ Task {}: {} {meta} (blocked: {blockers})\n",
+                        t.order, t.title
+                    ));
+                }
+            }
+            TaskStatus::Failed => {
+                out.push_str(&format!("✗ Task {}: {} {meta} (failed — retry/fix)\n", t.order, t.title))
+            }
+            TaskStatus::Blocked(reason) => out.push_str(&format!(
+                "⊘ Task {}: {} {meta} (blocked: {reason})\n",
+                t.order, t.title
+            )),
             TaskStatus::Completed | TaskStatus::Skipped => {}
         }
     }

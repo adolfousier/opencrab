@@ -539,18 +539,7 @@ impl PlanDocument {
                 TaskStatus::Blocked(_) => summary.blocked += 1,
             }
             summary.total_retries += task.retry_count as usize;
-            summary.total_tool_calls += task
-                .execution_history
-                .iter()
-                .map(|e| e.tools_called.len())
-                .sum::<usize>();
         }
-
-        summary.success_rate = if summary.completed + summary.failed > 0 {
-            (summary.completed as f32 / (summary.completed + summary.failed) as f32) * 100.0
-        } else {
-            0.0
-        };
 
         summary
     }
@@ -642,8 +631,6 @@ pub struct ExecutionSummary {
     pub skipped: usize,
     pub blocked: usize,
     pub total_retries: usize,
-    pub total_tool_calls: usize,
-    pub success_rate: f32,
 }
 
 /// Status of a plan
@@ -728,10 +715,6 @@ pub struct PlanTask {
     #[serde(default)]
     pub completed_at: Option<DateTime<Utc>>,
 
-    /// Execution history (for plan-and-execute pattern)
-    #[serde(default)]
-    pub execution_history: Vec<TaskExecution>,
-
     /// Number of retry attempts
     #[serde(default)]
     pub retry_count: u8,
@@ -743,55 +726,10 @@ pub struct PlanTask {
     /// Output artifacts (file paths, generated code, etc.)
     #[serde(default)]
     pub artifacts: Vec<String>,
-
-    /// Reflection notes from LLM after execution
-    #[serde(default)]
-    pub reflection: Option<String>,
 }
 
 fn default_max_retries() -> u8 {
     3
-}
-
-/// Record of a single execution attempt
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskExecution {
-    /// When this execution attempt started
-    pub started_at: DateTime<Utc>,
-
-    /// When this execution attempt ended
-    pub ended_at: Option<DateTime<Utc>>,
-
-    /// Tools called during this execution
-    pub tools_called: Vec<ToolCall>,
-
-    /// Output/result of this execution
-    pub output: Option<String>,
-
-    /// Error if execution failed
-    pub error: Option<String>,
-
-    /// Whether this attempt was successful
-    pub success: bool,
-}
-
-/// Record of a tool call during task execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    /// Tool name
-    pub tool_name: String,
-
-    /// Tool input (JSON)
-    pub input: serde_json::Value,
-
-    /// Tool output
-    pub output: Option<String>,
-
-    /// Whether the call succeeded
-    pub success: bool,
-
-    /// Timestamp
-    pub timestamp: DateTime<Utc>,
 }
 
 impl PlanTask {
@@ -809,86 +747,17 @@ impl PlanTask {
             status: TaskStatus::Pending,
             notes: None,
             completed_at: None,
-            execution_history: Vec::new(),
             retry_count: 0,
             max_retries: 3,
             artifacts: Vec::new(),
-            reflection: None,
         }
     }
 
-    /// Mark task as in progress
+    /// Mark task as in progress. Idempotent and works from any prior state
+    /// (Pending, InProgress, or Failed) so `start` can re-surface a task's
+    /// details after a context compaction or to retry a failed task.
     pub fn start(&mut self) {
         self.status = TaskStatus::InProgress;
-    }
-
-    /// Start a new execution attempt
-    pub fn start_execution(&mut self) -> &mut TaskExecution {
-        self.status = TaskStatus::InProgress;
-        let execution = TaskExecution {
-            started_at: Utc::now(),
-            ended_at: None,
-            tools_called: Vec::new(),
-            output: None,
-            error: None,
-            success: false,
-        };
-        self.execution_history.push(execution);
-        self.execution_history.last_mut().expect("just pushed")
-    }
-
-    /// Record a tool call in the current execution
-    pub fn record_tool_call(&mut self, tool_call: ToolCall) {
-        if let Some(execution) = self.execution_history.last_mut() {
-            execution.tools_called.push(tool_call);
-        }
-    }
-
-    /// Complete the current execution attempt
-    pub fn complete_execution(&mut self, output: String, success: bool) {
-        if let Some(execution) = self.execution_history.last_mut() {
-            execution.ended_at = Some(Utc::now());
-            execution.output = Some(output.clone());
-            execution.success = success;
-        }
-
-        if success {
-            self.status = TaskStatus::Completed;
-            self.notes = Some(output);
-            self.completed_at = Some(Utc::now());
-        } else {
-            self.retry_count += 1;
-            if self.retry_count >= self.max_retries {
-                self.status = TaskStatus::Failed;
-            } else {
-                self.status = TaskStatus::Pending; // Ready for retry
-            }
-        }
-    }
-
-    /// Mark execution as failed with error
-    pub fn fail_execution(&mut self, error: String) {
-        if let Some(execution) = self.execution_history.last_mut() {
-            execution.ended_at = Some(Utc::now());
-            execution.error = Some(error.clone());
-            execution.success = false;
-        }
-
-        self.retry_count += 1;
-        if self.retry_count >= self.max_retries {
-            self.status = TaskStatus::Failed;
-            self.notes = Some(format!(
-                "Failed after {} attempts: {}",
-                self.retry_count, error
-            ));
-        } else {
-            self.status = TaskStatus::Pending;
-        }
-    }
-
-    /// Add reflection notes after execution
-    pub fn add_reflection(&mut self, reflection: String) {
-        self.reflection = Some(reflection);
     }
 
     /// Add an artifact (file path, generated code, etc.)
@@ -900,11 +769,6 @@ impl PlanTask {
     pub fn can_retry(&self) -> bool {
         self.retry_count < self.max_retries
             && matches!(self.status, TaskStatus::Pending | TaskStatus::Failed)
-    }
-
-    /// Get the last execution attempt
-    pub fn last_execution(&self) -> Option<&TaskExecution> {
-        self.execution_history.last()
     }
 
     /// Complete the task

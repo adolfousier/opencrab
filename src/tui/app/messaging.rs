@@ -1087,12 +1087,16 @@ impl App {
                     .and_then(|v| v.as_str())
                     .unwrap_or("?");
                 match op {
-                    "create" => {
-                        let name = ci(tool_input, "title")
-                            .or_else(|| ci(tool_input, "name"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("plan");
-                        format!("Plan: create '{}'", name)
+                    "init" => {
+                        if let Some(path) = ci(tool_input, "file_path").and_then(|v| v.as_str()) {
+                            let name = path.rsplit('/').next().unwrap_or(path);
+                            format!("Plan: import '{}' — awaiting approval", name)
+                        } else {
+                            let name = ci(tool_input, "title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("plan");
+                            format!("Plan: create '{}' — awaiting approval", name)
+                        }
                     }
                     "add_task" => {
                         let title = ci(tool_input, "title")
@@ -1100,30 +1104,23 @@ impl App {
                             .unwrap_or("task");
                         format!("Plan: add task '{}'", title)
                     }
-                    "finalize" => "Plan: finalize — awaiting approval".to_string(),
-                    "start_task" => {
+                    "start" => {
+                        let id = ci(tool_input, "task_order")
+                            .and_then(|v| v.as_u64())
+                            .map(|n| format!("#{n}"))
+                            .unwrap_or_else(|| "next".to_string());
+                        format!("Plan: start task {}", id)
+                    }
+                    "complete" => {
                         let id = ci(tool_input, "task_order")
                             .and_then(|v| v.as_u64())
                             .map(|n| n.to_string())
                             .unwrap_or_else(|| "?".to_string());
-                        format!("Plan: start task #{}", id)
+                        let action = ci(tool_input, "action")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("success");
+                        format!("Plan: complete task #{} ({})", id, action)
                     }
-                    "complete_task" => {
-                        let id = ci(tool_input, "task_order")
-                            .and_then(|v| v.as_u64())
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|| "?".to_string());
-                        format!("Plan: complete task #{}", id)
-                    }
-                    "update_task" => {
-                        let id = ci(tool_input, "task_order")
-                            .and_then(|v| v.as_u64())
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|| "?".to_string());
-                        format!("Plan: update task #{}", id)
-                    }
-                    "summary" => "Plan: summary".to_string(),
-                    "get_status" => "Plan: status".to_string(),
                     _ => format!("Plan: {}", op),
                 }
             }
