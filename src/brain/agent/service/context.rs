@@ -246,17 +246,16 @@ impl AgentService {
             return String::from("[No brain files found — agent context limited]\n\n");
         }
 
-        // Contextual files are NOT re-injected after compaction — they load on
-        // demand, like any other turn. A one-line pointer keeps them top of mind
-        // without spending the tokens to inline their content.
-        let pointer = "Contextual files — load with `load_brain_file` ONLY when the task needs them \
-                       (not pre-loaded): CODE.md before writing ANY code, TOOLS.md for \
-                       environment/tool specifics, SECURITY.md, MEMORY.md, BOOT.md, HEARTBEAT.md.\n";
-
+        // Contextual files (CODE.md before code work, TOOLS.md for tool specifics,
+        // SECURITY/MEMORY/BOOT/HEARTBEAT) are NOT re-injected here — they load on
+        // demand like any normal turn. We don't repeat that directive: AGENTS.md
+        // (re-injected above) already owns it ("If writing code: Read CODE.md"),
+        // and the system prompt's always-present "Available Context Files" index
+        // keeps the full set discoverable. One source, no duplication.
         format!(
             "[RECOVERED BRAIN CONTEXT — these files define your identity, the user, and your \
              always-enforced rules. They take priority over any contradictory inference from the \
-             summary.]\n\n{files_block}{pointer}\n"
+             summary.]\n\n{files_block}\n"
         )
     }
 
