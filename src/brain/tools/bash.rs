@@ -622,7 +622,22 @@ impl Tool for BashTool {
 /// This is intentionally conservative — it blocks patterns that are
 /// almost never legitimate in an AI agent context and would cause
 /// catastrophic, irreversible damage if executed.
-fn check_blocked_command(command: &str) -> Option<&'static str> {
+/// Normalize an `rm` target token for blocklist comparison: strip surrounding
+/// quotes and map the (already-lowercased) `$HOME` / `${HOME}` env vars to `~`,
+/// so `"$HOME"`, `$home`, and `~` all compare equal.
+fn normalize_rm_target(tok: &str) -> String {
+    let t = tok.trim_matches(|c| c == '"' || c == '\'');
+    if let Some(rest) = t
+        .strip_prefix("${home}")
+        .or_else(|| t.strip_prefix("$home"))
+    {
+        format!("~{rest}")
+    } else {
+        t.to_string()
+    }
+}
+
+pub(crate) fn check_blocked_command(command: &str) -> Option<&'static str> {
     // Normalize: collapse whitespace, lowercase for pattern matching
     let normalized: String = command
         .split_whitespace()
@@ -631,44 +646,47 @@ fn check_blocked_command(command: &str) -> Option<&'static str> {
         .to_lowercase();
 
     // ── Recursive filesystem destruction ──────────────────────────
-    // rm -rf / or rm -rf /* or rm -rf ~ or sudo rm -rf . etc.
-    if normalized.contains("rm ") && normalized.contains("-r") {
-        let after_rf = normalized
-            .find("-rf ")
-            .or_else(|| normalized.find("-r -f "))
-            .map(|i| {
-                let offset = if normalized[i..].starts_with("-rf ") {
-                    4
-                } else {
-                    5
-                };
-                &normalized[i + offset..]
-            });
-        if let Some(target) = after_rf {
-            let target = target.trim();
-            // Block root, home, and current/parent directory destruction
-            if target == "/"
-                || target == "/*"
-                || target == "~"
-                || target == "~/"
-                || target == "~/*"
-                || target == "$home"
-                || target == "$home/"
-                || target == "$home/*"
-                || target.starts_with("/ ")
-            {
-                return Some("recursive delete on root or home directory");
+    // `rm` (optionally `sudo`) with a recursive flag targeting root/home/cwd.
+    // Split into command segments first (so `echo x; rm -rf ~`, `... && rm
+    // -rf ~`, and `rm -rf ~;echo` are all caught), then per-segment this is
+    // robust to flag ORDER (-rf, -fr, -r -f), LONG flags (--recursive --force),
+    // QUOTED targets ("$HOME"), and the $HOME/${HOME} env vars.
+    let segmented = normalized
+        .replace("&&", "\n")
+        .replace("||", "\n")
+        .replace(['|', ';', '&'], "\n");
+    for segment in segmented.split('\n') {
+        let tokens: Vec<&str> = segment.split_whitespace().collect();
+        let sudo = tokens.first() == Some(&"sudo");
+        let rm_idx = if sudo { 1 } else { 0 };
+        if tokens.get(rm_idx) != Some(&"rm") {
+            continue;
+        }
+        let mut recursive = false;
+        let mut targets: Vec<String> = Vec::new();
+        for &tok in tokens.iter().skip(rm_idx + 1) {
+            if tok == "--recursive" {
+                recursive = true;
+            } else if tok.starts_with("--") {
+                // other long flag (--force, --verbose, …) — ignore
+            } else if tok.starts_with('-') {
+                // short flag cluster: -rf, -fr, -r, -rfv … — recursive is what
+                // makes a delete catastrophic.
+                if tok.contains('r') {
+                    recursive = true;
+                }
+            } else {
+                targets.push(normalize_rm_target(tok));
             }
-            // sudo rm -rf . / sudo rm -rf .. — elevated destruction of cwd
-            if normalized.contains("sudo")
-                && (target == "."
-                    || target == "./"
-                    || target == "./*"
-                    || target == ".."
-                    || target == "../"
-                    || target == "../*")
-            {
-                return Some("sudo recursive delete on current or parent directory");
+        }
+        if recursive {
+            for t in &targets {
+                if matches!(t.as_str(), "/" | "/*" | "~" | "~/" | "~/*") {
+                    return Some("recursive delete on root or home directory");
+                }
+                if sudo && matches!(t.as_str(), "." | "./" | "./*" | ".." | "../" | "../*") {
+                    return Some("sudo recursive delete on current or parent directory");
+                }
             }
         }
     }
