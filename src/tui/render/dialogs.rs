@@ -262,6 +262,23 @@ pub(super) fn render_directory_picker(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(" Select here  ", Style::default().fg(Color::Reset)),
         Span::styled(
+            "[.]",
+            Style::default()
+                .fg(Color::Rgb(120, 120, 120))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                " {} hidden  ",
+                if app.file_picker_show_hidden {
+                    "Hide"
+                } else {
+                    "Show"
+                }
+            ),
+            Style::default().fg(Color::Reset),
+        ),
+        Span::styled(
             "[Esc]",
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),

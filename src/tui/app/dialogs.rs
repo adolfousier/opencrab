@@ -1123,6 +1123,15 @@ impl App {
     }
 
     /// Open directory picker (reuses file picker state, dirs only)
+    /// Whether a path's final component is a dotfile (hidden entry). The
+    /// navigate-up `..` entry is never treated as hidden.
+    fn is_hidden_entry(path: &std::path::Path) -> bool {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with('.') && n != ".." && n != ".")
+            .unwrap_or(false)
+    }
+
     pub(crate) async fn open_directory_picker(&mut self) -> Result<()> {
         let mut files = Vec::new();
 
@@ -1131,13 +1140,19 @@ impl App {
             files.push(self.file_picker_current_dir.join(".."));
         }
 
-        // Read directory entries — directories only
+        // Read directory entries — directories only. Dotfile dirs are hidden
+        // unless the user toggled them on (`.` key), matching Finder's
+        // cmd/ctrl+shift+. behaviour (a terminal app can't capture that combo).
         if let Ok(entries) = std::fs::read_dir(&self.file_picker_current_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_dir() {
-                    files.push(path);
+                if !path.is_dir() {
+                    continue;
                 }
+                if !self.file_picker_show_hidden && Self::is_hidden_entry(&path) {
+                    continue;
+                }
+                files.push(path);
             }
         }
 
@@ -1191,6 +1206,12 @@ impl App {
                 }
                 self.open_directory_picker().await?;
             }
+        } else if matches!(event.code, KeyCode::Char('.') | KeyCode::Char('>')) {
+            // Toggle hidden (dotfile) directories. The Finder shortcut
+            // cmd/ctrl+shift+. can't reach a terminal app, so `.` is the
+            // reliable mnemonic; `>` covers shift+. on US layouts.
+            self.file_picker_show_hidden = !self.file_picker_show_hidden;
+            self.open_directory_picker().await?;
         } else if event.code == KeyCode::Tab || event.code == KeyCode::Char(' ') {
             // Tab/Space selects the current directory as working dir
             let selected_dir = self.file_picker_current_dir.clone();

@@ -461,6 +461,9 @@ pub struct App {
     pub file_picker_selected: usize,
     pub file_picker_scroll_offset: usize,
     pub file_picker_current_dir: std::path::PathBuf,
+    /// Whether the directory/file picker shows dotfiles (hidden entries).
+    /// Off by default (clean view, like Finder); toggled with `.` in the picker.
+    pub file_picker_show_hidden: bool,
     pub file_picker_search: String,
     /// True when `file_picker_files` holds a recursive walk of the working
     /// directory rather than a flat listing of `file_picker_current_dir`.
@@ -774,6 +777,7 @@ impl App {
             file_picker_selected: 0,
             file_picker_scroll_offset: 0,
             file_picker_current_dir: std::env::current_dir().unwrap_or_default(),
+            file_picker_show_hidden: false,
             file_picker_search: String::new(),
             file_picker_recursive: false,
             slash_suggestions_active: false,
