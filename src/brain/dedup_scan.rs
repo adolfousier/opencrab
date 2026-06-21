@@ -40,6 +40,10 @@ const MIN_DUPLICATE_COUNT: usize = 2;
 /// CODE, SECURITY, MEMORY, USER) outrank everything else, regardless of
 /// alphabetical position. Unknown files fall to the bottom and tie-break
 /// alphabetically via the caller's `.then(...)`.
+///
+/// NOTE: this code-level order mirrors the brain-file ownership model whose
+/// source of truth is AGENTS.md's `> Owns:` headers + the BRAIN_PREAMBLE
+/// ownership map + the RSI taxonomy. Keep it consistent with them.
 pub(crate) fn canonical_file_rank(filename: &str) -> u8 {
     match filename {
         "SOUL.md" => 0,

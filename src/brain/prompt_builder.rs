@@ -708,12 +708,15 @@ pub(crate) fn push_known_paths(prompt: &mut String) {
     // Collapse to `~/…` so default renders `~/.opencrabs/` and a profile
     // renders `~/.opencrabs/profiles/<name>/` — readable and profile-correct.
     let home = crate::brain::tools::error::collapse_home(&crate::config::opencrabs_home());
+    // Always state the profile — including the default. A missing statement
+    // (the old `None => ""`) left the agent unable to answer "which profile am
+    // I?" on the default instance.
     let profile_note = match crate::config::profile::active_profile() {
         Some(name) => format!(
             " (this instance runs under profile '{name}' — the paths below are \
              profile-scoped; do NOT touch the default ~/.opencrabs/ root)"
         ),
-        None => String::new(),
+        None => " (this instance runs under the DEFAULT profile, ~/.opencrabs/)".to_string(),
     };
     prompt.push_str(&format!(
         "\nKnown paths{profile_note}:\n\
@@ -722,6 +725,13 @@ pub(crate) fn push_known_paths(prompt: &mut String) {
          - Keys: {home}/keys.toml\n\
          - Brain files: {home}/{{SOUL,USER,AGENTS,TOOLS,MEMORY,CODE}}.md\n\
          - Plans: {home}/agents/session/.opencrabs_plan_<session-id>.json\n\
+         - Projects: {home}/projects/<slug>/files/ (persistent per-project artifacts)\n\
+         Which PROFILE am I? The profile note above states it; manage profiles with \
+         `opencrabs profile list` or relaunch with `-p <name>`. \
+         What PROJECT is this session? Your working directory (Runtime Info above) is the \
+         active project context — confirm with `pwd`; persistent project files live under \
+         {home}/projects/. When the user asks about \"the project\", resolve it from the \
+         working directory, not from memory. \
          When the user asks to check logs, read today's file at \
          {home}/logs/opencrabs.<today UTC date>. Do NOT grep the repo \
          working directory for log files — opencrabs never writes logs there. \
