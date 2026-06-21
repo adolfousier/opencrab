@@ -638,6 +638,126 @@ fn normalize_rm_target(tok: &str) -> String {
 }
 
 pub(crate) fn check_blocked_command(command: &str) -> Option<&'static str> {
+    check_blocked_inner(command, 0)
+}
+
+/// Strip ONE matching pair of surrounding quotes from a string. Used to peel
+/// the code argument out of `bash -c '<code>'` / `echo '<code>' | sh` before
+/// re-checking it. Leaves inner quotes alone.
+fn unquote(s: &str) -> &str {
+    let s = s.trim();
+    for q in ['\'', '"'] {
+        if s.len() >= 2 && s.starts_with(q) && s.ends_with(q) {
+            return &s[1..s.len() - 1];
+        }
+    }
+    s
+}
+
+/// Decode a base64 token (standard alphabet) into a UTF-8 string, or `None`.
+/// Lets the blocklist see through `echo <b64> | base64 -d | bash`.
+fn try_base64_decode(tok: &str) -> Option<String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(tok.trim())
+        .ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// Pull out any command strings that `command` would hand to a shell
+/// interpreter, so the blocklist can re-check them. Covers the common ways a
+/// catastrophic command gets smuggled past a literal scan:
+///
+/// - `bash -c '<code>'`, `sh -lc "<code>"`, `zsh -c …`  (the `-c` payload)
+/// - `eval '<code>'`                                     (the eval payload)
+/// - `echo '<code>' | bash`, `printf … | sh`            (pipe to a shell)
+/// - `echo <b64> | base64 -d | bash`                    (base64 then shell)
+///
+/// Returns the decoded inner command(s); the caller recurses on each.
+fn extract_interpreter_payloads(command: &str) -> Vec<String> {
+    const SHELLS: [&str; 6] = ["bash", "sh", "zsh", "dash", "ash", "ksh"];
+    let basename = |t: &str| -> String {
+        t.trim_start_matches("./")
+            .rsplit('/')
+            .next()
+            .unwrap_or(t)
+            .to_lowercase()
+    };
+    let mut out: Vec<String> = Vec::new();
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+
+    // `<shell> … -c <code>` — the `-c` value (and everything after it) is code.
+    for i in 0..tokens.len() {
+        if !SHELLS.contains(&basename(tokens[i]).as_str()) {
+            continue;
+        }
+        for j in (i + 1)..tokens.len() {
+            let tk = tokens[j];
+            // `-c`, or a short cluster ending in c (`-lc`, `-ic`); NOT `--norc`.
+            let is_c =
+                tk == "-c" || (tk.starts_with('-') && !tk.starts_with("--") && tk.ends_with('c'));
+            if is_c {
+                out.push(unquote(&tokens[(j + 1)..].join(" ")).to_string());
+                break;
+            }
+            if !tk.starts_with('-') {
+                break; // a positional (script name) before -c => not the -c form
+            }
+        }
+    }
+
+    // `eval <code>` — everything after `eval` is code.
+    if let Some(idx) = tokens.iter().position(|&t| basename(t) == "eval") {
+        let payload = tokens[(idx + 1)..].join(" ");
+        if !payload.is_empty() {
+            out.push(unquote(&payload).to_string());
+        }
+    }
+
+    // `<producer> | … | <shell>` — text piped into a shell is executed. Pull the
+    // literal that `echo`/`printf` emits (base64-decoded if the pipe decodes it).
+    if command.contains('|') {
+        let stages: Vec<&str> = command.split('|').collect();
+        let feeds_shell = stages.iter().any(|s| {
+            s.split_whitespace()
+                .next()
+                .is_some_and(|w| SHELLS.contains(&basename(w).as_str()))
+        });
+        if feeds_shell {
+            let has_b64 = stages.iter().any(|s| {
+                let l = s.to_lowercase();
+                l.contains("base64") && (l.contains(" -d") || l.contains("--decode"))
+            });
+            for s in &stages {
+                let st = s.trim();
+                let first = st.split_whitespace().next().unwrap_or("");
+                if matches!(first, "echo" | "printf") {
+                    let arg = unquote(st.split_once(char::is_whitespace).map_or("", |(_, a)| a));
+                    if has_b64 {
+                        if let Some(dec) = try_base64_decode(arg) {
+                            out.push(dec);
+                        }
+                    } else {
+                        out.push(arg.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Depth-bounded core of [`check_blocked_command`]. Runs the literal scan on
+/// `command`, then recurses into any code it would feed to a shell interpreter
+/// so the same gate applies to `bash -c '<blocked>'`, `echo '<blocked>' | sh`,
+/// `eval …`, and base64-wrapped variants. Depth is capped so a maliciously
+/// self-nesting command can't spin the checker.
+fn check_blocked_inner(command: &str, depth: usize) -> Option<&'static str> {
+    if depth > 4 {
+        return Some("excessively nested interpreter invocation");
+    }
+
     // Normalize: collapse whitespace, lowercase for pattern matching
     let normalized: String = command
         .split_whitespace()
@@ -760,6 +880,16 @@ pub(crate) fn check_blocked_command(command: &str) -> Option<&'static str> {
     // ── iptables flush (locks out remote access) ─────────────────
     if normalized.contains("iptables -f") && normalized.contains("drop") {
         return Some("firewall flush with default DROP (can lock out remote access)");
+    }
+
+    // ── Interpreter indirection ──────────────────────────────────
+    // A literal scan can't see a blocked command hidden inside a string handed
+    // to a shell (`bash -c '…'`, `echo '…' | sh`, `eval …`, base64-then-shell).
+    // Pull those payloads back out and re-run the SAME gate on each.
+    for payload in extract_interpreter_payloads(command) {
+        if let Some(reason) = check_blocked_inner(&payload, depth + 1) {
+            return Some(reason);
+        }
     }
 
     None

@@ -56,6 +56,44 @@ fn blocks_other_catastrophic_commands() {
 }
 
 #[test]
+fn blocks_blocked_command_smuggled_through_an_interpreter() {
+    // A bare `echo 'rm -rf ~'` only PRINTS the string — but feeding it (or any
+    // blocked command) to a shell executes it. The gate now recurses into the
+    // interpreter payload, so every form below is caught.
+    for cmd in [
+        "echo 'rm -rf ~' | bash",
+        "echo \"rm -rf ~\" | sh",
+        "printf 'rm -rf ~' | bash",
+        "bash -c 'rm -rf ~'",
+        "sh -c 'rm -rf ~'",
+        "zsh -c 'rm -rf ~'",
+        "bash -lc 'rm -rf ~'",
+        "eval 'rm -rf ~'",
+        "/bin/bash -c 'rm -rf /'",
+        // base64 of "rm -rf ~" decoded straight into a shell
+        "echo cm0gLXJmIH4= | base64 -d | bash",
+        // nested one level deeper
+        "bash -c \"bash -c 'rm -rf ~'\"",
+    ] {
+        assert!(blocked(cmd), "MUST block interpreter-smuggled: {cmd}");
+    }
+}
+
+#[test]
+fn does_not_block_safe_echo_or_benign_interpreter_use() {
+    for cmd in [
+        "echo 'rm -rf ~'",   // prints the text, executes nothing
+        "echo \"rm -rf ~\"", // ditto, double-quoted
+        "bash -c 'ls -la'",  // runs a harmless command
+        "echo 'hello world' | bash",
+        "sh -c 'echo done'",
+        "git -c core.editor=vim commit", // -c here is git's flag, not a shell
+    ] {
+        assert!(!blocked(cmd), "must NOT block benign: {cmd}");
+    }
+}
+
+#[test]
 fn does_not_block_legitimate_deletes() {
     for cmd in [
         "rm -rf ./build",                // relative subdir
