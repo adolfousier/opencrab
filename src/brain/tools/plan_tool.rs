@@ -767,6 +767,10 @@ impl Tool for PlanTool {
                             // start() sets InProgress (also resets a Failed task for retry).
                             current_plan.get_task_by_order_mut(order).unwrap().start();
                             current_plan.status = PlanStatus::InProgress;
+                            // Auto-approve on first start (transition from Draft)
+                            if current_plan.approved_at.is_none() {
+                                current_plan.approved_at = Some(Utc::now());
+                            }
                         }
 
                         let done = current_plan
