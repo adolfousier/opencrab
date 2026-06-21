@@ -264,6 +264,15 @@ pub async fn handle_command(
     session_svc: &SessionService,
 ) -> ChannelCommand {
     let trimmed = text.trim();
+    // Strip @botname suffix that Telegram appends in groups
+    // (e.g., "/cd@opencrabsbot" → "/cd"). Defense-in-depth: handler.rs
+    // already strips this, but if bot_username() returns None there,
+    // this catch ensures commands still match.
+    let trimmed = if let Some(at_pos) = trimmed.find('@') {
+        &trimmed[..at_pos]
+    } else {
+        trimmed
+    };
     let result = match trimmed {
         "/compact" => ChannelCommand::Compact,
         "/doctor" => ChannelCommand::Doctor,

@@ -1333,11 +1333,18 @@ pub(crate) async fn handle_message(
 
     // Strip @bot_username suffix from ALL text (Telegram appends it in menus, even in DMs).
     // Without this, /stop@opencrabsbot won't match /stop in handle_command.
+    let original_text = text.clone();
     let text = if let Some(ref uname) = telegram_state.bot_username().await {
         text.replace(&format!("@{}", uname), "").trim().to_string()
     } else {
         text
     };
+    if original_text != text {
+        tracing::info!(
+            "Telegram: stripped @botname: {:?} → {:?} (chat={})",
+            original_text, text, msg.chat.id.0
+        );
+    }
 
     // ── Cowork command handling (DM only) ─────────────────────────────
     if is_dm && text == "/cowork" {
@@ -1699,6 +1706,11 @@ pub(crate) async fn handle_message(
         use crate::channels::commands::{self, ChannelCommand};
         let cmd = commands::handle_command(&text, session_id, &agent, &session_svc).await;
 
+        tracing::info!(
+            "Telegram: handle_command returned {:?} for text {:?} (chat={}, is_dm={})",
+            std::mem::discriminant(&cmd), text, msg.chat.id.0, is_dm
+        );
+
         // Handle simple text-response commands (Help, Usage, Evolve, Doctor, etc.)
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
             message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&reply))
@@ -1876,6 +1888,11 @@ pub(crate) async fn handle_message(
             _ => {}
         }
     }
+
+    tracing::info!(
+        "Telegram: reaching agent processing — text={:?}, is_voice={}, is_dm={}, chat={}",
+        text, is_voice, is_dm, msg.chat.id.0
+    );
 
     // Extract replied-to message context so the agent knows what the
     // user is referencing. When the user used Telegram's quote-reply
