@@ -570,6 +570,55 @@ mod tool {
     }
 
     #[tokio::test]
+    async fn test_create_shows_next_runs_for_validation() {
+        let (_db, tool) = setup().await;
+        let input = serde_json::json!({
+            "action": "create",
+            "name": "Weekday Briefing",
+            "cron": "0 9 * * Mon-Fri",
+            "tz": "America/New_York",
+            "prompt": "brief me"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success);
+        // The confirmation feedback the agent reads back to catch a wrong
+        // schedule before telling the user it's set.
+        assert!(
+            result.output.contains("Next runs:"),
+            "create must echo upcoming run times: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("Verify"),
+            "create must prompt the agent to verify the schedule: {}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_rejects_unknown_timezone() {
+        let (_db, tool) = setup().await;
+        let input = serde_json::json!({
+            "action": "create",
+            "name": "Bad TZ",
+            "cron": "0 9 * * *",
+            "tz": "Mars/Phobos",
+            "prompt": "x"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(!result.success);
+        assert!(
+            result.output.contains("Unknown timezone")
+                || result
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.contains("Unknown timezone")),
+            "unknown tz must be rejected (it's honored by the scheduler now): {:?}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
     async fn test_create_missing_fields() {
         let (_db, tool) = setup().await;
 

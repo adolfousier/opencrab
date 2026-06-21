@@ -12,8 +12,6 @@ use crate::db::CronJobRunRepository;
 use crate::db::models::{CronJob, CronJobRun};
 use crate::services::{ServiceContext, SessionService};
 use chrono::Utc;
-use cron::Schedule;
-use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -310,39 +308,39 @@ impl CronScheduler {
             Some(next) => *next <= now,
             // If next_run_at is None (first run), calculate from cron and check
             None => {
-                // For first-time jobs, check if the current minute matches
-                let cron_str = format!("0 {}", job.cron_expr);
-                if let Ok(schedule) = Schedule::from_str(&cron_str) {
-                    // If any upcoming time is within the next 60s, it's due
-                    if let Some(next) = schedule.upcoming(Utc).next() {
-                        let diff = next - now;
-                        diff.num_seconds() <= 60
-                    } else {
+                // Interpret the schedule in the job's timezone (DST-aware),
+                // then compare the resulting UTC instant. If any upcoming run
+                // is within the next 60s (one tick), it's due.
+                match super::next_run_utc(&job.cron_expr, job_tz(job), now) {
+                    Some(next) => (next - now).num_seconds() <= 60,
+                    None => {
+                        tracing::warn!(
+                            "Invalid cron expression for job '{}': {}",
+                            job.name,
+                            job.cron_expr
+                        );
                         false
                     }
-                } else {
-                    tracing::warn!(
-                        "Invalid cron expression for job '{}': {}",
-                        job.name,
-                        job.cron_expr
-                    );
-                    false
                 }
             }
         }
     }
 
-    /// Calculate the next run time after a given point.
+    /// Calculate the next run time after a given point, in the job's timezone.
     fn next_run_after(
         &self,
         job: &CronJob,
         after: chrono::DateTime<Utc>,
     ) -> Option<chrono::DateTime<Utc>> {
-        let cron_str = format!("0 {}", job.cron_expr);
-        Schedule::from_str(&cron_str)
-            .ok()
-            .and_then(|s| s.after(&after).next())
+        super::next_run_utc(&job.cron_expr, job_tz(job), after)
     }
+}
+
+/// Resolve a job's stored timezone string to a `Tz`, falling back to UTC for
+/// an unknown zone (the tool/CLI reject unknown zones at creation, so this is
+/// just a safety net for hand-edited rows).
+fn job_tz(job: &CronJob) -> chrono_tz::Tz {
+    super::parse_timezone(&job.timezone).unwrap_or(chrono_tz::UTC)
 }
 
 /// Resolve the `(Config, AgentService)` a job should run with.
@@ -725,28 +723,57 @@ async fn deliver_telegram(chat_id: &str, message: &str) {
         return;
     };
 
+    use crate::channels::telegram::handler::{markdown_to_telegram_html, split_message};
+    use crate::channels::telegram::rich;
+
+    // Render exactly like an interactive Telegram reply — never the fragile
+    // legacy `parse_mode: "Markdown"`, which breaks on '_', '[', etc. and
+    // routinely 400s. Honor the `channels.telegram.rich_messages` flag: when
+    // it's on AND the content has block structure (tables/headings/lists/math),
+    // deliver a native rich message through our parser; otherwise (and on any
+    // rich failure) fall back to the universal HTML rendering.
+    let chat_id_num = chat_id.parse::<i64>().ok();
+    if let Some(cid) = chat_id_num
+        && rich::should_send_native_rich(message)
+    {
+        match rich::api::send_rich_markdown(&token, cid, None, message).await {
+            Ok(()) => {
+                tracing::info!("Cron result delivered to Telegram chat {chat_id} (native rich)");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Cron native-rich delivery to {chat_id} failed ({e}) — falling back to HTML"
+                );
+            }
+        }
+    }
+
+    let html = markdown_to_telegram_html(message);
     let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-
     let client = reqwest::Client::new();
-    let body = serde_json::json!({
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown"
-    });
-
-    match client.post(&url).json(&body).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            tracing::info!("Cron result delivered to Telegram chat {chat_id}");
+    let mut delivered = 0usize;
+    for chunk in split_message(&html, 4096) {
+        let body = serde_json::json!({
+            "chat_id": chat_id,
+            "text": chunk,
+            "parse_mode": "HTML",
+        });
+        match client.post(&url).json(&body).send().await {
+            Ok(resp) if resp.status().is_success() => delivered += 1,
+            Ok(resp) => {
+                tracing::warn!(
+                    "Telegram delivery to {chat_id} failed ({}): {:?}",
+                    resp.status(),
+                    resp.text().await.unwrap_or_default()
+                );
+            }
+            Err(e) => {
+                tracing::error!("Telegram delivery to {chat_id} HTTP error: {e}");
+            }
         }
-        Ok(resp) => {
-            tracing::warn!(
-                "Telegram delivery failed ({}): {:?}",
-                resp.status(),
-                resp.text().await.unwrap_or_default()
-            );
-        }
-        Err(e) => {
-            tracing::error!("Telegram delivery HTTP error: {e}");
-        }
+    }
+    if delivered > 0 {
+        tracing::info!("Cron result delivered to Telegram chat {chat_id} (HTML, {delivered} part(s))");
     }
 }

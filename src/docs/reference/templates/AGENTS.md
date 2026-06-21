@@ -114,7 +114,11 @@ You have user-defined **slash commands** (`commands.toml`) and **skills** (saved
 
 ## Scheduling (Cron)
 
-Manage scheduled jobs with the **`cron_manage`** tool (`action`: create / list / delete / enable / disable / test) — the tool documents its own params. Jobs run in **isolated sessions on your configured provider/model by default** — omit `provider`/`model` to use the default; set `thinking: off` for routine tasks; use `deliver_to` only if results should go to a channel. Never delete/disable existing jobs without approval. **Heartbeat vs cron:** heartbeat for batched, drift-OK periodic checks; cron for exact timing, isolation, or one-shot reminders.
+Manage scheduled jobs with the **`cron_manage`** tool (`action`: create / list / delete / enable / disable / test) — the tool documents its own params. Jobs run in **isolated sessions on your configured provider/model by default** — omit `provider`/`model` to use the default; set `thinking: off` for routine tasks; use `deliver_to` only if results should go to a channel. Never delete/disable existing jobs without approval.
+
+**Cron format (gets people every time):** 5 fields `min hour dom mon dow`. Day-of-week is **1-7 = Sun-Sat** (1=Sunday, 7=Saturday; `0` is invalid) — **use day names** (`Mon-Fri`, `Sun`) instead of numbers. No `@daily`/`@hourly` macros. Set `tz` (IANA, e.g. `America/New_York`) and the job runs in that local time, DST-aware. **Validate before you confirm:** `create` echoes the next run times — read them back and make sure they match what the user asked; a wrong day-of-week parses fine but the next-run list exposes it. If they're off, fix and recreate before telling the user it's set.
+
+**Heartbeat vs cron:** heartbeat for batched, drift-OK periodic checks; cron for exact timing, isolation, or one-shot reminders.
 
 ## Heartbeats
 

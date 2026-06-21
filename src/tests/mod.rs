@@ -65,6 +65,7 @@ pub mod context_window_test;
 #[cfg(feature = "telegram")]
 pub mod cowork_connect_test;
 pub mod cron_profile_isolation_test;
+pub mod cron_schedule_util_test;
 pub mod cron_test;
 pub mod cross_provider_model_leak_guard_test;
 pub mod custom_model_paste_test;

@@ -48,11 +48,11 @@ impl Tool for CronManageTool {
                 },
                 "cron": {
                     "type": "string",
-                    "description": "Cron expression, 5-field (min hour dom mon dow). Required for create. Examples: '0 9 * * *' (daily 9am), '*/30 * * * *' (every 30min)"
+                    "description": "Cron expression, 5-field: 'min hour dom mon dow'. Required for create. Day-of-week is 1-7 = Sun-Sat (1=Sunday, 7=Saturday; 0 is INVALID) — prefer day NAMES (Sun, Mon..Sat, ranges like Mon-Fri) to avoid off-by-one mistakes. Month also accepts names (Jan-Mar). No @daily/@hourly macros. Examples: '0 9 * * *' (daily 9am), '*/30 * * * *' (every 30min), '0 9 * * Mon-Fri' (weekdays 9am), '0 22 * * Sun' (Sundays 10pm). The create reply shows the next run times — verify them."
                 },
                 "tz": {
                     "type": "string",
-                    "description": "Timezone (default: UTC). Examples: America/New_York, Europe/London"
+                    "description": "IANA timezone (default: UTC) — the schedule runs in this zone's local wall clock, DST-aware. Examples: America/New_York, Europe/London, Asia/Tokyo. An unknown zone is rejected."
                 },
                 "prompt": {
                     "type": "string",
@@ -156,7 +156,9 @@ impl CronManageTool {
         let cron_with_secs = format!("0 {cron_expr}");
         if let Err(e) = cron_with_secs.parse::<cron::Schedule>() {
             return Ok(ToolResult::error(format!(
-                "Invalid cron expression '{cron_expr}': {e}. Use 5-field format: 'min hour dom mon dow'. Example: '0 9 * * *' for daily at 9am."
+                "Invalid cron expression '{cron_expr}': {e}. Use 5-field format: 'min hour dom mon dow'. \
+                 Day-of-week is 1-7 = Sun-Sat (1=Sunday, 7=Saturday; 0 is invalid) — prefer names like \
+                 Mon-Fri or Sun to avoid mistakes. Example: '0 9 * * *' = daily 9am, '0 9 * * Mon-Fri' = weekdays 9am."
             )));
         }
 
@@ -181,6 +183,17 @@ impl CronManageTool {
             .and_then(|v| v.as_str())
             .unwrap_or("UTC")
             .to_string();
+        // Validate the timezone now — it's honored by the scheduler (jobs run
+        // in this zone's wall clock, DST-aware), so an unknown zone must be
+        // rejected here rather than silently falling back to UTC.
+        let parsed_tz = match crate::cron::parse_timezone(&tz) {
+            Some(t) => t,
+            None => {
+                return Ok(ToolResult::error(format!(
+                    "Unknown timezone '{tz}'. Use an IANA name like 'America/New_York', 'Europe/London', 'Asia/Tokyo', or 'UTC'."
+                )));
+            }
+        };
         let provider = input
             .get("provider")
             .and_then(|v| v.as_str())
@@ -231,8 +244,15 @@ impl CronManageTool {
             .as_deref()
             .unwrap_or("none (results logged only)");
 
+        // Confirmation feedback: show the next few fire times in the job's
+        // timezone so the agent (and user) can verify the schedule means what
+        // they intended before treating it as done — this is what catches a
+        // day-of-week mistake that still parses fine.
+        let next_runs =
+            crate::cron::format_upcoming(cron_expr, parsed_tz, 3, chrono::Utc::now());
+
         Ok(ToolResult::success(format!(
-            "Cron job created:\n  ID: {job_id}\n  Name: {name}\n  Schedule: {cron_expr}\n  Timezone: {}\n  Deliver to: {delivery}\n  Enabled: true",
+            "Cron job created:\n  ID: {job_id}\n  Name: {name}\n  Schedule: {cron_expr}\n  Timezone: {}\n  Deliver to: {delivery}\n  Enabled: true\n  Next runs:\n{next_runs}\n\nVerify the Next runs match what you intended (day-of-week is Sun-Sat, DST handled) before confirming to the user.",
             job.timezone
         )))
     }

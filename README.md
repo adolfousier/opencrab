@@ -2935,14 +2935,32 @@ The agent can also create, list, and manage cron jobs autonomously via the `cron
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--cron` | required | Standard cron expression (e.g. `"0 9 * * *"`) |
-| `--tz` | `UTC` | Timezone for the schedule |
+| `--cron` | required | 5-field cron expression — see **Cron expression format** below |
+| `--tz` | `UTC` | IANA timezone; the schedule runs in this zone's local time, DST-aware (e.g. `America/New_York`) |
 | `--prompt` | required | The instruction to execute |
 | `--provider` | `[cron]` default or current | Override provider (e.g. `anthropic`, `gemini`, `minimax`) |
 | `--model` | `[cron]` default or current | Override model |
 | `--thinking` | `off` | Thinking mode: `off`, `on`, `budget` |
 | `--auto-approve` | `true` | Auto-approve tool calls (isolated sessions) |
 | `--deliver` | none | Channel to deliver results (e.g. `telegram:123456`, `discord:789`, `slack:C0123`) |
+
+#### Cron expression format
+
+Five fields: `minute hour day-of-month month day-of-week`. Two things differ from textbook Unix cron, and both are common mistakes:
+
+- **Day-of-week is `1-7` = Sun-Sat** (1 = Sunday … 7 = Saturday). **`0` is invalid.** To avoid the off-by-one entirely, **use day names** — `Sun Mon Tue Wed Thu Fri Sat`, including ranges like `Mon-Fri`. Months take names too (`Jan-Mar`).
+- **No `@daily` / `@hourly` macros** — write the explicit fields instead.
+
+| Expression | Means |
+|------------|-------|
+| `0 9 * * *` | Every day at 09:00 |
+| `*/30 * * * *` | Every 30 minutes |
+| `0 9 * * Mon-Fri` | Weekdays at 09:00 |
+| `0 22 * * Sun` | Sundays at 22:00 |
+| `0 */6 * * *` | Every 6 hours |
+| `30 14 1 * *` | The 1st of each month at 14:30 |
+
+Creating a job (CLI or the `cron_manage` tool) **echoes the next few run times in your timezone** — always read them back to confirm the schedule fires when you meant. A wrong day-of-week parses fine but the next-run list makes it obvious.
 
 **Provider priority:** per-job `--provider` > `[cron] default_provider` in config.toml > session's active provider. Set a global default for cron jobs to route them to a cheaper provider while keeping your interactive session on a premium one:
 

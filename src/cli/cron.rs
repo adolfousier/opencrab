@@ -66,8 +66,19 @@ async fn cmd_add(
     // Validate cron expression (cron crate needs seconds prepended)
     let cron_with_secs = format!("0 {cron}");
     if let Err(e) = cron_with_secs.parse::<cron::Schedule>() {
-        anyhow::bail!("Invalid cron expression '{cron}': {e}");
+        anyhow::bail!(
+            "Invalid cron expression '{cron}': {e}. 5-field 'min hour dom mon dow'; \
+             day-of-week is 1-7 = Sun-Sat (0 invalid) — prefer names like Mon-Fri."
+        );
     }
+    // Validate the timezone — it's honored by the scheduler (jobs run in this
+    // zone, DST-aware), so reject an unknown zone rather than silently UTC.
+    let parsed_tz = match crate::cron::parse_timezone(&tz) {
+        Some(t) => t,
+        None => anyhow::bail!(
+            "Unknown timezone '{tz}'. Use an IANA name like 'America/New_York', 'Europe/London', or 'UTC'."
+        ),
+    };
 
     if (repo.find_by_name(&name).await?).is_some() {
         anyhow::bail!("A cron job named '{name}' already exists");
@@ -96,7 +107,12 @@ async fn cmd_add(
     if let Some(ref d) = deliver_to {
         println!("   Deliver to: {d}");
     }
-    println!("\n💡 Job will run on next scheduler tick (within 60s)");
+    println!("   Next runs:");
+    println!(
+        "{}",
+        crate::cron::format_upcoming(&cron, parsed_tz, 3, chrono::Utc::now())
+    );
+    println!("\n💡 Verify the next runs above match what you intended.");
     Ok(())
 }
 
