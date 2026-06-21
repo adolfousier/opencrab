@@ -70,10 +70,12 @@ pub fn build_continuation(kind: CompactionKind, silent: bool, auto_approve: bool
     // After compaction the agent should check for a live plan and,
     // if the session is code-focused, load coding standards.
     text.push_str(
-        "\n\nSESSION RECOVERY: Call `plan` with operation=\"status\" to check \
-         if this session has an active plan with incomplete tasks. If it does, \
-         continue executing from where the plan left off. If the task involves \
-         coding, load CODE.md for coding standards before editing files.",
+        "\n\nSESSION RECOVERY: Call `plan` with operation=\"start\" (no args) to \
+         re-surface the in-progress task and update the TUI plan widget. If \
+         this session has an active plan, this will show exactly where you \
+         left off (task details, progress count). Continue executing from \
+         there. If the task involves coding, load CODE.md for coding standards \
+         before editing files.",
     );
     if !auto_approve {
         text.push_str(

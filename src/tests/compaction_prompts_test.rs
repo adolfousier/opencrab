@@ -181,8 +181,8 @@ fn session_recovery_hint_present_in_all_variants() {
                 "{kind:?} silent={silent} must include the SESSION RECOVERY hint: {body}"
             );
             assert!(
-                body.contains("plan") && body.contains("status"),
-                "{kind:?} silent={silent} must tell the agent to call plan with status: {body}"
+                body.contains("plan") && body.contains("start"),
+                "{kind:?} silent={silent} must tell the agent to call plan with start: {body}"
             );
             assert!(
                 body.contains("CODE.md"),
