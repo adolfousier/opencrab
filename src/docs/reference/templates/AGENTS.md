@@ -1,6 +1,6 @@
 # AGENTS.md - Your Workspace
 
-> **Owns:** workspace governance + the enforced hard rules. Behavior/personality → SOUL.md · code → CODE.md · tools → TOOLS.md · memory-save/upgrade/service → BOOT.md.
+> **Owns:** workspace governance + the enforced hard rules. (The full brain-file ownership map lives in the system preamble — the single source of truth — not here.)
 
 This folder is home. Treat it that way.
 
