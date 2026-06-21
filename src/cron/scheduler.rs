@@ -652,12 +652,26 @@ async fn deliver_result(deliver_to: &str, job_name: &str, content: &str, api_key
             }
         }
         "discord" => {
-            tracing::info!("Delivering cron result to Discord channel {target_id}");
-            tracing::warn!("Discord cron delivery not yet wired — result logged only");
+            #[cfg(feature = "discord")]
+            {
+                tracing::info!("Delivering cron result to Discord channel {target_id}");
+                deliver_discord(target_id, &delivery_msg).await;
+            }
+            #[cfg(not(feature = "discord"))]
+            {
+                tracing::warn!("Discord feature not enabled — cannot deliver cron result");
+            }
         }
         "slack" => {
-            tracing::info!("Delivering cron result to Slack channel {target_id}");
-            tracing::warn!("Slack cron delivery not yet wired — result logged only");
+            #[cfg(feature = "slack")]
+            {
+                tracing::info!("Delivering cron result to Slack channel {target_id}");
+                deliver_slack(target_id, &delivery_msg).await;
+            }
+            #[cfg(not(feature = "slack"))]
+            {
+                tracing::warn!("Slack feature not enabled — cannot deliver cron result");
+            }
         }
         other => {
             tracing::warn!("Unknown delivery channel '{other}' for job '{job_name}'");
@@ -698,27 +712,59 @@ async fn deliver_http(url: &str, job_name: &str, content: &str, api_key: Option<
     }
 }
 
+/// Read `channels.<channel>.<field>` (e.g. a bot token) from the active
+/// workspace's `keys.toml`. Cron delivery runs outside any channel's live
+/// connection, so it reads the credential straight off disk.
+#[cfg(any(feature = "telegram", feature = "discord", feature = "slack"))]
+fn read_channel_secret(channel: &str, field: &str) -> Option<String> {
+    let keys_path = crate::brain::BrainLoader::resolve_path().join("keys.toml");
+    let content = std::fs::read_to_string(&keys_path).ok()?;
+    content.parse::<toml::Table>().ok().and_then(|t| {
+        t.get("channels")?
+            .as_table()?
+            .get(channel)?
+            .as_table()?
+            .get(field)?
+            .as_str()
+            .map(String::from)
+    })
+}
+
+/// Split `text` into `<= max_len` byte chunks, breaking on a newline near the
+/// limit when possible and never inside a multi-byte char. Used for Discord's
+/// 2000-char and Slack's message limits. (Telegram reuses its own chunker so
+/// HTML stays valid across splits.)
+#[cfg(any(feature = "discord", feature = "slack"))]
+fn split_for_delivery(text: &str, max_len: usize) -> Vec<&str> {
+    if text.len() <= max_len {
+        return vec![text];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let mut end = (start + max_len).min(text.len());
+        while end < text.len() && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let break_at = if end < text.len() {
+            text[start..end]
+                .rfind('\n')
+                .filter(|&pos| pos > end - start - 200)
+                .map(|pos| start + pos + 1)
+                .unwrap_or(end)
+        } else {
+            end
+        };
+        chunks.push(&text[start..break_at]);
+        start = break_at;
+    }
+    chunks
+}
+
 /// Deliver via Telegram Bot API (direct HTTP POST).
 #[cfg(feature = "telegram")]
 async fn deliver_telegram(chat_id: &str, message: &str) {
-    // We need the bot token — read from config
-    let brain_path = crate::brain::BrainLoader::resolve_path();
-    let keys_path = brain_path.join("keys.toml");
-    let token = if let Ok(content) = std::fs::read_to_string(&keys_path) {
-        content.parse::<toml::Table>().ok().and_then(|t| {
-            t.get("channels")?
-                .as_table()?
-                .get("telegram")?
-                .as_table()?
-                .get("token")?
-                .as_str()
-                .map(String::from)
-        })
-    } else {
-        None
-    };
-
-    let Some(token) = token else {
+    let Some(token) = read_channel_secret("telegram", "token") else {
         tracing::warn!("No Telegram bot token found in keys.toml — cannot deliver cron result");
         return;
     };
@@ -775,5 +821,91 @@ async fn deliver_telegram(chat_id: &str, message: &str) {
     }
     if delivered > 0 {
         tracing::info!("Cron result delivered to Telegram chat {chat_id} (HTML, {delivered} part(s))");
+    }
+}
+
+/// Deliver via Discord Bot API (direct HTTP POST to the channel-messages
+/// endpoint). Discord renders its own markdown natively, so the content is
+/// sent as-is, chunked to the 2000-char message limit.
+#[cfg(feature = "discord")]
+async fn deliver_discord(channel_id: &str, message: &str) {
+    let Some(token) = read_channel_secret("discord", "token") else {
+        tracing::warn!("No Discord bot token found in keys.toml — cannot deliver cron result");
+        return;
+    };
+
+    let url = format!("https://discord.com/api/v10/channels/{channel_id}/messages");
+    let client = reqwest::Client::new();
+    let mut delivered = 0usize;
+    for chunk in split_for_delivery(message, 2000) {
+        let body = serde_json::json!({ "content": chunk });
+        match client
+            .post(&url)
+            .header("Authorization", format!("Bot {token}"))
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => delivered += 1,
+            Ok(resp) => {
+                tracing::warn!(
+                    "Discord delivery to {channel_id} failed ({}): {:?}",
+                    resp.status(),
+                    resp.text().await.unwrap_or_default()
+                );
+            }
+            Err(e) => {
+                tracing::error!("Discord delivery to {channel_id} HTTP error: {e}");
+            }
+        }
+    }
+    if delivered > 0 {
+        tracing::info!("Cron result delivered to Discord channel {channel_id} ({delivered} part(s))");
+    }
+}
+
+/// Deliver via Slack Web API (`chat.postMessage`). The `text` field renders
+/// Slack mrkdwn. Slack returns HTTP 200 even on a logical failure
+/// (`{"ok":false,"error":...}`), so we inspect the body, not just the status.
+#[cfg(feature = "slack")]
+async fn deliver_slack(channel_id: &str, message: &str) {
+    let Some(token) = read_channel_secret("slack", "token") else {
+        tracing::warn!("No Slack bot token found in keys.toml — cannot deliver cron result");
+        return;
+    };
+
+    let url = "https://slack.com/api/chat.postMessage";
+    let client = reqwest::Client::new();
+    let mut delivered = 0usize;
+    for chunk in split_for_delivery(message, 3500) {
+        let body = serde_json::json!({ "channel": channel_id, "text": chunk });
+        match client
+            .post(url)
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let parsed: serde_json::Value = resp.json().await.unwrap_or_default();
+                if parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+                    delivered += 1;
+                } else {
+                    tracing::warn!(
+                        "Slack delivery to {channel_id} failed: {}",
+                        parsed
+                            .get("error")
+                            .and_then(|e| e.as_str())
+                            .unwrap_or("unknown error")
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!("Slack delivery to {channel_id} HTTP error: {e}");
+            }
+        }
+    }
+    if delivered > 0 {
+        tracing::info!("Cron result delivered to Slack channel {channel_id} ({delivered} part(s))");
     }
 }
