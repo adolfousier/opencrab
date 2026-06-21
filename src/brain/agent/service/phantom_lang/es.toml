@@ -208,7 +208,7 @@ line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:vale|bien|ok|okey|sí|claro)\\s*,?\\s
 # Anuncio de trabajo en curso que cierra el turno sin llamar a ninguna
 # herramienta — "Ejecutando las pruebas ahora.", "Verificando…". Requiere
 # gerundio de acción + marcador de inmediatez (ahora / … / : ).
-work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:vale|bien|ok|okey|sí|claro)[,.!:]?\\s+)?(?:estoy\\s+|ahora\\s+)?(?:ejecutando|corriendo|verificando|revisando|comprobando|construyendo|compilando|probando|buscando|leyendo|escribiendo|creando|generando|actualizando|modificando|instalando|aplicando|desplegando|descargando|subiendo|eliminando|borrando|arreglando|corrigiendo|analizando|investigando)\\b[^.!?:\\n]{0,60}?(?:\\s+ahora(?:[.!…,]+|\\s*$)|\\.{3}|…|:\\s*$)"
+work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:vale|bien|ok|okey|sí|claro)[,.!:]?\\s+)?(?:estoy\\s+|ahora\\s+)?(?:ejecutando|corriendo|verificando|revisando|comprobando|construyendo|compilando|probando|buscando|leyendo|escribiendo|creando|generando|actualizando|modificando|instalando|aplicando|desplegando|descargando|subiendo|eliminando|borrando|arreglando|corrigiendo|analizando|investigando)\\b[^.!?:\\n]{0,60}?(?:\\s+ahora(?:[.!…,:]+|\\s*$)|\\.{3}|…|:\\s*$)"
 
 gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:ahora|ya)\\s+(?:actualizando|modificando|corrigiendo|arreglando|creando|añadiendo|agregando|eliminando|borrando|ejecutando|leyendo|buscando)\\b"
 

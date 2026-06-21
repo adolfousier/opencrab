@@ -103,3 +103,21 @@ fn work_announcement_matches_only_with_imminence_marker() {
     assert!(matches_work_announcement("Running the tests now."));
     assert!(!matches_work_announcement("Running the tests helped."));
 }
+
+#[test]
+fn now_followed_by_colon_is_phantom() {
+    // "Checking runs now: I'll verify the schedule." — the colon after "now"
+    // is an imminence marker just like a period or ellipsis. The model leads
+    // with the announcement, adds a colon, then continues narrating instead
+    // of dispatching a tool call.
+    assert!(has_phantom_tool_intent_no_tools(
+        "Checking cron runs now: I'll verify the schedule."
+    ));
+    assert!(has_phantom_tool_intent_no_tools(
+        "Running checks now: let me look at the recent results."
+    ));
+    assert!(matches_work_announcement("Verifying the deployment now:"));
+    assert!(matches_work_announcement(
+        "Building the project now: clippy is clean."
+    ));
+}
