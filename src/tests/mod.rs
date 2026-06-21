@@ -271,6 +271,7 @@ pub mod pdf_vision_test;
 pub mod slack_handler_test;
 mod telegram_caption_test;
 pub mod telegram_command_sanitize_test;
+pub mod telegram_impersonation_test;
 pub mod telegram_handler_test;
 pub mod telegram_join_detection_test;
 pub mod telegram_last_intermediate_footer_test;

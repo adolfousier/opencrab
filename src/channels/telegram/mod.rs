@@ -44,6 +44,10 @@ pub struct TelegramState {
     bot: Mutex<Option<Bot>>,
     /// Chat ID of the owner's conversation — used as default for proactive sends
     owner_chat_id: Mutex<Option<i64>>,
+    /// Cached `(full_name, username)` of the owner, captured when an owner
+    /// message arrives. Used to flag non-owner senders whose display name or
+    /// username mimics the owner (impersonation detection in group chats).
+    owner_identity: Mutex<Option<(String, Option<String>)>>,
     /// Bot's @username — set at startup via get_me(), used for @mention detection in groups
     bot_username: Mutex<Option<String>>,
     /// Maps session_id → Telegram chat_id for approval routing
@@ -95,6 +99,7 @@ impl TelegramState {
         Self {
             bot: Mutex::new(None),
             owner_chat_id: Mutex::new(None),
+            owner_identity: Mutex::new(None),
             bot_username: Mutex::new(None),
             session_chats: Mutex::new(HashMap::new()),
             chat_sessions: Mutex::new(HashMap::new()),
@@ -119,6 +124,16 @@ impl TelegramState {
     /// Update the owner's chat ID (called on each owner message).
     pub async fn set_owner_chat_id(&self, chat_id: i64) {
         *self.owner_chat_id.lock().await = Some(chat_id);
+    }
+
+    /// Cache the owner's display identity (captured from an owner message) so
+    /// later non-owner senders can be checked for impersonation.
+    pub async fn set_owner_identity(&self, full_name: String, username: Option<String>) {
+        *self.owner_identity.lock().await = Some((full_name, username));
+    }
+
+    pub async fn owner_identity(&self) -> Option<(String, Option<String>)> {
+        self.owner_identity.lock().await.clone()
     }
 
     /// Get a clone of the Bot, if connected.
@@ -418,7 +433,12 @@ impl TelegramState {
 
     /// Check if a chat is in the profile-create flow.
     pub async fn is_prof_create(&self, chat_id: i64) -> bool {
-        self.prof_create_states.lock().await.get(&chat_id).copied().unwrap_or(false)
+        self.prof_create_states
+            .lock()
+            .await
+            .get(&chat_id)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Clear the profile-create flow state.
