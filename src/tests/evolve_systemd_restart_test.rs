@@ -21,7 +21,10 @@
 //! Construction + message shape is what we can pin portably; the
 //! end-to-end behaviour was validated empirically by the PR author.
 
-use crate::brain::tools::evolve::{SYSTEMD_UNIT_PATTERN, build_systemd_restart_command};
+use crate::brain::tools::evolve::{
+    EVOLVE_UNIT_GLOB, SYSTEMD_UNIT_PATTERN, build_systemd_cleanup_command,
+    build_systemd_restart_command,
+};
 
 #[test]
 fn unit_pattern_is_glob_so_multiple_profiles_match() {
@@ -121,6 +124,83 @@ fn restart_command_unit_name_includes_pid() {
         unit_a, unit_b,
         "two concurrent evolves on different PIDs must produce different unit names \
          or systemd-run will fail on the second one"
+    );
+}
+
+// ── stale-unit cleanup (the accumulation fix) ───────────────────
+
+#[test]
+fn cleanup_uses_reset_failed_not_collect() {
+    // We can't pass --collect to systemd-run (unsupported on systemd
+    // < v240, RHEL 7 / CentOS 7), so spent transient units are swept
+    // with `systemctl reset-failed <glob>` instead. reset-failed has
+    // existed far longer than --collect, so it stays portable.
+    let cmd = build_systemd_cleanup_command(false);
+    assert_eq!(
+        cmd.get_program(),
+        "systemctl",
+        "cleanup must use systemctl reset-failed, not systemd-run --collect"
+    );
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        args,
+        vec!["reset-failed", "opencrabs-evolve-*.service"],
+        "system-level cleanup must reset-failed exactly the evolve-unit glob — \
+         a wider glob could clear unrelated units, a narrower one would miss \
+         accumulated failed restarts"
+    );
+}
+
+#[test]
+fn cleanup_glob_matches_restart_unit_names() {
+    // The cleanup glob must match the per-PID unit names that
+    // build_systemd_restart_command creates, or nothing gets swept.
+    let restart = build_systemd_restart_command(12345, false);
+    let unit = restart
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .find(|a| a.starts_with("--unit="))
+        .expect("unit arg must exist");
+    assert_eq!(unit, "--unit=opencrabs-evolve-12345");
+    // EVOLVE_UNIT_GLOB is "opencrabs-evolve-*.service"; the unit name is
+    // "opencrabs-evolve-12345" (systemd appends .service). Assert the
+    // glob's fixed prefix matches so the two can never drift apart.
+    let prefix = EVOLVE_UNIT_GLOB.trim_end_matches("*.service");
+    assert_eq!(prefix, "opencrabs-evolve-");
+    assert!(
+        "opencrabs-evolve-12345".starts_with(prefix),
+        "cleanup glob prefix must match the restart unit-name prefix"
+    );
+}
+
+#[test]
+fn cleanup_user_level_includes_user_flag() {
+    let cmd = build_systemd_cleanup_command(true);
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        args,
+        vec!["--user", "reset-failed", "opencrabs-evolve-*.service"],
+        "user-level cleanup must target the user manager with --user, matching \
+         the user-level restart path"
+    );
+}
+
+#[test]
+fn evolve_sweeps_stale_units_before_scheduling_restart() {
+    // Sentinel: the schedule path must call the cleanup before spawning
+    // the restart. Removing it re-introduces the accumulation bug where
+    // failed opencrabs-evolve-* units pile up forever.
+    let src = include_str!("../brain/tools/evolve.rs");
+    assert!(
+        src.contains("build_systemd_cleanup_command(use_user_units)"),
+        "evolve must sweep stale evolve units (reset-failed) before scheduling a \
+         new restart, or failed transient units accumulate without bound"
     );
 }
 

@@ -115,6 +115,36 @@ pub(crate) fn build_systemd_restart_command(pid: u32, user: bool) -> std::proces
     cmd
 }
 
+/// Glob matching every transient evolve restart unit we have ever
+/// scheduled. `build_systemd_restart_command` embeds the scheduling
+/// process PID in each unit name (`opencrabs-evolve-<pid>`), so over a
+/// host's lifetime many such units are created — one per evolve / auto
+/// update attempt.
+pub(crate) const EVOLVE_UNIT_GLOB: &str = "opencrabs-evolve-*.service";
+
+/// Build the command that garbage-collects spent evolve restart units.
+///
+/// We cannot pass `--collect` to `systemd-run` (it's unsupported on
+/// systemd < v240, RHEL 7 / CentOS 7), so a finished transient
+/// `opencrabs-evolve-<pid>` unit lingers in systemd's registry — and a
+/// restart that *fails* (e.g. it lost the channel-token race against a
+/// running TUI) lingers in the **failed** state, accumulating forever.
+/// `systemctl reset-failed <glob>` clears those spent units and is
+/// available on every systemd version we target, so we call it right
+/// before scheduling a fresh restart. Best-effort: its failure must
+/// never block the evolve.
+pub(crate) fn build_systemd_cleanup_command(user: bool) -> std::process::Command {
+    let mut cmd = std::process::Command::new("systemctl");
+    if user {
+        cmd.arg("--user");
+    }
+    cmd.arg("reset-failed")
+        .arg(EVOLVE_UNIT_GLOB)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    cmd
+}
+
 /// Count systemd service units matching the given glob pattern, at either
 /// system or user level.
 ///
@@ -1311,6 +1341,29 @@ impl EvolveTool {
                     }
                     let pid = std::process::id();
                     let unit_name = format!("opencrabs-evolve-{pid}");
+                    // Garbage-collect spent evolve units from prior runs before
+                    // scheduling a fresh one. Without --collect (unsupported on
+                    // old systemd) finished/failed `opencrabs-evolve-<pid>`
+                    // units pile up indefinitely; reset-failed clears them and
+                    // works on every systemd we target. Best-effort — a cleanup
+                    // failure must not block the restart.
+                    match build_systemd_cleanup_command(use_user_units).status() {
+                        Ok(st) => tracing::info!(
+                            target: "evolve",
+                            glob = EVOLVE_UNIT_GLOB,
+                            success = st.success(),
+                            session_id = %sid,
+                            "evolve: reset-failed swept stale evolve units"
+                        ),
+                        Err(e) => tracing::warn!(
+                            target: "evolve",
+                            glob = EVOLVE_UNIT_GLOB,
+                            error = %e,
+                            session_id = %sid,
+                            "evolve: could not sweep stale evolve units (reset-failed spawn failed) — \
+                             they will linger until manually cleared, but the restart still proceeds"
+                        ),
+                    }
                     // Failure to spawn systemd-run is the most user-visible
                     // regression mode: the binary on disk is updated, the
                     // agent says "Evolved!", but the daemon keeps running
