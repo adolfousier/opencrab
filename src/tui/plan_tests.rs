@@ -392,11 +392,9 @@ mod tests {
             status: TaskStatus::Pending,
             notes: None,
             completed_at: None,
-            execution_history: Vec::new(),
             retry_count: 0,
             max_retries: 3,
             artifacts: Vec::new(),
-            reflection: None,
         };
         assert_eq!(task1.complexity_stars(), "★☆☆☆☆");
 

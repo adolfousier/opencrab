@@ -34,8 +34,7 @@ mod repository {
     async fn record_then_read_round_trip() {
         let (_db, repo) = setup().await;
         let wd = "~/srv/dart/myapp";
-        let path =
-            "~/srv/dart/myapp/lib/presentation/propositions_screen/propositions_screen.dart";
+        let path = "~/srv/dart/myapp/lib/presentation/propositions_screen/propositions_screen.dart";
         repo.record(wd, path).await.expect("record");
         let got = repo.top_for_dir(wd, 12).await.expect("query");
         assert_eq!(got, vec![path.to_string()]);

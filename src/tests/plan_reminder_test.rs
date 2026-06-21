@@ -29,9 +29,15 @@ fn executing_plan_with_incomplete_tasks_is_reminded() {
     );
     let out = format_plan_reminder(&plan).expect("should remind for an in-flight plan");
     assert!(out.contains("ACTIVE PLAN REMINDER"));
-    assert!(out.contains("1/3 tasks done"));
-    assert!(out.contains("→ In progress: build login form"));
-    assert!(out.contains("☐ add tests"));
+    assert!(out.contains("1/3 done"));
+    assert!(
+        out.contains("→ Task 1: build login form"),
+        "in-progress task must be flagged with its order + title, got: {out}"
+    );
+    assert!(
+        out.contains("☐ Task 2: add tests"),
+        "pending task must be listed with its order + title, got: {out}"
+    );
     // Completed tasks are not listed.
     assert!(!out.contains("wire auth service"));
 }

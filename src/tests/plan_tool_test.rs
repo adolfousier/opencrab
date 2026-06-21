@@ -262,7 +262,7 @@ async fn import_sample_plan_succeeds() {
     let tool = PlanTool;
 
     let input = serde_json::json!({
-        "operation": "import",
+        "operation": "init",
         "file_path": plan_file.to_str().unwrap(),
     });
 
@@ -286,7 +286,7 @@ async fn import_rejects_file_over_size_cap() {
     let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
     let tool = PlanTool;
     let input = serde_json::json!({
-        "operation": "import",
+        "operation": "init",
         "file_path": plan_file.to_str().unwrap(),
     });
 
@@ -310,7 +310,7 @@ async fn import_rejects_invalid_json() {
     let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
     let tool = PlanTool;
     let input = serde_json::json!({
-        "operation": "import",
+        "operation": "init",
         "file_path": plan_file.to_str().unwrap(),
     });
 
@@ -368,7 +368,7 @@ async fn import_rejects_orphan_dependency_uuid() {
     let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
     let tool = PlanTool;
     let input = serde_json::json!({
-        "operation": "import",
+        "operation": "init",
         "file_path": plan_file.to_str().unwrap(),
     });
 
@@ -402,7 +402,7 @@ async fn import_rejects_symlink_at_target() {
     let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
     let tool = PlanTool;
     let input = serde_json::json!({
-        "operation": "import",
+        "operation": "init",
         "file_path": symlink_path.to_str().unwrap(),
     });
 
@@ -417,31 +417,28 @@ async fn import_rejects_symlink_at_target() {
     );
 }
 
-// ── start_task auto-completion ─────────────────────────────────────
+// ── 4-command flow (init → add_task → start → complete) ────────────
 
-#[tokio::test]
-async fn start_task_auto_completes_previous_in_progress_task() {
+/// Build a session with a plan and `n` simple edit tasks via the new
+/// `init` + `add_task` flow. Returns the context to drive further calls.
+async fn setup_plan_with_tasks(tool: &PlanTool, n: usize) -> ToolExecutionContext {
     let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
-    let tool = PlanTool;
-
-    // Create a plan with 3 tasks
     tool.execute(
         serde_json::json!({
-            "operation": "create",
-            "title": "Auto-complete test",
-            "description": "Testing auto-completion of previous task"
+            "operation": "init",
+            "title": "Flow test",
+            "description": "Exercising the 4-command flow"
         }),
         &ctx,
     )
     .await
     .unwrap();
-
-    for i in 1..=3 {
+    for i in 1..=n {
         tool.execute(
             serde_json::json!({
                 "operation": "add_task",
-                "title": format!("Task {}", i),
-                "description": format!("Description {}", i),
+                "title": format!("Task {i}"),
+                "description": format!("Description for task {i}"),
                 "task_type": "edit"
             }),
             &ctx,
@@ -449,123 +446,175 @@ async fn start_task_auto_completes_previous_in_progress_task() {
         .await
         .unwrap();
     }
+    ctx
+}
 
-    tool.execute(serde_json::json!({ "operation": "finalize" }), &ctx)
-        .await
-        .unwrap();
+#[tokio::test]
+async fn start_returns_full_task_details() {
+    let tool = PlanTool;
+    let ctx = setup_plan_with_tasks(&tool, 2).await;
 
-    // Start task 1
-    tool.execute(
-        serde_json::json!({ "operation": "start_task", "task_order": 1 }),
-        &ctx,
-    )
-    .await
-    .unwrap();
-
-    // Start task 2 WITHOUT completing task 1 first.
-    // This should auto-complete task 1.
+    // No task_order → starts the next pending task and returns full details.
     let result = tool
-        .execute(
-            serde_json::json!({ "operation": "start_task", "task_order": 2 }),
-            &ctx,
-        )
+        .execute(serde_json::json!({ "operation": "start" }), &ctx)
         .await
         .unwrap();
-
+    assert!(result.success);
     assert!(
-        result.output.contains("Auto-completed"),
-        "should auto-complete previous task, got: {}",
+        result.output.contains("Task #1") && result.output.contains("Description for task 1"),
+        "start must surface full details of task 1, got: {}",
         result.output
-    );
-    assert!(
-        result.output.contains("Task 1"),
-        "should mention the auto-completed task name, got: {}",
-        result.output
-    );
-
-    // Verify task 1 is now completed via summary
-    let summary = tool
-        .execute(serde_json::json!({ "operation": "summary" }), &ctx)
-        .await
-        .unwrap();
-    assert!(
-        summary.output.contains("[x] Task 1"),
-        "task 1 should be completed, got: {}",
-        summary.output
-    );
-    assert!(
-        summary.output.contains("[>] Task 2"),
-        "task 2 should be in progress, got: {}",
-        summary.output
     );
 }
 
 #[tokio::test]
-async fn start_task_no_auto_complete_when_no_previous_in_progress() {
-    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+async fn start_is_idempotent_on_in_progress_task() {
+    // Calling start again (e.g. after a compaction) must re-surface the
+    // in-progress task's details, not error or skip ahead.
     let tool = PlanTool;
+    let ctx = setup_plan_with_tasks(&tool, 2).await;
 
-    tool.execute(
-        serde_json::json!({
-            "operation": "create",
-            "title": "No auto-complete test",
-            "description": "Normal flow"
-        }),
-        &ctx,
-    )
-    .await
-    .unwrap();
+    tool.execute(serde_json::json!({ "operation": "start" }), &ctx)
+        .await
+        .unwrap();
+    let again = tool
+        .execute(serde_json::json!({ "operation": "start" }), &ctx)
+        .await
+        .unwrap();
+    assert!(again.success);
+    assert!(
+        again.output.contains("Task #1"),
+        "start with no args must resume the in-progress task, got: {}",
+        again.output
+    );
+}
 
-    for i in 1..=2 {
-        tool.execute(
+#[tokio::test]
+async fn complete_auto_starts_next_task() {
+    let tool = PlanTool;
+    let ctx = setup_plan_with_tasks(&tool, 2).await;
+
+    tool.execute(serde_json::json!({ "operation": "start" }), &ctx)
+        .await
+        .unwrap();
+
+    // Completing task 1 auto-starts task 2 and returns its details.
+    let result = tool
+        .execute(
             serde_json::json!({
-                "operation": "add_task",
-                "title": format!("Task {}", i),
-                "description": format!("Desc {}", i),
-                "task_type": "edit"
+                "operation": "complete",
+                "task_order": 1,
+                "action": "success",
+                "output": "Task 1 done"
             }),
             &ctx,
         )
         .await
         .unwrap();
-    }
+    assert!(result.success);
+    assert!(
+        result.output.contains("Task #1") && result.output.contains("completed"),
+        "completion must confirm task 1, got: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("Started Task #2")
+            && result.output.contains("Description for task 2"),
+        "complete must auto-start task 2 with its details, got: {}",
+        result.output
+    );
+}
 
-    tool.execute(serde_json::json!({ "operation": "finalize" }), &ctx)
+#[tokio::test]
+async fn complete_last_task_reports_plan_complete() {
+    let tool = PlanTool;
+    let ctx = setup_plan_with_tasks(&tool, 1).await;
+
+    tool.execute(serde_json::json!({ "operation": "start" }), &ctx)
         .await
         .unwrap();
-
-    // Start task 1, complete it properly
-    tool.execute(
-        serde_json::json!({ "operation": "start_task", "task_order": 1 }),
-        &ctx,
-    )
-    .await
-    .unwrap();
-
-    tool.execute(
-        serde_json::json!({
-            "operation": "complete_task",
-            "task_order": 1,
-            "success": true,
-            "output": "Done"
-        }),
-        &ctx,
-    )
-    .await
-    .unwrap();
-
-    // Start task 2 - no auto-complete should happen since task 1 is already completed
     let result = tool
         .execute(
-            serde_json::json!({ "operation": "start_task", "task_order": 2 }),
+            serde_json::json!({
+                "operation": "complete",
+                "task_order": 1,
+                "action": "success"
+            }),
             &ctx,
         )
         .await
         .unwrap();
-
     assert!(
-        !result.output.contains("Auto-completed"),
-        "should NOT auto-complete when previous task is already done, got: {}",
+        result.output.contains("Plan complete"),
+        "finishing the last task must report plan completion, got: {}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn start_specific_task_blocked_by_dependency() {
+    let tool = PlanTool;
+    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+    tool.execute(
+        serde_json::json!({ "operation": "init", "title": "Deps", "description": "dep test" }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+    tool.execute(
+        serde_json::json!({ "operation": "add_task", "title": "First", "description": "the first", "task_type": "edit" }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+    tool.execute(
+        serde_json::json!({ "operation": "add_task", "title": "Second", "description": "needs first", "task_type": "edit", "dependencies": [1] }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    // Task 2 depends on task 1 (not yet done) → starting it must be blocked.
+    let result = tool
+        .execute(
+            serde_json::json!({ "operation": "start", "task_order": 2 }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(!result.success, "blocked start must not succeed");
+    let msg = result.error.unwrap_or(result.output);
+    assert!(
+        msg.contains("blocked"),
+        "starting a task with unmet dependencies must report it blocked, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn init_with_inline_tasks_creates_plan_and_tasks() {
+    let tool = PlanTool;
+    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "operation": "init",
+                "title": "Inline",
+                "description": "created with inline tasks",
+                "tasks": [
+                    { "title": "Alpha", "description": "first", "task_type": "edit" },
+                    { "title": "Beta", "description": "second", "task_type": "test" }
+                ]
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert!(
+        result.output.contains("2 tasks")
+            && result.output.contains("Alpha")
+            && result.output.contains("Beta"),
+        "init must create the plan with both inline tasks, got: {}",
         result.output
     );
 }

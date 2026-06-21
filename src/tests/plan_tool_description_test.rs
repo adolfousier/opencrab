@@ -87,13 +87,17 @@ fn description_explicitly_carves_out_trivial_work() {
 }
 
 #[test]
-fn description_keeps_original_capability_summary() {
-    // Don't lose the existing "plan-and-execute" framing; the
-    // agent uses it to map back to the operations (create, add_task,
-    // start_task, complete_task, reflect).
+fn description_keeps_capability_summary_and_names_the_four_commands() {
+    // Keep the capability framing AND name the 4 commands the agent maps to.
     let d = tool_description();
     assert!(
-        d.contains("plan-and-execute") || d.contains("Create plans"),
+        d.contains("structured task plan") || d.contains("plan-and-execute"),
         "description must keep the capability summary alongside the trigger criteria; got: {d}"
     );
+    for cmd in ["init", "add_task", "start", "complete"] {
+        assert!(
+            d.contains(cmd),
+            "description must name the `{cmd}` command so the agent can map to it; got: {d}"
+        );
+    }
 }

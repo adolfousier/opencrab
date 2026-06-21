@@ -39,7 +39,9 @@ fn no_foreign_instance_means_no_preemption() {
 
     let preempted = preempt_other_profile_instances();
     assert!(
-        preempted.iter().all(|p| !p.channels.iter().any(|c| c == channel)),
+        preempted
+            .iter()
+            .all(|p| !p.channels.iter().any(|c| c == channel)),
         "no instance should be reported for a channel with no lock file"
     );
 }
@@ -91,5 +93,8 @@ fn preempts_and_kills_a_live_background_instance() {
     let _ = child.wait();
     let _ = fs::remove_file(&lock_path);
 
-    assert!(killed, "the background process must be gone after preemption");
+    assert!(
+        killed,
+        "the background process must be gone after preemption"
+    );
 }
