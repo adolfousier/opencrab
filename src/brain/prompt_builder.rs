@@ -13,10 +13,11 @@ use std::path::PathBuf;
 const CORE_BRAIN_FILES: &[(&str, &str)] = &[("USER.md", "user profile")];
 
 /// Always-loaded brain files beyond USER.md (which is in CORE_BRAIN_FILES) and
-/// SOUL.md (injected at the very end). AGENTS.md lives here because it owns the
-/// enforced hard rules (safety/permission gates) — those MUST be in context on
-/// every turn and survive compaction, so AGENTS.md is injected near the end
-/// (next to SOUL) rather than loaded on demand.
+/// SOUL.md (injected before AGENTS.md). AGENTS.md lives here because it owns
+/// the enforced hard rules AND the brain-file ownership/routing model — those
+/// MUST be in context on every turn and survive compaction. AGENTS.md is
+/// injected LAST (after SOUL.md) so the routing/ownership info sits closest to
+/// the model's generation point.
 const ALWAYS_LOADED_FILES: &[(&str, &str)] = &[("AGENTS.md", "workspace governance + hard rules")];
 
 /// Contextual brain files — loaded on demand via the `load_brain_file` tool.
@@ -32,12 +33,11 @@ pub(crate) const CONTEXTUAL_BRAIN_FILES: &[(&str, &str)] = &[
 ];
 
 /// All brain files in assembly order — kept for `build_system_brain` (full mode).
-/// SOUL.md intentionally excluded — injected at the END
-/// to combat "lost in the middle" attention decay.
+/// SOUL.md intentionally excluded — injected near the end.
+/// AGENTS.md intentionally excluded — injected LAST (owns the brain-file routing model).
 /// TOOLS.md and CODE.md excluded — they're contextual now.
 const BRAIN_FILES: &[(&str, &str)] = &[
     ("USER.md", "user"),
-    ("AGENTS.md", "agents"),
     ("SECURITY.md", "security"),
     ("MEMORY.md", "memory"),
     ("BOOT.md", "boot"),
@@ -236,12 +236,13 @@ impl BrainLoader {
     /// Assembly order:
     /// 1. Brain preamble (hardcoded, always present)
     /// 2. USER.md — who the human is
-    /// 3. AGENTS.md — workspace rules, memory system, safety
-    /// 4. SECURITY.md — security policies
-    /// 5. MEMORY.md — long-term context
-    /// 6. BOOT/HEARTBEAT — startup config
-    /// 7. Runtime info — model, provider, working directory, OS, timestamp
-    /// 8. SOUL.md — personality, tone (LAST — "lost in the middle" fix)
+    /// 3. SECURITY.md — security policies
+    /// 4. MEMORY.md — long-term context
+    /// 5. BOOT/HEARTBEAT — startup config
+    /// 6. Runtime info — model, provider, working directory, OS, timestamp
+    /// 7. Commands & skills awareness index
+    /// 8. SOUL.md — personality, tone
+    /// 9. AGENTS.md — workspace governance + hard rules + brain-file routing (LAST)
     pub fn build_system_brain(&self, runtime_info: Option<&RuntimeInfo>) -> String {
         let mut prompt = String::with_capacity(8192);
 
@@ -293,13 +294,26 @@ impl BrainLoader {
         // 7.5 Available commands & skills (awareness layer — see the method).
         self.push_commands_and_skills(&mut prompt);
 
-        // 8. SOUL.md — injected LAST to combat "lost in the middle" attention
-        //     decay. Critical personality and hard rules sit at the bottom of
-        //     the system prompt, closest to the model's generation point.
+        // 8. SOUL.md — personality, tone. Injected near the end so personality
+        //    sits close to the model's generation point, but BEFORE AGENTS.md.
         if let Some(content) = self.load_file("SOUL.md") {
             let trimmed = content.trim();
             if !trimmed.is_empty() {
                 prompt.push_str(&format!("--- SOUL.md (personality) ---\n{}\n\n", trimmed));
+            }
+        }
+
+        // 9. AGENTS.md — workspace governance + the enforced hard rules +
+        //    brain-file ownership/routing model. Injected LAST so the routing
+        //    info sits at the very bottom, closest to the model's generation
+        //    point.
+        if let Some(content) = self.load_file("AGENTS.md") {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                prompt.push_str(&format!(
+                    "--- AGENTS.md (workspace governance + enforced hard rules) ---\n{}\n\n",
+                    trimmed
+                ));
             }
         }
 
@@ -308,11 +322,12 @@ impl BrainLoader {
 
     /// Build a lean "core" system brain: only USER.md is injected early.
     ///
-    /// SOUL.md is injected LAST to combat the
-    /// "lost in the middle" attention decay — critical personality and
-    /// hard rules sit closest to the model's generation point.
+    /// SOUL.md is injected near the end for personality, and AGENTS.md is
+    /// injected LAST so the brain-file ownership/routing model sits closest
+    /// to the model's generation point. After compaction, the model sees
+    /// AGENTS.md last and can immediately navigate to the right brain file.
     ///
-    /// All other brain files (MEMORY.md, AGENTS.md, etc.) are listed in a
+    /// All other brain files (MEMORY.md, SECURITY.md, etc.) are listed in a
     /// "Available Context Files" index section so the agent knows they exist and can
     /// load them on demand via the `load_brain_file` tool — only when actually needed.
     ///
@@ -471,10 +486,23 @@ impl BrainLoader {
             prompt.push('\n');
         }
 
-        // 5. AGENTS.md — workspace governance + the enforced hard rules.
-        //    Always-loaded (not on demand) and injected near the END so the
-        //    safety/permission gates are in context every turn and survive
-        //    compaction, closest to the model's generation point.
+        // 5. SOUL.md — personality, tone. Injected near the end so personality
+        //    sits close to the model's generation point, but BEFORE AGENTS.md
+        //    which is the true last section (it owns the brain-file routing
+        //    model that tells the agent where everything lives).
+        if let Some(content) = self.load_file("SOUL.md") {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                prompt.push_str(&format!("--- SOUL.md (personality) ---\n{}\n\n", trimmed));
+            }
+        }
+
+        // 6. AGENTS.md — workspace governance + the enforced hard rules +
+        //    brain-file ownership/routing model. Always-loaded and injected
+        //    LAST so the routing info (what lives where, which file owns what)
+        //    sits at the very bottom, closest to the model's generation point.
+        //    After compaction, the model sees this last and can immediately
+        //    navigate to the right brain file.
         for (filename, _label) in ALWAYS_LOADED_FILES {
             if let Some(content) = self.load_file(filename) {
                 let trimmed = content.trim();
@@ -484,16 +512,6 @@ impl BrainLoader {
                         filename, trimmed
                     ));
                 }
-            }
-        }
-
-        // 6. SOUL.md — injected LAST to combat "lost in the middle" attention
-        //    decay. Personality sits at the very bottom, closest to the
-        //    model's generation point.
-        if let Some(content) = self.load_file("SOUL.md") {
-            let trimmed = content.trim();
-            if !trimmed.is_empty() {
-                prompt.push_str(&format!("--- SOUL.md (personality) ---\n{}\n\n", trimmed));
             }
         }
 

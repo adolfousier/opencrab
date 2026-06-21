@@ -1,8 +1,8 @@
 //! Tests for `BrainLoader::build_core_brain()`.
 //!
 //! Verifies the lean-injection model: USER.md is baked into every request;
-//! SOUL.md is injected last to combat "lost in the middle" attention decay;
-//! only as an index so the agent can retrieve them on demand via `load_brain_file`.
+//! AGENTS.md is injected last (owns the brain-file routing model);
+//! other files are listed only as an index so the agent can retrieve them on demand via `load_brain_file`.
 
 use super::*;
 use tempfile::TempDir;
@@ -278,24 +278,32 @@ fn test_runtime_info_included_in_core_brain() {
 
 // ── SOUL.md position ─────────────────────────────────────────────────────────
 
-/// SOUL.md must appear as the LAST section in the system prompt to combat
-/// "lost in the middle" attention decay. Slash commands are no longer in
-/// the system prompt (moved to contextual on-demand loading).
+/// AGENTS.md must appear as the LAST section in the system prompt — it owns
+/// the brain-file ownership/routing model and the model needs it closest to
+/// its generation point to navigate brain files after compaction.
 #[test]
-fn test_soul_md_is_last_section() {
+fn test_agents_md_is_last_section() {
     let dir = TempDir::new().unwrap();
     write(&dir, "SOUL.md", "PERSONALITY_MARKER_UNIQUE_12345");
+    write(&dir, "AGENTS.md", "AGENTS_MARKER_UNIQUE_67890");
     write(&dir, "USER.md", "Name: Alice");
     let brain = loader(&dir).build_core_brain(None);
+    let agents_pos = brain
+        .find("AGENTS_MARKER_UNIQUE_67890")
+        .expect("AGENTS.md must be in prompt");
     let soul_pos = brain
         .find("PERSONALITY_MARKER_UNIQUE_12345")
         .expect("SOUL.md must be in prompt");
-    // SOUL.md should be the last brain file in the prompt
-    let after_soul = &brain[soul_pos..];
-    let trimmed = after_soul.trim();
     assert!(
-        trimmed.ends_with("PERSONALITY_MARKER_UNIQUE_12345") || trimmed.ends_with("---"),
-        "SOUL.md should be the last section in the system prompt, got trailing: {:?}",
+        agents_pos > soul_pos,
+        "AGENTS.md must come AFTER SOUL.md (AGENTS owns the brain-file routing model)"
+    );
+    // AGENTS.md should be the last brain file in the prompt
+    let after_agents = &brain[agents_pos..];
+    let trimmed = after_agents.trim();
+    assert!(
+        trimmed.ends_with("AGENTS_MARKER_UNIQUE_67890") || trimmed.ends_with("---"),
+        "AGENTS.md should be the last section in the system prompt, got trailing: {:?}",
         &trimmed[trimmed.len().saturating_sub(100)..]
     );
 }
