@@ -10,7 +10,6 @@
 use std::sync::Arc;
 
 use teloxide::payloads::SendMessageSetters;
-use teloxide::prelude::Requester;
 use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
 use tokio::sync::oneshot;
 
@@ -105,8 +104,7 @@ pub(crate) fn make_question_callback(
             // after the buttons, confusing the user (issue #142).
             flush_intermediates(&bot, ChatId(chat_id), thread_id, &streaming).await;
 
-            if let Err(e) = bot
-                .send_message(ChatId(chat_id), &text)
+            if let Err(e) = super::send::message_in_thread(&bot, ChatId(chat_id), thread_id, &text)
                 .parse_mode(ParseMode::Html)
                 .reply_markup(keyboard)
                 .await
