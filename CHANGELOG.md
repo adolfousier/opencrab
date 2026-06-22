@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.47] - 2026-06-22
+
+37 commits since v0.3.46. 52 files changed, +2665 / -289 lines.
+
+### ✨ Features
+
+- `e3f20a64` **Proactive tool discovery**: agent searches for tools before claiming inability, plus project-directive loading
+- `c8ddb521` **Confidential file protection**: SSH keys, .env, credentials protected. Owner verification required in group chats
+- `87621927` **Per-project brain overlay**: project-specific brain files layer on top of profile brain files
+- `1adc8b17` **Owner impersonation detection**: detect non-owners trying to act as the owner in Telegram group chats
+- `0ddd8479` **bot_owner config field**: TelegramConfig with is_owner() helper for identity checks
+- `67b55edf` **/profiles command**: manage AI profiles from any channel
+- `a63b042c` **/cd hidden dirs toggle**: show/hide hidden directories in the directory picker
+
+### 🔧 Fixes
+
+- `217a431e` **Forum topic session isolation**: each forum topic gets its own session (#215)
+- `b24f13a9` **Follow-up question topic routing**: questions go to the correct topic thread, not #general
+- `ee367d2d` **System brain rebuild on change**: system brain rebuilt from disk when brain files change (#213)
+- `56b8b057` **JIT tool activation**: extended tools activated on-demand when called by name (#214)
+- `56df0352` **tool_search guidance**: extended tool guidance moved to preamble + RSI (#214)
+- `5d0b4b47` **RSI tool success rate**: pre-execution misses no longer penalize success rate (#214)
+- `53620509` **Internal-state query routing**: queries route to their tools, not the raw DB
+- `c00b4a83` **State query routing refined**: further cleanup of internal-state query routing
+- `cc689374` **Profile/project directives**: default profile stated, profile and project directives added
+- `6889668d` **Session recovery hint**: corrected to use plan operation="start"
+- `a37820cb` **Compaction reinjection fix**: TOOLS.md and CODE.md no longer re-injected after compaction
+- `c6f900ce` **Plan auto-approve**: plan auto-approved on first start
+- `238ded51` **rm-blocklist bypasses closed**: reversed flags, quoted $HOME, long flags, chained rm
+- `3dbd430e` **Blocklist recursion**: recurse blocklist through interpreter indirection
+- `1328f8fa` **@botname stripping defense**: defense-in-depth stripping + tracing for group command bugs
+- `e4aa995b` **TOOLS.md template cap**: trimmed below 100-line regression cap
+
+### 📖 Documentation
+
+- `8036b7e3` Require a tool_search reminder when naming extended tools
+- `f225cc5c` Add YAML frontmatter requirement for SKILL.md files
+
+### 🧹 Miscellaneous
+
+- `6f762022` Move AGENTS.md to last injection position
+- `16c53b56` Drop routing-map duplication from AGENTS.md Owns header
+- `17075a23` Drop redundant contextual-files pointer; AGENTS.md owns it
+- `2d77b301` Move operational how-tos out of AGENTS into their owners
+- `0070d118` Gate build/test on cargo-audit so advisories fail fast
+- `09a83340` Live system-brain rebuild test
+- `0d522443` Accept STT-chain umbrella error so CI isn't network-fragile
+- `0ef60dd3` Per-project brain overlay integration test
+- `64b349d2` Docker e2e adversarial eval harness
+- `425f1713` cargo fmt commands.rs
+- `bbd4247d` cargo fmt for commands and telegram
+- `8ced3bc7` Bump quinn-proto 0.11.14 -> 0.11.15 (RUSTSEC-2026-0185)
+
+### 📊 Stats
+
+- 37 commits since v0.3.46
+- 52 files changed, +2665 / -289 lines
+- 4,103 tests (4,103 passed, 0 failed, 24 ignored)
+
 ## [0.3.46] - 2026-06-21
 
 36 commits since v0.3.45. 81 files changed, +3799 / -1972 lines.
@@ -5859,3 +5918,4 @@ fixes.
 [0.3.44]: https://github.com/adolfousier/opencrabs/compare/v0.3.43...v0.3.44
 [0.3.45]: https://github.com/adolfousier/opencrabs/compare/v0.3.44...v0.3.45
 [0.3.46]: https://github.com/adolfousier/opencrabs/compare/v0.3.45...v0.3.46
+[0.3.47]: https://github.com/adolfousier/opencrabs/compare/v0.3.46...v0.3.47
