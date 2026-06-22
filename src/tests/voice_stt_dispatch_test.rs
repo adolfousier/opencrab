@@ -21,10 +21,15 @@ async fn dispatch_api_mode_requires_api_key() {
 
     let result = crate::channels::voice::transcribe(vec![0u8; 50], &config).await;
     assert!(result.is_err());
-    // Falls through to local STT which fails on invalid audio bytes
+    // With no API provider the chain falls through to local STT, which fails
+    // either decoding the 50 garbage bytes (model already cached) or loading
+    // the model (not cached in CI — a HuggingFace download that can 429). Any
+    // of those surfaces as the "All STT providers failed" umbrella, so assert
+    // on that rather than a single failure reason.
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("No STT provider")
+        err.contains("STT providers failed")
+            || err.contains("No STT provider")
             || err.contains("Local STT")
             || err.contains("probe audio")
             || err.contains("decode"),
@@ -65,10 +70,14 @@ async fn dispatch_api_mode_with_provider_no_key_fails() {
 
     let result = crate::channels::voice::transcribe(vec![0u8; 50], &config).await;
     assert!(result.is_err());
-    // Provider has no API key, falls through to local STT path
+    // Provider has no API key, so the chain falls through to local STT, which
+    // fails either decoding the garbage bytes (model cached) or loading the
+    // model (not cached in CI — a download that can 429). Both surface as the
+    // "All STT providers failed" umbrella.
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("No STT provider")
+        err.contains("STT providers failed")
+            || err.contains("No STT provider")
             || err.contains("Local STT")
             || err.contains("probe audio")
             || err.contains("decode"),
