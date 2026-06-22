@@ -7,7 +7,7 @@
 //!     fires at the correct UTC instant, DST included — which was a silent
 //!     bug before (everything ran in UTC).
 
-use crate::cron::{next_run_utc, parse_timezone, upcoming_in_tz};
+use crate::cron::{format_upcoming, next_run_utc, parse_timezone, upcoming_in_tz};
 use chrono::{Datelike, TimeZone, Timelike, Utc, Weekday};
 use chrono_tz::UTC;
 
@@ -113,4 +113,39 @@ fn upcoming_count_is_capped() {
     let after = Utc.with_ymd_and_hms(2026, 6, 17, 0, 0, 0).unwrap();
     assert_eq!(upcoming_in_tz("0 * * * *", UTC, 3, after).len(), 3);
     assert_eq!(upcoming_in_tz("0 * * * *", UTC, 1, after).len(), 1);
+}
+
+// ── format_upcoming uses full weekday name (no ambiguity) ───────────────────
+
+#[test]
+fn format_upcoming_shows_full_weekday_name() {
+    // June 22, 2026 is a Monday. When created at 00:52 UTC (02:52 CEST),
+    // the next 09:00 CEST run should be June 22 — a Monday, not Sunday.
+    let tz = parse_timezone("Europe/Paris").expect("known zone");
+    let after = Utc.with_ymd_and_hms(2026, 6, 22, 0, 52, 0).unwrap();
+    let formatted = format_upcoming("0 9 * * *", tz, 1, after);
+    assert!(
+        formatted.contains("Monday"),
+        "Expected full weekday 'Monday' in output, got: {formatted}"
+    );
+    assert!(
+        !formatted.contains("Sunday"),
+        "Output must NOT contain 'Sunday' for a Monday date: {formatted}"
+    );
+}
+
+#[test]
+fn june_22_2026_is_monday_in_paris() {
+    // Pin the exact date: 2026-06-22 09:00 CEST must be a Monday.
+    let tz = parse_timezone("Europe/Paris").expect("known zone");
+    let after = Utc.with_ymd_and_hms(2026, 6, 22, 0, 52, 0).unwrap();
+    let runs = upcoming_in_tz("0 9 * * *", tz, 3, after);
+    assert!(!runs.is_empty(), "Must have at least one upcoming run");
+    assert_eq!(
+        runs[0].weekday(),
+        Weekday::Mon,
+        "2026-06-22 must be Monday, got {:?}",
+        runs[0].weekday()
+    );
+    assert_eq!(runs[0].hour(), 9, "Must fire at 09:00");
 }

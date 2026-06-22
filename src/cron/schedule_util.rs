@@ -68,7 +68,7 @@ pub fn format_upcoming(cron_expr: &str, tz: Tz, n: usize, after: DateTime<Utc>) 
         return "    (could not compute upcoming runs — re-check the expression)".to_string();
     }
     runs.iter()
-        .map(|dt| format!("    - {}", dt.format("%a %Y-%m-%d %H:%M %Z")))
+        .map(|dt| format!("    - {}", dt.format("%A %Y-%m-%d %H:%M %Z")))
         .collect::<Vec<_>>()
         .join("\n")
 }
