@@ -433,6 +433,15 @@ pub(crate) async fn handle_message(
     // and non-forum groups.
     let thread_id = msg.thread_id;
 
+    // Forum-topic session isolation (#215). #130 fixed the reply ADDRESS
+    // (replies land in the right topic); this scopes the CONVERSATION so each
+    // topic gets its own session instead of every topic sharing one. Gated on
+    // is_topic_message so only real forum topics isolate: DMs, non-forum
+    // groups, the General topic, and plain reply-threads resolve to None and
+    // keep sharing the base [chat:<id>] session.
+    let topic_id =
+        session_resolve::topic_session_id(msg.is_topic_message, thread_id.map(|t| t.0.0));
+
     // Read latest config from watch channel — single source of truth
     // (moved before /start so we can check allowlist for group silencing)
     let cfg = config_rx.borrow().clone();
@@ -1479,9 +1488,15 @@ pub(crate) async fn handle_message(
     // BUILD 🦀" produced two distinct DB rows under the old title-only
     // lookup. The chat_id suffix prevents that.
     let chat_id = msg.chat.id.0;
-    let chat_id_suffix = session_resolve::chat_id_suffix(chat_id);
-    let session_title =
-        session_resolve::build_session_title(is_dm, &user.first_name, user_id, chat_title, chat_id);
+    let chat_id_suffix = session_resolve::chat_id_suffix(chat_id, topic_id);
+    let session_title = session_resolve::build_session_title(
+        is_dm,
+        &user.first_name,
+        user_id,
+        chat_title,
+        chat_id,
+        topic_id,
+    );
     // Legacy title format used before the chat_id suffix was added.
     let legacy_title =
         session_resolve::build_legacy_session_title(is_dm, &user.first_name, user_id, chat_title);
@@ -1491,7 +1506,7 @@ pub(crate) async fn handle_message(
         // session_resolve::choose_resolve_source and telegram_session_resolve_test.
         // 0) Explicit chat→session binding from /sessions switch or prior message.
         // Policy: choose_resolve_source (tests) — ChatBound when map → live row.
-        if let Some(bound_id) = telegram_state.chat_session(chat_id).await
+        if let Some(bound_id) = telegram_state.chat_session(chat_id, topic_id).await
             && let Ok(Some(bound)) = session_svc.get_session(bound_id).await
             && !bound.is_archived()
             && matches!(
@@ -1567,7 +1582,11 @@ pub(crate) async fn handle_message(
                 .ok()
                 .flatten();
 
+            // Legacy fallback only for base (non-topic) chats: the pre-suffix
+            // title format predates forum topics, so a topic message must never
+            // adopt and rewrite the old shared row (#215).
             if existing.is_none()
+                && topic_id.is_none()
                 && let Ok(Some(legacy)) = session_svc.find_session_by_title(&legacy_title).await
             {
                 tracing::info!(
@@ -1706,17 +1725,19 @@ pub(crate) async fn handle_message(
     }
 
     tracing::info!(
-        "Telegram: resolved session={} for {} in {} \"{}\" (chat_id={})",
+        "Telegram: resolved session={} for {} in {} \"{}\" (chat_id={}, topic_id={:?})",
         session_id,
         user.first_name,
         chat_kind,
         chat_title,
         msg.chat.id.0,
+        topic_id,
     );
 
-    // Register session → chat for approval routing
+    // Register session → chat for approval routing, scoped to the forum topic
+    // so each topic resolves to its own session on the fast path (#215).
     telegram_state
-        .register_session_chat(session_id, msg.chat.id.0)
+        .register_session_chat(session_id, msg.chat.id.0, topic_id)
         .await;
 
     // Archive any shared images under the session's project files dir (when the
@@ -1809,6 +1830,7 @@ pub(crate) async fn handle_message(
                     user_id,
                     chat_title,
                     chat_id,
+                    topic_id,
                 );
                 // Archive the previous session on /new, except for the owner —
                 // owner sessions stay non-archived so they remain visible in
@@ -1831,7 +1853,7 @@ pub(crate) async fn handle_message(
                             *shared_session.lock().await = Some(new_session.id);
                         }
                         telegram_state
-                            .register_session_chat(new_session.id, msg.chat.id.0)
+                            .register_session_chat(new_session.id, msg.chat.id.0, topic_id)
                             .await;
                         // Sync provider for the new session so baseline is accurate
                         let new_meta = session_svc.get_session(new_session.id).await.ok().flatten();
@@ -2735,7 +2757,7 @@ pub(crate) async fn handle_message(
                         *shared_session.lock().await = Some(new_id);
                     }
                     telegram_state
-                        .register_session_chat(new_id, msg.chat.id.0)
+                        .register_session_chat(new_id, msg.chat.id.0, topic_id)
                         .await;
                     let approval_cb2 = make_approval_callback(telegram_state.clone());
                     let question_cb2 = super::follow_up_question::make_question_callback(

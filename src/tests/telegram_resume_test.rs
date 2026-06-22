@@ -120,7 +120,7 @@ async fn cancel_token_rapid_replacement() {
 async fn session_chat_register_and_lookup() {
     let state = TelegramState::new();
     let session_id = Uuid::new_v4();
-    state.register_session_chat(session_id, -12345).await;
+    state.register_session_chat(session_id, -12345, None).await;
     assert_eq!(state.session_chat(session_id).await, Some(-12345));
 }
 

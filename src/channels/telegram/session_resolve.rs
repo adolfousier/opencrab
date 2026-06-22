@@ -4,18 +4,25 @@
 //! to the default `Telegram: DM …` template on every subsequent message.
 
 /// Build the canonical session title for a Telegram chat.
+///
+/// `topic_id` scopes the title to a forum topic (#215): `Some` appends
+/// `:topic:<id>` to the suffix so each topic in a supergroup resolves to its
+/// own session row instead of all topics collapsing onto the bare
+/// `[chat:<id>]` session. `None` (DMs, non-forum groups, the General topic)
+/// produces the exact same title as before topics existed.
 pub fn build_session_title(
     is_dm: bool,
     user_name: &str,
     user_id: i64,
     chat_title: &str,
     chat_id: i64,
+    topic_id: Option<i32>,
 ) -> String {
-    let chat_id_suffix = format!("[chat:{chat_id}]");
+    let suffix = chat_id_suffix(chat_id, topic_id);
     if is_dm {
-        format!("Telegram: DM {user_name} ({user_id}) {chat_id_suffix}")
+        format!("Telegram: DM {user_name} ({user_id}) {suffix}")
     } else {
-        format!("Telegram: {chat_title} {chat_id_suffix}")
+        format!("Telegram: {chat_title} {suffix}")
     }
 }
 
@@ -33,8 +40,29 @@ pub fn build_legacy_session_title(
     }
 }
 
-pub fn chat_id_suffix(chat_id: i64) -> String {
-    format!("[chat:{chat_id}]")
+/// Title/lookup suffix for a chat, optionally scoped to a forum topic (#215).
+///
+/// Base chats stay `[chat:<id>]`; a real forum topic becomes
+/// `[chat:<id>:topic:<tid>]`. `find_session_by_title_suffix` matches with
+/// `LIKE '%suffix'`, and a base title never ends with `:topic:<n>]` while a
+/// topic title never ends with the bare `[chat:<id>]`, so the two never
+/// cross-resolve.
+pub fn chat_id_suffix(chat_id: i64, topic_id: Option<i32>) -> String {
+    match topic_id {
+        Some(tid) => format!("[chat:{chat_id}:topic:{tid}]"),
+        None => format!("[chat:{chat_id}]"),
+    }
+}
+
+/// Resolve the forum-topic id used to key a session (#215). Returns the thread
+/// id ONLY for a genuine forum-topic message. DMs, non-forum groups, the
+/// General topic, and plain reply-threads report `is_topic_message == false`
+/// (or no thread id) and resolve to `None`, so they keep sharing the base
+/// `[chat:<id>]` session exactly as before. Gating on `is_topic_message` is
+/// deliberate: a bare `thread_id` can appear on ordinary reply-threads, which
+/// must NOT spawn isolated sessions.
+pub fn topic_session_id(is_topic_message: bool, thread_id: Option<i32>) -> Option<i32> {
+    if is_topic_message { thread_id } else { None }
 }
 
 /// True when a session exceeded the configured idle window (same rule as handler suffix path).
@@ -123,14 +151,14 @@ mod tests {
 
     #[test]
     fn dm_template_format() {
-        let t = build_session_title(true, "Alice", 123, "", 456);
+        let t = build_session_title(true, "Alice", 123, "", 456, None);
         assert_eq!(t, "Telegram: DM Alice (123) [chat:456]");
     }
 
     #[test]
     fn should_not_clobber_auto_titled_dm() {
         let auto = "Telegram: Fix deploy [chat:133526395]";
-        let template = build_session_title(true, "Alexey", 133526395, "", 133526395);
+        let template = build_session_title(true, "Alexey", 133526395, "", 133526395, None);
         assert!(!should_refresh_label(auto, &template));
     }
 
@@ -143,8 +171,8 @@ mod tests {
 
     #[test]
     fn default_dm_still_refreshes_on_name_change() {
-        let old = build_session_title(true, "Alice", 1, "", 99);
-        let new = build_session_title(true, "Bob", 1, "", 99);
+        let old = build_session_title(true, "Alice", 1, "", 99, None);
+        let new = build_session_title(true, "Bob", 1, "", 99, None);
         assert!(should_refresh_label(&old, &new));
     }
 

@@ -50,10 +50,15 @@ pub struct TelegramState {
     owner_identity: Mutex<Option<(String, Option<String>)>>,
     /// Bot's @username — set at startup via get_me(), used for @mention detection in groups
     bot_username: Mutex<Option<String>>,
-    /// Maps session_id → Telegram chat_id for approval routing
+    /// Maps session_id → Telegram chat_id for approval routing. Topic-agnostic:
+    /// approval/question replies route back by `chat_id` plus the per-message
+    /// `thread_id` captured at send time, so the topic does not belong here.
     session_chats: Mutex<HashMap<Uuid, i64>>,
-    /// Reverse map: chat_id → session_id (kept in sync with session_chats)
-    chat_sessions: Mutex<HashMap<i64, Uuid>>,
+    /// Reverse map: (chat_id, forum_topic_id) → session_id. The topic component
+    /// is `Some` only for genuine forum-topic messages (#215); DMs, non-forum
+    /// groups, and the General topic key on `(chat_id, None)`, preserving the
+    /// pre-topic behaviour. Each forum topic therefore binds its own session.
+    chat_sessions: Mutex<HashMap<(i64, Option<i32>), Uuid>>,
     /// Pending approval channels: approval_id → oneshot sender of (approved, always).
     pending_approvals: Mutex<HashMap<String, oneshot::Sender<(bool, bool)>>>,
     /// Pending follow-up questions: question_id → (oneshot sender of
@@ -163,9 +168,22 @@ impl TelegramState {
 
     /// Record which chat_id corresponds to a given session (for approval routing).
     /// Also maintains a reverse map so callbacks can resolve session from chat.
-    pub async fn register_session_chat(&self, session_id: Uuid, chat_id: i64) {
+    ///
+    /// The reverse map keys on `(chat_id, topic_id)` so distinct forum topics in
+    /// one supergroup bind distinct sessions (#215); pass `None` for DMs,
+    /// non-forum groups, and the General topic. The forward `session_chats` map
+    /// stays topic-agnostic (approval routing only needs the chat_id).
+    pub async fn register_session_chat(
+        &self,
+        session_id: Uuid,
+        chat_id: i64,
+        topic_id: Option<i32>,
+    ) {
         self.session_chats.lock().await.insert(session_id, chat_id);
-        self.chat_sessions.lock().await.insert(chat_id, session_id);
+        self.chat_sessions
+            .lock()
+            .await
+            .insert((chat_id, topic_id), session_id);
     }
 
     /// Look up the chat_id for a given session_id.
@@ -173,11 +191,17 @@ impl TelegramState {
         self.session_chats.lock().await.get(&session_id).copied()
     }
 
-    /// Reverse lookup: find the session_id for a given chat_id.
-    /// Used by callback handlers to resolve the correct session for the chat
-    /// where a button was pressed (instead of using the shared TUI session).
-    pub async fn chat_session(&self, chat_id: i64) -> Option<Uuid> {
-        self.chat_sessions.lock().await.get(&chat_id).copied()
+    /// Reverse lookup: find the session_id for a given chat_id, scoped to the
+    /// forum topic (#215). Used by callback handlers to resolve the correct
+    /// session for the chat where a button was pressed (instead of using the
+    /// shared TUI session). `(chat_id, None)` matches the base/General session;
+    /// `(chat_id, Some(tid))` matches that topic's own session.
+    pub async fn chat_session(&self, chat_id: i64, topic_id: Option<i32>) -> Option<Uuid> {
+        self.chat_sessions
+            .lock()
+            .await
+            .get(&(chat_id, topic_id))
+            .copied()
     }
 
     /// Register a pending approval channel by id.

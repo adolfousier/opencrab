@@ -492,7 +492,19 @@ impl TelegramAgent {
                                         .as_ref()
                                         .map(|m| m.chat().id.0)
                                         .unwrap_or(caller_id_raw as i64);
-                                    state.register_session_chat(new_id, switch_chat_id).await;
+                                    // Scope the binding to the forum topic the switch
+                                    // happened in, so the next message in that topic
+                                    // resolves to the switched session (#215).
+                                    let switch_topic_id =
+                                        query.message.as_ref().and_then(|m| m.regular_message()).and_then(|m| {
+                                            super::session_resolve::topic_session_id(
+                                                m.is_topic_message,
+                                                m.thread_id.map(|t| t.0.0),
+                                            )
+                                        });
+                                    state
+                                        .register_session_chat(new_id, switch_chat_id, switch_topic_id)
+                                        .await;
 
                                     // Touch updated_at so find_session_by_title_suffix returns this session on next message
                                     if let Ok(Some(s)) = session_svc.get_session(new_id).await {
@@ -1153,10 +1165,15 @@ async fn resolve_callback_session(
     state: &super::TelegramState,
     shared_session: &tokio::sync::Mutex<Option<Uuid>>,
 ) -> Option<Uuid> {
-    // Try to get the session registered for this chat
+    // Try to get the session registered for this chat, scoped to the forum
+    // topic the button was pressed in (#215) so a callback inside a topic
+    // resolves that topic's session, not the base one.
     if let Some(msg) = &query.message {
         let chat_id = msg.chat().id.0;
-        if let Some(session_id) = state.chat_session(chat_id).await {
+        let topic_id = msg.regular_message().and_then(|m| {
+            super::session_resolve::topic_session_id(m.is_topic_message, m.thread_id.map(|t| t.0.0))
+        });
+        if let Some(session_id) = state.chat_session(chat_id, topic_id).await {
             return Some(session_id);
         }
     }

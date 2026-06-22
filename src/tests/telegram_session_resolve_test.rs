@@ -3,7 +3,7 @@
 use crate::channels::telegram::TelegramState;
 use crate::channels::telegram::session_resolve::{
     ResolveSource, build_session_title, chat_id_suffix, choose_resolve_source,
-    session_idle_expired, should_refresh_label,
+    session_idle_expired, should_refresh_label, topic_session_id,
 };
 use crate::db::Database;
 use crate::db::models::Session;
@@ -36,11 +36,11 @@ async fn telegram_state_chat_map_survives_suffix_competition() {
     let chat_id = 4242_i64;
     let bound = Uuid::new_v4();
     let suffix_winner = Uuid::new_v4();
-    state.register_session_chat(bound, chat_id).await;
-    assert_eq!(state.chat_session(chat_id).await, Some(bound));
+    state.register_session_chat(bound, chat_id, None).await;
+    assert_eq!(state.chat_session(chat_id, None).await, Some(bound));
     assert_eq!(
         choose_resolve_source(
-            state.chat_session(chat_id).await,
+            state.chat_session(chat_id, None).await,
             false,
             Some(suffix_winner)
         ),
@@ -51,7 +51,7 @@ async fn telegram_state_chat_map_survives_suffix_competition() {
 #[test]
 fn should_not_clobber_auto_titled_dm_title() {
     let auto = "Telegram: Fix deploy pipeline [chat:133526395]";
-    let template = build_session_title(true, "Alexey", 133526395, "", 133526395);
+    let template = build_session_title(true, "Alexey", 133526395, "", 133526395, None);
     assert!(
         !should_refresh_label(auto, &template),
         "auto-titled DM must not revert to default template"
@@ -69,8 +69,8 @@ fn group_rename_still_refreshes() {
 async fn suffix_lookup_after_switch_touch_picks_switched_row() {
     let (_db, repo) = fresh_repo().await;
     let chat_id = 42_i64;
-    let suffix = chat_id_suffix(chat_id);
-    let title = build_session_title(true, "U", 1, "", chat_id);
+    let suffix = chat_id_suffix(chat_id, None);
+    let title = build_session_title(true, "U", 1, "", chat_id, None);
 
     let older = Session::new(Some(title.clone()), None, None);
     repo.create(&older).await.expect("create older");
@@ -94,8 +94,8 @@ async fn suffix_lookup_after_switch_touch_picks_switched_row() {
 
 #[tokio::test]
 async fn auto_titled_title_survives_should_refresh_check() {
-    let template = build_session_title(true, "Alice", 1, "", 99);
-    let auto_titled = format!("Telegram: Deploy fix {}", chat_id_suffix(99));
+    let template = build_session_title(true, "Alice", 1, "", 99, None);
+    let auto_titled = format!("Telegram: Deploy fix {}", chat_id_suffix(99, None));
     assert!(!should_refresh_label(&auto_titled, &template));
 }
 
@@ -106,10 +106,15 @@ async fn register_session_chat_binds_guest_dm() {
     let state = TelegramState::new();
     let guest_chat_id = 9988_i64;
     let session_id = Uuid::new_v4();
-    state.register_session_chat(session_id, guest_chat_id).await;
-    assert_eq!(state.chat_session(guest_chat_id).await, Some(session_id));
+    state
+        .register_session_chat(session_id, guest_chat_id, None)
+        .await;
     assert_eq!(
-        choose_resolve_source(state.chat_session(guest_chat_id).await, false, None),
+        state.chat_session(guest_chat_id, None).await,
+        Some(session_id)
+    );
+    assert_eq!(
+        choose_resolve_source(state.chat_session(guest_chat_id, None).await, false, None),
         ResolveSource::ChatBound
     );
 }
@@ -143,7 +148,7 @@ async fn chat_bound_idle_archives_and_creates_new_session() {
     let ctx = ServiceContext::new(db.pool().clone());
     let svc = SessionService::new(ctx.clone());
     let chat_id = 77_i64;
-    let title = build_session_title(true, "U", 1, "", chat_id);
+    let title = build_session_title(true, "U", 1, "", chat_id, None);
 
     let mut bound = Session::new(Some(title.clone()), None, None);
     bound.updated_at = chrono::Utc::now() - chrono::Duration::hours(48);
@@ -161,6 +166,86 @@ async fn chat_bound_idle_archives_and_creates_new_session() {
     assert!(archived.is_archived());
 }
 
+// ── Forum-topic session isolation (#215) ──────────────────────────────────
+
+#[test]
+fn chat_id_suffix_topic_vs_base_format() {
+    // Base chats keep the bare suffix; a forum topic carries :topic:<id>.
+    assert_eq!(chat_id_suffix(-100, None), "[chat:-100]");
+    assert_eq!(chat_id_suffix(-100, Some(42)), "[chat:-100:topic:42]");
+}
+
+#[test]
+fn build_session_title_carries_topic_suffix() {
+    let base = build_session_title(false, "", 0, "Build", -100, None);
+    let topic = build_session_title(false, "", 0, "Build", -100, Some(42));
+    assert_eq!(base, "Telegram: Build [chat:-100]");
+    assert_eq!(topic, "Telegram: Build [chat:-100:topic:42]");
+}
+
+#[test]
+fn topic_session_id_gates_on_is_topic_message() {
+    // A real forum-topic message isolates...
+    assert_eq!(topic_session_id(true, Some(7)), Some(7));
+    // ...but a plain reply-thread (thread_id present, NOT a topic) must not,
+    // nor a DM / non-forum group / General topic (is_topic_message == false).
+    assert_eq!(topic_session_id(false, Some(7)), None);
+    assert_eq!(topic_session_id(false, None), None);
+    assert_eq!(topic_session_id(true, None), None);
+}
+
+#[tokio::test]
+async fn chat_map_isolates_topic_from_base_session() {
+    // The reverse map keys on (chat_id, topic_id): the same supergroup chat
+    // resolves to different sessions for the base/General vs a forum topic,
+    // and an unbound topic returns None rather than leaking the base session.
+    let state = TelegramState::new();
+    let chat_id = -1009_i64;
+    let base = Uuid::new_v4();
+    let topic = Uuid::new_v4();
+
+    state.register_session_chat(base, chat_id, None).await;
+    state.register_session_chat(topic, chat_id, Some(5)).await;
+
+    assert_eq!(state.chat_session(chat_id, None).await, Some(base));
+    assert_eq!(state.chat_session(chat_id, Some(5)).await, Some(topic));
+    assert_eq!(state.chat_session(chat_id, Some(99)).await, None);
+}
+
+#[tokio::test]
+async fn base_and_topic_titles_do_not_cross_resolve() {
+    // The suffix LIKE '%suffix' lookup must keep base and topic sessions
+    // separate: a base title never ends with :topic:<n>], and a topic title
+    // never ends with the bare [chat:<id>], so neither suffix matches the
+    // other's row.
+    let (_db, repo) = fresh_repo().await;
+    let chat_id = -100_i64;
+
+    let base_title = build_session_title(false, "", 0, "G", chat_id, None);
+    let topic_title = build_session_title(false, "", 0, "G", chat_id, Some(7));
+    let base = Session::new(Some(base_title), None, None);
+    let topic = Session::new(Some(topic_title), None, None);
+    repo.create(&base).await.expect("create base");
+    repo.create(&topic).await.expect("create topic");
+
+    let base_hit = repo
+        .find_by_title_suffix(&chat_id_suffix(chat_id, None))
+        .await
+        .expect("query base")
+        .expect("base hit");
+    assert_eq!(base_hit.id, base.id, "base suffix must not match topic row");
+
+    let topic_hit = repo
+        .find_by_title_suffix(&chat_id_suffix(chat_id, Some(7)))
+        .await
+        .expect("query topic")
+        .expect("topic hit");
+    assert_eq!(
+        topic_hit.id, topic.id,
+        "topic suffix must not match base row"
+    );
+}
+
 #[tokio::test]
 async fn service_update_session_title_preserves_suffix() {
     let db = Database::connect_in_memory().await.expect("connect");
@@ -168,13 +253,13 @@ async fn service_update_session_title_preserves_suffix() {
     let ctx = ServiceContext::new(db.pool().clone());
     let svc = SessionService::new(ctx);
 
-    let title = build_session_title(true, "U", 1, "", 77);
+    let title = build_session_title(true, "U", 1, "", 77, None);
     let session = svc
         .create_session(Some(title.clone()))
         .await
         .expect("create");
 
-    let new_title = format!("Telegram: Custom topic {}", chat_id_suffix(77));
+    let new_title = format!("Telegram: Custom topic {}", chat_id_suffix(77, None));
     svc.update_session_title(session.id, Some(new_title.clone()))
         .await
         .expect("rename");
