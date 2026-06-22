@@ -981,7 +981,11 @@ pub(crate) async fn format_profiles_browser() -> ProfilesResponse {
             marker,
             p.name,
             suffix,
-            if desc.is_empty() { String::new() } else { format!("— {}", desc) }
+            if desc.is_empty() {
+                String::new()
+            } else {
+                format!("— {}", desc)
+            }
         ));
 
         entries.push(ProfileBrowserEntry {
