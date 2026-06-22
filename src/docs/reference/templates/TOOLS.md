@@ -35,12 +35,6 @@ never assume the capability is missing before searching.
 - Profile-aware paths
 - Custom routing rules specific to your setup
 
-## What does NOT belong here
-
-- Failure logs or timestamps (use `feedback_record`)
-- Full CLI references (put in skills, load on demand)
-- Provider configuration (lives in config.toml + onboarding)
-- System commands (basic OS knowledge)
 
 ## Skills (load on demand)
 
