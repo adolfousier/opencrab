@@ -764,6 +764,10 @@ async fn cmd_chat_inner(
         config_rx,
     ));
 
+    // Give channel agents the runtime info so their live-rebuilt brain (#213)
+    // keeps the model/provider/working-dir lines after a brain-file edit.
+    channel_factory.set_runtime_info(runtime_info.clone());
+
     // Shared Telegram state for proactive messaging
     #[cfg(feature = "telegram")]
     let telegram_state = Arc::new(crate::channels::telegram::TelegramState::new());
@@ -1060,6 +1064,12 @@ async fn cmd_chat_inner(
         AgentService::new(provider.clone(), service_context.clone(), config)
             .await
             .with_system_brain(system_brain)
+            .with_brain_rebuild(
+                brain_loader.clone(),
+                Some(runtime_info.clone()),
+                true,
+                config.agent.lazy_tools,
+            )
             .with_tool_registry(shared_tool_registry.clone())
             .with_approval_callback(Some(approval_callback))
             .with_progress_callback(Some(progress_callback))

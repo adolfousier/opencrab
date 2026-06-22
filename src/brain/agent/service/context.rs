@@ -61,10 +61,12 @@ impl AgentService {
         let mut context =
             AgentContext::from_db_messages(session_id, db_messages, context_window as usize);
 
-        // Add system brain if available (count its tokens for accurate tracking)
-        if let Some(brain) = &self.default_system_brain {
-            context.token_count += AgentContext::estimate_tokens(brain);
-            context.system_brain = Some(brain.clone());
+        // Add system brain if available (count its tokens for accurate tracking).
+        // `live_system_brain` rebuilds from disk when a brain file changed so
+        // edits take effect on the next turn without a restart (#213).
+        if let Some(brain) = self.live_system_brain() {
+            context.token_count += AgentContext::estimate_tokens(&brain);
+            context.system_brain = Some(brain);
         }
 
         // Add user message. If a plan is actively executing, append a compact

@@ -16,6 +16,92 @@ pub(super) const RECENT_PATHS_CAP: usize = 12;
 /// Used to restore the user's pick after an in-flight turn took a fallback.
 type ManualSwitchPin = (u64, Arc<dyn Provider>, String);
 
+/// Live-rebuild handle for the system brain (#213).
+///
+/// The system brain was historically built once at startup and cached as a
+/// static string, so edits to brain files (manual, `write_opencrabs_file`,
+/// `self_improve`) were invisible until the process restarted. This handle
+/// rebuilds the brain from disk on the next turn whenever a brain file's
+/// mtime advances, and otherwise returns the byte-identical cached render so
+/// the provider prompt cache stays warm when nothing changed.
+///
+/// Cheap to clone (it's an `Arc`), so a provider/model rebuild can carry the
+/// same handle (and its warm cache) forward without re-reading disk.
+#[derive(Clone)]
+pub struct BrainRebuild {
+    inner: Arc<BrainRebuildInner>,
+}
+
+struct BrainRebuildInner {
+    loader: crate::brain::prompt_builder::BrainLoader,
+    runtime_info: Option<crate::brain::prompt_builder::RuntimeInfo>,
+    /// `true` → `build_core_brain` (TUI/channels), `false` → `build_system_brain`.
+    core: bool,
+    /// Append `LAZY_TOOLS_PROMPT` after the brain, matching startup assembly.
+    lazy_tools: bool,
+    cache: std::sync::RwLock<BrainCache>,
+}
+
+struct BrainCache {
+    mtime: std::time::SystemTime,
+    rendered: String,
+}
+
+impl BrainRebuild {
+    /// Build a handle seeded with the brain already assembled at startup.
+    /// The seed is returned verbatim until a brain file changes on disk, so
+    /// no work happens and the prompt cache stays warm on the common path.
+    pub fn new(
+        loader: crate::brain::prompt_builder::BrainLoader,
+        runtime_info: Option<crate::brain::prompt_builder::RuntimeInfo>,
+        core: bool,
+        lazy_tools: bool,
+        seed: String,
+    ) -> Self {
+        let mtime = loader.brain_files_mtime();
+        Self {
+            inner: Arc::new(BrainRebuildInner {
+                loader,
+                runtime_info,
+                core,
+                lazy_tools,
+                cache: std::sync::RwLock::new(BrainCache {
+                    mtime,
+                    rendered: seed,
+                }),
+            }),
+        }
+    }
+
+    /// The system brain for this turn. Returns the cached render unless a
+    /// brain file's mtime is newer than the last render, in which case it
+    /// rebuilds from disk and updates the cache.
+    pub fn render(&self) -> String {
+        let i = &self.inner;
+        let latest = i.loader.brain_files_mtime();
+        {
+            let cache = i.cache.read().expect("brain cache lock poisoned");
+            if latest <= cache.mtime {
+                return cache.rendered.clone();
+            }
+        }
+        let mut brain = if i.core {
+            i.loader.build_core_brain(i.runtime_info.as_ref())
+        } else {
+            i.loader.build_system_brain(i.runtime_info.as_ref())
+        };
+        if i.lazy_tools {
+            brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
+        }
+        let mut cache = i.cache.write().expect("brain cache lock poisoned");
+        *cache = BrainCache {
+            mtime: latest,
+            rendered: brain.clone(),
+        };
+        brain
+    }
+}
+
 /// Agent Service for managing AI conversations
 pub struct AgentService {
     /// Default LLM provider — used for brand-new sessions that haven't
@@ -90,8 +176,15 @@ pub struct AgentService {
     /// Maximum tool execution iterations (0 = unlimited, relies on loop detection)
     pub(crate) max_tool_iterations: usize,
 
-    /// System brain template
+    /// System brain template — the brain assembled at startup. Used as the
+    /// seed for `brain_rebuild` and by token-estimate floors; the live prompt
+    /// sent each turn comes from `live_system_brain()`.
     pub(super) default_system_brain: Option<String>,
+
+    /// When set, the system brain is rebuilt from disk on the next turn
+    /// whenever a brain file changes, so edits take effect without a restart
+    /// (#213). `None` → the static `default_system_brain` is used as-is.
+    pub(super) brain_rebuild: Option<BrainRebuild>,
 
     /// Whether to auto-approve tool execution
     pub(super) auto_approve_tools: bool,
@@ -175,6 +268,7 @@ impl AgentService {
             tool_registry: Arc::new(ToolRegistry::new()),
             max_tool_iterations: 0, // 0 = unlimited (loop detection is the safety net)
             default_system_brain: None,
+            brain_rebuild: None,
             auto_approve_tools: false,
             silent_compaction: config.agent.silent_compaction,
             lazy_tools: config.agent.lazy_tools,
@@ -291,6 +385,55 @@ impl AgentService {
     pub fn with_system_brain(mut self, prompt: String) -> Self {
         self.default_system_brain = Some(prompt);
         self
+    }
+
+    /// Enable live brain rebuilding from disk (#213). Call AFTER
+    /// `with_system_brain` — the already-assembled brain is used as the seed
+    /// so the first turns return it verbatim (warm prompt cache) until a brain
+    /// file actually changes on disk. `core` picks `build_core_brain` (TUI /
+    /// channels) vs `build_system_brain`; `lazy_tools` re-appends the lazy-tools
+    /// prompt to match the startup assembly.
+    pub fn with_brain_rebuild(
+        mut self,
+        loader: crate::brain::prompt_builder::BrainLoader,
+        runtime_info: Option<crate::brain::prompt_builder::RuntimeInfo>,
+        core: bool,
+        lazy_tools: bool,
+    ) -> Self {
+        let seed = self.default_system_brain.clone().unwrap_or_default();
+        self.brain_rebuild = Some(BrainRebuild::new(
+            loader,
+            runtime_info,
+            core,
+            lazy_tools,
+            seed,
+        ));
+        self
+    }
+
+    /// Carry an existing live-brain handle forward across a service rebuild
+    /// (e.g. a `/models` provider swap) so live rebuilding and its warm cache
+    /// survive without re-reading disk.
+    pub fn with_brain_rebuild_handle(mut self, handle: BrainRebuild) -> Self {
+        self.brain_rebuild = Some(handle);
+        self
+    }
+
+    /// The live-brain handle, if live rebuilding is enabled. Cloned cheaply
+    /// (it's an `Arc`) so callers can carry it across a rebuild.
+    pub fn brain_rebuild(&self) -> Option<BrainRebuild> {
+        self.brain_rebuild.clone()
+    }
+
+    /// The system brain to send THIS turn. Rebuilds from disk when a brain
+    /// file changed (#213); otherwise returns the cached/static brain. This is
+    /// the single source of truth for the prompt — `default_system_brain` is
+    /// only a seed and a token-estimate floor.
+    pub(super) fn live_system_brain(&self) -> Option<String> {
+        match &self.brain_rebuild {
+            Some(rebuild) => Some(rebuild.render()),
+            None => self.default_system_brain.clone(),
+        }
     }
 
     /// Set maximum tool iterations

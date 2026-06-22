@@ -196,6 +196,7 @@ Your tool executions are automatically tracked. When you notice recurring failur
 Do NOT call these tools every turn. Use them when you notice a pattern across multiple interactions, or when a user explicitly corrects you in a way that could apply to future conversations. Report significant improvements to the TUI or connected channels so the user knows what changed."#;
 
 /// Loads brain workspace files and assembles the system brain.
+#[derive(Clone)]
 pub struct BrainLoader {
     workspace_path: PathBuf,
 }
@@ -204,6 +205,30 @@ impl BrainLoader {
     /// Create a new BrainLoader with the given workspace path.
     pub fn new(workspace_path: PathBuf) -> Self {
         Self { workspace_path }
+    }
+
+    /// Latest modification time across the brain markdown files at the
+    /// workspace root (SOUL.md, USER.md, AGENTS.md, MEMORY.md, …) — the
+    /// files that feed the system brain. Cheap: stats `*.md` dir entries,
+    /// no content reads. Used to decide when the live system brain must be
+    /// rebuilt so edits take effect on the next turn without a restart
+    /// (#213). Returns `UNIX_EPOCH` when the dir can't be read.
+    pub fn brain_files_mtime(&self) -> std::time::SystemTime {
+        let mut latest = std::time::SystemTime::UNIX_EPOCH;
+        if let Ok(entries) = std::fs::read_dir(&self.workspace_path) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if !name.to_string_lossy().to_lowercase().ends_with(".md") {
+                    continue;
+                }
+                if let Ok(modified) = entry.metadata().and_then(|m| m.modified())
+                    && modified > latest
+                {
+                    latest = modified;
+                }
+            }
+        }
+        latest
     }
 
     /// Resolve the brain path: `~/.opencrabs/`

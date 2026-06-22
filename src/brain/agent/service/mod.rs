@@ -19,7 +19,7 @@ pub(crate) mod tool_loop;
 mod truncation;
 mod types;
 
-pub use builder::AgentService;
+pub use builder::{AgentService, BrainRebuild};
 pub use gaslighting::{is_gaslighting_preamble, strip_gaslighting_preamble};
 pub use helpers::detect_text_repetition;
 pub use phantom::{

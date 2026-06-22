@@ -31,6 +31,11 @@ pub struct ChannelFactory {
     config_rx: tokio::sync::watch::Receiver<Config>,
     session_updated_tx:
         OnceLock<tokio::sync::mpsc::UnboundedSender<crate::brain::agent::ChannelSessionEvent>>,
+    /// Runtime info (model/provider/working dir) used to faithfully rebuild
+    /// the channel system brain when a brain file changes (#213). Set once at
+    /// startup via [`set_runtime_info`]; absent on the cron daemon path, where
+    /// the brain is built with no runtime info anyway.
+    runtime_info: OnceLock<crate::brain::prompt_builder::RuntimeInfo>,
 }
 
 impl ChannelFactory {
@@ -54,7 +59,15 @@ impl ChannelFactory {
             shared_session_id,
             config_rx,
             session_updated_tx: OnceLock::new(),
+            runtime_info: OnceLock::new(),
         }
+    }
+
+    /// Wire in the runtime info so channel agents rebuild their system brain
+    /// faithfully (model/provider/working-dir lines preserved) when a brain
+    /// file changes at runtime (#213). Call once at startup.
+    pub fn set_runtime_info(&self, info: crate::brain::prompt_builder::RuntimeInfo) {
+        let _ = self.runtime_info.set(info);
     }
 
     /// Wire in the TUI session-updated sender so channel agents trigger live TUI refresh.
@@ -82,6 +95,16 @@ impl ChannelFactory {
             AgentService::new(self.provider.clone(), self.service_context.clone(), &config)
                 .await
                 .with_system_brain(self.shared_brain.clone())
+                // Live brain rebuild (#213): channel agents pick up brain-file
+                // edits on their next turn. Channels use the core brain; the
+                // lazy-tools suffix mirrors the startup assembly. Seeded from
+                // `shared_brain` so nothing is re-read until a file changes.
+                .with_brain_rebuild(
+                    crate::brain::prompt_builder::BrainLoader::new(self.brain_path.clone()),
+                    self.runtime_info.get().cloned(),
+                    true,
+                    config.agent.lazy_tools,
+                )
                 .with_working_directory(self.working_directory.clone())
                 .with_brain_path(self.brain_path.clone());
 

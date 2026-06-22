@@ -1382,6 +1382,10 @@ impl App {
         // Get existing system brain from current agent service
         let system_brain = self.agent_service.system_brain().cloned();
 
+        // Carry the live-brain handle forward so brain-file edits keep taking
+        // effect after a provider/model rebuild without re-reading disk (#213).
+        let brain_rebuild = self.agent_service.brain_rebuild();
+
         // Get event sender for approval callback
         let event_sender = self.event_sender();
 
@@ -1461,6 +1465,12 @@ impl App {
         // Add system brain if it exists
         if let Some(brain) = system_brain {
             new_agent_service = new_agent_service.with_system_brain(brain);
+        }
+
+        // Re-attach live brain rebuilding (#213) so /models switches don't
+        // revert the agent to a static, startup-frozen brain.
+        if let Some(handle) = brain_rebuild {
+            new_agent_service = new_agent_service.with_brain_rebuild_handle(handle);
         }
 
         // Preserve per-session provider entries across the rebuild so

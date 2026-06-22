@@ -646,14 +646,16 @@ impl AgentService {
         // Add system brain if available (count its tokens so context.token_count
         // reflects the full API input from the start — prevents gross undercount
         // that causes the TUI context counter to jump wildly on first calibration)
-        if let Some(brain) = &self.default_system_brain {
+        // `live_system_brain` rebuilds from disk when a brain file changed so
+        // edits take effect on the next turn without a restart (#213).
+        if let Some(brain) = self.live_system_brain() {
             // mimo narrates/text-emits tool calls instead of using the
             // structured field; remind it up front (the self-heal + the
             // <tool_call_list> parser are the after-the-fact safety nets).
             let brain = if super::helpers::is_mimo_model(&model_name) {
                 format!("{brain}\n\n{}", super::helpers::MIMO_TOOL_CALL_HINT)
             } else {
-                brain.clone()
+                brain
             };
             context.token_count += AgentContext::estimate_tokens(&brain);
             context.system_brain = Some(brain);
