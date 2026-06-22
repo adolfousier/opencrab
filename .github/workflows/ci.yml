@@ -74,7 +74,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --lib --bins --tests --all-features -- -D warnings
 
-  # ── Stage 2: Build verification (parallel, gated on lint) ────────────────
+  # ── Stage 2: Build verification (parallel, gated on lint + audit) ────────
   # Cross-platform BUILD on Windows + macOS confirms target compatibility
   # without running tests there (tests run on Linux only — see `test`
   # below). Why: Windows runners are 3-5x slower than Linux for cargo,
@@ -83,7 +83,7 @@ jobs:
   # we can promote it via the matrix.
   build:
     name: Build (${{ matrix.target }})
-    needs: [lint]
+    needs: [lint, audit]
     # Cross-platform build verification is the expensive job (Windows is
     # 3-5x slower). Run it where it pays off — on PRs (gate contributions)
     # and on-demand (workflow_dispatch, e.g. before a release tag) — but
@@ -145,7 +145,7 @@ jobs:
           CXXFLAGS: -march=armv8-a+crypto
         run: cargo build --locked --profile ci --target ${{ matrix.target }} ${{ matrix.features }}
 
-  # ── Stage 3: Test on Linux (gated on lint, parallel with build) ──────────
+  # ── Stage 3: Test on Linux (gated on lint + audit, parallel with build) ──
   # Tests run on Linux only — Windows/macOS get build verification via
   # the `build` job above. ZeroClaw uses the same split because the
   # cross-platform matrix triples wall-clock for little extra coverage
@@ -157,7 +157,7 @@ jobs:
   # migration is a follow-up once those tests are made portable.
   test:
     name: Test (Linux)
-    needs: [lint]
+    needs: [lint, audit]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -182,11 +182,15 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
         run: cargo test --locked --profile ci --all-features --verbose
 
-  # ── Stage 4: Security (parallel with test/build, gated on lint) ──────────
+  # ── Stage 1b: Security (fast gate — runs alongside lint, before build/test)
+  # cargo-audit only scans Cargo.lock; it needs no compile, so it runs in
+  # PARALLEL with lint as a second fast gate rather than after it. build/test/
+  # coverage all `needs: [lint, audit]`, so a fresh advisory (this fails in
+  # ~4s) skips the ~22-min Linux test and the cross-platform build matrix
+  # instead of racing them. Lockfile-only fix → no recompile to re-gate.
 
   audit:
     name: Cargo Audit
-    needs: [lint]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -219,7 +223,7 @@ jobs:
   # this job only publishes the percentage report.
   coverage:
     name: Code Coverage
-    needs: [lint]
+    needs: [lint, audit]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
