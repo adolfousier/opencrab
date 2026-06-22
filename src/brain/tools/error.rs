@@ -46,6 +46,18 @@ pub enum ToolError {
     Internal(String),
 }
 
+impl ToolError {
+    /// True when the tool never actually ran: the call was rejected before
+    /// execution because the name didn't resolve (`NotFound`) or the arguments
+    /// failed validation (`InvalidInput`). These are model tool-USE mistakes,
+    /// not reliability failures of the tool itself, so the feedback ledger
+    /// records them as `discovery_miss` rather than `tool_failure` and they're
+    /// kept out of a tool's success rate (#214).
+    pub fn is_pre_execution_miss(&self) -> bool {
+        matches!(self, ToolError::NotFound(_) | ToolError::InvalidInput(_))
+    }
+}
+
 /// Result type for tool operations
 pub type Result<T> = std::result::Result<T, ToolError>;
 
@@ -215,6 +227,18 @@ mod tests {
 
         let err = ToolError::PermissionDenied("dangerous_operation".to_string());
         assert_eq!(err.to_string(), "Permission denied: dangerous_operation");
+    }
+
+    #[test]
+    fn test_is_pre_execution_miss() {
+        // The tool never ran: name didn't resolve, or args failed validation.
+        assert!(ToolError::NotFound("x".into()).is_pre_execution_miss());
+        assert!(ToolError::InvalidInput("x".into()).is_pre_execution_miss());
+        // The tool ran (or tried) and genuinely errored: real reliability signal.
+        assert!(!ToolError::Execution("x".into()).is_pre_execution_miss());
+        assert!(!ToolError::PermissionDenied("x".into()).is_pre_execution_miss());
+        assert!(!ToolError::ApprovalRequired("x".into()).is_pre_execution_miss());
+        assert!(!ToolError::Timeout(5).is_pre_execution_miss());
     }
 
     #[test]

@@ -101,6 +101,36 @@ impl AgentService {
         });
     }
 
+    /// Fire-and-forget recording of a pre-execution tool miss (#214): the model
+    /// called a tool that didn't resolve, or with arguments that failed
+    /// validation, so the tool never ran. Recorded as `discovery_miss` (NOT a
+    /// `tool_`-prefixed event) so it stays OUT of the success-rate denominator
+    /// in `stats_by_dimension("tool_")`, while staying visible in the
+    /// event-type breakdown and queryable for "what is the model guessing
+    /// blind" analysis. `dimension` is the tool name.
+    pub(super) fn record_tool_discovery_miss(
+        &self,
+        session_id: Uuid,
+        tool_name: &str,
+        tool_input: Option<&serde_json::Value>,
+        error_snippet: Option<&str>,
+    ) {
+        let pool = self.context.pool();
+        let sid = session_id.to_string();
+        let tname = tool_name.to_string();
+        let enriched = enrich_metadata(tool_name, error_snippet, tool_input);
+        let meta = enriched.map(|s| s.chars().take(500).collect::<String>());
+        tokio::spawn(async move {
+            let repo = crate::db::repository::FeedbackLedgerRepository::new(pool);
+            if let Err(e) = repo
+                .record(&sid, "discovery_miss", &tname, 0.0, meta.as_deref())
+                .await
+            {
+                tracing::debug!("feedback ledger write failed: {e}");
+            }
+        });
+    }
+
     /// Fire-and-forget recording of a provider error to the feedback ledger.
     pub(super) fn record_provider_feedback(
         &self,

@@ -4489,13 +4489,28 @@ impl AgentService {
                                             tool_name,
                                             err_msg
                                         );
-                                        self.record_tool_feedback(
-                                            session_id,
-                                            &tool_name,
-                                            Some(&tool_input_for_progress),
-                                            false,
-                                            Some(&err_msg),
-                                        );
+                                        // #214: a name that didn't resolve or
+                                        // args that failed validation means the
+                                        // tool never ran, a model tool-use miss
+                                        // rather than the tool failing. Bucket
+                                        // it as discovery_miss so it stays out
+                                        // of the tool's success rate.
+                                        if e.is_pre_execution_miss() {
+                                            self.record_tool_discovery_miss(
+                                                session_id,
+                                                &tool_name,
+                                                Some(&tool_input_for_progress),
+                                                Some(&err_msg),
+                                            );
+                                        } else {
+                                            self.record_tool_feedback(
+                                                session_id,
+                                                &tool_name,
+                                                Some(&tool_input_for_progress),
+                                                false,
+                                                Some(&err_msg),
+                                            );
+                                        }
                                         // Record tool execution for usage dashboard
                                         if let Some(pool) = crate::db::global_pool() {
                                             let tool_repo =
@@ -4692,13 +4707,26 @@ impl AgentService {
                         let err_msg = format!("Tool execution error: {}", e);
                         // GRANULAR LOG: Direct tool execution error
                         tracing::error!("[TOOL_EXEC] 💥 Tool '{}' error: {}", tool_name, err_msg);
-                        self.record_tool_feedback(
-                            session_id,
-                            &tool_name,
-                            Some(&tool_input_for_progress),
-                            false,
-                            Some(&err_msg),
-                        );
+                        // #214: a name that didn't resolve or args that failed
+                        // validation means the tool never ran, a model tool-use
+                        // miss rather than the tool failing. Bucket it as
+                        // discovery_miss so it stays out of the success rate.
+                        if e.is_pre_execution_miss() {
+                            self.record_tool_discovery_miss(
+                                session_id,
+                                &tool_name,
+                                Some(&tool_input_for_progress),
+                                Some(&err_msg),
+                            );
+                        } else {
+                            self.record_tool_feedback(
+                                session_id,
+                                &tool_name,
+                                Some(&tool_input_for_progress),
+                                false,
+                                Some(&err_msg),
+                            );
+                        }
                         // Record tool execution for usage dashboard
                         if let Some(pool) = crate::db::global_pool() {
                             let tool_repo =

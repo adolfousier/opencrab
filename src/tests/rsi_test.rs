@@ -166,6 +166,42 @@ mod feedback_ledger_repo {
     }
 
     #[tokio::test]
+    async fn discovery_miss_excluded_from_success_rate() {
+        // #214: a pre-execution miss (tool never ran: bad params or unresolved
+        // name) is recorded as `discovery_miss`, NOT `tool_failure`. The
+        // success-rate query aggregates `event_type LIKE 'tool_%'`, so the miss
+        // is excluded from both numerator and denominator. A tool that ran once
+        // successfully keeps a 100% rate despite an earlier blind miss.
+        let (_db, repo) = setup().await;
+        repo.record("s1", "discovery_miss", "telegram_send", 0.0, None)
+            .await
+            .unwrap();
+        repo.record("s1", "tool_success", "telegram_send", 1.0, None)
+            .await
+            .unwrap();
+
+        let stats = repo.stats_by_dimension("tool_").await.unwrap();
+        assert_eq!(
+            stats.len(),
+            1,
+            "discovery_miss must not form its own tool row"
+        );
+        let s = &stats[0];
+        assert_eq!(s.dimension, "telegram_send");
+        assert_eq!(s.total_events, 1, "only the tool_success counts");
+        assert_eq!(s.successes, 1);
+        assert_eq!(s.failures, 0);
+        assert!((s.success_rate - 1.0).abs() < 0.01);
+
+        // Contrast: had the miss been recorded as tool_failure, the rate halves.
+        repo.record("s1", "tool_failure", "telegram_send", 0.0, None)
+            .await
+            .unwrap();
+        let polluted = repo.stats_by_dimension("tool_").await.unwrap();
+        assert!((polluted[0].success_rate - 0.5).abs() < 0.01);
+    }
+
+    #[tokio::test]
     async fn stats_by_dimension_empty() {
         let (_db, repo) = setup().await;
         let stats = repo.stats_by_dimension("tool_").await.unwrap();
