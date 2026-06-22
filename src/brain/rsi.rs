@@ -430,7 +430,12 @@ Do NOT apply improvements if the data is insufficient or ambiguous. \
 Quality over quantity — one well-reasoned improvement is better than many speculative ones. \
 Never duplicate an existing instruction in a brain file — you have the 'read' action to check first. \
 If an improvement was already applied (check self_improve action='list'), skip it. \
-Use 'update' over 'apply' when an existing instruction needs rewording, not a new one added.";
+Use 'update' over 'apply' when an existing instruction needs rewording, not a new one added. \
+When a brain rule you write names a specific non-core tool (`telegram_send`, `analyze_image`, \
+`cron_manage`, `message`, ...), pair the mention with a `tool_search` reminder — a bare tool name \
+reads as directly callable and invites a schema-less guess that wastes the first call. The runtime \
+preamble already states this discipline globally; do not restate the general rule, just keep \
+individual tool mentions you author consistent with it.";
 
 /// Run a single autonomous RSI agent cycle.
 ///

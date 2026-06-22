@@ -28,12 +28,6 @@ convenience.
 Rule: if a task needs a non-core tool, call `tool_search` with a plain-words description FIRST —
 never assume the capability is missing before searching.
 
-Authoring convention: whenever a brain file names a specific extended tool (`message`,
-`analyze_image`, `cron_manage`, `telegram_send`, …), pair the mention with a `tool_search`
-reminder. A named tool with no reminder reads as directly callable and invites a schema-less guess
-that wastes the first call (the JIT activation in #214 recovers it on the next turn, but the
-reminder avoids the wasted round-trip).
-
 ## What belongs here
 
 - Skill pointers (what/where to load on demand)
