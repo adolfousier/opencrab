@@ -265,6 +265,17 @@ impl ToolRegistry {
         };
         let name = resolved_name.as_str();
 
+        // JIT discovery (#214): when lazy_tools is on, a tool the model called
+        // by name but never surfaced via `tool_search` is absent from the
+        // system prompt, so the model is guessing its params blind. Activate it
+        // now, BEFORE validation, so even if THIS call fails on bad params the
+        // next request carries the real schema and the model self-corrects
+        // instead of looping. No-op for CORE tools (always present); harmless
+        // when lazy_tools is off (the active set is never consulted).
+        if !crate::brain::tools::catalog::is_core(name) {
+            self.activate_tools(context.session_id, [name.to_string()]);
+        }
+
         // Normalize LLM parameter name mistakes before validation
         let input = normalize_tool_input(name, input);
 
@@ -454,6 +465,95 @@ mod tests {
             result.unwrap_err(),
             ToolError::ApprovalRequired(_)
         ));
+    }
+
+    /// Mock tool whose input validation always fails — used to prove JIT
+    /// activation (#214) runs BEFORE validation, so a tool that fails its
+    /// first (blind) call is still discovered for the next turn.
+    struct ValidateFailTool;
+
+    #[async_trait]
+    impl Tool for ValidateFailTool {
+        fn name(&self) -> &str {
+            "extended_blind_tool"
+        }
+        fn description(&self) -> &str {
+            "always fails validation"
+        }
+        fn input_schema(&self) -> Value {
+            serde_json::json!({ "type": "object" })
+        }
+        fn capabilities(&self) -> Vec<ToolCapability> {
+            vec![ToolCapability::ReadFiles]
+        }
+        fn validate_input(&self, _input: &Value) -> Result<()> {
+            Err(ToolError::InvalidInput("missing required param".into()))
+        }
+        async fn execute(
+            &self,
+            _input: Value,
+            _context: &ToolExecutionContext,
+        ) -> Result<ToolResult> {
+            Ok(ToolResult::success("unreachable".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_jit_activates_extended_tool_even_on_failure() {
+        // #214: an EXTENDED tool called by name but never surfaced via
+        // tool_search must be activated for the session so its schema rides the
+        // NEXT request, and that activation has to happen even when this first
+        // call fails on bad params, or the model stays stuck guessing blind.
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(ValidateFailTool));
+
+        let session_id = Uuid::new_v4();
+        let context = ToolExecutionContext::new(session_id);
+
+        assert!(
+            !registry
+                .active_tools(session_id)
+                .contains("extended_blind_tool")
+        );
+
+        let result = registry
+            .execute("extended_blind_tool", serde_json::json!({}), &context)
+            .await;
+
+        // The call failed validation...
+        assert!(matches!(result.unwrap_err(), ToolError::InvalidInput(_)));
+        // ...yet the tool is now discovered for the next turn.
+        assert!(
+            registry
+                .active_tools(session_id)
+                .contains("extended_blind_tool"),
+            "extended tool must be activated before validation, even on a failing call"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_does_not_activate_core_tool() {
+        // CORE tools are always in the prompt, so JIT activation must skip them
+        // (no point bloating the per-session active set). A MockTool registered
+        // under a core name (`bash`) must NOT be added to the active set.
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(MockTool {
+            name: "bash".to_string(),
+            requires_approval: false,
+        }));
+
+        let session_id = Uuid::new_v4();
+        let context = ToolExecutionContext::new(session_id);
+
+        let result = registry
+            .execute("bash", serde_json::json!({ "message": "hi" }), &context)
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(
+            !registry.active_tools(session_id).contains("bash"),
+            "core tools must never be added to the session active set"
+        );
     }
 
     #[tokio::test]
