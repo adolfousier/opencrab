@@ -407,6 +407,50 @@ pub(crate) fn find_recent_tmp_file(
     best.map(|(_, p)| p)
 }
 
+/// Like [`find_recent_tmp_file`] but returns ALL matching files, sorted
+/// oldest-first. Used for multi-photo pickup so every image the user
+/// dropped is included, not just the last one.
+pub(crate) fn find_all_recent_tmp_files(
+    chat_id: i64,
+    kind: &str,
+    max_age_secs: i64,
+) -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let tmp_dir: PathBuf = crate::config::opencrabs_home().join("tmp");
+    let now = chrono::Utc::now().timestamp();
+    let prefix = format!("{kind}-{chat_id}-");
+
+    let mut results: Vec<(i64, PathBuf)> = Vec::new();
+    let entries = match std::fs::read_dir(&tmp_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with(&prefix) {
+            continue;
+        }
+        let ts_str = match name_str
+            .strip_prefix(&prefix)
+            .and_then(|s| s.split('.').next())
+        {
+            Some(s) => s,
+            None => continue,
+        };
+        let ts: i64 = match ts_str.parse() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if now - ts <= max_age_secs {
+            results.push((ts, entry.path()));
+        }
+    }
+    results.sort_by_key(|(ts, _)| *ts);
+    results.into_iter().map(|(_, p)| p).collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_message(
     bot: Bot,
@@ -586,15 +630,57 @@ pub(crate) async fn handle_message(
 
     let tg_cfg = &cfg.channels.telegram;
 
-    // Fire-and-forget: save incoming voice/document/audio files to tmp
-    // so the agent can pick them up later when tagged in mention-only groups.
+    // Save incoming media to tmp and track the JoinHandle so downstream
+    // photo pickup can await completion (fixes the race when the user
+    // drops images and tags the bot "right after"). Photos are also
+    // archived to the session's project dir on arrival when one exists.
     {
         let bot_c = bot.clone();
         let msg_c = msg.clone();
         let bt = bot_token.to_string();
-        tokio::spawn(async move {
+        let ts_inner = telegram_state.clone();
+        let agent_c = agent.clone();
+        let tid = topic_id;
+        let handle = tokio::spawn(async move {
             save_incoming_files_to_tmp(&bot_c, &msg_c, &bt).await;
+
+            // Archive photos to project dir on arrival when a session is
+            // already bound to this chat. This eliminates the race entirely
+            // for project sessions: the photos are in the project before
+            // the user even mentions the bot.
+            let chat_id = msg_c.chat.id.0;
+            if msg_c.photo().is_some()
+                && let Some(session_id) = ts_inner.chat_session(chat_id, tid).await
+                && let Some(photo_path) = find_recent_tmp_file(chat_id, "photo", 300)
+            {
+                // Ephemeral feedback so the user sees something immediately
+                let feedback_id = match message_in_thread(
+                    &bot_c,
+                    msg_c.chat.id,
+                    msg_c.thread_id,
+                    "📸 Processing your photos…",
+                )
+                .await
+                {
+                    Ok(sent) => Some(sent.id),
+                    Err(_) => None,
+                };
+
+                let fs = crate::services::FileService::new(agent_c.context().clone());
+                let marker = format!("<<IMG:{}>>", photo_path.display());
+                let _ = archive_image_markers(&marker, session_id, &fs).await;
+
+                // Delete the feedback message (best-effort)
+                if let Some(mid) = feedback_id
+                    && let Err(e) = bot_c.delete_message(msg_c.chat.id, mid).await
+                {
+                    tracing::debug!("Telegram: could not delete photo feedback msg: {e}");
+                }
+            }
         });
+        telegram_state
+            .push_pending_save(msg.chat.id.0, handle)
+            .await;
     }
 
     let allowed: HashSet<i64> = tg_cfg
@@ -838,22 +924,25 @@ pub(crate) async fn handle_message(
         }
     }
 
-    // Pick up a recent photo from tmp: the user shared an image in a
+    // Pick up recent photos from tmp: the user shared images in a
     // mention-only group, then tagged the bot in a follow-up WITHOUT
-    // re-attaching it. Inject it as an `<<IMG:path>>` marker so
-    // build_user_message inlines it for vision. The file is left on disk —
-    // the periodic tmp purge cleans it; deleting here would race
-    // build_user_message, which reads the bytes when assembling the message.
-    let mut tmp_photo_marker: Option<String> = None;
-    if !is_dm
-        && msg.photo().is_none()
-        && let Some(photo_path) = find_recent_tmp_file(msg.chat.id.0, "photo", 300)
-    {
-        tracing::info!(
-            "Telegram: picked up recent photo from tmp: {}",
-            photo_path.display()
-        );
-        tmp_photo_marker = Some(format!("<<IMG:{}>>", photo_path.display()));
+    // re-attaching them. Await any in-flight file saves first (Fix 1)
+    // to eliminate the race, then collect ALL matching photos (Fix 2).
+    // Inject `<<IMG:path>>` markers so build_user_message inlines them
+    // for vision. Files are left on disk; the periodic tmp purge cleans them.
+    let mut tmp_photo_markers: Vec<String> = Vec::new();
+    if !is_dm && msg.photo().is_none() {
+        // Drain pending file-save handles: ensures the spawned download
+        // tasks have finished writing to disk before we scan.
+        telegram_state.drain_pending_saves(msg.chat.id.0).await;
+
+        for photo_path in find_all_recent_tmp_files(msg.chat.id.0, "photo", 300) {
+            tracing::info!(
+                "Telegram: picked up recent photo from tmp: {}",
+                photo_path.display()
+            );
+            tmp_photo_markers.push(format!("<<IMG:{}>>", photo_path.display()));
+        }
     }
 
     // Extract text from either text message or voice note (via STT)
@@ -1341,9 +1430,9 @@ pub(crate) async fn handle_message(
         }
     }
 
-    // Append any image picked up from tmp so the agent can actually see it
-    // (the <<IMG:>> marker is base64-inlined for vision by build_user_message).
-    if let Some(marker) = tmp_photo_marker {
+    // Append all images picked up from tmp so the agent can actually see them
+    // (the <<IMG:>> markers are base64-inlined for vision by build_user_message).
+    for marker in tmp_photo_markers {
         text = if text.is_empty() {
             marker
         } else {

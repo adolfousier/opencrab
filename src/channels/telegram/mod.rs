@@ -91,6 +91,11 @@ pub struct TelegramState {
     dir_browsers: Mutex<HashMap<i64, (String, Option<String>)>>,
     /// Profile create flow state: chat_id → true when awaiting a profile name
     prof_create_states: Mutex<HashMap<i64, bool>>,
+    /// Pending file-save JoinHandles keyed by chat_id. The spawned task that
+    /// downloads incoming media to tmp registers its handle here so the
+    /// downstream tmp-photo pickup can `drain + await` before scanning,
+    /// eliminating the race between fire-and-forget saves and mention handling.
+    pending_file_saves: Mutex<HashMap<i64, Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl Default for TelegramState {
@@ -118,6 +123,7 @@ impl TelegramState {
             cowork_groups: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             dir_browsers: Mutex::new(HashMap::new()),
             prof_create_states: Mutex::new(HashMap::new()),
+            pending_file_saves: Mutex::new(HashMap::new()),
         }
     }
 
@@ -202,6 +208,35 @@ impl TelegramState {
             .await
             .get(&(chat_id, topic_id))
             .copied()
+    }
+
+    /// Register a pending file-save JoinHandle for a chat. The spawned task
+    /// that downloads incoming media calls this so the tmp-photo pickup can
+    /// await completion before scanning for files.
+    pub async fn push_pending_save(&self, chat_id: i64, handle: tokio::task::JoinHandle<()>) {
+        self.pending_file_saves
+            .lock()
+            .await
+            .entry(chat_id)
+            .or_default()
+            .push(handle);
+    }
+
+    /// Drain all pending file-save handles for a chat and await each one.
+    /// Called just before tmp-photo pickup to eliminate the race between
+    /// fire-and-forget downloads and mention-triggered file lookups.
+    pub async fn drain_pending_saves(&self, chat_id: i64) {
+        let handles = self
+            .pending_file_saves
+            .lock()
+            .await
+            .remove(&chat_id)
+            .unwrap_or_default();
+        for h in handles {
+            if let Err(e) = h.await {
+                tracing::warn!("Telegram: pending file-save task panicked: {e}");
+            }
+        }
     }
 
     /// Register a pending approval channel by id.
