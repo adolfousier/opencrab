@@ -493,19 +493,19 @@ pub(crate) fn format_help() -> String {
     let mut lines = vec![
         "📖 *Available Commands*".to_string(),
         String::new(),
+        "`/new`      — Start a new session".to_string(),
         "`/cd`       — Browse and change working directory".to_string(),
+        "`/stop`     — Abort current operation".to_string(),
         "`/compact`  — Compact context (summarize & trim)".to_string(),
         "`/cowork`   — Create a cowork workspace with QR invite (Telegram only)".to_string(),
         "`/evolve`   — Download latest release & restart".to_string(),
         "`/help`     — Show this message".to_string(),
         "`/mission-control` Mission control: analytics, activity, inbox & schedule".to_string(),
         "`/models`   — Switch AI model".to_string(),
-        "`/new`      — Start a new session".to_string(),
         "`/profiles` — Manage profiles (create, switch, migrate)".to_string(),
         "`/rename`   — Rename current session (`/rename <new title>`)".to_string(),
         "`/rtk`      — Show RTK token savings statistics".to_string(),
         "`/sessions` — Switch between sessions (`/sessions:<query>` to filter)".to_string(),
-        "`/stop`     — Abort current operation".to_string(),
         "`/usage`    — Session token & cost stats".to_string(),
     ];
 
