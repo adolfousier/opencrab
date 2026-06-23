@@ -495,6 +495,7 @@ pub(crate) fn format_help() -> String {
         String::new(),
         "`/new`      — Start a new session".to_string(),
         "`/cd`       — Browse and change working directory".to_string(),
+        "`/sessions` — Switch between sessions (`/sessions:<query>` to filter)".to_string(),
         "`/stop`     — Abort current operation".to_string(),
         "`/compact`  — Compact context (summarize & trim)".to_string(),
         "`/cowork`   — Create a cowork workspace with QR invite (Telegram only)".to_string(),
@@ -505,7 +506,6 @@ pub(crate) fn format_help() -> String {
         "`/profiles` — Manage profiles (create, switch, migrate)".to_string(),
         "`/rename`   — Rename current session (`/rename <new title>`)".to_string(),
         "`/rtk`      — Show RTK token savings statistics".to_string(),
-        "`/sessions` — Switch between sessions (`/sessions:<query>` to filter)".to_string(),
         "`/usage`    — Session token & cost stats".to_string(),
     ];
 

@@ -143,6 +143,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Change working directory",
     },
     SlashCommand {
+        name: "/sessions",
+        description: "List all sessions",
+    },
+    SlashCommand {
         name: "/compact",
         description: "Compact context now",
     },
@@ -199,10 +203,6 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Create a Telegram cowork workspace (QR + deep link)",
     },
     SlashCommand {
-        name: "/sessions",
-        description: "List all sessions",
-    },
-    SlashCommand {
         name: "/approve",
         description: "Tool approval policy",
     },
@@ -217,10 +217,6 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/whisper",
         description: "Speak anywhere, paste to clipboard",
-    },
-    SlashCommand {
-        name: "/cd",
-        description: "Change working directory",
     },
     SlashCommand {
         name: "/skills",

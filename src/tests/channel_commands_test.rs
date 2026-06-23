@@ -65,17 +65,18 @@ fn format_help_most_used_commands_first() {
             }
         })
         .collect();
-    // Most-used commands (/new, /cd, /stop) should be at the top
+    // Most-used commands (/new, /cd, /sessions, /stop) should be at the top
     assert_eq!(commands.first(), Some(&"/new"), "/new should be first");
     assert_eq!(commands.get(1), Some(&"/cd"), "/cd should be second");
-    assert_eq!(commands.get(2), Some(&"/stop"), "/stop should be third");
+    assert_eq!(commands.get(2), Some(&"/sessions"), "/sessions should be third");
+    assert_eq!(commands.get(3), Some(&"/stop"), "/stop should be fourth");
     // Remaining commands should be alphabetical
-    let rest: Vec<&str> = commands[3..].to_vec();
+    let rest: Vec<&str> = commands[4..].to_vec();
     let mut sorted_rest = rest.clone();
     sorted_rest.sort();
     assert_eq!(
         rest, sorted_rest,
-        "commands after /new, /cd, /stop should be alphabetical"
+        "commands after /new, /cd, /sessions, /stop should be alphabetical"
     );
 }
 
