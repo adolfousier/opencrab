@@ -1495,24 +1495,6 @@ pub(crate) async fn handle_message(
         return Ok(());
     }
 
-    // Workspace name input: active cowork conversation + non-command text
-    if is_dm
-        && !text.starts_with('/')
-        && !text.is_empty()
-        && telegram_state.get_cowork_state(user_id).await.is_some()
-    {
-        super::cowork::handle_workspace_name(
-            &bot,
-            &telegram_state,
-            user_id,
-            msg.chat.id.0,
-            &text,
-            thread_id,
-        )
-        .await?;
-        return Ok(());
-    }
-
     tracing::info!(
         "Telegram: {} from user {} ({}): {}",
         if is_voice { "voice" } else { "text" },

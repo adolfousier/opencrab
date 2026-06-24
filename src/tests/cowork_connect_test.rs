@@ -9,23 +9,12 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 #[tokio::test]
-async fn empty_workspace_name_errors() {
-    let tool = CoworkConnectTool::new(Arc::new(TelegramState::new()));
-    let ctx = ToolExecutionContext::new(Uuid::new_v4());
-    let r = tool
-        .execute(serde_json::json!({ "workspace_name": "" }), &ctx)
-        .await
-        .unwrap();
-    assert!(!r.success);
-}
-
-#[tokio::test]
 async fn without_bot_username_errors_clearly() {
     // No bot username known → Telegram isn't connected; can't build a link.
     let tool = CoworkConnectTool::new(Arc::new(TelegramState::new()));
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
     let r = tool
-        .execute(serde_json::json!({ "workspace_name": "Team" }), &ctx)
+        .execute(serde_json::json!({}), &ctx)
         .await
         .unwrap();
     assert!(!r.success);
@@ -40,7 +29,7 @@ async fn builds_deep_link_with_bot_and_session() {
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
 
     let r = tool
-        .execute(serde_json::json!({ "workspace_name": "My Team" }), &ctx)
+        .execute(serde_json::json!({}), &ctx)
         .await
         .unwrap();
     assert!(r.success, "{:?}", r.error);
@@ -49,5 +38,4 @@ async fn builds_deep_link_with_bot_and_session() {
         "deep link missing: {}",
         r.output
     );
-    assert!(r.output.contains("My Team"));
 }

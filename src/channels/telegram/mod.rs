@@ -416,25 +416,6 @@ impl TelegramState {
             .cloned()
     }
 
-    /// Set the workspace name for an active /cowork conversation.
-    /// Returns the updated state, or None if no active conversation.
-    pub async fn set_workspace_name(
-        &self,
-        user_id: i64,
-        name: &str,
-    ) -> Option<cowork::CoworkState> {
-        let mut convos = self.cowork_conversations.lock().await;
-        if let Some(state) = convos.get_mut(&user_id) {
-            state.workspace_name = name.to_string();
-            // Also update the session lookup
-            let mut sessions = self.cowork_sessions.lock().await;
-            sessions.insert(state.session_id.clone(), state.clone());
-            Some(state.clone())
-        } else {
-            None
-        }
-    }
-
     /// Take (remove) a cowork state by session_id. Used when bot joins a group.
     pub async fn take_cowork_by_session(&self, session_id: &str) -> Option<cowork::CoworkState> {
         let state = self.cowork_sessions.lock().await.remove(session_id);

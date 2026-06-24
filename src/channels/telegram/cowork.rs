@@ -1,11 +1,10 @@
-//! /cowork Command: Create a cowork workspace with QR invite.
+//! /cowork Command: Add OpenCrabs to a Telegram group with auto-registration.
 //!
 //! Flow:
-//! 1. User sends `/cowork` in DM → bot asks for workspace name
-//! 2. User sends workspace name → bot generates `?startgroup=cowork_<id>` deep link
-//! 3. User taps link → Telegram native UI creates group, adds bot
-//! 4. Bot detects `/start cowork_<id>` in new group → generates invite link + QR
-//! 5. QR sent to user's DM. New members auto-register in allowed_users.
+//! 1. User sends `/cowork` in DM → bot shows "Add to Group" button immediately
+//! 2. User taps link → Telegram native UI lets them pick/create a group
+//! 3. Bot detects `/start cowork_<id>` in new group → generates invite link + QR
+//! 4. QR sent to user's DM. All group members auto-register in allowed_users.
 
 use crate::config::{Config, opencrabs_home};
 
@@ -17,27 +16,38 @@ use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputF
 /// Prefix for cowork startgroup parameters.
 const COWORK_PREFIX: &str = "cowork_";
 
-/// State for an active /cowork conversation.
+/// Lightweight session linking a `/cowork` DM to the group that will be created.
+/// Stored so when the bot joins via the deep link, we know where to send the QR.
 #[derive(Debug, Clone)]
 pub struct CoworkState {
     /// User who initiated /cowork.
     pub user_id: i64,
     /// DM chat where /cowork was sent (for sending QR back).
     pub chat_id: i64,
-    /// Workspace name provided by user.
-    pub workspace_name: String,
     /// Unique session identifier for this cowork flow.
     pub session_id: String,
+    /// When this state was created. If the user never taps "Add to Group",
+    /// the state silently expires and their next message is processed normally.
+    pub created_at: std::time::Instant,
 }
+
+/// If the user doesn't click "Add to Group" within this window, the cowork
+/// state is silently cleared and their next message goes through normally.
+const COWORK_TIMEOUT_SECS: u64 = 120;
 
 impl CoworkState {
     pub fn new(user_id: i64, chat_id: i64, session_id: String) -> Self {
         Self {
             user_id,
             chat_id,
-            workspace_name: String::new(),
             session_id,
+            created_at: std::time::Instant::now(),
         }
+    }
+
+    /// Returns true if this cowork state has expired (user never tapped the link).
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed().as_secs() > COWORK_TIMEOUT_SECS
     }
 }
 
@@ -100,7 +110,7 @@ pub async fn is_cowork_group(chat_id: i64, state: &TelegramState) -> bool {
     state.is_cowork_group(chat_id).await
 }
 
-/// Handle the /cowork command in DM. Returns the text to send back.
+/// Handle the /cowork command in DM. Immediately shows the "Add to Group" button.
 pub async fn handle_cowork_command(
     bot: &Bot,
     _msg: &Message,
@@ -109,81 +119,29 @@ pub async fn handle_cowork_command(
     chat_id: i64,
     thread_id: Option<teloxide::types::ThreadId>,
 ) -> Result<(), teloxide::RequestError> {
-    // Check if user already has an active cowork conversation
-    if let Some(existing) = state.get_cowork_state(user_id).await {
-        // User already in a cowork flow — show the deep link again
-        let bot_username = state
-            .bot_username()
-            .await
-            .unwrap_or_else(|| "opencrabsbot".to_string());
-        let deep_link = build_cowork_deep_link(&bot_username, &existing.session_id);
-
-        let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
-            "🦀 Add to Group".to_string(),
-            deep_link.parse().unwrap(),
-        )]]);
-
-        let text = if existing.workspace_name.is_empty() {
-            "You have a pending /cowork setup. What should we call your workspace?".to_string()
-        } else {
-            format!(
-                "Workspace: **{}**\n\nTap below to add me to any group with your friends.\n\
-                 Don't have one yet? Create a group in Telegram, invite your friends, then come back and tap this button.",
-                existing.workspace_name
-            )
-        };
-
-        message_in_thread(bot, ChatId(chat_id), thread_id, text)
-            .reply_markup(keyboard)
-            .await?;
-        return Ok(());
-    }
-
-    // Start new cowork conversation
-    let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
-    state.start_cowork(user_id, chat_id, session_id).await;
-
-    message_in_thread(
-        bot,
-        ChatId(chat_id),
-        thread_id,
-        "🦀 **Cowork Setup**\n\nWhat should we call your workspace?",
-    )
-    .await?;
-    Ok(())
-}
-
-/// Handle a user providing their workspace name (second message in /cowork flow).
-pub async fn handle_workspace_name(
-    bot: &Bot,
-    state: &TelegramState,
-    user_id: i64,
-    chat_id: i64,
-    workspace_name: &str,
-    thread_id: Option<teloxide::types::ThreadId>,
-) -> Result<(), teloxide::RequestError> {
-    let Some(mut cowork) = state.set_workspace_name(user_id, workspace_name).await else {
-        return Ok(());
-    };
-    cowork.workspace_name = workspace_name.to_string();
-
     let bot_username = state
         .bot_username()
         .await
         .unwrap_or_else(|| "opencrabsbot".to_string());
-    let deep_link = build_cowork_deep_link(&bot_username, &cowork.session_id);
+
+    // If user already has a pending cowork session, reuse it; otherwise start new one
+    let session_id = if let Some(existing) = state.get_cowork_state(user_id).await {
+        existing.session_id
+    } else {
+        let sid = uuid::Uuid::new_v4().to_string()[..8].to_string();
+        state.start_cowork(user_id, chat_id, sid.clone()).await;
+        sid
+    };
+
+    let deep_link = build_cowork_deep_link(&bot_username, &session_id);
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
         "🦀 Add to Group".to_string(),
         deep_link.parse().unwrap(),
     )]]);
 
-    let text = format!(
-        "Workspace: **{}**\n\nTap below to add me to any group with your friends.\n\
-         Don't have one yet? Create a group in Telegram, invite your friends, then come back and tap this button.\n\n\
-         I'll auto-register everyone when they send a message.",
-        workspace_name
-    );
+    let text = "Tap below to add me to a Telegram group.\n\n\
+        Every member auto-registers when they send a message — no setup needed.";
 
     message_in_thread(bot, ChatId(chat_id), thread_id, text)
         .reply_markup(keyboard)
@@ -229,12 +187,11 @@ pub async fn handle_cowork_group_join(
                         user_chat,
                         None,
                         format!(
-                            "🦀 **Workspace created!**\n\n\
-                             Group: **{}**\n\
+                            "🦀 **All set!**\n\n\
                              Invite link: {}\n\n\
-                             Share the QR or link with your team. \
-                             Their IDs auto-register when they join.",
-                            cowork_state.workspace_name, invite_url
+                             Share the QR or link. \
+                             Everyone auto-registers when they join and send a message.",
+                            invite_url
                         ),
                     )
                     .await;
@@ -246,9 +203,8 @@ pub async fn handle_cowork_group_join(
                 bot,
                 ChatId(group_chat_id),
                 thread_id,
-                "🦀 Welcome to your Cowork workspace!\n\n\
-                 Share the invite link with your team. \
-                 @mention me anytime to chat.",
+                "🦀 I'm in! @mention me anytime to chat.\n\n\
+                 Everyone here is auto-registered. No setup needed.",
             )
             .await;
         }
@@ -318,8 +274,8 @@ mod tests {
         let state = CoworkState::new(123, 456, "abc".to_string());
         assert_eq!(state.user_id, 123);
         assert_eq!(state.chat_id, 456);
-        assert!(state.workspace_name.is_empty());
         assert_eq!(state.session_id, "abc");
+        assert!(!state.is_expired());
     }
 
     #[test]
