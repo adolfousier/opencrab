@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.48] - 2026-06-24
+
+2 commits since v0.3.47. 5 files changed, +200 / -186 lines.
+
+### 🔧 Fixes
+
+- `f146af47` **Race-free photo storage and multi-image pickup**: Track pending file-save JoinHandles to eliminate fire-and-forget race, pick up ALL recent photos from tmp (Vec<PathBuf>), archive photos to project dir on arrival regardless of mention, ephemeral "Processing your photos..." feedback message
+- `dcdad728` **Simplify cowork flow**: Remove misleading workspace name step, /cowork now immediately shows Add to Group button, auto-register all group members when bot joins, cowork state auto-expires after 120s so users never get locked
+
+### 📊 Stats
+
+- 2 commits since v0.3.47
+- 5 files changed, +200 / -186 lines
+- 4102 tests (4102 passed, 0 failed, 24 ignored)
+
+[0.3.48]: https://github.com/adolfousier/opencrabs/compare/v0.3.47...v0.3.48
+
 ## [0.3.47] - 2026-06-22
 
 37 commits since v0.3.46. 52 files changed, +2665 / -289 lines.
@@ -5919,3 +5936,4 @@ fixes.
 [0.3.45]: https://github.com/adolfousier/opencrabs/compare/v0.3.44...v0.3.45
 [0.3.46]: https://github.com/adolfousier/opencrabs/compare/v0.3.45...v0.3.46
 [0.3.47]: https://github.com/adolfousier/opencrabs/compare/v0.3.46...v0.3.47
+[0.3.48]: https://github.com/adolfousier/opencrabs/compare/v0.3.47...v0.3.48
