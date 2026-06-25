@@ -36,7 +36,7 @@ OpenCrabs runs as a **single binary on your terminal** — no server, no gateway
 
 | | **OpenCrabs** (Rust) | **Node.js Frameworks** (e.g. Open Claw) |
 |---|---|---|
-| **Binary size** | **26–29 MB** single binary, zero dependencies | **1 GB+** `node_modules` with hundreds of transitive packages |
+| **Binary size** | **34–36 MB** single binary, zero dependencies | **1 GB+** `node_modules` with hundreds of transitive packages |
 | **Runtime** | None — runs natively | Requires Node.js runtime + npm install |
 | **Attack surface** | Zero network listeners. Outbound HTTPS only | Server infrastructure: open ports, auth layers, middleware |
 | **API key security** | Keys on your machine only. `zeroize` clears them from RAM on drop, `[REDACTED]` in all debug output | Keys in env vars or config. GC doesn't guarantee memory clearing. Heap dumps can leak secrets |

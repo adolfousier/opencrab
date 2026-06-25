@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.49] - 2026-06-25
+
+22 commits since v0.3.48. 44 files changed, +2114 / -177 lines.
+
+### ✨ Features
+
+- `2a1337de` **Block::Details AST variant**: new AST node for `<details>/<summary>` collapsible blocks with HTML fallback
+- `730aafbc` **Parse `<details>/<summary>` collapsible blocks**: markdown parser now recognizes `<details>` and `<summary>` HTML tags
+- `c76f51a2` **Draft message streaming for DMs**: ephemeral "typing..." messages that update in-place as tokens stream
+- `47257dc5` **Wire draft streaming for Telegram DMs**: connects the rich AST renderer's draft streaming to Telegram's edit API
+- `51938f39` **Rich structure detection tests**: `<details>` parsing tests + `has_rich_structure()` utility
+- `720c2b4e` **Promote most-used commands to top of /help**: /new, /cd, /sessions, /stop now appear first in command listings
+- `92380f72` **Auto-assign project on /cd**: `/cd` now auto-assigns the session to the matching project + project-scoped skill resolution
+- `fd8c1edd` **Expanded TOOL LIFECYCLE directive**: proactive tool_search, skills check, fallback-on-failure, and refusal interception
+
+### 🔧 Fixes
+
+- `be8a29e4` **Cron double-fire on first tick**: fixed race condition where jobs near the cron boundary would fire twice on startup
+- `971c6e4f` **Cron shared session with compaction isolation**: cron jobs now share a single session per job with proper compaction boundaries
+- `359cfc6c` **Forum topic isolation in channel_search**: `recent()` now filters by thread_id so forum topic messages don't leak across topics
+- `65f8ab4f` **Rich AST renderer for slash command responses**: slash commands in Telegram now render through the rich AST pipeline
+- `10a1b510` **Re-inject skill bodies after compaction**: active skill definitions are re-injected into the system brain after context compaction
+- `c48299d4` **Accept dotted keys in [brain.caps]**: TOML config now accepts dotted keys like `brain.caps.model` with full error logging
+- `4fd1f50f` **Bot replies stored after rich fallback**: reply context is now recovered when rich rendering falls back to plain text
+- `bbe6cc12` **Strip MiniMax/mimo namespaced `<mm:think>` tags**: reasoning tags with `mm:` prefix are now properly stripped from output
+
+### 📖 Documentation
+
+- `da130901` Brain Constitution added to `src/docs/reference/BRAIN_CONSTITUTION.md`
+- `eb6378d0` Brain Constitution hyperlink in README + project structure updated
+
+### 🧹 Miscellaneous
+
+- `a25065ec` test(skills): inline closure returns to satisfy clippy
+- `b4fcfafc` refactor: move `security-eval/` to `evals/security-eval/`
+- `ab8a3b75` evals/security-eval/README: update deterministic CI section
+- `b381621e` style: cargo fmt on 10 files
+
+### 📊 Stats
+
+- 22 commits since v0.3.48
+- 44 files changed, +2114 / -177 lines
+- 4130 tests (4130 passed, 0 failed, 28 ignored)
+
 ## [0.3.48] - 2026-06-24
 
 2 commits since v0.3.47. 5 files changed, +200 / -186 lines.
@@ -5937,3 +5981,4 @@ fixes.
 [0.3.46]: https://github.com/adolfousier/opencrabs/compare/v0.3.45...v0.3.46
 [0.3.47]: https://github.com/adolfousier/opencrabs/compare/v0.3.46...v0.3.47
 [0.3.48]: https://github.com/adolfousier/opencrabs/compare/v0.3.47...v0.3.48
+[0.3.49]: https://github.com/adolfousier/opencrabs/compare/v0.3.48...v0.3.49
