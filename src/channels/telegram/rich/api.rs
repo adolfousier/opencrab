@@ -9,6 +9,36 @@
 use teloxide::Bot;
 use teloxide::types::ThreadId;
 
+/// Send an ephemeral rich-message draft (DM-only, auto-expires in ~30s).
+///
+/// Drafts are private to the chat and produce no persistent notification.
+/// Re-sending with the same `draft_id` causes Telegram to animate the
+/// transition instead of creating a new message. Call this every ~25s to
+/// keep the draft alive while the agent is working.
+///
+/// Only works in private chats — Telegram silently ignores drafts in groups.
+pub(crate) async fn send_rich_message_draft(
+    token: &str,
+    chat_id: i64,
+    draft_id: i32,
+    markdown: &str,
+) -> anyhow::Result<i32> {
+    let url = format!("https://api.telegram.org/bot{token}/sendRichMessageDraft");
+    let body = serde_json::json!({
+        "chat_id": chat_id,
+        "draft_id": draft_id,
+        "rich_message": { "markdown": markdown },
+    });
+    let result = post_rich(&url, &body).await?;
+    result
+        .get("message_id")
+        .and_then(serde_json::Value::as_i64)
+        .map(|id| id as i32)
+        .ok_or_else(|| {
+            anyhow::anyhow!("sendRichMessageDraft ok but response carried no message_id")
+        })
+}
+
 /// Rich-first send: attempt `sendRichMessage` for `markdown`, pulling the token
 /// from `bot`. Returns `Err` on failure so the caller can fall back to its
 /// existing (plain or HTML) send path. Default-on — there is no config toggle.
