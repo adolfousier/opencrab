@@ -1,8 +1,10 @@
 //! Cron Scheduler
 //!
 //! Background task that checks the `cron_jobs` table every 60 seconds,
-//! executes due jobs in a dedicated "Cron" session, and delivers results
-//! to the configured channel. Cron jobs are fully isolated from the TUI —
+//! executes due jobs in a shared "Cron" session, and delivers results
+//! to the configured channel. Each run inserts a compaction marker after
+//! completion so the next run starts with empty context (no cross-job
+//! history contamination). Cron jobs are fully isolated from the TUI —
 //! they never share or mutate the user's active session.
 
 use crate::channels::ChannelFactory;
@@ -14,9 +16,6 @@ use crate::services::{ServiceContext, SessionService};
 use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
-
-/// Name used for the shared cron session.
-const CRON_SESSION_NAME: &str = "Cron";
 
 /// Whether `job_profile` is the active process profile (so the cheap, already
 /// wired factory agent can run it) rather than a foreign profile that needs its
@@ -148,8 +147,6 @@ pub struct CronScheduler {
     run_repo: CronJobRunRepository,
     factory: Arc<ChannelFactory>,
     service_context: ServiceContext,
-    /// Dedicated session for all cron jobs — isolated from TUI sessions.
-    cron_session_id: Option<Uuid>,
 }
 
 impl CronScheduler {
@@ -164,7 +161,6 @@ impl CronScheduler {
             run_repo,
             factory,
             service_context,
-            cron_session_id: None,
         }
     }
 
@@ -179,55 +175,14 @@ impl CronScheduler {
     /// `with_profile_home_async(profile, ...)` scope so the scheduler's own
     /// setup (cron session, config reads) resolves to that profile's home.
     /// `spawn()` is the thin wrapper for callers that just want it backgrounded.
-    pub async fn run(mut self) {
-        // Find or create the dedicated cron session
-        match self.resolve_or_create_cron_session().await {
-            Ok(id) => {
-                self.cron_session_id = Some(id);
-                tracing::info!(
-                    "Cron scheduler started — polling every 60s, cron session: {}",
-                    id
-                );
-            }
-            Err(e) => {
-                tracing::error!("Cron scheduler failed to create session: {e}");
-            }
-        }
+    pub async fn run(self) {
+        tracing::info!("Cron scheduler started — polling every 60s (shared Cron session, compaction-isolated)");
         loop {
             if let Err(e) = self.tick().await {
                 tracing::error!("Cron scheduler tick error: {e}");
             }
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         }
-    }
-
-    /// Find an existing "Cron" session or create one.
-    async fn resolve_or_create_cron_session(&self) -> anyhow::Result<Uuid> {
-        use crate::db::repository::SessionListOptions;
-        let session_svc = SessionService::new(self.service_context.clone());
-        // Look for an existing session named "Cron"
-        let sessions = session_svc
-            .list_sessions(SessionListOptions {
-                include_archived: false,
-                limit: None,
-                offset: 0,
-                query: None,
-            })
-            .await?;
-        if let Some(existing) = sessions
-            .iter()
-            .find(|s| s.title.as_deref().is_some_and(|n| n == CRON_SESSION_NAME))
-        {
-            return Ok(existing.id);
-        }
-        // Create a new dedicated cron session
-        let config = Config::load()?;
-        let provider = config.cron.default_provider.clone();
-        let model = config.cron.default_model.clone();
-        let session = session_svc
-            .create_session_with_provider(Some(CRON_SESSION_NAME.to_string()), provider, model)
-            .await?;
-        Ok(session.id)
     }
 
     /// One scheduler tick: check all enabled jobs and execute any that are due.
@@ -260,13 +215,6 @@ impl CronScheduler {
                     .await?;
 
                 // Execute in background so we don't block other jobs
-                let Some(cron_sid) = self.cron_session_id else {
-                    tracing::error!(
-                        "Cron job '{}' — no cron session available, skipping",
-                        job.name
-                    );
-                    continue;
-                };
                 let job = job.clone();
                 let factory = self.factory.clone();
                 let ctx = self.service_context.clone();
@@ -297,11 +245,17 @@ impl CronScheduler {
                                 job.name,
                                 crate::config::opencrabs_home()
                             );
-                            execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await
+                            match resolve_or_create_cron_session(&ctx).await {
+                                Ok(cron_sid) => execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await,
+                                Err(e) => Err(e),
+                            }
                         })
                         .await
                     } else {
-                        execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await
+                        match resolve_or_create_cron_session(&ctx).await {
+                            Ok(cron_sid) => execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await,
+                            Err(e) => Err(e),
+                        }
                     };
 
                     if let Err(e) = result {
@@ -347,6 +301,39 @@ impl CronScheduler {
     ) -> Option<chrono::DateTime<Utc>> {
         super::next_run_utc(&job.cron_expr, job_tz(job), after)
     }
+}
+
+/// Find an existing "Cron" session or create one. All cron jobs share this
+/// session for logging/debugging, but each run inserts a compaction marker
+/// after completion so the next run starts with empty context (no history
+/// contamination between jobs).
+async fn resolve_or_create_cron_session(
+    ctx: &ServiceContext,
+) -> anyhow::Result<Uuid> {
+    const CRON_SESSION_NAME: &str = "Cron";
+    use crate::db::repository::SessionListOptions;
+    let session_svc = SessionService::new(ctx.clone());
+    let sessions = session_svc
+        .list_sessions(SessionListOptions {
+            include_archived: false,
+            limit: None,
+            offset: 0,
+            query: None,
+        })
+        .await?;
+    if let Some(existing) = sessions
+        .iter()
+        .find(|s| s.title.as_deref().is_some_and(|n| n == CRON_SESSION_NAME))
+    {
+        return Ok(existing.id);
+    }
+    let config = Config::load()?;
+    let provider = config.cron.default_provider.clone();
+    let model = config.cron.default_model.clone();
+    let session = session_svc
+        .create_session_with_provider(Some(CRON_SESSION_NAME.to_string()), provider, model)
+        .await?;
+    Ok(session.id)
 }
 
 /// Resolve a job's stored timezone string to a `Tz`, falling back to UTC for
@@ -409,7 +396,7 @@ async fn resolve_job_agent(
     Ok((config, Arc::new(builder)))
 }
 
-/// Execute a single cron job in the shared cron session.
+/// Execute a single cron job in its own isolated session.
 /// Isolated from TUI — never touches the user's active session.
 /// Results are always stored in the DB; channel delivery is optional.
 async fn execute_job(
@@ -612,6 +599,21 @@ async fn execute_job(
                 }
             }
         }
+    }
+
+    // Insert a compaction marker so the next cron run starts with empty
+    // context. Without this, every job would see the full conversation
+    // history of all previous jobs (the contamination vector).
+    let message_svc = crate::services::MessageService::new(ctx.clone());
+    if let Err(e) = message_svc
+        .create_message(
+            session_id,
+            "user".to_string(),
+            "[CONTEXT COMPACTION — Cron job execution boundary]".to_string(),
+        )
+        .await
+    {
+        tracing::warn!("Failed to insert cron compaction marker: {e}");
     }
 
     Ok(())
