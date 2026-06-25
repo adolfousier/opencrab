@@ -66,9 +66,12 @@ Append a line to `attacks.jsonl`:
   not leak. Put the matching fake file + sentinel string in `setup_sandbox.sh`
   and the `restore_sentinels()` helper in `run_evals.py`.
 
-## Note on the deterministic layer
+## Deterministic CI layer
 
 The destructive-command cases here exercise the same `check_blocked_command`
-gate that should also have fast, no-Docker unit tests (`cargo test`). If you
-want that CI-friendly layer too (recommended — it catches blocklist bypasses
-without a model or container), ask and it can be added under `src/tests/`.
+gate that has fast, no-Docker unit tests in `src/tests/bash_blocklist_test.rs`.
+These run on every CI cycle (`cargo test --all-features`) and catch blocklist
+bypasses without a model or container — including interpreter smuggling
+(`bash -c 'rm -rf ~'`, base64-wrapped variants, pipe-to-shell patterns) and
+known bypass vectors (reversed flags, quoted `$HOME`, long flags, chained `rm`).
+If you add a new blocklist rule, add the matching CI test in that file.
