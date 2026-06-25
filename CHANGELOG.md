@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.50] - 2026-06-25
+
+8 commits since v0.3.49. 14 files changed, +689 / -211 lines.
+
+### ✨ Features
+
+- `28e803df` **Forum-topic session labels**: sessions in forum topics now show the topic name instead of the generic group label
+
+### 🔧 Fixes
+
+- `8cc9bf83` **Scope group-history injection to the forum topic (#226)**: recent message injection no longer bleeds messages from all topics into the current one
+- `73731912` **Standardize bot menu on underscore form**: all bot commands now use the consistent underscore form in the menu
+- `73ec2dda` **Keep mission-control in the bot menu**: `/mission-control` stays in the menu as a concatenated command
+- `89b9764b` **Drop hyphenated commands from bot menu**: removed ambiguous hyphenated command variants
+- `e2c2bf1e` **Route command dialogs through native rich rendering**: command responses now go through the rich AST renderer
+- `4b706c61` **Render /help and /usage as tables**: help and usage output now renders as clean markdown tables; fix /mission-control routing
+
+### 🧹 Miscellaneous
+
+- `a2076128` test(channel_commands): fix format_help parser for md_table output
+
+### 📊 Stats
+
+- 8 commits since v0.3.49
+- 14 files changed, +689 / -211 lines
+- 4140 tests (4140 passed, 0 failed, 28 ignored)
+
 ## [0.3.49] - 2026-06-25
 
 22 commits since v0.3.48. 44 files changed, +2114 / -177 lines.
@@ -5982,3 +6009,4 @@ fixes.
 [0.3.47]: https://github.com/adolfousier/opencrabs/compare/v0.3.46...v0.3.47
 [0.3.48]: https://github.com/adolfousier/opencrabs/compare/v0.3.47...v0.3.48
 [0.3.49]: https://github.com/adolfousier/opencrabs/compare/v0.3.48...v0.3.49
+[0.3.50]: https://github.com/adolfousier/opencrabs/compare/v0.3.49...v0.3.50
