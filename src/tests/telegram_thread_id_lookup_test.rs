@@ -68,6 +68,59 @@ async fn channel_message_thread_id_round_trips_through_repo() {
     assert_eq!(recent[0].thread_id.as_deref(), Some("17"));
 }
 
+/// #226: forum-topic isolation. `recent()` with a thread_id must return ONLY
+/// that topic's messages — the handler was passing `None`, so every topic saw
+/// every other topic's history. Two topics in the same chat must not bleed.
+#[tokio::test]
+async fn recent_scoped_to_thread_does_not_bleed_across_topics() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let repo = ChannelMessageRepository::new(db.pool().clone());
+
+    let chat_id = "test-chat-topic-isolation";
+    let mk = |body: &str, mid: &str, thread: &str| {
+        ChannelMessage::new(
+            "telegram".into(),
+            chat_id.into(),
+            None,
+            "u1".into(),
+            "alice".into(),
+            body.into(),
+            "text".into(),
+            Some(mid.into()),
+        )
+        .with_thread(Some(thread.to_string()), None)
+    };
+
+    repo.insert(&mk("topic ten message", "m-10", "10"))
+        .await
+        .unwrap();
+    repo.insert(&mk("topic twenty message", "m-20", "20"))
+        .await
+        .unwrap();
+
+    // Scoped to topic 10 → only topic-10 content, never topic 20.
+    let only_10 = repo
+        .recent(Some("telegram"), chat_id, 30, Some("10"))
+        .await
+        .unwrap();
+    assert_eq!(
+        only_10.len(),
+        1,
+        "topic 10 must see exactly its own message"
+    );
+    assert_eq!(only_10[0].thread_id.as_deref(), Some("10"));
+    assert!(only_10.iter().all(|m| !m.content.contains("twenty")));
+
+    // Unscoped (None) returns both — kept for the non-forum group case where
+    // there's a single shared conversation.
+    let all = repo
+        .recent(Some("telegram"), chat_id, 30, None)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 2);
+}
+
 #[tokio::test]
 async fn recent_returns_newest_first_so_helper_picks_latest_thread() {
     let db = Database::connect_in_memory().await.unwrap();

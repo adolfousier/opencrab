@@ -2292,8 +2292,13 @@ pub(crate) async fn handle_message(
     // Inject recent group history so the agent has full conversation context.
     let agent_input = if !is_dm {
         let chat_id_str = msg.chat.id.0.to_string();
+        // Scope recent history to THIS forum topic. Passing None pulled every
+        // topic's messages into context, so each topic saw all the others
+        // (#226). Derive the thread_id exactly as the store path does
+        // (`t.0.to_string()`) so the filter matches what was persisted.
+        let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
         match channel_msg_repo
-            .recent(Some("telegram"), &chat_id_str, 30, None)
+            .recent(Some("telegram"), &chat_id_str, 30, thread_id_str.as_deref())
             .await
         {
             Ok(messages) if !messages.is_empty() => {
