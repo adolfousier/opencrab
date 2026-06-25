@@ -135,6 +135,22 @@ pub struct SlashCommand {
 /// Available slash commands for autocomplete
 pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
+        name: "/new",
+        description: "Start a new session",
+    },
+    SlashCommand {
+        name: "/cd",
+        description: "Change working directory",
+    },
+    SlashCommand {
+        name: "/sessions",
+        description: "List all sessions",
+    },
+    SlashCommand {
+        name: "/compact",
+        description: "Compact context now",
+    },
+    SlashCommand {
         name: "/help",
         description: "Show available commands",
     },
@@ -187,20 +203,8 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Create a Telegram cowork workspace (QR + deep link)",
     },
     SlashCommand {
-        name: "/new",
-        description: "Start a new session",
-    },
-    SlashCommand {
-        name: "/sessions",
-        description: "List all sessions",
-    },
-    SlashCommand {
         name: "/approve",
         description: "Tool approval policy",
-    },
-    SlashCommand {
-        name: "/compact",
-        description: "Compact context now",
     },
     SlashCommand {
         name: "/rebuild",
@@ -213,10 +217,6 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/whisper",
         description: "Speak anywhere, paste to clipboard",
-    },
-    SlashCommand {
-        name: "/cd",
-        description: "Change working directory",
     },
     SlashCommand {
         name: "/skills",

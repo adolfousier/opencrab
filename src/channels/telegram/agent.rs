@@ -1194,6 +1194,10 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
     use teloxide::types::BotCommand;
 
     let mut commands: Vec<BotCommand> = vec![
+        BotCommand::new("new", "Start a new session"),
+        BotCommand::new("cd", "Change working directory"),
+        BotCommand::new("sessions", "List and switch sessions"),
+        BotCommand::new("stop", "Cancel the current operation"),
         BotCommand::new("help", "Show available commands"),
         BotCommand::new("models", "Switch AI model or provider"),
         BotCommand::new("usage", "Session token and cost stats"),
@@ -1201,11 +1205,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
             "mission-control",
             "Mission control: analytics, activity, inbox & schedule",
         ),
-        BotCommand::new("new", "Start a new session"),
-        BotCommand::new("sessions", "List and switch sessions"),
-        BotCommand::new("stop", "Cancel the current operation"),
         BotCommand::new("compact", "Compact conversation context"),
-        BotCommand::new("cd", "Change working directory"),
         BotCommand::new("profiles", "Manage profiles (create, switch, migrate)"),
         BotCommand::new(
             "cowork",

@@ -36,6 +36,7 @@ fn format_number_millions() {
 fn format_help_contains_all_commands() {
     let help = format_help();
     for cmd in [
+        "/cd",
         "/evolve",
         "/help",
         "/models",
@@ -49,7 +50,7 @@ fn format_help_contains_all_commands() {
 }
 
 #[test]
-fn format_help_is_alphabetical() {
+fn format_help_most_used_commands_first() {
     let help = format_help();
     let builtin_section = help.split("Custom Commands").next().unwrap_or(&help);
     let commands: Vec<&str> = builtin_section
@@ -64,11 +65,18 @@ fn format_help_is_alphabetical() {
             }
         })
         .collect();
-    let mut sorted = commands.clone();
-    sorted.sort();
+    // Most-used commands (/new, /cd, /sessions, /stop) should be at the top
+    assert_eq!(commands.first(), Some(&"/new"), "/new should be first");
+    assert_eq!(commands.get(1), Some(&"/cd"), "/cd should be second");
+    assert_eq!(commands.get(2), Some(&"/sessions"), "/sessions should be third");
+    assert_eq!(commands.get(3), Some(&"/stop"), "/stop should be fourth");
+    // Remaining commands should be alphabetical
+    let rest: Vec<&str> = commands[4..].to_vec();
+    let mut sorted_rest = rest.clone();
+    sorted_rest.sort();
     assert_eq!(
-        commands, sorted,
-        "built-in help commands are not alphabetical"
+        rest, sorted_rest,
+        "commands after /new, /cd, /sessions, /stop should be alphabetical"
     );
 }
 
