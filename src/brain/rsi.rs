@@ -435,7 +435,11 @@ When a brain rule you write names a specific non-core tool (`telegram_send`, `an
 `cron_manage`, `message`, ...), pair the mention with a `tool_search` reminder — a bare tool name \
 reads as directly callable and invites a schema-less guess that wastes the first call. The runtime \
 preamble already states this discipline globally; do not restate the general rule, just keep \
-individual tool mentions you author consistent with it.";
+individual tool mentions you author consistent with it.\n\nTOOL LIFECYCLE: when you find instructions \
+referencing a tool the agent should use, reinforce the full cycle — `tool_search` before calling, \
+fallback to `tool_search` on failure, never assume a tool is unavailable without searching. If a \
+brain rule only names the tool without the search reminder, the agent will guess parameters or skip \
+the tool entirely. Always include the search-then-call pattern.";
 
 /// Run a single autonomous RSI agent cycle.
 ///
