@@ -13,10 +13,7 @@ async fn without_bot_username_errors_clearly() {
     // No bot username known → Telegram isn't connected; can't build a link.
     let tool = CoworkConnectTool::new(Arc::new(TelegramState::new()));
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
-    let r = tool
-        .execute(serde_json::json!({}), &ctx)
-        .await
-        .unwrap();
+    let r = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
     assert!(!r.success);
     assert!(r.error.unwrap().to_lowercase().contains("telegram"));
 }
@@ -28,10 +25,7 @@ async fn builds_deep_link_with_bot_and_session() {
     let tool = CoworkConnectTool::new(state.clone());
     let ctx = ToolExecutionContext::new(Uuid::new_v4());
 
-    let r = tool
-        .execute(serde_json::json!({}), &ctx)
-        .await
-        .unwrap();
+    let r = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
     assert!(r.success, "{:?}", r.error);
     assert!(
         r.output.contains("t.me/testcrabbot?startgroup=cowork_"),

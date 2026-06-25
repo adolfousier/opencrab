@@ -176,7 +176,9 @@ impl CronScheduler {
     /// setup (cron session, config reads) resolves to that profile's home.
     /// `spawn()` is the thin wrapper for callers that just want it backgrounded.
     pub async fn run(self) {
-        tracing::info!("Cron scheduler started — polling every 60s (shared Cron session, compaction-isolated)");
+        tracing::info!(
+            "Cron scheduler started — polling every 60s (shared Cron session, compaction-isolated)"
+        );
         loop {
             if let Err(e) = self.tick().await {
                 tracing::error!("Cron scheduler tick error: {e}");
@@ -202,12 +204,10 @@ impl CronScheduler {
                 // (#224)
                 let next_run = match job.next_run_at {
                     Some(scheduled) => self.next_run_after(job, scheduled),
-                    None => {
-                        match super::next_run_utc(&job.cron_expr, job_tz(job), now) {
-                            Some(boundary) => self.next_run_after(job, boundary),
-                            None => None,
-                        }
-                    }
+                    None => match super::next_run_utc(&job.cron_expr, job_tz(job), now) {
+                        Some(boundary) => self.next_run_after(job, boundary),
+                        None => None,
+                    },
                 };
                 let next_run_str = next_run.map(|dt| dt.to_rfc3339());
                 self.repo
@@ -246,14 +246,18 @@ impl CronScheduler {
                                 crate::config::opencrabs_home()
                             );
                             match resolve_or_create_cron_session(&ctx).await {
-                                Ok(cron_sid) => execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await,
+                                Ok(cron_sid) => {
+                                    execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await
+                                }
                                 Err(e) => Err(e),
                             }
                         })
                         .await
                     } else {
                         match resolve_or_create_cron_session(&ctx).await {
-                            Ok(cron_sid) => execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await,
+                            Ok(cron_sid) => {
+                                execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await
+                            }
                             Err(e) => Err(e),
                         }
                     };
@@ -307,9 +311,7 @@ impl CronScheduler {
 /// session for logging/debugging, but each run inserts a compaction marker
 /// after completion so the next run starts with empty context (no history
 /// contamination between jobs).
-async fn resolve_or_create_cron_session(
-    ctx: &ServiceContext,
-) -> anyhow::Result<Uuid> {
+async fn resolve_or_create_cron_session(ctx: &ServiceContext) -> anyhow::Result<Uuid> {
     const CRON_SESSION_NAME: &str = "Cron";
     use crate::db::repository::SessionListOptions;
     let session_svc = SessionService::new(ctx.clone());

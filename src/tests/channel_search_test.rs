@@ -44,7 +44,10 @@ mod repository {
         let m = msg("telegram", "-100111", "Group A", "Alice", "Hello world");
         repo.insert(&m).await.unwrap();
 
-        let recent = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
+        let recent = repo
+            .recent(Some("telegram"), "-100111", 10, None)
+            .await
+            .unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].content, "Hello world");
         assert_eq!(recent[0].sender_name, "Alice");
@@ -65,7 +68,10 @@ mod repository {
             repo.insert(&m).await.unwrap();
         }
 
-        let recent = repo.recent(Some("telegram"), "-100111", 3, None).await.unwrap();
+        let recent = repo
+            .recent(Some("telegram"), "-100111", 3, None)
+            .await
+            .unwrap();
         assert_eq!(recent.len(), 3);
     }
 
@@ -106,11 +112,17 @@ mod repository {
             .await
             .unwrap();
 
-        let tg = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
+        let tg = repo
+            .recent(Some("telegram"), "-100111", 10, None)
+            .await
+            .unwrap();
         assert_eq!(tg.len(), 1);
         assert_eq!(tg[0].content, "tg msg");
 
-        let dc = repo.recent(Some("discord"), "-100111", 10, None).await.unwrap();
+        let dc = repo
+            .recent(Some("discord"), "-100111", 10, None)
+            .await
+            .unwrap();
         assert_eq!(dc.len(), 0);
     }
 
@@ -264,7 +276,10 @@ mod repository {
         // Same ID again — INSERT OR IGNORE
         repo.insert(&m).await.unwrap();
 
-        let recent = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
+        let recent = repo
+            .recent(Some("telegram"), "-100111", 10, None)
+            .await
+            .unwrap();
         assert_eq!(recent.len(), 1);
     }
 
@@ -324,7 +339,10 @@ mod repository {
             .unwrap();
         assert_eq!(updated, 1, "the stored frame should be rewritten");
 
-        let recent = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
+        let recent = repo
+            .recent(Some("telegram"), "-100111", 10, None)
+            .await
+            .unwrap();
         assert_eq!(recent.len(), 1, "reconcile updates in place, no new row");
         assert_eq!(recent[0].content, final_text);
     }
@@ -383,15 +401,26 @@ mod repository {
         repo.insert(&m3).await.unwrap();
 
         // Without thread_id filter: all 3 messages returned
-        let all = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
-        assert_eq!(all.len(), 3, "no thread_id filter should return all messages");
+        let all = repo
+            .recent(Some("telegram"), "-100111", 10, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            all.len(),
+            3,
+            "no thread_id filter should return all messages"
+        );
 
         // With thread_id filter for topic A: only 2 messages
         let topic_a = repo
             .recent(Some("telegram"), "-100111", 10, Some("2411"))
             .await
             .unwrap();
-        assert_eq!(topic_a.len(), 2, "thread_id filter should return only topic A messages");
+        assert_eq!(
+            topic_a.len(),
+            2,
+            "thread_id filter should return only topic A messages"
+        );
         for msg in &topic_a {
             assert_eq!(msg.thread_id.as_deref(), Some("2411"));
         }
@@ -401,7 +430,11 @@ mod repository {
             .recent(Some("telegram"), "-100111", 10, Some("2614"))
             .await
             .unwrap();
-        assert_eq!(topic_b.len(), 1, "thread_id filter should return only topic B messages");
+        assert_eq!(
+            topic_b.len(),
+            1,
+            "thread_id filter should return only topic B messages"
+        );
         assert_eq!(topic_b[0].content, "topic B message");
 
         // With thread_id filter for nonexistent topic: empty

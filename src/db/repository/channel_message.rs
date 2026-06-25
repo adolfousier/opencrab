@@ -117,44 +117,44 @@ impl ChannelMessageRepository {
             .get()
             .await
             .context("Failed to get connection")?
-            .interact(move |conn| {
-                match (ch, tid) {
-                    (Some(ch), Some(tid)) => {
-                        let mut stmt = conn.prepare_cached(
-                            "SELECT * FROM channel_messages \
+            .interact(move |conn| match (ch, tid) {
+                (Some(ch), Some(tid)) => {
+                    let mut stmt = conn.prepare_cached(
+                        "SELECT * FROM channel_messages \
                              WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id = ?3 \
                              ORDER BY created_at DESC LIMIT ?4",
-                        )?;
-                        let rows = stmt.query_map(params![ch, cid, tid, limit], ChannelMessage::from_row)?;
-                        rows.collect::<std::result::Result<Vec<_>, _>>()
-                    }
-                    (Some(ch), None) => {
-                        let mut stmt = conn.prepare_cached(
-                            "SELECT * FROM channel_messages \
+                    )?;
+                    let rows =
+                        stmt.query_map(params![ch, cid, tid, limit], ChannelMessage::from_row)?;
+                    rows.collect::<std::result::Result<Vec<_>, _>>()
+                }
+                (Some(ch), None) => {
+                    let mut stmt = conn.prepare_cached(
+                        "SELECT * FROM channel_messages \
                              WHERE channel = ?1 AND channel_chat_id = ?2 \
                              ORDER BY created_at DESC LIMIT ?3",
-                        )?;
-                        let rows = stmt.query_map(params![ch, cid, limit], ChannelMessage::from_row)?;
-                        rows.collect::<std::result::Result<Vec<_>, _>>()
-                    }
-                    (None, Some(tid)) => {
-                        let mut stmt = conn.prepare_cached(
-                            "SELECT * FROM channel_messages \
+                    )?;
+                    let rows = stmt.query_map(params![ch, cid, limit], ChannelMessage::from_row)?;
+                    rows.collect::<std::result::Result<Vec<_>, _>>()
+                }
+                (None, Some(tid)) => {
+                    let mut stmt = conn.prepare_cached(
+                        "SELECT * FROM channel_messages \
                              WHERE channel_chat_id = ?1 AND thread_id = ?2 \
                              ORDER BY created_at DESC LIMIT ?3",
-                        )?;
-                        let rows = stmt.query_map(params![cid, tid, limit], ChannelMessage::from_row)?;
-                        rows.collect::<std::result::Result<Vec<_>, _>>()
-                    }
-                    (None, None) => {
-                        let mut stmt = conn.prepare_cached(
-                            "SELECT * FROM channel_messages \
+                    )?;
+                    let rows =
+                        stmt.query_map(params![cid, tid, limit], ChannelMessage::from_row)?;
+                    rows.collect::<std::result::Result<Vec<_>, _>>()
+                }
+                (None, None) => {
+                    let mut stmt = conn.prepare_cached(
+                        "SELECT * FROM channel_messages \
                              WHERE channel_chat_id = ?1 \
                              ORDER BY created_at DESC LIMIT ?2",
-                        )?;
-                        let rows = stmt.query_map(params![cid, limit], ChannelMessage::from_row)?;
-                        rows.collect::<std::result::Result<Vec<_>, _>>()
-                    }
+                    )?;
+                    let rows = stmt.query_map(params![cid, limit], ChannelMessage::from_row)?;
+                    rows.collect::<std::result::Result<Vec<_>, _>>()
                 }
             })
             .await

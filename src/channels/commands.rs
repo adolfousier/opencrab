@@ -364,9 +364,15 @@ pub async fn handle_command(
             &crate::brain::BrainLoader::resolve_path(),
         );
         let user_commands = loader.load();
-        if !user_commands.iter().any(|c| norm_command_key(&c.name) == key) {
+        if !user_commands
+            .iter()
+            .any(|c| norm_command_key(&c.name) == key)
+        {
             let skills = crate::brain::skills::load_all_skills();
-            if let Some(skill) = skills.iter().find(|s| norm_command_key(&s.slash_name) == key) {
+            if let Some(skill) = skills
+                .iter()
+                .find(|s| norm_command_key(&s.slash_name) == key)
+            {
                 agent.register_active_skill(session_id, &skill.slash_name);
             }
         }

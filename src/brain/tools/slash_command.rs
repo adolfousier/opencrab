@@ -298,13 +298,9 @@ impl SlashCommandTool {
                     // `/cd ~/redevest-ai/` matches project "redevest-ai".
                     if let Ok(projects) = project_svc.list_projects().await {
                         for project in &projects {
-                            let slug = crate::services::file::slugify_project_name(
-                                &project.name,
-                            );
+                            let slug = crate::services::file::slugify_project_name(&project.name);
                             if slug.eq_ignore_ascii_case(&dir_name) {
-                                let _ = project_svc
-                                    .assign_session(sid, project.id)
-                                    .await;
+                                let _ = project_svc.assign_session(sid, project.id).await;
                                 tracing::info!(
                                     "Auto-assigned session {} to project '{}'",
                                     sid,

@@ -321,18 +321,31 @@ fn details_with_summary_parses() {
     let md = "Before\n\n<details>\n<summary>Click to expand</summary>\n\nHidden content\n\n</details>\n\nAfter";
     let blocks = parse_markdown(md);
     assert_eq!(blocks.len(), 3);
-    assert_eq!(blocks[0], Block::Paragraph(vec![Inline::Text("Before".into())]));
+    assert_eq!(
+        blocks[0],
+        Block::Paragraph(vec![Inline::Text("Before".into())])
+    );
     match &blocks[1] {
-        Block::Details { summary, blocks, open } => {
+        Block::Details {
+            summary,
+            blocks,
+            open,
+        } => {
             assert!(!open);
             assert_eq!(summary.len(), 1);
             assert_eq!(summary[0], Inline::Text("Click to expand".into()));
             assert_eq!(blocks.len(), 1);
-            assert_eq!(blocks[0], Block::Paragraph(vec![Inline::Text("Hidden content".into())]));
+            assert_eq!(
+                blocks[0],
+                Block::Paragraph(vec![Inline::Text("Hidden content".into())])
+            );
         }
         other => panic!("expected Details, got {:?}", other),
     }
-    assert_eq!(blocks[2], Block::Paragraph(vec![Inline::Text("After".into())]));
+    assert_eq!(
+        blocks[2],
+        Block::Paragraph(vec![Inline::Text("After".into())])
+    );
 }
 
 #[test]
@@ -352,7 +365,9 @@ fn details_without_summary() {
     let blocks = parse_markdown(md);
     assert_eq!(blocks.len(), 1);
     match &blocks[0] {
-        Block::Details { summary, blocks, .. } => {
+        Block::Details {
+            summary, blocks, ..
+        } => {
             assert!(summary.is_empty());
             assert_eq!(blocks.len(), 1);
         }
@@ -366,13 +381,22 @@ fn nested_details() {
     let blocks = parse_markdown(md);
     assert_eq!(blocks.len(), 1);
     match &blocks[0] {
-        Block::Details { summary, blocks, .. } => {
+        Block::Details {
+            summary, blocks, ..
+        } => {
             assert_eq!(summary[0], Inline::Text("Outer".into()));
             assert_eq!(blocks.len(), 1);
             match &blocks[0] {
-                Block::Details { summary: inner_sum, blocks: inner_body, .. } => {
+                Block::Details {
+                    summary: inner_sum,
+                    blocks: inner_body,
+                    ..
+                } => {
                     assert_eq!(inner_sum[0], Inline::Text("Inner".into()));
-                    assert_eq!(inner_body[0], Block::Paragraph(vec![Inline::Text("Deep".into())]));
+                    assert_eq!(
+                        inner_body[0],
+                        Block::Paragraph(vec![Inline::Text("Deep".into())])
+                    );
                 }
                 other => panic!("expected nested Details, got {:?}", other),
             }

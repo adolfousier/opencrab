@@ -1854,14 +1854,9 @@ pub(crate) async fn handle_message(
 
         // Handle simple text-response commands (Help, Usage, Evolve, Doctor, etc.)
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
-            message_in_thread(
-                &bot,
-                msg.chat.id,
-                thread_id,
-                command_md_to_html(&reply),
-            )
-            .parse_mode(ParseMode::Html)
-            .await?;
+            message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&reply))
+                .parse_mode(ParseMode::Html)
+                .await?;
             return Ok(());
         }
 
@@ -2060,10 +2055,15 @@ pub(crate) async fn handle_message(
                     path.display(),
                     resp.text
                 );
-                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&success_text))
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(keyboard)
-                    .await?;
+                message_in_thread(
+                    &bot,
+                    msg.chat.id,
+                    thread_id,
+                    command_md_to_html(&success_text),
+                )
+                .parse_mode(ParseMode::Html)
+                .reply_markup(keyboard)
+                .await?;
                 return Ok(());
             }
             Err(e) => {
@@ -2114,10 +2114,7 @@ pub(crate) async fn handle_message(
         // populate text()/caption() in teloxide's reply_to_message model.
         // Fall back to the most recent bot message in channel_messages so
         // the agent still sees what it said.
-        if full_text.is_empty()
-            && reply.from.as_ref().is_some_and(|u| u.is_bot)
-            && !is_dm
-        {
+        if full_text.is_empty() && reply.from.as_ref().is_some_and(|u| u.is_bot) && !is_dm {
             let chat_id_str = msg.chat.id.0.to_string();
             let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
             match channel_msg_repo
@@ -2125,10 +2122,7 @@ pub(crate) async fn handle_message(
                 .await
             {
                 Ok(recent) => {
-                    if let Some(bot_msg) = recent
-                        .iter()
-                        .find(|m| m.sender_id.starts_with("bot:"))
-                    {
+                    if let Some(bot_msg) = recent.iter().find(|m| m.sender_id.starts_with("bot:")) {
                         full_text = bot_msg.content.clone();
                         tracing::info!(
                             "Telegram reply context: recovered rich message text from channel_messages ({} chars)",
