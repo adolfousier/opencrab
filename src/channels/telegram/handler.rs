@@ -1850,9 +1850,14 @@ pub(crate) async fn handle_message(
 
         // Handle simple text-response commands (Help, Usage, Evolve, Doctor, etc.)
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
-            message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&reply))
-                .parse_mode(ParseMode::Html)
-                .await?;
+            message_in_thread(
+                &bot,
+                msg.chat.id,
+                thread_id,
+                command_md_to_html(&reply),
+            )
+            .parse_mode(ParseMode::Html)
+            .await?;
             return Ok(());
         }
 
@@ -1881,7 +1886,7 @@ pub(crate) async fn handle_message(
                     })
                     .collect();
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&resp.text))
+                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
                     .parse_mode(ParseMode::Html)
                     .reply_markup(keyboard)
                     .await?;
@@ -1977,7 +1982,7 @@ pub(crate) async fn handle_message(
                     })
                     .collect();
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&resp.text))
+                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
                     .parse_mode(ParseMode::Html)
                     .reply_markup(keyboard)
                     .await?;
@@ -2005,7 +2010,7 @@ pub(crate) async fn handle_message(
 
                 let rows = build_cd_keyboard(&resp);
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&resp.text))
+                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
                     .parse_mode(ParseMode::Html)
                     .reply_markup(keyboard)
                     .await?;
@@ -2014,7 +2019,7 @@ pub(crate) async fn handle_message(
             ChannelCommand::Profiles(resp) => {
                 let rows = build_profiles_keyboard(&resp);
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&resp.text))
+                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
                     .parse_mode(ParseMode::Html)
                     .reply_markup(keyboard)
                     .await?;
@@ -2051,7 +2056,7 @@ pub(crate) async fn handle_message(
                     path.display(),
                     resp.text
                 );
-                message_in_thread(&bot, msg.chat.id, thread_id, md_to_html(&success_text))
+                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&success_text))
                     .parse_mode(ParseMode::Html)
                     .reply_markup(keyboard)
                     .await?;
@@ -4124,6 +4129,18 @@ pub(crate) fn md_to_html(s: &str) -> String {
         }
     }
     out
+}
+
+/// Convert markdown to Telegram HTML for channel command responses.
+/// Routes through the full AST renderer (tables, lists, headings, code blocks)
+/// when `channels.telegram.rich_messages` is enabled; falls back to the
+/// lightweight `md_to_html` (bold + code only) otherwise.
+pub(crate) fn command_md_to_html(s: &str) -> String {
+    if Config::current().channels.telegram.rich_messages {
+        super::rich::markdown_to_html(s)
+    } else {
+        md_to_html(s)
+    }
 }
 
 /// Extract a short, status-line-friendly excerpt from the agent's
