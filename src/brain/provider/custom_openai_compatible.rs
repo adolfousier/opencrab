@@ -39,9 +39,10 @@ const DEFAULT_TCP_KEEPALIVE: Duration = Duration::from_secs(15);
 /// (e.g. "strip `<result>` tags"). Stripping them here eats the rest of the
 /// response when no closing tag arrives in the same chunk. Tool-call XML is
 /// handled post-response in tool_loop.rs where the full text is available.
-const STRIP_OPEN_TAGS: &[&str] = &["<think>", "<!-- reasoning -->", "<!--"];
+const STRIP_OPEN_TAGS: &[&str] = &["<think>", "<mm:think>", "<!-- reasoning -->", "<!--"];
 const STRIP_CLOSE_TAGS: &[&[&str]] = &[
     &["</think>"],
+    &["</mm:think>"], // MiniMax/mimo namespaced think tag — leaked to chat before this entry existed
     &["<!-- /reasoning -->", "</think>", "-->"], // Kimi uses <!-- /reasoning -->, MiniMax uses </think>, --> catches split-chunk close tags
     &["-->"],
 ];
@@ -78,9 +79,9 @@ const MAX_OPEN_TAG_CARRY: usize = 17;
 /// `display_text` is the portion of the input that falls OUTSIDE every
 /// stripped block — what the user should see.
 ///
-/// `reasoning_text` is the portion that fell inside a `<think>` or
-/// `<!-- reasoning -->` block. Generic HTML-comment blocks (the
-/// catch-all `<!--` entry at index 2 in STRIP_OPEN_TAGS, covering
+/// `reasoning_text` is the portion that fell inside a `<think>`,
+/// `<mm:think>`, or `<!-- reasoning -->` block. Generic HTML-comment blocks
+/// (the catch-all `<!--` entry, the last in STRIP_OPEN_TAGS, covering
 /// echoed `<!-- tools-v2: ... -->` markers etc.) are NOT treated as
 /// reasoning — they go to neither output and are discarded.
 ///
@@ -133,11 +134,11 @@ pub(crate) fn filter_think_tags(
     let mut reasoning = String::new();
     let mut remaining = input_ref;
 
-    // STRIP_OPEN_TAGS indices 0 (`<think>`) and 1 (`<!-- reasoning -->`)
-    // carry real reasoning content. Index 2 (`<!--` generic) catches
-    // hallucinated tool markers and random HTML comments — those must
-    // stay discarded.
-    let is_reasoning_block = |idx: usize| idx < 2;
+    // STRIP_OPEN_TAGS indices 0 (`<think>`), 1 (`<mm:think>`), and 2
+    // (`<!-- reasoning -->`) carry real reasoning content. Index 3 (`<!--`
+    // generic) catches hallucinated tool markers and random HTML comments —
+    // those must stay discarded.
+    let is_reasoning_block = |idx: usize| idx < 3;
 
     loop {
         if *inside_think {

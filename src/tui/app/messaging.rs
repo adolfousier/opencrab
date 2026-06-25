@@ -1227,9 +1227,13 @@ impl App {
         // Extract <think> blocks (DeepSeek)
         remaining = Self::extract_tag_case_insensitive(&remaining, "think", &mut reasoning_parts);
 
+        // Extract <mm:think> blocks (MiniMax/mimo namespaced think tag)
+        remaining =
+            Self::extract_tag_case_insensitive(&remaining, "mm:think", &mut reasoning_parts);
+
         // Extract self-closing tags: <think/>, <antThinking/>, etc.
         // These appear when the model emits thinking with no content or as a flush marker.
-        for tag_name in ["think", "antthinking"] {
+        for tag_name in ["think", "antthinking", "mm:think"] {
             let mut cleaned = String::new();
             let mut rest = remaining.as_str();
             let open_self = format!("<{}", tag_name);
@@ -1260,10 +1264,11 @@ impl App {
             remaining = cleaned;
         }
 
-        // Strip orphan closing tags (</think>, </antThinking>) that leaked
-        // when a stream error dropped mid-thinking-block. These have no
+        // Strip orphan closing tags (</think>, </antThinking>, </mm:think>)
+        // that leaked when a stream error dropped mid-thinking-block, or when
+        // the model emits a bare closer with no open tag. These have no
         // matching open tag so extract_tag_case_insensitive never catches them.
-        for tag_name in ["think", "antthinking"] {
+        for tag_name in ["think", "antthinking", "mm:think"] {
             let close = format!("</{}>", tag_name);
             let mut cleaned = String::new();
             let mut rest = remaining.as_str();
@@ -1342,6 +1347,7 @@ impl App {
                 && !msg.content.contains("<!-- reasoning -->")
                 && !content_lower.contains("<antthinking")
                 && !content_lower.contains("<think")
+                && !content_lower.contains("<mm:think")
                 && !has_db_thinking
                 && !has_tool_call_tag)
         {

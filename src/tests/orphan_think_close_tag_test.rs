@@ -150,10 +150,74 @@ fn no_think_tags_batch() {
 
 // ─── HTML comments (not affected by orphan detection) ─────────────────
 
+// ─── Namespaced think tag: MiniMax/mimo `<mm:think>` ──────────────────
+// The mimo model wraps reasoning in `<mm:think>...</mm:think>`. Before the
+// strip tables learned that variant, the whole block (and the bare
+// `</mm:think>` closer) leaked into the chat message on Telegram.
+
+#[test]
+fn mm_think_properly_opened_streaming() {
+    let mut inside = false;
+    let mut close_idx = 0;
+    let mut consumed = 0;
+    let mut carry = String::new();
+
+    let (display, reasoning) = filter_think_tags(
+        "Hello.<mm:think>Some reasoning.</mm:think>World.",
+        &mut inside,
+        &mut close_idx,
+        &mut consumed,
+        &mut carry,
+    );
+
+    assert_eq!(display, "Hello.World.");
+    assert!(
+        reasoning.contains("Some reasoning"),
+        "mm:think reasoning must be captured, not leaked: {reasoning:?}"
+    );
+}
+
+#[test]
+fn mm_think_orphan_close_streaming() {
+    // mimo skipped the opening tag and emitted only `</mm:think>` — the
+    // exact shape the user saw leak to Telegram.
+    let mut inside = false;
+    let mut close_idx = 0;
+    let mut consumed = 0;
+    let mut carry = String::new();
+
+    let (display, reasoning) = filter_think_tags(
+        "The user said yes. Let me back up the DB.</mm:think>Applying the change.",
+        &mut inside,
+        &mut close_idx,
+        &mut consumed,
+        &mut carry,
+    );
+
+    assert_eq!(display, "Applying the change.");
+    assert!(
+        reasoning.contains("back up the DB"),
+        "orphan mm:think reasoning must route to reasoning, got: {reasoning:?}"
+    );
+}
+
+#[test]
+fn mm_think_batch_and_orphan() {
+    assert_eq!(
+        strip_think_blocks("Hi.<mm:think>reasoning.</mm:think>There."),
+        "Hi.There."
+    );
+    // Orphan closer with no open tag.
+    assert_eq!(
+        strip_think_blocks("leaked reasoning\n</mm:think>actual response"),
+        "actual response"
+    );
+}
+
 #[test]
 fn html_comment_close_not_treated_as_orphan() {
-    // `-->` is index 2 in STRIP_CLOSE_TAGS and should NOT trigger
-    // orphan detection (too generic for prose).
+    // `-->` is the bare-comment closer in STRIP_CLOSE_TAGS and should NOT
+    // trigger orphan detection (too generic for prose).
     let mut inside = false;
     let mut close_idx = 0;
     let mut consumed = 0;
