@@ -326,10 +326,11 @@ pub async fn handle_command(
             ChannelCommand::ChangeDir(format_cd_browser(path_arg, session_id, session_svc).await)
         }
         "/profiles" => ChannelCommand::Profiles(format_profiles_browser().await),
-        // Telegram registers the hyphen-free `mission_control` (its command
-        // names allow no hyphens), so a menu tap sends `/mission_control`;
-        // accept both that and the typed `/mission-control`.
-        "/mission-control" | "/mission_control" => {
+        // Telegram menu chips can't contain hyphens, so the menu registers the
+        // concatenated `missioncontrol` (a tap sends `/missioncontrol`). Accept
+        // that, the canonical typed `/mission-control`, and the legacy
+        // underscore form so every path reaches the same report.
+        "/mission-control" | "/missioncontrol" | "/mission_control" => {
             ChannelCommand::MissionControl(format_mission_control(agent).await)
         }
         cmd if cmd.starts_with("/rename ") => {

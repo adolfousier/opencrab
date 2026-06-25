@@ -35,6 +35,8 @@ fn menu_drops_hyphenated_names_rather_than_underscoring_them() {
     assert!(menu_keeps("usage"));
     assert!(menu_keeps("new"));
     assert!(menu_keeps("my_command_123"));
+    // The concatenated mission-control menu form is valid (no hyphen) → kept.
+    assert!(menu_keeps("missioncontrol"));
 }
 
 #[test]

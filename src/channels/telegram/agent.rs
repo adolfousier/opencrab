@@ -1201,10 +1201,14 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("help", "Show available commands"),
         BotCommand::new("models", "Switch AI model or provider"),
         BotCommand::new("usage", "Session token and cost stats"),
-        // `mission-control` is intentionally NOT registered: Telegram bot
-        // command names can't contain hyphens, and rewriting it to
-        // `mission_control` produced an ugly underscore chip. It works when
-        // typed (`/mission-control`) and is listed in `/help`.
+        // Telegram command names can't contain hyphens, so the canonical
+        // `mission-control` can't be a menu chip. We register the CONCATENATED
+        // `missioncontrol` (valid, no ugly underscore) so it's still in the
+        // menu; `/help` and typing keep the dash, and all forms dispatch.
+        BotCommand::new(
+            "missioncontrol",
+            "Mission control: analytics, activity, inbox & schedule",
+        ),
         BotCommand::new("compact", "Compact conversation context"),
         BotCommand::new("profiles", "Manage profiles (create, switch, migrate)"),
         BotCommand::new(
