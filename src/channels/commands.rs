@@ -352,6 +352,26 @@ pub async fn handle_command(
         _ => ChannelCommand::NotACommand,
     };
 
+    // Record skill activation so the full body survives compaction (#219).
+    // When a skill is invoked (returns UserPrompt), its name is tracked on
+    // the AgentService so the tool loop can re-inject the full skill body
+    // into the system prompt after compaction.
+    if matches!(&result, ChannelCommand::UserPrompt(_)) && trimmed.starts_with('/') {
+        let (cmd_name, _) = trimmed.split_once(' ').unwrap_or((trimmed, ""));
+        let key = norm_command_key(cmd_name);
+        // Only register as skill if no user-defined command took priority
+        let loader = crate::brain::CommandLoader::from_brain_path(
+            &crate::brain::BrainLoader::resolve_path(),
+        );
+        let user_commands = loader.load();
+        if !user_commands.iter().any(|c| norm_command_key(&c.name) == key) {
+            let skills = crate::brain::skills::load_all_skills();
+            if let Some(skill) = skills.iter().find(|s| norm_command_key(&s.slash_name) == key) {
+                agent.register_active_skill(session_id, &skill.slash_name);
+            }
+        }
+    }
+
     // Persist command + response to session history
     let response_text = match &result {
         ChannelCommand::Help(body)

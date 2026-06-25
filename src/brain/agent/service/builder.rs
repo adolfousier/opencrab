@@ -2,7 +2,7 @@ use super::types::*;
 use crate::brain::provider::Provider;
 use crate::brain::tools::ToolRegistry;
 use crate::services::ServiceContext;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -167,6 +167,13 @@ pub struct AgentService {
     /// next one.
     pub(super) session_primary_failure_streak: std::sync::RwLock<HashMap<Uuid, u32>>,
 
+    /// Per-session set of skill names that have been invoked. When a skill
+    /// is activated (via `/skill-name`), its name is recorded here so
+    /// the tool loop can re-inject the full skill body into the system brain
+    /// after compaction (issue #219). Without this, the 120-char clipped
+    /// description in `push_commands_and_skills` is all that survives.
+    pub(super) active_skills: std::sync::RwLock<HashMap<Uuid, HashSet<String>>>,
+
     /// Service context for database operations
     pub(super) context: ServiceContext,
 
@@ -264,6 +271,7 @@ impl AgentService {
             manual_switch: std::sync::RwLock::new(HashMap::new()),
             session_context_limits: std::sync::RwLock::new(HashMap::new()),
             session_primary_failure_streak: std::sync::RwLock::new(HashMap::new()),
+            active_skills: std::sync::RwLock::new(HashMap::new()),
             context,
             tool_registry: Arc::new(ToolRegistry::new()),
             max_tool_iterations: 0, // 0 = unlimited (loop detection is the safety net)
@@ -763,6 +771,10 @@ impl AgentService {
             .write()
             .expect("session_primary_failure_streak lock poisoned")
             .remove(&session_id);
+        self.active_skills
+            .write()
+            .expect("active_skills lock poisoned")
+            .remove(&session_id);
     }
 
     /// Record one primary-provider failure that was rescued by a
@@ -1067,5 +1079,30 @@ impl AgentService {
             .iter()
             .find(|p| p.name() != active_name)
             .cloned()
+    }
+
+    /// Record that a skill has been activated for a session. Called when
+    /// `match_user_command` resolves a skill slash command. The full skill
+    /// body is re-injected into the system brain on every turn so it
+    /// survives context compaction (#219).
+    pub fn register_active_skill(&self, session_id: Uuid, skill_name: &str) {
+        let mut map = self
+            .active_skills
+            .write()
+            .expect("active_skills lock poisoned");
+        map.entry(session_id)
+            .or_default()
+            .insert(skill_name.to_string());
+    }
+
+    /// Get the set of active skill names for a session. Returns empty set
+    /// if no skills have been activated.
+    pub fn active_skills_for_session(&self, session_id: Uuid) -> HashSet<String> {
+        self.active_skills
+            .read()
+            .expect("active_skills lock poisoned")
+            .get(&session_id)
+            .cloned()
+            .unwrap_or_default()
     }
 }

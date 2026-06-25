@@ -661,6 +661,30 @@ impl AgentService {
             context.system_brain = Some(brain);
         }
 
+        // Re-inject active skill bodies into system brain so they survive
+        // compaction (#219). Skills are invoked as UserPrompt messages that
+        // get compacted away; this ensures the full instructions are always
+        // present in the system prompt for the current session.
+        let active_skills = self.active_skills_for_session(session_id);
+        if !active_skills.is_empty() {
+            let skills = crate::brain::skills::load_all_skills();
+            let mut skill_section = String::new();
+            for skill in &skills {
+                if active_skills.contains(&skill.slash_name) {
+                    skill_section.push_str(&format!(
+                        "\n\n--- Active Skill: {} ---\n{}",
+                        skill.slash_name, skill.body
+                    ));
+                }
+            }
+            if !skill_section.is_empty()
+                && let Some(ref mut brain) = context.system_brain
+            {
+                brain.push_str(&skill_section);
+                context.token_count += AgentContext::estimate_tokens(&skill_section);
+            }
+        }
+
         // Emit token count immediately after DB reload so the TUI reflects the
         // real post-compaction value. Without this, the TUI shows the stale
         // pre-compaction count from the previous request until the API responds.
