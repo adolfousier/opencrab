@@ -2096,8 +2096,8 @@ pub(crate) async fn handle_message(
     // reports in the field: the log shows whether Telegram actually
     // sent us `reply_to_message` and `quote`, and what we threaded
     // into the agent prompt.
-    let reply_context = msg.reply_to_message().and_then(|reply| {
-        let full_text = reply.text().or(reply.caption()).unwrap_or("");
+    let reply_context = if let Some(reply) = msg.reply_to_message() {
+        let mut full_text = reply.text().or(reply.caption()).unwrap_or("").to_string();
         let quote_text = msg.quote().map(|q| q.text.as_str()).unwrap_or("");
         let reply_sender = reply
             .from
@@ -2110,8 +2110,39 @@ pub(crate) async fn handle_message(
                 }
             })
             .unwrap_or_else(|| "unknown".to_string());
+        // Bug #225: messages sent via sendRichMessage (Bot API 10.1) don't
+        // populate text()/caption() in teloxide's reply_to_message model.
+        // Fall back to the most recent bot message in channel_messages so
+        // the agent still sees what it said.
+        if full_text.is_empty()
+            && reply.from.as_ref().is_some_and(|u| u.is_bot)
+            && !is_dm
+        {
+            let chat_id_str = msg.chat.id.0.to_string();
+            let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
+            match channel_msg_repo
+                .recent(Some("telegram"), &chat_id_str, 10, thread_id_str.as_deref())
+                .await
+            {
+                Ok(recent) => {
+                    if let Some(bot_msg) = recent
+                        .iter()
+                        .find(|m| m.sender_id.starts_with("bot:"))
+                    {
+                        full_text = bot_msg.content.clone();
+                        tracing::info!(
+                            "Telegram reply context: recovered rich message text from channel_messages ({} chars)",
+                            full_text.len()
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Telegram reply context: channel_msg_repo lookup failed: {e}");
+                }
+            }
+        }
         // Strip ctx footer from quoted text so metadata never leaks into agent context
-        let full_clean = crate::utils::strip_ctx_footer(full_text);
+        let full_clean = crate::utils::strip_ctx_footer(&full_text);
         let quote_clean = crate::utils::strip_ctx_footer(quote_text);
         let ctx = format_reply_context(&reply_sender, &full_clean, &quote_clean);
         tracing::info!(
@@ -2126,7 +2157,9 @@ pub(crate) async fn handle_message(
             ctx,
         );
         ctx
-    });
+    } else {
+        None
+    };
     if msg.reply_to_message().is_none() && msg.quote().is_some() {
         // Should never happen per Telegram Bot API contract, but log
         // it loudly if it does — would mean we're missing the quote
@@ -3178,6 +3211,37 @@ pub(crate) async fn handle_message(
                             rich_md.len(),
                             intermediate_ids.len()
                         );
+                        // Store bot reply in channel_messages even though
+                        // text_only is empty (dedup stripped it). The rich
+                        // fallback already sent pre_dedup_text, so the next
+                        // turn's recent() query sees the bot's side of the
+                        // conversation. Without this, the agent "talks to
+                        // itself in the dark" after every rich fallback.
+                        if !is_dm {
+                            let bot_display_name = telegram_state
+                                .bot_username()
+                                .await
+                                .map(|u| format!("@{}", u))
+                                .unwrap_or_else(|| "OpenCrabs".to_string());
+                            let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
+                            let cm = DbChannelMessage::new(
+                                "telegram".to_string(),
+                                msg.chat.id.0.to_string(),
+                                Some(chat_title.to_string()),
+                                "bot:opencrabs".to_string(),
+                                bot_display_name,
+                                pre_dedup_text.clone(),
+                                "text".to_string(),
+                                None,
+                            )
+                            .with_thread(thread_id_str, None);
+                            if let Err(e) = channel_msg_repo.insert(&cm).await {
+                                tracing::warn!(
+                                    "Telegram: rich fallback: failed to record bot reply: {}",
+                                    e
+                                );
+                            }
+                        }
                         text_only
                     }
                     Err(e) => {
