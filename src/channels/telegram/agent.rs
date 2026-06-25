@@ -1201,12 +1201,12 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("help", "Show available commands"),
         BotCommand::new("models", "Switch AI model or provider"),
         BotCommand::new("usage", "Session token and cost stats"),
-        // Telegram command names can't contain hyphens, so the canonical
-        // `mission-control` can't be a menu chip. We register the CONCATENATED
-        // `missioncontrol` (valid, no ugly underscore) so it's still in the
-        // menu; `/help` and typing keep the dash, and all forms dispatch.
+        // Authored with the canonical hyphen; sanitized to `mission_control`
+        // for the menu below (Telegram command names can't contain hyphens).
+        // The dispatcher and /help keep the dash; the menu chip is underscore,
+        // consistent with every other multi-word command/skill.
         BotCommand::new(
-            "missioncontrol",
+            "mission-control",
             "Mission control: analytics, activity, inbox & schedule",
         ),
         BotCommand::new("compact", "Compact conversation context"),
@@ -1225,9 +1225,9 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
     let loader = crate::brain::CommandLoader::from_brain_path(&brain_path);
     let user_commands = loader.load();
     for cmd in &user_commands {
-        // Keep the canonical name (hyphens and all). Names Telegram won't
-        // accept are dropped from the menu below, NOT mangled to underscores.
+        // Strip leading slash and convert to Telegram format.
         let name = cmd.name.strip_prefix('/').unwrap_or(&cmd.name);
+        let name = sanitize_command_name(name);
         if name.is_empty() {
             continue;
         }
@@ -1238,39 +1238,25 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
     // Load skills and register them as commands.
     let skills = crate::brain::skills::load_all_skills();
     for skill in &skills {
-        // Keep the canonical (often hyphenated) skill name; the menu filter
-        // below drops what Telegram rejects rather than rewriting hyphens.
-        if skill.name.is_empty() {
+        // Skills use hyphens (security-audit); convert to underscores.
+        let name = sanitize_command_name(&skill.name);
+        if name.is_empty() {
             continue;
         }
         let description = truncate_description(&skill.description, 256);
-        commands.push(BotCommand::new(skill.name.as_str(), description));
+        commands.push(BotCommand::new(name, description));
     }
 
-    // Telegram command names must match [a-z0-9_]{1,32}, and it rejects the
-    // WHOLE setMyCommands call if a single name is invalid. We author commands
-    // and skills with hyphens (mission-control, security-audit) as their
-    // canonical names. Rather than rewrite hyphens to underscores — which
-    // surfaced ugly `/mission_control` chips in the menu — DROP any name
-    // Telegram won't accept verbatim. Dropped commands still work when typed
-    // (the dispatcher accepts the hyphen form) and stay listed in /help; they
-    // just don't get an autocomplete chip. `sanitize_command_name` differs from
-    // a plain lowercase exactly when a name has a hyphen or other invalid char,
-    // so equality is the "already valid" test.
-    commands.retain_mut(|c| {
-        let cleaned = sanitize_command_name(&c.command);
-        let already_valid =
-            cleaned == c.command.to_lowercase() && !cleaned.is_empty() && cleaned.len() <= 32;
-        if already_valid {
-            c.command = cleaned; // lowercase-normalize only
-        } else {
-            tracing::debug!(
-                "Telegram menu: skipping '{}' (not a valid command name — typed + /help only)",
-                c.command
-            );
-        }
-        already_valid
-    });
+    // Normalize EVERY command name to Telegram's rules ([a-z0-9_], 1-32 chars).
+    // Telegram rejects the ENTIRE setMyCommands call if a single name is
+    // invalid, and it can't show hyphens, so the menu standard is the
+    // underscore form: `mission-control` → `mission_control`, consistent with
+    // every other multi-word command and skill. The canonical dash is kept in
+    // /help and accepted (alongside the underscore) by the dispatcher.
+    for c in &mut commands {
+        c.command = sanitize_command_name(&c.command);
+    }
+    commands.retain(|c| !c.command.is_empty() && c.command.len() <= 32);
 
     // Telegram limit: max 100 commands
     commands.truncate(100);

@@ -13,30 +13,17 @@ fn sanitize_converts_hyphens_to_underscores() {
     assert_eq!(sanitize_command_name("a2a-gateway"), "a2a_gateway");
 }
 
-/// Mirrors the bot-menu registration filter: a command is offered in the
-/// Telegram menu only when its canonical name is ALREADY valid (sanitizing
-/// changes nothing). Hyphenated names (mission-control, security-audit) differ
-/// from their sanitized form, so they are DROPPED from the menu — never shown
-/// as an ugly `mission_control` chip. They still work when typed and in /help.
-fn menu_keeps(name: &str) -> bool {
-    let cleaned = sanitize_command_name(name);
-    cleaned == name.to_lowercase() && !cleaned.is_empty() && cleaned.len() <= 32
-}
-
+/// The Telegram menu standard is the underscore form: every multi-word command
+/// and skill is sanitized hyphen→underscore so the menu is consistent
+/// (`mission_control`, `github_workflow`, …). The canonical dash is kept in
+/// /help and accepted (alongside the underscore) by the dispatcher.
 #[test]
-fn menu_drops_hyphenated_names_rather_than_underscoring_them() {
-    assert!(
-        !menu_keeps("mission-control"),
-        "hyphenated built-in must be dropped from the menu, not shown as mission_control"
-    );
-    assert!(!menu_keeps("security-audit"));
-    assert!(!menu_keeps("a2a-gateway"));
-    // Plain single-word commands are valid and stay in the menu.
-    assert!(menu_keeps("usage"));
-    assert!(menu_keeps("new"));
-    assert!(menu_keeps("my_command_123"));
-    // The concatenated mission-control menu form is valid (no hyphen) → kept.
-    assert!(menu_keeps("missioncontrol"));
+fn menu_uses_consistent_underscore_form() {
+    assert_eq!(sanitize_command_name("mission-control"), "mission_control");
+    assert_eq!(sanitize_command_name("github-workflow"), "github_workflow");
+    // Single-word and already-underscore names are unchanged.
+    assert_eq!(sanitize_command_name("usage"), "usage");
+    assert_eq!(sanitize_command_name("github_workflow"), "github_workflow");
 }
 
 #[test]
