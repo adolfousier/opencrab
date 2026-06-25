@@ -130,6 +130,32 @@ pub fn load_last_good_config() -> Option<Config> {
 
     tracing::warn!("Attempting recovery from last-known-good config");
 
+    // Log the age of the snapshot so the operator knows how stale it is.
+    if let Ok(meta) = fs::metadata(&config_good)
+        && let Ok(modified) = meta.modified()
+    {
+        let age = std::time::SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or_default();
+        let saved_at = chrono::DateTime::<chrono::Local>::from(modified)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let hours = age.as_secs() / 3600;
+        let age_str = if hours >= 24 {
+            format!("{}d {}h", hours / 24, hours % 24)
+        } else if hours >= 1 {
+            format!("{}h {}m", hours, (age.as_secs() % 3600) / 60)
+        } else {
+            format!("{}m", age.as_secs() / 60)
+        };
+        tracing::warn!(
+            "last_known_good snapshot is {} old (saved at {}) — \
+             config.toml changes since then are silently ignored",
+            age_str,
+            saved_at
+        );
+    }
+
     // Load base config from the good snapshot
     let mut config = match Config::load_from_path(&config_good) {
         Ok(c) => c,

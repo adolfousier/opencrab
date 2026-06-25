@@ -88,6 +88,45 @@ pub struct Config {
     pub browser: BrowserConfig,
 }
 
+/// Custom deserializer for `[brain.caps]` that accepts both:
+///
+/// - Quoted keys: `"AGENTS.md" = 600` (already a string key → usize)
+/// - Unquoted dotted keys: `AGENTS.md = 600` (TOML 1.0 treats as nested table
+///   `{AGENTS: {md: 600}}` which this deserializer flattens back)
+fn deser_caps_compat<'de, D>(d: D) -> std::result::Result<BTreeMap<String, usize>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize as _;
+
+    let value: toml::Value = toml::Value::deserialize(d)?;
+    let mut result = BTreeMap::new();
+    if let Some(table) = value.as_table() {
+        flatten_caps_table(table, String::new(), &mut result);
+    }
+    Ok(result)
+}
+
+/// Recursively walk a TOML table, reconstructing dotted keys from nested tables.
+fn flatten_caps_table(
+    table: &toml::map::Map<String, toml::Value>,
+    prefix: String,
+    out: &mut BTreeMap<String, usize>,
+) {
+    for (key, value) in table {
+        let full_key = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{}.{}", prefix, key)
+        };
+        if let Some(n) = value.as_integer() {
+            out.insert(full_key, n as usize);
+        } else if let Some(sub_table) = value.as_table() {
+            flatten_caps_table(sub_table, full_key, out);
+        }
+    }
+}
+
 /// Brain-file behaviour configuration. Issue #164 added read-time stripping
 /// of empty header stubs (`## Header` with no body) so the LLM never sees
 /// dead sections, plus a per-file line cap so `sync_templates` cannot
@@ -106,7 +145,7 @@ pub struct BrainConfig {
     /// and the top-3 largest new sections that would have been added.
     /// Empty map means no cap configured beyond `default_brain_file_cap`.
     /// Issue #164 fix 2.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deser_caps_compat")]
     pub caps: std::collections::BTreeMap<String, usize>,
 
     /// Fallback cap applied to any brain file not explicitly listed in

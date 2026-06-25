@@ -181,7 +181,7 @@ impl Config {
         match Self::load_inner() {
             Ok(config) => Ok(config),
             Err(e) => {
-                tracing::error!("Config load failed: {e} — attempting auto-repair");
+                tracing::error!("Config load failed: {e:#} — attempting auto-repair");
                 // First: try to mechanically fix a syntactically-broken config
                 // file (e.g. an unterminated array left by a hand edit), save
                 // the fix back to disk, and re-load. This heals the typo on
