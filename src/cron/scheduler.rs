@@ -239,8 +239,21 @@ impl CronScheduler {
             if self.is_due(job, now) {
                 tracing::info!("Cron job '{}' ({}) is due — executing", job.name, job.id);
 
-                // Calculate next run time before executing (so we don't re-trigger)
-                let next_run = self.next_run_after(job, now);
+                // Calculate next run time before executing (so we don't re-trigger).
+                // Use the scheduled boundary as anchor, not `now`: for a
+                // first-run job (next_run_at = None), `now` may be 16s before
+                // the boundary (e.g. 10:59:44 vs 11:00:00). Passing `now`
+                // resolves to the SAME boundary, causing a double-fire next tick.
+                // (#224)
+                let next_run = match job.next_run_at {
+                    Some(scheduled) => self.next_run_after(job, scheduled),
+                    None => {
+                        match super::next_run_utc(&job.cron_expr, job_tz(job), now) {
+                            Some(boundary) => self.next_run_after(job, boundary),
+                            None => None,
+                        }
+                    }
+                };
                 let next_run_str = next_run.map(|dt| dt.to_rfc3339());
                 self.repo
                     .update_last_run(&job.id.to_string(), next_run_str.as_deref())
