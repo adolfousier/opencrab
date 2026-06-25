@@ -275,23 +275,62 @@ impl SlashCommandTool {
         }
 
         // Persist to session DB — that's the source of truth for per-session WD.
+        let mut assigned_project: Option<String> = None;
         if let Some(ref svc_ctx) = context.service_context {
+            let svc_ctx = svc_ctx.clone();
             let session_svc = crate::services::SessionService::new(svc_ctx.clone());
+            let project_svc = crate::services::ProjectService::new(svc_ctx);
             let sid = context.session_id;
             let dir_str = canonical.to_string_lossy().to_string();
-            tokio::task::block_in_place(|| {
+            let dir_name = canonical
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            assigned_project = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let _ = session_svc
                         .update_session_working_directory(sid, Some(dir_str))
                         .await;
-                });
+
+                    // Auto-assign session to project if WD matches a known project dir (#220).
+                    // Match by directory name against project slugs, so
+                    // `/cd ~/redevest-ai/` matches project "redevest-ai".
+                    if let Ok(projects) = project_svc.list_projects().await {
+                        for project in &projects {
+                            let slug = crate::services::file::slugify_project_name(
+                                &project.name,
+                            );
+                            if slug.eq_ignore_ascii_case(&dir_name) {
+                                let _ = project_svc
+                                    .assign_session(sid, project.id)
+                                    .await;
+                                tracing::info!(
+                                    "Auto-assigned session {} to project '{}'",
+                                    sid,
+                                    project.name
+                                );
+                                return Some(project.name.clone());
+                            }
+                        }
+                    }
+                    None
+                })
             });
         }
 
-        Ok(ToolResult::success(format!(
-            "Working directory changed to: {}",
-            canonical.display()
-        )))
+        if let Some(ref name) = assigned_project {
+            Ok(ToolResult::success(format!(
+                "Working directory changed to: {}\nAssigned to project: {}",
+                canonical.display(),
+                name
+            )))
+        } else {
+            Ok(ToolResult::success(format!(
+                "Working directory changed to: {}",
+                canonical.display()
+            )))
+        }
     }
 
     fn handle_rebuild(&self) -> Result<ToolResult> {

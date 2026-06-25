@@ -182,10 +182,15 @@ fn user_skills_dir() -> PathBuf {
     crate::config::opencrabs_home().join("skills")
 }
 
-/// Load every available skill (built-ins + user overlays).
+/// Load every available skill (built-ins + project overlays + user overlays).
 ///
-/// User skills override built-ins of the same name. Skills with broken
-/// frontmatter are skipped with a warning rather than aborting the load.
+/// Resolution order (last writer wins):
+/// 1. Built-in skills shipped with the binary
+/// 2. Project-specific skills from `~/.opencrabs/projects/*/skills/`
+/// 3. User profile overlay from `~/.opencrabs/skills/`
+///
+/// Skills with broken frontmatter are skipped with a warning rather than
+/// aborting the load.
 pub fn load_all_skills() -> Vec<Skill> {
     let mut by_name: std::collections::BTreeMap<String, Skill> = std::collections::BTreeMap::new();
 
@@ -201,7 +206,53 @@ pub fn load_all_skills() -> Vec<Skill> {
         }
     }
 
-    // 2. User overlay
+    // 2. Project-specific skills: ~/.opencrabs/projects/*/skills/<name>/SKILL.md
+    let projects_dir = crate::services::ProjectService::projects_dir();
+    if let Ok(projects) = std::fs::read_dir(&projects_dir) {
+        for project_entry in projects.flatten() {
+            let skills_dir = project_entry.path().join("skills");
+            if !skills_dir.is_dir() {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                        continue;
+                    };
+                    let skill_path = path.join("SKILL.md");
+                    if !skill_path.exists() {
+                        continue;
+                    }
+                    let raw = match std::fs::read_to_string(&skill_path) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!(
+                                "skills: failed to read project skill '{name}' at {}: {e}",
+                                skill_path.display()
+                            );
+                            continue;
+                        }
+                    };
+                    match Skill::parse(name, &raw, SkillSource::User) {
+                        Ok(skill) => {
+                            by_name.insert(skill.name.clone(), skill);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "skills: project skill '{name}' has bad frontmatter: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. User profile overlay: ~/.opencrabs/skills/<name>/SKILL.md
     let dir = user_skills_dir();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {

@@ -4,6 +4,7 @@
 /// mid-run. Every HOME-mutating test must take THIS shared lock.
 pub static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+pub mod active_skill_tracking_test;
 pub mod agent_approval_policies_test;
 pub mod agent_basic_test;
 pub mod agent_context_tracking_test;
@@ -167,6 +168,7 @@ pub mod plan_window_test;
 pub mod post_evolve_test;
 pub mod project_file_archive_test;
 pub mod project_file_slug_test;
+pub mod project_skills_test;
 pub mod project_test;
 pub mod prompt_compiled_features_test;
 pub mod prompt_inline_edit_directive_test;
