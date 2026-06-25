@@ -77,6 +77,10 @@ pub(crate) struct StreamingState {
     tools_started_at: Option<std::time::Instant>,
     /// When the current status message was shown (for show/vanish timing)
     status_shown_at: Option<std::time::Instant>,
+    /// Client-chosen draft_id for `sendRichMessageDraft` (DMs with rich_messages).
+    /// `None` when using the standard message path. When set, status updates
+    /// re-send the draft with this id instead of editing a persistent message.
+    draft_id: Option<i32>,
     /// Intermediate texts already sent — used to dedup final response
     sent_intermediates: Vec<String>,
     /// Message IDs of every intermediate chunk delivered to Telegram, so a
@@ -2290,6 +2294,7 @@ pub(crate) async fn handle_message(
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
         status_shown_at: None,
+        draft_id: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -2307,6 +2312,7 @@ pub(crate) async fn handle_message(
         let chat = msg.chat.id;
         let st = streaming.clone();
         let cancel = edit_cancel.clone();
+        let use_drafts = is_dm && Config::current().channels.telegram.rich_messages;
         async move {
             loop {
                 tokio::select! {
@@ -2343,6 +2349,8 @@ pub(crate) async fn handle_message(
                             /// rolling status line when no tool/reasoning
                             /// signal is yet available.
                             user_message_preview: Option<String>,
+                            /// Draft ID for DM rich message drafts
+                            draft_id: Option<i32>,
                         }
 
                         let snap = {
@@ -2403,6 +2411,7 @@ pub(crate) async fn handle_message(
                                 processing,
                                 thinking_excerpt: thinking_status_excerpt(&s.thinking),
                                 user_message_preview: s.user_message_preview.clone(),
+                                draft_id: s.draft_id,
                             };
 
                             // Pre-clear state that will be handled
@@ -2600,7 +2609,41 @@ pub(crate) async fn handle_message(
                                 snap.thinking_excerpt.as_deref(),
                                 snap.user_message_preview.as_deref(),
                             ) {
-                                if let Some(mid) = snap.status_msg_id {
+                                if use_drafts {
+                                    // Draft path (DMs + rich_messages): re-send or create draft
+                                    let did = snap.draft_id.unwrap_or(1);
+                                    let token = bot.token();
+                                    let cid = chat.0;
+                                    match super::rich::api::send_rich_message_draft(
+                                        token, cid, did, &status,
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            let mut s =
+                                                st.lock().unwrap_or_else(|e| e.into_inner());
+                                            s.draft_id = Some(did);
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!("Draft send failed, falling back: {e}");
+                                            // Fallback to standard message
+                                            if shown_elapsed >= 2
+                                                && snap.status_msg_id.is_none()
+                                                && snap.draft_id.is_none()
+                                                && let Ok(m) = message_in_thread(
+                                                    &bot, chat, thread_id, &status,
+                                                )
+                                                .await
+                                            {
+                                                let mut s = st
+                                                    .lock()
+                                                    .unwrap_or_else(|e| e.into_inner());
+                                                s.status_msg_id = Some(m.id);
+                                                s.status_shown_at = Some(now);
+                                            }
+                                        }
+                                    }
+                                } else if let Some(mid) = snap.status_msg_id {
                                     // Existing message — edit in place (no flicker, no extra API call)
                                     let _ = bot.edit_message_text(chat, mid, &status)
                                         .parse_mode(ParseMode::Html)
@@ -2617,7 +2660,9 @@ pub(crate) async fn handle_message(
                         }
 
                         // ── Delete status when real content arrives ──
-                        if (snap.has_intermediates || (snap.dirty && !snap.response_text.is_empty()))
+                        // Drafts auto-expire; only delete standard messages.
+                        if snap.draft_id.is_none()
+                            && (snap.has_intermediates || (snap.dirty && !snap.response_text.is_empty()))
                             && let Some(mid) = snap.status_msg_id
                         {
                             let _ = bot.delete_message(chat, mid).await;
@@ -3446,6 +3491,7 @@ pub(crate) async fn resume_session(
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
         status_shown_at: None,
+        draft_id: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
