@@ -313,3 +313,85 @@ fn rich_request_body_passes_markdown_through() {
     // No thread id supplied → field omitted.
     assert!(body.get("message_thread_id").is_none());
 }
+
+// ── <details>/<summary> parsing ──────────────────────────────────────────
+
+#[test]
+fn details_with_summary_parses() {
+    let md = "Before\n\n<details>\n<summary>Click to expand</summary>\n\nHidden content\n\n</details>\n\nAfter";
+    let blocks = parse_markdown(md);
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks[0], Block::Paragraph(vec![Inline::Text("Before".into())]));
+    match &blocks[1] {
+        Block::Details { summary, blocks, open } => {
+            assert!(!open);
+            assert_eq!(summary.len(), 1);
+            assert_eq!(summary[0], Inline::Text("Click to expand".into()));
+            assert_eq!(blocks.len(), 1);
+            assert_eq!(blocks[0], Block::Paragraph(vec![Inline::Text("Hidden content".into())]));
+        }
+        other => panic!("expected Details, got {:?}", other),
+    }
+    assert_eq!(blocks[2], Block::Paragraph(vec![Inline::Text("After".into())]));
+}
+
+#[test]
+fn details_open_attribute() {
+    let md = "<details open>\n<summary>Open by default</summary>\n\nBody\n\n</details>";
+    let blocks = parse_markdown(md);
+    assert_eq!(blocks.len(), 1);
+    match &blocks[0] {
+        Block::Details { open, .. } => assert!(open),
+        other => panic!("expected Details, got {:?}", other),
+    }
+}
+
+#[test]
+fn details_without_summary() {
+    let md = "<details>\n\nJust content\n\n</details>";
+    let blocks = parse_markdown(md);
+    assert_eq!(blocks.len(), 1);
+    match &blocks[0] {
+        Block::Details { summary, blocks, .. } => {
+            assert!(summary.is_empty());
+            assert_eq!(blocks.len(), 1);
+        }
+        other => panic!("expected Details, got {:?}", other),
+    }
+}
+
+#[test]
+fn nested_details() {
+    let md = "<details>\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nDeep\n\n</details>\n\n</details>";
+    let blocks = parse_markdown(md);
+    assert_eq!(blocks.len(), 1);
+    match &blocks[0] {
+        Block::Details { summary, blocks, .. } => {
+            assert_eq!(summary[0], Inline::Text("Outer".into()));
+            assert_eq!(blocks.len(), 1);
+            match &blocks[0] {
+                Block::Details { summary: inner_sum, blocks: inner_body, .. } => {
+                    assert_eq!(inner_sum[0], Inline::Text("Inner".into()));
+                    assert_eq!(inner_body[0], Block::Paragraph(vec![Inline::Text("Deep".into())]));
+                }
+                other => panic!("expected nested Details, got {:?}", other),
+            }
+        }
+        other => panic!("expected Details, got {:?}", other),
+    }
+}
+
+#[test]
+fn details_renders_html_fallback() {
+    use crate::channels::telegram::rich::markdown_to_html;
+    let md = "<details>\n<summary>Status</summary>\n\nAll good\n\n</details>";
+    let html = markdown_to_html(md);
+    assert!(html.contains("<b>▸ Status</b>"), "summary header: {html}");
+    assert!(html.contains("  All good"), "indented body: {html}");
+}
+
+#[test]
+fn details_rich_structure_detected() {
+    let md = "<details>\n<summary>Log</summary>\n\nContent\n\n</details>";
+    assert!(crate::channels::telegram::rich::has_rich_structure(md));
+}

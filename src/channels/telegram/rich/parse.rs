@@ -111,17 +111,27 @@ pub(super) fn parse_blocks(lines: &[String]) -> Vec<Block> {
             i += 1; // consume <details> / <details open>
             // Optional <summary> on the next line(s).
             let mut summary_inlines = Vec::new();
-            if i < lines.len() && lines[i].trim() == "<summary>" {
-                i += 1; // consume <summary>
-                let mut summary_buf = Vec::new();
-                while i < lines.len() && lines[i].trim() != "</summary>" {
-                    summary_buf.push(lines[i].trim().to_string());
+            if i < lines.len() {
+                let sl = lines[i].trim();
+                if sl == "<summary>" {
+                    // Multi-line summary: <summary> on own line
+                    i += 1;
+                    let mut summary_buf = Vec::new();
+                    while i < lines.len() && lines[i].trim() != "</summary>" {
+                        summary_buf.push(lines[i].trim().to_string());
+                        i += 1;
+                    }
+                    if i < lines.len() {
+                        i += 1; // consume </summary>
+                    }
+                    summary_inlines = parse_inlines(&summary_buf.join(" "));
+                } else if let Some(rest) = sl.strip_prefix("<summary>")
+                    && let Some(text) = rest.strip_suffix("</summary>")
+                {
+                    // Inline summary: <summary>text</summary> on one line
+                    summary_inlines = parse_inlines(text.trim());
                     i += 1;
                 }
-                if i < lines.len() {
-                    i += 1; // consume </summary>
-                }
-                summary_inlines = parse_inlines(&summary_buf.join(" "));
             }
             // Collect body lines until matching </details>, respecting nesting.
             let mut body_buf = Vec::new();

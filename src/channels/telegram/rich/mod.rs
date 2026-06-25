@@ -59,7 +59,13 @@ pub(crate) fn has_rich_structure(text: &str) -> bool {
     contains_table(text)
         || text.lines().any(|line| {
             let t = line.trim_start();
-            is_atx_heading(t) || list::is_item(t) || t.starts_with("```") || t == "$$"
+            is_atx_heading(t)
+                || list::is_item(t)
+                || t.starts_with("```")
+                || t == "$$"
+                || t == "<details>"
+                || t == "<details open>"
+                || t.starts_with("<details ")
         })
 }
 
