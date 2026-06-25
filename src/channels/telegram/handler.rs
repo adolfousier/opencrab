@@ -490,6 +490,34 @@ pub(crate) async fn handle_message(
     let topic_id =
         session_resolve::topic_session_id(msg.is_topic_message, thread_id.map(|t| t.0.0));
 
+    // Topic NAME for the session label, so a forum topic reads as "Devops"
+    // rather than the numeric "topic:2". Prefer the name carried on THIS
+    // message (regular topic messages include the topic-creation reply as
+    // their reply target); fall back to the last name we persisted for this
+    // thread so an in-topic reply — which omits it — doesn't drop the label
+    // back to the id. None for DMs/non-forum groups.
+    let topic_name: Option<String> = if topic_id.is_some() {
+        let live = msg
+            .forum_topic_created()
+            .map(|t| t.name.clone())
+            .or_else(|| {
+                msg.reply_to_message()
+                    .and_then(|r| r.forum_topic_created())
+                    .map(|t| t.name.clone())
+            });
+        match (live, thread_id) {
+            (Some(name), _) => Some(name),
+            (None, Some(tid)) => channel_msg_repo
+                .latest_topic_name("telegram", &msg.chat.id.0.to_string(), &tid.0.to_string())
+                .await
+                .ok()
+                .flatten(),
+            (None, None) => None,
+        }
+    } else {
+        None
+    };
+
     // Read latest config from watch channel — single source of truth
     // (moved before /start so we can check allowlist for group silencing)
     let cfg = config_rx.borrow().clone();
@@ -1571,6 +1599,7 @@ pub(crate) async fn handle_message(
         chat_title,
         chat_id,
         topic_id,
+        topic_name.as_deref(),
     );
     // Legacy title format used before the chat_id suffix was added.
     let legacy_title =
@@ -1925,6 +1954,7 @@ pub(crate) async fn handle_message(
                     chat_title,
                     chat_id,
                     topic_id,
+                    topic_name.as_deref(),
                 );
                 // Archive the previous session on /new, except for the owner —
                 // owner sessions stay non-archived so they remain visible in

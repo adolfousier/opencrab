@@ -17,12 +17,21 @@ pub fn build_session_title(
     chat_title: &str,
     chat_id: i64,
     topic_id: Option<i32>,
+    topic_name: Option<&str>,
 ) -> String {
     let suffix = chat_id_suffix(chat_id, topic_id);
     if is_dm {
         format!("Telegram: DM {user_name} ({user_id}) {suffix}")
     } else {
-        format!("Telegram: {chat_title} {suffix}")
+        // A forum topic gets its NAME in the display ("… / Devops"), so the
+        // session reads as the topic instead of the numeric thread id. The
+        // suffix stays the numeric `:topic:<id>` form for stable resolution.
+        match topic_name.map(str::trim).filter(|n| !n.is_empty()) {
+            Some(name) if topic_id.is_some() => {
+                format!("Telegram: {chat_title} / {name} {suffix}")
+            }
+            _ => format!("Telegram: {chat_title} {suffix}"),
+        }
     }
 }
 
@@ -151,14 +160,14 @@ mod tests {
 
     #[test]
     fn dm_template_format() {
-        let t = build_session_title(true, "Alice", 123, "", 456, None);
+        let t = build_session_title(true, "Alice", 123, "", 456, None, None);
         assert_eq!(t, "Telegram: DM Alice (123) [chat:456]");
     }
 
     #[test]
     fn should_not_clobber_auto_titled_dm() {
         let auto = "Telegram: Fix deploy [chat:133526395]";
-        let template = build_session_title(true, "Alexey", 133526395, "", 133526395, None);
+        let template = build_session_title(true, "Alexey", 133526395, "", 133526395, None, None);
         assert!(!should_refresh_label(auto, &template));
     }
 
@@ -171,8 +180,8 @@ mod tests {
 
     #[test]
     fn default_dm_still_refreshes_on_name_change() {
-        let old = build_session_title(true, "Alice", 1, "", 99, None);
-        let new = build_session_title(true, "Bob", 1, "", 99, None);
+        let old = build_session_title(true, "Alice", 1, "", 99, None, None);
+        let new = build_session_title(true, "Bob", 1, "", 99, None, None);
         assert!(should_refresh_label(&old, &new));
     }
 

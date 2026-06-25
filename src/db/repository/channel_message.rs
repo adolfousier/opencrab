@@ -6,7 +6,7 @@ use crate::db::Pool;
 use crate::db::database::interact_err;
 use crate::db::models::ChannelMessage;
 use anyhow::{Context, Result};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 /// Summary of a known chat
 pub struct ChatSummary {
@@ -160,6 +160,41 @@ impl ChannelMessageRepository {
             .await
             .map_err(interact_err)?
             .context("Failed to fetch recent channel messages")
+    }
+
+    /// Most recent non-null forum topic name for a thread, used to label the
+    /// session after the topic ("Devops") instead of its numeric thread id
+    /// ("topic:2"). Telegram only carries the name on regular topic messages
+    /// (via the topic-creation reply target); a user replying to a specific
+    /// message inside the topic omits it, so we read the last one we persisted
+    /// to keep the label stable.
+    pub async fn latest_topic_name(
+        &self,
+        channel: &str,
+        chat_id: &str,
+        thread_id: &str,
+    ) -> Result<Option<String>> {
+        let ch = channel.to_string();
+        let cid = chat_id.to_string();
+        let tid = thread_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT topic_name FROM channel_messages \
+                         WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id = ?3 \
+                         AND topic_name IS NOT NULL AND topic_name != '' \
+                         ORDER BY created_at DESC LIMIT 1",
+                    params![ch, cid, tid],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to fetch latest topic name")
     }
 
     /// Search messages by content (LIKE-based) with optional thread_id filter

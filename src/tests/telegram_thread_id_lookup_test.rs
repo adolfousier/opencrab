@@ -121,6 +121,59 @@ async fn recent_scoped_to_thread_does_not_bleed_across_topics() {
     assert_eq!(all.len(), 2);
 }
 
+/// The session label reads the topic NAME from `latest_topic_name`, which must
+/// return the most recent non-null name for a thread — so an in-topic reply
+/// (which omits the name) doesn't drop the label back to the numeric id.
+#[tokio::test]
+async fn latest_topic_name_returns_most_recent_non_null() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let repo = ChannelMessageRepository::new(db.pool().clone());
+
+    let chat_id = "test-chat-topic-name";
+    let mut named = ChannelMessage::new(
+        "telegram".into(),
+        chat_id.into(),
+        None,
+        "u1".into(),
+        "alice".into(),
+        "first message".into(),
+        "text".into(),
+        Some("m1".into()),
+    )
+    .with_thread(Some("2".to_string()), Some("Devops".into()));
+    named.created_at = Utc::now() - Duration::minutes(5);
+
+    // A later in-topic reply with NO topic name must not erase the label.
+    let nameless = ChannelMessage::new(
+        "telegram".into(),
+        chat_id.into(),
+        None,
+        "u1".into(),
+        "alice".into(),
+        "a reply".into(),
+        "text".into(),
+        Some("m2".into()),
+    )
+    .with_thread(Some("2".to_string()), None);
+
+    repo.insert(&named).await.unwrap();
+    repo.insert(&nameless).await.unwrap();
+
+    let name = repo
+        .latest_topic_name("telegram", chat_id, "2")
+        .await
+        .unwrap();
+    assert_eq!(name.as_deref(), Some("Devops"));
+
+    // Unknown thread → None (label falls back to the numeric id).
+    let missing = repo
+        .latest_topic_name("telegram", chat_id, "999")
+        .await
+        .unwrap();
+    assert_eq!(missing, None);
+}
+
 #[tokio::test]
 async fn recent_returns_newest_first_so_helper_picks_latest_thread() {
     let db = Database::connect_in_memory().await.unwrap();

@@ -51,7 +51,7 @@ async fn telegram_state_chat_map_survives_suffix_competition() {
 #[test]
 fn should_not_clobber_auto_titled_dm_title() {
     let auto = "Telegram: Fix deploy pipeline [chat:133526395]";
-    let template = build_session_title(true, "Alexey", 133526395, "", 133526395, None);
+    let template = build_session_title(true, "Alexey", 133526395, "", 133526395, None, None);
     assert!(
         !should_refresh_label(auto, &template),
         "auto-titled DM must not revert to default template"
@@ -70,7 +70,7 @@ async fn suffix_lookup_after_switch_touch_picks_switched_row() {
     let (_db, repo) = fresh_repo().await;
     let chat_id = 42_i64;
     let suffix = chat_id_suffix(chat_id, None);
-    let title = build_session_title(true, "U", 1, "", chat_id, None);
+    let title = build_session_title(true, "U", 1, "", chat_id, None, None);
 
     let older = Session::new(Some(title.clone()), None, None);
     repo.create(&older).await.expect("create older");
@@ -94,7 +94,7 @@ async fn suffix_lookup_after_switch_touch_picks_switched_row() {
 
 #[tokio::test]
 async fn auto_titled_title_survives_should_refresh_check() {
-    let template = build_session_title(true, "Alice", 1, "", 99, None);
+    let template = build_session_title(true, "Alice", 1, "", 99, None, None);
     let auto_titled = format!("Telegram: Deploy fix {}", chat_id_suffix(99, None));
     assert!(!should_refresh_label(&auto_titled, &template));
 }
@@ -148,7 +148,7 @@ async fn chat_bound_idle_archives_and_creates_new_session() {
     let ctx = ServiceContext::new(db.pool().clone());
     let svc = SessionService::new(ctx.clone());
     let chat_id = 77_i64;
-    let title = build_session_title(true, "U", 1, "", chat_id, None);
+    let title = build_session_title(true, "U", 1, "", chat_id, None, None);
 
     let mut bound = Session::new(Some(title.clone()), None, None);
     bound.updated_at = chrono::Utc::now() - chrono::Duration::hours(48);
@@ -177,10 +177,42 @@ fn chat_id_suffix_topic_vs_base_format() {
 
 #[test]
 fn build_session_title_carries_topic_suffix() {
-    let base = build_session_title(false, "", 0, "Build", -100, None);
-    let topic = build_session_title(false, "", 0, "Build", -100, Some(42));
+    let base = build_session_title(false, "", 0, "Build", -100, None, None);
+    let topic = build_session_title(false, "", 0, "Build", -100, Some(42), None);
     assert_eq!(base, "Telegram: Build [chat:-100]");
     assert_eq!(topic, "Telegram: Build [chat:-100:topic:42]");
+}
+
+#[test]
+fn build_session_title_shows_topic_name_keeps_numeric_suffix() {
+    // The topic NAME goes in the display so the session reads as "Devops",
+    // but the resolution suffix stays the numeric `:topic:2` form.
+    let named = build_session_title(false, "", 0, "Build", -100, Some(2), Some("Devops"));
+    assert_eq!(named, "Telegram: Build / Devops [chat:-100:topic:2]");
+    assert!(
+        named.ends_with("[chat:-100:topic:2]"),
+        "suffix must stay numeric"
+    );
+
+    // A blank/whitespace name falls back to the plain title (no trailing slash).
+    let blank = build_session_title(false, "", 0, "Build", -100, Some(2), Some("  "));
+    assert_eq!(blank, "Telegram: Build [chat:-100:topic:2]");
+
+    // A name with no topic_id (non-forum) is ignored.
+    let no_topic = build_session_title(false, "", 0, "Build", -100, None, Some("Devops"));
+    assert_eq!(no_topic, "Telegram: Build [chat:-100]");
+}
+
+#[test]
+fn refresh_label_promotes_id_titled_topic_session_to_named() {
+    // A topic session created before we learned the name (id-titled) gets
+    // refreshed to the named form on the next message — rename-on-learn.
+    let id_titled = "Telegram: Build [chat:-100:topic:2]";
+    let named = build_session_title(false, "", 0, "Build", -100, Some(2), Some("Devops"));
+    assert!(
+        should_refresh_label(id_titled, &named),
+        "id-titled topic session should be promoted to the named form"
+    );
 }
 
 #[test]
@@ -221,8 +253,8 @@ async fn base_and_topic_titles_do_not_cross_resolve() {
     let (_db, repo) = fresh_repo().await;
     let chat_id = -100_i64;
 
-    let base_title = build_session_title(false, "", 0, "G", chat_id, None);
-    let topic_title = build_session_title(false, "", 0, "G", chat_id, Some(7));
+    let base_title = build_session_title(false, "", 0, "G", chat_id, None, None);
+    let topic_title = build_session_title(false, "", 0, "G", chat_id, Some(7), None);
     let base = Session::new(Some(base_title), None, None);
     let topic = Session::new(Some(topic_title), None, None);
     repo.create(&base).await.expect("create base");
@@ -253,7 +285,7 @@ async fn service_update_session_title_preserves_suffix() {
     let ctx = ServiceContext::new(db.pool().clone());
     let svc = SessionService::new(ctx);
 
-    let title = build_session_title(true, "U", 1, "", 77, None);
+    let title = build_session_title(true, "U", 1, "", 77, None, None);
     let session = svc
         .create_session(Some(title.clone()))
         .await
