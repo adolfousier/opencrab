@@ -48,6 +48,23 @@ fn render_block(block: &Block) -> String {
         Block::Quote(inner) => format!("<blockquote>{}</blockquote>", render_html(inner)),
         Block::Math(expr) => format!("<pre>{}</pre>", escape(expr)),
         Block::Divider => "──────────".to_string(),
+        // Telegram HTML has no <details> — render as flat indented blocks
+        // with a bold summary header so content is still visible.
+        Block::Details {
+            summary,
+            blocks,
+            open: _,
+        } => {
+            let summary_html = render_inlines(summary);
+            let body = render_html(blocks);
+            format!(
+                "<b>▸ {summary_html}</b>\n{}",
+                body.lines()
+                    .map(|l| format!("  {l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        }
     }
 }
 

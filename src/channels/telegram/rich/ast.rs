@@ -28,6 +28,14 @@ pub enum Block {
     Math(String),
     /// A horizontal rule / divider.
     Divider,
+    /// A collapsible details block with a summary header.
+    /// `<details>` / `<summary>` in markdown; renders as native collapsible
+    /// in Telegram rich messages or flat indented blocks in HTML fallback.
+    Details {
+        summary: Vec<Inline>,
+        blocks: Vec<Block>,
+        open: bool,
+    },
 }
 
 /// A bulleted or numbered list.
