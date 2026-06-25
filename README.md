@@ -414,6 +414,8 @@ OpenCrabs's behavior lives in plain-markdown **brain files** in `~/.opencrabs/`.
 
 **Generic vs. personal.** The generic files (SOUL/AGENTS/CODE/TOOLS/SECURITY/BOOT) ship as the same templates for everyone (you then customize them); `USER.md` and `MEMORY.md` accumulate per user and stay private. Each file declares its scope in a `> **Owns:**` header at the top, and the discipline is simple: **one kind of content per file, never duplicated across files** — copies drift and go stale. (`HEARTBEAT.md` is a small periodic-task checklist, empty by default.)
 
+> **Deep dive:** for the full directive lifecycle (how directives flow from human/RSI through storage to system prompt), see the [Brain Constitution](src/docs/reference/BRAIN_CONSTITUTION.md).
+
 ### Profiles — Multi-Instance Crab Agents
 
 Run multiple isolated OpenCrabs instances from the same installation. Each profile gets its own config, brain files, memory, sessions, database, and gateway service.
@@ -3513,6 +3515,7 @@ opencrabs/
 │   ├── assets/           # Icons, screenshots, visual assets
 │   ├── scripts/          # Build and setup scripts
 │   └── docs/             # Documentation templates
+    └── reference/        # Architecture docs, provider guide, brain constitution
 ├── Cargo.toml
 ├── config.toml.example
 ├── keys.toml.example
