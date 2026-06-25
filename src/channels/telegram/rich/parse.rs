@@ -105,6 +105,49 @@ pub(super) fn parse_blocks(lines: &[String]) -> Vec<Block> {
             continue;
         }
 
+        // <details> / <summary> collapsible block.
+        if is_details_open(t) {
+            let open = t.contains(" open");
+            i += 1; // consume <details> / <details open>
+            // Optional <summary> on the next line(s).
+            let mut summary_inlines = Vec::new();
+            if i < lines.len() && lines[i].trim() == "<summary>" {
+                i += 1; // consume <summary>
+                let mut summary_buf = Vec::new();
+                while i < lines.len() && lines[i].trim() != "</summary>" {
+                    summary_buf.push(lines[i].trim().to_string());
+                    i += 1;
+                }
+                if i < lines.len() {
+                    i += 1; // consume </summary>
+                }
+                summary_inlines = parse_inlines(&summary_buf.join(" "));
+            }
+            // Collect body lines until matching </details>, respecting nesting.
+            let mut body_buf = Vec::new();
+            let mut depth = 1usize;
+            while i < lines.len() {
+                let bt = lines[i].trim();
+                if is_details_open(bt) {
+                    depth += 1;
+                } else if bt == "</details>" {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1; // consume </details>
+                        break;
+                    }
+                }
+                body_buf.push(lines[i].clone());
+                i += 1;
+            }
+            blocks.push(Block::Details {
+                summary: summary_inlines,
+                blocks: parse_blocks(&body_buf),
+                open,
+            });
+            continue;
+        }
+
         // Paragraph: gather soft-wrapped lines until a blank or a new block.
         let mut buf = Vec::new();
         while i < lines.len() {
@@ -132,6 +175,12 @@ fn starts_block(lines: &[String], i: usize) -> bool {
         || t == "$$"
         || list::is_item(&lines[i])
         || table::try_parse(lines, i).is_some()
+        || is_details_open(t)
+}
+
+/// Whether `t` is a `<details>` or `<details open>` opening tag.
+fn is_details_open(t: &str) -> bool {
+    t == "<details>" || t == "<details open>" || t.starts_with("<details ")
 }
 
 /// A fence line: three or more backticks.
