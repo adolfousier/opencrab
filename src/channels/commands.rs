@@ -516,24 +516,44 @@ pub(crate) fn match_user_command_inner(
 // ── /help ───────────────────────────────────────────────────────────────────
 
 pub(crate) fn format_help() -> String {
-    let mut lines = vec![
-        "📖 *Available Commands*".to_string(),
-        String::new(),
-        "`/new`      — Start a new session".to_string(),
-        "`/cd`       — Browse and change working directory".to_string(),
-        "`/sessions` — Switch between sessions (`/sessions:<query>` to filter)".to_string(),
-        "`/stop`     — Abort current operation".to_string(),
-        "`/compact`  — Compact context (summarize & trim)".to_string(),
-        "`/cowork`   — Create a cowork workspace with QR invite (Telegram only)".to_string(),
-        "`/evolve`   — Download latest release & restart".to_string(),
-        "`/help`     — Show this message".to_string(),
-        "`/mission-control` Mission control: analytics, activity, inbox & schedule".to_string(),
-        "`/models`   — Switch AI model".to_string(),
-        "`/profiles` — Manage profiles (create, switch, migrate)".to_string(),
-        "`/rename`   — Rename current session (`/rename <new title>`)".to_string(),
-        "`/rtk`      — Show RTK token savings statistics".to_string(),
-        "`/usage`    — Session token & cost stats".to_string(),
+    let builtins: &[(&str, &str)] = &[
+        ("/new", "Start a new session"),
+        ("/cd", "Browse and change working directory"),
+        (
+            "/sessions",
+            "Switch between sessions (`/sessions:<query>` to filter)",
+        ),
+        ("/stop", "Abort current operation"),
+        ("/compact", "Compact context (summarize & trim)"),
+        (
+            "/cowork",
+            "Create a cowork workspace with QR invite (Telegram only)",
+        ),
+        ("/evolve", "Download latest release & restart"),
+        ("/help", "Show this message"),
+        (
+            "/mission-control",
+            "Mission control: analytics, activity, inbox & schedule",
+        ),
+        ("/models", "Switch AI model"),
+        ("/profiles", "Manage profiles (create, switch, migrate)"),
+        ("/rename", "Rename current session (`/rename <new title>`)"),
+        ("/rtk", "Show RTK token savings statistics"),
+        ("/usage", "Session token & cost stats"),
     ];
+    let rows: Vec<Vec<String>> = builtins
+        .iter()
+        .map(|(cmd, desc)| vec![format!("`{cmd}`"), desc.to_string()])
+        .collect();
+
+    // Heading + table. When Telegram rich rendering is on this becomes a
+    // command/description table (a key-value list on a phone); the legacy
+    // path still renders it readably. `\n\n` around blocks so the markdown
+    // parser keeps the table separate from the heading and trailer.
+    let mut out = format!(
+        "# 📖 Available Commands\n\n{}",
+        md_table(&["Command", "Description"], &rows)
+    );
 
     // Append user-defined commands from commands.toml
     let brain_path = crate::brain::BrainLoader::resolve_path();
@@ -541,16 +561,52 @@ pub(crate) fn format_help() -> String {
     let mut user_cmds = loader.load();
     if !user_cmds.is_empty() {
         user_cmds.sort_by(|a, b| a.name.cmp(&b.name));
-        lines.push(String::new());
-        lines.push("📌 *Custom Commands*".to_string());
-        for cmd in &user_cmds {
-            lines.push(format!("`{}`  — {}", cmd.name, cmd.description));
-        }
+        let rows: Vec<Vec<String>> = user_cmds
+            .iter()
+            .map(|c| vec![format!("`{}`", c.name), c.description.clone()])
+            .collect();
+        out.push_str(&format!(
+            "\n## 📌 Custom Commands\n\n{}",
+            md_table(&["Command", "Description"], &rows)
+        ));
     }
 
-    lines.push(String::new());
-    lines.push("🦀 Any other message is sent to OpenCrabs. 🦀".to_string());
-    lines.join("\n")
+    out.push_str("\n🦀 Any other message is sent to OpenCrabs. 🦀");
+    out
+}
+
+/// Build a GitHub-flavored markdown table (`| h | h |` + `| --- | --- |` +
+/// rows). The Telegram rich renderer turns this into a phone-friendly layout:
+/// an aligned `<pre>` grid when narrow, a key/value list for wide 2-column
+/// tables, or cards for wide 3+ column tables. Returns `""` for no rows.
+///
+/// Cell contents have `|` and newlines neutralized so a stray pipe in a value
+/// can't shift columns or break the row.
+pub(crate) fn md_table(headers: &[&str], rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let clean = |s: &str| s.replace(['|', '\n'], " ");
+    let mut out = String::new();
+    out.push_str("| ");
+    out.push_str(
+        &headers
+            .iter()
+            .map(|h| clean(h))
+            .collect::<Vec<_>>()
+            .join(" | "),
+    );
+    out.push_str(" |\n|");
+    for _ in headers {
+        out.push_str(" --- |");
+    }
+    out.push('\n');
+    for row in rows {
+        out.push_str("| ");
+        out.push_str(&row.iter().map(|c| clean(c)).collect::<Vec<_>>().join(" | "));
+        out.push_str(" |\n");
+    }
+    out
 }
 
 // ── /rtk ────────────────────────────────────────────────────────────────────
@@ -614,9 +670,13 @@ async fn format_usage(
 ) -> String {
     use crate::usage::data::{DashboardData, Period, fmt_cost, fmt_tokens};
 
-    let mut lines = vec!["📊 *Usage Dashboard*".to_string(), String::new()];
+    // Each entry is a markdown block (heading, paragraph, or `### head`+table).
+    // Joined with blank lines so the rich renderer parses them as separate
+    // blocks — headings become bold, tables become phone-friendly grids /
+    // key-value lists. Authored once; renders well under rich or legacy mode.
+    let mut blocks: Vec<String> = vec!["# 📊 Usage Dashboard".to_string()];
 
-    // ── Current session (header) ─────────────────────────────────────
+    // ── Current session ──────────────────────────────────────────────
     let current_model = agent.provider_model();
     match session_svc.get_session(session_id).await {
         Ok(Some(session)) => {
@@ -634,40 +694,35 @@ async fn format_usage(
             } else {
                 0.0
             };
-            lines.push(format!("*Current:* {}", name));
-            lines.push(format!(
-                "  `{}` · {} tok · ${:.4}",
+            blocks.push(format!(
+                "**Current:** {} — `{}` · {} tok · ${:.4}",
+                name,
                 model,
                 format_number(tokens as i64),
                 cost
             ));
         }
         _ => {
-            lines.push("*Current:* (session not found)".to_string());
+            blocks.push("**Current:** (session not found)".to_string());
         }
     }
-    lines.push(String::new());
 
-    // ── Period cards (Today + All-Time, both rendered inline) ────────
-    // TUI /usage lets the user cycle T/W/M/A — for the channel dump
-    // we show Today and All-Time since those are the two most useful
-    // snapshots. Each block is the full five-card breakdown
-    // (summary + by model + by tool + by project + by activity + daily
-    // strip). Keeps parity with the dashboard without blowing past
-    // Telegram's 4096-char limit for normal sessions.
+    // ── Period sections (Today + All-Time) ───────────────────────────
+    // TUI /usage lets the user cycle T/W/M/A — for the channel dump we show
+    // Today and All-Time, the two most useful snapshots. Each is a section
+    // heading + a summary line + a table per breakdown.
     for period in [Period::Today, Period::AllTime] {
         let pool = session_svc.pool();
         let data = match DashboardData::fetch(&pool, period).await {
             Ok(d) => d,
             Err(e) => {
-                lines.push(format!("*{}:* (failed to load: {})", period.label(), e));
-                lines.push(String::new());
+                blocks.push(format!("## {}\n\n(failed to load: {})", period.label(), e));
                 continue;
             }
         };
 
-        lines.push(format!("━━ *{}* ━━", period.label()));
-        lines.push(format!(
+        blocks.push(format!("## {}", period.label()));
+        blocks.push(format!(
             "{} tok · {} · {} sessions · {} calls",
             fmt_tokens(data.summary.total_tokens),
             fmt_cost(data.summary.total_cost),
@@ -680,7 +735,7 @@ async fn format_usage(
         if let Some(cache) = &data.cache
             && cache.total_input_tokens > 0
         {
-            lines.push(format!(
+            blocks.push(format!(
                 "💾 Cache: {:.0}% hit · {} of {} input cached",
                 cache.cache_hit_pct,
                 fmt_tokens(cache.cached_tokens),
@@ -688,79 +743,97 @@ async fn format_usage(
             ));
         }
 
-        if !data.daily.is_empty() && period != Period::Today {
-            lines.push(String::new());
-            lines.push("*Daily:*".to_string());
-            // Last 7 days of the window
+        let section = |title: &str, headers: &[&str], rows: Vec<Vec<String>>| -> Option<String> {
+            if rows.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "### {title}\n\n{}",
+                    md_table(headers, &rows).trim_end()
+                ))
+            }
+        };
+
+        if period != Period::Today {
+            // Last 7 days of the window, oldest-first.
             let window: Vec<_> = data.daily.iter().rev().take(7).collect();
-            for d in window.iter().rev() {
-                lines.push(format!(
-                    "  {} · {} tok · {}",
-                    d.date,
-                    fmt_tokens(d.tokens),
-                    fmt_cost(d.cost)
-                ));
-            }
+            let rows: Vec<Vec<String>> = window
+                .iter()
+                .rev()
+                .map(|d| vec![d.date.clone(), fmt_tokens(d.tokens), fmt_cost(d.cost)])
+                .collect();
+            blocks.extend(section("Daily", &["Date", "Tokens", "Cost"], rows));
         }
 
-        if !data.models.is_empty() {
-            lines.push(String::new());
-            lines.push("*By Model:*".to_string());
-            for m in data.models.iter().take(5) {
-                let est = if m.estimated { " ~" } else { "" };
-                lines.push(format!(
-                    "  `{}` · {} tok · {}{}",
-                    m.model,
+        let model_rows: Vec<Vec<String>> = data
+            .models
+            .iter()
+            .take(5)
+            .map(|m| {
+                vec![
+                    format!("`{}`", m.model),
                     fmt_tokens(m.tokens),
-                    fmt_cost(m.cost),
-                    est
-                ));
-            }
-        }
+                    format!(
+                        "{}{}",
+                        fmt_cost(m.cost),
+                        if m.estimated { " ~" } else { "" }
+                    ),
+                ]
+            })
+            .collect();
+        blocks.extend(section(
+            "By Model",
+            &["Model", "Tokens", "Cost"],
+            model_rows,
+        ));
 
-        if !data.tools.is_empty() {
-            lines.push(String::new());
-            lines.push("*Core Tools:*".to_string());
-            for t in data.tools.iter().take(5) {
-                lines.push(format!(
-                    "  `{}` · {} calls",
-                    t.tool_name,
-                    format_number(t.call_count)
-                ));
-            }
-        }
+        let tool_rows: Vec<Vec<String>> = data
+            .tools
+            .iter()
+            .take(5)
+            .map(|t| vec![format!("`{}`", t.tool_name), format_number(t.call_count)])
+            .collect();
+        blocks.extend(section("Core Tools", &["Tool", "Calls"], tool_rows));
 
-        if !data.projects.is_empty() {
-            lines.push(String::new());
-            lines.push("*By Project:*".to_string());
-            for p in data.projects.iter().take(5) {
-                lines.push(format!(
-                    "  `{}` · {} · {} sessions",
-                    p.project,
+        let project_rows: Vec<Vec<String>> = data
+            .projects
+            .iter()
+            .take(5)
+            .map(|p| {
+                vec![
+                    format!("`{}`", p.project),
                     fmt_cost(p.cost),
-                    p.sessions
-                ));
-            }
-        }
+                    p.sessions.to_string(),
+                ]
+            })
+            .collect();
+        blocks.extend(section(
+            "By Project",
+            &["Project", "Cost", "Sessions"],
+            project_rows,
+        ));
 
-        if !data.activities.is_empty() {
-            lines.push(String::new());
-            lines.push("*By Activity:*".to_string());
-            for a in data.activities.iter().take(5) {
-                lines.push(format!(
-                    "  {} · {} · {} turns · {:.0}% one-shot",
-                    a.category,
+        let activity_rows: Vec<Vec<String>> = data
+            .activities
+            .iter()
+            .take(5)
+            .map(|a| {
+                vec![
+                    a.category.clone(),
                     fmt_cost(a.cost),
-                    a.turns,
-                    a.one_shot_pct,
-                ));
-            }
-        }
-
-        lines.push(String::new());
+                    a.turns.to_string(),
+                    format!("{:.0}%", a.one_shot_pct),
+                ]
+            })
+            .collect();
+        blocks.extend(section(
+            "By Activity",
+            &["Activity", "Cost", "Turns", "1-shot"],
+            activity_rows,
+        ));
     }
 
-    lines.join("\n")
+    blocks.join("\n\n")
 }
 
 fn estimate_cost(model: &str, token_count: i64) -> Option<f64> {

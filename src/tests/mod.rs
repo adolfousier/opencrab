@@ -60,6 +60,7 @@ pub mod clipboard_image_paste_test;
 pub mod codex_cli_test;
 pub mod collapse_build_output_test;
 pub mod collapse_home_test;
+pub mod command_rich_table_test;
 pub mod compaction_prompts_test;
 pub mod compaction_test;
 pub mod config_dotted_caps_test;

@@ -1852,11 +1852,19 @@ pub(crate) async fn handle_message(
             is_dm
         );
 
-        // Handle simple text-response commands (Help, Usage, Evolve, Doctor, etc.)
+        // Handle simple text-response commands (Help, Usage, MissionControl,
+        // Evolve, Doctor, etc.). Chunk to Telegram's 4096-char limit and send
+        // via the HTML-or-plain fallback: the old single
+        // `.parse_mode(Html).await?` silently failed for long or HTML-invalid
+        // replies — the mission-control report exceeds 4096 chars, so Telegram
+        // rejected the whole message and `/mission-control` appeared to do
+        // nothing. `send_html_or_plain` also degrades to plain text if a chunk
+        // is not valid Telegram HTML, so a render glitch never eats the reply.
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
-            message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&reply))
-                .parse_mode(ParseMode::Html)
-                .await?;
+            let html = command_md_to_html(&reply);
+            for chunk in split_message(&html, 4096) {
+                send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await?;
+            }
             return Ok(());
         }
 
