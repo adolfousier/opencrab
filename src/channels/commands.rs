@@ -575,39 +575,7 @@ pub(crate) fn format_help() -> String {
     out
 }
 
-/// Build a GitHub-flavored markdown table (`| h | h |` + `| --- | --- |` +
-/// rows). The Telegram rich renderer turns this into a phone-friendly layout:
-/// an aligned `<pre>` grid when narrow, a key/value list for wide 2-column
-/// tables, or cards for wide 3+ column tables. Returns `""` for no rows.
-///
-/// Cell contents have `|` and newlines neutralized so a stray pipe in a value
-/// can't shift columns or break the row.
-pub(crate) fn md_table(headers: &[&str], rows: &[Vec<String>]) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let clean = |s: &str| s.replace(['|', '\n'], " ");
-    let mut out = String::new();
-    out.push_str("| ");
-    out.push_str(
-        &headers
-            .iter()
-            .map(|h| clean(h))
-            .collect::<Vec<_>>()
-            .join(" | "),
-    );
-    out.push_str(" |\n|");
-    for _ in headers {
-        out.push_str(" --- |");
-    }
-    out.push('\n');
-    for row in rows {
-        out.push_str("| ");
-        out.push_str(&row.iter().map(|c| clean(c)).collect::<Vec<_>>().join(" | "));
-        out.push_str(" |\n");
-    }
-    out
-}
+pub(crate) use crate::utils::string::md_table;
 
 // ── /rtk ────────────────────────────────────────────────────────────────────
 

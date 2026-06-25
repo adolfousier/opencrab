@@ -1853,17 +1853,28 @@ pub(crate) async fn handle_message(
         );
 
         // Handle simple text-response commands (Help, Usage, MissionControl,
-        // Evolve, Doctor, etc.). Chunk to Telegram's 4096-char limit and send
-        // via the HTML-or-plain fallback: the old single
-        // `.parse_mode(Html).await?` silently failed for long or HTML-invalid
-        // replies — the mission-control report exceeds 4096 chars, so Telegram
-        // rejected the whole message and `/mission-control` appeared to do
-        // nothing. `send_html_or_plain` also degrades to plain text if a chunk
-        // is not valid Telegram HTML, so a render glitch never eats the reply.
+        // Evolve, Doctor, etc.). Prefer NATIVE rich rendering — the same
+        // `sendRichMessage` path regular messages and cron reports use, which
+        // turns markdown tables/headings into real Telegram tables (not `<pre>`
+        // ASCII grids). Falls back to chunked HTML-or-plain when rich is
+        // disabled, the reply has no rich structure, or the native send fails.
+        // (The old single `.parse_mode(Html).await?` had no chunking either, so
+        // the >4096-char mission-control report silently failed to send at all.)
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
-            let html = command_md_to_html(&reply);
-            for chunk in split_message(&html, 4096) {
-                send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await?;
+            let sent_rich = super::rich::should_send_native_rich(&reply)
+                && super::rich::api::send_rich_markdown(
+                    bot.token(),
+                    msg.chat.id.0,
+                    thread_id,
+                    &reply,
+                )
+                .await
+                .is_ok();
+            if !sent_rich {
+                let html = command_md_to_html(&reply);
+                for chunk in split_message(&html, 4096) {
+                    send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await?;
+                }
             }
             return Ok(());
         }

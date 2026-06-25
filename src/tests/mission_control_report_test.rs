@@ -73,16 +73,20 @@ fn report_includes_all_sections() {
 
     let md = render_markdown(&analytics, &activity, &inbox, &schedule);
 
-    // Analytics section
-    assert!(md.contains("Mission Control"));
-    assert!(md.contains("Analytics"));
-    assert!(md.contains("Tools: 100 calls, 7 fails (7.0%)"));
-    assert!(md.contains("RSI applied: 12"));
-    assert!(md.contains("Brain: 312.4 KB across 1 files"));
-    assert!(md.contains("bash: 60 calls (8.3% fail)"));
-    assert!(md.contains("web_fetch: 22.2% fail (9 calls)"));
-    assert!(md.contains("tool_loop: 8"));
-    assert!(md.contains("MEMORY.md: 120.3 KB"));
+    // Authored as ATX headings + GFM tables (so native rich renders real
+    // tables, not ASCII grids).
+    assert!(md.contains("# 🦀 Mission Control"));
+    assert!(md.contains("## 📊 Analytics"));
+    assert!(md.contains("| --- |"), "must be a markdown table");
+
+    // Analytics table rows.
+    assert!(md.contains("100 calls, 7 fails (7.0%)"));
+    assert!(md.contains("| RSI applied | 12 |"));
+    assert!(md.contains("312.4 KB across 1 files"));
+    assert!(md.contains("| bash | 60 calls | 8.3% fail |"));
+    assert!(md.contains("| web_fetch | 22.2% fail | 9 calls |"));
+    assert!(md.contains("| tool_loop | 8 |"));
+    assert!(md.contains("| MEMORY.md | 120.3 KB |"));
 
     // Inbox section
     assert!(md.contains("Inbox (RSI Proposals)"));
@@ -109,7 +113,7 @@ fn report_includes_all_sections() {
 fn empty_sections_are_omitted() {
     let md = render_markdown(&McAnalytics::default(), &[], &[], &[]);
     assert!(md.contains("Mission Control"));
-    assert!(md.contains("Tools: 0 calls, 0 fails (0.0%)"));
+    assert!(md.contains("0 calls, 0 fails (0.0%)"));
     // Empty sections should not appear
     assert!(!md.contains("Inbox"));
     assert!(!md.contains("Activity Feed"));

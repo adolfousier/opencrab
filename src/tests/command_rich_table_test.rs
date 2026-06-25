@@ -39,6 +39,16 @@ fn help_renders_commands_on_separate_lines() {
 }
 
 #[test]
+fn help_qualifies_for_native_rich_rendering() {
+    // The table structure is what makes Telegram render it natively (real
+    // bordered tables) instead of the HTML/`<pre>` fallback.
+    assert!(
+        crate::channels::telegram::rich::has_rich_structure(&format_help()),
+        "help must contain a table/heading so it routes to native rich"
+    );
+}
+
+#[test]
 fn md_table_emits_gfm_with_separator() {
     let t = md_table(&["A", "B"], &[vec!["1".into(), "2".into()]]);
     assert!(t.contains("| A | B |"));

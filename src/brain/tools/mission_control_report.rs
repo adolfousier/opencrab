@@ -104,90 +104,158 @@ pub(crate) fn render_markdown(
     inbox: &[McInboxItem],
     schedule: &[McScheduleItem],
 ) -> String {
-    let mut s = String::new();
+    use crate::utils::string::md_table;
+
     let fail_pct = if a.tool_total_calls > 0 {
         (a.tool_total_fails as f64 / a.tool_total_calls as f64) * 100.0
     } else {
         0.0
     };
 
-    // ── Header ───────────────────────────────────────────────────────
-    s.push_str("🦀 *Mission Control*\n\n");
+    // Markdown blocks (heading / table) joined with blank lines. Authored as
+    // ATX headings + GFM tables so Telegram's native rich renderer turns them
+    // into real bordered tables (not `<pre>` ASCII grids); the HTML fallback
+    // still renders them readably.
+    let mut blocks: Vec<String> = vec!["# 🦀 Mission Control".to_string()];
 
-    // ── Analytics section ────────────────────────────────────────────
-    s.push_str("━━ *Analytics* ━━\n");
-    s.push_str(&format!(
-        "Tools: {} calls, {} fails ({:.1}%)\n",
-        a.tool_total_calls, a.tool_total_fails, fail_pct
-    ));
-    s.push_str(&format!("RSI applied: {}\n", a.rsi_applied_total));
-    s.push_str(&format!(
-        "Brain: {:.1} KB across {} files\n",
-        a.brain_total_kb,
-        a.brain_files.len()
-    ));
+    // ── Analytics ────────────────────────────────────────────────────
+    blocks.push("## 📊 Analytics".to_string());
+    blocks.push(
+        md_table(
+            &["Metric", "Value"],
+            &[
+                vec![
+                    "Tools".to_string(),
+                    format!(
+                        "{} calls, {} fails ({:.1}%)",
+                        a.tool_total_calls, a.tool_total_fails, fail_pct
+                    ),
+                ],
+                vec!["RSI applied".to_string(), a.rsi_applied_total.to_string()],
+                vec![
+                    "Brain".to_string(),
+                    format!(
+                        "{:.1} KB across {} files",
+                        a.brain_total_kb,
+                        a.brain_files.len()
+                    ),
+                ],
+            ],
+        )
+        .trim_end()
+        .to_string(),
+    );
 
-    if !a.top_tools.is_empty() {
-        s.push_str("\n*Top tools*\n");
-        for t in a.top_tools.iter().take(10) {
-            s.push_str(&format!(
-                "• {}: {} calls ({:.1}% fail)\n",
-                t.name, t.total, t.fail_rate
-            ));
+    let mut table_section = |title: &str, headers: &[&str], rows: Vec<Vec<String>>| {
+        if !rows.is_empty() {
+            blocks.push(format!("### {title}"));
+            blocks.push(md_table(headers, &rows).trim_end().to_string());
         }
-    }
+    };
 
-    if !a.flakiest_tools.is_empty() {
-        s.push_str("\n*Flakiest (>=5 calls)*\n");
-        for t in a.flakiest_tools.iter().take(8) {
-            s.push_str(&format!(
-                "• {}: {:.1}% fail ({} calls)\n",
-                t.name, t.fail_rate, t.total
-            ));
-        }
-    }
-
-    if !a.rsi_top_dimensions.is_empty() {
-        s.push_str("\n*RSI by dimension*\n");
-        for (dim, n) in a.rsi_top_dimensions.iter().take(8) {
-            s.push_str(&format!("• {dim}: {n}\n"));
-        }
-    }
-
-    if !a.brain_files.is_empty() {
-        s.push_str("\n*Brain files*\n");
-        for f in a.brain_files.iter().take(10) {
-            s.push_str(&format!("• {}: {:.1} KB\n", f.name, f.kb));
-        }
-    }
+    table_section(
+        "Top Tools",
+        &["Tool", "Calls", "Fail"],
+        a.top_tools
+            .iter()
+            .take(10)
+            .map(|t| {
+                vec![
+                    t.name.clone(),
+                    format!("{} calls", t.total),
+                    format!("{:.1}% fail", t.fail_rate),
+                ]
+            })
+            .collect(),
+    );
+    table_section(
+        "Flakiest (>=5 calls)",
+        &["Tool", "Fail", "Calls"],
+        a.flakiest_tools
+            .iter()
+            .take(8)
+            .map(|t| {
+                vec![
+                    t.name.clone(),
+                    format!("{:.1}% fail", t.fail_rate),
+                    format!("{} calls", t.total),
+                ]
+            })
+            .collect(),
+    );
+    table_section(
+        "RSI by Dimension",
+        &["Dimension", "Count"],
+        a.rsi_top_dimensions
+            .iter()
+            .take(8)
+            .map(|(dim, n)| vec![dim.clone(), n.to_string()])
+            .collect(),
+    );
+    table_section(
+        "Brain Files",
+        &["File", "Size"],
+        a.brain_files
+            .iter()
+            .take(10)
+            .map(|f| vec![f.name.clone(), format!("{:.1} KB", f.kb)])
+            .collect(),
+    );
 
     // ── Inbox (RSI proposals) ────────────────────────────────────────
     if !inbox.is_empty() {
-        s.push_str("\n━━ *Inbox (RSI Proposals)* ━━\n");
-        for item in inbox.iter().take(5) {
-            let icon = inbox_icon(&item.kind);
-            s.push_str(&format!("{} {}: {}\n", icon, item.label, item.summary));
-        }
+        let rows: Vec<Vec<String>> = inbox
+            .iter()
+            .take(5)
+            .map(|item| {
+                vec![
+                    format!("{} {}", inbox_icon(&item.kind), item.label),
+                    item.summary.clone(),
+                ]
+            })
+            .collect();
+        blocks.push("## 📥 Inbox (RSI Proposals)".to_string());
+        blocks.push(
+            md_table(&["Proposal", "Detail"], &rows)
+                .trim_end()
+                .to_string(),
+        );
     }
 
     // ── Activity feed ────────────────────────────────────────────────
     if !activity.is_empty() {
-        s.push_str("\n━━ *Activity Feed* ━━\n");
-        for entry in activity.iter().take(5) {
-            let icon = activity_icon(&entry.level);
-            let date = entry.timestamp.format("%Y-%m-%d");
-            s.push_str(&format!("{} {} - {}\n", icon, date, entry.detail));
-        }
+        let rows: Vec<Vec<String>> = activity
+            .iter()
+            .take(5)
+            .map(|entry| {
+                vec![
+                    format!(
+                        "{} {}",
+                        activity_icon(&entry.level),
+                        entry.timestamp.format("%Y-%m-%d")
+                    ),
+                    entry.detail.clone(),
+                ]
+            })
+            .collect();
+        blocks.push("## 📰 Activity Feed".to_string());
+        blocks.push(md_table(&["When", "Detail"], &rows).trim_end().to_string());
     }
 
     // ── Schedule (cron jobs) ─────────────────────────────────────────
     if !schedule.is_empty() {
-        s.push_str("\n━━ *Schedule* ━━\n");
-        for item in schedule.iter() {
-            let icon = schedule_icon(item);
-            s.push_str(&format!("{} {} ({})\n", icon, item.label, item.schedule));
-        }
+        let rows: Vec<Vec<String>> = schedule
+            .iter()
+            .map(|item| {
+                vec![
+                    format!("{} {}", schedule_icon(item), item.label),
+                    item.schedule.clone(),
+                ]
+            })
+            .collect();
+        blocks.push("## ⏰ Schedule".to_string());
+        blocks.push(md_table(&["Job", "Schedule"], &rows).trim_end().to_string());
     }
 
-    s
+    blocks.join("\n\n")
 }

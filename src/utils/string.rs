@@ -134,6 +134,40 @@ pub fn format_ctx_footer(used: u32, max: u32, tps: Option<f64>) -> String {
     }
 }
 
+/// Build a GitHub-flavored markdown table (`| h | h |` + `| --- | --- |` +
+/// rows). Telegram's native rich renderer (`sendRichMessage`) turns this into a
+/// real bordered table; the HTML fallback renders a phone-friendly grid /
+/// key-value list. Returns `""` for no rows so callers can skip empty sections.
+///
+/// Cell contents have `|` and newlines neutralized so a stray pipe in a value
+/// can't shift columns or break the row.
+pub fn md_table(headers: &[&str], rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let clean = |s: &str| s.replace(['|', '\n'], " ");
+    let mut out = String::new();
+    out.push_str("| ");
+    out.push_str(
+        &headers
+            .iter()
+            .map(|h| clean(h))
+            .collect::<Vec<_>>()
+            .join(" | "),
+    );
+    out.push_str(" |\n|");
+    for _ in headers {
+        out.push_str(" --- |");
+    }
+    out.push('\n');
+    for row in rows {
+        out.push_str("| ");
+        out.push_str(&row.iter().map(|c| clean(c)).collect::<Vec<_>>().join(" | "));
+        out.push_str(" |\n");
+    }
+    out
+}
+
 /// Strip ctx footer lines (e.g. "ctx: 84K/200K 42% | 406 tok/s") from text.
 /// Used on incoming reply quotes so the metadata never leaks into agent context.
 pub fn strip_ctx_footer(text: &str) -> String {
