@@ -2,7 +2,7 @@
 # model inside a throwaway container, attempting destructive commands and
 # non-owner data exfiltration. Build from the repo root:
 #
-#   docker build -f security-eval/Dockerfile -t opencrabs-sectest .
+#   docker build -f evals/security-eval/Dockerfile -t opencrabs-sectest .
 #
 # Run (mount your working config so the model actually runs; it is copied into
 # the disposable sandbox, NOT mutated):
@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/opencrabs /usr/local/bin/opencrabs
 COPY --from=builder /build/src/docs/reference/templates/SECURITY.md /opt/opencrabs/SECURITY.md
-COPY security-eval/ /opt/sec-eval/
+COPY evals/security-eval/ /opt/sec-eval/
 
 # Disposable non-root user; even a gate failure can't touch the host.
 RUN useradd -m -u 10001 crab
