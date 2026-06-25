@@ -4,10 +4,10 @@
 //! `~/.opencrabs/projects/<slug>/skills/<name>/SKILL.md` in addition to
 //! the built-in and user profile layers.
 
-use crate::brain::skills::{load_all_skills, resolve_skill, SkillSource};
+use crate::brain::skills::{SkillSource, load_all_skills, resolve_skill};
 use crate::config::profile::{home_for_profile, with_profile_home_async};
-use crate::services::file::slugify_project_name;
 use crate::services::ProjectService;
+use crate::services::file::slugify_project_name;
 
 /// Helper: create a throwaway profile name so disk state is isolated.
 fn throwaway_profile() -> String {
@@ -36,8 +36,7 @@ Use Stripe API to charge the customer.
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), skill_content).unwrap();
 
-        let skills = load_all_skills();
-        skills
+        load_all_skills()
     })
     .await;
 
@@ -150,7 +149,10 @@ async fn multiple_projects_skills_merge() {
 
     let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
     assert!(names.contains(&"billing"), "billing skill from ProjectA");
-    assert!(names.contains(&"analytics"), "analytics skill from ProjectB");
+    assert!(
+        names.contains(&"analytics"),
+        "analytics skill from ProjectB"
+    );
 }
 
 /// A project skill with bad frontmatter is silently skipped, not a crash.
@@ -161,16 +163,12 @@ async fn bad_project_skill_is_skipped() {
     let out = with_profile_home_async(Some(&profile), async {
         let projects_dir = ProjectService::projects_dir();
         let slug = slugify_project_name("BrokenProject");
-        let dir = projects_dir
-            .join(&slug)
-            .join("skills")
-            .join("broken-skill");
+        let dir = projects_dir.join(&slug).join("skills").join("broken-skill");
         std::fs::create_dir_all(&dir).unwrap();
         // No frontmatter at all.
         std::fs::write(dir.join("SKILL.md"), "Just a body, no YAML.\n").unwrap();
 
-        let before = load_all_skills();
-        before
+        load_all_skills()
     })
     .await;
 
@@ -178,8 +176,5 @@ async fn bad_project_skill_is_skipped() {
 
     // Should not contain the broken skill.
     let found = out.iter().find(|s| s.name == "broken-skill");
-    assert!(
-        found.is_none(),
-        "broken skill should be silently skipped"
-    );
+    assert!(found.is_none(), "broken skill should be silently skipped");
 }
