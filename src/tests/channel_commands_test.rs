@@ -56,7 +56,12 @@ fn format_help_most_used_commands_first() {
     let commands: Vec<&str> = builtin_section
         .lines()
         .filter_map(|line| {
-            let trimmed = line.trim().strip_prefix('`')?;
+            // Handle both bare backtick lines and markdown table rows:
+            //   bare:  `/new` description
+            //   table: | `/new` | description |
+            let content = line.trim();
+            let after_pipe = content.strip_prefix('|').unwrap_or(content);
+            let trimmed = after_pipe.trim().strip_prefix('`')?;
             let cmd = trimmed.split('`').next()?;
             if cmd.starts_with('/') {
                 Some(cmd.split_whitespace().next().unwrap_or(cmd))
