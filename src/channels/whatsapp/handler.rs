@@ -754,7 +754,7 @@ pub(crate) async fn handle_message(
     let agent_input = if info.source.is_group {
         let chat_id_str = info.source.chat.to_string();
         match channel_msg_repo
-            .recent(Some("whatsapp"), &chat_id_str, 30)
+            .recent(Some("whatsapp"), &chat_id_str, 30, None)
             .await
         {
             Ok(messages) if !messages.is_empty() => {

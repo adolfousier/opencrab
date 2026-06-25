@@ -101,36 +101,60 @@ impl ChannelMessageRepository {
             .context("Failed to update channel message content")
     }
 
-    /// Get recent messages for a specific chat
+    /// Get recent messages for a specific chat, optionally filtered by thread_id.
+    /// When `thread_id` is Some, only messages belonging to that forum topic are returned.
     pub async fn recent(
         &self,
         channel: Option<&str>,
         chat_id: &str,
         limit: i64,
+        thread_id: Option<&str>,
     ) -> Result<Vec<ChannelMessage>> {
         let ch = channel.map(|s| s.to_string());
         let cid = chat_id.to_string();
+        let tid = thread_id.map(|s| s.to_string());
         self.pool
             .get()
             .await
             .context("Failed to get connection")?
             .interact(move |conn| {
-                if let Some(ch) = ch {
-                    let mut stmt = conn.prepare_cached(
-                        "SELECT * FROM channel_messages \
-                         WHERE channel = ?1 AND channel_chat_id = ?2 \
-                         ORDER BY created_at DESC LIMIT ?3",
-                    )?;
-                    let rows = stmt.query_map(params![ch, cid, limit], ChannelMessage::from_row)?;
-                    rows.collect::<std::result::Result<Vec<_>, _>>()
-                } else {
-                    let mut stmt = conn.prepare_cached(
-                        "SELECT * FROM channel_messages \
-                         WHERE channel_chat_id = ?1 \
-                         ORDER BY created_at DESC LIMIT ?2",
-                    )?;
-                    let rows = stmt.query_map(params![cid, limit], ChannelMessage::from_row)?;
-                    rows.collect::<std::result::Result<Vec<_>, _>>()
+                match (ch, tid) {
+                    (Some(ch), Some(tid)) => {
+                        let mut stmt = conn.prepare_cached(
+                            "SELECT * FROM channel_messages \
+                             WHERE channel = ?1 AND channel_chat_id = ?2 AND thread_id = ?3 \
+                             ORDER BY created_at DESC LIMIT ?4",
+                        )?;
+                        let rows = stmt.query_map(params![ch, cid, tid, limit], ChannelMessage::from_row)?;
+                        rows.collect::<std::result::Result<Vec<_>, _>>()
+                    }
+                    (Some(ch), None) => {
+                        let mut stmt = conn.prepare_cached(
+                            "SELECT * FROM channel_messages \
+                             WHERE channel = ?1 AND channel_chat_id = ?2 \
+                             ORDER BY created_at DESC LIMIT ?3",
+                        )?;
+                        let rows = stmt.query_map(params![ch, cid, limit], ChannelMessage::from_row)?;
+                        rows.collect::<std::result::Result<Vec<_>, _>>()
+                    }
+                    (None, Some(tid)) => {
+                        let mut stmt = conn.prepare_cached(
+                            "SELECT * FROM channel_messages \
+                             WHERE channel_chat_id = ?1 AND thread_id = ?2 \
+                             ORDER BY created_at DESC LIMIT ?3",
+                        )?;
+                        let rows = stmt.query_map(params![cid, tid, limit], ChannelMessage::from_row)?;
+                        rows.collect::<std::result::Result<Vec<_>, _>>()
+                    }
+                    (None, None) => {
+                        let mut stmt = conn.prepare_cached(
+                            "SELECT * FROM channel_messages \
+                             WHERE channel_chat_id = ?1 \
+                             ORDER BY created_at DESC LIMIT ?2",
+                        )?;
+                        let rows = stmt.query_map(params![cid, limit], ChannelMessage::from_row)?;
+                        rows.collect::<std::result::Result<Vec<_>, _>>()
+                    }
                 }
             })
             .await
@@ -393,7 +417,7 @@ mod tests {
         repo.insert(&msg).await.expect("Failed to insert");
 
         let recent = repo
-            .recent(Some("telegram"), "-100123456", 10)
+            .recent(Some("telegram"), "-100123456", 10, None)
             .await
             .expect("Failed to fetch recent");
         assert_eq!(recent.len(), 1);

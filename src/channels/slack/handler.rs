@@ -1253,7 +1253,7 @@ async fn handle_message(
     let agent_input = if !is_dm {
         match state
             .channel_msg_repo
-            .recent(Some("slack"), &channel_id, 30)
+            .recent(Some("slack"), &channel_id, 30, None)
             .await
         {
             Ok(messages) if !messages.is_empty() => {

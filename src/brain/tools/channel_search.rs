@@ -137,9 +137,11 @@ impl Tool for ChannelSearchTool {
                     }
                 };
 
+                let thread_id = input.get("thread_id").and_then(|v| v.as_str());
+
                 let messages = self
                     .repo
-                    .recent(channel, chat_id, n)
+                    .recent(channel, chat_id, n, thread_id)
                     .await
                     .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
 

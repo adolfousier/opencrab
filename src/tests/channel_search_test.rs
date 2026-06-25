@@ -44,7 +44,7 @@ mod repository {
         let m = msg("telegram", "-100111", "Group A", "Alice", "Hello world");
         repo.insert(&m).await.unwrap();
 
-        let recent = repo.recent(Some("telegram"), "-100111", 10).await.unwrap();
+        let recent = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].content, "Hello world");
         assert_eq!(recent[0].sender_name, "Alice");
@@ -65,7 +65,7 @@ mod repository {
             repo.insert(&m).await.unwrap();
         }
 
-        let recent = repo.recent(Some("telegram"), "-100111", 3).await.unwrap();
+        let recent = repo.recent(Some("telegram"), "-100111", 3, None).await.unwrap();
         assert_eq!(recent.len(), 3);
     }
 
@@ -92,7 +92,7 @@ mod repository {
         .unwrap();
 
         // Same chat_id, no channel filter — both returned
-        let recent = repo.recent(None, "-100111", 10).await.unwrap();
+        let recent = repo.recent(None, "-100111", 10, None).await.unwrap();
         assert_eq!(recent.len(), 2);
     }
 
@@ -106,11 +106,11 @@ mod repository {
             .await
             .unwrap();
 
-        let tg = repo.recent(Some("telegram"), "-100111", 10).await.unwrap();
+        let tg = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
         assert_eq!(tg.len(), 1);
         assert_eq!(tg[0].content, "tg msg");
 
-        let dc = repo.recent(Some("discord"), "-100111", 10).await.unwrap();
+        let dc = repo.recent(Some("discord"), "-100111", 10, None).await.unwrap();
         assert_eq!(dc.len(), 0);
     }
 
@@ -264,7 +264,7 @@ mod repository {
         // Same ID again — INSERT OR IGNORE
         repo.insert(&m).await.unwrap();
 
-        let recent = repo.recent(Some("telegram"), "-100111", 10).await.unwrap();
+        let recent = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
         assert_eq!(recent.len(), 1);
     }
 
@@ -284,7 +284,7 @@ mod repository {
         let id = m.id;
         repo.insert(&m).await.unwrap();
 
-        let recent = repo.recent(Some("slack"), "C123", 1).await.unwrap();
+        let recent = repo.recent(Some("slack"), "C123", 1, None).await.unwrap();
         assert_eq!(recent.len(), 1);
         let r = &recent[0];
         assert_eq!(r.id, id);
@@ -324,7 +324,7 @@ mod repository {
             .unwrap();
         assert_eq!(updated, 1, "the stored frame should be rewritten");
 
-        let recent = repo.recent(Some("telegram"), "-100111", 10).await.unwrap();
+        let recent = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
         assert_eq!(recent.len(), 1, "reconcile updates in place, no new row");
         assert_eq!(recent[0].content, final_text);
     }
@@ -337,6 +337,79 @@ mod repository {
             .await
             .unwrap();
         assert_eq!(updated, 0);
+    }
+
+    #[tokio::test]
+    async fn test_recent_filters_by_thread_id() {
+        let (_db, repo) = setup().await;
+
+        // Insert messages in two different forum topics of the same chat
+        let m1 = ChannelMessage::new(
+            "telegram".into(),
+            "-100111".into(),
+            Some("Kanban Board".into()),
+            "u1".into(),
+            "Alice".into(),
+            "topic A message".into(),
+            "text".into(),
+            None,
+        )
+        .with_thread(Some("2411".to_string()), Some("Topic A".into()));
+        let m2 = ChannelMessage::new(
+            "telegram".into(),
+            "-100111".into(),
+            Some("Kanban Board".into()),
+            "u2".into(),
+            "Bob".into(),
+            "topic B message".into(),
+            "text".into(),
+            None,
+        )
+        .with_thread(Some("2614".to_string()), Some("Topic B".into()));
+        let m3 = ChannelMessage::new(
+            "telegram".into(),
+            "-100111".into(),
+            Some("Kanban Board".into()),
+            "u1".into(),
+            "Alice".into(),
+            "another topic A message".into(),
+            "text".into(),
+            None,
+        )
+        .with_thread(Some("2411".to_string()), Some("Topic A".into()));
+
+        repo.insert(&m1).await.unwrap();
+        repo.insert(&m2).await.unwrap();
+        repo.insert(&m3).await.unwrap();
+
+        // Without thread_id filter: all 3 messages returned
+        let all = repo.recent(Some("telegram"), "-100111", 10, None).await.unwrap();
+        assert_eq!(all.len(), 3, "no thread_id filter should return all messages");
+
+        // With thread_id filter for topic A: only 2 messages
+        let topic_a = repo
+            .recent(Some("telegram"), "-100111", 10, Some("2411"))
+            .await
+            .unwrap();
+        assert_eq!(topic_a.len(), 2, "thread_id filter should return only topic A messages");
+        for msg in &topic_a {
+            assert_eq!(msg.thread_id.as_deref(), Some("2411"));
+        }
+
+        // With thread_id filter for topic B: only 1 message
+        let topic_b = repo
+            .recent(Some("telegram"), "-100111", 10, Some("2614"))
+            .await
+            .unwrap();
+        assert_eq!(topic_b.len(), 1, "thread_id filter should return only topic B messages");
+        assert_eq!(topic_b[0].content, "topic B message");
+
+        // With thread_id filter for nonexistent topic: empty
+        let none = repo
+            .recent(Some("telegram"), "-100111", 10, Some("9999"))
+            .await
+            .unwrap();
+        assert!(none.is_empty(), "nonexistent thread_id should return empty");
     }
 }
 

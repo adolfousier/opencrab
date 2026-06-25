@@ -61,7 +61,7 @@ async fn channel_message_thread_id_round_trips_through_repo() {
 
     repo.insert(&msg).await.expect("insert");
     let recent = repo
-        .recent(Some("telegram"), chat_id, 1)
+        .recent(Some("telegram"), chat_id, 1, None)
         .await
         .expect("recent");
     assert_eq!(recent.len(), 1);
@@ -104,7 +104,7 @@ async fn recent_returns_newest_first_so_helper_picks_latest_thread() {
     repo.insert(&new).await.expect("insert new");
 
     let recent = repo
-        .recent(Some("telegram"), chat_id, 1)
+        .recent(Some("telegram"), chat_id, 1, None)
         .await
         .expect("recent");
     assert_eq!(recent.len(), 1);

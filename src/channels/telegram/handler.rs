@@ -2238,7 +2238,7 @@ pub(crate) async fn handle_message(
     let agent_input = if !is_dm {
         let chat_id_str = msg.chat.id.0.to_string();
         match channel_msg_repo
-            .recent(Some("telegram"), &chat_id_str, 30)
+            .recent(Some("telegram"), &chat_id_str, 30, None)
             .await
         {
             Ok(messages) if !messages.is_empty() => {
