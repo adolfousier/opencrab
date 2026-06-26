@@ -116,3 +116,64 @@ fn load_all_includes_every_builtin() {
     assert!(names.contains(&"security-audit"), "names: {:?}", names);
     assert!(names.contains(&"cost-estimate"), "names: {:?}", names);
 }
+
+/// Issue #231: a skill placed in a NAMED profile's own skills dir
+/// (`~/.opencrabs/profiles/<name>/skills/<skill>/SKILL.md`) is discovered when
+/// that profile is active, and is NOT visible from a different profile.
+///
+/// This pins the actual contract behind the report: profile skills resolve
+/// through the profile-aware `opencrabs_home()`, so they load under the profile
+/// where they are declared (`-p <name>`) — both at startup and on the live
+/// reload path. They are deliberately invisible from other profiles, because a
+/// profile is an isolation boundary, not a shared discovery tier. A global
+/// scan of `profiles/*/skills/` would leak every profile's skills into every
+/// other profile and is exactly what this test guards against.
+#[tokio::test]
+async fn profile_skill_is_discovered_under_its_own_profile_only() {
+    use crate::config::profile::{home_for_profile, with_profile_home_async};
+
+    let declared = format!("skill-decl-{}", uuid::Uuid::new_v4());
+    let other = format!("skill-other-{}", uuid::Uuid::new_v4());
+
+    // Declare a skill inside the `declared` profile's own skills directory.
+    with_profile_home_async(Some(&declared), async {
+        let dir = crate::config::opencrabs_home()
+            .join("skills")
+            .join("profile-only-skill");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: profile-only-skill\ndescription: Lives in one profile\n---\n\nBody.\n",
+        )
+        .unwrap();
+    })
+    .await;
+
+    // Visible while that profile is active.
+    let seen_here = with_profile_home_async(Some(&declared), async {
+        load_all_skills()
+            .iter()
+            .any(|s| s.name == "profile-only-skill")
+    })
+    .await;
+
+    // Invisible from a different profile (isolation holds).
+    let seen_elsewhere = with_profile_home_async(Some(&other), async {
+        load_all_skills()
+            .iter()
+            .any(|s| s.name == "profile-only-skill")
+    })
+    .await;
+
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&declared)));
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&other)));
+
+    assert!(
+        seen_here,
+        "profile-declared skill must load under its own profile"
+    );
+    assert!(
+        !seen_elsewhere,
+        "profile-declared skill must NOT leak into a different profile"
+    );
+}
