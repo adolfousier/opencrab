@@ -14,6 +14,17 @@ use super::highlight::highlight_code;
 
 const TABLE_BORDER: Color = Color::DarkGray;
 const TABLE_HEADER: Color = Color::Rgb(120, 120, 120);
+/// Dim gray used for list bullets, ordered numbers, and the blockquote gutter.
+const LIST_MARKER: Color = Color::Rgb(120, 120, 120);
+/// Link text color (underlined). Distinct from inline-code orange.
+const LINK_COLOR: Color = Color::Rgb(90, 160, 230);
+
+/// Fold an emphasis style stack (bold/italic/strikethrough/link) into a single
+/// `Style`. Inner tags `patch` over outer ones so nesting composes (bold inside
+/// a link keeps both the underline and the weight).
+fn folded_style(stack: &[Style]) -> Style {
+    stack.iter().fold(Style::default(), |acc, s| acc.patch(*s))
+}
 
 /// Parse markdown and convert to styled lines for Ratatui.
 ///
@@ -22,13 +33,25 @@ const TABLE_HEADER: Color = Color::Rgb(120, 120, 120);
 pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
     let parser = Parser::new_ext(markdown, options);
     let mut lines = Vec::new();
     let mut current_line: Vec<Span<'static>> = Vec::new();
     let mut in_code_block = false;
     let mut code_language = String::new();
     let mut code_content = String::new();
-    let mut list_level: u32 = 0;
+    // List nesting: one entry per open list. `Some(n)` = ordered list whose
+    // NEXT item number is `n`; `None` = unordered (bullet). Depth is the stack
+    // length, used for indentation.
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
+    // Inline emphasis stack (bold / italic / strikethrough / link). Folded into
+    // the active style for every text span so nesting composes.
+    let mut style_stack: Vec<Style> = Vec::new();
+    // URL of the link currently being rendered (appended dimly on close).
+    let mut link_url: Option<String> = None;
+    // Blockquote nesting depth — adds a `▌` gutter to quoted paragraphs.
+    let mut blockquote_depth: u32 = 0;
     let mut heading_level = 1;
 
     // Table accumulation state
@@ -67,8 +90,30 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                         ]));
                     }
                 }
-                Tag::List(_) => {
-                    list_level += 1;
+                Tag::List(first_num) => {
+                    // `Some(start)` = ordered list, `None` = bullet list.
+                    list_stack.push(first_num);
+                }
+                Tag::Item => {
+                    // Each item starts a fresh visual line led by its marker.
+                    // Flush any stray pending content first so the marker leads.
+                    if !current_line.is_empty() {
+                        lines.push(Line::from(std::mem::take(&mut current_line)));
+                    }
+                    let depth = list_stack.len().max(1);
+                    let indent = "  ".repeat(depth - 1);
+                    let marker = match list_stack.last_mut() {
+                        Some(Some(n)) => {
+                            let m = format!("{n}. ");
+                            *n += 1;
+                            m
+                        }
+                        _ => "• ".to_string(),
+                    };
+                    current_line.push(Span::styled(
+                        format!("{indent}{marker}"),
+                        Style::default().fg(LIST_MARKER),
+                    ));
                 }
                 Tag::Table(_alignments) => {
                     in_table = true;
@@ -87,9 +132,28 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                 Tag::TableCell => {
                     current_cell.clear();
                 }
-                Tag::Strong | Tag::Emphasis => {}
-                Tag::BlockQuote(_) if !current_line.is_empty() => {
-                    lines.push(Line::from(std::mem::take(&mut current_line)));
+                Tag::Strong => {
+                    style_stack.push(Style::default().add_modifier(Modifier::BOLD));
+                }
+                Tag::Emphasis => {
+                    style_stack.push(Style::default().add_modifier(Modifier::ITALIC));
+                }
+                Tag::Strikethrough => {
+                    style_stack.push(Style::default().add_modifier(Modifier::CROSSED_OUT));
+                }
+                Tag::Link { dest_url, .. } => {
+                    link_url = Some(dest_url.to_string());
+                    style_stack.push(
+                        Style::default()
+                            .fg(LINK_COLOR)
+                            .add_modifier(Modifier::UNDERLINED),
+                    );
+                }
+                Tag::BlockQuote(_) => {
+                    blockquote_depth += 1;
+                    if !current_line.is_empty() {
+                        lines.push(Line::from(std::mem::take(&mut current_line)));
+                    }
                 }
                 _ => {}
             },
@@ -170,21 +234,54 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                     code_content.clear();
                 }
                 TagEnd::List(_) => {
-                    list_level = list_level.saturating_sub(1);
-                    if list_level == 0 {
+                    list_stack.pop();
+                    // Blank line only after the OUTERMOST list closes.
+                    if list_stack.is_empty() {
                         lines.push(Line::from(""));
                     }
                 }
                 TagEnd::Paragraph => {
+                    if blockquote_depth > 0 && !current_line.is_empty() {
+                        current_line
+                            .insert(0, Span::styled("▌ ", Style::default().fg(LIST_MARKER)));
+                    }
                     if !current_line.is_empty() {
                         lines.push(Line::from(std::mem::take(&mut current_line)));
                     }
-                    lines.push(Line::from(""));
+                    // Inside a list, keep items tight (no blank line between
+                    // each loose-list item); blank-separate only top-level prose.
+                    if list_stack.is_empty() {
+                        lines.push(Line::from(""));
+                    }
                 }
                 TagEnd::Item if !current_line.is_empty() => {
                     lines.push(Line::from(std::mem::take(&mut current_line)));
                 }
+                TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough => {
+                    style_stack.pop();
+                }
+                TagEnd::Link => {
+                    style_stack.pop();
+                    // Surface the destination so a non-clickable terminal still
+                    // shows where a link points, unless the visible text already
+                    // contains it (autolinks like <https://x> or [url](url)).
+                    if let Some(url) = link_url.take()
+                        && !url.is_empty()
+                    {
+                        let already_shown = current_line
+                            .last()
+                            .map(|s| s.content.contains(url.as_str()))
+                            .unwrap_or(false);
+                        if !already_shown {
+                            current_line.push(Span::styled(
+                                format!(" ({url})"),
+                                Style::default().fg(Color::DarkGray),
+                            ));
+                        }
+                    }
+                }
                 TagEnd::BlockQuote(_) => {
+                    blockquote_depth = blockquote_depth.saturating_sub(1);
                     lines.push(Line::from(""));
                 }
                 TagEnd::TableCell => {
@@ -214,8 +311,19 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                 } else if in_code_block {
                     code_content.push_str(&text_str);
                 } else {
-                    current_line.push(Span::styled(text_str, Style::default()));
+                    current_line.push(Span::styled(text_str, folded_style(&style_stack)));
                 }
+            }
+
+            // Task-list checkbox (`- [x]` / `- [ ]`), emitted right after the
+            // item's bullet. Render a styled box so checked/unchecked is visible.
+            Event::TaskListMarker(checked) => {
+                let (glyph, color) = if checked {
+                    ("[x] ", Color::Rgb(120, 200, 120))
+                } else {
+                    ("[ ] ", LIST_MARKER)
+                };
+                current_line.push(Span::styled(glyph, Style::default().fg(color)));
             }
 
             Event::Code(code) => {
