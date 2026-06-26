@@ -86,6 +86,7 @@ OpenCrabs runs as a **single binary on your terminal** — no server, no gateway
 - [Keyboard Shortcuts](#-keyboard-shortcuts)
 - [Brain System & 3-Tier Memory](#-brain-system--3-tier-memory)
 - [Debug and Logging](#-debug-and-logging)
+- [/goal — Autonomous Goal Loop](#-goal-autonomous-goal-loop)
 - [Cron Jobs & Heartbeats](#-cron-jobs--heartbeats)
 - [Architecture](#-architecture)
 - [Project Structure](#-project-structure)
@@ -351,6 +352,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | **Self-Healing** | Detects and recovers from phantom tool calls, gaslighting preambles, text repetition loops, XML tool call failures, and provider errors. Short-circuits repeated failing bash commands and rejects interactive commands that would hang. Automatic context compaction at 65% (soft) and 90% (hard). Sticky fallback promotion when primary recovers |
 | **Self-Sustaining** | Agent can modify its own source, build, test, and hot-restart via Unix `exec()` |
 | **Self-Improving** | Learns from experience — saves reusable workflows as custom commands, writes lessons learned to memory, updates its own brain files. All local, no data leaves your machine |
+| **Autonomous /goal** | Set a goal with `/goal <text>` and the agent loops autonomously: executing, self-evaluating with an LLM judge, and continuing with a correction prompt until the goal is satisfied or the turn budget runs out. Supports `/goal pause`, `/goal resume`, `/goal status`, and `/goal clear` |
 | **Dynamic Tools** | Define custom tools at runtime via `~/.opencrabs/tools.toml` — the agent can call them autonomously like built-in tools. HTTP and shell executors, template parameters (`{{param}}`), enable/disable without restart. The `tool_manage` meta-tool lets the agent create, remove, and reload tools on the fly |
 | **Skills (cross-harness)** | Multi-stage workflow templates in the de-facto `SKILL.md` format used by Claude Code, Anthropic managed agents, and OpenClaw. Drop a `SKILL.md` under `~/.opencrabs/skills/<name>/` and it auto-registers as `/<name>` — no `commands.toml` entry needed. Works in the TUI **and** every connected channel (Telegram, Discord, Slack, WhatsApp). Built-ins ship with the binary (always version-matched); user skills override by file presence. Two built-ins out of the box: `/security-audit` (language-agnostic CVE & static-analysis audit, scores 0-100) and `/cost-estimate` (codebase valuation with AI-assisted ROI). Same `SKILL.md` is portable across harnesses |
 | **Mission Control** | Full-screen `/mission-control` dialog showing every actionable artifact in one place: pending RSI proposals (inbox cards), recent RSI activity (improvements log feed), the schedule queue (cron jobs + paused/active state), and a live **Analytics** panel (brain file sizes, tool usage with proportional bars, failure rates, RSI applied by dimension). Apply or reject inbox proposals inline with `a` / `r` — same machinery as the agent's `rsi_proposals` tool, byte-identical install. Tab between panels, j/k to navigate, Enter for the detail popup, Esc to close. Cron paused jobs flag in orange, active in teal — at-a-glance state |
@@ -2900,6 +2902,66 @@ OpenCrabs runs a background RSI (Recursive Self-Improvement) cycle that analyzes
 > Full RSI documentation: [docs.opencrabs.com/self-improvement](https://docs.opencrabs.com/features/self-improvement.html)
 
 **Key difference from cloud-based "self-improving" agents:** Your memory files, commands, and brain files are 100% local and belong to you. With local models (LM Studio, Ollama), everything stays on your machine. With cloud providers (Anthropic, MiniMax, OpenRouter), conversations go through their APIs — but these providers are privacy-first by default per their ToS, and you can opt out of logging and training data in their settings. Either way, your self-improvement data (skills, memory, commands) never leaves your machine.
+
+---
+
+## 🎯 /goal — Autonomous Goal Loop
+
+OpenCrabs has an autonomous goal loop inspired by Claude Code's `/goal` command, but with a deeper implementation. Set a goal, and the agent loops autonomously: executing work, self-evaluating via an LLM judge, and continuing with correction prompts until the goal is satisfied or the turn budget runs out.
+
+### Basic Usage
+
+```bash
+# Set a goal
+/goal Refactor the authentication module to use JWT tokens
+
+# Check progress
+/goal status
+
+# Pause the loop (e.g. to ask a question without triggering a new turn)
+/goal pause
+
+# Resume
+/goal resume
+
+# Clear the goal entirely
+/goal clear
+```
+
+### How It Works
+
+1. **You set a goal** with `/goal <text>`. The goal text describes a concrete, verifiable condition.
+2. **The agent executes** a normal turn: reading files, editing code, running tests, etc.
+3. **An LLM judge evaluates** whether the goal condition holds after the turn completes. The judge uses the same provider/model as the current session.
+4. **If not done:** the judge returns a correction prompt with specific feedback. The agent gets a new turn with that correction appended as context, and the loop continues.
+5. **If done:** the loop ends and reports success with the judge's reasoning.
+6. **Turn budget exhausted:** after 20 turns (configurable), the loop stops and reports what was accomplished.
+
+### Judge Decision Flow
+
+The judge returns one of three verdicts:
+
+| Verdict | Meaning |
+|---------|---------|
+| `Done { reason }` | Goal is satisfied. Loop ends with success. |
+| `Continue { prompt, corrections }` | Goal not yet met. Agent gets a new turn with the correction prompt. |
+| `Paused { reason }` | User paused via `/goal pause`. Loop holds until `/goal resume`. |
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Turn budget | 20 | Max autonomous turns before the loop stops |
+| Judge model | Same as session | Uses whatever provider/model the current session is on |
+| Fail-open parsing | 3 attempts | If the judge returns malformed JSON 3 times, the loop gives up gracefully |
+
+### Compared to Claude Code
+
+Claude Code's `/goal` uses a small fast evaluator model. OpenCrabs uses the same model as the session (you can always switch models mid-session with `/models` if you want a faster judge). OpenCrabs also adds `/goal pause` and `/goal resume` for situations where you need to interact with the agent without triggering another autonomous turn.
+
+### Storage
+
+Goal state is persisted in the database (`goal_state` table) and survives restarts. The goal, turn count, and accumulated context are all durable.
 
 ---
 
