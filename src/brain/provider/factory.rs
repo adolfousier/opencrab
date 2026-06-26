@@ -1063,14 +1063,27 @@ fn try_create_openrouter(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
 /// the real Xiaomi key and injects it server-side, so the binary never ships a
 /// key. Overridable via `[providers.xiaomi] base_url`. Will be nginx-fronted.
 const XIAOMI_PROXY_BASE_URL: &str = "https://xiaomi-collab.opencrabs.com/v1/chat/completions";
-/// Last day (inclusive, UTC) of the free keyless window. After this, a user
-/// must supply their own `api_key`. The proxy also enforces this server-side.
-const XIAOMI_KEYLESS_CUTOFF: &str = "2026-06-25";
+/// The instant the opencrabs × Xiaomi collab ends: 2026-06-27 00:00 UTC. This
+/// is the literal end DATE — the free keyless window is open STRICTLY BEFORE it
+/// (`today < end`), so it stays open through all of the 26th and flips closed at
+/// 00:00 UTC on the 27th. Keeping the constant equal to the real end date (with
+/// `<`) — rather than a "last open day" with `<=` — is deliberate: the original
+/// bug was someone translating the end into a different number and closing the
+/// window a full day early. After the window a user must supply their own
+/// `api_key`; the proxy enforces the same cutoff server-side.
+const XIAOMI_KEYLESS_END: &str = "2026-06-27";
 
-/// True while the free keyless collab window is open (today <= cutoff, UTC).
+/// True while the free keyless collab window is open: any UTC date strictly
+/// before the end date, so it closes exactly at 2026-06-27 00:00 UTC.
 fn xiaomi_keyless_window_open() -> bool {
-    match chrono::NaiveDate::parse_from_str(XIAOMI_KEYLESS_CUTOFF, "%Y-%m-%d") {
-        Ok(cutoff) => chrono::Utc::now().date_naive() <= cutoff,
+    xiaomi_keyless_open_on(chrono::Utc::now().date_naive())
+}
+
+/// Window-open check for a given UTC date — split out so the boundary is
+/// testable without mocking the clock. Open ⇔ `today < end`.
+pub(crate) fn xiaomi_keyless_open_on(today: chrono::NaiveDate) -> bool {
+    match chrono::NaiveDate::parse_from_str(XIAOMI_KEYLESS_END, "%Y-%m-%d") {
+        Ok(end) => today < end,
         Err(_) => false,
     }
 }
@@ -1126,7 +1139,7 @@ fn try_create_xiaomi(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         }
         None => {
             tracing::warn!(
-                "Xiaomi free keyless window ended ({XIAOMI_KEYLESS_CUTOFF}); add your own api_key in keys.toml to keep using Xiaomi"
+                "Xiaomi free keyless window ended ({XIAOMI_KEYLESS_END}); add your own api_key in keys.toml to keep using Xiaomi"
             );
             return Ok(None);
         }

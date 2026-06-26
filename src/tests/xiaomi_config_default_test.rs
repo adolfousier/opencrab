@@ -59,3 +59,22 @@ fn programmatic_default_keeps_xiaomi_none() {
     // (used throughout tests) is unaffected, so blast radius stays small.
     assert!(ProviderConfigs::default().xiaomi.is_none());
 }
+
+/// Pin the keyless-window boundary so the cutoff can't drift back to closing a
+/// day early again. The opencrabs × Xiaomi collab ends 2026-06-27 00:00 UTC, so
+/// the 26th must still be open and the 27th must be closed.
+#[test]
+fn keyless_window_closes_at_2026_06_27_00_utc_not_a_day_early() {
+    use crate::brain::provider::factory::xiaomi_keyless_open_on;
+    let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+
+    assert!(xiaomi_keyless_open_on(d("2026-06-25")), "25th: open");
+    assert!(
+        xiaomi_keyless_open_on(d("2026-06-26")),
+        "26th must still be open — collab runs through the 26th (ends 27th 00:00 UTC)"
+    );
+    assert!(
+        !xiaomi_keyless_open_on(d("2026-06-27")),
+        "27th: closed — window ends at 27th 00:00 UTC"
+    );
+}
