@@ -4098,6 +4098,50 @@ impl AgentService {
                     tracing::info!("Agent responded with text only (no tool calls)");
                 }
                 final_response = Some(response);
+
+                // --- GOAL POST-TURN HOOK ---
+                // If a goal is active for this session, evaluate whether
+                // the goal is satisfied by the last response. If the
+                // judge says CONTINUE and the turn budget has room,
+                // inject a continuation prompt and re-enter the loop.
+                {
+                    use crate::brain::goal::GoalManager;
+                    let goal_mgr = GoalManager::new(self.context.clone());
+                    match goal_mgr
+                        .evaluate_after_turn(
+                            self.provider_for_session(session_id).as_ref(),
+                            &model_name,
+                            session_id,
+                            &accumulated_text,
+                        )
+                        .await
+                    {
+                        crate::brain::goal::GoalDecision::Continue {
+                            continuation_prompt,
+                            ..
+                        } => {
+                            tracing::info!("Goal not yet satisfied, injecting continuation prompt");
+                            if let Some(ref cb) = progress_callback {
+                                cb(
+                                    session_id,
+                                    ProgressEvent::SelfHealingAlert {
+                                        message: "Goal continues, re-entering tool loop"
+                                            .to_string(),
+                                    },
+                                );
+                            }
+                            context.add_message(Message::user(continuation_prompt));
+                            final_response = None;
+                            continue;
+                        }
+                        crate::brain::goal::GoalDecision::Done { ref reason } => {
+                            tracing::info!("Goal satisfied: {}", reason);
+                        }
+                        crate::brain::goal::GoalDecision::Paused { ref reason } => {
+                            tracing::warn!("Goal paused: {}", reason);
+                        }
+                    }
+                }
                 break;
             }
 

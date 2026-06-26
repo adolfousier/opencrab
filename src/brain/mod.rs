@@ -7,6 +7,7 @@ pub mod agent;
 pub mod commands;
 pub mod dedup_scan;
 pub mod filter;
+pub mod goal;
 pub mod mission_control;
 pub mod plans;
 pub mod prompt_builder;

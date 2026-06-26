@@ -225,6 +225,7 @@ impl Tool for SlashCommandTool {
                  On channels, users type /stop. On TUI, press Escape twice."
                     .into(),
             )),
+            "/goal" => self.handle_goal(args, context).await,
             "/onboard" => Ok(ToolResult::success(
                 "Onboarding wizard is a TUI-only interactive screen. \
                  However, you can read and modify all settings via config_manager \
@@ -389,6 +390,7 @@ impl SlashCommandTool {
              /compact  — Compact context (summarize + trim)\n\
              /rebuild  — Build from source & hot-restart\n\
              /evolve   — Download latest release & hot-restart\n\
+             /goal     — Set/view/pause/clear session goal\n\
              /whisper  — Voice-to-text (TUI only)\n\
              /onboard  — Setup wizard (TUI only, use config_manager for programmatic changes)\n\n\
              You can also use config_manager to read/write any config setting directly."
@@ -717,6 +719,81 @@ impl SlashCommandTool {
         }
     }
 
+    async fn handle_goal(&self, args: &str, context: &ToolExecutionContext) -> Result<ToolResult> {
+        let svc_ctx = match &context.service_context {
+            Some(ctx) => ctx.clone(),
+            None => {
+                return Ok(ToolResult::error(
+                    "Service context not available — cannot manage goals.".into(),
+                ));
+            }
+        };
+
+        let goal_mgr = crate::brain::goal::GoalManager::new(svc_ctx);
+        let session_id = context.session_id;
+        let trimmed = args.trim();
+
+        // Subcommands
+        match trimmed.to_lowercase().as_str() {
+            "" | "status" => {
+                // Show current goal
+                match goal_mgr.get_goal(session_id).await {
+                    Ok(Some(goal)) => {
+                        let elapsed = chrono::Utc::now()
+                            .signed_duration_since(
+                                chrono::DateTime::parse_from_rfc3339(&goal.created_at)
+                                    .unwrap_or_default(),
+                            )
+                            .num_minutes();
+                        Ok(ToolResult::success(format!(
+                            "🎯 Active Goal ({}):\n\n{}\n\nState: {} | Turns: {}/{} | Elapsed: {}m",
+                            goal.id,
+                            goal.goal_text,
+                            goal.state,
+                            goal.turns_used,
+                            goal.max_turns,
+                            elapsed,
+                        )))
+                    }
+                    Ok(None) => Ok(ToolResult::success(
+                        "No active goal for this session. \
+                         Use `/goal <description>` to set one."
+                            .into(),
+                    )),
+                    Err(e) => Ok(ToolResult::error(format!("Failed to get goal: {}", e))),
+                }
+            }
+            "clear" | "cancel" | "stop" => match goal_mgr.clear_goal(session_id).await {
+                Ok(()) => Ok(ToolResult::success("Goal cleared.".into())),
+                Err(e) => Ok(ToolResult::error(format!("Failed to clear goal: {}", e))),
+            },
+            "pause" => match goal_mgr.pause_goal(session_id).await {
+                Ok(()) => Ok(ToolResult::success("Goal paused.".into())),
+                Err(e) => Ok(ToolResult::error(format!("Failed to pause goal: {}", e))),
+            },
+            "resume" => match goal_mgr.resume_goal(session_id).await {
+                Ok(()) => Ok(ToolResult::success("Goal resumed.".into())),
+                Err(e) => Ok(ToolResult::error(format!("Failed to resume goal: {}", e))),
+            },
+            _ => {
+                // Set a new goal
+                match goal_mgr
+                    .set_goal(session_id, trimmed.to_string(), None, None)
+                    .await
+                {
+                    Ok(goal) => Ok(ToolResult::success(format!(
+                        "🎯 Goal set (ID: {}):\n\n{}\n\n\
+                         The agent will work toward this goal autonomously \
+                         for up to {} turns. Use `/goal status` to check \
+                         progress, `/goal pause` to pause, `/goal clear` to remove.",
+                        goal.id, goal.goal_text, goal.max_turns,
+                    ))),
+                    Err(e) => Ok(ToolResult::error(format!("Failed to set goal: {}", e))),
+                }
+            }
+        }
+    }
+
     fn handle_user_command(&self, command: &str, _args: &str) -> Result<ToolResult> {
         let brain_path = crate::brain::BrainLoader::resolve_path();
         let loader = crate::brain::CommandLoader::from_brain_path(&brain_path);
@@ -754,6 +831,7 @@ impl SlashCommandTool {
                 "/settings",
                 "/onboard",
                 "/whisper",
+                "/goal",
             ];
             Ok(ToolResult::error(format!(
                 "Unknown command: '{}'. Built-in: {}. User-defined: {}",

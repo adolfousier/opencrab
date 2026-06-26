@@ -729,6 +729,71 @@ impl FeedbackEntry {
     }
 }
 
+// ─── GoalState ─────────────────────────────────────────────────────────────
+
+/// Goal state model — tracks an autonomous goal per session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalState {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub goal_text: String,
+    /// "active", "paused", "completed", "failed"
+    pub state: String,
+    pub turns_used: i32,
+    pub max_turns: i32,
+    pub consecutive_parse_failures: i32,
+    pub judge_verdict: Option<String>,
+    pub judge_reason: Option<String>,
+    pub channel: Option<String>,
+    pub channel_chat_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl GoalState {
+    pub fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(GoalState {
+            id: uuid_col(row, "id")?,
+            session_id: uuid_col(row, "session_id")?,
+            goal_text: row.get("goal_text")?,
+            state: row.get("state")?,
+            turns_used: row.get("turns_used")?,
+            max_turns: row.get("max_turns")?,
+            consecutive_parse_failures: row.get("consecutive_parse_failures")?,
+            judge_verdict: row.get("judge_verdict")?,
+            judge_reason: row.get("judge_reason")?,
+            channel: row.get("channel")?,
+            channel_chat_id: row.get("channel_chat_id")?,
+            created_at: row.get("created_at")?,
+            updated_at: row.get("updated_at")?,
+        })
+    }
+
+    pub fn new(
+        session_id: Uuid,
+        goal_text: String,
+        channel: Option<String>,
+        channel_chat_id: Option<String>,
+    ) -> Self {
+        let now = Utc::now().to_rfc3339();
+        Self {
+            id: Uuid::new_v4(),
+            session_id,
+            goal_text,
+            state: "active".to_string(),
+            turns_used: 0,
+            max_turns: 20,
+            consecutive_parse_failures: 0,
+            judge_verdict: None,
+            judge_reason: None,
+            channel,
+            channel_chat_id,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
