@@ -188,6 +188,11 @@ async fn spawn_cron_scheduler_for_profile(profile_name: String) {
             // populate and wire the registry here too.
             let tool_registry = Arc::new(crate::brain::tools::registry::ToolRegistry::new());
             crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, &config);
+            // Headless-safe runtime tools (dynamic tools.toml tools, tool_manage,
+            // browser) so secondary-profile cron jobs match the primary profile's
+            // functional tool set. Channel-send tools are intentionally NOT here
+            // (no live channel state in the daemon — delivery uses `deliver_to`).
+            crate::cli::tool_setup::register_runtime_tools(&tool_registry, &config);
             factory.set_tool_registry(tool_registry);
             let scheduler = crate::cron::CronScheduler::new(
                 CronJobRepository::new(db.pool().clone()),
@@ -879,60 +884,10 @@ async fn cmd_chat_inner(
     tracing::debug!("Creating agent service with approval, progress, and message queue callbacks");
     let shared_tool_registry = tool_registry;
 
-    // Load dynamic tools from ~/.opencrabs/tools.toml
-    let tools_toml_path = crate::brain::tools::dynamic::DynamicToolLoader::default_path()
-        .unwrap_or_else(|| std::path::PathBuf::from("tools.toml"));
-    let dynamic_count = crate::brain::tools::dynamic::DynamicToolLoader::load(
-        &tools_toml_path,
-        &shared_tool_registry,
-    );
-    if dynamic_count > 0 {
-        tracing::info!("Loaded {dynamic_count} dynamic tool(s) from tools.toml");
-    }
-
-    // Register tool_manage — agent can add/remove/reload dynamic tools at runtime
-    shared_tool_registry.register(Arc::new(
-        crate::brain::tools::tool_manage::ToolManageTool::new(
-            shared_tool_registry.clone(),
-            tools_toml_path.clone(),
-        ),
-    ));
-
-    // Browser automation tools (headless Chrome via CDP)
-    #[cfg(feature = "browser")]
-    {
-        let browser_manager = Arc::new(crate::brain::tools::browser::BrowserManager::new(
-            config.browser.clone(),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserNavigateTool::new(browser_manager.clone()),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserScreenshotTool::new(browser_manager.clone()),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserClickTool::new(browser_manager.clone()),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserTypeTool::new(browser_manager.clone()),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserEvalTool::new(browser_manager.clone()),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserContentTool::new(browser_manager.clone()),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserWaitTool::new(browser_manager.clone()),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserFindTool::new(browser_manager.clone()),
-        ));
-        shared_tool_registry.register(Arc::new(
-            crate::brain::tools::browser::BrowserCloseTool::new(browser_manager),
-        ));
-        tracing::info!("Browser automation tools registered (9 tools)");
-    }
+    // Headless-safe runtime tools (dynamic tools.toml tools, tool_manage,
+    // browser). Shared with the cron daemon via tool_setup so every entry point
+    // exposes the same set.
+    crate::cli::tool_setup::register_runtime_tools(&shared_tool_registry, config);
 
     // Now that the registry is Arc'd, give it to the channel factory
     channel_factory.set_tool_registry(shared_tool_registry.clone());

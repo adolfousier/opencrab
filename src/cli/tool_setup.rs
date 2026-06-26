@@ -161,3 +161,80 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(crate::brain::tools::self_improve::SelfImproveTool));
     tracing::info!("Registered 3 recursive self-improvement tools");
 }
+
+/// Register the headless-safe RUNTIME tools that depend only on config + the
+/// registry itself (never on live TUI or channel state): user-defined dynamic
+/// tools from `tools.toml`, the dynamic-tool manager, and browser automation.
+///
+/// Every entry point that runs an agent calls this on top of
+/// [`register_core_agent_tools`] so the tool set is identical across the TUI,
+/// the multi-profile cron daemon, and the one-shot/headless CLI paths. Without
+/// it, a cron job under a secondary profile (or a `run`/agent CLI invocation)
+/// could not use the user's own `tools.toml` tools or the browser.
+///
+/// Deliberately EXCLUDED here (and registered only by the interactive path):
+/// - **Channel send/connect tools** (`telegram_send`, `*_connect`, ...): they
+///   hold live in-process channel state (`TelegramState` etc.) that only exists
+///   once a bot is connected, which the daemon never does. Registering them
+///   would yield dead tools that always answer "not connected". Cron jobs reach
+///   channels through the job's config-based `deliver_to` path instead, which
+///   builds its own client from the API key and needs no live state.
+/// - **evolve / rebuild**: binary self-update is owned by the primary daemon;
+///   letting concurrent secondary profiles self-update would race on one binary.
+pub(crate) fn register_runtime_tools(tool_registry: &Arc<ToolRegistry>, config: &Config) {
+    // User-defined dynamic tools from the profile-aware ~/.opencrabs/tools.toml.
+    let tools_toml_path = crate::brain::tools::dynamic::DynamicToolLoader::default_path()
+        .unwrap_or_else(|| std::path::PathBuf::from("tools.toml"));
+    let dynamic_count =
+        crate::brain::tools::dynamic::DynamicToolLoader::load(&tools_toml_path, tool_registry);
+    if dynamic_count > 0 {
+        tracing::info!("Loaded {dynamic_count} dynamic tool(s) from tools.toml");
+    }
+    // tool_manage — agent can add/remove/reload dynamic tools at runtime.
+    tool_registry.register(Arc::new(
+        crate::brain::tools::tool_manage::ToolManageTool::new(
+            tool_registry.clone(),
+            tools_toml_path,
+        ),
+    ));
+
+    // Browser automation (headless Chrome via CDP). Config-only construction and
+    // lazy launch, so it is safe to register everywhere — chrome is spawned on
+    // first use, not here.
+    #[cfg(feature = "browser")]
+    {
+        let browser_manager = Arc::new(crate::brain::tools::browser::BrowserManager::new(
+            config.browser.clone(),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserNavigateTool::new(browser_manager.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserScreenshotTool::new(browser_manager.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserClickTool::new(browser_manager.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserTypeTool::new(browser_manager.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserEvalTool::new(browser_manager.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserContentTool::new(browser_manager.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserWaitTool::new(browser_manager.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserFindTool::new(browser_manager.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            crate::brain::tools::browser::BrowserCloseTool::new(browser_manager),
+        ));
+        tracing::info!("Browser automation tools registered (9 tools)");
+    }
+    #[cfg(not(feature = "browser"))]
+    let _ = config;
+}
