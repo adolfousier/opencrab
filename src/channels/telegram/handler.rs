@@ -115,11 +115,11 @@ pub(crate) struct StreamingState {
 }
 
 impl StreamingState {
-    /// Render response message: thinking + response only (tools are separate messages).
+    /// Render response message: response only. Thinking/reasoning is
+    /// internal model reasoning — it must never leak into the delivered
+    /// Telegram message. It was previously shown as a `💭 _..._` block
+    /// during streaming, but that leaked thinking into the final output.
     fn render(&self) -> String {
-        // Thinking/reasoning is internal — never render it in Telegram output.
-        // The model's reasoning stays in `s.thinking` for streaming-feedback
-        // but must not leak into the delivered message.
         if !self.response.is_empty() {
             let resp = crate::utils::sanitize::strip_llm_artifacts(&self.response);
             redact_secrets(&resp)
