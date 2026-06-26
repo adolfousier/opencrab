@@ -787,7 +787,7 @@ impl EvolveTool {
                 sid,
                 ProgressEvent::RestartReady {
                     status: format!(
-                        "Evolved via cargo install: v{} -> v{}. Restarting now.",
+                        "Evolved via cargo install: v{} -> v{}.",
                         current_version, latest_version
                     ),
                     // evolve replaced the running exe in place; the handler
@@ -798,7 +798,7 @@ impl EvolveTool {
         }
 
         Ok(ToolResult::success(format!(
-            "Evolved from v{} to v{} via cargo install. Restarting into the new version.",
+            "Evolved from v{} to v{} via cargo install.",
             current_version, latest_version
         )))
     }
@@ -1452,7 +1452,7 @@ impl RestartStatus {
     fn user_message(&self, current: &str, latest: &str) -> String {
         match self {
             RestartStatus::Scheduled => {
-                format!("Evolved from v{current} to v{latest}. Restarting into the new version.")
+                format!("Evolved from v{current} to v{latest}.")
             }
             RestartStatus::NotSystemd => format!(
                 "Evolved from v{current} to v{latest}. Binary updated on disk; restart \

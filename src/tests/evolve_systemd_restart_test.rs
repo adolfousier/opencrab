@@ -210,8 +210,8 @@ fn evolve_sweeps_stale_units_before_scheduling_restart() {
 fn restart_status_messages_are_distinct_per_outcome() {
     let src = include_str!("../brain/tools/evolve.rs");
     assert!(
-        src.contains("Restarting into the new version."),
-        "the Scheduled branch must keep its current 'Restarting into the new version.' wording"
+        src.contains("Evolved from v{current} to v{latest}."),
+        "the Scheduled branch must confirm the evolve completed"
     );
     assert!(
         src.contains("Binary updated on disk; restart"),

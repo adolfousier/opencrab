@@ -1121,20 +1121,18 @@ impl App {
                     // SAFETY: single-threaded at this point in startup
                     unsafe { std::env::remove_var("OPENCRABS_EVOLVED_FROM") };
                     format!(
-                        " You just evolved from v{old} to v{new}. \
-                         Check the CHANGELOG at the repo root for what's new in v{new}. \
-                         Compare the brain templates in src/docs/reference/templates/ against \
-                         the user's brain files in ~/.opencrabs/ (TOOLS.md, AGENTS.md, etc.) \
-                         and tell the user what changed. Offer to update their brain files \
-                         with the new content. Be specific about what's new.",
+                        " You just upgraded from v{old} to v{new}. \
+                         You're already running the new version, no restart needed. \
+                         Run `opencrabs --version` to confirm, then greet the user \
+                         and mention one cool thing from the upgrade. Keep it brief.",
                         new = crate::VERSION,
                     )
                 })
                 .unwrap_or_default();
             tokio::spawn(async move {
                 let wake_up = format!(
-                    "[System: You just rebuilt yourself from source and restarted \
-                    via exec(). Greet the user, confirm the restart succeeded, and continue \
+                    "[System: You just hot-reloaded to a new version. \
+                    Greet the user, confirm the upgrade, and continue \
                     where you left off.{evolution_context}]"
                 );
                 match agent_service
@@ -1204,12 +1202,10 @@ impl App {
             unsafe { std::env::remove_var("OPENCRABS_EVOLVED_FROM") };
             if old_version != crate::VERSION && self.current_session.is_some() {
                 let msg = format!(
-                    "[SYSTEM: You just evolved from v{old} to v{new}. \
-                     Check the CHANGELOG at the repo root for what's new in v{new}. \
-                     Compare the brain templates in src/docs/reference/templates/ against \
-                     the user's brain files in ~/.opencrabs/ (TOOLS.md, AGENTS.md, etc.) \
-                     and tell the user what changed. Offer to update their brain files \
-                     with the new content. Be specific about what's new.]",
+                    "[SYSTEM: You just upgraded from v{old} to v{new}. \
+                     You're already running the new version, no restart needed. \
+                     Run `opencrabs --version` to confirm, then greet the user \
+                     and mention one cool thing from the upgrade. Keep it brief.]",
                     old = old_version,
                     new = crate::VERSION,
                 );
