@@ -83,6 +83,7 @@ pub mod git_branch_test;
 pub mod glob_tool_test;
 pub mod intermediate_text_strip_guard_test;
 pub mod logging_log_files_test;
+pub mod markdown_render_test;
 pub mod mimo_tool_call_hint_test;
 pub mod mission_control_command_test;
 pub mod mission_control_report_test;
