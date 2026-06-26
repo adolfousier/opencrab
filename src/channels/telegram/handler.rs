@@ -117,32 +117,14 @@ pub(crate) struct StreamingState {
 impl StreamingState {
     /// Render response message: thinking + response only (tools are separate messages).
     fn render(&self) -> String {
-        let mut parts = Vec::new();
-        if !self.thinking.is_empty() {
-            let t = if self.thinking.len() > 800 {
-                let start = self.thinking.ceil_char_boundary(self.thinking.len() - 800);
-                &self.thinking[start..]
-            } else {
-                &self.thinking
-            };
-            let t = crate::utils::sanitize::strip_llm_artifacts(t.trim());
-            // Collapse repeated whitespace/newlines, then add line breaks after
-            // sentence-ending punctuation so thinking text reads well in Telegram.
-            let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
-            let t = t
-                .replace(". ", ".\n")
-                .replace("? ", "?\n")
-                .replace("! ", "!\n");
-            parts.push(format!("💭 _{}_", redact_secrets(&t)));
-        }
+        // Thinking/reasoning is internal — never render it in Telegram output.
+        // The model's reasoning stays in `s.thinking` for streaming-feedback
+        // but must not leak into the delivered message.
         if !self.response.is_empty() {
             let resp = crate::utils::sanitize::strip_llm_artifacts(&self.response);
-            parts.push(redact_secrets(&resp));
-        }
-        if parts.is_empty() {
-            String::new()
+            redact_secrets(&resp)
         } else {
-            parts.join("\n\n")
+            String::new()
         }
     }
 }

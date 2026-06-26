@@ -756,6 +756,15 @@ pub fn strip_llm_artifacts(text: &str) -> String {
     if result.contains("CODE_EDIT_BLOCK") {
         result = strip_code_edit_block_fences(&result);
     }
+    // Strip `<think>` / `<reasoning>` blocks that models emit inline.
+    // Some providers (e.g. mimo) promote these to ReasoningDelta, but
+    // chunk boundaries can leak raw tags into the response text.
+    if result.contains("<think>") {
+        result = strip_think_tags(&result);
+    }
+    if result.contains("<reasoning>") {
+        result = strip_reasoning_tags(&result);
+    }
     // Two strip paths:
     //   1. Matched-pair JSON-bearing tool-call blocks — only stripped
     //      when parse_xml_tool_calls confirms there's real call JSON
@@ -785,6 +794,39 @@ pub fn strip_llm_artifacts(text: &str) -> String {
         result = AgentService::strip_xml_tool_calls(&result);
     }
     result
+}
+
+/// Strip `<think>...</think>` blocks from LLM output.
+fn strip_think_tags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(start) = remaining.find("<think>") {
+        result.push_str(&remaining[..start]);
+        if let Some(end) = remaining[start..].find("</think>") {
+            remaining = &remaining[start + end + 8..]; // 8 = len("</think>")
+        } else {
+            // Unclosed tag — strip everything from <think> onward
+            remaining = "";
+        }
+    }
+    result.push_str(remaining);
+    result.trim().to_string()
+}
+
+/// Strip `<reasoning>...</reasoning>` blocks from LLM output.
+fn strip_reasoning_tags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(start) = remaining.find("<reasoning>") {
+        result.push_str(&remaining[..start]);
+        if let Some(end) = remaining[start..].find("</reasoning>") {
+            remaining = &remaining[start + end + 13..]; // 13 = len("</reasoning>")
+        } else {
+            remaining = "";
+        }
+    }
+    result.push_str(remaining);
+    result.trim().to_string()
 }
 
 /// Strip `CODE_EDIT_BLOCK`-style fenced blocks the LLM emits as text
@@ -1226,5 +1268,46 @@ mod tests {
         let input = json!({"msg": format!("Found at {}/docs/readme.md", home)});
         let out = redact_tool_input(&input);
         assert_eq!(out["msg"], "Found at ~/docs/readme.md");
+    }
+
+    #[test]
+    fn strip_think_tags_basic() {
+        let input = "Hello <think>secret reasoning</think> world";
+        assert_eq!(strip_think_tags(input), "Hello  world");
+    }
+
+    #[test]
+    fn strip_think_tags_multiple() {
+        let input = "A<think>one<think>B<think>two</think>C";
+        let out = strip_think_tags(input);
+        assert!(!out.contains("<think>"), "tag leaked: {out}");
+        assert!(!out.contains("one"), "first think leaked: {out}");
+        assert!(out.contains('C'), "tail lost: {out}");
+    }
+
+    #[test]
+    fn strip_think_tags_unclosed() {
+        let input = "Hello <think>this never closes and should all go";
+        assert_eq!(strip_think_tags(input), "Hello");
+    }
+
+    #[test]
+    fn strip_think_tags_no_tags() {
+        let input = "No thinking here";
+        assert_eq!(strip_think_tags(input), "No thinking here");
+    }
+
+    #[test]
+    fn strip_reasoning_tags_basic() {
+        let input = "Before <reasoning>internal</reasoning> After";
+        assert_eq!(strip_reasoning_tags(input), "Before After");
+    }
+
+    #[test]
+    fn strip_llm_artifacts_think_tags() {
+        let input = "Response <think>hidden<think> more";
+        let out = strip_llm_artifacts(input);
+        assert!(!out.contains("<think>"), "think tag leaked: {out}");
+        assert!(out.contains("Response"), "response lost: {out}");
     }
 }
