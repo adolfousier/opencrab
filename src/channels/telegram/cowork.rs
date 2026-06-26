@@ -141,7 +141,8 @@ pub async fn handle_cowork_command(
     )]]);
 
     let text = "Tap below to add me to a Telegram group.\n\n\
-        Every member auto-registers when they send a message — no setup needed.";
+        After joining, I'll check if I have admin access. \
+        If not, I'll send you instructions to promote me.";
 
     message_in_thread(bot, ChatId(chat_id), thread_id, text)
         .reply_markup(keyboard)
@@ -169,36 +170,68 @@ pub async fn handle_cowork_group_join(
     // Track this group as a cowork group
     state.add_cowork_group(group_chat_id).await;
 
-    // Generate invite link
+    // Check if the bot is an admin in the group before attempting admin-only ops
+    let bot_info = bot.get_me().await?;
+    let bot_id = bot_info.id;
+    let bot_member = bot.get_chat_member(ChatId(group_chat_id), bot_id).await?;
+    let is_admin = matches!(
+        bot_member.status(),
+        teloxide::types::ChatMemberStatus::Administrator | teloxide::types::ChatMemberStatus::Owner
+    );
+
+    if !is_admin {
+        let promote_msg = "🦀 I need **admin privileges** to create invite links and read messages.\n\n\
+            **To fix this:**\n\
+            1. Open Group Settings → Administrators → Add Admin\n\
+            2. Select me and confirm\n\
+            3. Disable privacy mode: send `/setprivacy` to @BotFather, choose this bot, set to Disabled\n\n\
+            Then send `/cowork` in your DM with me again to generate the invite link.";
+
+        let _ = message_in_thread(bot, ChatId(group_chat_id), thread_id, promote_msg).await;
+
+        // Also notify the user in their DM
+        if let Some(ref cowork_state) = cowork {
+            let user_chat = ChatId(cowork_state.chat_id);
+            let dm_msg = "🦀 I was added to the group but I'm **not an admin** yet.\n\n\
+                **What to do:**\n\
+                1. Go to the group → Group Settings → Administrators\n\
+                2. Add me as admin\n\
+                3. Disable privacy mode: send `/setprivacy` to @BotFather, choose this bot, set to Disabled\n\n\
+                Then send `/cowork` here again to generate the invite link and QR code.";
+
+            let _ = message_in_thread(bot, user_chat, None, dm_msg).await;
+        }
+
+        return Ok(());
+    }
+
+    // Bot is admin — generate invite link
     let invite_result = bot.create_chat_invite_link(ChatId(group_chat_id)).await;
 
     match invite_result {
         Ok(link) => {
             let invite_url = &link.invite_link;
 
-            // Generate QR
-            if let Some((_png_bytes, qr_path)) = build_invite_qr(invite_url) {
-                // Send QR to user's DM (not to the group)
-                if let Some(ref cowork_state) = cowork {
-                    let user_chat = ChatId(cowork_state.chat_id);
-                    let _ = photo_in_thread(bot, user_chat, None, InputFile::file(qr_path)).await;
-                    let _ = message_in_thread(
-                        bot,
-                        user_chat,
-                        None,
-                        format!(
-                            "🦀 **All set!**\n\n\
-                             Invite link: {}\n\n\
-                             Share the QR or link. \
-                             Everyone auto-registers when they join and send a message.",
-                            invite_url
-                        ),
-                    )
-                    .await;
-                }
+            if let (Some((_png_bytes, qr_path)), Some(cowork_state)) =
+                (build_invite_qr(invite_url), cowork.as_ref())
+            {
+                let user_chat = ChatId(cowork_state.chat_id);
+                let _ = photo_in_thread(bot, user_chat, None, InputFile::file(qr_path)).await;
+                let _ = message_in_thread(
+                    bot,
+                    user_chat,
+                    None,
+                    format!(
+                        "🦀 **All set!**\n\n\
+                         Invite link: {}\n\n\
+                         Share the QR or link. \
+                         Everyone auto-registers when they join and send a message.",
+                        invite_url
+                    ),
+                )
+                .await;
             }
 
-            // Send welcome in the group
             let _ = message_in_thread(
                 bot,
                 ChatId(group_chat_id),
