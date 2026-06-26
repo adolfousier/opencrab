@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.52] - 2026-06-26
+
+10 commits since v0.3.51. 23 files changed, +1324 / -529 lines.
+
+### ✨ Features
+
+- `173208b0` **Autonomous /goal command**: set a goal via `/goal <text>` and the agent loops autonomously until an LLM judge decides it's satisfied or the turn budget (default 20) runs out
+
+### 🔧 Fixes
+
+- `c5152e6d` **Share runtime tool registration across all agent entry points**: tools registered at startup are now available everywhere, not just the main session
+- `a7ec82a9` **Clarify render() doc**: thinking never leaks to output
+- `36421e8f` **Strip thinking/reasoning tags from output**: `<thought>`, `<thinking>`, and `<𝑎𝑛𝑡𝑚𝑙:thinking>` tags no longer leak into user-facing messages
+- `bbb7e0b6` **Wire tool registry into multi-profile daemon factory**: tool definitions are now properly available in the daemon's agent factory
+- `69ce7192` **Add draft_streaming config flag**: new `[telegram] draft_streaming = true/false` to disable draft message streaming
+- `ce78b943` **Check bot admin status before creating invite link**: /cowork no longer errors when the bot lacks admin permissions
+
+### 🧹 Miscellaneous
+
+- `88da8c9d` chore(deps): bump pdf-extract 0.10 -> 0.12 to pull lopdf 0.42 (RUSTSEC-2026-0187)
+- `be0d7787` test(cron): pin that register_core_agent_tools populates the registry
+- `a9eb03e0` docs(readme): document /goal autonomous command
+
+### 📊 Stats
+
+- 10 commits since v0.3.51
+- 23 files changed, +1324 / -529 lines
+- 4147 tests (4147 passed, 0 failed, 24 ignored)
+
 ## [0.3.51] - 2026-06-26
 
 Patch release: restores the Xiaomi keyless collab proxy for the final day of the collab. Users on 0.3.50 should update — that build shuts the keyless proxy off a day early (at 2026-06-26 00:00 UTC).
@@ -6024,3 +6053,4 @@ fixes.
 [0.3.49]: https://github.com/adolfousier/opencrabs/compare/v0.3.48...v0.3.49
 [0.3.50]: https://github.com/adolfousier/opencrabs/compare/v0.3.49...v0.3.50
 [0.3.51]: https://github.com/adolfousier/opencrabs/compare/v0.3.50...v0.3.51
+[0.3.52]: https://github.com/adolfousier/opencrabs/compare/v0.3.51...v0.3.52
