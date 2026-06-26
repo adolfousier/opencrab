@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.53] - 2026-06-26
+
+1 commit since v0.3.52. 3 files changed, +32 / -0 lines.
+
+### 🔧 Fixes
+
+- `12bf340c` **Wire /goal command into TUI dispatch, autocomplete, and commands.toml**: the autonomous /goal feature shipped in v0.3.52 with backend code but zero entry points connected (TUI showed 'Unknown command', no autocomplete, no commands.toml entry)
+
+### 📊 Stats
+- 1 commit since v0.3.52
+- 3 files changed, +32 / -0 lines
+
 ## [0.3.52] - 2026-06-26
 
 10 commits since v0.3.51. 23 files changed, +1324 / -529 lines.
@@ -6054,3 +6066,4 @@ fixes.
 [0.3.50]: https://github.com/adolfousier/opencrabs/compare/v0.3.49...v0.3.50
 [0.3.51]: https://github.com/adolfousier/opencrabs/compare/v0.3.50...v0.3.51
 [0.3.52]: https://github.com/adolfousier/opencrabs/compare/v0.3.51...v0.3.52
+[0.3.53]: https://github.com/adolfousier/opencrabs/compare/v0.3.52...v0.3.53
