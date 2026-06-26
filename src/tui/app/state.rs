@@ -226,6 +226,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/rtk",
         description: "Show RTK token savings statistics",
     },
+    SlashCommand {
+        name: "/goal",
+        description: "Set/track an autonomous goal (/goal <text>, status, pause, resume, clear)",
+    },
 ];
 
 /// Approval option selected by the user

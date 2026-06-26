@@ -900,6 +900,24 @@ impl App {
                 let _ = self.open_directory_picker().await;
                 true
             }
+            "/goal" => {
+                let args = input.strip_prefix("/goal").unwrap_or("").trim();
+                let prompt = if args.is_empty() {
+                    "[SYSTEM: The user typed /goal with no arguments. Call the slash_command tool \
+                     with command='/goal' to show current goal status.]"
+                        .to_string()
+                } else {
+                    format!(
+                        "[SYSTEM: The user wants to manage their autonomous goal. Call the \
+                         slash_command tool with command='/goal {args}'. The supported subcommands \
+                         are: a description to SET a goal, 'status' to check progress, 'pause' to \
+                         pause, 'resume' to resume, 'clear' to remove.]"
+                    )
+                };
+                let sender = self.event_sender();
+                let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
+                true
+            }
             _ if input.starts_with('/') && !crate::utils::string::looks_like_file_path(input) => {
                 // Check user-defined commands first — explicit user definitions
                 // win over auto-registered skills of the same `/<name>`.

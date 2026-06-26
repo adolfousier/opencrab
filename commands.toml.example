@@ -70,6 +70,16 @@ action = "prompt"
 prompt = "Ask me which channel and chat to show history for, then use channel_search with operation recent to show the last 20 messages."
 
 # ========================================
+# Autonomous Goal Commands
+# ========================================
+
+[[commands]]
+name = "/goal"
+description = "Set/track an autonomous goal the agent works toward"
+action = "prompt"
+prompt = "Call the slash_command tool with command='/goal'. If the user provided text after /goal, include it as the goal description. Supported: '/goal <text>' to set, '/goal status' to check, '/goal pause' to pause, '/goal resume' to resume, '/goal clear' to remove."
+
+# ========================================
 # Parallel Agent Commands
 # ========================================
 
