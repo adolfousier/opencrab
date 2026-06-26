@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.51] - 2026-06-26
+
+Patch release: restores the Xiaomi keyless collab proxy for the final day of the collab. Users on 0.3.50 should update — that build shuts the keyless proxy off a day early (at 2026-06-26 00:00 UTC).
+
+### 🔧 Fixes
+
+- `60309763` **Xiaomi keyless collab window closed a day early**: the free keyless window flipped closed at 2026-06-26 00:00 UTC instead of the collab's actual end of 2026-06-27 00:00 UTC, so the default Xiaomi provider stopped working mid-collab — RSI cycles failed with "Xiaomi not configured (missing API key)" and session swaps to Xiaomi silently didn't take. The cutoff now uses the literal end date (`2026-06-27`) with a strict `today < end` comparison, so the window closes exactly at 2026-06-27 00:00 UTC. A boundary test pins the 26th-open / 27th-closed behavior.
+
+### 📊 Stats
+
+- 1 commit since v0.3.50
+- 2 files changed, +40 / -8 lines
+
 ## [0.3.50] - 2026-06-25
 
 8 commits since v0.3.49. 14 files changed, +689 / -211 lines.
@@ -6010,3 +6023,4 @@ fixes.
 [0.3.48]: https://github.com/adolfousier/opencrabs/compare/v0.3.47...v0.3.48
 [0.3.49]: https://github.com/adolfousier/opencrabs/compare/v0.3.48...v0.3.49
 [0.3.50]: https://github.com/adolfousier/opencrabs/compare/v0.3.49...v0.3.50
+[0.3.51]: https://github.com/adolfousier/opencrabs/compare/v0.3.50...v0.3.51
