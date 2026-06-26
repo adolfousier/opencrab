@@ -8,7 +8,9 @@
 
 pub mod judge;
 pub mod manager;
+pub mod prompt;
 pub mod types;
 
 pub use manager::GoalManager;
+pub use prompt::{goal_command_prompt, goal_usage_warning, is_bare};
 pub use types::{GoalDecision, GoalVerdict, JudgeDecision};

@@ -1210,6 +1210,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
             "Mission control: analytics, activity, inbox & schedule",
         ),
         BotCommand::new("compact", "Compact conversation context"),
+        BotCommand::new("goal", "Set/track an autonomous goal"),
         BotCommand::new("profiles", "Manage profiles (create, switch, migrate)"),
         BotCommand::new(
             "cowork",
@@ -1257,6 +1258,13 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         c.command = sanitize_command_name(&c.command);
     }
     commands.retain(|c| !c.command.is_empty() && c.command.len() <= 32);
+
+    // Dedup by normalized name — built-ins are listed first, so a commands.toml
+    // entry or skill that shadows a built-in (e.g. a user-defined `/goal`) is
+    // dropped instead of creating a duplicate menu chip. Telegram would render
+    // two identical entries otherwise.
+    let mut seen = std::collections::HashSet::new();
+    commands.retain(|c| seen.insert(c.command.clone()));
 
     // Telegram limit: max 100 commands
     commands.truncate(100);

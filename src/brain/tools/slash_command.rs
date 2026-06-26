@@ -9,6 +9,30 @@ use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
+/// Split a possibly multi-word `command` field into `(command, args)`.
+///
+/// Models sometimes pass `command='/goal debug the build'` with an empty
+/// `args` instead of `command='/goal'`, `args='debug the build'`. Since the
+/// dispatch matches the command verbatim, peel the first whitespace-delimited
+/// token as the command and fold any trailing words back into `args` (ahead of
+/// whatever was already there). Single-token commands pass through unchanged.
+pub(crate) fn normalize_command(raw_command: &str, raw_args: &str) -> (String, String) {
+    let trimmed = raw_command.trim();
+    let raw_args = raw_args.trim();
+    match trimmed.split_once(char::is_whitespace) {
+        Some((head, tail)) => {
+            let tail = tail.trim();
+            let merged = match (tail.is_empty(), raw_args.is_empty()) {
+                (true, _) => raw_args.to_string(),
+                (false, true) => tail.to_string(),
+                (false, false) => format!("{tail} {raw_args}"),
+            };
+            (head.to_string(), merged)
+        }
+        None => (trimmed.to_string(), raw_args.to_string()),
+    }
+}
+
 pub struct SlashCommandTool;
 
 impl SlashCommandTool {
@@ -179,8 +203,17 @@ impl Tool for SlashCommandTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
-        let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        let args = input.get("args").and_then(|v| v.as_str()).unwrap_or("");
+        let raw_command = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        let raw_args = input.get("args").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Some models put the whole "/goal debug the build" into `command=`
+        // instead of using the separate `args` field. The dispatch below
+        // matches the command verbatim ("/goal"), so a multi-word command
+        // would fall through to handle_user_command and fail. Normalize first:
+        // peel the first token as the command, fold the rest into args.
+        let (command, args) = normalize_command(raw_command, raw_args);
+        let command = command.as_str();
+        let args = args.as_str();
 
         if !command.starts_with('/') {
             return Ok(ToolResult::error(format!(

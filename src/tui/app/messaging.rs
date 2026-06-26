@@ -901,21 +901,17 @@ impl App {
                 true
             }
             "/goal" => {
-                let args = input.strip_prefix("/goal").unwrap_or("").trim();
-                let prompt = if args.is_empty() {
-                    "[SYSTEM: The user typed /goal with no arguments. Call the slash_command tool \
-                     with command='/goal' to show current goal status.]"
-                        .to_string()
+                let args = input.strip_prefix("/goal").unwrap_or("");
+                if crate::brain::goal::is_bare(args) {
+                    // Bare `/goal`: DENY it. Show the usage warning directly and
+                    // send NOTHING to the LLM — an abandoned/mistyped /goal leaves
+                    // the conversation exactly as it was, zero context interference.
+                    self.push_system_message(crate::brain::goal::goal_usage_warning());
                 } else {
-                    format!(
-                        "[SYSTEM: The user wants to manage their autonomous goal. Call the \
-                         slash_command tool with command='/goal {args}'. The supported subcommands \
-                         are: a description to SET a goal, 'status' to check progress, 'pause' to \
-                         pause, 'resume' to resume, 'clear' to remove.]"
-                    )
-                };
-                let sender = self.event_sender();
-                let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
+                    let prompt = crate::brain::goal::goal_command_prompt(args);
+                    let sender = self.event_sender();
+                    let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
+                }
                 true
             }
             _ if input.starts_with('/') && !crate::utils::string::looks_like_file_path(input) => {

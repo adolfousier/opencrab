@@ -326,6 +326,22 @@ pub async fn handle_command(
             ChannelCommand::ChangeDir(format_cd_browser(path_arg, session_id, session_svc).await)
         }
         "/profiles" => ChannelCommand::Profiles(format_profiles_browser().await),
+        // `/goal` works on every surface. The TUI intercepts it in
+        // handle_slash_command; here we mirror that so Telegram/Discord/
+        // WhatsApp/Slack users hit the same behaviour. A bare `/goal` is
+        // DENIED: the usage warning is shown for display only via
+        // UnknownCommand, which renders the text but returns None for
+        // history — so a mistyped/abandoned /goal never persists and leaves
+        // the conversation context untouched. Only a real `/goal <text>` is
+        // forwarded as a directive that calls the slash_command tool.
+        cmd if cmd == "/goal" || cmd.starts_with("/goal ") => {
+            let args = cmd.strip_prefix("/goal").unwrap_or("");
+            if crate::brain::goal::is_bare(args) {
+                ChannelCommand::UnknownCommand(crate::brain::goal::goal_usage_warning())
+            } else {
+                ChannelCommand::UserPrompt(crate::brain::goal::goal_command_prompt(args))
+            }
+        }
         // Telegram registers the hyphen-free `mission_control` (its command
         // names allow no hyphens), so a menu tap sends `/mission_control`;
         // accept both that and the canonical typed `/mission-control`.
@@ -530,6 +546,10 @@ pub(crate) fn format_help() -> String {
             "Create a cowork workspace with QR invite (Telegram only)",
         ),
         ("/evolve", "Download latest release & restart"),
+        (
+            "/goal",
+            "Set/track an autonomous goal (`/goal <text>`, status, pause, resume, clear)",
+        ),
         ("/help", "Show this message"),
         (
             "/mission-control",
