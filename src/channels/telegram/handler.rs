@@ -2393,7 +2393,9 @@ pub(crate) async fn handle_message(
         let chat = msg.chat.id;
         let st = streaming.clone();
         let cancel = edit_cancel.clone();
-        let use_drafts = is_dm && Config::current().channels.telegram.rich_messages;
+        let use_drafts = is_dm
+            && Config::current().channels.telegram.rich_messages
+            && Config::current().channels.telegram.draft_streaming;
         async move {
             loop {
                 tokio::select! {
