@@ -697,6 +697,14 @@ pub(crate) async fn handle_message(
             }
             ChannelCommand::NotACommand => {}
             // Help, Usage, Evolve, Doctor, UserSystem handled by try_execute_text_command above
+            ChannelCommand::Profiles(resp) => {
+                let reply = waproto::whatsapp::Message {
+                    conversation: Some(resp.text.clone()),
+                    ..Default::default()
+                };
+                let _ = client.send_message(info.source.chat.clone(), reply).await;
+                return;
+            }
             _ => {}
         }
     }
