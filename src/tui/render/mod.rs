@@ -12,6 +12,7 @@ pub(crate) mod palette;
 mod panes;
 mod plan_widget;
 pub(crate) mod plan_window;
+pub(crate) mod profiles_dialog;
 mod projects;
 mod session_files;
 mod sessions;
@@ -200,6 +201,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let (title_area, content_area) = split_title_area(full_content_area);
             render_app_title(f, title_area);
             skills_dialog::draw(f, app, content_area);
+        }
+        AppMode::Profiles => {
+            f.render_widget(Clear, full_content_area);
+            let (title_area, content_area) = split_title_area(full_content_area);
+            render_app_title(f, title_area);
+            profiles_dialog::draw(f, app, content_area);
         }
         AppMode::SessionFiles => {
             f.render_widget(Clear, full_content_area);

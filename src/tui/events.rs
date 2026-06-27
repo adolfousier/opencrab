@@ -387,6 +387,8 @@ pub enum AppMode {
     SessionFiles,
     /// Projects — manage projects and assign sessions (triggered by P in /sessions)
     Projects,
+    /// Profiles — manage OpenCrabs profiles (triggered by /profiles)
+    Profiles,
 }
 
 /// Event handler for the TUI

@@ -230,6 +230,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/goal",
         description: "Set/track an autonomous goal (/goal <text>, status, pause, resume, clear)",
     },
+    SlashCommand {
+        name: "/profiles",
+        description: "Manage OpenCrabs profiles (list, create, switch, migrate)",
+    },
 ];
 
 /// Approval option selected by the user
@@ -531,6 +535,8 @@ pub struct App {
     /// Skills dialog state — filter buffer, selection, scroll. Same
     /// "single-struct field" pattern as MC.
     pub skills_dialog: crate::tui::app::skills_dialog::SkillsDialogState,
+    /// Profiles dialog state — filter, selection, scroll. Same pattern.
+    pub profiles_dialog: crate::tui::app::profiles_dialog::ProfilesDialogState,
 
     /// Onboarding wizard state
     pub onboarding: Option<OnboardingWizard>,
@@ -807,6 +813,7 @@ impl App {
             skills,
             mc: crate::tui::app::mission_control::McState::default(),
             skills_dialog: crate::tui::app::skills_dialog::SkillsDialogState::default(),
+            profiles_dialog: crate::tui::app::profiles_dialog::ProfilesDialogState::default(),
             onboarding: None,
             force_onboard: false,
             processing_sessions: HashSet::new(),
@@ -3291,6 +3298,9 @@ impl App {
             }
             AppMode::SkillsList => {
                 crate::tui::app::skills_dialog::input::handle_key(self, event).await;
+            }
+            AppMode::Profiles => {
+                crate::tui::app::profiles_dialog::input::handle_key(self, event).await;
             }
             AppMode::SessionFiles => {
                 self.handle_session_files_key(event).await?;

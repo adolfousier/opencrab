@@ -26,9 +26,10 @@ pub struct ProfilesDialogState {
 }
 
 /// Action state for the profiles dialog.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ProfileAction {
     /// Normal browsing mode.
+    #[default]
     None,
     /// Confirming deletion of a profile (name being deleted).
     ConfirmDelete(String),
@@ -40,12 +41,6 @@ pub enum ProfileAction {
     MigrateFrom,
     /// Migrating: typing destination profile.
     MigrateTo,
-}
-
-impl Default for ProfileAction {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl ProfilesDialogState {

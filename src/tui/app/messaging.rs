@@ -833,6 +833,10 @@ impl App {
                 crate::tui::app::skills_dialog::actions::open(self);
                 true
             }
+            "/profiles" => {
+                crate::tui::app::profiles_dialog::actions::open(self);
+                true
+            }
             "/rtk" => {
                 #[cfg(feature = "rtk")]
                 {
