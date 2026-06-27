@@ -491,6 +491,10 @@ pub(crate) async fn handle_message(
             }
             ChannelCommand::NotACommand => {}
             // Help, Usage, Evolve, Doctor, UserSystem handled by try_execute_text_command above
+            ChannelCommand::Profiles(resp) => {
+                let _ = msg.channel_id.say(&ctx.http, &resp.text).await;
+                return;
+            }
             _ => {}
         }
     }
