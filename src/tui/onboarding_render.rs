@@ -965,6 +965,44 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(""));
         }
 
+        // Xiaomi MiMo endpoint type toggle (api vs token-plan) — BEFORE API key
+        if wizard.ps.provider_id() == "xiaomi" {
+            let et_focused = wizard.auth_field == AuthField::XiaomiEndpointType;
+            let api_marker = if wizard.ps.xiaomi_endpoint_type == 0 {
+                "[*]"
+            } else {
+                "[ ]"
+            };
+            let tp_marker = if wizard.ps.xiaomi_endpoint_type == 1 {
+                "[*]"
+            } else {
+                "[ ]"
+            };
+            lines.push(Line::from(Span::styled(
+                "  Endpoint Type:",
+                Style::default().fg(if et_focused { BRAND_BLUE } else { Color::Gray }),
+            )));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("    {} API  ", api_marker),
+                    Style::default().fg(if et_focused && wizard.ps.xiaomi_endpoint_type == 0 {
+                        Color::White
+                    } else {
+                        Color::Gray
+                    }),
+                ),
+                Span::styled(
+                    format!("{} Token Plan", tp_marker),
+                    Style::default().fg(if et_focused && wizard.ps.xiaomi_endpoint_type == 1 {
+                        Color::White
+                    } else {
+                        Color::Gray
+                    }),
+                ),
+            ]));
+            lines.push(Line::from(""));
+        }
+
         // CLI providers have no API key — skip the field
         if !wizard.ps.is_cli() {
             let key_focused = wizard.auth_field == AuthField::ApiKey;

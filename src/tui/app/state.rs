@@ -1741,8 +1741,9 @@ impl App {
                                 let models = super::onboarding::fetch_provider_models(
                                     provider_idx,
                                     api_key.as_deref(),
-                                    base_url.as_deref(),
                                     None,
+                                    None,
+                                    base_url.as_deref(),
                                 )
                                 .await;
                                 let _ = sender.send(TuiEvent::OnboardingModelsFetched(models));
@@ -2595,9 +2596,14 @@ impl App {
                     let token = oauth_token.clone();
                     let sender = self.event_sender();
                     tokio::spawn(async move {
-                        let models =
-                            super::onboarding::fetch_provider_models(2, Some(&token), None, None)
-                                .await;
+                        let models = super::onboarding::fetch_provider_models(
+                            2,
+                            Some(&token),
+                            None,
+                            None,
+                            None,
+                        )
+                        .await;
                         let _ = sender.send(TuiEvent::OnboardingModelsFetched(models));
                     });
                 }
@@ -2631,7 +2637,8 @@ impl App {
                     let sender = self.event_sender();
                     tokio::spawn(async move {
                         let models =
-                            super::onboarding::fetch_provider_models(2, None, None, None).await;
+                            super::onboarding::fetch_provider_models(2, None, None, None, None)
+                                .await;
                         let _ = sender.send(TuiEvent::OnboardingModelsFetched(models));
                     });
                 }

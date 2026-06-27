@@ -1040,10 +1040,15 @@ fn try_create_openrouter(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
 /// Default endpoint for Xiaomi MiMo's OpenAI-compatible API. Overridable via
 /// `[providers.xiaomi] base_url`. Users get an API key at platform.xiaomimimo.com.
 const XIAOMI_DEFAULT_BASE_URL: &str = "https://api.xiaomimimo.com/v1/chat/completions";
+const XIAOMI_TOKEN_PLAN_URL: &str = "https://token-plan-ams.xiaomimimo.com/v1/chat/completions";
 
 /// Xiaomi MiMo. OpenAI-compatible, keyed: the user supplies an API key from
 /// platform.xiaomimimo.com. With no key the provider stays unconfigured so the
 /// user is steered to add one (or pick another provider).
+///
+/// Supports two endpoint types:
+/// - "api"        → https://api.xiaomimimo.com/v1/chat/completions
+/// - "token-plan" → https://token-plan-ams.xiaomimimo.com/v1/chat/completions
 fn try_create_xiaomi(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     let xiaomi_config = match &config.providers.xiaomi {
         Some(cfg) => cfg,
@@ -1060,14 +1065,23 @@ fn try_create_xiaomi(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         }
     };
 
-    let base_url = xiaomi_config
-        .base_url
-        .clone()
-        .unwrap_or_else(|| XIAOMI_DEFAULT_BASE_URL.to_string());
-    let base_url = if base_url.contains("/chat/completions") {
-        base_url
-    } else {
-        format!("{}/chat/completions", base_url.trim_end_matches('/'))
+    // Determine base URL based on endpoint_type
+    // API endpoint: https://api.xiaomimimo.com/v1
+    // Token Plan endpoint: https://token-plan-ams.xiaomimimo.com/v1
+    let base_url = match xiaomi_config.endpoint_type.as_deref() {
+        Some("token-plan") => XIAOMI_TOKEN_PLAN_URL.to_string(),
+        _ => {
+            // Fall back to explicit base_url or the default
+            let url = xiaomi_config
+                .base_url
+                .clone()
+                .unwrap_or_else(|| XIAOMI_DEFAULT_BASE_URL.to_string());
+            if url.contains("/chat/completions") {
+                url
+            } else {
+                format!("{}/chat/completions", url.trim_end_matches('/'))
+            }
+        }
     };
 
     // Thinking is ON by default — Xiaomi streams reasoning_content and the API

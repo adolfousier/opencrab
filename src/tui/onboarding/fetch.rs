@@ -169,6 +169,7 @@ pub async fn fetch_provider_models(
     provider_index: usize,
     api_key: Option<&str>,
     zhipu_endpoint_type: Option<&str>,
+    xiaomi_endpoint_type: Option<&str>,
     base_url: Option<&str>,
 ) -> Vec<String> {
     use crate::tui::onboarding::PROVIDERS;
@@ -266,22 +267,63 @@ pub async fn fetch_provider_models(
         return merge_minimax_baseline(minimax_baseline_models(), user_minimax_models());
     }
 
-    // Xiaomi MiMo: /v1/models is the live source, but the picker reads the
-    // curated chat-model list from config (config.toml.example) so it always
-    // shows even if the endpoint is briefly unreachable. Chat itself still goes
-    // through the live API. Mirrors qwen/minimax/codex.
+    // Xiaomi MiMo: fetch models live from /v1/models, merge with config models.
+    // Two endpoints: api (default) and token-plan. Mirrors zhipu's live-fetch-then-merge.
     if provider_id == "xiaomi" {
-        let models = crate::tui::provider_selector::load_default_models("xiaomi");
-        if !models.is_empty() {
-            return models;
+        let endpoint_type = xiaomi_endpoint_type
+            .map(|s| s.to_string())
+            .or_else(|| {
+                crate::config::Config::load()
+                    .ok()
+                    .and_then(|c| c.providers.xiaomi.clone())
+                    .and_then(|p| p.endpoint_type)
+            })
+            .unwrap_or_else(|| "api".to_string());
+
+        let base_url = match endpoint_type.as_str() {
+            "token-plan" => "https://token-plan-ams.xiaomimimo.com/v1/models",
+            _ => "https://api.xiaomimimo.com/v1/models",
+        };
+
+        let client = reqwest::Client::new();
+        let mut req = client.get(base_url);
+        if let Some(key) = api_key
+            && !key.is_empty()
+        {
+            req = req.header("Authorization", format!("Bearer {}", key));
         }
-        return vec![
-            "mimo-v2.5-pro".to_string(),
-            "mimo-v2-pro".to_string(),
-            "mimo-v2.5".to_string(),
-            "mimo-v2-omni".to_string(),
-            "mimo-v2-flash".to_string(),
-        ];
+
+        let api_models: Vec<String> = match req.send().await {
+            Ok(resp) if resp.status().is_success() => match resp.json::<ModelsResponse>().await {
+                Ok(body) => {
+                    let mut entries = body.data;
+                    entries.sort_by_key(|e| std::cmp::Reverse(e.created));
+                    entries.into_iter().map(|m| m.id).collect()
+                }
+                Err(e) => {
+                    tracing::warn!("[fetch_provider_models] xiaomi parse error: {}", e);
+                    Vec::new()
+                }
+            },
+            Ok(resp) => {
+                tracing::warn!(
+                    "[fetch_provider_models] xiaomi /models HTTP {}",
+                    resp.status()
+                );
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::warn!("[fetch_provider_models] xiaomi request failed: {}", e);
+                Vec::new()
+            }
+        };
+
+        let user_models = crate::config::Config::load()
+            .ok()
+            .and_then(|c| c.providers.xiaomi.clone())
+            .map(|p| p.models)
+            .unwrap_or_default();
+        return merge_minimax_baseline(api_models, user_models);
     }
 
     let client = reqwest::Client::new();

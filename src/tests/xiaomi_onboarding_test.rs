@@ -22,11 +22,20 @@ fn xiaomi_keyed_lands_on_api_key_field() {
     // Confirm the provider selection (Enter on the provider field).
     let _ = wizard.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
 
-    // Keyed provider must land on the API-key field, not skip to Model.
+    // With the endpoint_type toggle, selecting xiaomi lands on XiaomiEndpointType first.
+    // User picks API or Token Plan, then advances to the API-key field.
+    assert_eq!(
+        wizard.auth_field,
+        AuthField::XiaomiEndpointType,
+        "Xiaomi has an endpoint_type toggle — selecting it must land on XiaomiEndpointType first"
+    );
+
+    // Advance past the endpoint type toggle (Tab/Enter)
+    let _ = wizard.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()));
     assert_eq!(
         wizard.auth_field,
         AuthField::ApiKey,
-        "Xiaomi is keyed now — selecting it must land on the API-key field"
+        "Tabbing from XiaomiEndpointType must land on the API-key field"
     );
 }
 
@@ -89,7 +98,7 @@ async fn xiaomi_models_fetch_returns_mimo_list() {
         .iter()
         .position(|p| p.id == "xiaomi")
         .expect("xiaomi in PROVIDERS");
-    let models = crate::tui::onboarding::fetch_provider_models(idx, None, None, None).await;
+    let models = crate::tui::onboarding::fetch_provider_models(idx, None, None, None, None).await;
     assert!(
         !models.is_empty(),
         "/models must show a model list for Xiaomi (was empty)"

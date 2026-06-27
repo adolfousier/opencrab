@@ -512,6 +512,7 @@ pub enum AuthField {
     CustomModel,
     CustomContextWindow,
     ZhipuEndpointType,
+    XiaomiEndpointType,
 }
 
 /// Which field is focused in DiscordSetup step

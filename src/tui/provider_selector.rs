@@ -46,6 +46,8 @@ pub struct ProviderSelectorState {
     pub models_fetching: bool,
     /// z.ai GLM endpoint type: 0=API, 1=Coding
     pub zhipu_endpoint_type: usize,
+    /// Xiaomi MiMo endpoint type: 0=API, 1=Token Plan
+    pub xiaomi_endpoint_type: usize,
     /// Base URL for custom providers
     pub base_url: String,
     /// Model name for custom providers (free-text)
@@ -109,6 +111,10 @@ impl ProviderSelectorState {
         self.provider_id() == "zhipu"
     }
 
+    pub fn is_xiaomi(&self) -> bool {
+        self.provider_id() == "xiaomi"
+    }
+
     /// Get the canonical provider id for the current selection.
     pub fn provider_id(&self) -> &'static str {
         if self.selected_provider < CUSTOM_PROVIDER_IDX {
@@ -140,6 +146,7 @@ impl ProviderSelectorState {
                 | "github"
                 | "gemini"
                 | "openrouter"
+                | "xiaomi"
                 | "zhipu"
                 | "opencode-cli"
                 | "codex-cli"
@@ -153,7 +160,7 @@ impl ProviderSelectorState {
     pub fn max_field(&self) -> usize {
         if self.is_custom() {
             6 // provider(0), base_url(1), api_key(2), model(3), name(4), context_window(5)
-        } else if self.is_zhipu() {
+        } else if self.is_zhipu() || self.is_xiaomi() {
             4 // provider(0), endpoint_type(1), api_key(2), model(3)
         } else {
             3 // provider(0), api_key(1), model(2)
@@ -321,7 +328,8 @@ impl ProviderSelectorState {
     }
 
     /// Load custom provider fields when navigating to an existing custom (10+),
-    /// clear fields for new custom (9), load zhipu endpoint type for index 6.
+    /// clear fields for new custom (9), load zhipu endpoint type for index 6,
+    /// load xiaomi endpoint type.
     pub fn load_custom_fields(&mut self) {
         if self.is_zhipu()
             && let Ok(config) = crate::config::Config::load()
@@ -329,6 +337,15 @@ impl ProviderSelectorState {
         {
             self.zhipu_endpoint_type = match zhipu.endpoint_type.as_deref() {
                 Some("coding") => 1,
+                _ => 0,
+            };
+        }
+        if self.is_xiaomi()
+            && let Ok(config) = crate::config::Config::load()
+            && let Some(xiaomi) = &config.providers.xiaomi
+        {
+            self.xiaomi_endpoint_type = match xiaomi.endpoint_type.as_deref() {
+                Some("token-plan") => 1,
                 _ => 0,
             };
         }
@@ -398,6 +415,22 @@ impl ProviderSelectorState {
             Some(
                 if self.zhipu_endpoint_type == 1 {
                     "coding"
+                } else {
+                    "api"
+                }
+                .to_string(),
+            )
+        } else {
+            None
+        }
+    }
+
+    /// Xiaomi MiMo endpoint type as string for API calls.
+    pub fn xiaomi_endpoint_str(&self) -> Option<String> {
+        if self.is_xiaomi() {
+            Some(
+                if self.xiaomi_endpoint_type == 1 {
+                    "token-plan"
                 } else {
                     "api"
                 }

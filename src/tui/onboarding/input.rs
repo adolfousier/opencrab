@@ -400,6 +400,15 @@ impl OnboardingWizard {
                     self.ps.api_key_input.push_str(clean);
                     self.ps.api_key_cursor = self.ps.api_key_input.len();
                 }
+                AuthField::XiaomiEndpointType => {
+                    // User pasted on endpoint type — they meant to paste API key
+                    self.auth_field = AuthField::ApiKey;
+                    if self.ps.has_existing_key_sentinel() {
+                        self.ps.api_key_input.clear();
+                    }
+                    self.ps.api_key_input.push_str(clean);
+                    self.ps.api_key_cursor = self.ps.api_key_input.len();
+                }
                 _ => {}
             },
             _ => {}
@@ -518,6 +527,9 @@ impl OnboardingWizard {
                     } else if self.ps.provider_id() == "zhipu" {
                         // z.ai GLM: endpoint type first, then API key
                         self.auth_field = AuthField::ZhipuEndpointType;
+                    } else if self.ps.provider_id() == "xiaomi" {
+                        // Xiaomi: endpoint type first, then API key
+                        self.auth_field = AuthField::XiaomiEndpointType;
                     } else {
                         self.auth_field = AuthField::ApiKey;
                     }
@@ -574,6 +586,8 @@ impl OnboardingWizard {
                 KeyCode::BackTab | KeyCode::Up => {
                     if self.ps.provider_id() == "zhipu" {
                         self.auth_field = AuthField::ZhipuEndpointType;
+                    } else if self.ps.provider_id() == "xiaomi" {
+                        self.auth_field = AuthField::XiaomiEndpointType;
                     } else {
                         self.auth_field = AuthField::Provider;
                     }
@@ -870,6 +884,20 @@ impl OnboardingWizard {
                 KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') => {
                     // Toggle between 0 (api) and 1 (coding)
                     self.ps.zhipu_endpoint_type = 1 - self.ps.zhipu_endpoint_type;
+                }
+                KeyCode::Enter | KeyCode::Tab => {
+                    // Endpoint type selected → now enter API key
+                    self.auth_field = AuthField::ApiKey;
+                }
+                KeyCode::BackTab => {
+                    self.auth_field = AuthField::Provider;
+                }
+                _ => {}
+            },
+            AuthField::XiaomiEndpointType => match event.code {
+                KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') => {
+                    // Toggle between 0 (api) and 1 (token-plan)
+                    self.ps.xiaomi_endpoint_type = 1 - self.ps.xiaomi_endpoint_type;
                 }
                 KeyCode::Enter | KeyCode::Tab => {
                     // Endpoint type selected → now enter API key

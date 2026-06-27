@@ -351,7 +351,8 @@ impl OnboardingWizard {
                 .and_then(|c| c.providers.custom.as_ref())
                 .map(|m| m.keys().cloned().collect())
                 .unwrap_or_default(),
-            zhipu_endpoint_type: 0, // default to API mode
+            zhipu_endpoint_type: 0,  // default to API mode
+            xiaomi_endpoint_type: 0, // default to API mode
             model_filter: String::new(),
             ..Default::default()
         };

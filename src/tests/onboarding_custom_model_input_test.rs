@@ -43,6 +43,7 @@ fn state() -> ProviderSelectorState {
         model_filter: String::new(),
         models_fetching: false,
         zhipu_endpoint_type: 0,
+        xiaomi_endpoint_type: 0,
         base_url: String::new(),
         custom_model: String::new(),
         custom_name: String::new(),

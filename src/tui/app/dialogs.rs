@@ -294,12 +294,24 @@ impl App {
                         None
                     };
 
+                    // Capture xiaomi endpoint type from wizard state (not yet saved to config)
+                    let xiaomi_et = if wizard.ps.provider_id() == "xiaomi" {
+                        Some(if wizard.ps.xiaomi_endpoint_type == 1 {
+                            "token-plan".to_string()
+                        } else {
+                            "api".to_string()
+                        })
+                    } else {
+                        None
+                    };
+
                     let sender = self.event_sender();
                     tokio::spawn(async move {
                         let models = super::onboarding::fetch_provider_models(
                             provider_idx,
                             api_key.as_deref(),
                             zhipu_et.as_deref(),
+                            xiaomi_et.as_deref(),
                             base_url.as_deref(),
                         )
                         .await;

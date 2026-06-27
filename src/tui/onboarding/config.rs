@@ -451,6 +451,13 @@ impl OnboardingWizard {
                     try_write!(write_errors, section, "endpoint_type", endpoint_type);
                 }
                 "xiaomi" => {
+                    // Endpoint type: "api" (default) or "token-plan"
+                    let endpoint_type = if self.ps.xiaomi_endpoint_type == 1 {
+                        "token-plan"
+                    } else {
+                        "api"
+                    };
+                    try_write!(write_errors, section, "endpoint_type", endpoint_type);
                     // Cap MiMo at 200k. It advertises ~1M but degrades past
                     // ~200-300k, and OpenCrabs' transparent compaction already
                     // gives effectively-infinite memory — the extra window only
