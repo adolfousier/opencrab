@@ -88,3 +88,13 @@ name = "/btw"
 description = "Spawn a parallel agent for a side task"
 action = "prompt"
 prompt = "Spawn an isolated sub-agent to handle this task in parallel while the main conversation continues. Use the spawn_agent tool with agent_type 'general' and a descriptive label. The user's input after /btw is the task for the sub-agent. After spawning, confirm the agent is running and provide its label for reference."
+
+# ========================================
+# Profile Management
+# ========================================
+
+[[commands]]
+name = "/profiles"
+description = "List and switch between OpenCrabs profiles"
+action = "prompt"
+prompt = "Call the slash_command tool with command='/profiles'. If the user provided a profile name after /profiles, switch to that profile."
