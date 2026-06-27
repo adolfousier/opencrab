@@ -33,9 +33,7 @@ api_key = ""
 api_key = ""
 
 [providers.xiaomi]
-# NOT needed during the free opencrabs x Xiaomi launch window (the proxy
-# supplies the key). Only set this AFTER the cutoff (2026-06-25) to keep using
-# Xiaomi with your own key. Get one at: platform.xiaomimimo.com
+# Get an API key (sk-...) at: platform.xiaomimimo.com
 api_key = ""
 
 [providers.gemini]

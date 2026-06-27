@@ -120,7 +120,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 ### AI & Providers
 | Feature | Description |
 |---------|-------------|
-| **Multi-Provider** | **Xiaomi (default — free, no key during the launch window)**, Anthropic Claude, OpenAI, GitHub Copilot (uses your Copilot subscription), OpenRouter (400+ models), MiniMax, Google Gemini, z.ai GLM (General API + Coding API), Claude CLI, OpenCode CLI, Codex CLI (uses your ChatGPT/Codex subscription), Qwen Native (free OAuth with multi-account rotation), Qwen Code CLI (1k free req/day), and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly. Custom provider dialog: paste-by-default for API keys, Enter-to-load live models, typed-not-in-list models accepted and merged. Each session remembers its provider + model and restores it on switch |
+| **Multi-Provider** | **Xiaomi MiMo**, Anthropic Claude, OpenAI, GitHub Copilot (uses your Copilot subscription), OpenRouter (400+ models), MiniMax, Google Gemini, z.ai GLM (General API + Coding API), Claude CLI, OpenCode CLI, Codex CLI (uses your ChatGPT/Codex subscription), Qwen Native (free OAuth with multi-account rotation), Qwen Code CLI (1k free req/day), and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly. Custom provider dialog: paste-by-default for API keys, Enter-to-load live models, typed-not-in-list models accepted and merged. Each session remembers its provider + model and restores it on switch |
 | **Fallback Providers** | Configure a chain of fallback providers — if the primary fails, each fallback is tried in sequence automatically. Any configured provider can be a fallback. Config: `[providers.fallback] providers = ["openrouter", "anthropic"]` |
 | **Per-Provider Vision** | Set `vision_model` per provider — the LLM calls `analyze_image` as a tool, which uses the vision model on the same provider API to describe images. The chat model stays the same and gets vision capability via tool call. Gemini vision takes priority when configured. Auto-configured for known providers (e.g. MiniMax) on first run |
 | **Prompt Caching** | Caches the stable context prefix (system prompt, brain files, earlier turns) on every caching-capable provider — Anthropic native (default), OpenAI/OpenRouter (`cache_enabled`), Qwen/Alibaba (zero-config auto), Xiaomi (server-side). Averaging ~87% cache efficiency in real use; watch it live in the Cache Efficiency card of `/usage`. Big reason a larger context window stays affordable |
@@ -148,7 +148,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 
 #### Vision setup — two paths, pick one
 
-> **Using Xiaomi during the collab?** Share images and OpenCrabs automatically routes to a vision-capable model. No setup needed.
+> **Using Xiaomi?** Share images and OpenCrabs automatically routes to MiMo's multimodal model — no separate vision key needed.
 
 **Path A (preferred, simpler).** Set `vision_model = "<model>"` on your active `[providers.<name>]` block in `config.toml`. Works for every built-in and custom provider — the agent calls the vision model on the **same provider endpoint** via the `analyze_image` tool, so no second API key is needed. Pick a vision-capable model on that provider (DeepSeek chat models like `deepseek-v4-flash` reject `image_url` content, so point `vision_model` at a vision-capable variant of the same family — every provider has at least one).
 
@@ -567,7 +567,7 @@ The CLI `migrate` command currently supports OpenClaw and Hermes. For everything
 
 | Provider | Auth | Models | Streaming | Tools | Notes |
 |----------|------|--------|-----------|-------|-------|
-| **Xiaomi** ⭐ | Free, no key\* | mimo-v2.5-pro (1M ctx), v2-pro, v2.5, omni, flash | ✅ | ✅ | **Default provider.** opencrabs × Xiaomi collab — free inference, no API key needed during the launch window (until 2026-06-25). New users land almost straight in chat |
+| **Xiaomi (MiMo)** | API key | mimo-v2.5-pro (1M ctx), v2-pro, v2.5, omni, flash | ✅ | ✅ | OpenAI-compatible. Get a key at platform.xiaomimimo.com. MiMo v2.5 is multimodal (native vision) |
 | [Anthropic Claude](#anthropic-claude) | API key | Claude Opus 4.6, Sonnet 4.5, Haiku 4.5+ | ✅ | ✅ | Cost tracking, automatic retry |
 | [OpenAI](#openai) | API key | GPT-5 Turbo, GPT-5 | ✅ | ✅ | |
 | [GitHub Copilot](#github-copilot) | OAuth | GPT-4o, Claude Sonnet 4+ | ✅ | ✅ | Uses your Copilot subscription — no API charges |
