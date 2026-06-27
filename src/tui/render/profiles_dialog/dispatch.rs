@@ -142,11 +142,7 @@ fn draw_profile_list(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(palette::TEXT_PRIMARY)
         };
 
-        let desc = entry
-            .description
-            .as_deref()
-            .unwrap_or("")
-            .to_string();
+        let desc = entry.description.as_deref().unwrap_or("").to_string();
 
         let mut spans = vec![
             Span::styled(
@@ -238,7 +234,10 @@ fn draw_create_flow(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(palette::TEAL));
     let line = Line::from(vec![
         Span::styled(" > ", Style::default().fg(palette::TEAL)),
-        Span::styled(input_value.clone(), Style::default().fg(palette::TEXT_PRIMARY)),
+        Span::styled(
+            input_value.clone(),
+            Style::default().fg(palette::TEXT_PRIMARY),
+        ),
         Span::styled("▎", Style::default().fg(palette::TEXT_DIM)),
     ]);
     let para = Paragraph::new(line).block(block);
@@ -327,7 +326,10 @@ fn draw_migrate_flow(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(palette::TEAL));
     let line = Line::from(vec![
         Span::styled(" > ", Style::default().fg(palette::TEAL)),
-        Span::styled(input_value.clone(), Style::default().fg(palette::TEXT_PRIMARY)),
+        Span::styled(
+            input_value.clone(),
+            Style::default().fg(palette::TEXT_PRIMARY),
+        ),
         Span::styled("▎", Style::default().fg(palette::TEXT_DIM)),
     ]);
     let para = Paragraph::new(line).block(block);

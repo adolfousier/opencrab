@@ -23,10 +23,8 @@ pub fn reload(app: &mut App) {
     app.profiles_dialog.profiles = profiles;
     app.profiles_dialog.active_profile = active;
     // Clamp selection
-    let visible = super::state::matching(
-        &app.profiles_dialog.profiles,
-        &app.profiles_dialog.filter,
-    );
+    let visible =
+        super::state::matching(&app.profiles_dialog.profiles, &app.profiles_dialog.filter);
     if app.profiles_dialog.selected_index >= visible.len() && !visible.is_empty() {
         app.profiles_dialog.selected_index = visible.len() - 1;
     }
