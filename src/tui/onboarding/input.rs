@@ -756,6 +756,13 @@ impl OnboardingWizard {
                             self.ps.custom_model.pop();
                         }
                         KeyCode::Enter | KeyCode::Tab | KeyCode::Down => {
+                            // Empty model + base_url that supports it: refetch the live
+                            // catalogue so the user can pick instead of typing a name.
+                            if self.ps.custom_model.trim().is_empty()
+                                && self.ps.supports_model_fetch()
+                            {
+                                return WizardAction::FetchModels;
+                            }
                             self.auth_field = AuthField::CustomContextWindow;
                         }
                         KeyCode::BackTab | KeyCode::Up => {

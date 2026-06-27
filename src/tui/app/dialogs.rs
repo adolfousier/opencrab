@@ -276,6 +276,13 @@ impl App {
                     };
                     wizard.ps.models_fetching = true;
 
+                    // Capture custom base_url so custom providers can hit <base_url>/v1/models
+                    let base_url = if wizard.ps.base_url.trim().is_empty() {
+                        None
+                    } else {
+                        Some(wizard.ps.base_url.clone())
+                    };
+
                     // Capture zhipu endpoint type from wizard state (not yet saved to config)
                     let zhipu_et = if wizard.ps.provider_id() == "zhipu" {
                         Some(if wizard.ps.zhipu_endpoint_type == 1 {
@@ -293,7 +300,7 @@ impl App {
                             provider_idx,
                             api_key.as_deref(),
                             zhipu_et.as_deref(),
-                            None,
+                            base_url.as_deref(),
                         )
                         .await;
                         let _ = sender.send(TuiEvent::OnboardingModelsFetched(models));
