@@ -111,6 +111,7 @@ pub mod custom_provider_test;
 pub mod daemon_health_test;
 pub mod doc_parser_page_range_test;
 pub mod dynamic_tool_coerce_test;
+pub mod dynamic_tool_parse_error_test;
 pub mod evolve_diagnose_test;
 pub mod evolve_systemd_restart_test;
 pub mod evolve_test;
