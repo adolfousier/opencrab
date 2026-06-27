@@ -250,7 +250,7 @@ async fn apply_installs_tool_into_live_tools_toml_and_archives() {
     // Tool is registered and listed in tools.toml.
     let tools_path = dir.path().join("tools.toml");
     assert!(tools_path.exists());
-    let listed = DynamicToolLoader::list_tools_detailed(&tools_path);
+    let listed = DynamicToolLoader::list_tools_detailed(&tools_path).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].name, "gh_issue_list");
     assert!(registry.get("gh_issue_list").is_some());
@@ -333,7 +333,7 @@ async fn reject_archives_without_installing() {
     assert!(registry.get("gh_issue_list").is_none());
     let tools_path = dir.path().join("tools.toml");
     if tools_path.exists() {
-        let listed = DynamicToolLoader::list_tools_detailed(&tools_path);
+        let listed = DynamicToolLoader::list_tools_detailed(&tools_path).unwrap();
         assert_eq!(listed.len(), 0);
     }
 

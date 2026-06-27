@@ -133,7 +133,16 @@ impl Tool for ToolManageTool {
 
 impl ToolManageTool {
     fn handle_list(&self) -> Result<ToolResult> {
-        let defs = DynamicToolLoader::list_tools_detailed(&self.tools_path);
+        let defs = match DynamicToolLoader::list_tools_detailed(&self.tools_path) {
+            Ok(defs) => defs,
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Cannot read dynamic tools from {}: {e}. Fix the TOML syntax error \
+                     (often a duplicate key) before any tools will load.",
+                    self.tools_path.display()
+                )));
+            }
+        };
         if defs.is_empty() {
             return Ok(ToolResult::success(
                 "No dynamic tools defined. Use 'add' to create one.".to_string(),
@@ -293,11 +302,19 @@ impl ToolManageTool {
     }
 
     fn handle_reload(&self) -> Result<ToolResult> {
-        let count = DynamicToolLoader::reload(&self.tools_path, &self.registry);
-        Ok(ToolResult::success(format!(
-            "Reloaded {count} dynamic tool(s) from {}",
-            self.tools_path.display()
-        )))
+        match DynamicToolLoader::reload(&self.tools_path, &self.registry) {
+            Ok(count) => Ok(ToolResult::success(format!(
+                "Reloaded {count} dynamic tool(s) from {}",
+                self.tools_path.display()
+            ))),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to reload dynamic tools from {}: {e}. The file likely has a TOML \
+                 syntax error (often a duplicate key); a single bad key drops the ENTIRE \
+                 file, so every tool is skipped until it is fixed. Already-loaded tools are \
+                 left unchanged.",
+                self.tools_path.display()
+            ))),
+        }
     }
 }
 
