@@ -373,12 +373,12 @@ impl OnboardingWizard {
                 }
                 AuthField::CustomBaseUrl => {
                     self.ps.base_url.push_str(clean);
-                    // Normalize pasted URL immediately
+                    // Normalize pasted URL: strip trailing slashes and
+                    // /chat/completions suffix. Keep /v1 intact so routers
+                    // like Dialagram (/router/v1) get /v1/chat/completions.
                     let normalized = self.ps.base_url.trim_end_matches('/');
                     let normalized = normalized
-                        .strip_suffix("/v1/chat/completions")
-                        .or_else(|| normalized.strip_suffix("/chat/completions"))
-                        .or_else(|| normalized.strip_suffix("/v1"))
+                        .strip_suffix("/chat/completions")
                         .unwrap_or(normalized)
                         .to_string();
                     self.ps.base_url = normalized;
@@ -689,14 +689,12 @@ impl OnboardingWizard {
                     self.ps.base_url.pop();
                 }
                 KeyCode::Enter | KeyCode::Tab | KeyCode::Down => {
-                    // Normalize base URL: strip trailing slashes, /v1/chat/completions,
-                    // /chat/completions, /v1 suffixes so model fetch and provider
-                    // factory get a clean base. Users paste all sorts of formats.
+                    // Normalize base URL: strip trailing slashes and
+                    // /chat/completions suffix. Keep /v1 intact so routers
+                    // like Dialagram (/router/v1) get /v1/chat/completions.
                     let normalized = self.ps.base_url.trim_end_matches('/');
                     let normalized = normalized
-                        .strip_suffix("/v1/chat/completions")
-                        .or_else(|| normalized.strip_suffix("/chat/completions"))
-                        .or_else(|| normalized.strip_suffix("/v1"))
+                        .strip_suffix("/chat/completions")
                         .unwrap_or(normalized)
                         .to_string();
                     self.ps.base_url = normalized;
