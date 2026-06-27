@@ -2141,28 +2141,60 @@ pub(crate) async fn handle_message(
                 }
             })
             .unwrap_or_else(|| "unknown".to_string());
-        // Bug #225: messages sent via sendRichMessage (Bot API 10.1) don't
-        // populate text()/caption() in teloxide's reply_to_message model.
-        // Fall back to the most recent bot message in channel_messages so
-        // the agent still sees what it said.
-        if full_text.is_empty() && reply.from.as_ref().is_some_and(|u| u.is_bot) && !is_dm {
-            let chat_id_str = msg.chat.id.0.to_string();
-            let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
-            match channel_msg_repo
-                .recent(Some("telegram"), &chat_id_str, 10, thread_id_str.as_deref())
-                .await
-            {
-                Ok(recent) => {
-                    if let Some(bot_msg) = recent.iter().find(|m| m.sender_id.starts_with("bot:")) {
+        // Bug #225 / #234: messages sent via sendRichMessage (Bot API 10.1)
+        // arrive with empty text()/caption() in teloxide's reply_to_message
+        // model, and current Telegram clients can't quote rich messages, so
+        // both `full_text` and `quote_text` are empty when a user replies to
+        // a rich bot message. Recover the bot's text so the agent still sees
+        // what it said. The source differs by chat type:
+        //   - Groups: bot replies are persisted to channel_messages (#225).
+        //   - DMs: bot replies live in the session `messages` table, not
+        //     channel_messages, so recover the last assistant message there.
+        if full_text.is_empty() && reply.from.as_ref().is_some_and(|u| u.is_bot) {
+            if is_dm {
+                let msg_repo = crate::db::MessageRepository::new(session_svc.pool());
+                match msg_repo.get_last_assistant_message(session_id).await {
+                    Ok(Some(bot_msg)) => {
                         full_text = bot_msg.content.clone();
                         tracing::info!(
-                            "Telegram reply context: recovered rich message text from channel_messages ({} chars)",
+                            "Telegram reply context: recovered DM rich message text from session messages ({} chars)",
                             full_text.len()
                         );
                     }
+                    Ok(None) => {
+                        tracing::info!(
+                            "Telegram reply context: no assistant message found in session {session_id} for DM recovery"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Telegram reply context: session message lookup failed: {e}"
+                        );
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Telegram reply context: channel_msg_repo lookup failed: {e}");
+            } else {
+                let chat_id_str = msg.chat.id.0.to_string();
+                let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
+                match channel_msg_repo
+                    .recent(Some("telegram"), &chat_id_str, 10, thread_id_str.as_deref())
+                    .await
+                {
+                    Ok(recent) => {
+                        if let Some(bot_msg) =
+                            recent.iter().find(|m| m.sender_id.starts_with("bot:"))
+                        {
+                            full_text = bot_msg.content.clone();
+                            tracing::info!(
+                                "Telegram reply context: recovered rich message text from channel_messages ({} chars)",
+                                full_text.len()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Telegram reply context: channel_msg_repo lookup failed: {e}"
+                        );
+                    }
                 }
             }
         }
