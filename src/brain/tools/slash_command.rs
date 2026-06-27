@@ -172,7 +172,8 @@ impl Tool for SlashCommandTool {
     fn description(&self) -> &str {
         "Execute any OpenCrabs slash command. Built-in: /help, /models (view/switch), \
          /usage (session stats), /doctor (health check), /sessions (list), \
-         /approve (get/set policy), /cd (change dir), /compact, /rebuild. \
+         /profiles (list/switch/create profiles), /approve (get/set policy), \
+         /cd (change dir), /compact, /rebuild. \
          Also executes user-defined commands from commands.toml. \
          /models with args='model-name' switches the active model."
     }
@@ -259,6 +260,7 @@ impl Tool for SlashCommandTool {
                     .into(),
             )),
             "/goal" => self.handle_goal(args, context).await,
+            "/profiles" => self.handle_profiles(context).await,
             "/onboard" => Ok(ToolResult::success(
                 "Onboarding wizard is a TUI-only interactive screen. \
                  However, you can read and modify all settings via config_manager \
@@ -424,6 +426,7 @@ impl SlashCommandTool {
              /rebuild  — Build from source & hot-restart\n\
              /evolve   — Download latest release & hot-restart\n\
              /goal     — Set/view/pause/clear session goal\n\
+             /profiles — List/switch/create/manage profiles\n\
              /whisper  — Voice-to-text (TUI only)\n\
              /onboard  — Setup wizard (TUI only, use config_manager for programmatic changes)\n\n\
              You can also use config_manager to read/write any config setting directly."
@@ -827,6 +830,42 @@ impl SlashCommandTool {
         }
     }
 
+    async fn handle_profiles(&self, _context: &ToolExecutionContext) -> Result<ToolResult> {
+        use crate::config::profile::{active_profile, list_profiles};
+
+        let active = active_profile().unwrap_or("default");
+        let profiles = list_profiles().unwrap_or_default();
+
+        if profiles.is_empty() {
+            return Ok(ToolResult::success(
+                "No profiles found. Use `opencrabs profile create <name>` to create one.".into(),
+            ));
+        }
+
+        let mut lines = vec![format!("👤 Profiles (active: `{}`)", active), String::new()];
+
+        for p in &profiles {
+            let marker = if p.name == active { "▸ " } else { "  " };
+            let desc = p
+                .description
+                .as_deref()
+                .filter(|d| !d.is_empty())
+                .map(|d| format!(" — {d}"))
+                .unwrap_or_default();
+            lines.push(format!("{}{}{}", marker, p.name, desc));
+        }
+
+        lines.push(String::new());
+        lines.push(
+            "Manage via CLI: `opencrabs profile create <name>`, \
+             `opencrabs profile switch <name>`, \
+             `opencrabs -p <name>` to launch under a profile."
+                .to_string(),
+        );
+
+        Ok(ToolResult::success(lines.join("\n")))
+    }
+
     fn handle_user_command(&self, command: &str, _args: &str) -> Result<ToolResult> {
         let brain_path = crate::brain::BrainLoader::resolve_path();
         let loader = crate::brain::CommandLoader::from_brain_path(&brain_path);
@@ -865,6 +904,7 @@ impl SlashCommandTool {
                 "/onboard",
                 "/whisper",
                 "/goal",
+                "/profiles",
             ];
             Ok(ToolResult::error(format!(
                 "Unknown command: '{}'. Built-in: {}. User-defined: {}",
