@@ -1045,18 +1045,14 @@ pub struct DebugConfig {
     pub profiling: bool,
 }
 
-/// Canonical defaults for the Xiaomi (opencrabs × xiaomi collab) provider,
-/// applied when `config.toml` has no `[providers.xiaomi]` section.
+/// Canonical defaults for the Xiaomi MiMo provider, applied when `config.toml`
+/// has no `[providers.xiaomi]` section.
 ///
-/// Xiaomi is keyless during the free collab window — the proxy supplies the
-/// key server-side — so a config that predates the provider (or a fresh
-/// `/evolve` that never appended the section) still gets a working, selectable
-/// Xiaomi with zero manual edits. Without this, `try_create_xiaomi` returned
-/// `Ok(None)` and `/models` showed "No models available" even though the picker
-/// listed Xiaomi as keyless-available (#194), and `default_model()` would have
-/// reported the `"MISSING_MODEL"` sentinel. The keyless time-gate stays in
-/// `try_create_xiaomi`, so a synthesized section is harmless after the cutoff —
-/// it only supplies model metadata.
+/// This seeds model metadata (model list, vision model, context window) so the
+/// picker and `/models` show MiMo's catalogue without manual edits (#194).
+/// Xiaomi is keyed: `try_create_xiaomi` still needs an `api_key`, and the
+/// registry marks it `requires_api_key`, so an enabled section with no key is
+/// simply skipped rather than becoming a broken default.
 pub fn xiaomi_provider_defaults() -> ProviderConfig {
     ProviderConfig {
         enabled: true,
@@ -1073,7 +1069,7 @@ pub fn xiaomi_provider_defaults() -> ProviderConfig {
         .collect(),
         // MiMo v2.5 is multimodal, so analyze_image routes to it natively
         // (via ProviderVisionTool) instead of needing a Gemini key. Falls back
-        // to Gemini at call time if the proxy ever rejects image content.
+        // to Gemini at call time if Xiaomi ever rejects image content.
         vision_model: Some("mimo-v2.5-pro".to_string()),
         // Cap at 200k even though MiMo advertises ~1M: quality degrades past
         // ~200-300k, and OpenCrabs already provides effectively-infinite memory
@@ -1085,7 +1081,7 @@ pub fn xiaomi_provider_defaults() -> ProviderConfig {
 }
 
 /// serde field-default for [`ProviderConfigs::xiaomi`] — materializes the
-/// canonical keyless section when the TOML omits `[providers.xiaomi]`.
+/// canonical metadata section when the TOML omits `[providers.xiaomi]`.
 fn default_xiaomi_provider() -> Option<ProviderConfig> {
     Some(xiaomi_provider_defaults())
 }
@@ -1113,11 +1109,10 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub zhipu: Option<ProviderConfig>,
 
-    /// Xiaomi MiMo configuration (opencrabs x xiaomi collab). OpenAI-compatible.
-    /// During the free collab window the key is supplied server-side by our
-    /// proxy, so this needs no api_key; after the cutoff a user key is required.
-    /// Defaults to the canonical keyless section when the TOML omits it, so
-    /// configs predating the provider still get a working Xiaomi (#194).
+    /// Xiaomi MiMo configuration. OpenAI-compatible, keyed: the user supplies an
+    /// API key from platform.xiaomimimo.com. Defaults to a canonical metadata
+    /// section (model list, vision model, context window) when the TOML omits
+    /// it, so the picker and /models show MiMo's catalogue (#194).
     #[serde(default = "default_xiaomi_provider")]
     pub xiaomi: Option<ProviderConfig>,
 
@@ -1226,10 +1221,11 @@ impl ProviderConfigs {
         &self,
     ) -> [(&'static str, &'static str, bool, Option<&ProviderConfig>); 17] {
         [
-            // Xiaomi MiMo (opencrabs x xiaomi collab) — the default. Keyless
-            // (requires_api_key = false) during the free window: the proxy
-            // supplies the key. First so a fresh, key-less install lands on it.
-            ("xiaomi", "Xiaomi", false, self.xiaomi.as_ref()),
+            // Xiaomi MiMo — keyed (requires_api_key = true): the user supplies
+            // an API key from platform.xiaomimimo.com. An enabled-but-keyless
+            // section is correctly skipped here so it never becomes a broken
+            // default.
+            ("xiaomi", "Xiaomi", true, self.xiaomi.as_ref()),
             // CLI providers — enabled flag alone is enough
             ("claude-cli", "Claude CLI", false, self.claude_cli.as_ref()),
             (

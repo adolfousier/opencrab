@@ -1,21 +1,14 @@
-//! Regression: keyless API providers (Xiaomi) must onboard without an API key.
-//!
-//! Xiaomi is a key-LESS API provider (empty key_label, the proxy supplies the
-//! key). Selecting it in onboarding must skip the API-key field and go straight
-//! to model selection with a populated model list — otherwise the user gets
-//! stuck on the key field and can never enable the provider.
+//! Regression: Xiaomi MiMo is a KEYED provider (it used to be keyless during
+//! the collab). Selecting it in onboarding must land on the API-key field, and
+//! an enabled-but-keyless section must NOT resolve as the active provider — the
+//! `requires_api_key` gate keeps a key-less Xiaomi from becoming a broken
+//! default.
 
-use crate::tui::onboarding::{
-    AuthField, OnboardingStep, OnboardingWizard, PROVIDERS, WizardAction,
-};
+use crate::tui::onboarding::{AuthField, OnboardingStep, OnboardingWizard, PROVIDERS};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-fn enter() -> KeyEvent {
-    KeyEvent::new(KeyCode::Enter, KeyModifiers::empty())
-}
-
 #[test]
-fn xiaomi_keyless_skips_api_key_and_loads_models() {
+fn xiaomi_keyed_lands_on_api_key_field() {
     let mut wizard = OnboardingWizard::new();
     let idx = PROVIDERS
         .iter()
@@ -29,65 +22,33 @@ fn xiaomi_keyless_skips_api_key_and_loads_models() {
     // Confirm the provider selection (Enter on the provider field).
     let _ = wizard.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
 
-    // Keyless provider must SKIP the API-key field and land on Model.
+    // Keyed provider must land on the API-key field, not skip to Model.
     assert_eq!(
         wizard.auth_field,
-        AuthField::Model,
-        "Xiaomi (empty key_label) must skip the API-key field, not get stuck on ApiKey"
-    );
-
-    // And there must be a selectable model list, or the user can't pick a model
-    // and complete onboarding.
-    let has_models = !wizard.ps.config_models.is_empty() || !wizard.ps.models.is_empty();
-    assert!(
-        has_models,
-        "Xiaomi must have a selectable model list after skipping the key field; \
-         config_models={:?} models={:?}",
-        wizard.ps.config_models, wizard.ps.models
+        AuthField::ApiKey,
+        "Xiaomi is keyed now — selecting it must land on the API-key field"
     );
 }
 
-/// Full quick-jump flow (what /onboard:provider and /models do): select Xiaomi
-/// on the provider field, Enter to the model field, Enter on the model must
-/// COMMIT (return QuickJumpDone) — previously a no-op / stuck.
+/// The onboarding entry for Xiaomi must declare a key field, so the wizard
+/// prompts for a key instead of treating it as keyless.
 #[test]
-#[allow(clippy::field_reassign_with_default)]
-fn xiaomi_keyless_quickjump_full_flow_commits() {
-    let mut w = OnboardingWizard::default();
-    w.quick_jump = true;
-    w.step = OnboardingStep::ProviderAuth;
-    w.auth_field = AuthField::Provider;
-    let idx = PROVIDERS
+fn xiaomi_provider_entry_requires_a_key() {
+    let xiaomi = PROVIDERS
         .iter()
-        .position(|p| p.id == "xiaomi")
+        .find(|p| p.id == "xiaomi")
         .expect("xiaomi in PROVIDERS");
-    w.ps.selected_provider = idx;
-
-    // Enter on the provider field → keyless skip to Model with models loaded.
-    let _ = w.handle_key(enter());
-    assert_eq!(w.auth_field, AuthField::Model);
     assert!(
-        !w.ps.config_models.is_empty() || !w.ps.models.is_empty(),
-        "model list must be populated"
-    );
-
-    // Enter on the model field → must commit.
-    let action = w.handle_key(enter());
-    assert_eq!(
-        action,
-        WizardAction::QuickJumpDone,
-        "Enter on the model field must commit the keyless Xiaomi selection"
+        !xiaomi.key_label.is_empty(),
+        "Xiaomi must have a non-empty key_label so onboarding prompts for a key"
     );
 }
 
-/// is_first_time() must NOT loop back to onboarding when Xiaomi is the only
-/// enabled provider. It now derives "configured" from active_provider_and_model
-/// (provider_registry) instead of a hardcoded OR-chain that omitted xiaomi —
-/// that omission is exactly why an enabled Xiaomi re-triggered onboarding on
-/// every restart. Keyless: enabled + no api_key still counts as active.
+/// An enabled Xiaomi section with NO api_key must NOT resolve as the active
+/// provider — `requires_api_key` skips it so it never becomes a broken default.
 #[test]
 #[allow(clippy::field_reassign_with_default)]
-fn xiaomi_enabled_is_an_active_provider_no_onboarding_loop() {
+fn xiaomi_enabled_without_key_is_not_active() {
     use crate::config::{ProviderConfig, ProviderConfigs};
     let mut providers = ProviderConfigs::default();
     providers.xiaomi = Some(ProviderConfig {
@@ -97,15 +58,31 @@ fn xiaomi_enabled_is_an_active_provider_no_onboarding_loop() {
     });
     let (provider, _) = providers.active_provider_and_model();
     assert_eq!(
-        provider, "xiaomi",
-        "enabled keyless Xiaomi must resolve as the active provider so \
-         is_first_time() stops re-triggering onboarding on restart"
+        provider, "none",
+        "an enabled but key-less Xiaomi must be skipped, not selected as active"
     );
 }
 
+/// An enabled Xiaomi section WITH an api_key resolves as the active provider.
+#[test]
+#[allow(clippy::field_reassign_with_default)]
+fn xiaomi_enabled_with_key_is_active() {
+    use crate::config::{ProviderConfig, ProviderConfigs};
+    let mut providers = ProviderConfigs::default();
+    providers.xiaomi = Some(ProviderConfig {
+        enabled: true,
+        api_key: Some("sk-user-key".to_string()),
+        default_model: Some("mimo-v2.5-pro".to_string()),
+        ..Default::default()
+    });
+    let (provider, model) = providers.active_provider_and_model();
+    assert_eq!(provider, "xiaomi", "a keyed, enabled Xiaomi must be active");
+    assert_eq!(model, "mimo-v2.5-pro");
+}
+
 /// /models populates its list via fetch_provider_models — it must return the
-/// mimo chat models for Xiaomi (was empty: xiaomi missing from the endpoint
-/// match, so the picker showed nothing to select).
+/// mimo chat models for Xiaomi (static fallback list) so the picker has
+/// something to select even before a key is entered.
 #[tokio::test]
 async fn xiaomi_models_fetch_returns_mimo_list() {
     let idx = PROVIDERS

@@ -97,10 +97,10 @@ impl ProviderSelectorState {
     }
 
     /// Whether the current provider needs NO API key from the user: CLI
-    /// subprocesses (claude-cli, …) AND key-less API providers whose onboarding
-    /// entry has an empty `key_label` (e.g. Xiaomi, where the proxy supplies the
-    /// key). The single source of truth for "skip the API-key field" — use this
-    /// instead of re-deriving `is_cli() || key_label.is_empty()` at each site.
+    /// subprocesses (claude-cli, …) AND any API provider whose onboarding entry
+    /// has an empty `key_label`. The single source of truth for "skip the
+    /// API-key field" — use this instead of re-deriving
+    /// `is_cli() || key_label.is_empty()` at each site.
     pub fn is_keyless(&self) -> bool {
         self.is_cli() || (!self.is_custom() && self.current_provider().key_label.is_empty())
     }

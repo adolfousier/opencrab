@@ -293,18 +293,16 @@ pub const PROVIDERS: &[ProviderInfo] = &[
             "Requires: ollama serve (local) or cloud endpoint",
         ],
     },
-    // opencrabs x Xiaomi collab. The runtime DEFAULT (see provider_registry /
-    // config.toml.example) — listed here for users who switch away and back.
-    // Free + keyless during the launch window: empty key_label = onboarding
-    // skips the API-key step. After the cutoff a key is required.
+    // Xiaomi MiMo — OpenAI-compatible, keyed. Get an API key at
+    // platform.xiaomimimo.com.
     ProviderInfo {
         id: "xiaomi",
         name: "Xiaomi",
-        models: &[], // Fetched live from the proxy's /v1/models (chat models only)
-        key_label: "",
+        models: &[], // Fetched live from /v1/models (chat models only)
+        key_label: "API Key",
         help_lines: &[
-            "Free during the opencrabs x Xiaomi launch (no API key needed)",
-            "Default provider — just continue to start chatting",
+            "Get an API key at platform.xiaomimimo.com",
+            "OpenAI-compatible — MiMo v2.5 models",
         ],
     },
     ProviderInfo {

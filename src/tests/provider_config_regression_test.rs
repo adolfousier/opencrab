@@ -268,7 +268,7 @@ fn is_first_time_uses_provider_registry_not_hardcoded_list() {
     // source of truth), NOT a hardcoded OR-chain of provider fields.
     //
     // History: the hardcoded chain silently omitted new providers — ollama and
-    // opencode (2026-04-28), then keyless Xiaomi (2026-06) — so an enabled but
+    // opencode (2026-04-28), then Xiaomi (2026-06) — so an enabled but
     // un-listed provider re-triggered onboarding on every restart. Routing
     // through provider_registry makes that class of bug impossible: adding a
     // provider to the registry automatically covers is_first_time().

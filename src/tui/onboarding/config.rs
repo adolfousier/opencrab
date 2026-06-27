@@ -170,9 +170,9 @@ impl OnboardingWizard {
                 HealthStatus::Fail(format!("'{}' CLI not found in PATH", binary))
             }
         } else if self.ps.is_keyless() {
-            // Keyless / local providers (Xiaomi's free window, Ollama, etc.)
-            // need no API key — the proxy or local server supplies it. Failing
-            // them on "No API key provided" wrongly blocked onboarding.
+            // Keyless / local providers (Ollama, llama.cpp, etc.) need no API
+            // key — the local server supplies it. Failing them on "No API key
+            // provided" wrongly blocked onboarding.
             HealthStatus::Pass
         } else if !self.ps.api_key_input.is_empty() || !self.ps.base_url.is_empty() {
             // A key, or an explicit endpoint (custom provider, or a local /
@@ -454,8 +454,7 @@ impl OnboardingWizard {
                     // Cap MiMo at 200k. It advertises ~1M but degrades past
                     // ~200-300k, and OpenCrabs' transparent compaction already
                     // gives effectively-infinite memory — the extra window only
-                    // hurts. Pin it on the written section so it survives even
-                    // when the keyless default isn't materialized.
+                    // hurts. Pin it on the written section so it always survives.
                     try_write!(write_errors, section, "context_window", "200000");
                 }
                 "" => {

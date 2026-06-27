@@ -70,8 +70,7 @@ struct ProviderRegistration {
 /// The index is used by `provider_enabled()`.
 static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
     vec![
-        // Xiaomi MiMo (opencrabs x xiaomi collab) — the default provider.
-        // First so a key-less install lands on it via active_provider_and_model.
+        // Xiaomi MiMo — OpenAI-compatible, keyed (key from platform.xiaomimimo.com).
         ProviderRegistration {
             display_name: "Xiaomi",
             session_id: "xiaomi",
@@ -758,29 +757,13 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
         && let Some(vision_model) = &cfg.vision_model
     {
         // A configured `vision_model` is the gate — NOT the presence of an API
-        // key. Keyless and local providers (Ollama, llama.cpp, LM Studio,
-        // Xiaomi's free window, etc.) have no key but still serve vision, so
-        // requiring one wrongly hid `analyze_image` from those installs.
-        //
-        // Key resolution mirrors provider creation: a real user key wins;
-        // otherwise Xiaomi sends the collab app token as the Bearer during its
-        // free window; any other keyless/local provider gets an empty Bearer.
-        // A provider that genuinely needs a key but has none simply fails at
-        // call time with a clear auth error, which is better than silently
-        // having no vision tool at all.
-        let api_key = cfg
-            .api_key
-            .clone()
-            .filter(|k| !k.is_empty())
-            .unwrap_or_else(|| {
-                if name == "xiaomi" && xiaomi_keyless_window_open() {
-                    option_env!("OPENCRABS_XIAOMI_APP_TOKEN")
-                        .unwrap_or("")
-                        .to_string()
-                } else {
-                    String::new()
-                }
-            });
+        // key. Keyless and local providers (Ollama, llama.cpp, LM Studio, etc.)
+        // have no key but still serve vision, so requiring one wrongly hid
+        // `analyze_image` from those installs. A real user key wins; any
+        // keyless/local provider gets an empty Bearer. A provider that genuinely
+        // needs a key but has none simply fails at call time with a clear auth
+        // error, which is better than silently having no vision tool at all.
+        let api_key = cfg.api_key.clone().filter(|k| !k.is_empty()).unwrap_or_default();
         let base_url = cfg
             .base_url
             .clone()
@@ -842,23 +825,10 @@ pub fn active_provider_generation(config: &Config) -> Option<(String, String, St
         && let Some(generation_model) = &cfg.generation_model
     {
         // Gate on `generation_model`, not the API key, so keyless and local
-        // providers (Ollama, llama.cpp, LM Studio, Xiaomi's free window, etc.)
-        // still register `generate_image`. Same key resolution as the vision
-        // path: real user key wins; Xiaomi sends its collab app token during the
-        // free window; any other keyless/local provider gets an empty Bearer.
-        let api_key = cfg
-            .api_key
-            .clone()
-            .filter(|k| !k.is_empty())
-            .unwrap_or_else(|| {
-                if name == "xiaomi" && xiaomi_keyless_window_open() {
-                    option_env!("OPENCRABS_XIAOMI_APP_TOKEN")
-                        .unwrap_or("")
-                        .to_string()
-                } else {
-                    String::new()
-                }
-            });
+        // providers (Ollama, llama.cpp, LM Studio, etc.) still register
+        // `generate_image`. Same key resolution as the vision path: a real user
+        // key wins; any keyless/local provider gets an empty Bearer.
+        let api_key = cfg.api_key.clone().filter(|k| !k.is_empty()).unwrap_or_default();
         // Strip any chat-specific trailing segment so the caller can append
         // `/images/generations` cleanly. Accepts the three URL shapes users
         // typically paste into custom-provider config: `…/v1`,
@@ -1059,90 +1029,37 @@ fn try_create_openrouter(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
 }
 
 /// Try to create Minimax provider if configured
-/// Default proxy endpoint for the opencrabs x xiaomi collab. The proxy holds
-/// the real Xiaomi key and injects it server-side, so the binary never ships a
-/// key. Overridable via `[providers.xiaomi] base_url`. Will be nginx-fronted.
-const XIAOMI_PROXY_BASE_URL: &str = "https://xiaomi-collab.opencrabs.com/v1/chat/completions";
-/// The instant the opencrabs × Xiaomi collab ends: 2026-06-27 00:00 UTC. This
-/// is the literal end DATE — the free keyless window is open STRICTLY BEFORE it
-/// (`today < end`), so it stays open through all of the 26th and flips closed at
-/// 00:00 UTC on the 27th. Keeping the constant equal to the real end date (with
-/// `<`) — rather than a "last open day" with `<=` — is deliberate: the original
-/// bug was someone translating the end into a different number and closing the
-/// window a full day early. After the window a user must supply their own
-/// `api_key`; the proxy enforces the same cutoff server-side.
-const XIAOMI_KEYLESS_END: &str = "2026-06-27";
+/// Default endpoint for Xiaomi MiMo's OpenAI-compatible API. Overridable via
+/// `[providers.xiaomi] base_url`. Users get an API key at platform.xiaomimimo.com.
+const XIAOMI_DEFAULT_BASE_URL: &str = "https://api.xiaomimimo.com/v1/chat/completions";
 
-/// True while the free keyless collab window is open: any UTC date strictly
-/// before the end date, so it closes exactly at 2026-06-27 00:00 UTC.
-fn xiaomi_keyless_window_open() -> bool {
-    xiaomi_keyless_open_on(chrono::Utc::now().date_naive())
-}
-
-/// Window-open check for a given UTC date — split out so the boundary is
-/// testable without mocking the clock. Open ⇔ `today < end`.
-pub(crate) fn xiaomi_keyless_open_on(today: chrono::NaiveDate) -> bool {
-    match chrono::NaiveDate::parse_from_str(XIAOMI_KEYLESS_END, "%Y-%m-%d") {
-        Ok(end) => today < end,
-        Err(_) => false,
-    }
-}
-
-/// Xiaomi MiMo (opencrabs x xiaomi collab). OpenAI-compatible.
-///
-/// Key resolution: a real user-supplied key always wins (works any time).
-/// Otherwise, during the free window we go keyless (empty Bearer) and the
-/// proxy supplies the real key. After the cutoff with no user key, the
-/// provider is unavailable so the user is steered to add their own key.
+/// Xiaomi MiMo. OpenAI-compatible, keyed: the user supplies an API key from
+/// platform.xiaomimimo.com. With no key the provider stays unconfigured so the
+/// user is steered to add one (or pick another provider).
 fn try_create_xiaomi(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
-    // Config load already materializes the canonical section via serde default
-    // (`default_xiaomi_provider`), so `xiaomi` is normally `Some`. Keep a
-    // belt-and-suspenders fallback for a programmatically-built `Config` that
-    // bypasses deserialization: during the keyless window synthesize the same
-    // defaults so Xiaomi still works; after the cutoff a missing section with
-    // no key stays unconfigured.
-    let synthesized_xiaomi;
     let xiaomi_config = match &config.providers.xiaomi {
         Some(cfg) => cfg,
-        None if xiaomi_keyless_window_open() => {
-            synthesized_xiaomi = crate::config::xiaomi_provider_defaults();
-            &synthesized_xiaomi
-        }
         None => return Ok(None),
+    };
+
+    let api_key = match xiaomi_config.api_key.clone().filter(|k| !k.is_empty()) {
+        Some(k) => k,
+        None => {
+            tracing::debug!(
+                "Xiaomi has no api_key; add one in keys.toml ([providers.xiaomi] api_key) to enable it"
+            );
+            return Ok(None);
+        }
     };
 
     let base_url = xiaomi_config
         .base_url
         .clone()
-        .unwrap_or_else(|| XIAOMI_PROXY_BASE_URL.to_string());
+        .unwrap_or_else(|| XIAOMI_DEFAULT_BASE_URL.to_string());
     let base_url = if base_url.contains("/chat/completions") {
         base_url
     } else {
         format!("{}/chat/completions", base_url.trim_end_matches('/'))
-    };
-
-    let user_key = xiaomi_config.api_key.clone().filter(|k| !k.is_empty());
-    let api_key = match user_key {
-        Some(k) => k,
-        None if xiaomi_keyless_window_open() => {
-            // Keyless: send the collab app token as the Bearer so the proxy can
-            // gate to OpenCrabs traffic. It's baked at release-build time from a
-            // secret (OPENCRABS_XIAOMI_APP_TOKEN), so it never lives in the
-            // public source; empty in unconfigured dev builds. The proxy
-            // validates it and swaps it for the real Xiaomi key server-side.
-            let app_token = option_env!("OPENCRABS_XIAOMI_APP_TOKEN").unwrap_or("");
-            tracing::info!(
-                "Xiaomi: keyless free-window mode via proxy {base_url} (app token: {})",
-                if app_token.is_empty() { "none" } else { "set" }
-            );
-            app_token.to_string()
-        }
-        None => {
-            tracing::warn!(
-                "Xiaomi free keyless window ended ({XIAOMI_KEYLESS_END}); add your own api_key in keys.toml to keep using Xiaomi"
-            );
-            return Ok(None);
-        }
     };
 
     // Thinking is ON by default — Xiaomi streams reasoning_content and the API

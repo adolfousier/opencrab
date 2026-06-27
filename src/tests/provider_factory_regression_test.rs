@@ -102,8 +102,7 @@ async fn by_name_zhipu() {
 
 #[tokio::test]
 async fn by_name_xiaomi_with_user_key() {
-    // Time-independent path: a user-supplied key works regardless of the free
-    // window. (The keyless free-window path is date-gated, so not unit-tested.)
+    // A user-supplied key creates the keyed Xiaomi provider.
     let config = config_with_provider("xiaomi");
     let provider = create_provider_by_name(&config, "xiaomi")
         .await

@@ -94,8 +94,6 @@ fn all_providers_have_key_label_and_help() {
         "codex-cli",
         "opencode",
         "ollama",
-        // Keyless during the free collab window (auth handled by the proxy).
-        "xiaomi",
     ];
 
     for p in PROVIDERS.iter() {

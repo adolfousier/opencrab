@@ -147,7 +147,7 @@ pub fn is_first_time() -> bool {
     // Past first-time setup iff there's an enabled + usable provider. Use
     // active_provider_and_model (which walks provider_registry + customs)
     // instead of a hardcoded list — the old hardcoded OR-chain silently omitted
-    // new providers (e.g. keyless Xiaomi), so an enabled Xiaomi still looped
+    // new providers (e.g. Xiaomi), so an enabled Xiaomi still looped
     // back into onboarding on every restart. provider_registry is the single
     // source of truth and can't drift.
     let (active_provider, _) = config.providers.active_provider_and_model();
@@ -266,10 +266,10 @@ pub async fn fetch_provider_models(
         return merge_minimax_baseline(minimax_baseline_models(), user_minimax_models());
     }
 
-    // Xiaomi MiMo: the proxy's /v1/models is the live source, but the picker
-    // reads the curated chat-model list from config (config.toml.example) so it
-    // always shows even if the proxy is briefly unreachable. Chat itself still
-    // goes through the live proxy. Mirrors qwen/minimax/codex.
+    // Xiaomi MiMo: /v1/models is the live source, but the picker reads the
+    // curated chat-model list from config (config.toml.example) so it always
+    // shows even if the endpoint is briefly unreachable. Chat itself still goes
+    // through the live API. Mirrors qwen/minimax/codex.
     if provider_id == "xiaomi" {
         let models = crate::tui::provider_selector::load_default_models("xiaomi");
         if !models.is_empty() {

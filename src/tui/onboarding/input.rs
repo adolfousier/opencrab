@@ -502,9 +502,9 @@ impl OnboardingWizard {
                     } else if self.ps.is_custom() {
                         self.auth_field = AuthField::CustomName;
                     } else if self.ps.is_keyless() {
-                        // Keyless providers — CLI subprocesses AND key-less API
-                        // providers like Xiaomi (empty key_label). No API key, so
-                        // skip the key field and go straight to model selection.
+                        // Keyless providers — CLI subprocesses AND any API
+                        // provider with an empty key_label. No API key, so skip
+                        // the key field and go straight to model selection.
                         self.auth_field = AuthField::Model;
                         self.ps.models.clear();
                         self.ps.selected_model = 0;
@@ -596,8 +596,8 @@ impl OnboardingWizard {
                 }
                 KeyCode::Backspace => {
                     if self.ps.model_filter.is_empty() {
-                        // Keyless providers (CLI or empty key_label like Xiaomi)
-                        // have no API key field — go straight back to Provider.
+                        // Keyless providers (CLI or empty key_label) have no API
+                        // key field — go straight back to Provider.
                         if self.ps.is_keyless() {
                             self.auth_field = AuthField::Provider;
                         } else {

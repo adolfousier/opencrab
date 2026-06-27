@@ -1,6 +1,6 @@
-//! `[providers.xiaomi]` materializes to the canonical keyless defaults when the
+//! `[providers.xiaomi]` materializes to the canonical metadata defaults when the
 //! TOML omits the section, so a config that predates the provider (or a fresh
-//! `/evolve` that never appended it) still gets a working, selectable Xiaomi
+//! `/evolve` that never appended it) still shows MiMo's catalogue in the picker
 //! with no manual edits (#194). A section the user did write is left exactly as
 //! written — the default never clobbers explicit values.
 
@@ -13,19 +13,19 @@ fn missing_xiaomi_section_deserializes_to_canonical_defaults() {
     let cfgs: ProviderConfigs = toml::from_str("").expect("empty providers should parse");
     let xiaomi = cfgs.xiaomi.expect("xiaomi must default to Some, not None");
 
-    assert!(xiaomi.enabled, "default provider is enabled");
+    assert!(xiaomi.enabled, "the default section is enabled");
     assert_eq!(xiaomi.default_model.as_deref(), Some("mimo-v2.5-pro"));
     assert!(
         xiaomi.api_key.is_none(),
-        "keyless — the proxy supplies the key"
+        "defaults carry no key — the user supplies one from platform.xiaomimimo.com"
     );
     assert!(
         xiaomi.base_url.is_none(),
-        "base_url stays None so the factory uses the proxy default"
+        "base_url stays None so the factory uses the default xiaomimimo endpoint"
     );
     assert_eq!(xiaomi.models, xiaomi_provider_defaults().models);
     // MiMo v2.5 is multimodal, so vision (analyze_image) routes to it natively
-    // via ProviderVisionTool — no Gemini key required for the keyless promo.
+    // via ProviderVisionTool when a key is set.
     assert_eq!(xiaomi.vision_model.as_deref(), Some("mimo-v2.5-pro"));
     // Capped at 200k despite MiMo's ~1M — quality degrades past ~200-300k and
     // transparent compaction already gives effectively-infinite memory.
@@ -58,23 +58,4 @@ fn programmatic_default_keeps_xiaomi_none() {
     // The serde default is deserialization-only; an in-memory Default::default()
     // (used throughout tests) is unaffected, so blast radius stays small.
     assert!(ProviderConfigs::default().xiaomi.is_none());
-}
-
-/// Pin the keyless-window boundary so the cutoff can't drift back to closing a
-/// day early again. The opencrabs × Xiaomi collab ends 2026-06-27 00:00 UTC, so
-/// the 26th must still be open and the 27th must be closed.
-#[test]
-fn keyless_window_closes_at_2026_06_27_00_utc_not_a_day_early() {
-    use crate::brain::provider::factory::xiaomi_keyless_open_on;
-    let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
-
-    assert!(xiaomi_keyless_open_on(d("2026-06-25")), "25th: open");
-    assert!(
-        xiaomi_keyless_open_on(d("2026-06-26")),
-        "26th must still be open — collab runs through the 26th (ends 27th 00:00 UTC)"
-    );
-    assert!(
-        !xiaomi_keyless_open_on(d("2026-06-27")),
-        "27th: closed — window ends at 27th 00:00 UTC"
-    );
 }

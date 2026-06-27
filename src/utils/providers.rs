@@ -65,9 +65,8 @@ pub const KNOWN_PROVIDERS: &[ProviderMeta] = &[
         id: "xiaomi",
         display_name: "Xiaomi",
         config_section: "providers.xiaomi",
-        // Keyless during the free collab window (the proxy holds the key);
-        // needs_api_key=false tells the UI/onboarding not to prompt for a key.
-        needs_api_key: false,
+        // Keyed: the user supplies an API key from platform.xiaomimimo.com.
+        needs_api_key: true,
     },
     ProviderMeta {
         id: "openai",

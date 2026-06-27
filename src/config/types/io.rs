@@ -418,8 +418,7 @@ pub(crate) fn merge_provider_keys(
         let entry = base.minimax.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
-    // Xiaomi: keyless during the free collab window, but if a user supplies
-    // their own key (e.g. after the cutoff) merge it like any other provider.
+    // Xiaomi: merge the user's key from keys.toml like any other provider.
     if let Some(k) = keys.xiaomi
         && let Some(key) = k.api_key
         && is_real_key(&key)
