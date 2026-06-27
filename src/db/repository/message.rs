@@ -390,33 +390,6 @@ impl MessageRepository {
             .context("Failed to get last assistant message")
     }
 
-    /// Get the most recent assistant message in a session.
-    ///
-    /// Used to recover reply context in Telegram DMs: bot messages live in
-    /// this `messages` table (not `channel_messages`), and rich messages
-    /// (Bot API 10.1) arrive with empty `text()`/`caption()`, so the
-    /// replied-to text must be recovered from here. The incoming user
-    /// message is not yet persisted at recovery time, so the last assistant
-    /// row is the message the user is replying to in the common case.
-    pub async fn get_last_assistant_message(&self, session_id: Uuid) -> Result<Option<Message>> {
-        let sid = session_id.to_string();
-        self.pool
-            .get()
-            .await
-            .context("Failed to get connection")?
-            .interact(move |conn| {
-                conn.prepare_cached(
-                    "SELECT * FROM messages WHERE session_id = ?1 AND role = 'assistant' \
-                     ORDER BY sequence DESC LIMIT 1",
-                )?
-                .query_row(params![sid], Message::from_row)
-                .optional()
-            })
-            .await
-            .map_err(interact_err)?
-            .context("Failed to get last assistant message")
-    }
-
     /// Delete all messages in a session
     pub async fn delete_by_session(&self, session_id: Uuid) -> Result<()> {
         let sid = session_id.to_string();
