@@ -763,7 +763,11 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
         // keyless/local provider gets an empty Bearer. A provider that genuinely
         // needs a key but has none simply fails at call time with a clear auth
         // error, which is better than silently having no vision tool at all.
-        let api_key = cfg.api_key.clone().filter(|k| !k.is_empty()).unwrap_or_default();
+        let api_key = cfg
+            .api_key
+            .clone()
+            .filter(|k| !k.is_empty())
+            .unwrap_or_default();
         let base_url = cfg
             .base_url
             .clone()
@@ -828,7 +832,11 @@ pub fn active_provider_generation(config: &Config) -> Option<(String, String, St
         // providers (Ollama, llama.cpp, LM Studio, etc.) still register
         // `generate_image`. Same key resolution as the vision path: a real user
         // key wins; any keyless/local provider gets an empty Bearer.
-        let api_key = cfg.api_key.clone().filter(|k| !k.is_empty()).unwrap_or_default();
+        let api_key = cfg
+            .api_key
+            .clone()
+            .filter(|k| !k.is_empty())
+            .unwrap_or_default();
         // Strip any chat-specific trailing segment so the caller can append
         // `/images/generations` cleanly. Accepts the three URL shapes users
         // typically paste into custom-provider config: `…/v1`,
