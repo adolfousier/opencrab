@@ -1,6 +1,6 @@
 [package]
 name = "opencrabs"
-version = "0.3.53"
+version = "0.3.54"
 edition = "2024"
 rust-version = "1.91"
 authors = ["Adolfo Usier <adolfo@meetneura.ai>"]

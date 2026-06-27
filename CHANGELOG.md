@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.54] - 2026-06-27
+
+21 commits since v0.3.53. 47 files changed, +1728 / -380 lines.
+
+### ✨ Features
+
+- `94558f16` **TUI markdown rendering**: render emphasis, lists, links, and task items in the terminal UI
+- `10ed2726` **Wire /goal to all channels**: the autonomous /goal command is now available across every channel with bare-command denial (#232)
+- `d49f67d4` **Xiaomi MiMo as a normal keyed provider**: the collab-specific keyless proxy is gone, MiMo now behaves like any other keyed provider
+
+### 🔧 Fixes
+
+- `0cb0a9bf` **Restore custom-provider live model fetch**: onboarding model fetch from a custom base_url was broken, now pulls the live model list again
+- `e3755e44` **Surface tools.toml parse errors**: a malformed tools.toml no longer silently drops every tool, the parse error is now reported (#235)
+- `2885b225` **Recover Telegram reply context for bot rich messages in DMs**: reply context for bot rich messages was lost in DMs, now recovered (#234)
+- `a63f8440` **Remove duplicate get_last_assistant_message**: deduplicated the helper and its duplicate tests (#234)
+- `4501226b` **Remove hallucination fuel from post-evolve prompts**: post-evolve prompts no longer carry text that triggered hallucinations
+
+### 📖 Documentation
+
+- `422a725c` docs(providers): scrub Xiaomi collab references for the keyed provider
+- `6f83f8a1` docs(cron): add copy-paste cron job templates
+
+### 🧹 Miscellaneous
+
+- `c316aebb` style(provider): apply rustfmt to factory key resolution
+- `f6aecad2` test(providers): pin Xiaomi keyed-provider behaviour and shadow agreement
+- `53310f4d` test(onboarding): pin custom-provider live model fetch regression
+- `9dfc35b9` test(tools): cover tools.toml parse-error handling and data-loss guard (#235)
+- `f81b5b19` test(telegram): pin DM reply-context recovery for bot rich messages (#234)
+- `c012a30a` test(goal): pin /goal dispatch, bare-denial, and directive shape (#232)
+- `27941dd7` test(tui): cover markdown emphasis, lists, links, and task rendering
+- `f5fd1427` test(skills): pin profile-scoped skill discovery and isolation (#231)
+
+### 📊 Stats
+
+- 21 commits since v0.3.53
+- 47 files changed, +1728 / -380 lines
+- 4193 tests (4193 passed, 0 failed, 24 ignored)
+
+[0.3.54]: https://github.com/adolfousier/opencrabs/compare/v0.3.53...v0.3.54
+
 ## [0.3.53] - 2026-06-26
 
 1 commit since v0.3.52. 3 files changed, +32 / -0 lines.
@@ -6067,3 +6109,4 @@ fixes.
 [0.3.51]: https://github.com/adolfousier/opencrabs/compare/v0.3.50...v0.3.51
 [0.3.52]: https://github.com/adolfousier/opencrabs/compare/v0.3.51...v0.3.52
 [0.3.53]: https://github.com/adolfousier/opencrabs/compare/v0.3.52...v0.3.53
+[0.3.54]: https://github.com/adolfousier/opencrabs/compare/v0.3.53...v0.3.54
