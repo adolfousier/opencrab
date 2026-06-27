@@ -153,18 +153,41 @@ impl DynamicToolLoader {
                 return Err(anyhow::anyhow!("failed to read {}: {e}", path.display()));
             }
         };
-        toml::from_str(&content).map_err(|e| {
-            tracing::error!(
-                "tools: {} failed to parse — every dynamic tool is skipped until this is fixed: {e}",
-                path.display()
-            );
-            anyhow::anyhow!("failed to parse {}: {e}", path.display())
-        })
+        match toml::from_str(&content) {
+            Ok(config) => Ok(config),
+            Err(e) => {
+                tracing::error!(
+                    "tools: {} failed to parse, trying last_good backup: {e}",
+                    path.display()
+                );
+                let backup = path.with_extension("toml.bak");
+                if let Ok(backup_content) = std::fs::read_to_string(&backup)
+                    && let Ok(backup_config) = toml::from_str::<DynamicToolsConfig>(&backup_content)
+                {
+                    tracing::warn!(
+                        "tools: recovered {} tool(s) from {}",
+                        backup_config.tools.len(),
+                        backup.display()
+                    );
+                    return Ok(backup_config);
+                }
+                Err(anyhow::anyhow!("failed to parse {}: {e}", path.display()))
+            }
+        }
     }
 
     fn write_config(path: &Path, config: &DynamicToolsConfig) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
+        }
+        // Snapshot the current parseable file as last_good backup (#235).
+        if path.exists() {
+            let backup = path.with_extension("toml.bak");
+            if let Ok(current) = std::fs::read_to_string(path)
+                && toml::from_str::<DynamicToolsConfig>(&current).is_ok()
+            {
+                let _ = std::fs::copy(path, &backup);
+            }
         }
         std::fs::write(path, toml::to_string_pretty(config)?)?;
         Ok(())
