@@ -90,3 +90,124 @@ fn bot_quote_without_recovery_still_works() {
         "bot quote without recovery must still produce context"
     );
 }
+
+// ── DM recovery (#234, the case #225 missed) ────────────────────────────────
+//
+// #225 only recovered bot text from `channel_messages`, which is gated on
+// `!is_dm` — bot DMs are never stored there. So a DM reply to a rich bot
+// message had NO recovery source and lost all context. The fix recovers the
+// last assistant message from the session `messages` table via
+// `MessageRepository::get_last_assistant_message`. These tests pin that.
+
+use crate::db::models::Message;
+use crate::db::{Database, MessageRepository};
+use crate::services::{ServiceContext, SessionService};
+
+/// The DM recovery source: the last assistant message in the session is
+/// returned even when a later user row exists, and even though the incoming
+/// reply isn't persisted yet at recovery time.
+#[tokio::test]
+async fn dm_recovery_returns_last_assistant_message() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let context = ServiceContext::new(db.pool().clone());
+    let session = SessionService::new(context)
+        .create_session(Some("DM".to_string()))
+        .await
+        .unwrap();
+
+    let repo = MessageRepository::new(db.pool().clone());
+    repo.create(&Message::new(
+        session.id,
+        "user".into(),
+        "earlier question".into(),
+        1,
+    ))
+    .await
+    .unwrap();
+    repo.create(&Message::new(
+        session.id,
+        "assistant".into(),
+        "Here is your rich photo report.".into(),
+        2,
+    ))
+    .await
+    .unwrap();
+
+    let recovered = repo
+        .get_last_assistant_message(session.id)
+        .await
+        .unwrap()
+        .expect("must find the assistant message for DM reply recovery");
+    assert_eq!(recovered.content, "Here is your rich photo report.");
+
+    // The recovered text flows into format_reply_context with an empty quote,
+    // exactly as the DM rich-reply path does — context must be present.
+    let ctx = format_reply_context("assistant", &recovered.content, "");
+    assert!(ctx.is_some());
+    assert!(ctx.unwrap().contains("Here is your rich photo report."));
+}
+
+/// `role = 'assistant'` filter: a trailing user row must NOT shadow the
+/// assistant message the user is replying to.
+#[tokio::test]
+async fn dm_recovery_skips_trailing_user_message() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let context = ServiceContext::new(db.pool().clone());
+    let session = SessionService::new(context)
+        .create_session(Some("DM".to_string()))
+        .await
+        .unwrap();
+
+    let repo = MessageRepository::new(db.pool().clone());
+    repo.create(&Message::new(
+        session.id,
+        "assistant".into(),
+        "bot reply text".into(),
+        1,
+    ))
+    .await
+    .unwrap();
+    repo.create(&Message::new(
+        session.id,
+        "user".into(),
+        "a later user line".into(),
+        2,
+    ))
+    .await
+    .unwrap();
+
+    let recovered = repo
+        .get_last_assistant_message(session.id)
+        .await
+        .unwrap()
+        .expect("must return the assistant row, not the trailing user row");
+    assert_eq!(recovered.content, "bot reply text");
+}
+
+/// Empty session (no assistant message yet) → None, and the handler then
+/// leaves `full_text` empty (no false recovery).
+#[tokio::test]
+async fn dm_recovery_returns_none_when_no_assistant_message() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let context = ServiceContext::new(db.pool().clone());
+    let session = SessionService::new(context)
+        .create_session(Some("DM".to_string()))
+        .await
+        .unwrap();
+
+    let repo = MessageRepository::new(db.pool().clone());
+    repo.create(&Message::new(
+        session.id,
+        "user".into(),
+        "only a user line".into(),
+        1,
+    ))
+    .await
+    .unwrap();
+
+    let recovered = repo.get_last_assistant_message(session.id).await.unwrap();
+    assert!(recovered.is_none());
+}
