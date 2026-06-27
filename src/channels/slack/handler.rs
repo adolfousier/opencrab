@@ -1185,6 +1185,16 @@ async fn handle_message(
             }
             ChannelCommand::NotACommand => {}
             // Help, Usage, Evolve, Doctor, UserSystem handled by try_execute_text_command above
+            ChannelCommand::Profiles(resp) => {
+                let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
+                let session = client.open_session(&token);
+                let request = SlackApiChatPostMessageRequest::new(
+                    SlackChannelId::new(channel_id),
+                    SlackMessageContent::new().with_text(resp.text.clone()),
+                );
+                let _ = session.chat_post_message(&request).await;
+                return;
+            }
             _ => {}
         }
     }
