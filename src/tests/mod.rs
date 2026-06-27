@@ -77,6 +77,7 @@ pub mod cron_tool_registry_test;
 pub mod cross_provider_model_leak_guard_test;
 pub mod custom_model_paste_test;
 pub mod custom_provider_cache_autoenable_test;
+pub mod custom_provider_live_fetch_regression_test;
 pub mod custom_provider_rename_keys_toml_test;
 pub mod custom_provider_section_resolver_test;
 pub mod git_branch_test;
