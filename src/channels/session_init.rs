@@ -35,10 +35,31 @@ pub async fn create_channel_session(
     session_svc: &SessionService,
     title: Option<String>,
 ) -> Result<Session> {
-    let (inherited_provider, inherited_model) = match session_svc.get_most_recent_session().await {
-        Ok(Some(prev)) => (prev.provider_name, prev.model),
-        _ => (None, None),
-    };
+    let (mut inherited_provider, mut inherited_model) =
+        match session_svc.get_most_recent_session().await {
+            Ok(Some(prev)) => (prev.provider_name, prev.model),
+            _ => (None, None),
+        };
+
+    // Never inherit a provider that is disabled or absent in config. The most
+    // recent session can carry a stale pick (e.g. a provider the user has since
+    // turned off), and blindly copying it propagates that dead provider — and
+    // its cross-provider model — onto every new channel session, surfacing as a
+    // "stale model pin" on each turn. Drop it so the session falls through to
+    // the config default instead.
+    if let Some(p) = &inherited_provider {
+        let usable = crate::config::Config::load()
+            .map(|c| c.providers.is_provider_usable(p))
+            .unwrap_or(false);
+        if !usable {
+            tracing::info!(
+                "Channel session: not inheriting disabled/absent provider {:?}; using config default",
+                p
+            );
+            inherited_provider = None;
+            inherited_model = None;
+        }
+    }
 
     if inherited_provider.is_some() {
         tracing::info!(
