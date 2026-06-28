@@ -171,3 +171,40 @@ fn reply_context_carries_full_sender_identity() {
         Some(r#"[Replying to Carol (@carol), ID 555: "the original message"]"#.into())
     );
 }
+
+// ---------------------------------------------------------------------------
+// resolve_reply_context — never fabricate when the replied-to content is gone
+// ---------------------------------------------------------------------------
+
+use crate::channels::telegram::handler::resolve_reply_context;
+
+#[test]
+fn unrecoverable_bot_reply_emits_explicit_marker_not_none() {
+    // Rich/cron bot message we could not retrieve: the agent must be told the
+    // content is unavailable so it says so instead of inventing a reply target.
+    let ctx = resolve_reply_context("assistant", "", "", true);
+    let text = ctx.expect("must emit a marker, not None");
+    assert!(text.contains("could not be retrieved"), "got: {text}");
+    assert!(
+        text.contains("Do NOT guess"),
+        "must forbid fabrication: {text}"
+    );
+}
+
+#[test]
+fn recoverable_content_ignores_the_unavailable_flag() {
+    // When we DID retrieve content, the marker must never appear even if the
+    // flag is set — real content always wins.
+    let ctx = resolve_reply_context("assistant", "the real message", "", true);
+    assert_eq!(
+        ctx,
+        Some(r#"[Replying to assistant: "the real message"]"#.into())
+    );
+}
+
+#[test]
+fn empty_non_bot_reply_stays_none() {
+    // A user message with genuinely empty text (e.g. a sticker) and no bot
+    // flag must stay None — no marker, no fabrication prompt.
+    assert_eq!(resolve_reply_context("Alice", "", "", false), None);
+}

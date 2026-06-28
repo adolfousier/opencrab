@@ -2187,61 +2187,29 @@ pub(crate) async fn handle_message(
                 }
             }
         }
-        // Heuristic fallback: only runs when the exact lookup found nothing
-        // (e.g. a reply to a message sent before id capture shipped, or a
-        // delivery path that captured no id).
-        if full_text.is_empty() && reply.from.as_ref().is_some_and(|u| u.is_bot) {
-            if is_dm {
-                let msg_repo = crate::db::MessageRepository::new(session_svc.pool());
-                match msg_repo.get_last_assistant_message(session_id).await {
-                    Ok(Some(bot_msg)) => {
-                        full_text = bot_msg.content.clone();
-                        tracing::info!(
-                            "Telegram reply context: recovered DM rich message text from session messages ({} chars)",
-                            full_text.len()
-                        );
-                    }
-                    Ok(None) => {
-                        tracing::info!(
-                            "Telegram reply context: no assistant message found in session {session_id} for DM recovery"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Telegram reply context: session message lookup failed: {e}"
-                        );
-                    }
-                }
-            } else {
-                let chat_id_str = msg.chat.id.0.to_string();
-                let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
-                match channel_msg_repo
-                    .recent(Some("telegram"), &chat_id_str, 10, thread_id_str.as_deref())
-                    .await
-                {
-                    Ok(recent) => {
-                        if let Some(bot_msg) =
-                            recent.iter().find(|m| m.sender_id.starts_with("bot:"))
-                        {
-                            full_text = bot_msg.content.clone();
-                            tracing::info!(
-                                "Telegram reply context: recovered rich message text from channel_messages ({} chars)",
-                                full_text.len()
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Telegram reply context: channel_msg_repo lookup failed: {e}"
-                        );
-                    }
-                }
-            }
-        }
+        // If the exact lookup found nothing we genuinely cannot read the
+        // replied-to content: Telegram delivers rich bot messages (and
+        // cron-delivered messages) with empty text and, when sent before id
+        // capture or via a path that stores no id, there is nothing to match.
+        //
+        // We deliberately DO NOT guess "the most recent bot message" here. That
+        // heuristic injected stale, wrong content as `[Replying to assistant:
+        // "..."]`, and the model confidently fabricated answers around it —
+        // confirmed in field logs (2026-06-28) where every "yeah I can see it"
+        // was a hallucination built on a mismatched message. Honesty beats a
+        // confident wrong guess.
+        let unrecoverable_bot_reply =
+            full_text.is_empty() && reply.from.as_ref().is_some_and(|u| u.is_bot);
+
         // Strip ctx footer from quoted text so metadata never leaks into agent context
         let full_clean = crate::utils::strip_ctx_footer(&full_text);
         let quote_clean = crate::utils::strip_ctx_footer(quote_text);
-        let ctx = format_reply_context(&reply_sender, &full_clean, &quote_clean);
+        let ctx = resolve_reply_context(
+            &reply_sender,
+            &full_clean,
+            &quote_clean,
+            unrecoverable_bot_reply,
+        );
         tracing::info!(
             "Telegram reply context: chat_id={}, has_reply_to=true, \
              has_quote={}, quote_is_manual={:?}, quote_text_len={}, \
@@ -4333,6 +4301,31 @@ pub(crate) fn format_reply_sender(
     }
     let handle = username.map(|h| format!(" (@{h})")).unwrap_or_default();
     format!("{name}{handle}, ID {user_id}")
+}
+
+/// Resolve the final reply-context line the agent sees.
+///
+/// Normally this is just [`format_reply_context`]. But when we are replying to
+/// a BOT message whose text we could not retrieve (rich/cron messages arrive
+/// with empty text and may have no stored id), we emit an explicit
+/// "content unavailable" marker instead of `None`. Returning `None` there let
+/// the model invent a reply target; an explicit marker tells it to say it
+/// cannot see the content rather than fabricate one.
+pub(crate) fn resolve_reply_context(
+    sender: &str,
+    full_clean: &str,
+    quote_clean: &str,
+    unrecoverable_bot_reply: bool,
+) -> Option<String> {
+    match format_reply_context(sender, full_clean, quote_clean) {
+        Some(c) => Some(c),
+        None if unrecoverable_bot_reply => Some(format!(
+            "[Replying to {sender}, but the exact content of that message could not be retrieved \
+             — Telegram delivers rich and cron bot messages without readable text. Do NOT guess, \
+             summarize, or describe what it said; if you need it, ask the user to quote or paste it.]"
+        )),
+        None => None,
+    }
 }
 
 pub(crate) fn format_reply_context(
