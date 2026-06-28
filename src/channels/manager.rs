@@ -183,6 +183,18 @@ impl ChannelManager {
             && let Some(handle) = handles.remove("whatsapp")
         {
             tracing::info!("ChannelManager: restarting WhatsApp agent for re-pairing");
+            // Cleanly disconnect the live client BEFORE aborting the task.
+            // Aborting the JoinHandle only drops the `bot.run()` future;
+            // whatsapp-rust runs its keepalive and read loop on independent
+            // detached tasks, so the old socket keeps pinging and lingers as a
+            // second companion alongside the freshly-paired one. Two companions
+            // on one session make WhatsApp drop a socket, so inbound messages
+            // land on an orphaned connection and never get a reply.
+            // `disconnect()` tears the transport down and disables
+            // auto-reconnect so it cannot resurrect.
+            if let Some(client) = self.whatsapp_state.client().await {
+                client.disconnect().await;
+            }
             handle.abort();
         }
         match channel_action(should_run, handle_alive(handles, "whatsapp")) {
@@ -205,6 +217,11 @@ impl ChannelManager {
             ChannelAction::Stop => {
                 if let Some(handle) = handles.remove("whatsapp") {
                     tracing::info!("ChannelManager: stopping WhatsApp agent");
+                    // Same as the restart path: disconnect the live client so
+                    // the socket does not linger after the task is aborted.
+                    if let Some(client) = self.whatsapp_state.client().await {
+                        client.disconnect().await;
+                    }
                     handle.abort();
                 }
             }
