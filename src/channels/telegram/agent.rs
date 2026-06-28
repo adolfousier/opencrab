@@ -595,6 +595,24 @@ impl TelegramAgent {
 
                             // Directory browser callbacks: cd:sel:{idx}, cd:up, cd:pg:{n}, cd:here, cd:noop
                             if data.starts_with("cd:") {
+                                // Owner-only: the browser exposes the host
+                                // filesystem. Even though /cd is owner-gated, the
+                                // inline keyboard sits in the chat where any
+                                // allowlisted user could tap it, so re-check the
+                                // tapper here.
+                                let caller_is_owner = config_rx
+                                    .borrow()
+                                    .channels
+                                    .telegram
+                                    .is_owner(&query.from.id.0.to_string());
+                                if !caller_is_owner {
+                                    let _ = bot
+                                        .answer_callback_query(query.id.clone())
+                                        .text("🔒 Owner only")
+                                        .show_alert(true)
+                                        .await;
+                                    return ResponseResult::Ok(());
+                                }
                                 let chat_id = query.message.as_ref().map(|m| m.chat().id.0).unwrap_or(0);
                                 // Answer callback query — deferred to each branch
                                 // to allow custom text popups (cd:sel on files).

@@ -290,6 +290,7 @@ pub async fn handle_command(
     session_id: Uuid,
     agent: &AgentService,
     session_svc: &SessionService,
+    is_owner: bool,
 ) -> ChannelCommand {
     let trimmed = text.trim();
     // Strip @botname suffix that Telegram appends in groups
@@ -322,8 +323,18 @@ pub async fn handle_command(
         "/stop" => ChannelCommand::Stop,
         "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
         cmd if cmd == "/cd" || cmd.starts_with("/cd ") => {
-            let path_arg = cmd.strip_prefix("/cd").unwrap_or("").trim();
-            ChannelCommand::ChangeDir(format_cd_browser(path_arg, session_id, session_svc).await)
+            // Owner-only: /cd browses the host filesystem, so a non-owner on the
+            // allowlist could otherwise navigate the owner's private files.
+            if !is_owner {
+                ChannelCommand::UnknownCommand(
+                    "🔒 `/cd` is restricted to the bot owner.".to_string(),
+                )
+            } else {
+                let path_arg = cmd.strip_prefix("/cd").unwrap_or("").trim();
+                ChannelCommand::ChangeDir(
+                    format_cd_browser(path_arg, session_id, session_svc).await,
+                )
+            }
         }
         "/profiles" => ChannelCommand::Profiles(format_profiles_browser().await),
         // `/goal` works on every surface. The TUI intercepts it in
