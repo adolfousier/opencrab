@@ -39,6 +39,52 @@ mod repository {
     }
 
     #[tokio::test]
+    async fn content_by_platform_message_id_returns_exact_match() {
+        let (_db, repo) = setup().await;
+
+        // Two bot replies in the same DM, each with its own Telegram message id.
+        // The newer one would win any "most recent bot message" heuristic, so
+        // this proves the lookup keys on the id, not recency.
+        let older = ChannelMessage::new(
+            "telegram".into(),
+            "7711740248".into(),
+            Some("DM".into()),
+            "bot:opencrabs".into(),
+            "OpenCrabs".into(),
+            "Done. Updated the GitHub stats cron.".into(),
+            "text".into(),
+            Some("1001".into()),
+        );
+        let newer = ChannelMessage::new(
+            "telegram".into(),
+            "7711740248".into(),
+            Some("DM".into()),
+            "bot:opencrabs".into(),
+            "OpenCrabs".into(),
+            "Yeah I can see it.".into(),
+            "text".into(),
+            Some("1002".into()),
+        );
+        repo.insert(&older).await.unwrap();
+        repo.insert(&newer).await.unwrap();
+
+        // Replying to the OLDER message must recover the OLDER content, even
+        // though a newer bot message exists.
+        let got = repo
+            .content_by_platform_message_id("telegram", "7711740248", "1001")
+            .await
+            .unwrap();
+        assert_eq!(got.as_deref(), Some("Done. Updated the GitHub stats cron."));
+
+        // Unknown id → None (caller falls back to its heuristic).
+        let miss = repo
+            .content_by_platform_message_id("telegram", "7711740248", "9999")
+            .await
+            .unwrap();
+        assert_eq!(miss, None);
+    }
+
+    #[tokio::test]
     async fn test_insert_and_recent() {
         let (_db, repo) = setup().await;
         let m = msg("telegram", "-100111", "Group A", "Alice", "Hello world");
