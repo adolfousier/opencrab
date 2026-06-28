@@ -727,6 +727,22 @@ pub(crate) async fn create_test_service() -> (AgentService, Uuid) {
     create_test_service_with_provider(Arc::new(MockProvider)).await
 }
 
+/// Like [`create_test_service`] but also hands back the `SessionService` bound
+/// to the same context, for tests that drive `handle_command` (which needs it).
+#[allow(dead_code)]
+pub(crate) async fn create_test_service_full() -> (AgentService, SessionService, Uuid) {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let context = ServiceContext::new(db.pool().clone());
+    let agent_service = AgentService::new_for_test(Arc::new(MockProvider), context.clone()).await;
+    let session_service = SessionService::new(context);
+    let session = session_service
+        .create_session(Some("Test Session".to_string()))
+        .await
+        .unwrap();
+    (agent_service, session_service, session.id)
+}
+
 #[allow(dead_code)]
 pub(crate) async fn create_test_service_with_provider(
     provider: Arc<dyn Provider>,

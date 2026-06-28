@@ -12,6 +12,39 @@ use tokio::task::JoinHandle;
 use crate::channels::ChannelFactory;
 use crate::config::Config;
 
+/// What reconcile should do with a channel this pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChannelAction {
+    /// Not running (or its agent task died) and it should be: (re)start it.
+    Start,
+    /// Running but it should not be: stop it.
+    Stop,
+    /// Desired state already matches: do nothing.
+    Noop,
+}
+
+/// Decide what to do with a channel from its desired state and whether its
+/// agent task is still ALIVE.
+///
+/// The key case (issues #239/#240): when a channel agent crashes or exits, its
+/// `JoinHandle` lingers in the map. Keying "running" off `contains_key` then
+/// treats a dead agent as running, so an enabled channel is never restarted and
+/// the WhatsApp pairing QR never reappears. Treating a finished handle as
+/// not-alive yields `Start`, so a dead agent auto-restarts.
+pub(crate) fn channel_action(should_run: bool, alive: bool) -> ChannelAction {
+    match (should_run, alive) {
+        (true, false) => ChannelAction::Start,
+        (false, true) => ChannelAction::Stop,
+        _ => ChannelAction::Noop,
+    }
+}
+
+/// A channel counts as running only while its agent task is still alive; a
+/// finished handle is stale (the agent exited) and must not block a restart.
+fn handle_alive(handles: &HashMap<String, JoinHandle<()>>, name: &str) -> bool {
+    handles.get(name).is_some_and(|h| !h.is_finished())
+}
+
 /// Manages running channel agents, allowing dynamic spawn/stop on config reload.
 pub struct ChannelManager {
     handles: tokio::sync::Mutex<HashMap<String, JoinHandle<()>>>,
@@ -98,36 +131,39 @@ impl ChannelManager {
             .unwrap_or(false);
 
         let should_run = tg.enabled && has_valid_token;
-        let is_running = handles.contains_key("telegram");
-
-        if should_run && !is_running {
-            if let Some(ref token) = tg.token {
-                let token_hash = crate::config::profile::hash_token(token);
-                if let Err(e) = crate::config::profile::acquire_token_lock("telegram", &token_hash)
-                {
-                    tracing::warn!("ChannelManager: Telegram token lock denied — {}", e);
-                    return;
+        match channel_action(should_run, handle_alive(handles, "telegram")) {
+            ChannelAction::Start => {
+                if let Some(ref token) = tg.token {
+                    let token_hash = crate::config::profile::hash_token(token);
+                    if let Err(e) =
+                        crate::config::profile::acquire_token_lock("telegram", &token_hash)
+                    {
+                        tracing::warn!("ChannelManager: Telegram token lock denied — {}", e);
+                        return;
+                    }
+                    let agent = crate::channels::telegram::TelegramAgent::new(
+                        self.channel_factory.create_agent_service().await,
+                        self.channel_factory.service_context(),
+                        self.channel_factory.shared_session_id(),
+                        self.telegram_state.clone(),
+                        self.channel_factory.config_rx(),
+                        crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
+                    );
+                    tracing::info!(
+                        "ChannelManager: spawning Telegram bot ({} allowed users)",
+                        tg.allowed_users.len()
+                    );
+                    // Overwrites any stale finished handle.
+                    handles.insert("telegram".to_string(), agent.start(token.clone()));
                 }
-                let agent = crate::channels::telegram::TelegramAgent::new(
-                    self.channel_factory.create_agent_service().await,
-                    self.channel_factory.service_context(),
-                    self.channel_factory.shared_session_id(),
-                    self.telegram_state.clone(),
-                    self.channel_factory.config_rx(),
-                    crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
-                );
-                tracing::info!(
-                    "ChannelManager: spawning Telegram bot ({} allowed users)",
-                    tg.allowed_users.len()
-                );
-                handles.insert("telegram".to_string(), agent.start(token.clone()));
             }
-        } else if !should_run
-            && is_running
-            && let Some(handle) = handles.remove("telegram")
-        {
-            tracing::info!("ChannelManager: stopping Telegram bot");
-            handle.abort();
+            ChannelAction::Stop => {
+                if let Some(handle) = handles.remove("telegram") {
+                    tracing::info!("ChannelManager: stopping Telegram bot");
+                    handle.abort();
+                }
+            }
+            ChannelAction::Noop => {}
         }
     }
 
@@ -139,28 +175,40 @@ impl ChannelManager {
     ) {
         let wa = &config.channels.whatsapp;
         let should_run = wa.enabled;
-        let is_running = handles.contains_key("whatsapp");
-
-        if should_run && !is_running {
-            let agent = crate::channels::whatsapp::WhatsAppAgent::new(
-                self.channel_factory.create_agent_service().await,
-                self.channel_factory.service_context(),
-                self.channel_factory.shared_session_id(),
-                self.whatsapp_state.clone(),
-                self.channel_factory.config_rx(),
-                crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
-            );
-            tracing::info!(
-                "ChannelManager: spawning WhatsApp agent ({} allowed phones)",
-                wa.allowed_phones.len()
-            );
-            handles.insert("whatsapp".to_string(), agent.start());
-        } else if !should_run
-            && is_running
+        // A pairing reset wipes session.db and asks for a restart. Abort the
+        // live agent so it starts fresh against the wiped session (drops old
+        // auth at runtime); the Start arm below then respawns it.
+        if should_run
+            && self.whatsapp_state.take_restart_request()
             && let Some(handle) = handles.remove("whatsapp")
         {
-            tracing::info!("ChannelManager: stopping WhatsApp agent");
+            tracing::info!("ChannelManager: restarting WhatsApp agent for re-pairing");
             handle.abort();
+        }
+        match channel_action(should_run, handle_alive(handles, "whatsapp")) {
+            ChannelAction::Start => {
+                let agent = crate::channels::whatsapp::WhatsAppAgent::new(
+                    self.channel_factory.create_agent_service().await,
+                    self.channel_factory.service_context(),
+                    self.channel_factory.shared_session_id(),
+                    self.whatsapp_state.clone(),
+                    self.channel_factory.config_rx(),
+                    crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
+                );
+                tracing::info!(
+                    "ChannelManager: spawning WhatsApp agent ({} allowed phones)",
+                    wa.allowed_phones.len()
+                );
+                // Overwrites any stale finished handle (dead agent auto-restarts).
+                handles.insert("whatsapp".to_string(), agent.start());
+            }
+            ChannelAction::Stop => {
+                if let Some(handle) = handles.remove("whatsapp") {
+                    tracing::info!("ChannelManager: stopping WhatsApp agent");
+                    handle.abort();
+                }
+            }
+            ChannelAction::Noop => {}
         }
     }
 
@@ -177,35 +225,38 @@ impl ChannelManager {
             .map(|t| !t.is_empty() && t.len() > 50)
             .unwrap_or(false);
         let should_run = dc.enabled && has_valid_token;
-        let is_running = handles.contains_key("discord");
-
-        if should_run && !is_running {
-            if let Some(ref token) = dc.token {
-                let token_hash = crate::config::profile::hash_token(token);
-                if let Err(e) = crate::config::profile::acquire_token_lock("discord", &token_hash) {
-                    tracing::warn!("ChannelManager: Discord token lock denied — {}", e);
-                    return;
+        match channel_action(should_run, handle_alive(handles, "discord")) {
+            ChannelAction::Start => {
+                if let Some(ref token) = dc.token {
+                    let token_hash = crate::config::profile::hash_token(token);
+                    if let Err(e) =
+                        crate::config::profile::acquire_token_lock("discord", &token_hash)
+                    {
+                        tracing::warn!("ChannelManager: Discord token lock denied — {}", e);
+                        return;
+                    }
+                    let agent = crate::channels::discord::DiscordAgent::new(
+                        self.channel_factory.create_agent_service().await,
+                        self.channel_factory.service_context(),
+                        self.channel_factory.shared_session_id(),
+                        self.discord_state.clone(),
+                        self.channel_factory.config_rx(),
+                        crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
+                    );
+                    tracing::info!(
+                        "ChannelManager: spawning Discord bot ({} allowed users)",
+                        dc.allowed_users.len()
+                    );
+                    handles.insert("discord".to_string(), agent.start(token.clone()));
                 }
-                let agent = crate::channels::discord::DiscordAgent::new(
-                    self.channel_factory.create_agent_service().await,
-                    self.channel_factory.service_context(),
-                    self.channel_factory.shared_session_id(),
-                    self.discord_state.clone(),
-                    self.channel_factory.config_rx(),
-                    crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
-                );
-                tracing::info!(
-                    "ChannelManager: spawning Discord bot ({} allowed users)",
-                    dc.allowed_users.len()
-                );
-                handles.insert("discord".to_string(), agent.start(token.clone()));
             }
-        } else if !should_run
-            && is_running
-            && let Some(handle) = handles.remove("discord")
-        {
-            tracing::info!("ChannelManager: stopping Discord bot");
-            handle.abort();
+            ChannelAction::Stop => {
+                if let Some(handle) = handles.remove("discord") {
+                    tracing::info!("ChannelManager: stopping Discord bot");
+                    handle.abort();
+                }
+            }
+            ChannelAction::Noop => {}
         }
     }
 
@@ -227,35 +278,37 @@ impl ChannelManager {
                 .map(|t| !t.is_empty() && t.starts_with("xapp-"))
                 .unwrap_or(false);
         let should_run = sl.enabled && has_valid_tokens;
-        let is_running = handles.contains_key("slack");
-
-        if should_run && !is_running {
-            if let (Some(bot_tok), Some(app_tok)) = (sl.token.clone(), sl.app_token.clone()) {
-                let token_hash = crate::config::profile::hash_token(&bot_tok);
-                if let Err(e) = crate::config::profile::acquire_token_lock("slack", &token_hash) {
-                    tracing::warn!("ChannelManager: Slack token lock denied — {}", e);
-                    return;
+        match channel_action(should_run, handle_alive(handles, "slack")) {
+            ChannelAction::Start => {
+                if let (Some(bot_tok), Some(app_tok)) = (sl.token.clone(), sl.app_token.clone()) {
+                    let token_hash = crate::config::profile::hash_token(&bot_tok);
+                    if let Err(e) = crate::config::profile::acquire_token_lock("slack", &token_hash)
+                    {
+                        tracing::warn!("ChannelManager: Slack token lock denied — {}", e);
+                        return;
+                    }
+                    let agent = crate::channels::slack::SlackAgent::new(
+                        self.channel_factory.create_agent_service().await,
+                        self.channel_factory.service_context(),
+                        self.channel_factory.shared_session_id(),
+                        self.slack_state.clone(),
+                        self.channel_factory.config_rx(),
+                        crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
+                    );
+                    tracing::info!(
+                        "ChannelManager: spawning Slack bot ({} allowed users)",
+                        sl.allowed_users.len()
+                    );
+                    handles.insert("slack".to_string(), agent.start(bot_tok, app_tok));
                 }
-                let agent = crate::channels::slack::SlackAgent::new(
-                    self.channel_factory.create_agent_service().await,
-                    self.channel_factory.service_context(),
-                    self.channel_factory.shared_session_id(),
-                    self.slack_state.clone(),
-                    self.channel_factory.config_rx(),
-                    crate::db::ChannelMessageRepository::new(self.db_pool.clone()),
-                );
-                tracing::info!(
-                    "ChannelManager: spawning Slack bot ({} allowed users)",
-                    sl.allowed_users.len()
-                );
-                handles.insert("slack".to_string(), agent.start(bot_tok, app_tok));
             }
-        } else if !should_run
-            && is_running
-            && let Some(handle) = handles.remove("slack")
-        {
-            tracing::info!("ChannelManager: stopping Slack bot");
-            handle.abort();
+            ChannelAction::Stop => {
+                if let Some(handle) = handles.remove("slack") {
+                    tracing::info!("ChannelManager: stopping Slack bot");
+                    handle.abort();
+                }
+            }
+            ChannelAction::Noop => {}
         }
     }
 
@@ -274,37 +327,40 @@ impl ChannelManager {
             && tr.token.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
         let has_boards = !tr.board_ids.is_empty();
         let should_run = tr.enabled && has_valid_creds && has_boards;
-        let is_running = handles.contains_key("trello");
-
-        if should_run && !is_running {
-            if let (Some(api_key), Some(api_token)) = (tr.app_token.clone(), tr.token.clone()) {
-                let token_hash = crate::config::profile::hash_token(&api_token);
-                if let Err(e) = crate::config::profile::acquire_token_lock("trello", &token_hash) {
-                    tracing::warn!("ChannelManager: Trello token lock denied — {}", e);
-                    return;
+        match channel_action(should_run, handle_alive(handles, "trello")) {
+            ChannelAction::Start => {
+                if let (Some(api_key), Some(api_token)) = (tr.app_token.clone(), tr.token.clone()) {
+                    let token_hash = crate::config::profile::hash_token(&api_token);
+                    if let Err(e) =
+                        crate::config::profile::acquire_token_lock("trello", &token_hash)
+                    {
+                        tracing::warn!("ChannelManager: Trello token lock denied — {}", e);
+                        return;
+                    }
+                    let agent = crate::channels::trello::TrelloAgent::new(
+                        self.channel_factory.create_agent_service().await,
+                        self.channel_factory.service_context(),
+                        tr.allowed_users.clone(),
+                        self.channel_factory.shared_session_id(),
+                        self.trello_state.clone(),
+                        tr.board_ids.clone(),
+                        tr.poll_interval_secs,
+                        tr.session_idle_hours,
+                    );
+                    tracing::info!(
+                        "ChannelManager: spawning Trello agent ({} boards)",
+                        tr.board_ids.len()
+                    );
+                    handles.insert("trello".to_string(), agent.start(api_key, api_token));
                 }
-                let agent = crate::channels::trello::TrelloAgent::new(
-                    self.channel_factory.create_agent_service().await,
-                    self.channel_factory.service_context(),
-                    tr.allowed_users.clone(),
-                    self.channel_factory.shared_session_id(),
-                    self.trello_state.clone(),
-                    tr.board_ids.clone(),
-                    tr.poll_interval_secs,
-                    tr.session_idle_hours,
-                );
-                tracing::info!(
-                    "ChannelManager: spawning Trello agent ({} boards)",
-                    tr.board_ids.len()
-                );
-                handles.insert("trello".to_string(), agent.start(api_key, api_token));
             }
-        } else if !should_run
-            && is_running
-            && let Some(handle) = handles.remove("trello")
-        {
-            tracing::info!("ChannelManager: stopping Trello agent");
-            handle.abort();
+            ChannelAction::Stop => {
+                if let Some(handle) = handles.remove("trello") {
+                    tracing::info!("ChannelManager: stopping Trello agent");
+                    handle.abort();
+                }
+            }
+            ChannelAction::Noop => {}
         }
     }
 }

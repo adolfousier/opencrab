@@ -1853,7 +1853,7 @@ pub(crate) async fn handle_message(
     let mut text = text;
     if !is_voice {
         use crate::channels::commands::{self, ChannelCommand};
-        let cmd = commands::handle_command(&text, session_id, &agent, &session_svc).await;
+        let cmd = commands::handle_command(&text, session_id, &agent, &session_svc, is_owner).await;
 
         tracing::info!(
             "Telegram: handle_command returned {:?} for text {:?} (chat={}, is_dm={})",

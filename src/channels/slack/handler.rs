@@ -248,14 +248,7 @@ pub async fn on_interaction(
                             .as_ref()
                             .map(|u| u.id.0.as_str())
                             .unwrap_or("");
-                        let is_owner = cfg.channels.slack.allowed_users.is_empty()
-                            || cfg
-                                .channels
-                                .slack
-                                .allowed_users
-                                .first()
-                                .map(|a| a == caller_id)
-                                .unwrap_or(false);
+                        let is_owner = cfg.channels.slack.is_owner(caller_id);
 
                         if is_owner {
                             *state.shared_session.lock().await = Some(new_id);
@@ -755,12 +748,7 @@ async fn handle_message(
     tracing::info!("Slack: message from {}: {}", user_id, text_preview);
 
     // Track owner's channel for proactive messaging
-    let is_owner = allowed.is_empty()
-        || allowed
-            .iter()
-            .next()
-            .map(|a| *a == user_id)
-            .unwrap_or(false);
+    let is_owner = sl_cfg.is_owner(&user_id);
 
     if is_owner {
         state
@@ -960,8 +948,14 @@ async fn handle_message(
     // ── Channel commands (/help, /usage, /models) ──────────────────────────
     {
         use crate::channels::commands::{self, ChannelCommand};
-        let cmd =
-            commands::handle_command(&content, session_id, &state.agent, &state.session_svc).await;
+        let cmd = commands::handle_command(
+            &content,
+            session_id,
+            &state.agent,
+            &state.session_svc,
+            is_owner,
+        )
+        .await;
 
         // Handle simple text-response commands (Help, Usage, Evolve, Doctor, etc.)
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {

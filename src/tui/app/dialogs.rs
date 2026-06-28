@@ -422,14 +422,18 @@ impl App {
                     });
                 }
                 WizardAction::WhatsAppConnect => {
-                    // Wipe session so agent shows fresh QR, then enable so
-                    // ChannelManager (re)starts the single agent bot.
+                    // Wipe session.db (old auth on disk), then request a restart
+                    // so reconcile aborts the live agent and starts a fresh one
+                    // against the wiped session. Without the restart the running
+                    // agent keeps its in-memory auth and never re-pairs, so the
+                    // QR never refreshes after a reset.
                     #[cfg(feature = "whatsapp")]
                     {
                         let wa_dir = crate::config::opencrabs_home().join("whatsapp");
                         let _ = std::fs::remove_file(wa_dir.join("session.db"));
                         let _ = std::fs::remove_file(wa_dir.join("session.db-wal"));
                         let _ = std::fs::remove_file(wa_dir.join("session.db-shm"));
+                        self.whatsapp_state.request_restart();
                         let _ = crate::config::Config::write_key(
                             "channels.whatsapp",
                             "enabled",
@@ -448,6 +452,13 @@ impl App {
                                 crate::brain::tools::whatsapp_connect::subscribe_whatsapp_pairing(
                                     &wa_state, false,
                                 );
+                            // Replay the current QR immediately so a connect that
+                            // subscribes after the agent already emitted still
+                            // shows it, instead of waiting for the next refresh
+                            // (the "press Enter twice" race).
+                            if let Some(qr) = wa_state.current_qr() {
+                                let _ = sender.send(TuiEvent::WhatsAppQrCode(qr));
+                            }
                             // Forward QR codes to the TUI
                             let qr_sender = sender.clone();
                             let mut qr_rx = handle.qr_rx;

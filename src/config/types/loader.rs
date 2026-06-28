@@ -455,7 +455,7 @@ impl Config {
     ///
     /// Currently handles: `channels.trello.allowed_channels` → `board_ids`.
     /// Called once after loading so old configs are silently upgraded on first run.
-    fn migrate_if_needed(path: &Path) {
+    pub(crate) fn migrate_if_needed(path: &Path) {
         // Hold lock to prevent races between main thread and config watcher
         let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -570,6 +570,13 @@ impl Config {
             changed = true;
         }
 
+        // ── Migration 4: seed channel bot_owner from the first allow-list entry ──
+        for (channel, list_key) in Self::OWNER_SEED_CHANNELS {
+            if Self::owner_seed_needed(&doc, channel, list_key) {
+                changed = true;
+            }
+        }
+
         if !changed {
             // Migration 3: inject commented subagent defaults into [agent] section
             // Uses text-level injection (comments can't survive toml::Value round-trip)
@@ -616,9 +623,14 @@ impl Config {
         // Migration 2: remove [voice] section
         edit_doc.as_table_mut().remove("voice");
 
+        // Migration 4: seed bot_owner per channel where missing.
+        for (channel, list_key) in Self::OWNER_SEED_CHANNELS {
+            Self::seed_bot_owner_edit(&mut edit_doc, channel, list_key);
+        }
+
         Self::backup_config(path, 7);
         if fs::write(path, edit_doc.to_string()).is_ok() {
-            tracing::info!("Config migrated: [voice] → providers.stt/tts");
+            tracing::info!("Config migrated (structural changes written)");
         }
 
         // Migration 3: inject subagent defaults after structural migration
@@ -631,6 +643,75 @@ impl Config {
         {
             tracing::warn!("Config migration: failed to inject subagent defaults: {e}");
         }
+    }
+
+    /// Channels whose `bot_owner` is seeded from the first allow-list entry on
+    /// migration, paired with that channel's allow-list key (WhatsApp keys off
+    /// `allowed_phones`, the rest off `allowed_users`).
+    const OWNER_SEED_CHANNELS: &'static [(&'static str, &'static str)] = &[
+        ("telegram", "allowed_users"),
+        ("discord", "allowed_users"),
+        ("slack", "allowed_users"),
+        ("trello", "allowed_users"),
+        ("whatsapp", "allowed_phones"),
+    ];
+
+    /// True when `channel` has a non-empty allow list but no `bot_owner` yet, so
+    /// the owner must be seeded. Owner identity used to be the implicit first
+    /// allow-list entry; this makes it explicit and stable (#243).
+    fn owner_seed_needed(doc: &toml::Value, channel: &str, list_key: &str) -> bool {
+        let Some(t) = doc
+            .get("channels")
+            .and_then(|c| c.get(channel))
+            .and_then(|t| t.as_table())
+        else {
+            return false;
+        };
+        let has_owner = t
+            .get("bot_owner")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty());
+        let has_first = t
+            .get(list_key)
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty());
+        !has_owner && has_first
+    }
+
+    /// Insert `bot_owner = [<first allow-list entry>]` for `channel` when it is
+    /// missing, preserving the entry's TOML type (string id or numeric id).
+    fn seed_bot_owner_edit(doc: &mut toml_edit::DocumentMut, channel: &str, list_key: &str) {
+        let Some(t) = doc
+            .get_mut("channels")
+            .and_then(|c| c.as_table_mut())
+            .and_then(|c| c.get_mut(channel))
+            .and_then(|t| t.as_table_mut())
+        else {
+            return;
+        };
+        let has_owner = t
+            .get("bot_owner")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty());
+        if has_owner {
+            return;
+        }
+        let Some(first) = t
+            .get(list_key)
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.get(0))
+        else {
+            return;
+        };
+        let mut owner = toml_edit::Array::new();
+        if let Some(s) = first.as_str() {
+            owner.push(s);
+        } else if let Some(i) = first.as_integer() {
+            owner.push(i);
+        } else {
+            return;
+        }
+        t.insert("bot_owner", toml_edit::value(owner));
     }
 
     /// Get the system config path: ~/.opencrabs/config.toml

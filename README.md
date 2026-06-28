@@ -309,6 +309,18 @@ respond_to = "mention"           # Bot only responds to @mentions in groups
 silence_group_start = true       # Silently ignore /start from non-allowed users in groups
 ```
 
+#### Bot owner and owner-only commands
+
+Every channel has a `bot_owner` field (`[channels.telegram]`, `[channels.discord]`, `[channels.slack]`, `[channels.whatsapp]`, `[channels.trello]`). It names the user ID(s) (phone for WhatsApp) treated as the bot owner. On first-run setup the owner is seeded automatically from the first entry in your allow list (`allowed_users`, or `allowed_phones` for WhatsApp), and existing configs are migrated on load. Set `bot_owner` explicitly to pin the owner instead of relying on list order.
+
+The owner gets access that other allowlisted users do not. Commands that expose personal data or the host system are owner-only on channels. For example `/cd` browses the host filesystem, so a non-owner on the allowlist cannot run it or tap its inline buttons. Non-owners who try get a short "owner only" notice.
+
+```toml
+[channels.telegram]
+allowed_users = ["123456789"]    # who may interact
+# bot_owner = ["123456789"]      # owner for owner-only commands (auto-seeded from allowed_users[0])
+```
+
 #### Voice and file pickup in groups
 
 In mention-only groups (`respond_to = "mention"`), users can now share files and voice messages even when the bot isn't directly tagged in the same message. Here's how it works:

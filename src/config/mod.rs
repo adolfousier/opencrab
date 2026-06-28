@@ -5,6 +5,7 @@
 pub mod crabrace;
 mod current;
 pub mod health;
+pub mod owner;
 pub mod profile;
 pub mod repair;
 pub mod secrets;
