@@ -39,3 +39,34 @@ fn no_restart_pending_by_default() {
     let s = WhatsAppState::new();
     assert!(!s.take_restart_request());
 }
+
+/// Once connected the QR is locked: a late/stale `broadcast_qr` is a no-op so a
+/// QR can never reappear after the account is linked. A reset re-enables it.
+///
+/// `mark_connected` is the testable core of `set_connected` (the latter needs a
+/// live `Arc<Client>` that a unit test cannot construct); both flip the same
+/// connected flag and clear any stale QR.
+#[tokio::test]
+async fn qr_is_locked_after_connect_and_reenabled_on_restart() {
+    let s = WhatsAppState::new();
+    assert!(!s.is_connected().await, "not connected initially");
+
+    s.broadcast_qr("QR-PRECONNECT");
+    assert_eq!(s.current_qr().as_deref(), Some("QR-PRECONNECT"));
+
+    // Connecting flips the flag and drops the stale QR.
+    s.mark_connected();
+    assert!(s.is_connected().await, "connected after mark_connected");
+    assert_eq!(s.current_qr(), None, "connecting clears the stale QR");
+
+    // A late/stale QR event after connect is suppressed entirely.
+    s.broadcast_qr("QR-STALE");
+    assert_eq!(s.current_qr(), None, "no QR may reappear once connected");
+
+    // A reset re-enables pairing: connected flips back to false and a fresh QR
+    // can be broadcast again.
+    s.request_restart();
+    assert!(!s.is_connected().await, "restart clears the connected flag");
+    s.broadcast_qr("QR-REPAIR");
+    assert_eq!(s.current_qr().as_deref(), Some("QR-REPAIR"));
+}

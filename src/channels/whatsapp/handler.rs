@@ -199,17 +199,54 @@ fn sender_phone(info: &MessageInfo) -> String {
         .to_string()
 }
 
-/// Extract recipient phone from MessageInfo (who the message is TO).
-fn recipient_phone(info: &MessageInfo) -> Option<String> {
-    info.source.recipient.as_ref().map(|r| {
-        let full = r.to_string();
-        let without_server = full.split('@').next().unwrap_or(&full);
-        without_server
-            .split(':')
-            .next()
-            .unwrap_or(without_server)
-            .to_string()
-    })
+/// Extract the chat's user part from MessageInfo (who/where the message is in).
+/// Mirrors [`sender_phone`]: strips the `@server` and any `:device` suffix so a
+/// JID like "351933536442:34@s.whatsapp.net" becomes "351933536442".
+fn chat_user(info: &MessageInfo) -> String {
+    let full = info.source.chat.to_string();
+    let without_server = full.split('@').next().unwrap_or(&full);
+    without_server
+        .split(':')
+        .next()
+        .unwrap_or(without_server)
+        .to_string()
+}
+
+/// Decide whether the WhatsApp handler should respond to an incoming message.
+///
+/// Security-critical owner / self-chat gate. The bot pairs *as* the owner's
+/// WhatsApp account, so the owner talks to it in the "Message Yourself"
+/// self-chat: `is_from_me` is true and the chat JID equals the sender JID.
+/// That case is **number-agnostic** — even if `allowed_phones` was configured
+/// with a number that does not exactly match the real paired account, the
+/// owner can never be locked out of their own self-chat.
+///
+/// Rules (numbers normalised by stripping a leading `+` on both sides):
+/// * `allowed` empty  -> open mode, respond to everyone.
+/// * owner self-chat (`is_from_me && sender_user == chat_user`) -> respond.
+/// * an explicitly allow-listed contact messaging in
+///   (`!is_from_me && allowed contains sender`) -> respond.
+/// * otherwise -> ignore (never respond to arbitrary chats).
+pub(crate) fn wa_should_respond(
+    is_from_me: bool,
+    sender_user: &str,
+    chat_user: &str,
+    allowed: &[String],
+) -> bool {
+    if allowed.is_empty() {
+        return true;
+    }
+    let sender = sender_user.trim_start_matches('+');
+    let chat = chat_user.trim_start_matches('+');
+    // The paired owner account messaging itself (self-chat).
+    if is_from_me && sender == chat {
+        return true;
+    }
+    // An explicitly allow-listed contact messaging the bot.
+    if !is_from_me && allowed.iter().any(|a| a.trim_start_matches('+') == sender) {
+        return true;
+    }
+    false
 }
 
 /// Split a message into chunks that fit WhatsApp's limit (~65536 chars, but we use 4000 for readability).
@@ -321,29 +358,27 @@ pub(crate) async fn handle_message(
     let idle_timeout_hours = wa_cfg.session_idle_hours;
     let voice_config = cfg.voice_config();
 
-    // SECURITY: When allowed_phones is configured, only respond to the owner.
-    // Also check the recipient: when owner sends a message TO a contact,
-    // sender=owner but recipient=contact — must not treat that as "owner messaging bot".
-    // If allowed_phones is empty (unconfigured), fall through without filtering.
-    if !allowed.is_empty() {
-        let owner_phone_raw = allowed.iter().next().cloned().unwrap_or_default();
-        let owner_phone = owner_phone_raw.trim_start_matches('+');
-        let sender_normalized = phone.trim_start_matches('+');
-        let recipient = recipient_phone(&info);
-        let recipient_normalized = recipient.as_ref().map(|r| r.trim_start_matches('+'));
-        let is_to_owner = recipient_normalized
-            .map(|r| r == owner_phone)
-            .unwrap_or(false);
-        let is_from_owner = sender_normalized == owner_phone;
-        if !is_from_owner || (recipient.is_some() && !is_to_owner) {
-            tracing::debug!(
-                "WhatsApp: ignoring message from={} to={:?} (owner={})",
-                phone,
-                recipient,
-                owner_phone
-            );
-            return;
-        }
+    // SECURITY: owner / self-chat authorization. The bot pairs AS the owner's
+    // account, so the owner's messages arrive in the "Message Yourself"
+    // self-chat (is_from_me, chat == sender). `wa_should_respond` accepts that
+    // self-chat number-agnostically — a config/paired-number mismatch can never
+    // lock the owner out — plus any explicitly allow-listed contact. Everything
+    // else is dropped. Open mode when `allowed_phones` is empty.
+    let sender_user = phone.trim_start_matches('+').to_string();
+    let chat_user_part = chat_user(&info);
+    if !wa_should_respond(
+        info.source.is_from_me,
+        &sender_user,
+        &chat_user_part,
+        &wa_cfg.allowed_phones,
+    ) {
+        tracing::debug!(
+            "WhatsApp: ignoring message from={} chat={} is_from_me={}",
+            sender_user,
+            chat_user_part,
+            info.source.is_from_me,
+        );
+        return;
     }
 
     // Pending approval check: if a tool approval is waiting for this phone,
@@ -1221,6 +1256,143 @@ pub(crate) async fn handle_message(
             let _ = client
                 .send_message(info.source.chat.clone(), error_msg)
                 .await;
+        }
+    }
+}
+
+/// Send a real agent-generated confirmation greeting into the owner's self-chat
+/// right after pairing/connect, proving the full round trip (agent turn + send).
+///
+/// This reuses the exact path `handle_message` uses for the owner: it resolves
+/// the same persistent per-phone WhatsApp session (`wa-<number>`), restores its
+/// provider, runs ONE agent turn with an internal first-message prompt, then
+/// sends the agent's reply to the owner's self-chat JID. On any failure (bad
+/// JID, session error, no agent reply, send error) it broadcasts a WhatsApp
+/// error so onboarding surfaces a real failure instead of a hollow "connected".
+pub(crate) async fn send_connection_greeting(
+    client: Arc<Client>,
+    agent: Arc<AgentService>,
+    session_svc: SessionService,
+    wa_state: Arc<WhatsAppState>,
+    owner_number: String,
+) {
+    let owner_number = owner_number.trim_start_matches('+').to_string();
+    if owner_number.is_empty() {
+        wa_state.broadcast_error(
+            "WhatsApp connected but the owner number is empty — cannot send confirmation.",
+        );
+        return;
+    }
+
+    let jid_str = format!("{owner_number}@s.whatsapp.net");
+    let jid: wacore_binary::jid::Jid = match jid_str.parse() {
+        Ok(j) => j,
+        Err(e) => {
+            wa_state.broadcast_error(&format!(
+                "WhatsApp connected but owner JID '{jid_str}' is invalid: {e}"
+            ));
+            return;
+        }
+    };
+
+    // Resolve the same persistent per-phone session handle_message uses.
+    let idle_timeout_hours = Config::load()
+        .ok()
+        .and_then(|c| c.channels.whatsapp.session_idle_hours);
+    let session_id = {
+        use crate::channels::session_resolve;
+        let legacy_title = format!("WhatsApp: {}", owner_number);
+        let suffix = session_resolve::chat_id_suffix(&format!("wa-{owner_number}"));
+        let session_title = format!("{legacy_title} {suffix}");
+        match session_resolve::resolve_or_create_channel_session(
+            &session_svc,
+            &suffix,
+            &legacy_title,
+            &session_title,
+            idle_timeout_hours,
+            "WhatsApp",
+        )
+        .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                wa_state.broadcast_error(&format!(
+                    "WhatsApp connected but failed to resolve owner session for the \
+                     confirmation greeting: {e}"
+                ));
+                return;
+            }
+        }
+    };
+
+    // Restore the session's own provider so the greeting uses the right model.
+    let session_meta = session_svc.get_session(session_id).await.ok().flatten();
+    crate::channels::commands::sync_provider_for_session(
+        &agent,
+        session_id,
+        session_meta
+            .as_ref()
+            .and_then(|s| s.provider_name.as_deref()),
+        session_meta.as_ref().and_then(|s| s.model.as_deref()),
+    )
+    .await;
+
+    // A real agent turn (not a hardcoded string): the model greets with full
+    // context (preamble/USER/SOUL/AGENTS) via the persistent WhatsApp session.
+    let prompt = "[Channel: WhatsApp — your text response is automatically sent to this chat. \
+         There is no whatsapp_send tool. Just reply with text.]\n\
+         You are now connected to WhatsApp. Greet the owner in one short message \
+         confirming you are online and ready."
+        .to_string();
+
+    let result = agent
+        .send_message_with_tools_and_display(
+            session_id,
+            prompt,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "whatsapp",
+            Some(&jid_str),
+        )
+        .await;
+
+    match result {
+        Ok(response) => {
+            let (text_content, _imgs) = crate::utils::extract_img_markers(&response.content);
+            let text_content = crate::utils::sanitize::strip_llm_artifacts(&text_content);
+            let text_content = redact_secrets(&text_content);
+            let text_content = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_content);
+            if text_content.trim().is_empty() {
+                wa_state.broadcast_error(
+                    "WhatsApp connected but the agent produced no greeting — onboarding \
+                     round trip failed.",
+                );
+                return;
+            }
+            let tagged = format!("{}\n\n{}", MSG_HEADER, text_content.trim());
+            for chunk in split_message(&tagged, 4000) {
+                let msg = waproto::whatsapp::Message {
+                    conversation: Some(chunk.to_string()),
+                    ..Default::default()
+                };
+                if let Err(e) = client.send_message(jid.clone(), msg).await {
+                    tracing::error!("WhatsApp: failed to send connection greeting: {e}");
+                    wa_state.broadcast_error(&format!(
+                        "WhatsApp connected but sending the confirmation greeting failed: {e}"
+                    ));
+                    return;
+                }
+            }
+            tracing::info!("WhatsApp: sent connection greeting to owner self-chat {jid_str}");
+        }
+        Err(e) => {
+            wa_state.broadcast_error(&format!(
+                "WhatsApp connected but the agent could not generate a greeting: {e}"
+            ));
         }
     }
 }

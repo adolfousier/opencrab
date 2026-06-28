@@ -121,14 +121,104 @@ impl WhatsAppAgent {
                                 );
                                 wa_state.broadcast_qr(code);
                             }
+                            Event::PairSuccess(ref s) => {
+                                // The paired account's JID IS the owner (the
+                                // person who scanned). Pin them as the
+                                // authoritative owner so a config mismatch can
+                                // never lock them out, and ensure they are in
+                                // the allow list. Numbers are stored WITHOUT a
+                                // leading '+' (matching sender_phone); the
+                                // handler's wa_should_respond normalises both
+                                // sides, so '+'-prefixed legacy entries still
+                                // match.
+                                let full = s.id.to_string();
+                                let num = full
+                                    .split('@')
+                                    .next()
+                                    .unwrap_or(&full)
+                                    .split(':')
+                                    .next()
+                                    .unwrap_or(&full)
+                                    .trim_start_matches('+')
+                                    .to_string();
+                                if num.is_empty() {
+                                    tracing::warn!(
+                                        "WhatsApp: pairing successful but could not extract \
+                                         owner number from JID '{full}'"
+                                    );
+                                } else {
+                                    tracing::info!("WhatsApp: pairing successful — owner is {num}");
+                                    if let Err(e) = Config::write_key(
+                                        "channels.whatsapp",
+                                        "bot_owner",
+                                        &format!("[\"{num}\"]"),
+                                    ) {
+                                        tracing::warn!(
+                                            "WhatsApp: failed to persist bot_owner: {e}"
+                                        );
+                                    }
+                                    // Append to allowed_phones if not already present.
+                                    let mut allowed: Vec<String> =
+                                        config_rx.borrow().channels.whatsapp.allowed_phones.clone();
+                                    let present =
+                                        allowed.iter().any(|a| a.trim_start_matches('+') == num);
+                                    if !present {
+                                        allowed.push(num.clone());
+                                        let json = format!(
+                                            "[{}]",
+                                            allowed
+                                                .iter()
+                                                .map(|a| format!("\"{a}\""))
+                                                .collect::<Vec<_>>()
+                                                .join(",")
+                                        );
+                                        if let Err(e) = Config::write_key(
+                                            "channels.whatsapp",
+                                            "allowed_phones",
+                                            &json,
+                                        ) {
+                                            tracing::warn!(
+                                                "WhatsApp: failed to persist allowed_phones: {e}"
+                                            );
+                                        }
+                                    }
+                                    // Make the freshly-paired owner available to
+                                    // the Connected handler (which sends the
+                                    // confirmation greeting once the socket is
+                                    // ready) and to the whatsapp_send tool.
+                                    wa_state
+                                        .set_owner_jid(format!("{num}@s.whatsapp.net"))
+                                        .await;
+                                }
+                            }
                             Event::Connected(_) => {
                                 tracing::info!("WhatsApp: connected successfully");
-                                wa_state
-                                    .set_connected(client.clone(), owner_jid.clone())
-                                    .await;
-                            }
-                            Event::PairSuccess(_) => {
-                                tracing::info!("WhatsApp: pairing successful");
+                                // Prefer the freshly-paired owner (set on
+                                // PairSuccess) over the startup-derived one,
+                                // which is None on a first-time pairing.
+                                let owner = match wa_state.owner_jid().await {
+                                    Some(j) => Some(j),
+                                    None => owner_jid.clone(),
+                                };
+                                wa_state.set_connected(client.clone(), owner.clone()).await;
+                                // Real agent confirmation greeting into the
+                                // owner's self-chat. Spawned so the event loop
+                                // is never blocked by a full agent turn.
+                                if let Some(jid) = owner {
+                                    let num = jid.split('@').next().unwrap_or(&jid).to_string();
+                                    tokio::spawn(handler::send_connection_greeting(
+                                        client.clone(),
+                                        agent.clone(),
+                                        session_svc.clone(),
+                                        wa_state.clone(),
+                                        num,
+                                    ));
+                                } else {
+                                    tracing::warn!(
+                                        "WhatsApp: connected but no owner number known — \
+                                         skipping confirmation greeting"
+                                    );
+                                }
                             }
                             Event::Message(msg, info) => {
                                 tracing::debug!("WhatsApp: Event::Message received");

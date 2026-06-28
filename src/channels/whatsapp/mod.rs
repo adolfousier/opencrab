@@ -71,6 +71,11 @@ pub struct WhatsAppState {
     /// the wiped `session.db`, so old auth is dropped at RUNTIME (not only on
     /// disk) and the agent re-pairs with a fresh QR.
     restart_requested: std::sync::atomic::AtomicBool,
+    /// True once pairing/connection succeeds. Locks the QR: once connected, a
+    /// late or stale `broadcast_qr` is suppressed so the onboarding UI never
+    /// flashes a QR after the account is already linked. Reset by
+    /// `request_restart` when a fresh pairing is requested.
+    connected: std::sync::atomic::AtomicBool,
     /// Photo batching buffer: (chat_jid) → Vec<(img_marker, caption)>
     /// When multiple photos arrive in quick succession (WhatsApp sends
     /// each as a separate message), we buffer them and dispatch together.
@@ -102,6 +107,7 @@ impl WhatsAppState {
             error_tx,
             last_qr: std::sync::Mutex::new(None),
             restart_requested: std::sync::atomic::AtomicBool::new(false),
+            connected: std::sync::atomic::AtomicBool::new(false),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
         }
@@ -168,7 +174,14 @@ impl WhatsAppState {
 
     /// Broadcast a QR code to any subscribed onboarding UI, and remember it so
     /// a subscriber that joins after this point can replay it immediately.
+    ///
+    /// No-op once connected: after pairing succeeds the QR is locked, so a late
+    /// or stale QR event can never reappear in the onboarding UI.
     pub fn broadcast_qr(&self, code: &str) {
+        if self.connected.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::debug!("WhatsApp: suppressing QR broadcast — already connected");
+            return;
+        }
         *self.last_qr.lock().unwrap_or_else(|e| e.into_inner()) = Some(code.to_string());
         let _ = self.qr_tx.send(code.to_string());
     }
@@ -185,9 +198,12 @@ impl WhatsAppState {
 
     /// Request a fresh pairing: the next `reconcile_whatsapp` aborts the live
     /// agent and starts a new one against the wiped session. Clears the stored
-    /// QR so the stale one is never replayed.
+    /// QR so the stale one is never replayed, and clears the connected flag so
+    /// a new QR can be broadcast again for the re-pairing.
     pub fn request_restart(&self) {
         *self.last_qr.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.connected
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         self.restart_requested
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
@@ -223,13 +239,32 @@ impl WhatsAppState {
         self.error_tx.subscribe()
     }
 
-    /// Store the connected client and owner JID.
+    /// Store the connected client and owner JID, then mark connected (which
+    /// locks the QR) and notify onboarding subscribers.
     pub async fn set_connected(&self, client: Arc<Client>, owner_jid: Option<String>) {
         *self.client.lock().await = Some(client);
         if let Some(jid) = owner_jid {
             *self.owner_jid.lock().await = Some(jid);
         }
+        self.mark_connected();
         self.broadcast_connected();
+    }
+
+    /// Flip the connected flag and drop any stale QR so it can never be
+    /// replayed after pairing. Shared core of [`set_connected`]; exposed
+    /// separately because unit tests cannot construct a live `Client`.
+    pub fn mark_connected(&self) {
+        self.connected
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        *self.last_qr.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// Record the freshly-paired owner's JID (`<number>@s.whatsapp.net`).
+    /// Called on `PairSuccess` so the subsequent `Connected` handler and the
+    /// `whatsapp_send` tool address the right account even on a first pairing
+    /// where the startup-derived owner was unknown.
+    pub async fn set_owner_jid(&self, jid: String) {
+        *self.owner_jid.lock().await = Some(jid);
     }
 
     /// Get a clone of the connected client, if any.
@@ -242,9 +277,10 @@ impl WhatsAppState {
         self.owner_jid.lock().await.clone()
     }
 
-    /// Check if WhatsApp is currently connected.
+    /// Check if WhatsApp is currently connected (reflects the connected flag set
+    /// on pairing/connect and cleared on `request_restart`).
     pub async fn is_connected(&self) -> bool {
-        self.client.lock().await.is_some()
+        self.connected.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Store a cancel token for a session (before starting agent call).
