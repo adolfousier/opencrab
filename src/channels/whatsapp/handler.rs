@@ -1347,10 +1347,14 @@ pub(crate) async fn send_connection_greeting(
 
     // A real agent turn (not a hardcoded string): the model greets with full
     // context (preamble/USER/SOUL/AGENTS) via the persistent WhatsApp session.
+    // The prompt intentionally does NOT dictate the wording, so the greeting
+    // reads as a genuine message in the agent's own voice rather than a canned
+    // "online and ready" line repeated verbatim every time.
     let prompt = "[Channel: WhatsApp — your text response is automatically sent to this chat. \
          There is no whatsapp_send tool. Just reply with text.]\n\
-         You are now connected to WhatsApp. Greet the owner in one short message \
-         confirming you are online and ready."
+         You have just connected to the owner over WhatsApp. Send one short, \
+         natural first message in your own voice letting them know you are here. \
+         Do not use a generic canned status line."
         .to_string();
 
     let result = agent

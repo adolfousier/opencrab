@@ -200,11 +200,25 @@ impl WhatsAppAgent {
                                     Some(j) => Some(j),
                                     None => owner_jid.clone(),
                                 };
+                                // Greet only on the FIRST connect of this run, not
+                                // on every reconnect. Keepalive timeouts force
+                                // frequent reconnects, each emitting Connected; the
+                                // `connected` flag stays set across them (only a
+                                // user reset clears it), so a true reading here
+                                // means this is a reconnect and the greeting must
+                                // be suppressed. Otherwise the owner is spammed
+                                // with the same confirmation over and over.
+                                let was_connected = wa_state.is_connected().await;
                                 wa_state.set_connected(client.clone(), owner.clone()).await;
-                                // Real agent confirmation greeting into the
-                                // owner's self-chat. Spawned so the event loop
-                                // is never blocked by a full agent turn.
-                                if let Some(jid) = owner {
+                                if was_connected {
+                                    tracing::debug!(
+                                        "WhatsApp: reconnected — suppressing duplicate \
+                                         confirmation greeting"
+                                    );
+                                } else if let Some(jid) = owner {
+                                    // First connect: a real agent turn into the
+                                    // owner's self-chat. Spawned so the event loop
+                                    // is never blocked by a full agent turn.
                                     let num = jid.split('@').next().unwrap_or(&jid).to_string();
                                     tokio::spawn(handler::send_connection_greeting(
                                         client.clone(),
