@@ -5159,7 +5159,6 @@ pub(crate) fn make_approval_callback(
     use crate::brain::agent::ToolApprovalInfo;
     use crate::utils::{check_approval_policy, persist_auto_session_policy};
     use teloxide::payloads::SendMessageSetters;
-    use teloxide::prelude::Requester;
     use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
     use tokio::sync::oneshot;
 
@@ -5241,8 +5240,13 @@ pub(crate) fn make_approval_callback(
                 chat_id
             );
 
-            match bot
-                .send_message(ChatId(chat_id), &text)
+            // Resolve forum topic_id for this session (#249)
+            let topic_id = state
+                .session_topic(info.session_id)
+                .await
+                .map(|tid| teloxide::types::ThreadId(teloxide::types::MessageId(tid)));
+
+            match super::send::message_in_thread(&bot, ChatId(chat_id), topic_id, &text)
                 .parse_mode(ParseMode::Html)
                 .reply_markup(keyboard)
                 .await

@@ -96,8 +96,15 @@ pub(crate) fn make_question_callback(
                 info.options.len()
             );
 
-            // Resolve thread_id for this chat (forum topic routing)
-            let thread_id = super::send::latest_thread_id_for_chat(chat_id).await;
+            // Resolve thread_id for this chat (forum topic routing #247).
+            // Use the in-memory session_topic map (populated when the message
+            // arrived) instead of the DB query (latest_thread_id_for_chat)
+            // which has a race on first-message-in-topic and can pick the
+            // wrong topic when multiple topics are active.
+            let thread_id = state
+                .session_topic(info.session_id)
+                .await
+                .map(|tid| teloxide::types::ThreadId(teloxide::types::MessageId(tid)));
 
             // Flush any pending intermediate texts BEFORE the question
             // lands. Without this, the 1500ms edit loop sends them

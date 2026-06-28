@@ -59,6 +59,7 @@ pub struct TelegramState {
     /// groups, and the General topic key on `(chat_id, None)`, preserving the
     /// pre-topic behaviour. Each forum topic therefore binds its own session.
     chat_sessions: Mutex<HashMap<(i64, Option<i32>), Uuid>>,
+    session_topic: Mutex<HashMap<Uuid, Option<i32>>>,
     /// Pending approval channels: approval_id → oneshot sender of (approved, always).
     pending_approvals: Mutex<HashMap<String, oneshot::Sender<(bool, bool)>>>,
     /// Pending follow-up questions: question_id → (oneshot sender of
@@ -113,6 +114,7 @@ impl TelegramState {
             bot_username: Mutex::new(None),
             session_chats: Mutex::new(HashMap::new()),
             chat_sessions: Mutex::new(HashMap::new()),
+            session_topic: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
             pending_questions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
@@ -186,6 +188,7 @@ impl TelegramState {
         topic_id: Option<i32>,
     ) {
         self.session_chats.lock().await.insert(session_id, chat_id);
+        self.session_topic.lock().await.insert(session_id, topic_id);
         self.chat_sessions
             .lock()
             .await
@@ -195,6 +198,19 @@ impl TelegramState {
     /// Look up the chat_id for a given session_id.
     pub async fn session_chat(&self, session_id: Uuid) -> Option<i64> {
         self.session_chats.lock().await.get(&session_id).copied()
+    }
+
+    /// Look up the forum topic_id for a given session_id. Returns `Some(tid)`
+    /// for forum-topic sessions, `None` for DMs / non-forum groups / General.
+    /// Used by `follow_up_question` and `make_approval_callback` to route
+    /// messages to the correct forum topic (#247, #249).
+    pub async fn session_topic(&self, session_id: Uuid) -> Option<i32> {
+        self.session_topic
+            .lock()
+            .await
+            .get(&session_id)
+            .copied()
+            .flatten()
     }
 
     /// Reverse lookup: find the session_id for a given chat_id, scoped to the
