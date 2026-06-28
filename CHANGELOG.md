@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [0.3.55] - 2026-06-27
+
+20 commits since v0.3.54. 41 files changed, +2569 / -200 lines.
+
+### ✨ Features
+
+- `cfde361e` **xiaomi endpoint_type selector**: API vs Token Plan mode with per-provider switching
+- `567476d8` **wire /profiles in slash_command handler**: slash_command tool routes to profile manager
+- `a71bcf30` **profiles rendering for Discord**: Discord handler shows profile browser/switch/delete/create
+- `2b4d4b8f` **profiles rendering for WhatsApp**: WhatsApp handler shows profile browser/switch/delete/create
+- `5d59192b` **profiles rendering for Slack**: Slack handler shows profile browser/switch/delete/create
+- `5c443514` **TUI profiles dialog module**: state, actions, and input handling for native /profiles dialog
+- `052abf32` **TUI profiles dialog renderer**: full browse/create/delete/migrate UI rendering
+- `23d28397` **wire AppMode::Profiles into TUI**: events, state, slash commands, and render dispatch
+- `ebe10ff3` **profiles dialog tests**: 49 tests for matching, decide, navigation, create/delete/migrate flows
+- `15cb19c7` **tools.toml backup recovery**: last_good .bak snapshot on every write, fallback on parse error
+
+### 🔧 Fixes
+
+- `883d31e9` **preserve /v1 in custom provider base_url**: onboarding no longer strips /v1 from endpoints
+- `879a69c0` **reply context includes replied-to author identity**: telegram reply messages now show who was replied to
+- `1b2414c1` **recover exact replied-to message by id**: telegram replies fetch the precise message, not the latest
+- `1b4a2645` **stop fabricating reply context when content is unretrievable**: telegram no longer fakes reply context
+- `73de1cd5` **persist delivered Telegram message id for reply recovery**: cron scheduler saves message IDs for later reply lookups
+
+### 📖 Documentation
+
+- `b9fa1a53` add /profiles entry to commands.toml.example
+- `2a26ff18` update test counts in README (4,257 tests, 319 modules, 24 ignored)
+- `429d042f` update TESTING.md with accurate test counts (146 missing entries added, stale counts corrected)
+
+### 🧹 Miscellaneous
+
+- `4ee0747b` style: cargo fmt cleanup for profiles dialog
+- `fb60c323` test: pin exact replied-to message lookup by platform id
+
+### 📊 Stats
+
+- 20 commits since v0.3.54
+- 41 files changed, +2569 / -200 lines
+- 4,257 tests (4,257 passed, 0 failed, 24 ignored)
+
+[0.3.55]: https://github.com/adolfousier/opencrabs/compare/v0.3.54...v0.3.55
+
 ## [0.3.54] - 2026-06-27
 
 21 commits since v0.3.53. 47 files changed, +1728 / -380 lines.
