@@ -923,13 +923,13 @@ pub(crate) async fn handle_message(
                     let bot_username = telegram_state.bot_username().await;
                     let text_content = msg.text().or(msg.caption()).unwrap_or("");
 
-                    let mentioned_by_username = bot_username.as_ref().is_some_and(|uname| {
-                        text_content.contains(&format!("@{}", uname))
-                    });
+                    let mentioned_by_username = bot_username
+                        .as_ref()
+                        .is_some_and(|uname| text_content.contains(&format!("@{}", uname)));
 
-                    let replied_to_bot = msg.reply_to_message().is_some_and(|reply| {
-                        reply.from.as_ref().is_some_and(|u| u.is_bot)
-                    });
+                    let replied_to_bot = msg
+                        .reply_to_message()
+                        .is_some_and(|reply| reply.from.as_ref().is_some_and(|u| u.is_bot));
 
                     tracing::info!(
                         "Telegram: respond_to=auto, {} senders in \"{}\" — mention-only (mentioned={}, replied_to_bot={})",
