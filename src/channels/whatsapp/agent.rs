@@ -114,8 +114,8 @@ impl WhatsAppAgent {
                     let config_rx = config_rx.clone();
                     let channel_msg_repo = channel_msg_repo.clone();
                     async move {
-                        match event {
-                            Event::PairingQrCode { ref code, .. } => {
+                        match &*event {
+                            Event::PairingQrCode { code, .. } => {
                                 tracing::info!(
                                     "WhatsApp: QR code available (scan with your phone)"
                                 );
@@ -133,8 +133,8 @@ impl WhatsAppAgent {
                             Event::Message(msg, info) => {
                                 tracing::debug!("WhatsApp: Event::Message received");
                                 handler::handle_message(
-                                    *msg,
-                                    info,
+                                    (**msg).clone(),
+                                    (**info).clone(),
                                     client,
                                     agent,
                                     session_svc,
