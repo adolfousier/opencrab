@@ -598,6 +598,21 @@ pub(crate) async fn handle_message(
         _ => phone.clone(),
     };
 
+    // Where ALL agent output for this turn is sent. For the owner self-chat the
+    // owner's LID JID (<lid>@lid) is rejected by the server with error 400 (its
+    // LID-form device session can't be established, so the encrypt fan-out skips
+    // that device and the whole stanza is refused), while the owner's PN
+    // (<num>@s.whatsapp.net) delivers — same target the greeting uses. Both the
+    // streamed intermediate text and the final reply must use this, or a
+    // streamed turn (which suppresses the final reply) goes only to the LID and
+    // is dropped. Non-owner chats keep their original chat JID.
+    let reply_target: wacore_binary::jid::Jid = match (is_owner_self_chat, &owner_number) {
+        (true, Some(num)) => format!("{num}@s.whatsapp.net")
+            .parse()
+            .unwrap_or_else(|_| info.source.chat.clone()),
+        _ => info.source.chat.clone(),
+    };
+
     // is_owner gates /new archiving and owner-only flows. The self-chat is
     // always the owner even though its LID sender won't match the configured PN.
     let is_owner =
@@ -905,7 +920,7 @@ pub(crate) async fn handle_message(
     let intermediate_handles_cb = intermediate_handles.clone();
     let progress_cb: ProgressCallback = {
         let client_cb = client.clone();
-        let jid_cb = info.source.chat.clone();
+        let jid_cb = reply_target.clone();
         let was_streamed_cb = was_streamed.clone();
         Arc::new(move |_session_id, event| match event {
             ProgressEvent::IntermediateText { text, .. } => {
@@ -1106,18 +1121,10 @@ pub(crate) async fn handle_message(
 
     match result {
         Ok(response) => {
-            // Owner self-chat replies must go to the owner's PN, not the LID
-            // chat. Sends to the owner's LID JID are rejected by the server
-            // (the LID-form device session can't be established, so the encrypt
-            // skips that device and the whole stanza 400s), while sends to the
-            // PN deliver — the same target the connection greeting uses
-            // successfully. Non-owner chats keep their original chat JID.
-            let reply_jid = match (is_owner_self_chat, &owner_number) {
-                (true, Some(num)) => format!("{num}@s.whatsapp.net")
-                    .parse()
-                    .unwrap_or_else(|_| info.source.chat.clone()),
-                _ => info.source.chat.clone(),
-            };
+            // Send to the same target the streamed intermediate text used (PN
+            // for the owner self-chat, original chat otherwise) — see
+            // `reply_target` above.
+            let reply_jid = reply_target.clone();
 
             // Extract <<IMG:path>> markers — send each as a real WhatsApp image message.
             let (text_content, img_paths) = crate::utils::extract_img_markers(&response.content);
