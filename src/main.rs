@@ -6,22 +6,8 @@ use anyhow::Result;
 use clap::Parser;
 use opencrabs::{cli, logging};
 
-fn main() -> Result<()> {
-    // Build the runtime by hand instead of `#[tokio::main]` so we can enlarge
-    // the worker stack. OpenCrabs' agent turn (tool loop -> provider stream ->
-    // tool dispatch) and the RSI digest are very deeply nested async state
-    // machines; on the default 2MB worker stack a single poll can overflow and
-    // abort the whole process with "thread 'tokio-rt-worker' has overflowed its
-    // stack". 16MB gives that nesting ample headroom.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(16 * 1024 * 1024)
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build tokio runtime: {}", e))?;
-    runtime.block_on(async_main())
-}
-
-async fn async_main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Install rustls crypto provider before any TLS connections (Slack Socket Mode)
     #[cfg(feature = "slack")]
     let _ = rustls::crypto::ring::default_provider().install_default();
