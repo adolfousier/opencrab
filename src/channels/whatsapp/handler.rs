@@ -21,10 +21,43 @@ use uuid::Uuid;
 use tokio_util::sync::CancellationToken;
 use wacore::types::message::MessageInfo;
 use waproto::whatsapp::Message;
+use whatsapp_rust::SendOptions;
 use whatsapp_rust::client::Client;
 
 /// Header prepended to all outgoing messages so the user knows it's from the agent.
 pub const MSG_HEADER: &str = "\u{1f980} *OpenCrabs*";
+
+/// Send a WhatsApp message, then resend it once after a short delay reusing the
+/// SAME message id.
+///
+/// wacore's parallel encrypt fan-out silently skips any recipient device whose
+/// Signal session is not yet established (`session ... not found. Skipping.`),
+/// and the server then rejects the WHOLE stanza with `error 400` — so a reply
+/// to a chat that has a freshly-seen or stale linked device can never arrive,
+/// even though the agent produced it. The skipped device's prekey is fetched as
+/// a side effect of that first attempt, so a second attempt encrypts for every
+/// device and lands. Reusing the message id makes the pair idempotent:
+/// recipients dedupe by id, so a first attempt that DID deliver is never shown
+/// twice. The resend is spawned so the caller is never blocked.
+async fn send_resilient(client: &Arc<Client>, jid: wacore_binary::jid::Jid, msg: Message) {
+    let opts = SendOptions {
+        message_id: Some(client.generate_message_id().await),
+        ..Default::default()
+    };
+    if let Err(e) = client
+        .send_message_with_options(jid.clone(), msg.clone(), opts.clone())
+        .await
+    {
+        tracing::error!("WhatsApp: send failed: {e}");
+    }
+    let client = client.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        if let Err(e) = client.send_message_with_options(jid, msg, opts).await {
+            tracing::debug!("WhatsApp: idempotent resend failed: {e}");
+        }
+    });
+}
 
 /// Unwrap nested message wrappers (device_sent, ephemeral, view_once, etc.)
 /// Returns the innermost Message that contains actual content.
@@ -888,9 +921,7 @@ pub(crate) async fn handle_message(
                                 conversation: Some(chunk.to_string()),
                                 ..Default::default()
                             };
-                            if let Err(e) = client.send_message(jid.clone(), msg).await {
-                                tracing::error!("WhatsApp: intermediate text send failed: {}", e);
-                            }
+                            send_resilient(&client, jid.clone(), msg).await;
                         }
                     });
                     if let Ok(mut g) = intermediate_handles_cb.lock() {
@@ -1162,9 +1193,7 @@ pub(crate) async fn handle_message(
                         conversation: Some(chunk.to_string()),
                         ..Default::default()
                     };
-                    if let Err(e) = client.send_message(reply_jid.clone(), reply_msg).await {
-                        tracing::error!("WhatsApp: failed to send reply: {}", e);
-                    }
+                    send_resilient(&client, reply_jid.clone(), reply_msg).await;
                 }
             }
 
@@ -1391,13 +1420,7 @@ pub(crate) async fn send_connection_greeting(
                     conversation: Some(chunk.to_string()),
                     ..Default::default()
                 };
-                if let Err(e) = client.send_message(jid.clone(), msg).await {
-                    tracing::error!("WhatsApp: failed to send connection greeting: {e}");
-                    wa_state.broadcast_error(&format!(
-                        "WhatsApp connected but sending the confirmation greeting failed: {e}"
-                    ));
-                    return;
-                }
+                send_resilient(&client, jid.clone(), msg).await;
             }
             tracing::info!("WhatsApp: sent connection greeting to owner self-chat {jid_str}");
         }
