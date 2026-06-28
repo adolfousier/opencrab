@@ -50,6 +50,7 @@ pub mod browser_stealth_test;
 pub mod build_user_message_image_test;
 pub mod bundled_plans_test;
 pub mod candle_whisper_test;
+pub mod channel_action_test;
 pub mod channel_search_test;
 pub mod channel_session_resolve_test;
 pub mod claude_cli_model_test;
