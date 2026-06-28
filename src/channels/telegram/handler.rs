@@ -2130,15 +2130,22 @@ pub(crate) async fn handle_message(
     let reply_context = if let Some(reply) = msg.reply_to_message() {
         let mut full_text = reply.text().or(reply.caption()).unwrap_or("").to_string();
         let quote_text = msg.quote().map(|q| q.text.as_str()).unwrap_or("");
+        // Identify the replied-to author the same way the current sender is
+        // identified ("{name}{handle}, ID {id}") so the agent knows exactly
+        // WHO is being replied to — not just a bare first name. Without the
+        // @username and numeric ID the agent can't disambiguate users in a
+        // group or address the right person.
         let reply_sender = reply
             .from
             .as_ref()
             .map(|u| {
-                if u.is_bot {
-                    "assistant".to_string()
-                } else {
-                    u.first_name.clone()
-                }
+                format_reply_sender(
+                    u.is_bot,
+                    &u.first_name,
+                    u.last_name.as_deref(),
+                    u.username.as_deref(),
+                    u.id.0,
+                )
             })
             .unwrap_or_else(|| "unknown".to_string());
         // Bug #225 / #234: messages sent via sendRichMessage (Bot API 10.1)
@@ -4246,6 +4253,32 @@ pub(crate) async fn resume_session(
 /// answer (issue #131).
 ///
 /// Returns `None` when there is no usable text on either side.
+/// Build the "who is being replied to" label used in reply context.
+///
+/// The bot collapses to `"assistant"`; a human is rendered as
+/// `"{name}{handle}, ID {id}"` — the SAME shape used to identify the current
+/// sender — so the agent can tell exactly who it is replying to (disambiguate
+/// users in a group, address the right person). Previously only the bare
+/// first name was passed, so the @username and numeric ID were lost.
+pub(crate) fn format_reply_sender(
+    is_bot: bool,
+    first_name: &str,
+    last_name: Option<&str>,
+    username: Option<&str>,
+    user_id: u64,
+) -> String {
+    if is_bot {
+        return "assistant".to_string();
+    }
+    let mut name = first_name.to_string();
+    if let Some(last) = last_name {
+        name.push(' ');
+        name.push_str(last);
+    }
+    let handle = username.map(|h| format!(" (@{h})")).unwrap_or_default();
+    format!("{name}{handle}, ID {user_id}")
+}
+
 pub(crate) fn format_reply_context(
     sender: &str,
     reply_full_text: &str,

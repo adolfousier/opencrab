@@ -8,7 +8,7 @@
 //! a long forwarded thread got a generic answer because the model
 //! had no idea which sentence was being pointed at.
 
-use crate::channels::telegram::handler::format_reply_context;
+use crate::channels::telegram::handler::{format_reply_context, format_reply_sender};
 
 #[test]
 fn no_quote_falls_back_to_full_text() {
@@ -128,5 +128,46 @@ fn unicode_quote_is_preserved() {
 Full message: "Le toit nécessite des réparations urgentes."]"#
                 .into()
         )
+    );
+}
+
+// ---------------------------------------------------------------------------
+// format_reply_sender — identify WHO is being replied to (username + user id)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reply_sender_includes_username_and_id() {
+    let label = format_reply_sender(false, "Alice", None, Some("alice_w"), 12345);
+    assert_eq!(label, "Alice (@alice_w), ID 12345");
+}
+
+#[test]
+fn reply_sender_includes_last_name() {
+    let label = format_reply_sender(false, "Alice", Some("Wong"), Some("aw"), 42);
+    assert_eq!(label, "Alice Wong (@aw), ID 42");
+}
+
+#[test]
+fn reply_sender_without_username_still_has_id() {
+    // No @handle, but the numeric ID must still let the agent disambiguate.
+    let label = format_reply_sender(false, "Bob", None, None, 999);
+    assert_eq!(label, "Bob, ID 999");
+}
+
+#[test]
+fn reply_sender_for_bot_is_assistant() {
+    // The bot collapses to a stable label, never its own username/id.
+    let label = format_reply_sender(true, "OpenCrabs", None, Some("opencrabs_bot"), 7);
+    assert_eq!(label, "assistant");
+}
+
+#[test]
+fn reply_context_carries_full_sender_identity() {
+    // End to end: the identity flows into the [Replying to ...] line.
+    let sender = format_reply_sender(false, "Carol", None, Some("carol"), 555);
+    let ctx = format_reply_context(&sender, "the original message", "");
+    assert_eq!(
+        ctx,
+        Some(r#"[Replying to Carol (@carol), ID 555: "the original message"]"#.into())
     );
 }
