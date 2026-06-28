@@ -233,6 +233,7 @@ pub mod profile_test;
 pub mod rsi_brain_dedup_test;
 pub mod rsi_fallback_wrap_test;
 pub mod rsi_git_history_test;
+pub mod rsi_prompt_triage_test;
 pub mod rsi_proposals_test;
 pub mod rsi_self_improve_dedup_test;
 pub mod rsi_skill_proposals_test;

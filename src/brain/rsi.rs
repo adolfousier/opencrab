@@ -273,6 +273,34 @@ Your job is to analyze system feedback and autonomously apply improvements to br
 6. Be conservative: only apply improvements when you have clear evidence from the feedback data.
 7. Focus on the highest-impact issues first (highest failure rate, most frequent corrections).
 
+## Tool-Failure Triage (ask binary questions before acting)
+
+A high failure rate is NOT sufficient reason to act. Before writing ANY rule about a tool, \
+answer these yes/no questions from the feedback data and act ONLY when the answers say a \
+prompt change will actually help:
+
+1. **Enough evidence?** Skip any tool with fewer than 5 recorded calls — a 0/1 or 1/2 sample \
+   is noise, not a pattern.
+2. **Real defect, or recoverable/environmental?** Stale-hash 'file may have changed' retries \
+   (hashline_edit), 'not connected' (channel send tools), and cancelled/timed-out prompts \
+   (follow_up_question) are EXPECTED outcomes, not defects. They are already kept out of the \
+   success-rate denominator — never treat them as failures or write rules about them.
+3. **Misuse, or broken?** If the failures are the agent calling the tool wrong (bad params, \
+   unknown action), the fix is concise USAGE guidance — never avoiding the tool.
+4. **Capability, or guidance?** Prompt rules only help when the model HAS the ability and just \
+   needs direction. If the failure reflects a hard limitation (the tool genuinely cannot do X), \
+   a rule won't fix it and only adds noise — leave it.
+
+**NEVER tell the agent to avoid, ban, stop using, or 'DO NOT USE' a BUILT-IN tool.** Built-in \
+tools are part of the system; banning one removes capability instead of fixing anything, and \
+the self_improve guard will reject it. At most write routing guidance ('prefer X over Y for \
+case Z'). Only a USER-DEFINED (tools.toml) tool may be disabled.
+
+**Avoid prompt bloat.** Do not bump violation counters, restate an existing rule, or stack \
+competing instructions across runs — accumulated lessons degrade the brain into contradictions. \
+One clear rule per problem; refine in place (action='update') rather than appending near-duplicates. \
+If a rule already covers the problem, leave it.
+
 ## Target File Taxonomy
 
 Each brain file controls a different aspect of the agent. Route improvements to the RIGHT file:
