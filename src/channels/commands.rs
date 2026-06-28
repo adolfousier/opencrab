@@ -33,23 +33,7 @@ pub async fn sync_provider_for_session(
         }
     };
 
-    // A session can carry a stale provider pin (channel sessions inherit the
-    // previous session's provider/model). If that provider is disabled or no
-    // longer in config, it must NOT be used — config is authoritative. Treat an
-    // unusable pin as "no stored provider" so we fall back to the global
-    // default below instead of running a disabled provider.
-    if let Some(stale) = session_provider
-        && !config.providers.is_provider_usable(stale)
-    {
-        tracing::warn!(
-            "sync_provider_for_session[{}]: stored provider '{}' is disabled or absent in config — falling back to the global default",
-            session_id,
-            stale,
-        );
-    }
-    let session_provider = session_provider.filter(|p| config.providers.is_provider_usable(p));
-
-    // If the session has an explicit (usable) provider, restore it (ignoring global config)
+    // If the session has an explicit provider, restore it (ignoring global config)
     if let Some(sess_prov) = session_provider {
         let agent_provider = agent.provider_name_for_session(session_id);
         let agent_model = agent.provider_model_for_session(session_id);
