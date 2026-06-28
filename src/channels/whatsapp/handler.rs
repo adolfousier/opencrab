@@ -1086,7 +1086,11 @@ pub(crate) async fn handle_message(
                     Ok(bytes) => {
                         use wacore::download::MediaType;
                         use waproto::whatsapp::message::ImageMessage;
-                        match client.upload(bytes, MediaType::Image).await {
+                        use whatsapp_rust::upload::UploadOptions;
+                        match client
+                            .upload(bytes, MediaType::Image, UploadOptions::new())
+                            .await
+                        {
                             Ok(upload) => {
                                 let mime = if img_path.ends_with(".png") {
                                     "image/png"
@@ -1097,9 +1101,9 @@ pub(crate) async fn handle_message(
                                     image_message: Some(Box::new(ImageMessage {
                                         url: Some(upload.url),
                                         direct_path: Some(upload.direct_path),
-                                        media_key: Some(upload.media_key),
-                                        file_enc_sha256: Some(upload.file_enc_sha256),
-                                        file_sha256: Some(upload.file_sha256),
+                                        media_key: Some(upload.media_key.to_vec()),
+                                        file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+                                        file_sha256: Some(upload.file_sha256.to_vec()),
                                         file_length: Some(upload.file_length),
                                         mimetype: Some(mime.to_string()),
                                         ..Default::default()
@@ -1202,15 +1206,19 @@ pub(crate) async fn handle_message(
                         // then sending the message with the returned URL + crypto keys.
                         use wacore::download::MediaType;
                         use waproto::whatsapp::message::AudioMessage;
-                        match client.upload(audio_bytes, MediaType::Audio).await {
+                        use whatsapp_rust::upload::UploadOptions;
+                        match client
+                            .upload(audio_bytes, MediaType::Audio, UploadOptions::new())
+                            .await
+                        {
                             Ok(upload) => {
                                 let audio_msg = waproto::whatsapp::Message {
                                     audio_message: Some(Box::new(AudioMessage {
                                         url: Some(upload.url),
                                         direct_path: Some(upload.direct_path),
-                                        media_key: Some(upload.media_key),
-                                        file_enc_sha256: Some(upload.file_enc_sha256),
-                                        file_sha256: Some(upload.file_sha256),
+                                        media_key: Some(upload.media_key.to_vec()),
+                                        file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+                                        file_sha256: Some(upload.file_sha256.to_vec()),
                                         file_length: Some(upload.file_length),
                                         mimetype: Some("audio/ogg; codecs=opus".to_string()),
                                         ptt: Some(true),

@@ -114,14 +114,14 @@ impl WhatsAppAgent {
                     let config_rx = config_rx.clone();
                     let channel_msg_repo = channel_msg_repo.clone();
                     async move {
-                        match event {
-                            Event::PairingQrCode { ref code, .. } => {
+                        match &*event {
+                            Event::PairingQrCode { code, .. } => {
                                 tracing::info!(
                                     "WhatsApp: QR code available (scan with your phone)"
                                 );
                                 wa_state.broadcast_qr(code);
                             }
-                            Event::PairSuccess(ref s) => {
+                            Event::PairSuccess(s) => {
                                 // The paired account's JID IS the owner (the
                                 // person who scanned). Pin them as the
                                 // authoritative owner so a config mismatch can
@@ -222,9 +222,13 @@ impl WhatsAppAgent {
                             }
                             Event::Message(msg, info) => {
                                 tracing::debug!("WhatsApp: Event::Message received");
-                                handler::handle_message(
-                                    *msg,
-                                    info,
+                                // Spawned onto its own task: the agent turn is a
+                                // very large async state machine, and polling it
+                                // inline inside the event-loop future overflows
+                                // the worker stack (and would block the loop).
+                                tokio::spawn(handler::handle_message(
+                                    (**msg).clone(),
+                                    (**info).clone(),
                                     client,
                                     agent,
                                     session_svc,
@@ -232,8 +236,7 @@ impl WhatsAppAgent {
                                     wa_state.clone(),
                                     config_rx,
                                     channel_msg_repo,
-                                )
-                                .await;
+                                ));
                             }
                             Event::LoggedOut(_) => {
                                 tracing::warn!("WhatsApp: logged out");
