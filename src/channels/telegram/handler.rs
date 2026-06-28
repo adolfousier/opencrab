@@ -2157,6 +2157,39 @@ pub(crate) async fn handle_message(
         //   - Groups: bot replies are persisted to channel_messages (#225).
         //   - DMs: bot replies live in the session `messages` table, not
         //     channel_messages, so recover the last assistant message there.
+        // First, recover the EXACT replied-to message by its Telegram
+        // message_id. Every bot reply persists its id (group + DM), so this
+        // pinpoints the specific bubble the user tapped. The old heuristic
+        // below returned "the latest bot message", which silently surfaced the
+        // WRONG message whenever the user replied to anything but the newest
+        // reply (#234 follow-up — confirmed in field logs).
+        if full_text.is_empty() && reply.from.as_ref().is_some_and(|u| u.is_bot) {
+            let chat_id_str = msg.chat.id.0.to_string();
+            let reply_pmid = reply.id.0.to_string();
+            match channel_msg_repo
+                .content_by_platform_message_id("telegram", &chat_id_str, &reply_pmid)
+                .await
+            {
+                Ok(Some(content)) => {
+                    full_text = content;
+                    tracing::info!(
+                        "Telegram reply context: recovered EXACT replied-to message by id {reply_pmid} ({} chars)",
+                        full_text.len()
+                    );
+                }
+                Ok(None) => {
+                    tracing::info!(
+                        "Telegram reply context: no stored message for id {reply_pmid}, falling back to heuristic"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Telegram reply context: exact id lookup failed: {e}");
+                }
+            }
+        }
+        // Heuristic fallback: only runs when the exact lookup found nothing
+        // (e.g. a reply to a message sent before id capture shipped, or a
+        // delivery path that captured no id).
         if full_text.is_empty() && reply.from.as_ref().is_some_and(|u| u.is_bot) {
             if is_dm {
                 let msg_repo = crate::db::MessageRepository::new(session_svc.pool());
@@ -3344,6 +3377,11 @@ pub(crate) async fn handle_message(
                 footer,
                 text_only.lines().last()
             );
+            // Telegram message_id of the FINAL reply bubble. Captured across the
+            // delivery paths (rich send, in-place edit, chunked send) so we can
+            // persist it and later recover the EXACT message a user replies to,
+            // instead of guessing "the most recent bot message" (#234 follow-up).
+            let mut sent_reply_id: Option<i32> = None;
             if !display_html.is_empty() {
                 // Rich-first delivery: a structured reply (tables / headings /
                 // lists / math) is delivered as a native Telegram rich message
@@ -3375,7 +3413,7 @@ pub(crate) async fn handle_message(
                     if let Some(mid) = streaming_msg_id.take() {
                         let _ = bot.delete_message(msg.chat.id, mid).await;
                     }
-                    match super::rich::api::send_rich_markdown(
+                    match super::rich::api::send_rich_markdown_id(
                         bot.token(),
                         msg.chat.id.0,
                         thread_id,
@@ -3383,7 +3421,10 @@ pub(crate) async fn handle_message(
                     )
                     .await
                     {
-                        Ok(()) => true,
+                        Ok(id) => {
+                            sent_reply_id = Some(id);
+                            true
+                        }
                         Err(e) => {
                             tracing::warn!("Telegram: rich delivery failed, using HTML: {e}");
                             false
@@ -3406,7 +3447,10 @@ pub(crate) async fn handle_message(
                             .parse_mode(ParseMode::Html)
                             .await
                         {
-                            Ok(_) => {}
+                            Ok(_) => {
+                                // Edited in place — the reply bubble keeps `mid`.
+                                sent_reply_id = Some(mid.0);
+                            }
                             Err(teloxide::RequestError::RetryAfter(secs)) => {
                                 tracing::warn!(
                                     "Telegram: edit rate-limited, waiting {}s",
@@ -3447,7 +3491,12 @@ pub(crate) async fn handle_message(
                             let _ = bot.delete_message(msg.chat.id, mid).await;
                         }
                         for chunk in &chunks {
-                            let _ = send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await;
+                            // Last chunk wins — that's the bubble a user replies to.
+                            if let Ok(sent) =
+                                send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await
+                            {
+                                sent_reply_id = Some(sent.0);
+                            }
                         }
                     }
                 }
@@ -3478,14 +3527,21 @@ pub(crate) async fn handle_message(
                 let _ = bot.delete_message(msg.chat.id, mid).await;
             }
 
-            // Record the bot's text reply into channel_messages for group chats
-            // so the recent() query that builds conversation context on the NEXT
-            // turn sees both sides. Without this, `channel_msg_repo.recent()`
-            // returns user messages only — the bot loads a one-sided transcript
-            // on every group turn and effectively talks to itself in the dark.
-            // DMs skip this: they already use the session's messages table
-            // directly for context and don't touch channel_msg_repo.
-            if !is_dm && !text_only.trim().is_empty() {
+            // Record the bot's text reply into channel_messages.
+            //
+            // Groups: needed so the recent() query that builds conversation
+            // context on the NEXT turn sees both sides — without it the bot
+            // loads a one-sided transcript and talks to itself in the dark.
+            //
+            // Both group AND DM persist the Telegram message_id (when captured)
+            // so a later reply to THIS bubble can be recovered EXACTLY by id —
+            // Telegram delivers rich bot messages with empty text, so the reply
+            // handler can't read the quoted content from the update and must
+            // look it up by id (#234 follow-up). DMs are stored only when we
+            // have an id (lookup-only; DM conversation context still comes from
+            // the session messages table, not channel_messages).
+            let pmid = sent_reply_id.map(|i| i.to_string());
+            if !text_only.trim().is_empty() && (!is_dm || pmid.is_some()) {
                 let bot_display_name = telegram_state
                     .bot_username()
                     .await
@@ -3500,7 +3556,7 @@ pub(crate) async fn handle_message(
                     bot_display_name,
                     text_only.clone(),
                     "text".to_string(),
-                    None,
+                    pmid.clone(),
                 )
                 .with_thread(thread_id, None);
                 if let Err(e) = channel_msg_repo.insert(&cm).await {

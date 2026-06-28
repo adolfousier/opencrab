@@ -162,6 +162,41 @@ impl ChannelMessageRepository {
             .context("Failed to fetch recent channel messages")
     }
 
+    /// Look up the stored content of a single message by its platform message id
+    /// (the Telegram `message_id`). Used to recover the EXACT message a user
+    /// replied to — Telegram delivers rich bot messages with empty text, so the
+    /// reply handler can't read the quoted content from the update and must look
+    /// it up by id instead of guessing "the most recent bot message". Returns
+    /// the most recent match (ids are unique per chat, but a defensive ORDER BY
+    /// keeps this deterministic). `None` when nothing was stored under that id.
+    pub async fn content_by_platform_message_id(
+        &self,
+        channel: &str,
+        chat_id: &str,
+        platform_message_id: &str,
+    ) -> Result<Option<String>> {
+        let ch = channel.to_string();
+        let cid = chat_id.to_string();
+        let pmid = platform_message_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT content FROM channel_messages \
+                     WHERE channel = ?1 AND channel_chat_id = ?2 AND platform_message_id = ?3 \
+                     ORDER BY created_at DESC LIMIT 1",
+                    params![ch, cid, pmid],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to look up channel message by platform id")
+    }
+
     /// Most recent non-null forum topic name for a thread, used to label the
     /// session after the topic ("Devops") instead of its numeric thread id
     /// ("topic:2"). Telegram only carries the name on regular topic messages
