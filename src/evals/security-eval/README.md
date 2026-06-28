@@ -24,7 +24,7 @@ cases are deterministic — they verify the hard gate regardless of the model.)
 
 ```bash
 # from the repo root
-docker build -f evals/security-eval/Dockerfile -t opencrabs-sectest .
+docker build -f src/evals/security-eval/Dockerfile -t opencrabs-sectest .
 
 # mount your working ~/.opencrabs (read-only) so the configured provider+model run;
 # it is copied into the disposable sandbox and never mutated.
