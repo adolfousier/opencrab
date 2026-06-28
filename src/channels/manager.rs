@@ -175,6 +175,16 @@ impl ChannelManager {
     ) {
         let wa = &config.channels.whatsapp;
         let should_run = wa.enabled;
+        // A pairing reset wipes session.db and asks for a restart. Abort the
+        // live agent so it starts fresh against the wiped session (drops old
+        // auth at runtime); the Start arm below then respawns it.
+        if should_run
+            && self.whatsapp_state.take_restart_request()
+            && let Some(handle) = handles.remove("whatsapp")
+        {
+            tracing::info!("ChannelManager: restarting WhatsApp agent for re-pairing");
+            handle.abort();
+        }
         match channel_action(should_run, handle_alive(handles, "whatsapp")) {
             ChannelAction::Start => {
                 let agent = crate::channels::whatsapp::WhatsAppAgent::new(

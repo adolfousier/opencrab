@@ -61,6 +61,16 @@ pub struct WhatsAppState {
     connected_tx: tokio::sync::broadcast::Sender<()>,
     /// Broadcast channel for error events — onboarding subscribes to this.
     error_tx: tokio::sync::broadcast::Sender<String>,
+    /// Last QR code broadcast. The QR channel is a plain broadcast with no
+    /// replay, so a connect flow that subscribes AFTER the agent already
+    /// emitted its QR would see nothing until the next ~20s refresh (the
+    /// "press Enter twice" bug). New subscribers replay this immediately.
+    last_qr: std::sync::Mutex<Option<String>>,
+    /// Set by the onboarding connect/reset flow to force a fresh pairing.
+    /// `reconcile_whatsapp` aborts the live agent and starts a new one against
+    /// the wiped `session.db`, so old auth is dropped at RUNTIME (not only on
+    /// disk) and the agent re-pairs with a fresh QR.
+    restart_requested: std::sync::atomic::AtomicBool,
     /// Photo batching buffer: (chat_jid) → Vec<(img_marker, caption)>
     /// When multiple photos arrive in quick succession (WhatsApp sends
     /// each as a separate message), we buffer them and dispatch together.
@@ -90,6 +100,8 @@ impl WhatsAppState {
             qr_tx,
             connected_tx,
             error_tx,
+            last_qr: std::sync::Mutex::new(None),
+            restart_requested: std::sync::atomic::AtomicBool::new(false),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
         }
@@ -154,9 +166,36 @@ impl WhatsAppState {
         self.pending_questions.lock().await.contains_key(phone)
     }
 
-    /// Broadcast a QR code to any subscribed onboarding UI.
+    /// Broadcast a QR code to any subscribed onboarding UI, and remember it so
+    /// a subscriber that joins after this point can replay it immediately.
     pub fn broadcast_qr(&self, code: &str) {
+        *self.last_qr.lock().unwrap_or_else(|e| e.into_inner()) = Some(code.to_string());
         let _ = self.qr_tx.send(code.to_string());
+    }
+
+    /// The most recently broadcast QR, if any. Replayed to a new subscriber so
+    /// it does not have to wait for the next refresh (fixes the "Enter twice"
+    /// race). Cleared on [`request_restart`] and on connect.
+    pub fn current_qr(&self) -> Option<String> {
+        self.last_qr
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Request a fresh pairing: the next `reconcile_whatsapp` aborts the live
+    /// agent and starts a new one against the wiped session. Clears the stored
+    /// QR so the stale one is never replayed.
+    pub fn request_restart(&self) {
+        *self.last_qr.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.restart_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Consume the restart request (returns whether one was pending).
+    pub fn take_restart_request(&self) -> bool {
+        self.restart_requested
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Broadcast a connected event to any subscribed onboarding UI.
