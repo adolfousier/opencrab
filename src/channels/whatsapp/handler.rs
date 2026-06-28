@@ -580,24 +580,35 @@ pub(crate) async fn handle_message(
         return;
     }
 
-    // is_owner still used below for /new / owner-only flows, but session
-    // resolution no longer depends on it — every phone gets its own session.
-    let is_owner = allowed.is_empty()
-        || allowed
-            .iter()
-            .next()
-            .map(|a| a.trim_start_matches('+') == phone)
-            .unwrap_or(false);
+    // The bot pairs AS the owner, so the owner's own messages arrive in the
+    // "Message Yourself" self-chat addressed by LID (e.g. 236927743742100),
+    // while the connection greeting and config identify the owner by PN
+    // (351933536442). Keying the session by the raw sender would create a
+    // SECOND owner session (wa-<LID>) separate from the greeting's (wa-<PN>) —
+    // the "two sessions every time" bug. Collapse the owner's self-chat to the
+    // configured owner number (the same one the greeting uses) so the owner
+    // always resolves to exactly one session regardless of PN/LID addressing.
+    let is_owner_self_chat = info.source.is_from_me && sender_user == chat_user_part;
+    let owner_number = wa_cfg
+        .allowed_phones
+        .first()
+        .map(|a| a.trim_start_matches('+').to_string());
+    let session_phone = match (is_owner_self_chat, &owner_number) {
+        (true, Some(num)) => num.clone(),
+        _ => phone.clone(),
+    };
 
-    // Sessions are ALWAYS isolated per phone — owner no longer shares the
-    // TUI session. Each phone gets its own session in the DB. Title carries a
-    // stable `[chat:wa-<phone>]` suffix so auto-rename of the visible label
-    // still resolves to the same row (issue #121, Discord/Slack/WhatsApp port
-    // of the Telegram fix in PR #123).
+    // is_owner gates /new archiving and owner-only flows. The self-chat is
+    // always the owner even though its LID sender won't match the configured PN.
+    let is_owner =
+        is_owner_self_chat || allowed.is_empty() || owner_number.as_deref() == Some(phone.as_str());
+
+    // Sessions are keyed by a stable `[chat:wa-<phone>]` suffix so auto-rename
+    // of the visible label still resolves to the same row (issue #121).
     let session_id = {
         use crate::channels::session_resolve;
-        let legacy_title = format!("WhatsApp: {}", phone);
-        let suffix = session_resolve::chat_id_suffix(&format!("wa-{phone}"));
+        let legacy_title = format!("WhatsApp: {}", session_phone);
+        let suffix = session_resolve::chat_id_suffix(&format!("wa-{session_phone}"));
         let session_title = format!("{legacy_title} {suffix}");
 
         match session_resolve::resolve_or_create_channel_session(
