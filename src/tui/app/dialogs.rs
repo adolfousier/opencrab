@@ -1677,12 +1677,37 @@ async fn test_whatsapp_connection(
         ..Default::default()
     };
 
-    client
+    // Subscribe BEFORE sending so the delivery receipt can't be missed.
+    let mut delivered_rx = wa_state.subscribe_delivered();
+    let sent = client
         .send_message(jid, wa_msg)
         .await
         .map_err(|e| format!("WhatsApp send error: {}", e))?;
 
-    Ok(())
+    // `send_message` returning Ok only means the stanza was transmitted — the
+    // server can still reject it asynchronously (error 400, e.g. when a
+    // recipient device session can't be established). Confirm the message was
+    // actually DELIVERED by waiting for its delivery receipt; otherwise report
+    // failure so onboarding never shows success for a message that never landed.
+    let target_id = sent.message_id;
+    let wait_for_delivery = async {
+        loop {
+            match delivered_rx.recv().await {
+                Ok(id) if id == target_id => return true,
+                Ok(_) => continue,
+                Err(_) => return false,
+            }
+        }
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(20), wait_for_delivery).await {
+        Ok(true) => Ok(()),
+        _ => Err(
+            "Message was sent but never confirmed delivered by WhatsApp \
+                  (no delivery receipt). It may have been rejected — check that \
+                  the device is linked and reachable."
+                .to_string(),
+        ),
+    }
 }
 
 #[cfg(feature = "trello")]

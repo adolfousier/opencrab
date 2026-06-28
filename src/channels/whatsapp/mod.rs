@@ -61,6 +61,12 @@ pub struct WhatsAppState {
     connected_tx: tokio::sync::broadcast::Sender<()>,
     /// Broadcast channel for error events — onboarding subscribes to this.
     error_tx: tokio::sync::broadcast::Sender<String>,
+    /// Broadcast channel for delivered message ids (from `ReceiptType::Delivered`
+    /// receipts). The onboarding connection test waits on this so it confirms
+    /// only when a message actually reached WhatsApp — not merely when the send
+    /// stanza was transmitted (which still returns Ok even if the server later
+    /// rejects it with error 400).
+    delivered_tx: tokio::sync::broadcast::Sender<String>,
     /// Last QR code broadcast. The QR channel is a plain broadcast with no
     /// replay, so a connect flow that subscribes AFTER the agent already
     /// emitted its QR would see nothing until the next ~20s refresh (the
@@ -96,6 +102,7 @@ impl WhatsAppState {
         let (qr_tx, _) = tokio::sync::broadcast::channel(8);
         let (connected_tx, _) = tokio::sync::broadcast::channel(4);
         let (error_tx, _) = tokio::sync::broadcast::channel(4);
+        let (delivered_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
             client: Mutex::new(None),
             owner_jid: Mutex::new(None),
@@ -105,6 +112,7 @@ impl WhatsAppState {
             qr_tx,
             connected_tx,
             error_tx,
+            delivered_tx,
             last_qr: std::sync::Mutex::new(None),
             restart_requested: std::sync::atomic::AtomicBool::new(false),
             connected: std::sync::atomic::AtomicBool::new(false),
@@ -237,6 +245,18 @@ impl WhatsAppState {
     /// Subscribe to error events (used by onboarding).
     pub fn subscribe_error(&self) -> tokio::sync::broadcast::Receiver<String> {
         self.error_tx.subscribe()
+    }
+
+    /// Announce that a sent message id received a `Delivered` receipt. Called
+    /// from the agent event loop so the onboarding test can confirm real
+    /// delivery rather than mere transmission.
+    pub fn broadcast_delivered(&self, message_id: &str) {
+        let _ = self.delivered_tx.send(message_id.to_string());
+    }
+
+    /// Subscribe to delivered-message ids (used by the connection test).
+    pub fn subscribe_delivered(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.delivered_tx.subscribe()
     }
 
     /// Store the connected client and owner JID, then mark connected (which

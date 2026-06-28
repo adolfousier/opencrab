@@ -258,6 +258,20 @@ impl WhatsAppAgent {
                             Event::Disconnected(_) => {
                                 tracing::warn!("WhatsApp: disconnected");
                             }
+                            Event::Receipt(receipt) => {
+                                // A Delivered receipt means a message we sent
+                                // actually reached the recipient. Surface the id
+                                // so the onboarding connection test can confirm
+                                // real delivery instead of mere transmission.
+                                if matches!(
+                                    receipt.r#type,
+                                    wacore::types::presence::ReceiptType::Delivered
+                                ) {
+                                    for id in &receipt.message_ids {
+                                        wa_state.broadcast_delivered(id);
+                                    }
+                                }
+                            }
                             other => {
                                 tracing::debug!("WhatsApp: unhandled event: {:?}", other);
                             }
