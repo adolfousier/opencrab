@@ -34,6 +34,8 @@ type PhotoEntry = (String, Option<String>);
 
 /// Photo buffer key: (chat_id, user_id, media_group_id)
 type PhotoBufferKey = (i64, i64, String);
+type DirBrowserKey = (i64, Option<i32>);
+type DirBrowserState = (String, Option<String>);
 
 /// Shared Telegram state for proactive messaging.
 ///
@@ -94,7 +96,7 @@ pub struct TelegramState {
     /// Directory browser state: chat_id → (current_path, filter).
     /// Used by /cd inline-keyboard callbacks to know which directory
     /// is being browsed without encoding full paths in callback data.
-    dir_browsers: Mutex<HashMap<i64, (String, Option<String>)>>,
+    dir_browsers: Mutex<HashMap<DirBrowserKey, DirBrowserState>>,
     /// Profile create flow state: chat_id → true when awaiting a profile name
     prof_create_states: Mutex<HashMap<i64, bool>>,
     /// Pending file-save JoinHandles keyed by chat_id. The spawned task that
@@ -477,22 +479,36 @@ impl TelegramState {
 
     // ── Directory browser state ─────────────────────────────────────────
 
-    /// Set the browsing path for a chat (called on /cd and navigation).
-    pub async fn set_dir_browser(&self, chat_id: i64, path: String, filter: Option<String>) {
+    /// Set the browsing path for a chat+topic (called on /cd and navigation).
+    pub async fn set_dir_browser(
+        &self,
+        chat_id: i64,
+        topic_id: Option<i32>,
+        path: String,
+        filter: Option<String>,
+    ) {
         self.dir_browsers
             .lock()
             .await
-            .insert(chat_id, (path, filter));
+            .insert((chat_id, topic_id), (path, filter));
     }
 
-    /// Get the current browsing path and filter for a chat.
-    pub async fn get_dir_browser(&self, chat_id: i64) -> Option<(String, Option<String>)> {
-        self.dir_browsers.lock().await.get(&chat_id).cloned()
+    /// Get the current browsing path and filter for a chat+topic.
+    pub async fn get_dir_browser(
+        &self,
+        chat_id: i64,
+        topic_id: Option<i32>,
+    ) -> Option<(String, Option<String>)> {
+        self.dir_browsers
+            .lock()
+            .await
+            .get(&(chat_id, topic_id))
+            .cloned()
     }
 
-    /// Clear the directory browser state for a chat (after confirming).
-    pub async fn clear_dir_browser(&self, chat_id: i64) {
-        self.dir_browsers.lock().await.remove(&chat_id);
+    /// Clear the directory browser state for a chat+topic (after confirming).
+    pub async fn clear_dir_browser(&self, chat_id: i64, topic_id: Option<i32>) {
+        self.dir_browsers.lock().await.remove(&(chat_id, topic_id));
     }
 
     /// Set the profile-create flow state for a chat.

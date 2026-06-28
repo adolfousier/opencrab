@@ -2083,6 +2083,7 @@ pub(crate) async fn handle_message(
                 telegram_state
                     .set_dir_browser(
                         msg.chat.id.0,
+                        thread_id.map(|t| t.0.0),
                         resp.current_path.clone(),
                         resp.filter.clone(),
                     )

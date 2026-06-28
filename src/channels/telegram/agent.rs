@@ -616,6 +616,10 @@ impl TelegramAgent {
                                 let chat_id = query.message.as_ref().map(|m| m.chat().id.0).unwrap_or(0);
                                 // Answer callback query — deferred to each branch
                                 // to allow custom text popups (cd:sel on files).
+                                let topic_id = query.message.as_ref()
+                                    .and_then(|m| m.regular_message())
+                                    .and_then(|r| r.thread_id)
+                                    .map(|t| t.0.0);
 
                                 // Handle cd:noop (page indicator, no action)
                                 if data == "cd:noop" {
@@ -624,7 +628,7 @@ impl TelegramAgent {
                                 }
 
                                 // Get current browser state
-                                let browser_state = state.get_dir_browser(chat_id).await;
+                                let browser_state = state.get_dir_browser(chat_id, topic_id).await;
                                 let (current_path, current_filter) = browser_state.unwrap_or_else(|| {
                                     let home = dirs::home_dir()
                                         .map(|p| p.to_string_lossy().to_string())
@@ -652,7 +656,7 @@ impl TelegramAgent {
                                         let svc = crate::services::SessionService::new(agent.context().clone());
                                         let _ = svc.update_session_working_directory(sid, Some(current_path.clone())).await;
                                     }
-                                    state.clear_dir_browser(chat_id).await;
+                                    state.clear_dir_browser(chat_id, topic_id).await;
                                     // Edit the message to confirm
                                     if let Some(msg) = &query.message {
                                         use teloxide::payloads::EditMessageTextSetters;
@@ -709,7 +713,7 @@ impl TelegramAgent {
                                 };
 
                                 if let Some(resp) = new_state {
-                                    state.set_dir_browser(chat_id, resp.current_path.clone(), resp.filter.clone()).await;
+                                    state.set_dir_browser(chat_id, topic_id, resp.current_path.clone(), resp.filter.clone()).await;
                                     let rows = crate::channels::telegram::handler::build_cd_keyboard(&resp);
                                     let keyboard = teloxide::types::InlineKeyboardMarkup::new(rows);
                                     if let Some(msg) = &query.message {
