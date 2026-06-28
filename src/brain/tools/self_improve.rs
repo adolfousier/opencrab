@@ -281,6 +281,9 @@ impl Tool for SelfImproveTool {
                 if let Some(reason) = looks_like_failure_log(new_content) {
                     return Ok(ToolResult::error(reason.to_string()));
                 }
+                if let Some(reason) = super::self_improve_guards::bans_builtin_tool(new_content) {
+                    return Ok(ToolResult::error(reason));
+                }
 
                 let target_path = home.join(target_file);
                 let existing = match std::fs::read_to_string(&target_path) {
@@ -486,6 +489,9 @@ impl Tool for SelfImproveTool {
 
                 if let Some(reason) = looks_like_failure_log(content) {
                     return Ok(ToolResult::error(reason.to_string()));
+                }
+                if let Some(reason) = super::self_improve_guards::bans_builtin_tool(content) {
+                    return Ok(ToolResult::error(reason));
                 }
 
                 if is_trivial_content(content, description) {

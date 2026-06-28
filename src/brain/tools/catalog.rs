@@ -69,6 +69,51 @@ pub fn is_core(name: &str) -> bool {
     CORE_TOOLS.contains(&name)
 }
 
+/// Built-in tools the RSI must never tell the agent to avoid/ban/stop using.
+///
+/// Banning a built-in removes capability rather than fixing anything, and these
+/// tools' "failures" are environmental or recoverable (a channel needing a live
+/// bot, a stale-hash retry, a declined prompt), not defects (#236). This is the
+/// core set plus the proactive channel, browser, and runtime built-ins that are
+/// registered outside `CORE_TOOLS`. Dynamic (`tools.toml`) tools are
+/// intentionally absent — those the user defines and can legitimately disable.
+pub fn is_protected_builtin(name: &str) -> bool {
+    is_core(name)
+        || matches!(
+            name,
+            "telegram_send"
+                | "whatsapp_send"
+                | "discord_send"
+                | "slack_send"
+                | "trello_send"
+                | "telegram_connect"
+                | "whatsapp_connect"
+                | "discord_connect"
+                | "slack_connect"
+                | "trello_connect"
+                | "cowork_connect"
+                | "cron_manage"
+                | "session_search"
+                | "channel_search"
+                | "mission_control_report"
+                | "a2a_send"
+                | "tool_manage"
+                | "execute_code"
+                | "notebook_edit"
+                | "doc_parser"
+                | "pdf_to_images"
+                | "browser_navigate"
+                | "browser_click"
+                | "browser_type"
+                | "browser_eval"
+                | "browser_content"
+                | "browser_screenshot"
+                | "browser_wait"
+                | "browser_find"
+                | "browser_close"
+        )
+}
+
 /// Coarse category for an EXTENDED tool, derived from its name. Used to group
 /// `tool_search` results and to catalog the extended set in TOOLS.md. Returns
 /// `"core"` for core tools.

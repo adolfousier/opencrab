@@ -56,6 +56,7 @@ pub mod rename_session;
 pub mod rsi_proposals;
 pub mod rsi_propose;
 pub mod self_improve;
+pub mod self_improve_guards;
 pub mod session_search;
 pub mod slash_command;
 pub mod slash_onboard;
