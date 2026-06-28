@@ -723,6 +723,21 @@ async fn handle_message(
                 }
             }
             RespondTo::All => {} // pass through
+            RespondTo::Auto => {
+                // Active sender tracking not implemented for Slack yet;
+                // fall back to mention-only behaviour (#244).
+                let mentioned = is_app_mention
+                    || if let Some(ref bid) = state.bot_user_id {
+                        text.contains(&format!("<@{}>", bid))
+                    } else {
+                        text.contains("<@U")
+                    };
+                if !mentioned {
+                    tracing::debug!("Slack: respond_to=auto, bot not mentioned — ignoring");
+                    store_channel_msg(text.clone()).await;
+                    return;
+                }
+            }
         }
     }
 

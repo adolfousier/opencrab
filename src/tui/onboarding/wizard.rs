@@ -644,16 +644,19 @@ impl OnboardingWizard {
             RespondTo::All => 0,
             RespondTo::DmOnly => 1,
             RespondTo::Mention => 2,
+            RespondTo::Auto => 3,
         };
         wizard.discord_respond_to = match config.channels.discord.respond_to {
             RespondTo::All => 0,
             RespondTo::DmOnly => 1,
             RespondTo::Mention => 2,
+            RespondTo::Auto => 3,
         };
         wizard.slack_respond_to = match config.channels.slack.respond_to {
             RespondTo::All => 0,
             RespondTo::DmOnly => 1,
             RespondTo::Mention => 2,
+            RespondTo::Auto => 3,
         };
 
         // Load voice settings

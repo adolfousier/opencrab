@@ -307,6 +307,10 @@ pub enum RespondTo {
     /// Only respond when @mentioned (or replied-to on Telegram)
     #[default]
     Mention,
+    /// Auto-switch: respond to all when ≤1 active sender, switch to
+    /// mention-only when a second unique sender is detected (#244).
+    /// Once switched, stays mention-only until manually reset.
+    Auto,
 }
 
 /// Deserialize `allowed_users` from either a TOML integer array (legacy) or string array.
@@ -1238,6 +1242,23 @@ impl ProviderConfigs {
     pub fn custom_by_name(&self, name: &str) -> Option<&ProviderConfig> {
         let normalized = normalize_toml_key(name);
         self.custom.as_ref()?.get(&normalized)
+    }
+
+    /// Whether a provider (named as stored on a session — built-in id like
+    /// `zhipu` or a `custom:`-prefixed / bare custom name) is currently usable:
+    /// present, `enabled = true`, and — for keyed built-ins — holding an API
+    /// key. A session pinned to a disabled or removed provider must fall back
+    /// to the global default rather than silently use it; config is the single
+    /// source of truth for what is allowed to run.
+    pub fn is_provider_usable(&self, name: &str) -> bool {
+        let name = name.strip_prefix("custom:").unwrap_or(name);
+        for (id, _display, requires_api_key, cfg) in self.provider_registry() {
+            if id == name {
+                return cfg
+                    .is_some_and(|c| c.enabled && (!requires_api_key || c.api_key.is_some()));
+            }
+        }
+        self.custom_by_name(name).is_some_and(|c| c.enabled)
     }
 
     /// Single source of truth for built-in provider iteration. Both

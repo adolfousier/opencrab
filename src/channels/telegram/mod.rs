@@ -84,6 +84,11 @@ pub struct TelegramState {
     cowork_conversations: Mutex<HashMap<i64, cowork::CoworkState>>,
     /// Cowork session lookup: session_id → CoworkState (for startgroup detection)
     cowork_sessions: Mutex<HashMap<String, cowork::CoworkState>>,
+    /// Active sender tracking for auto mention-only mode (#244).
+    /// Maps chat_id → set of user_ids that have sent ≥1 message.
+    /// Set never shrinks — once >1 sender is detected, the chat
+    /// permanently switches to mention-only until manually reset.
+    active_senders: Mutex<HashMap<i64, std::collections::HashSet<i64>>>,
     /// Set of chat_ids that are cowork groups (for auto-register on join)
     cowork_groups: tokio::sync::Mutex<std::collections::HashSet<i64>>,
     /// Directory browser state: chat_id → (current_path, filter).
@@ -122,6 +127,7 @@ impl TelegramState {
             photo_debounce: Mutex::new(HashMap::new()),
             cowork_conversations: Mutex::new(HashMap::new()),
             cowork_sessions: Mutex::new(HashMap::new()),
+            active_senders: Mutex::new(HashMap::new()),
             cowork_groups: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             dir_browsers: Mutex::new(HashMap::new()),
             prof_create_states: Mutex::new(HashMap::new()),
@@ -456,6 +462,17 @@ impl TelegramState {
     /// Check if a chat_id is a tracked cowork group.
     pub async fn is_cowork_group(&self, chat_id: i64) -> bool {
         self.cowork_groups.lock().await.contains(&chat_id)
+    }
+
+    // ── Active sender tracking (#244) ───────────────────────────────────
+
+    /// Record a message sender for a chat. Returns the total number of
+    /// unique senders after adding this one. Set never shrinks.
+    pub async fn track_active_sender(&self, chat_id: i64, user_id: i64) -> usize {
+        let mut map = self.active_senders.lock().await;
+        let set = map.entry(chat_id).or_default();
+        set.insert(user_id);
+        set.len()
     }
 
     // ── Directory browser state ─────────────────────────────────────────

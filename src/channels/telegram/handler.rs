@@ -852,6 +852,12 @@ pub(crate) async fn handle_message(
             return Ok(());
         }
 
+        // Track active senders for auto mention-only mode (#244).
+        // Must happen before the match so the Auto branch can check count.
+        let active_sender_count = telegram_state
+            .track_active_sender(msg.chat.id.0, user_id)
+            .await;
+
         match respond_to {
             RespondTo::DmOnly => {
                 tracing::debug!(
@@ -904,6 +910,46 @@ pub(crate) async fn handle_message(
                     chat_kind,
                     chat_title
                 );
+            }
+            RespondTo::Auto => {
+                if active_sender_count <= 1 {
+                    tracing::debug!(
+                        "Telegram: respond_to=auto, {} sender(s) in \"{}\" — respond-to-all",
+                        active_sender_count,
+                        chat_title,
+                    );
+                } else {
+                    // >1 active sender → require @mention (same as Mention mode)
+                    let bot_username = telegram_state.bot_username().await;
+                    let text_content = msg.text().or(msg.caption()).unwrap_or("");
+
+                    let mentioned_by_username = bot_username.as_ref().is_some_and(|uname| {
+                        text_content.contains(&format!("@{}", uname))
+                    });
+
+                    let replied_to_bot = msg.reply_to_message().is_some_and(|reply| {
+                        reply.from.as_ref().is_some_and(|u| u.is_bot)
+                    });
+
+                    tracing::info!(
+                        "Telegram: respond_to=auto, {} senders in \"{}\" — mention-only (mentioned={}, replied_to_bot={})",
+                        active_sender_count,
+                        chat_title,
+                        mentioned_by_username,
+                        replied_to_bot,
+                    );
+
+                    if !mentioned_by_username && !replied_to_bot {
+                        tracing::info!(
+                            "Telegram: auto mention-only — {} in \"{}\" said: {}",
+                            user.first_name,
+                            chat_title,
+                            truncate_str(text_content, 80),
+                        );
+                        store_channel_msg(text_content.to_string()).await;
+                        return Ok(());
+                    }
+                }
             }
         }
     }

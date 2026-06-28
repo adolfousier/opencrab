@@ -541,24 +541,24 @@ impl OnboardingWizard {
             );
 
             // respond_to per channel
-            let respond_to_values = ["all", "dm_only", "mention"];
+            let respond_to_values = ["all", "dm_only", "mention", "auto"];
             try_write!(
                 write_errors,
                 "channels.telegram",
                 "respond_to",
-                respond_to_values[self.telegram_respond_to.min(2)]
+                respond_to_values[self.telegram_respond_to.min(3)]
             );
             try_write!(
                 write_errors,
                 "channels.discord",
                 "respond_to",
-                respond_to_values[self.discord_respond_to.min(2)]
+                respond_to_values[self.discord_respond_to.min(3)]
             );
             try_write!(
                 write_errors,
                 "channels.slack",
                 "respond_to",
-                respond_to_values[self.slack_respond_to.min(2)]
+                respond_to_values[self.slack_respond_to.min(3)]
             );
         } // end if write_channels
 

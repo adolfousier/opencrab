@@ -146,6 +146,18 @@ pub(crate) async fn handle_message(
                 }
             }
             RespondTo::All => {} // pass through
+            RespondTo::Auto => {
+                // Active sender tracking not implemented for Discord yet;
+                // fall back to mention-only behaviour (#244).
+                let bot_id = discord_state.bot_user_id().await;
+                let mentioned =
+                    bot_id.is_some_and(|bid| msg.mentions.iter().any(|u| u.id.get() == bid));
+                if !mentioned {
+                    tracing::debug!("Discord: respond_to=auto, bot not mentioned — ignoring");
+                    store_channel_msg(msg.content.clone()).await;
+                    return;
+                }
+            }
         }
     }
 
