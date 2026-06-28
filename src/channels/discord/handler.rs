@@ -238,12 +238,7 @@ pub(crate) async fn handle_message(
     );
 
     // Track owner's channel for proactive messaging
-    let is_owner = allowed.is_empty()
-        || allowed
-            .iter()
-            .next()
-            .map(|&a| a == user_id)
-            .unwrap_or(false);
+    let is_owner = dc_cfg.is_owner(&user_id.to_string());
 
     if is_owner {
         discord_state.set_owner_channel(msg.channel_id.get()).await;

@@ -384,14 +384,7 @@ impl TelegramConfig {
     /// first entry in `allowed_users`. Returns true when `allowed_users`
     /// is empty (open mode — everyone is treated as owner).
     pub fn is_owner(&self, user_id: &str) -> bool {
-        if self.allowed_users.is_empty() {
-            return true;
-        }
-        if !self.bot_owner.is_empty() {
-            self.bot_owner.contains(&user_id.to_string())
-        } else {
-            self.allowed_users.first().is_some_and(|o| o == user_id)
-        }
+        crate::config::owner::is_owner(&self.allowed_users, &self.bot_owner, user_id)
     }
 }
 
@@ -414,6 +407,17 @@ pub struct DiscordConfig {
     /// Idle session timeout in hours for non-owner sessions.
     #[serde(default)]
     pub session_idle_hours: Option<f64>,
+    /// Bot owner user IDs. When unset, defaults to the first entry in
+    /// `allowed_users`. Accepts int or string arrays.
+    #[serde(default, deserialize_with = "deser_users_compat")]
+    pub bot_owner: Vec<String>,
+}
+
+impl DiscordConfig {
+    /// Check if a user ID is a bot owner. See [`crate::config::owner::is_owner`].
+    pub fn is_owner(&self, user_id: &str) -> bool {
+        crate::config::owner::is_owner(&self.allowed_users, &self.bot_owner, user_id)
+    }
 }
 
 /// Slack channel configuration
@@ -439,6 +443,17 @@ pub struct SlackConfig {
     /// Idle session timeout in hours for non-owner sessions.
     #[serde(default)]
     pub session_idle_hours: Option<f64>,
+    /// Bot owner user IDs. When unset, defaults to the first entry in
+    /// `allowed_users`. Accepts int or string arrays.
+    #[serde(default, deserialize_with = "deser_users_compat")]
+    pub bot_owner: Vec<String>,
+}
+
+impl SlackConfig {
+    /// Check if a user ID is a bot owner. See [`crate::config::owner::is_owner`].
+    pub fn is_owner(&self, user_id: &str) -> bool {
+        crate::config::owner::is_owner(&self.allowed_users, &self.bot_owner, user_id)
+    }
 }
 
 /// WhatsApp channel configuration
@@ -453,6 +468,19 @@ pub struct WhatsAppConfig {
     /// Idle session timeout in hours for non-owner sessions.
     #[serde(default)]
     pub session_idle_hours: Option<f64>,
+    /// Bot owner phone numbers. When unset, defaults to the first entry in
+    /// `allowed_phones`. Accepts int or string arrays.
+    #[serde(default, deserialize_with = "deser_users_compat")]
+    pub bot_owner: Vec<String>,
+}
+
+impl WhatsAppConfig {
+    /// Check if a phone number is a bot owner. See
+    /// [`crate::config::owner::is_owner`]. Owners are resolved against
+    /// `allowed_phones` (WhatsApp's allow list).
+    pub fn is_owner(&self, user_id: &str) -> bool {
+        crate::config::owner::is_owner(&self.allowed_phones, &self.bot_owner, user_id)
+    }
 }
 
 /// Trello channel configuration
@@ -479,6 +507,17 @@ pub struct TrelloConfig {
     /// Idle session timeout in hours for non-owner sessions.
     #[serde(default)]
     pub session_idle_hours: Option<f64>,
+    /// Bot owner member IDs. When unset, defaults to the first entry in
+    /// `allowed_users`. Accepts int or string arrays.
+    #[serde(default, deserialize_with = "deser_users_compat")]
+    pub bot_owner: Vec<String>,
+}
+
+impl TrelloConfig {
+    /// Check if a member ID is a bot owner. See [`crate::config::owner::is_owner`].
+    pub fn is_owner(&self, user_id: &str) -> bool {
+        crate::config::owner::is_owner(&self.allowed_users, &self.bot_owner, user_id)
+    }
 }
 
 /// Signal channel configuration (placeholder — not yet implemented)

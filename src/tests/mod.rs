@@ -166,6 +166,7 @@ pub mod onboarding_welcome_test;
 pub mod onboarding_wizard_test;
 pub mod orphan_close_tag_strip_test;
 pub mod orphan_think_close_tag_test;
+pub mod owner_resolve_test;
 pub mod phantom_cleanup_intent_test;
 pub mod phantom_db_persistence_test;
 pub mod phantom_deferment_test;

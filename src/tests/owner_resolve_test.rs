@@ -1,0 +1,62 @@
+//! Tests for the shared bot-owner resolution helper used by every channel
+//! config (Telegram/Discord/Slack/WhatsApp/Trello). Issue #243.
+
+use crate::config::owner::{is_owner, seed_bot_owner};
+
+fn v(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn empty_allowed_is_open_mode_everyone_is_owner() {
+    let allowed: Vec<String> = Vec::new();
+    let bot_owner: Vec<String> = Vec::new();
+    assert!(is_owner(&allowed, &bot_owner, "anyone"));
+    assert!(is_owner(&allowed, &bot_owner, ""));
+    // Open mode wins even if an explicit owner list is present.
+    assert!(is_owner(&allowed, &v(&["explicit"]), "anyone"));
+}
+
+#[test]
+fn explicit_bot_owner_governs_ownership() {
+    let allowed = v(&["a", "b", "c"]);
+    let bot_owner = v(&["b", "c"]);
+    // A listed (non-first) id is an owner.
+    assert!(is_owner(&allowed, &bot_owner, "b"));
+    assert!(is_owner(&allowed, &bot_owner, "c"));
+    // A non-listed id (even the first allowed entry) is NOT an owner.
+    assert!(!is_owner(&allowed, &bot_owner, "a"));
+    assert!(!is_owner(&allowed, &bot_owner, "z"));
+}
+
+#[test]
+fn positional_fallback_uses_first_allowed_when_no_bot_owner() {
+    let allowed = v(&["first", "second", "third"]);
+    let bot_owner: Vec<String> = Vec::new();
+    assert!(is_owner(&allowed, &bot_owner, "first"));
+    // A non-first allowed id is NOT the owner under positional fallback.
+    assert!(!is_owner(&allowed, &bot_owner, "second"));
+    assert!(!is_owner(&allowed, &bot_owner, "third"));
+    assert!(!is_owner(&allowed, &bot_owner, "stranger"));
+}
+
+#[test]
+fn seed_bot_owner_seeds_from_first_allowed() {
+    let allowed = v(&["first", "second"]);
+    let bot_owner: Vec<String> = Vec::new();
+    assert_eq!(seed_bot_owner(&allowed, &bot_owner), Some(v(&["first"])));
+}
+
+#[test]
+fn seed_bot_owner_none_when_already_explicit() {
+    let allowed = v(&["first", "second"]);
+    let bot_owner = v(&["second"]);
+    assert_eq!(seed_bot_owner(&allowed, &bot_owner), None);
+}
+
+#[test]
+fn seed_bot_owner_none_when_nothing_to_seed_from() {
+    let allowed: Vec<String> = Vec::new();
+    let bot_owner: Vec<String> = Vec::new();
+    assert_eq!(seed_bot_owner(&allowed, &bot_owner), None);
+}
