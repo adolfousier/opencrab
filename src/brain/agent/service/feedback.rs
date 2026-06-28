@@ -87,10 +87,19 @@ impl AgentService {
         let tname = tool_name.to_string();
         let enriched = enrich_metadata(tool_name, error_snippet, tool_input);
         let meta = enriched.map(|s| s.chars().take(500).collect::<String>());
+        // Recoverable / environmental failures (stale-hash retry, channel not
+        // connected, user-cancelled prompt) are NOT tool defects. Record them
+        // under a non-`tool_` event so they stay queryable but OUT of the
+        // success-rate denominator — otherwise they drove the RSI to ban
+        // working built-in tools (#236).
+        let recoverable = !success
+            && crate::brain::feedback_policy::is_recoverable_tool_failure(tool_name, error_snippet);
         tokio::spawn(async move {
             let repo = crate::db::repository::FeedbackLedgerRepository::new(pool);
             let event = if success {
                 "tool_success"
+            } else if recoverable {
+                "recoverable_failure"
             } else {
                 "tool_failure"
             };
