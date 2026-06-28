@@ -33,7 +33,23 @@ pub async fn sync_provider_for_session(
         }
     };
 
-    // If the session has an explicit provider, restore it (ignoring global config)
+    // A session can carry a stale provider pin (channel sessions inherit the
+    // previous session's provider/model). If that provider is disabled or no
+    // longer in config, it must NOT be used — config is authoritative. Treat an
+    // unusable pin as "no stored provider" so we fall back to the global
+    // default below instead of running a disabled provider.
+    if let Some(stale) = session_provider
+        && !config.providers.is_provider_usable(stale)
+    {
+        tracing::warn!(
+            "sync_provider_for_session[{}]: stored provider '{}' is disabled or absent in config — falling back to the global default",
+            session_id,
+            stale,
+        );
+    }
+    let session_provider = session_provider.filter(|p| config.providers.is_provider_usable(p));
+
+    // If the session has an explicit (usable) provider, restore it (ignoring global config)
     if let Some(sess_prov) = session_provider {
         let agent_provider = agent.provider_name_for_session(session_id);
         let agent_model = agent.provider_model_for_session(session_id);
@@ -191,6 +207,8 @@ pub enum ChannelCommand {
     ChangeDir(DirBrowserResponse),
     /// `/profiles` — profile manager (inline keyboard)
     Profiles(ProfilesResponse),
+    /// `/respond_to [all|mention|auto]` — show/switch auto-mention mode (#244)
+    RespondTo(String),
     /// Not a recognised command — pass through to agent
     NotACommand,
 }
@@ -337,6 +355,16 @@ pub async fn handle_command(
             }
         }
         "/profiles" => ChannelCommand::Profiles(format_profiles_browser().await),
+        cmd if cmd == "/respond_to" || cmd.starts_with("/respond_to ") => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand(
+                    "🔒 `/respond_to` is restricted to the bot owner.".to_string(),
+                )
+            } else {
+                let arg = cmd.strip_prefix("/respond_to").unwrap_or("").trim();
+                ChannelCommand::RespondTo(handle_respond_to(arg).await)
+            }
+        }
         // `/goal` works on every surface. The TUI intercepts it in
         // handle_slash_command; here we mirror that so Telegram/Discord/
         // WhatsApp/Slack users hit the same behaviour. A bare `/goal` is
@@ -425,6 +453,7 @@ pub async fn handle_command(
         | ChannelCommand::UserPrompt(_)
         | ChannelCommand::NotACommand
         | ChannelCommand::UnknownCommand(_) => None,
+        ChannelCommand::RespondTo(body) => Some(body.clone()),
     };
 
     if let Some(response) = response_text {
@@ -569,6 +598,10 @@ pub(crate) fn format_help() -> String {
         ("/models", "Switch AI model"),
         ("/profiles", "Manage profiles (create, switch, migrate)"),
         ("/rename", "Rename current session (`/rename <new title>`)"),
+        (
+            "/respond_to",
+            "Show/switch auto-mention mode (`/respond_to <all|mention|auto>`)",
+        ),
         ("/rtk", "Show RTK token savings statistics"),
         ("/usage", "Session token & cost stats"),
     ];
@@ -1638,7 +1671,71 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
         ChannelCommand::Doctor => Some(run_doctor()),
         ChannelCommand::Evolve => Some(run_evolve().await),
         ChannelCommand::UnknownCommand(msg) => Some(msg.to_string()),
+        ChannelCommand::RespondTo(body) => Some(body.clone()),
         _ => None,
+    }
+}
+
+/// Handle `/respond_to [all|mention|auto]` — show or switch the auto-mention
+/// mode for the Telegram channel (#244). Owner-only (enforced by caller).
+async fn handle_respond_to(arg: &str) -> String {
+    use crate::config::RespondTo;
+
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(e) => return format!("❌ Failed to load config: {}", e),
+    };
+
+    let current = &config.channels.telegram.respond_to;
+    let current_label = match current {
+        RespondTo::All => "all",
+        RespondTo::DmOnly => "dm_only",
+        RespondTo::Mention => "mention",
+        RespondTo::Auto => "auto",
+    };
+
+    if arg.is_empty() {
+        return format!(
+            "📢 Current respond_to mode: **{}**\n\n\
+             Usage: `/respond_to <all|mention|auto>`\n\n\
+             • **all** — respond to every message\n\
+             • **mention** — only respond when @mentioned\n\
+             • **auto** — respond to all when ≤1 sender, mention-only when >1 sender",
+            current_label
+        );
+    }
+
+    let (new_mode, new_label) = match arg.to_lowercase().as_str() {
+        "all" => ("all", "all"),
+        "mention" | "mentions" => ("mention", "mention"),
+        "auto" => ("auto", "auto"),
+        _ => {
+            return format!(
+                "❌ Unknown mode \"{}\". Use: `/respond_to <all|mention|auto>`",
+                arg
+            );
+        }
+    };
+
+    if current_label == new_label {
+        return format!("ℹ️ Already in **{}** mode.", current_label);
+    }
+
+    // Format-preserving write via toml_edit — preserves comments and ordering
+    match Config::write_key("channels.telegram", "respond_to", new_mode) {
+        Ok(_) => format!(
+            "✅ Respond-to mode switched to **{}**.\n{}",
+            new_label,
+            match new_label {
+                "all" => "Bot will respond to every message in groups.",
+                "auto" => {
+                    "Bot responds to all when ≤1 active sender. \
+                     Switches to mention-only when a second sender appears."
+                }
+                _ => "Bot will only respond when @mentioned in groups.",
+            }
+        ),
+        Err(e) => format!("❌ Failed to save config: {}", e),
     }
 }
 

@@ -1237,6 +1237,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("doctor", "Run connection health check"),
         BotCommand::new("evolve", "Check for updates"),
         BotCommand::new("rtk", "Show RTK token savings statistics"),
+        BotCommand::new("respond_to", "Show/switch auto-mention mode"),
     ];
 
     // Load user-defined commands from commands.toml
