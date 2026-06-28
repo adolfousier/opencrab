@@ -1106,7 +1106,18 @@ pub(crate) async fn handle_message(
 
     match result {
         Ok(response) => {
-            let reply_jid = info.source.chat.clone();
+            // Owner self-chat replies must go to the owner's PN, not the LID
+            // chat. Sends to the owner's LID JID are rejected by the server
+            // (the LID-form device session can't be established, so the encrypt
+            // skips that device and the whole stanza 400s), while sends to the
+            // PN deliver — the same target the connection greeting uses
+            // successfully. Non-owner chats keep their original chat JID.
+            let reply_jid = match (is_owner_self_chat, &owner_number) {
+                (true, Some(num)) => format!("{num}@s.whatsapp.net")
+                    .parse()
+                    .unwrap_or_else(|_| info.source.chat.clone()),
+                _ => info.source.chat.clone(),
+            };
 
             // Extract <<IMG:path>> markers — send each as a real WhatsApp image message.
             let (text_content, img_paths) = crate::utils::extract_img_markers(&response.content);
