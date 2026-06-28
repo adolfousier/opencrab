@@ -1045,6 +1045,18 @@ impl AgentService {
             let chain = crate::brain::provider::factory::fallback_chain(fallback);
             let mut providers = Vec::new();
             for name in &chain {
+                // A provider that is disabled (or absent) in config must never be
+                // used — not as the default, and not as a fallback. Otherwise a
+                // sticky-fallback can land on a provider the user turned off and
+                // pin its (cross-provider) model onto the session, which then
+                // surfaces as "stale model pin" on every later turn.
+                if !config.providers.is_provider_usable(name) {
+                    tracing::warn!(
+                        "AgentService: fallback provider '{}' skipped: disabled or unavailable in config",
+                        name
+                    );
+                    continue;
+                }
                 match crate::brain::provider::factory::create_provider_by_name(config, name).await {
                     Ok(p) => {
                         tracing::info!("AgentService: fallback provider '{}' ready", name);
