@@ -67,6 +67,7 @@ pub mod compaction_prompts_test;
 pub mod compaction_test;
 pub mod config_dotted_caps_test;
 pub mod config_last_good_recovery_test;
+pub mod config_owner_seed_migration_test;
 pub mod config_repair_test;
 pub mod config_watcher_test;
 pub mod context_window_test;
