@@ -110,7 +110,3 @@ impl CrabraceIntegration {
         &self.config
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/config_crabrace_test.rs"]
-mod tests;

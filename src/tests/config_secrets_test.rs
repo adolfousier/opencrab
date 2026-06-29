@@ -1,4 +1,4 @@
-use super::*;
+use crate::config::secrets::*;
 
 #[test]
 fn test_secret_string_creation() {

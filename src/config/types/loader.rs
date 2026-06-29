@@ -720,7 +720,7 @@ impl Config {
     }
 
     /// Get the local config path: ./opencrabs.toml
-    fn local_config_path() -> PathBuf {
+    pub(crate) fn local_config_path() -> PathBuf {
         PathBuf::from("./opencrabs.toml")
     }
 
@@ -1335,7 +1335,3 @@ pub fn resolve_provider_from_config(config: &Config) -> (&str, &str) {
     }
     ("Not configured", "N/A")
 }
-
-#[cfg(test)]
-#[path = "../../tests/config_types_loader_test.rs"]
-mod tests;

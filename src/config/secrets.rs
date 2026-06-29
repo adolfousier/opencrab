@@ -95,7 +95,3 @@ impl From<&str> for SecretString {
         SecretString::from_str(s)
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/config_secrets_test.rs"]
-mod tests;

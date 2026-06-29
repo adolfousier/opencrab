@@ -260,7 +260,3 @@ impl UpdateResult {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/config_update_test.rs"]
-mod tests;

@@ -1,5 +1,6 @@
-use super::*;
 use crate::config::Config;
+use crate::config::types::*;
+use std::fs;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 

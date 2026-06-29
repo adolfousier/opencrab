@@ -117,10 +117,14 @@ pub mod collapse_home_test;
 pub mod command_rich_table_test;
 pub mod compaction_prompts_test;
 pub mod compaction_test;
+pub mod config_crabrace_test;
 pub mod config_dotted_caps_test;
 pub mod config_last_good_recovery_test;
 pub mod config_owner_seed_migration_test;
 pub mod config_repair_test;
+pub mod config_secrets_test;
+pub mod config_types_loader_test;
+pub mod config_update_test;
 pub mod config_watcher_test;
 pub mod context_window_test;
 #[cfg(feature = "telegram")]

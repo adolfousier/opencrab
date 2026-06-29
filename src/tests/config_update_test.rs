@@ -1,5 +1,7 @@
-use super::*;
+use crate::config::Config;
 use crate::config::crabrace::CrabraceConfig;
+use crate::config::crabrace::CrabraceIntegration;
+use crate::config::update::*;
 
 #[test]
 fn test_should_update_when_disabled() {
