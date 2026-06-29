@@ -1665,11 +1665,32 @@ async fn test_whatsapp_connection(
         })?
     };
 
-    if phone.is_empty() {
-        return Err("No phone number provided.".to_string());
+    // Send the round-trip greeting to the PAIRED account's OWN self-chat — the
+    // only target a delivery is guaranteed for. The typed `phone` (an allowed
+    // contact) may be a third party the bot must not greet unsolicited, so it is
+    // only a fallback when the paired number isn't known yet. The paired number
+    // is captured at PairSuccess into owner_jid.
+    let target = match wa_state.owner_jid().await {
+        Some(jid) => jid
+            .split('@')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('+')
+            .to_string(),
+        None => phone.trim_start_matches('+').to_string(),
+    };
+    if target.is_empty() {
+        return Err(
+            "Could not determine the paired WhatsApp number to test against. \
+             Re-scan the QR code."
+                .to_string(),
+        );
     }
 
-    let jid_str = format!("{}@s.whatsapp.net", phone.trim_start_matches('+'));
+    let jid_str = format!("{}@s.whatsapp.net", target);
     let jid: wacore_binary::jid::Jid = jid_str
         .parse()
         .map_err(|e| format!("Invalid phone number format: {}", e))?;
