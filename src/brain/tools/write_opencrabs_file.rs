@@ -399,5 +399,5 @@ impl Tool for WriteOpenCrabsFileTool {
 }
 
 #[cfg(test)]
-#[path = "write_opencrabs_file_tests.rs"]
-mod write_opencrabs_file_tests;
+#[path = "../../tests/brain_tools_write_opencrabs_file_tests.rs"]
+mod tests;

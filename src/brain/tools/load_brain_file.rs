@@ -260,5 +260,5 @@ impl Tool for LoadBrainFileTool {
 }
 
 #[cfg(test)]
-#[path = "load_brain_file_tests.rs"]
-mod load_brain_file_tests;
+#[path = "../../tests/brain_tools_load_brain_file_tests.rs"]
+mod tests;

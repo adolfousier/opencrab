@@ -6,7 +6,7 @@
 mod builder;
 mod compaction;
 pub(crate) mod compaction_prompts;
-mod context;
+pub(crate) mod context;
 #[allow(unused_imports)] // only used in test code
 pub(crate) use context::format_plan_reminder;
 pub(crate) mod feedback;
@@ -14,7 +14,7 @@ mod gaslighting;
 pub(crate) mod helpers;
 mod messaging;
 pub(crate) mod phantom;
-mod phantom_lang;
+pub(crate) mod phantom_lang;
 pub(crate) mod tool_loop;
 mod truncation;
 mod types;

@@ -7,7 +7,7 @@ mod messaging;
 pub mod mission_control;
 pub mod profiles_dialog;
 pub mod skills_dialog;
-mod state;
+pub(crate) mod state;
 
 pub use background_session::{BackgroundSessionState, SessionStateMut};
 pub use state::*;

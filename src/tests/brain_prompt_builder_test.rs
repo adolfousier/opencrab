@@ -5,6 +5,7 @@
 //! other files are listed only as an index so the agent can retrieve them on demand via `load_brain_file`.
 
 use super::*;
+
 use tempfile::TempDir;
 
 // ── helpers ───────────────────────────────────────────────────────────────────

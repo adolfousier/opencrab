@@ -1,6 +1,6 @@
 //! Tests for channel model switching and provider section resolution.
 
-use super::commands::provider_section;
+use super::*;
 
 // ── provider_section ──────────────────────────────────────────────────
 

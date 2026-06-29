@@ -1,5 +1,5 @@
 //! Logging and Debug System
 
-mod logger;
+pub(crate) mod logger;
 
 pub use logger::*;

@@ -2,7 +2,7 @@
 //!
 //! Provides database connection management, models, and repositories.
 
-mod database;
+pub(crate) mod database;
 pub mod models;
 pub mod repository;
 pub mod retry;

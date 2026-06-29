@@ -1,7 +1,8 @@
 //! Tests for `write_opencrabs_file` tool.
 
 use super::*;
-use crate::brain::tools::r#trait::ToolExecutionContext;
+
+use crate::brain::tools::ToolExecutionContext;
 use tempfile::TempDir;
 use uuid::Uuid;
 

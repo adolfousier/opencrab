@@ -9,7 +9,7 @@ pub mod owner;
 pub mod profile;
 pub mod repair;
 pub mod secrets;
-mod types;
+pub(crate) mod types;
 pub mod update;
 
 pub use crabrace::{CrabraceConfig, CrabraceIntegration};

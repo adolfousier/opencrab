@@ -3,7 +3,7 @@
 //! This module contains the business logic services that orchestrate
 //! operations between the database layer and the application layer.
 
-mod context;
+pub(crate) mod context;
 pub mod file;
 pub mod message;
 pub mod plan;

@@ -9,8 +9,8 @@
 
 mod embedding;
 mod index;
-mod search;
-mod store;
+pub(crate) mod search;
+pub(crate) mod store;
 
 pub use embedding::{
     embed_content, embed_content_api, embed_query_api, embed_via_api, engine_if_ready, get_engine,

@@ -18,7 +18,7 @@ mod session_files;
 mod sessions;
 pub(crate) mod skills_dialog;
 mod tools;
-mod utils;
+pub(crate) mod utils;
 
 // Re-export for sibling modules (e.g. onboarding_render)
 pub(in crate::tui) use utils::char_boundary_at_width;

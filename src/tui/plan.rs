@@ -893,5 +893,5 @@ impl TaskStatus {
 }
 
 #[cfg(test)]
-#[path = "plan_tests.rs"]
-mod plan_tests;
+#[path = "../tests/tui_plan_tests_test.rs"]
+mod tests;
