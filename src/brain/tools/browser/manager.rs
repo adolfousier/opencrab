@@ -1083,7 +1083,7 @@ pub(crate) fn parse_ls_handlers(text: &str) -> Option<String> {
 
 /// Detect the user's default browser (Linux).
 #[cfg(target_os = "linux")]
-fn detect_default_browser_id() -> Option<String> {
+pub(crate) fn detect_default_browser_id() -> Option<String> {
     let output = std::process::Command::new("xdg-settings")
         .args(["get", "default-web-browser"])
         .output()
@@ -1107,7 +1107,7 @@ pub(crate) fn parse_xdg_default_browser(text: &str) -> Option<String> {
 
 /// Detect the user's default browser (Windows).
 #[cfg(target_os = "windows")]
-fn detect_default_browser_id() -> Option<String> {
+pub(crate) fn detect_default_browser_id() -> Option<String> {
     let output = std::process::Command::new("reg")
         .args([
             "query",

@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+
+## [0.3.56] - 2026-06-29
+
+51 commits since v0.3.55. 256 files changed, +14841 / -17680 lines.
+
+### ✨ Features
+
+- `f57eb274` **Per-group /respond-to command**: override response mode per Telegram/Discord group via slash command
+- `7b3ab774` **Auto mention-only mode**: automatically switch to mention-only when a group grows beyond 2 members
+- `6de61f78` **Uniform bot-owner identity**: explicit, consistent bot-owner detection across all channels
+- `d628f2df` **Bot-owner migration**: seed channel bot_owner from the allow list on config migration
+- `db5d6913` **RSI BinEval triage**: failure triage modeled on BinEval in the RSI prompt
+- `117ed40a` **RSI tool-ban guard**: refuse self_improve rules that would ban built-in tools
+- `9df35301` **RSI recoverable failures**: keep recoverable tool failures out of the success-rate denominator
+- `25803109` **Per-chat ACL**: group allow lists, DM gate, and per-group respond_to config
+- `eacec7d7` **Forum callback routing**: route follow_up_question and approval callbacks to the correct forum topic
+
+### 🔧 Fixes
+
+- `7ec02d6c` **WhatsApp Sender receipts**: accept Sender receipts as delivery confirmation for self-chat
+- `3cdd9278` **WhatsApp encrypt race**: serialize the session store to stop the encrypt race that drops replies
+- `a70c46ff` **WhatsApp streamed replies**: route streamed reply text to the PN too, not just the final reply
+- `9f19d2b8` **Telegram /cd state**: isolate /cd directory browser state per forum topic
+- `c6758279` **Telegram voice indicator**: voice typing indicator now targets correct forum topic
+- `f9992f68` **WhatsApp onboarding**: onboarding test confirms real delivery, not just transmission
+- `158bfef4` **WhatsApp owner replies**: send owner replies to the PN, not the LID self-chat
+- `771799ec` **WhatsApp self-chat**: collapse the owner self-chat to a single session
+- `8014828d` **Disabled provider fallback**: exclude disabled providers from the fallback chain
+- `28182fdf` **Session provider inheritance**: never inherit a disabled or absent provider into new sessions
+- `f3414c55` **WhatsApp idempotent resend**: resilient resend so a skipped device can't drop replies
+- `5fefeb4e` **Tokio stack overflow**: enlarge tokio worker stack to stop agent-turn stack overflow
+- `94fdccfb` **WhatsApp restart cleanup**: disconnect the live client before aborting on restart/stop
+- `3e197c44` **WhatsApp greet dedup**: greet once per connection, not on every reconnect
+- `1362bd69` **WhatsApp pairing**: authorize the paired owner, confirm via agent, lock QR after connect
+- `ea0f00cb` **WhatsApp QR flow**: show pairing QR on connect and force fresh re-pair on reset
+- `f8d33803` **Owner-only /cd**: restrict /cd directory browser to the bot owner
+- `5e57d4ce` **Channel agent restart**: restart dead channel agents on reconcile
+
+### 📖 Documentation
+
+- `30fcc070` document bot_owner and owner-only commands
+- `3c4e1d35` document per-group ACL, DM gate, and respond_to auto/override
+
+### 🧹 Miscellaneous
+
+- `c5e2d52c` refactor(whatsapp): split store.rs into store/ submodules
+- `a696bf67` chore(deps): migrate WhatsApp to wacore/whatsapp-rust 0.6
+- `5a536074` refactor(tests): migrate all inline #[cfg(test)] modules to src/tests/
+- `e5b66868` through `c5371a0a` refactor(tests): move tests by module into registered src/tests/ files (14 commits)
+- `dbaa22b7` chore: remove dead vendored wacore-binary patch crate
+- `14474933` test: recover 12 tests dropped by #248 inline-to-src/tests migration
+- `d2d92183` chore(evals): move security-eval under src/ and fix path references
+- `6d5a1f61` through `8401f779` revert 4 commits (runtime stack size, disabled-provider fallback chain)
+
+### 📊 Stats
+
+- 51 commits since v0.3.55
+- 256 files changed, +14841 / -17680 lines
+- 4,308 tests (4,308 passed, 0 failed, 24 ignored)
+
+
 ## [0.3.55] - 2026-06-27
 
 20 commits since v0.3.54. 41 files changed, +2569 / -200 lines.
@@ -6153,4 +6214,5 @@ fixes.
 [0.3.51]: https://github.com/adolfousier/opencrabs/compare/v0.3.50...v0.3.51
 [0.3.52]: https://github.com/adolfousier/opencrabs/compare/v0.3.51...v0.3.52
 [0.3.53]: https://github.com/adolfousier/opencrabs/compare/v0.3.52...v0.3.53
-[0.3.54]: https://github.com/adolfousier/opencrabs/compare/v0.3.53...v0.3.54
+[0.3.54]: https://github.com/adolfousier/opencrabs/compare/v0.3.53...v0.3.54[0.3.55]: https://github.com/adolfousier/opencrabs/compare/v0.3.54...v0.3.55
+[0.3.56]: https://github.com/adolfousier/opencrabs/compare/v0.3.55...v0.3.56
