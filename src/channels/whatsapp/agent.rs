@@ -259,13 +259,18 @@ impl WhatsAppAgent {
                                 tracing::warn!("WhatsApp: disconnected");
                             }
                             Event::Receipt(receipt) => {
-                                // A Delivered receipt means a message we sent
-                                // actually reached the recipient. Surface the id
-                                // so the onboarding connection test can confirm
-                                // real delivery instead of mere transmission.
+                                // A message we sent was accepted/delivered.
+                                // `Delivered` is the normal recipient receipt;
+                                // `Sender` is what a self-chat send gets back —
+                                // the bot is paired AS the owner, so its replies
+                                // go to the owner's own devices, which ack with
+                                // `sender`, not `delivered`. Either one means the
+                                // message landed, so surface the id for the
+                                // onboarding connection test.
                                 if matches!(
                                     receipt.r#type,
                                     wacore::types::presence::ReceiptType::Delivered
+                                        | wacore::types::presence::ReceiptType::Sender
                                 ) {
                                     for id in &receipt.message_ids {
                                         wa_state.broadcast_delivered(id);
