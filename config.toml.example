@@ -422,6 +422,8 @@ model = "gemini-3.1-flash-image-preview"   # Gemini vision model
 #   "all"      — reply to every message in allowed channels (default)
 #   "dm_only"  — reply only to direct/private messages
 #   "mention"  — reply only when the bot is @mentioned or replied-to
+#   "auto"     — reply to all while there is at most one active sender, then switch
+#                to mention-only once a second unique sender appears in the chat
 
 [channels.whatsapp]
 enabled = false
@@ -448,12 +450,25 @@ allowed_users = [123456789]             # Who the bot replies to (numeric user I
                                         # Auto-seeded from the first allowed_users entry on first run; set it
                                         # explicitly to pin the owner instead of relying on list order.
 # allowed_channels = ["-100123456789"]  # Chat/group IDs to restrict to (empty = all chats)
-# respond_to = "all"                    # "all" | "dm_only" | "mention"
+# respond_to = "all"                    # "all" | "dm_only" | "mention" | "auto"
 # silence_group_start = true            # Silently ignore /start from non-allowed users in groups (default: true)
 # session_idle_hours = 24.0             # Archive inactive non-owner sessions after N hours (default: never)
 # rich_messages = true                  # Native rich messages (tables/headings/lists/math). Default false:
                                         # rich is unreadable on Telegram Web and older clients (no fallback),
                                         # so enable only when your audience is on current mobile/desktop apps.
+
+# Per-group access control (per-chat ACL). Tiers:
+#   - allowed_users (above) = admins: may DM the bot and act in any chat.
+#   - bot_owner             = owner: always allowed everywhere.
+#   - groups.<chat_id>.allowed_users = users allowed in THAT group ONLY. They are
+#     refused in DMs unless they are also an admin/owner — this blocks the "DM the
+#     bot privately to escape group oversight" bypass.
+# DMs are gated to admins + owner. If neither allowed_users nor bot_owner is set
+# the bot is unconfigured and stays open (no hard lockout); set either to lock down.
+# Each group may also override respond_to just for that group.
+# [channels.telegram.groups.-1001234567890]
+# allowed_users = [222333444, 555666777]  # allowed in this group only, never via DM
+# respond_to = "mention"                  # per-group override of the global respond_to
 
 [channels.slack]
 enabled = false

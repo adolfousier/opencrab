@@ -241,7 +241,7 @@ The one user-settable TTL is `cache_ttl` (default 300s, range 1-86400), which se
 ### Messaging Integrations
 | Feature | Description |
 |---------|-------------|
-| **Telegram Bot** | Full-featured Telegram bot — owner DMs share TUI session, groups get isolated per-group sessions (keyed by chat ID). Photo/voice support (STT transcribes incoming voice notes; TTS replies as OGG/Opus voice notes via `send_voice` when input was audio). Allowed user IDs, allowed chat/group IDs, `respond_to` filter (`all`/`dm_only`/`mention`). Passive group message capture — all messages stored for context even when bot isn't mentioned |
+| **Telegram Bot** | Full-featured Telegram bot — owner DMs share TUI session, groups get isolated per-group sessions (keyed by chat ID). Photo/voice support (STT transcribes incoming voice notes; TTS replies as OGG/Opus voice notes via `send_voice` when input was audio). Allowed user IDs, allowed chat/group IDs, per-group allow lists (`[channels.telegram.groups.<id>]`), `respond_to` filter (`all`/`dm_only`/`mention`/`auto`, global or per-group). Passive group message capture — all messages stored for context even when bot isn't mentioned |
 | **WhatsApp** | Connect via QR code pairing at runtime or from onboarding wizard. The pairing QR renders as a scannable PNG image in channels (not just unicode blocks), so you can scan it directly from Telegram/Discord/Slack. Text + image + voice (STT transcribes incoming voice notes; TTS replies as voice notes when input was audio and `tts_enabled=true`). Shared session with TUI, phone allowlist (`allowed_phones`), session persists across restarts |
 | **Discord** | Full Discord bot — text + image + voice. Owner DMs share TUI session, guild channels get isolated per-channel sessions. Allowed user IDs, allowed channel IDs, `respond_to` filter. Full proactive control via `discord_send` (17 actions): `send`, `reply`, `react`, `unreact`, `edit`, `delete`, `pin`, `unpin`, `create_thread`, `send_embed`, `get_messages`, `list_channels`, `add_role`, `remove_role`, `kick`, `ban`, `send_file`. Generated images sent as native Discord file attachments |
 | **Slack** | Full Slack bot via Socket Mode — owner DMs share TUI session, channels get isolated per-channel sessions. Text + image + voice (STT transcribes incoming audio attachments; TTS replies upload an OGG/Opus audio file via `files.upload` — renders inline with waveform UI — when input was audio and `tts_enabled=true`). Allowed user IDs, allowed channel IDs, `respond_to` filter. Full proactive control via `slack_send` (17 actions): `send`, `reply`, `react`, `unreact`, `edit`, `delete`, `pin`, `unpin`, `get_messages`, `get_channel`, `list_channels`, `get_user`, `list_members`, `kick_user`, `set_topic`, `send_blocks`, `send_file`. Generated images sent as native Slack file uploads. Bot token + app token from `api.slack.com/apps` (Socket Mode required). **Required Bot Token Scopes:** `chat:write`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `users:read`, `files:read`, `files:write`, `reactions:write`, `app_mentions:read` |
@@ -320,6 +320,28 @@ The owner gets access that other allowlisted users do not. Commands that expose 
 allowed_users = ["123456789"]    # who may interact
 # bot_owner = ["123456789"]      # owner for owner-only commands (auto-seeded from allowed_users[0])
 ```
+
+#### Per-group access control (per-chat ACL)
+
+Telegram groups can have their own member list, so a user can be allowed in **one group** without gaining DM access:
+
+- `allowed_users` (channel level) — **admins**: may DM the bot and act in any chat.
+- `bot_owner` — the **owner**: always allowed everywhere.
+- `[channels.telegram.groups.<chat_id>].allowed_users` — allowed in **that group only**. These users are refused in DMs unless they are also an admin or the owner, which closes the "DM the bot privately to escape group oversight" bypass.
+
+DMs are gated to admins + owner. If neither `allowed_users` nor `bot_owner` is set, the bot is unconfigured and stays open (no hard lockout); set either one to lock it down. Each group can also override `respond_to` just for itself.
+
+```toml
+[channels.telegram]
+allowed_users = ["111"]                  # admins: DM + any chat
+respond_to = "mention"                   # global default
+
+[channels.telegram.groups.-1001234567890]
+allowed_users = ["222", "333"]           # allowed in this group only, never via DM
+respond_to = "all"                       # per-group override of the global respond_to
+```
+
+`respond_to` accepts `all`, `mention`, `dm_only`, or `auto` (reply to all while there is at most one active sender, then switch to mention-only once a second unique sender appears).
 
 #### Voice and file pickup in groups
 
@@ -1809,20 +1831,20 @@ redact_sensitive_data = true     # redact IPs, tokens, passwords from tool outpu
 [channels.telegram]
 enabled = true
 allowed_users = ["123456789"]    # Telegram user IDs (get yours via /start)
-respond_to = "all"               # all | mention | dm_only
+respond_to = "all"               # all | mention | dm_only | auto
 silence_group_start = true       # true (default): silently ignore /start from non-allowed users in groups
 
 [channels.discord]
 enabled = true
 allowed_users = ["637291214508654633"]  # Discord user IDs
 allowed_channels = ["1473207147025137778"]
-respond_to = "mention"           # all | mention | dm_only
+respond_to = "mention"           # all | mention | dm_only | auto
 
 [channels.slack]
 enabled = true
 allowed_users = ["U066SGWQZFG"]  # Slack user IDs
 allowed_channels = ["C0AEY3C2P9V"]
-respond_to = "mention"           # all | mention | dm_only
+respond_to = "mention"           # all | mention | dm_only | auto
 
 [channels.whatsapp]
 enabled = true
