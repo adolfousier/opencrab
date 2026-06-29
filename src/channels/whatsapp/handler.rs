@@ -969,6 +969,43 @@ pub(crate) async fn handle_message(
                     }
                 });
             }
+            ProgressEvent::RetryAttempt {
+                attempt,
+                max,
+                reason,
+            } => {
+                let client = client_cb.clone();
+                let jid = jid_cb.clone();
+                let text = format!(
+                    "{}\n\n⏳ Retry {}/{} — {}",
+                    MSG_HEADER, attempt, max, reason
+                );
+                tokio::spawn(async move {
+                    let msg = waproto::whatsapp::Message {
+                        conversation: Some(text),
+                        ..Default::default()
+                    };
+                    if let Err(e) = client.send_message(jid, msg).await {
+                        tracing::error!("WhatsApp: retry attempt send failed: {}", e);
+                    }
+                });
+            }
+            ProgressEvent::ProviderSwitched {
+                to_name, to_model, ..
+            } => {
+                let client = client_cb.clone();
+                let jid = jid_cb.clone();
+                let text = format!("{}\n\n🔄 Now using {}/{}", MSG_HEADER, to_name, to_model);
+                tokio::spawn(async move {
+                    let msg = waproto::whatsapp::Message {
+                        conversation: Some(text),
+                        ..Default::default()
+                    };
+                    if let Err(e) = client.send_message(jid, msg).await {
+                        tracing::error!("WhatsApp: provider switched send failed: {}", e);
+                    }
+                });
+            }
             _ => {}
         })
     };

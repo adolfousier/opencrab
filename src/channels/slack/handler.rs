@@ -1537,6 +1537,42 @@ async fn handle_message(
                         g.push(handle);
                     }
                 }
+                ProgressEvent::RetryAttempt {
+                    attempt,
+                    max,
+                    reason,
+                } => {
+                    let thread_ts_retry = thread_ts_inner.clone();
+                    tokio::spawn(async move {
+                        let session = client.open_session(&token);
+                        let text = format!("⏳ Retry {}/{} — {}", attempt, max, reason);
+                        let mut req = SlackApiChatPostMessageRequest::new(
+                            channel,
+                            SlackMessageContent::new().with_text(text),
+                        );
+                        if let Some(ref ts) = thread_ts_retry {
+                            req = req.with_thread_ts(ts.clone());
+                        }
+                        let _ = session.chat_post_message(&req).await;
+                    });
+                }
+                ProgressEvent::ProviderSwitched {
+                    to_name, to_model, ..
+                } => {
+                    let thread_ts_switch = thread_ts_inner.clone();
+                    tokio::spawn(async move {
+                        let session = client.open_session(&token);
+                        let text = format!("🔄 Now using {}/{}", to_name, to_model);
+                        let mut req = SlackApiChatPostMessageRequest::new(
+                            channel,
+                            SlackMessageContent::new().with_text(text),
+                        );
+                        if let Some(ref ts) = thread_ts_switch {
+                            req = req.with_thread_ts(ts.clone());
+                        }
+                        let _ = session.chat_post_message(&req).await;
+                    });
+                }
                 _ => {}
             }
         })

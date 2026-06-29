@@ -726,6 +726,28 @@ pub(crate) async fn handle_message(
                         g.push(handle);
                     }
                 }
+                ProgressEvent::RetryAttempt {
+                    attempt,
+                    max,
+                    reason,
+                } => {
+                    let http = http.clone();
+                    let channel = channel;
+                    tokio::spawn(async move {
+                        let text = format!("⏳ Retry {}/{} — {}", attempt, max, reason);
+                        let _ = channel.say(&http, &text).await;
+                    });
+                }
+                ProgressEvent::ProviderSwitched {
+                    to_name, to_model, ..
+                } => {
+                    let http = http.clone();
+                    let channel = channel;
+                    tokio::spawn(async move {
+                        let text = format!("🔄 Now using {}/{}", to_name, to_model);
+                        let _ = channel.say(&http, &text).await;
+                    });
+                }
                 _ => {}
             }
         })
