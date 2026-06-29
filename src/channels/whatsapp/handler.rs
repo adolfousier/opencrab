@@ -601,10 +601,32 @@ pub(crate) async fn handle_message(
     // configured owner number (the same one the greeting uses) so the owner
     // always resolves to exactly one session regardless of PN/LID addressing.
     let is_owner_self_chat = info.source.is_from_me && sender_user == chat_user_part;
-    let owner_number = wa_cfg
-        .allowed_phones
-        .first()
-        .map(|a| a.trim_start_matches('+').to_string());
+    // The PAIRED account's own number (captured at PairSuccess into owner_jid) is
+    // the correct self-chat target. allowed_phones[0] is only right when it IS
+    // the paired account (self-DM); for a number paired to serve other people's
+    // DMs it may be an allowed CONTACT, so prefer owner_jid and fall back to the
+    // first allowed phone.
+    let owner_number = match wa_state.owner_jid().await {
+        Some(jid) => jid
+            .split('@')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('+')
+            .to_string(),
+        None => wa_cfg
+            .allowed_phones
+            .first()
+            .map(|a| a.trim_start_matches('+').to_string())
+            .unwrap_or_default(),
+    };
+    let owner_number = if owner_number.is_empty() {
+        None
+    } else {
+        Some(owner_number)
+    };
     let session_phone = match (is_owner_self_chat, &owner_number) {
         (true, Some(num)) => num.clone(),
         _ => phone.clone(),
