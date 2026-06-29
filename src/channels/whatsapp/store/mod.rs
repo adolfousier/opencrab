@@ -41,9 +41,20 @@ impl Store {
     /// Open (or create) the store at the given path.
     pub async fn new(path: &str) -> Result<Self> {
         let pool = Config::new(path)
+            // Single connection: the Signal session store is read-modify-write
+            // (load_session -> ratchet/establish -> put_session), and
+            // whatsapp-rust encrypts for a message's recipient devices in
+            // PARALLEL. With multiple pooled connections, a session written for
+            // a device on one connection isn't always visible to the encrypt's
+            // read on another connection in time, so that device is skipped
+            // ("session ... not found"), the participant list comes out
+            // incomplete, and the server rejects the whole message with error
+            // 400 (intermittently — whichever device loses the race). Serializing
+            // all store access removes that race. A personal bot's WhatsApp
+            // throughput is tiny, so one connection costs nothing.
             .builder(Runtime::Tokio1)
             .map_err(|e| StoreError::Connection(e.to_string().into()))?
-            .max_size(4)
+            .max_size(1)
             .post_create(Hook::async_fn(|conn, _| {
                 Box::pin(async move {
                     conn.interact(|conn| {
