@@ -1,4 +1,5 @@
-use super::*;
+use crate::logging::logger::*;
+use tracing::Level;
 
 #[test]
 fn test_log_config_default() {

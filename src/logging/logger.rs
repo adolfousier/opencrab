@@ -400,7 +400,3 @@ pub fn cleanup_old_temp_files(max_age_days: u64) -> Result<usize, Box<dyn std::e
 
     Ok(removed)
 }
-
-#[cfg(test)]
-#[path = "../tests/logging_logger_test.rs"]
-mod tests;
