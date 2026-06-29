@@ -106,3 +106,61 @@ fn id_normalizes_leading_plus() {
     let c = cfg(&["+111"], &["+111"], &[]);
     assert!(c.user_allowed("111", "111", true));
 }
+
+#[test]
+fn respond_to_group_with_mention_override() {
+    let mut c = cfg(&["111"], &["111"], &[]);
+    c.respond_to = RespondTo::All;
+    c.groups.insert(
+        "-100g".to_string(),
+        TelegramGroupConfig {
+            allowed_users: vec![],
+            respond_to: Some(RespondTo::Mention),
+        },
+    );
+    assert_eq!(
+        c.respond_to_for("-100g"),
+        RespondTo::Mention,
+        "group can restrict to mention-only even when global is all"
+    );
+    assert_eq!(
+        c.respond_to_for("-100other"),
+        RespondTo::All,
+        "other groups fall back to global"
+    );
+}
+
+#[test]
+fn respond_to_group_with_auto_override() {
+    let mut c = cfg(&["111"], &["111"], &[]);
+    c.respond_to = RespondTo::Mention;
+    c.groups.insert(
+        "-100g".to_string(),
+        TelegramGroupConfig {
+            allowed_users: vec![],
+            respond_to: Some(RespondTo::Auto),
+        },
+    );
+    assert_eq!(
+        c.respond_to_for("-100g"),
+        RespondTo::Auto,
+        "group can set auto mode"
+    );
+    assert_eq!(
+        c.respond_to_for("-100other"),
+        RespondTo::Mention,
+        "other groups get global mention"
+    );
+}
+
+#[test]
+fn respond_to_no_group_override_uses_global() {
+    let mut c = cfg(&["111"], &["111"], &[("-100g", &["222"])]);
+    c.respond_to = RespondTo::Auto;
+    // No respond_to set on the group => should fall back to global
+    assert_eq!(
+        c.respond_to_for("-100g"),
+        RespondTo::Auto,
+        "group without override falls back to global auto"
+    );
+}

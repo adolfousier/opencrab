@@ -293,6 +293,7 @@ pub async fn handle_command(
     agent: &AgentService,
     session_svc: &SessionService,
     is_owner: bool,
+    chat_id: Option<&str>,
 ) -> ChannelCommand {
     let trimmed = text.trim();
     // Strip @botname suffix that Telegram appends in groups
@@ -346,7 +347,7 @@ pub async fn handle_command(
                 )
             } else {
                 let arg = cmd.strip_prefix("/respond_to").unwrap_or("").trim();
-                ChannelCommand::RespondTo(handle_respond_to(arg).await)
+                ChannelCommand::RespondTo(handle_respond_to(arg, chat_id).await)
             }
         }
         // `/goal` works on every surface. The TUI intercepts it in
@@ -1662,7 +1663,12 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
 
 /// Handle `/respond_to [all|mention|auto]` — show or switch the auto-mention
 /// mode for the Telegram channel (#244). Owner-only (enforced by caller).
-async fn handle_respond_to(arg: &str) -> String {
+///
+/// When `chat_id` is `Some` (command issued from a group), the setting is
+/// persisted per-group under `[channels.telegram.groups.<chat_id>]`.
+/// When `None` (command issued from a DM), it falls back to the channel-level
+/// `[channels.telegram]` setting.
+async fn handle_respond_to(arg: &str, chat_id: Option<&str>) -> String {
     use crate::config::RespondTo;
 
     let config = match Config::load() {
@@ -1670,8 +1676,20 @@ async fn handle_respond_to(arg: &str) -> String {
         Err(e) => return format!("❌ Failed to load config: {}", e),
     };
 
-    let current = &config.channels.telegram.respond_to;
-    let current_label = match current {
+    // When in a group, prefer per-group override; fall back to channel-level.
+    let current = if let Some(cid) = chat_id {
+        let group_cfg = config.channels.telegram.groups.get(cid);
+        let group_override = group_cfg.and_then(|g| g.respond_to.as_ref());
+        if let Some(override_val) = group_override {
+            *override_val
+        } else {
+            config.channels.telegram.respond_to
+        }
+    } else {
+        config.channels.telegram.respond_to
+    };
+
+    let current_label = match &current {
         RespondTo::All => "all",
         RespondTo::DmOnly => "dm_only",
         RespondTo::Mention => "mention",
@@ -1679,13 +1697,18 @@ async fn handle_respond_to(arg: &str) -> String {
     };
 
     if arg.is_empty() {
+        let scope = if chat_id.is_some() {
+            "this group"
+        } else {
+            "all groups (channel-level)"
+        };
         return format!(
-            "📢 Current respond_to mode: **{}**\n\n\
+            "📢 Current respond_to mode for {}: **{}**\n\n\
              Usage: `/respond_to <all|mention|auto>`\n\n\
              • **all** — respond to every message\n\
              • **mention** — only respond when @mentioned\n\
              • **auto** — respond to all when ≤1 sender, mention-only when >1 sender",
-            current_label
+            scope, current_label
         );
     }
 
@@ -1705,20 +1728,40 @@ async fn handle_respond_to(arg: &str) -> String {
         return format!("ℹ️ Already in **{}** mode.", current_label);
     }
 
-    // Format-preserving write via toml_edit — preserves comments and ordering
-    match Config::write_key("channels.telegram", "respond_to", new_mode) {
-        Ok(_) => format!(
-            "✅ Respond-to mode switched to **{}**.\n{}",
-            new_label,
-            match new_label {
-                "all" => "Bot will respond to every message in groups.",
-                "auto" => {
-                    "Bot responds to all when ≤1 active sender. \
-                     Switches to mention-only when a second sender appears."
+    // Write to the correct config section
+    let write_result = if let Some(cid) = chat_id {
+        // Per-group: write to channels.telegram.groups.<chat_id>.respond_to
+        Config::write_key(
+            &format!("channels.telegram.groups.{}", cid),
+            "respond_to",
+            new_mode,
+        )
+    } else {
+        // Channel-level: write to channels.telegram.respond_to
+        Config::write_key("channels.telegram", "respond_to", new_mode)
+    };
+
+    match write_result {
+        Ok(_) => {
+            let scope = if chat_id.is_some() {
+                "this group"
+            } else {
+                "all groups"
+            };
+            format!(
+                "✅ Respond-to mode switched to **{}** for {}.\n{}",
+                new_label,
+                scope,
+                match new_label {
+                    "all" => "Bot will respond to every message.",
+                    "auto" => {
+                        "Bot responds to all when ≤1 active sender. \
+                         Switches to mention-only when a second sender appears."
+                    }
+                    _ => "Bot will only respond when @mentioned.",
                 }
-                _ => "Bot will only respond when @mentioned in groups.",
-            }
-        ),
+            )
+        }
         Err(e) => format!("❌ Failed to save config: {}", e),
     }
 }

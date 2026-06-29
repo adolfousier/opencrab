@@ -8,7 +8,7 @@ use crate::tests::agent_service_mocks::create_test_service_full;
 #[tokio::test]
 async fn cd_is_denied_for_non_owner() {
     let (agent, svc, sid) = create_test_service_full().await;
-    let cmd = handle_command("/cd", sid, &agent, &svc, false).await;
+    let cmd = handle_command("/cd", sid, &agent, &svc, false, None).await;
     match cmd {
         ChannelCommand::UnknownCommand(msg) => {
             assert!(
@@ -23,7 +23,7 @@ async fn cd_is_denied_for_non_owner() {
 #[tokio::test]
 async fn cd_is_allowed_for_owner() {
     let (agent, svc, sid) = create_test_service_full().await;
-    let cmd = handle_command("/cd", sid, &agent, &svc, true).await;
+    let cmd = handle_command("/cd", sid, &agent, &svc, true, None).await;
     assert!(
         matches!(cmd, ChannelCommand::ChangeDir(_)),
         "owner /cd must open the directory browser"
@@ -33,7 +33,7 @@ async fn cd_is_allowed_for_owner() {
 #[tokio::test]
 async fn cd_with_path_is_also_denied_for_non_owner() {
     let (agent, svc, sid) = create_test_service_full().await;
-    let cmd = handle_command("/cd /etc", sid, &agent, &svc, false).await;
+    let cmd = handle_command("/cd /etc", sid, &agent, &svc, false, None).await;
     assert!(
         matches!(cmd, ChannelCommand::UnknownCommand(_)),
         "non-owner /cd <path> must be denied too"

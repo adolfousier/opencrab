@@ -673,7 +673,7 @@ pub(crate) async fn handle_message(
     {
         use crate::channels::commands::{self, ChannelCommand};
         let cmd =
-            commands::handle_command(&content, session_id, &agent, &session_svc, is_owner).await;
+            commands::handle_command(&content, session_id, &agent, &session_svc, is_owner, None).await;
 
         // Handle simple text-response commands (Help, Usage, Evolve, Doctor, etc.)
         if let Some(reply_text) = commands::try_execute_text_command(&cmd).await {

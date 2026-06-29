@@ -969,6 +969,7 @@ async fn handle_message(
             &state.agent,
             &state.session_svc,
             is_owner,
+            None,
         )
         .await;
 
