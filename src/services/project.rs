@@ -184,7 +184,3 @@ impl ProjectService {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/services_project_test.rs"]
-mod tests;

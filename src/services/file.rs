@@ -347,7 +347,3 @@ impl FileService {
         Ok(files.into_iter().filter(|f| f.content.is_none()).collect())
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/services_file_test.rs"]
-mod tests;

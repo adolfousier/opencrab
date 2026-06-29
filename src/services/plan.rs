@@ -289,7 +289,3 @@ impl PlanService {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/services_plan_test.rs"]
-mod tests;

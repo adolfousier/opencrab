@@ -238,7 +238,3 @@ impl MessageService {
         Ok(total)
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/services_message_test.rs"]
-mod tests;

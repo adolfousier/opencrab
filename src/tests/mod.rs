@@ -171,6 +171,12 @@ pub mod rsi_pruned_test;
 pub mod rsi_sync_cap_bail_test;
 #[cfg(target_os = "linux")]
 pub mod service_scope_test;
+pub mod services_context_test;
+pub mod services_file_test;
+pub mod services_message_test;
+pub mod services_plan_test;
+pub mod services_project_test;
+pub mod services_session_test;
 pub mod systemd_unit_test;
 pub mod tools_md_regression_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows

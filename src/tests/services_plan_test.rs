@@ -1,7 +1,9 @@
-use super::*;
 use crate::db::Database;
 use crate::db::models::Session;
 use crate::db::repository::session::SessionRepository;
+use crate::services::ServiceContext;
+use crate::services::plan::*;
+use crate::tui::plan::PlanDocument;
 use crate::tui::plan::{PlanStatus, PlanTask, TaskStatus, TaskType};
 use tempfile::TempDir;
 use tokio;

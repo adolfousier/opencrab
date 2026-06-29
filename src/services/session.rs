@@ -303,7 +303,3 @@ impl SessionService {
             .context("Failed to count archived sessions")
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/services_session_test.rs"]
-mod tests;

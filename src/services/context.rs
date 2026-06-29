@@ -81,7 +81,3 @@ impl ServiceManager {
         &self.context
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/services_context_test.rs"]
-mod tests;
