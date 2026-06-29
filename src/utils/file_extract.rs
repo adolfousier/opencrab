@@ -115,7 +115,7 @@ pub fn is_text_mime(mime: &str) -> bool {
 /// Telegram preserves the original filename from forwarded messages; if the source
 /// already had an extension matching its MIME type, Telegram appends the same
 /// extension again, producing e.g. `zaiavlenie_s_ekzamena.docx.docx`.
-fn collapse_double_extension(name: &str) -> String {
+pub(crate) fn collapse_double_extension(name: &str) -> String {
     // Split off the last two dot-separated parts
     let parts: Vec<&str> = name.rsplitn(3, '.').collect();
     // parts_rev = [base, inner_ext, outer_ext]
@@ -751,7 +751,3 @@ fn extract_zip_contents(bytes: &[u8], archive_name: &str, config: &Config) -> Fi
 
     FileContent::Text(combined)
 }
-
-#[cfg(test)]
-#[path = "../tests/utils_file_extract_test.rs"]
-mod tests;

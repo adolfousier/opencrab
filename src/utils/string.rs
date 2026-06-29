@@ -181,7 +181,3 @@ pub fn strip_ctx_footer(text: &str) -> String {
         .trim_end_matches('\n')
         .to_string()
 }
-
-#[cfg(test)]
-#[path = "../tests/utils_string_test.rs"]
-mod tests;

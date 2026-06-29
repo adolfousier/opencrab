@@ -1,4 +1,4 @@
-use super::*;
+use crate::utils::string::*;
 
 #[test]
 fn test_strip_ctx_footer() {

@@ -325,7 +325,3 @@ where
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/utils_retry_test.rs"]
-mod tests;

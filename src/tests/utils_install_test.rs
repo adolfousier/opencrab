@@ -1,4 +1,4 @@
-use super::*;
+use crate::utils::install::*;
 
 #[test]
 fn detect_returns_some_variant() {

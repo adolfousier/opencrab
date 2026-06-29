@@ -1,4 +1,4 @@
-use super::*;
+use crate::utils::file_extract::*;
 
 #[test]
 fn collapse_double_extension_handles_double_docx() {

@@ -96,7 +96,3 @@ pub fn binary_name() -> &'static str {
         "opencrabs"
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/utils_install_test.rs"]
-mod tests;

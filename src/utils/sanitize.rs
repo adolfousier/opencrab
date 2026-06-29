@@ -797,7 +797,7 @@ pub fn strip_llm_artifacts(text: &str) -> String {
 }
 
 /// Strip `<think>...</think>` blocks from LLM output.
-fn strip_think_tags(text: &str) -> String {
+pub(crate) fn strip_think_tags(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut remaining = text;
     while let Some(start) = remaining.find("<think>") {
@@ -814,7 +814,7 @@ fn strip_think_tags(text: &str) -> String {
 }
 
 /// Strip `<reasoning>...</reasoning>` blocks from LLM output.
-fn strip_reasoning_tags(text: &str) -> String {
+pub(crate) fn strip_reasoning_tags(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut remaining = text;
     while let Some(start) = remaining.find("<reasoning>") {
@@ -917,7 +917,3 @@ fn redact_headers_object(value: &Value) -> Value {
         other => other.clone(),
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/utils_sanitize_test.rs"]
-mod tests;

@@ -1,4 +1,4 @@
-use super::*;
+use crate::utils::sanitize::*;
 use serde_json::json;
 
 #[test]
