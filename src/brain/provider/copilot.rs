@@ -42,18 +42,18 @@ pub struct DeviceFlowResponse {
 
 /// Response from the Copilot token exchange (step 4).
 #[derive(Debug, serde::Deserialize)]
-struct CopilotTokenResponse {
-    token: String,
-    expires_at: u64,
+pub(crate) struct CopilotTokenResponse {
+    pub(crate) token: String,
+    pub(crate) expires_at: u64,
 }
 
 /// OAuth polling response — either success or a known error state.
 #[derive(Debug, serde::Deserialize)]
-struct OAuthPollResponse {
+pub(crate) struct OAuthPollResponse {
     #[serde(default)]
-    access_token: Option<String>,
+    pub(crate) access_token: Option<String>,
     #[serde(default)]
-    error: Option<String>,
+    pub(crate) error: Option<String>,
 }
 
 /// Standard headers sent with Copilot API requests.
