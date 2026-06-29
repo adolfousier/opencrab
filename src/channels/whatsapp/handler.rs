@@ -261,25 +261,35 @@ fn chat_user(info: &MessageInfo) -> String {
 ///   (`!is_from_me && allowed contains sender`) -> respond.
 /// * otherwise -> ignore (never respond to arbitrary chats).
 pub(crate) fn wa_should_respond(
+    policy: crate::config::types::WaResponsePolicy,
     is_from_me: bool,
     sender_user: &str,
     chat_user: &str,
     allowed: &[String],
+    operators: &[String],
 ) -> bool {
-    if allowed.is_empty() {
-        return true;
-    }
+    use crate::config::types::WaResponsePolicy;
     let sender = sender_user.trim_start_matches('+');
     let chat = chat_user.trim_start_matches('+');
-    // The paired owner account messaging itself (self-chat).
-    if is_from_me && sender == chat {
+    let in_list = |list: &[String]| list.iter().any(|a| a.trim_start_matches('+') == sender);
+    // The paired account messaging itself (self-chat) or a configured operator
+    // (bot_owner) DMing the bot — always allowed regardless of policy.
+    if (is_from_me && sender == chat) || in_list(operators) {
         return true;
     }
-    // An explicitly allow-listed contact messaging the bot.
-    if !is_from_me && allowed.iter().any(|a| a.trim_start_matches('+') == sender) {
-        return true;
+    match policy {
+        // Legacy: open when no allow-list, otherwise allow-listed contacts only.
+        WaResponsePolicy::Auto => {
+            if allowed.is_empty() {
+                true
+            } else {
+                !is_from_me && in_list(allowed)
+            }
+        }
+        WaResponsePolicy::OwnerOnly => false,
+        WaResponsePolicy::Allowlist => !is_from_me && in_list(allowed),
+        WaResponsePolicy::Open => true,
     }
-    false
 }
 
 /// Split a message into chunks that fit WhatsApp's limit (~65536 chars, but we use 4000 for readability).
@@ -400,10 +410,12 @@ pub(crate) async fn handle_message(
     let sender_user = phone.trim_start_matches('+').to_string();
     let chat_user_part = chat_user(&info);
     if !wa_should_respond(
+        wa_cfg.response_policy,
         info.source.is_from_me,
         &sender_user,
         &chat_user_part,
         &wa_cfg.allowed_phones,
+        &wa_cfg.bot_owner,
     ) {
         tracing::debug!(
             "WhatsApp: ignoring message from={} chat={} is_from_me={}",
@@ -673,7 +685,8 @@ pub(crate) async fn handle_message(
     {
         use crate::channels::commands::{self, ChannelCommand};
         let cmd =
-            commands::handle_command(&content, session_id, &agent, &session_svc, is_owner, None).await;
+            commands::handle_command(&content, session_id, &agent, &session_svc, is_owner, None)
+                .await;
 
         // Handle simple text-response commands (Help, Usage, Evolve, Doctor, etc.)
         if let Some(reply_text) = commands::try_execute_text_command(&cmd).await {

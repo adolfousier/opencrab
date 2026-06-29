@@ -528,6 +528,23 @@ impl SlackConfig {
 }
 
 /// WhatsApp channel configuration
+/// Who the WhatsApp bot answers. The paired account's own self-chat and any
+/// `bot_owner` (operator) number are ALWAYS allowed regardless of policy.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WaResponsePolicy {
+    /// Legacy/auto: open when `allowed_phones` is empty, otherwise owner +
+    /// allow-listed contacts. Preserves the historical behaviour.
+    #[default]
+    Auto,
+    /// Only the paired account's self-chat and `bot_owner` operators.
+    OwnerOnly,
+    /// Owner/operator plus the contacts in `allowed_phones`.
+    Allowlist,
+    /// Every incoming DM (a business serving any customer).
+    Open,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WhatsAppConfig {
     #[serde(default)]
@@ -543,6 +560,12 @@ pub struct WhatsAppConfig {
     /// `allowed_phones`. Accepts int or string arrays.
     #[serde(default, deserialize_with = "deser_users_compat")]
     pub bot_owner: Vec<String>,
+    /// Who the bot responds to: `auto` (legacy), `owner_only`, `allowlist`, or
+    /// `open`. The paired account's self-chat and `bot_owner` are always
+    /// allowed. Lets a number paired to serve other people's DMs choose to
+    /// answer everyone (`open`) or a fixed contact list (`allowlist`).
+    #[serde(default)]
+    pub response_policy: WaResponsePolicy,
 }
 
 impl WhatsAppConfig {
