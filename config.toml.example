@@ -427,11 +427,23 @@ model = "gemini-3.1-flash-image-preview"   # Gemini vision model
 
 [channels.whatsapp]
 enabled = false
+# You pair the bot to a WhatsApp account by scanning its QR — it then runs AS
+# that account. It can be your own number (talk to it in "Message Yourself") or
+# any other number you own, including a WhatsApp Business account, to serve that
+# account's incoming DMs.
 # Phone numbers allowed to message the bot (E.164 format, leading + optional)
-# Access control is purely phone-based — add numbers here to restrict who can message the bot.
 allowed_phones = ["+15551234567"]
-# bot_owner = ["+15551234567"]          # Owner phone(s) for owner-only commands. Auto-seeded from the first
-                                        # allowed_phones entry on first run; set explicitly to pin the owner.
+# bot_owner = ["+15551234567"]          # Operator phone(s) for owner-only commands. The operator can DM the
+                                        # bot and is always allowed regardless of response_policy. Auto-seeded
+                                        # from the first allowed_phones entry on first run; set explicitly to
+                                        # pin a different operator than the paired account.
+# response_policy = "auto"              # Who the bot answers. The paired account's own self-chat and bot_owner
+                                        # are ALWAYS allowed. Options:
+                                        #   "auto"       — legacy: open when allowed_phones is empty, else
+                                        #                  owner/operator + allowed_phones (default)
+                                        #   "owner_only" — only the paired self-chat and bot_owner operators
+                                        #   "allowlist"  — owner/operator + the contacts in allowed_phones
+                                        #   "open"       — every incoming DM (business serving any customer)
 # session_idle_hours = 24.0             # Archive inactive non-owner sessions after N hours (default: never)
 
 [channels.discord]
