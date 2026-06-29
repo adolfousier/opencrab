@@ -2979,6 +2979,28 @@ pub(crate) async fn handle_message(
                             .push(DisplayItem::Intermediate(format!("🔧 {}", message)));
                     }
                 }
+                ProgressEvent::RetryAttempt {
+                    attempt,
+                    max,
+                    reason,
+                } => {
+                    if let Ok(mut s) = st.lock() {
+                        s.display_queue.push(DisplayItem::Intermediate(format!(
+                            "⏳ Retry {}/{} — {}",
+                            attempt, max, reason
+                        )));
+                    }
+                }
+                ProgressEvent::ProviderSwitched {
+                    to_name, to_model, ..
+                } => {
+                    if let Ok(mut s) = st.lock() {
+                        s.display_queue.push(DisplayItem::Intermediate(format!(
+                            "🔄 Now using {}/{}",
+                            to_name, to_model
+                        )));
+                    }
+                }
                 _ => {}
             }
         })
@@ -3967,6 +3989,34 @@ pub(crate) async fn resume_session(
                     if !text.is_empty() {
                         s.display_queue.push(DisplayItem::Intermediate(text));
                     }
+                }
+            }
+            ProgressEvent::SelfHealingAlert { message } => {
+                if let Ok(mut s) = st.lock() {
+                    s.display_queue
+                        .push(DisplayItem::Intermediate(format!("🔧 {}", message)));
+                }
+            }
+            ProgressEvent::RetryAttempt {
+                attempt,
+                max,
+                reason,
+            } => {
+                if let Ok(mut s) = st.lock() {
+                    s.display_queue.push(DisplayItem::Intermediate(format!(
+                        "⏳ Retry {}/{} — {}",
+                        attempt, max, reason
+                    )));
+                }
+            }
+            ProgressEvent::ProviderSwitched {
+                to_name, to_model, ..
+            } => {
+                if let Ok(mut s) = st.lock() {
+                    s.display_queue.push(DisplayItem::Intermediate(format!(
+                        "🔄 Now using {}/{}",
+                        to_name, to_model
+                    )));
                 }
             }
             _ => {}
