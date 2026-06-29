@@ -1642,20 +1642,27 @@ async fn test_whatsapp_connection(
     phone: &str,
     agent: std::sync::Arc<crate::brain::agent::AgentService>,
 ) -> Result<(), String> {
-    // Wait for the agent bot to be connected (up to 15 seconds)
+    // Wait until WhatsApp is actually CONNECTED, not just until a client object
+    // exists. The client is stored on Event::Connected but the socket can drop
+    // right after (keepalive churn), so a stored-but-disconnected client makes
+    // send_message fail with "client is not connected". Gate on is_connected()
+    // so the test only sends on a live link.
     let client = {
-        let mut client = wa_state.client().await;
-        if client.is_none() {
-            for _ in 0..30 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                client = wa_state.client().await;
-                if client.is_some() {
-                    break;
-                }
+        let mut found = None;
+        for _ in 0..40 {
+            if wa_state.is_connected().await
+                && let Some(c) = wa_state.client().await
+            {
+                found = Some(c);
+                break;
             }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        client
-            .ok_or_else(|| "WhatsApp not connected. Please scan the QR code first.".to_string())?
+        found.ok_or_else(|| {
+            "WhatsApp did not reach a connected state (20s). Scan the QR code and \
+             wait for the link to finish, then retry."
+                .to_string()
+        })?
     };
 
     if phone.is_empty() {
@@ -1679,10 +1686,28 @@ async fn test_whatsapp_connection(
 
     // Subscribe BEFORE sending so the delivery receipt can't be missed.
     let mut delivered_rx = wa_state.subscribe_delivered();
-    let sent = client
-        .send_message(jid, wa_msg)
-        .await
-        .map_err(|e| format!("WhatsApp send error: {}", e))?;
+    // Send, retrying once if the socket briefly dropped between connect and send
+    // (the client can still report "not connected" mid-reconnect). On retry,
+    // re-fetch the client because a reconnect installs a fresh one.
+    let mut send_res = client.send_message(jid.clone(), wa_msg.clone()).await;
+    if send_res
+        .as_ref()
+        .err()
+        .is_some_and(|e| e.to_string().contains("not connected"))
+    {
+        let mut reconnected = None;
+        for _ in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if wa_state.is_connected().await {
+                reconnected = wa_state.client().await;
+                break;
+            }
+        }
+        if let Some(c) = reconnected {
+            send_res = c.send_message(jid, wa_msg).await;
+        }
+    }
+    let sent = send_res.map_err(|e| format!("WhatsApp send error: {}", e))?;
 
     // `send_message` returning Ok only means the stanza was transmitted — the
     // server can still reject it asynchronously (error 400, e.g. when a
