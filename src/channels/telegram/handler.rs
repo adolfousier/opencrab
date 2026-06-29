@@ -697,22 +697,24 @@ pub(crate) async fn handle_message(
             .await;
     }
 
-    let allowed: HashSet<i64> = tg_cfg
-        .allowed_users
-        .iter()
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    let respond_to = &tg_cfg.respond_to;
+    let chat_id_str = msg.chat.id.0.to_string();
+    let is_dm = matches!(msg.chat.kind, ChatKind::Private { .. });
+    // Per-group respond mode: a group's `respond_to` override wins over the
+    // channel-level default.
+    let respond_to = tg_cfg.respond_to_for(&chat_id_str);
     let allowed_channels: HashSet<String> = tg_cfg.allowed_channels.iter().cloned().collect();
     let idle_timeout_hours = tg_cfg.session_idle_hours;
     let voice_config = cfg.voice_config();
 
-    // Allowlist check — read from config (hot-reloaded via watch channel)
+    // Per-chat ACL — read from config (hot-reloaded via watch channel).
+    // Admins (allowed_users) and the owner act anywhere; a group's
+    // groups.<id>.allowed_users grants access in that group only (never DMs),
+    // which blocks the "DM the bot privately to escape group oversight" bypass.
     // In groups, only reply "not authorized" when the bot is @mentioned or
-    // replied-to. Silently drop all other messages from non-allowed users.
-    // In DMs, always reply so the user knows to add their ID.
-    if !allowed.is_empty() && !allowed.contains(&user_id) {
-        let is_group = !matches!(msg.chat.kind, ChatKind::Private { .. });
+    // replied-to; otherwise silently drop. In DMs, always reply so the user
+    // knows to ask the owner for access.
+    if !tg_cfg.user_allowed(&user_id.to_string(), &chat_id_str, is_dm) {
+        let is_group = !is_dm;
         if is_group {
             // Only reply if the bot was actually mentioned or replied-to
             let bot_username = telegram_state.bot_username().await;
@@ -748,7 +750,6 @@ pub(crate) async fn handle_message(
     }
 
     // respond_to / allowed_channels filtering — private chats always pass
-    let is_dm = matches!(msg.chat.kind, ChatKind::Private { .. });
     let chat_title = msg
         .chat
         .title()

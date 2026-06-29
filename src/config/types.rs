@@ -297,7 +297,7 @@ pub struct ChannelsConfig {
 
 /// When the bot should respond to messages in group channels.
 /// DMs always get a response regardless of this setting.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RespondTo {
     /// Respond to all messages from allowed users
@@ -379,6 +379,27 @@ pub struct TelegramConfig {
     /// Requires `rich_messages` to also be enabled. Default: true.
     #[serde(default = "default_true")]
     pub draft_streaming: bool,
+    /// Per-group access control and behavior overrides, keyed by chat id:
+    /// `[channels.telegram.groups.<chat_id>]`. A user listed under a group's
+    /// `allowed_users` may interact in THAT group only and is still refused in
+    /// DMs unless they are also a global admin (`allowed_users`) or the owner.
+    #[serde(default)]
+    pub groups: std::collections::HashMap<String, TelegramGroupConfig>,
+}
+
+/// Per-group access control + behaviour override for one Telegram group.
+/// Lives under `[channels.telegram.groups.<chat_id>]`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TelegramGroupConfig {
+    /// Users allowed to interact ONLY within this group. They are NOT granted
+    /// DM access (that needs the global `allowed_users` or owner). Accepts int
+    /// or string arrays, same as `allowed_users`.
+    #[serde(default, deserialize_with = "deser_users_compat")]
+    pub allowed_users: Vec<String>,
+    /// Per-group respond mode. Overrides the channel-level `respond_to` for
+    /// this group when set; `None` falls back to the global value.
+    #[serde(default)]
+    pub respond_to: Option<RespondTo>,
 }
 
 impl TelegramConfig {
@@ -389,6 +410,52 @@ impl TelegramConfig {
     /// is empty (open mode — everyone is treated as owner).
     pub fn is_owner(&self, user_id: &str) -> bool {
         crate::config::owner::is_owner(&self.allowed_users, &self.bot_owner, user_id)
+    }
+
+    /// Whether any list in `list` matches `uid` (ignoring a leading '+').
+    fn id_in(list: &[String], uid: &str) -> bool {
+        list.iter().any(|u| u.trim_start_matches('+') == uid)
+    }
+
+    /// A global admin (`allowed_users`) or the owner (`bot_owner`). These may
+    /// act in any chat, DMs included.
+    fn is_admin_or_owner(&self, uid: &str) -> bool {
+        Self::id_in(&self.allowed_users, uid) || Self::id_in(&self.bot_owner, uid)
+    }
+
+    /// Per-chat access control.
+    ///
+    /// Tiers:
+    /// - `bot_owner` + `allowed_users` (admins): allowed anywhere, DMs included.
+    /// - `groups.<chat_id>.allowed_users`: allowed in THAT group only; refused
+    ///   in DMs. This closes the "move the bot into a private chat to escape
+    ///   group oversight" bypass.
+    ///
+    /// When neither `allowed_users` nor `bot_owner` is configured the bot is
+    /// fully unconfigured and stays open (legacy behaviour, avoids a hard
+    /// lockout); configuring either list activates the strict ACL.
+    pub fn user_allowed(&self, user_id: &str, chat_id: &str, is_dm: bool) -> bool {
+        let uid = user_id.trim_start_matches('+');
+        if self.allowed_users.is_empty() && self.bot_owner.is_empty() {
+            return true;
+        }
+        if self.is_admin_or_owner(uid) {
+            return true;
+        }
+        if is_dm {
+            return false;
+        }
+        self.groups
+            .get(chat_id)
+            .is_some_and(|g| Self::id_in(&g.allowed_users, uid))
+    }
+
+    /// Respond mode for a chat: the group's override if set, else the global.
+    pub fn respond_to_for(&self, chat_id: &str) -> RespondTo {
+        self.groups
+            .get(chat_id)
+            .and_then(|g| g.respond_to)
+            .unwrap_or(self.respond_to)
     }
 }
 
