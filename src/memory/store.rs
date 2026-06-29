@@ -47,10 +47,6 @@ pub fn get_store() -> Result<&'static Mutex<Store>, String> {
 }
 
 /// Path to the memory directory: `~/.opencrabs/memory/`
-fn memory_dir() -> PathBuf {
+pub(crate) fn memory_dir() -> PathBuf {
     crate::config::opencrabs_home().join("memory")
 }
-
-#[cfg(test)]
-#[path = "../tests/memory_store_test.rs"]
-mod tests;

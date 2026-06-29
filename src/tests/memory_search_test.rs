@@ -1,4 +1,4 @@
-use super::*;
+use crate::memory::search::*;
 
 #[test]
 fn test_sanitize_fts_query() {

@@ -1,4 +1,5 @@
-use super::*;
+use crate::memory::store::*;
+use qmd::Store;
 
 #[test]
 fn test_memory_dir() {

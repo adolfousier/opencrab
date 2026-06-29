@@ -140,7 +140,7 @@ fn resolve_path(home: &Path, collection: &str, doc_path: &str) -> String {
 
 /// Sanitize a search query for FTS5: wrap each word in double quotes
 /// to avoid syntax errors from special characters, then join with spaces (implicit AND).
-fn sanitize_fts_query(query: &str) -> String {
+pub(crate) fn sanitize_fts_query(query: &str) -> String {
     query
         .split_whitespace()
         .map(|w| {
@@ -152,7 +152,7 @@ fn sanitize_fts_query(query: &str) -> String {
 }
 
 /// Extract a snippet from body text around the first query term match.
-fn extract_snippet(body: &str, query: &str, max_len: usize) -> String {
+pub(crate) fn extract_snippet(body: &str, query: &str, max_len: usize) -> String {
     let query_lower = query.to_lowercase();
     let body_lower = body.to_lowercase();
 
@@ -184,7 +184,3 @@ fn extract_snippet(body: &str, query: &str, max_len: usize) -> String {
 
     snippet
 }
-
-#[cfg(test)]
-#[path = "../tests/memory_search_test.rs"]
-mod tests;
