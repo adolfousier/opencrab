@@ -6,7 +6,6 @@
 //! nested lists, math) — so there is no block JSON to construct: we pass the
 //! model's markdown straight through.
 
-use teloxide::Bot;
 use teloxide::types::ThreadId;
 
 /// Send an ephemeral rich-message draft (DM-only, auto-expires in ~30s).
@@ -37,18 +36,6 @@ pub(crate) async fn send_rich_message_draft(
         .ok_or_else(|| {
             anyhow::anyhow!("sendRichMessageDraft ok but response carried no message_id")
         })
-}
-
-/// Rich-first send: attempt `sendRichMessage` for `markdown`, pulling the token
-/// from `bot`. Returns `Err` on failure so the caller can fall back to its
-/// existing (plain or HTML) send path. Default-on — there is no config toggle.
-pub(crate) async fn try_send_rich(
-    bot: &Bot,
-    chat_id: i64,
-    thread_id: Option<ThreadId>,
-    markdown: &str,
-) -> anyhow::Result<()> {
-    send_rich_markdown(bot.token(), chat_id, thread_id, markdown).await
 }
 
 /// Send `markdown` as a native rich message via `sendRichMessage`.

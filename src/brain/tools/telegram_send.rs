@@ -117,6 +117,51 @@ pub(crate) async fn resolve_thread_id(
     crate::channels::telegram::send::latest_thread_id_for_chat(chat_id).await
 }
 
+/// Persist outgoing bot messages to `channel_messages` keyed by their Telegram
+/// `message_id`, so a later reply can recover their text by id — exactly like
+/// the normal reply path does. Without this, a user replying to a message the
+/// bot posted proactively (a report, a cron post, any `telegram_send`) hits an
+/// empty `channel_messages` lookup, and because rich/cron messages arrive with
+/// no readable text in the reply, the agent can only honestly say it cannot see
+/// it. `sent` is `(message_id, content)` pairs (one per chunk for plain sends).
+async fn persist_outgoing(
+    chat_id: i64,
+    thread_id: Option<teloxide::types::ThreadId>,
+    sent: &[(i32, String)],
+) {
+    if sent.is_empty() {
+        return;
+    }
+    let Some(pool) = crate::db::global_pool() else {
+        tracing::warn!("telegram_send: no global DB pool — outgoing message not persisted");
+        return;
+    };
+    let repo = crate::db::ChannelMessageRepository::new(pool.clone());
+    let chat_id_str = chat_id.to_string();
+    let thread = thread_id.map(|t| t.0.0.to_string());
+    for (mid, content) in sent {
+        if content.trim().is_empty() {
+            continue;
+        }
+        let cm = crate::db::models::ChannelMessage::new(
+            "telegram".to_string(),
+            chat_id_str.clone(),
+            None,
+            "bot:opencrabs".to_string(),
+            "OpenCrabs".to_string(),
+            content.clone(),
+            "text".to_string(),
+            Some(mid.to_string()),
+        )
+        .with_thread(thread.clone(), None);
+        if let Err(e) = repo.insert(&cm).await {
+            tracing::warn!(
+                "telegram_send: failed to persist outgoing message {mid} for reply-recovery: {e}"
+            );
+        }
+    }
+}
+
 async fn chat_or_err(input: &Value, state: &TelegramState) -> std::result::Result<i64, ToolResult> {
     if let Some(id) = input.get("chat_id").and_then(|v| v.as_i64()) {
         return Ok(id);
@@ -285,29 +330,48 @@ impl Tool for TelegramSendTool {
                 // table would break. Plain prose, and any rich failure, fall back
                 // to the chunked plain-text send so a message is never dropped
                 // and Telegram's parser never reinterprets incidental characters.
+                // Track sent (message_id, content) so the message is persisted
+                // for reply-recovery below.
+                let mut sent: Vec<(i32, String)> = Vec::new();
                 let sent_rich = crate::channels::telegram::rich::should_send_native_rich(&text)
-                    && crate::channels::telegram::rich::api::try_send_rich(
-                        &bot, chat_id, thread_id, &text,
+                    && match crate::channels::telegram::rich::api::send_rich_markdown_id(
+                        bot.token(),
+                        chat_id,
+                        thread_id,
+                        &text,
                     )
                     .await
-                    .inspect_err(|e| {
-                        tracing::warn!("telegram_send: rich send failed, sending plain: {e}");
-                    })
-                    .is_ok();
+                    {
+                        Ok(id) => {
+                            sent.push((id, text.clone()));
+                            true
+                        }
+                        Err(e) => {
+                            tracing::warn!("telegram_send: rich send failed, sending plain: {e}");
+                            false
+                        }
+                    };
                 if !sent_rich {
                     for chunk in crate::channels::telegram::handler::split_message(&text, 4096) {
-                        if let Err(e) = crate::channels::telegram::send::message_in_thread(
+                        let chunk_str = chunk.to_string();
+                        match crate::channels::telegram::send::message_in_thread(
                             &bot,
                             ChatId(chat_id),
                             thread_id,
-                            chunk,
+                            chunk_str.clone(),
                         )
                         .await
                         {
-                            return Ok(ToolResult::error(format!("Failed to send: {e}")));
+                            Ok(m) => sent.push((m.id.0, chunk_str)),
+                            Err(e) => {
+                                return Ok(ToolResult::error(format!("Failed to send: {e}")));
+                            }
                         }
                     }
                 }
+                // Persist so a later reply to this message can be read back by id
+                // (a report/cron post replied-to would otherwise be unrecoverable).
+                persist_outgoing(chat_id, thread_id, &sent).await;
                 Ok(ToolResult::success(format!(
                     "Message sent to chat {chat_id}."
                 )))
@@ -319,6 +383,7 @@ impl Tool for TelegramSendTool {
                 let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
                 let message_id = pget!(get_id(&input, "message_id"));
                 let thread_id = resolve_thread_id(&input, chat_id).await;
+                let reply_text = text.clone();
                 match crate::channels::telegram::send::message_in_thread(
                     &bot,
                     ChatId(chat_id),
@@ -328,9 +393,13 @@ impl Tool for TelegramSendTool {
                 .reply_parameters(ReplyParameters::new(MessageId(message_id as i32)))
                 .await
                 {
-                    Ok(_) => Ok(ToolResult::success(format!(
-                        "Reply sent to message {message_id}."
-                    ))),
+                    Ok(m) => {
+                        // Persist for reply-recovery (a user can reply to this bot reply).
+                        persist_outgoing(chat_id, thread_id, &[(m.id.0, reply_text)]).await;
+                        Ok(ToolResult::success(format!(
+                            "Reply sent to message {message_id}."
+                        )))
+                    }
                     Err(e) => Ok(ToolResult::error(format!("Failed to reply: {e}"))),
                 }
             }
