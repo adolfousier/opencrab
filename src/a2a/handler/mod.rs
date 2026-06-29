@@ -71,7 +71,3 @@ pub async fn dispatch(
         ),
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/a2a_handler_test.rs"]
-mod tests;

@@ -1,4 +1,4 @@
-use super::*;
+use crate::a2a::agent_card::*;
 use crate::brain::tools::ToolRegistry;
 
 #[test]

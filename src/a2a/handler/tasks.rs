@@ -93,7 +93,3 @@ pub async fn handle_cancel_task(
         ),
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/a2a_handler_tasks_test.rs"]
-mod tests;

@@ -224,7 +224,3 @@ async fn health_check() -> Json<serde_json::Value> {
         "provider": "OpenCrabs Community"
     }))
 }
-
-#[cfg(test)]
-#[path = "../tests/a2a_server_test.rs"]
-mod tests;

@@ -640,7 +640,3 @@ pub async fn run_debate(mut config: DebateConfig) -> Result<DebateSession, Debat
 
     Ok(session)
 }
-
-#[cfg(test)]
-#[path = "../tests/a2a_debate_test.rs"]
-mod tests;

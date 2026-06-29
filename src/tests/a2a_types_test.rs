@@ -1,5 +1,4 @@
-use super::*;
-
+use crate::a2a::types::*;
 #[test]
 fn test_part_text_creation() {
     let part = Part::text("hello world");

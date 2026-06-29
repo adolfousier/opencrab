@@ -101,7 +101,3 @@ pub fn build_agent_card(host: &str, port: u16, tool_registry: Option<&ToolRegist
         default_output_modes: vec!["text/plain".to_string(), "application/json".to_string()],
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/a2a_agent_card_test.rs"]
-mod tests;

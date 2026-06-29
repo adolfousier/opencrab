@@ -351,7 +351,3 @@ pub mod error_codes {
     /// Unsupported operation.
     pub const UNSUPPORTED_OPERATION: i64 = -32003;
 }
-
-#[cfg(test)]
-#[path = "../tests/a2a_types_test.rs"]
-mod tests;

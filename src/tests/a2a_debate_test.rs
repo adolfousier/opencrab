@@ -1,5 +1,5 @@
-use super::*;
-
+use crate::a2a::debate::*;
+use crate::a2a::types::Role;
 fn test_config() -> DebateConfig {
     DebateConfig {
         topic: "Should AI agents have persistent memory across sessions?".to_string(),

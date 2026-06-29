@@ -4,6 +4,12 @@
 /// mid-run. Every HOME-mutating test must take THIS shared lock.
 pub static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+pub mod a2a_agent_card_test;
+pub mod a2a_debate_test;
+pub mod a2a_handler_tasks_test;
+pub mod a2a_handler_test;
+pub mod a2a_server_test;
+pub mod a2a_types_test;
 pub mod active_skill_tracking_test;
 pub mod agent_approval_policies_test;
 pub mod agent_basic_test;
