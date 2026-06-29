@@ -1,5 +1,6 @@
-use super::*;
 use crate::db::models::Session;
+use crate::db::models::*;
+use chrono::Utc;
 use uuid::Uuid;
 
 #[test]

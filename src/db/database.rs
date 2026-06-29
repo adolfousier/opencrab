@@ -37,7 +37,7 @@ pub fn interact_err(e: InteractError) -> anyhow::Error {
 
 /// Database connection manager
 pub struct Database {
-    pool: Pool,
+    pub(crate) pool: Pool,
 }
 
 /// Apply PRAGMA settings to a rusqlite connection.
@@ -352,7 +352,3 @@ impl PoolExt for Pool {
         self.status().size > 0 || self.status().max_size > 0
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/db_database_test.rs"]
-mod tests;

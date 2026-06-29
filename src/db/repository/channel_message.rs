@@ -458,7 +458,3 @@ pub struct TopicSummary {
     /// `created_at INTEGER` used by every other query in this file.
     pub last_message_at: i64,
 }
-
-#[cfg(test)]
-#[path = "../../tests/db_repository_channel_message_test.rs"]
-mod tests;

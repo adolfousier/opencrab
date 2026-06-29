@@ -1,7 +1,11 @@
-use super::*;
 use crate::db::Database;
 use crate::db::models::Session;
+use crate::db::repository::plan::*;
 use crate::db::repository::session::SessionRepository;
+use crate::tui::plan::PlanDocument;
+use crate::tui::plan::PlanStatus;
+use crate::tui::plan::TaskDep;
+use crate::tui::plan::TaskStatus;
 use crate::tui::plan::{PlanTask, TaskType};
 use chrono::Utc;
 use tokio;

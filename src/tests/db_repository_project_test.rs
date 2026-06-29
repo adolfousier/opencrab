@@ -1,7 +1,8 @@
-use super::*;
 use crate::db::Database;
+use crate::db::models::Project;
 use crate::db::models::Session;
 use crate::db::repository::SessionRepository;
+use crate::db::repository::project::*;
 use tokio;
 
 #[tokio::test]

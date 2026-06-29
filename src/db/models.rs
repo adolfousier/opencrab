@@ -793,7 +793,3 @@ impl GoalState {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/db_models_test.rs"]
-mod tests;

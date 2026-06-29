@@ -58,7 +58,7 @@ impl DbRetryConfig {
     }
 
     /// Calculate delay for a given attempt
-    fn calculate_delay(&self, attempt: u32) -> Duration {
+    pub(crate) fn calculate_delay(&self, attempt: u32) -> Duration {
         let base_delay = self.initial_delay.as_millis() as f64;
         let exponential = base_delay * self.backoff_multiplier.powi(attempt as i32);
         let max_delay_ms = self.max_delay.as_millis() as f64;
@@ -69,7 +69,7 @@ impl DbRetryConfig {
 }
 
 /// Check if a rusqlite error is a SQLite busy/locked error
-fn is_database_locked(err: &rusqlite::Error) -> bool {
+pub(crate) fn is_database_locked(err: &rusqlite::Error) -> bool {
     matches!(
         err,
         rusqlite::Error::SqliteFailure(
@@ -211,7 +211,3 @@ where
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/db_retry_test.rs"]
-mod tests;

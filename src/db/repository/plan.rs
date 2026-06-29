@@ -464,7 +464,3 @@ impl<T> OptionalExt<T> for rusqlite::Result<T> {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/db_repository_plan_test.rs"]
-mod tests;

@@ -1,4 +1,5 @@
-use super::*;
+use crate::db::retry::*;
+use std::time::Duration;
 
 #[test]
 fn test_retry_config_defaults() {

@@ -1,6 +1,6 @@
-use super::*;
 use crate::db::Database;
 use crate::db::models::ChannelMessage;
+use crate::db::repository::channel_message::*;
 use tokio;
 
 #[tokio::test]
