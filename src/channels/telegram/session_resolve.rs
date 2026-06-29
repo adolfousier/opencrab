@@ -153,7 +153,3 @@ fn telegram_middle_label(title: &str) -> String {
     }
     body.strip_suffix(suffix).unwrap_or(body).trim().to_string()
 }
-
-#[cfg(test)]
-#[path = "../../tests/channels_telegram_session_resolve_test.rs"]
-mod tests;

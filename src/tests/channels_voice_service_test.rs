@@ -1,4 +1,4 @@
-use super::*;
+use crate::channels::voice::service::*;
 
 #[test]
 fn split_short_text_returns_single_chunk() {

@@ -255,7 +255,3 @@ pub async fn handle_cowork_group_join(
 
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "../../tests/channels_telegram_cowork_test.rs"]
-mod tests;

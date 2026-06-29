@@ -100,6 +100,12 @@ pub mod channel_action_test;
 pub mod channel_command_owner_gate_test;
 pub mod channel_search_test;
 pub mod channel_session_resolve_test;
+#[cfg(feature = "telegram")]
+pub mod channels_telegram_cowork_test;
+#[cfg(feature = "telegram")]
+pub mod channels_telegram_session_resolve_test;
+pub mod channels_tests;
+pub mod channels_voice_service_test;
 pub mod claude_cli_model_test;
 pub mod cli_arg_too_long_test;
 pub mod cli_supported_models_test;

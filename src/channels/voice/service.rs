@@ -424,7 +424,7 @@ async fn try_tts_chunked(
 /// Tries to break at `. `, `! `, `? `, or `\n` to keep sentences intact.
 /// Each chunk is at most `max_chars` characters. Falls back to hard split
 /// at word boundaries if no sentence break is found.
-fn split_for_tts(text: &str, max_chars: usize) -> Vec<String> {
+pub(crate) fn split_for_tts(text: &str, max_chars: usize) -> Vec<String> {
     if text.len() <= max_chars {
         return vec![text.to_string()];
     }
@@ -452,7 +452,7 @@ fn split_for_tts(text: &str, max_chars: usize) -> Vec<String> {
 }
 
 /// Find the last sentence-ending punctuation within text.
-fn find_sentence_break(text: &str) -> Option<usize> {
+pub(crate) fn find_sentence_break(text: &str) -> Option<usize> {
     let candidates = [". ", "! ", "? ", ".\n", "!\n", "?\n", "\n\n", "\n"];
     let mut best = None;
     for delim in &candidates {
@@ -904,7 +904,3 @@ pub async fn transcribe_audio_local(audio_bytes: Vec<u8>, model_id: String) -> R
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/channels_voice_service_test.rs"]
-mod tests;

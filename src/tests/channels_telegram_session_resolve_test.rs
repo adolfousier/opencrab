@@ -1,4 +1,4 @@
-use super::*;
+use crate::channels::telegram::session_resolve::*;
 
 #[test]
 fn dm_template_format() {

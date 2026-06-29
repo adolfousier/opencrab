@@ -1728,7 +1728,3 @@ async fn handle_respond_to(arg: &str) -> String {
 pub(crate) fn provider_section(provider_name: &str) -> Option<String> {
     crate::utils::providers::config_section(provider_name)
 }
-
-#[cfg(test)]
-#[path = "../tests/channels_tests.rs"]
-mod tests;

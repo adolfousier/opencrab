@@ -1,4 +1,4 @@
-use super::*;
+use crate::channels::telegram::cowork::*;
 
 #[test]
 fn parse_startgroup_valid() {
