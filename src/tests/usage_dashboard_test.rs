@@ -1,4 +1,5 @@
-use super::*;
+use crate::usage::dashboard::*;
+use crate::usage::data::Period;
 use ratatui::layout::Rect;
 
 #[test]

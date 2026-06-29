@@ -1,4 +1,4 @@
-use super::*;
+use crate::usage::data::*;
 
 #[test]
 fn test_period_cycle() {

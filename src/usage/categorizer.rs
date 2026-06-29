@@ -126,7 +126,3 @@ pub async fn categorize_with_heuristic(pool: &Pool) -> Result<usize> {
 
     save_categories(pool, &pairs).await
 }
-
-#[cfg(test)]
-#[path = "../tests/usage_categorizer_test.rs"]
-mod tests;

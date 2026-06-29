@@ -948,7 +948,3 @@ pub fn fmt_cost(c: f64) -> String {
         format!("${:.4}", c)
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/usage_data_test.rs"]
-mod tests;

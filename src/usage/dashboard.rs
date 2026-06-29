@@ -58,7 +58,7 @@ impl DashboardState {
 }
 
 /// Compute a centered rect that takes ~75% of the terminal, clamped to min/max.
-fn centered_rect(area: Rect) -> Rect {
+pub(crate) fn centered_rect(area: Rect) -> Rect {
     // Target ~75% but at least 60 cols / 20 rows, at most area - 4 margin each side
     let w = (area.width * 3 / 4)
         .max(60.min(area.width))
@@ -175,7 +175,3 @@ pub fn render(f: &mut Frame, state: &DashboardState, area: Rect) {
     // Footer
     cards::render_footer(f, chunks[3]);
 }
-
-#[cfg(test)]
-#[path = "../tests/usage_dashboard_test.rs"]
-mod tests;

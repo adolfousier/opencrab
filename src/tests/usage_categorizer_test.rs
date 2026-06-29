@@ -1,4 +1,4 @@
-use super::*;
+use crate::usage::categorizer::*;
 
 #[test]
 fn test_build_prompt() {
