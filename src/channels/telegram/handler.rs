@@ -716,15 +716,30 @@ pub(crate) async fn handle_message(
     if !tg_cfg.user_allowed(&user_id.to_string(), &chat_id_str, is_dm) {
         let is_group = !is_dm;
         if is_group {
+            // Silently drop messages from other bots — sending "not authorized"
+            // to bots is meaningless spam (they can't ask for access).
+            if user.is_bot {
+                tracing::info!(
+                    "Telegram: silently ignoring bot {} ({}) in group — not sending auth rejection",
+                    user_id,
+                    user.username.as_deref().unwrap_or("unknown"),
+                );
+                return Ok(());
+            }
             // Only reply if the bot was actually mentioned or replied-to
             let bot_username = telegram_state.bot_username().await;
+            let bot_uid = telegram_state.bot_user_id().await;
             let text_content = msg.text().or(msg.caption()).unwrap_or("");
             let mentioned = bot_username
                 .as_ref()
                 .is_some_and(|uname| text_content.contains(&format!("@{}", uname)));
             let replied_to_bot = msg
                 .reply_to_message()
-                .is_some_and(|reply| reply.from.as_ref().is_some_and(|u| u.is_bot));
+                .is_some_and(|reply| {
+                    reply.from.as_ref().is_some_and(|u| {
+                        bot_uid.is_some_and(|bid| u.id.0 as i64 == bid)
+                    })
+                });
             if !mentioned && !replied_to_bot {
                 tracing::info!(
                     "Telegram: silently ignoring non-allowed user {} ({}) in group",
@@ -872,6 +887,7 @@ pub(crate) async fn handle_message(
             RespondTo::Mention => {
                 // Check if bot is @mentioned in text or message is a reply to the bot
                 let bot_username = telegram_state.bot_username().await;
+                let bot_uid = telegram_state.bot_user_id().await;
                 let text_content = msg.text().or(msg.caption()).unwrap_or("");
 
                 let mentioned_by_username = bot_username
@@ -880,7 +896,11 @@ pub(crate) async fn handle_message(
 
                 let replied_to_bot = msg
                     .reply_to_message()
-                    .is_some_and(|reply| reply.from.as_ref().is_some_and(|u| u.is_bot));
+                    .is_some_and(|reply| {
+                        reply.from.as_ref().is_some_and(|u| {
+                            bot_uid.is_some_and(|bid| u.id.0 as i64 == bid)
+                        })
+                    });
 
                 tracing::info!(
                     "Telegram: group mention check — mentioned={}, replied_to_bot={}, bot_username={:?}",
@@ -922,6 +942,7 @@ pub(crate) async fn handle_message(
                 } else {
                     // >1 active sender → require @mention (same as Mention mode)
                     let bot_username = telegram_state.bot_username().await;
+                    let bot_uid = telegram_state.bot_user_id().await;
                     let text_content = msg.text().or(msg.caption()).unwrap_or("");
 
                     let mentioned_by_username = bot_username
@@ -930,7 +951,11 @@ pub(crate) async fn handle_message(
 
                     let replied_to_bot = msg
                         .reply_to_message()
-                        .is_some_and(|reply| reply.from.as_ref().is_some_and(|u| u.is_bot));
+                        .is_some_and(|reply| {
+                            reply.from.as_ref().is_some_and(|u| {
+                                bot_uid.is_some_and(|bid| u.id.0 as i64 == bid)
+                            })
+                        });
 
                     tracing::info!(
                         "Telegram: respond_to=auto, {} senders in \"{}\" — mention-only (mentioned={}, replied_to_bot={})",

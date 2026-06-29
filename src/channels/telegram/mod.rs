@@ -52,6 +52,9 @@ pub struct TelegramState {
     owner_identity: Mutex<Option<(String, Option<String>)>>,
     /// Bot's @username — set at startup via get_me(), used for @mention detection in groups
     bot_username: Mutex<Option<String>>,
+    /// Bot's numeric user ID — set at startup via get_me(), used to distinguish
+    /// replies to THIS bot from replies to other bots in group chats.
+    bot_user_id: Mutex<Option<i64>>,
     /// Maps session_id → Telegram chat_id for approval routing. Topic-agnostic:
     /// approval/question replies route back by `chat_id` plus the per-message
     /// `thread_id` captured at send time, so the topic does not belong here.
@@ -119,6 +122,7 @@ impl TelegramState {
             owner_chat_id: Mutex::new(None),
             owner_identity: Mutex::new(None),
             bot_username: Mutex::new(None),
+            bot_user_id: Mutex::new(None),
             session_chats: Mutex::new(HashMap::new()),
             chat_sessions: Mutex::new(HashMap::new()),
             session_topic: Mutex::new(HashMap::new()),
@@ -172,9 +176,19 @@ impl TelegramState {
         *self.bot_username.lock().await = Some(username);
     }
 
+    /// Store the bot's numeric user ID (set at startup via get_me).
+    pub async fn set_bot_user_id(&self, id: i64) {
+        *self.bot_user_id.lock().await = Some(id);
+    }
+
     /// Get the bot's @username for mention detection.
     pub async fn bot_username(&self) -> Option<String> {
         self.bot_username.lock().await.clone()
+    }
+
+    /// Get the bot's numeric user ID for reply-to-bot detection.
+    pub async fn bot_user_id(&self) -> Option<i64> {
+        *self.bot_user_id.lock().await
     }
 
     /// Check if Telegram is currently connected.

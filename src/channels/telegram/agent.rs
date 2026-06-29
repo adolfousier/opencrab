@@ -97,6 +97,9 @@ impl TelegramAgent {
                         tracing::info!("Telegram: bot username is @{}", username);
                         self.telegram_state.set_bot_username(username.clone()).await;
                     }
+                    // Store bot's numeric user ID for reply-to-bot detection
+                    self.telegram_state.set_bot_user_id(me.user.id.0 as i64).await;
+                    tracing::info!("Telegram: bot user ID is {}", me.user.id.0);
                     // Store bot in state for proactive messaging only after successful auth
                     self.telegram_state.set_bot(bot.clone()).await;
 
