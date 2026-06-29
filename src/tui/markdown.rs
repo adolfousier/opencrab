@@ -620,7 +620,3 @@ fn render_table(
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/tui_markdown_test.rs"]
-mod tests;

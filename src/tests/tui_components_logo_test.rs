@@ -1,4 +1,4 @@
-use super::*;
+use crate::tui::components::logo::*;
 
 #[test]
 fn test_logo_not_empty() {

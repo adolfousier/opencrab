@@ -1,4 +1,5 @@
-use super::*;
+use crate::tui::render::utils::char_boundary_at_width;
+use crate::tui::render::utils::wrap_line_with_padding;
 use ratatui::text::Line;
 
 // ── char_boundary_at_width ──────────────────────────────────────

@@ -64,7 +64,3 @@ pub fn get_small_logo() -> &'static str {
 pub fn get_logo_with_version(version: &str) -> String {
     format!("{}\n   Version: {}\n", LOGO, version)
 }
-
-#[cfg(test)]
-#[path = "../../tests/tui_components_logo_test.rs"]
-mod tests;

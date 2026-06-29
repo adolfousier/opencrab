@@ -635,7 +635,3 @@ pub mod keys {
         event.code == KeyCode::Tab && event.modifiers.is_empty()
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/tui_events_test.rs"]
-mod tests;

@@ -1,4 +1,5 @@
-use super::*;
+use crate::db::models::Message;
+use crate::tui::app::state::*;
 use uuid::Uuid;
 
 #[test]

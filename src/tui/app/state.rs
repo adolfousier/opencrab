@@ -3747,7 +3747,3 @@ impl App {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/tui_app_state_test.rs"]
-mod tests;

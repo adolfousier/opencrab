@@ -1,4 +1,7 @@
-use super::*;
+use crate::tui::events::*;
+use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyModifiers;
 
 #[test]
 fn test_event_handler_creation() {

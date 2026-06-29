@@ -1,4 +1,4 @@
-use super::*;
+use crate::tui::plan::*;
 
 use uuid::Uuid;
 

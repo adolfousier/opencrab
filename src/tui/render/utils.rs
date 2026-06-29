@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 /// Pre-wrap a Line's text content to fit within max_width, preserving the style
 /// of the first span and prepending `padding` to each continuation line.
-pub(super) fn wrap_line_with_padding<'a>(
+pub(crate) fn wrap_line_with_padding<'a>(
     line: Line<'a>,
     max_width: usize,
     padding: &'a str,
@@ -86,7 +86,7 @@ pub(super) fn wrap_line_with_padding<'a>(
 
 /// Find the byte index in `s` where the cumulative display width first reaches or exceeds `target_width`.
 /// Always returns a valid char boundary.
-pub(in crate::tui) fn char_boundary_at_width(s: &str, target_width: usize) -> usize {
+pub(crate) fn char_boundary_at_width(s: &str, target_width: usize) -> usize {
     let mut width = 0;
     for (idx, ch) in s.char_indices() {
         let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
@@ -125,7 +125,3 @@ pub(super) fn format_token_count_raw(tokens: i32) -> String {
         "0".to_string()
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/tui_render_utils_test.rs"]
-mod tests;

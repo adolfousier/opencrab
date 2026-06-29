@@ -1,4 +1,4 @@
-use super::*;
+use crate::tui::markdown::*;
 
 #[test]
 fn test_parse_simple_text() {

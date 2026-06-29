@@ -1,4 +1,4 @@
-use super::*;
+use crate::tui::highlight::*;
 
 #[test]
 fn test_highlight_rust() {

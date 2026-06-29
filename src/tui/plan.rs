@@ -891,7 +891,3 @@ impl TaskStatus {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/tui_plan_tests_test.rs"]
-mod tests;

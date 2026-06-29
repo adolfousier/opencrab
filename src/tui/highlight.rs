@@ -145,7 +145,3 @@ pub fn supported_languages() -> Vec<String> {
 pub fn is_language_supported(language: &str) -> bool {
     find_syntax(language).is_some()
 }
-
-#[cfg(test)]
-#[path = "../tests/tui_highlight_test.rs"]
-mod tests;

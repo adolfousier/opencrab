@@ -281,6 +281,14 @@ pub mod rtk_autodownload_test;
 pub mod rtk_rewrite_test;
 #[cfg(feature = "rtk")]
 pub mod rtk_tracker_test;
+pub mod tui_app_state_test;
+pub mod tui_components_logo_test;
+pub mod tui_events_test;
+pub mod tui_highlight_test;
+pub mod tui_markdown_test;
+pub mod tui_plan_tests_test;
+pub mod tui_prompt_analyzer_test;
+pub mod tui_render_utils_test;
 mod xiaomi_config_default_test;
 mod xiaomi_keyed_provider_regression_test;
 mod xiaomi_onboarding_test;

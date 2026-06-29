@@ -202,7 +202,3 @@ impl Default for PromptAnalyzer {
         Self::new()
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/tui_prompt_analyzer_test.rs"]
-mod tests;
