@@ -646,7 +646,13 @@ impl App {
                         .unwrap_or("")
                         .trim_start_matches(':')
                 };
-                let step = match suffix {
+                // `/onboard:channels whatsapp` (and telegram/slack/discord/
+                // trello) jumps straight into that channel's setup dialog;
+                // bare `/onboard:channels` opens the channel-selection menu.
+                let mut suffix_parts = suffix.split_whitespace();
+                let head = suffix_parts.next().unwrap_or("");
+                let channel_arg = suffix_parts.next().unwrap_or("");
+                let step = match head {
                     "provider" => OnboardingStep::ProviderAuth,
                     "workspace" => OnboardingStep::Workspace,
                     "channels" => OnboardingStep::Channels,
@@ -670,6 +676,17 @@ impl App {
                 };
                 let mut wizard = OnboardingWizard::from_config(&config);
                 wizard.step = step;
+                // Deep-link a named channel directly to its setup dialog. Seeds
+                // the channel's fields just like selecting it in the menu; on an
+                // unknown name `open_channel_setup` leaves the menu step intact.
+                let step = if step == OnboardingStep::Channels
+                    && !channel_arg.is_empty()
+                    && wizard.open_channel_setup(channel_arg)
+                {
+                    wizard.step
+                } else {
+                    step
+                };
                 // Deep-link to a specific step: lock to that step only
                 // (no progress dots, no navigation, Enter/Esc exit to chat)
                 // Only bare /onboard runs the full wizard flow

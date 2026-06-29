@@ -31,50 +31,15 @@ impl OnboardingWizard {
                     // Enter on an enabled channel — open its setup screen
                     let idx = self.focused_field;
                     tracing::debug!("[channels] Enter on enabled channel idx={}", idx);
-                    match idx {
-                        0 => {
-                            self.step = OnboardingStep::TelegramSetup;
-                            self.telegram_field = TelegramField::BotToken;
-                            self.channel_test_status = ChannelTestStatus::Idle;
-                            self.detect_existing_telegram_token();
-                            self.detect_existing_telegram_user_id();
-                            self.detect_existing_respond_to();
-                        }
-                        1 => {
-                            self.step = OnboardingStep::DiscordSetup;
-                            self.discord_field = DiscordField::BotToken;
-                            self.channel_test_status = ChannelTestStatus::Idle;
-                            self.detect_existing_discord_token();
-                            self.detect_existing_discord_channel_id();
-                            self.detect_existing_discord_allowed_list();
-                            self.detect_existing_respond_to();
-                        }
-                        2 => {
-                            self.step = OnboardingStep::WhatsAppSetup;
-                            self.reset_whatsapp_state();
-                            self.detect_existing_whatsapp_phone();
-                            // Always start on Connection field so the user can see
-                            // the reset option (R) when already paired, or scan QR
-                            // when not paired. Tab advances to PhoneAllowlist.
-                            self.whatsapp_field = WhatsAppField::Connection;
-                        }
-                        3 => {
-                            self.step = OnboardingStep::SlackSetup;
-                            self.slack_field = SlackField::BotToken;
-                            self.channel_test_status = ChannelTestStatus::Idle;
-                            self.detect_existing_slack_tokens();
-                            self.detect_existing_slack_channel_id();
-                            self.detect_existing_slack_allowed_list();
-                            self.detect_existing_respond_to();
-                        }
-                        4 => {
-                            self.step = OnboardingStep::TrelloSetup;
-                            self.trello_field = TrelloField::ApiKey;
-                            self.channel_test_status = ChannelTestStatus::Idle;
-                            self.detect_existing_trello_credentials();
-                        }
-                        _ => {}
-                    }
+                    let channel = match idx {
+                        0 => "telegram",
+                        1 => "discord",
+                        2 => "whatsapp",
+                        3 => "slack",
+                        4 => "trello",
+                        _ => "",
+                    };
+                    self.open_channel_setup(channel);
                 }
             }
             KeyCode::Tab => {
@@ -84,6 +49,60 @@ impl OnboardingWizard {
             _ => {}
         }
         WizardAction::None
+    }
+
+    /// Open a specific channel's setup screen, seeding its fields from the
+    /// existing config (same effect as selecting it in the channels menu).
+    ///
+    /// Used by the menu and by the `/onboard:channels <name>` deep-link so the
+    /// TUI command jumps straight to e.g. the WhatsApp dialog. Returns `false`
+    /// for an unrecognized channel name (caller falls back to the menu).
+    pub fn open_channel_setup(&mut self, channel: &str) -> bool {
+        match channel {
+            "telegram" => {
+                self.step = OnboardingStep::TelegramSetup;
+                self.telegram_field = TelegramField::BotToken;
+                self.channel_test_status = ChannelTestStatus::Idle;
+                self.detect_existing_telegram_token();
+                self.detect_existing_telegram_user_id();
+                self.detect_existing_respond_to();
+            }
+            "discord" => {
+                self.step = OnboardingStep::DiscordSetup;
+                self.discord_field = DiscordField::BotToken;
+                self.channel_test_status = ChannelTestStatus::Idle;
+                self.detect_existing_discord_token();
+                self.detect_existing_discord_channel_id();
+                self.detect_existing_discord_allowed_list();
+                self.detect_existing_respond_to();
+            }
+            "whatsapp" => {
+                self.step = OnboardingStep::WhatsAppSetup;
+                self.reset_whatsapp_state();
+                self.detect_existing_whatsapp_phone();
+                // Always start on Connection field so the user can see
+                // the reset option (R) when already paired, or scan QR
+                // when not paired. Tab advances to PhoneAllowlist.
+                self.whatsapp_field = WhatsAppField::Connection;
+            }
+            "slack" => {
+                self.step = OnboardingStep::SlackSetup;
+                self.slack_field = SlackField::BotToken;
+                self.channel_test_status = ChannelTestStatus::Idle;
+                self.detect_existing_slack_tokens();
+                self.detect_existing_slack_channel_id();
+                self.detect_existing_slack_allowed_list();
+                self.detect_existing_respond_to();
+            }
+            "trello" => {
+                self.step = OnboardingStep::TrelloSetup;
+                self.trello_field = TrelloField::ApiKey;
+                self.channel_test_status = ChannelTestStatus::Idle;
+                self.detect_existing_trello_credentials();
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// Check if Telegram channel is enabled (index 0 in channel_toggles)
