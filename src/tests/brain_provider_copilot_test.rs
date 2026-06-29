@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::provider::copilot::*;
 
 #[test]
 fn copilot_client_id_is_well_known() {

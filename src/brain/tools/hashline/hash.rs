@@ -12,7 +12,7 @@
 /// Kept: Z P M Q V R W S N K T X J B Y U
 /// Actually let's use the same alphabet as oh-my-pi for consistency:
 /// Z P M Q V R W S N K T X J B Y H
-const HASH_ALPHABET: &[u8; 16] = b"ZPMQVRWSNKTXJBYH";
+pub(crate) const HASH_ALPHABET: &[u8; 16] = b"ZPMQVRWSNKTXJBYH";
 
 /// FNV-1a 32-bit offset basis.
 const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
@@ -70,7 +70,3 @@ pub fn hash_all_lines(content: &str) -> Vec<(usize, String)> {
 pub fn format_hashline(_line_number: usize, hash: &str, content: &str) -> String {
     format!("{}|{}", hash, content)
 }
-
-#[cfg(test)]
-#[path = "../../../tests/brain_tools_hashline_hash_test.rs"]
-mod tests;

@@ -338,7 +338,3 @@ fn parse_retry_seconds(msg: &str) -> Option<u64> {
     }
     None
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_error_test.rs"]
-mod tests;

@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::tokenizer::*;
 
 #[test]
 fn test_empty_string() {

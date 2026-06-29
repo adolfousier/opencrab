@@ -1,5 +1,6 @@
-use super::*;
+use crate::brain::tools::Tool;
 use crate::brain::tools::ToolExecutionContext;
+use crate::brain::tools::doc_parser::*;
 use std::io::Write;
 use tempfile::NamedTempFile;
 use tokio;

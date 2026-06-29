@@ -322,7 +322,3 @@ impl AgentContext {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_agent_context_test.rs"]
-mod tests;

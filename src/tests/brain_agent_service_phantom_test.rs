@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::agent::service::phantom::*;
 
 #[test]
 fn english_phantom_detected() {

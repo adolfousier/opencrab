@@ -216,7 +216,3 @@ impl ProviderCapabilities {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_trait_test.rs"]
-mod tests;

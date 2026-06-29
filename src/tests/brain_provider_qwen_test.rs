@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::provider::qwen::*;
 
 #[test]
 fn extra_headers_match_qwen_cli_exactly() {

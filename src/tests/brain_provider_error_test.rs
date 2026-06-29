@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::provider::error::*;
 
 #[test]
 fn test_error_retryable() {

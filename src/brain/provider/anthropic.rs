@@ -89,7 +89,7 @@ impl AnthropicProvider {
     }
 
     /// Build request headers with prompt-caching beta header.
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    pub(crate) fn headers(&self) -> reqwest::header::HeaderMap {
         let mut headers = reqwest::header::HeaderMap::new();
 
         headers.insert(
@@ -586,7 +586,3 @@ struct AnthropicErrorDetail {
     error_type: String,
     message: String,
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_anthropic_test.rs"]
-mod tests;

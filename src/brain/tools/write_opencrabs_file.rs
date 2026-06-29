@@ -17,7 +17,7 @@ pub struct WriteOpenCrabsFileTool;
 
 /// Validate that `path` is a safe relative path within `~/.opencrabs/`.
 /// Prevents path traversal outside the app home directory.
-pub(super) fn validate_opencrabs_path(path: &str) -> std::result::Result<(), String> {
+pub(crate) fn validate_opencrabs_path(path: &str) -> std::result::Result<(), String> {
     if path.is_empty() {
         return Err("path is required".into());
     }
@@ -397,7 +397,3 @@ impl Tool for WriteOpenCrabsFileTool {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_write_opencrabs_file_tests.rs"]
-mod tests;

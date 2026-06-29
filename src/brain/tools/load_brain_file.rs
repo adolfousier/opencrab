@@ -258,7 +258,3 @@ impl Tool for LoadBrainFileTool {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_load_brain_file_tests.rs"]
-mod tests;

@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::provider::json_repair::*;
 
 #[test]
 fn passes_through_valid_json() {

@@ -1,5 +1,6 @@
-use super::*;
+use crate::brain::tools::Tool;
 use crate::brain::tools::ToolCapability;
+use crate::brain::tools::brave_search::*;
 
 fn make_tool() -> BraveSearchTool {
     BraveSearchTool::new("test-key".to_string())

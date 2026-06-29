@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::self_update::*;
 use std::path::PathBuf;
 
 #[test]

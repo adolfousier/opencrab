@@ -1188,7 +1188,3 @@ impl SshAskpass {
         self.script_file.path()
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_bash_test.rs"]
-mod tests;

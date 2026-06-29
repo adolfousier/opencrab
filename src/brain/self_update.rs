@@ -324,7 +324,3 @@ impl SelfUpdater {
         &self.binary_path
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/brain_self_update_test.rs"]
-mod tests;

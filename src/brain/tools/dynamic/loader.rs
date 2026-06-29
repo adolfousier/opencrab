@@ -193,7 +193,3 @@ impl DynamicToolLoader {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "../../../tests/brain_tools_dynamic_loader_test.rs"]
-mod tests;

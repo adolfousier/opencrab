@@ -773,7 +773,3 @@ pub(crate) fn push_known_paths(prompt: &mut String) {
          correct profile's config.toml) over editing the file by path.\n",
     ));
 }
-
-#[cfg(test)]
-#[path = "../tests/brain_prompt_builder_test.rs"]
-mod tests;

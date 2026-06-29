@@ -20,13 +20,13 @@ impl BraveSearchTool {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct BraveSearchInput {
+pub(crate) struct BraveSearchInput {
     /// Search query
-    query: String,
+    pub(crate) query: String,
 
     /// Maximum number of results to return
     #[serde(default = "default_max_results")]
-    max_results: usize,
+    pub(crate) max_results: usize,
 }
 
 fn default_max_results() -> usize {
@@ -34,20 +34,20 @@ fn default_max_results() -> usize {
 }
 
 #[derive(Debug, Deserialize)]
-struct BraveResponse {
-    web: Option<BraveWebResults>,
+pub(crate) struct BraveResponse {
+    pub(crate) web: Option<BraveWebResults>,
 }
 
 #[derive(Debug, Deserialize)]
-struct BraveWebResults {
-    results: Vec<BraveResult>,
+pub(crate) struct BraveWebResults {
+    pub(crate) results: Vec<BraveResult>,
 }
 
 #[derive(Debug, Deserialize)]
-struct BraveResult {
-    title: String,
-    url: String,
-    description: Option<String>,
+pub(crate) struct BraveResult {
+    pub(crate) title: String,
+    pub(crate) url: String,
+    pub(crate) description: Option<String>,
 }
 
 #[async_trait]
@@ -170,7 +170,3 @@ impl Tool for BraveSearchTool {
         Ok(ToolResult::success(output))
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_brave_search_test.rs"]
-mod tests;

@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::provider::codex_oauth::*;
 
 #[test]
 fn codex_client_id_is_correct() {

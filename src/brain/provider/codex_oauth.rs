@@ -32,16 +32,16 @@ use std::time::{Duration, Instant};
 pub const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 /// Device code request endpoint.
-const DEVICE_CODE_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/usercode";
+pub(crate) const DEVICE_CODE_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/usercode";
 
 /// Device token polling endpoint.
-const DEVICE_TOKEN_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/token";
+pub(crate) const DEVICE_TOKEN_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/token";
 
 /// OAuth token endpoint (for refresh + revoke).
-const OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+pub(crate) const OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 
 /// OpenAI chat completions endpoint.
-const OPENAI_CHAT_URL: &str = "https://api.openai.com/v1/chat/completions";
+pub(crate) const OPENAI_CHAT_URL: &str = "https://api.openai.com/v1/chat/completions";
 
 /// OAuth scopes requested.
 const SCOPES: &str =
@@ -685,7 +685,3 @@ impl Provider for CodexOAuthProvider {
         false
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_codex_oauth_test.rs"]
-mod tests;

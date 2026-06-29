@@ -361,7 +361,3 @@ impl ConfigTool {
 fn format_toml<T: serde::Serialize>(value: &T) -> String {
     toml::to_string_pretty(value).unwrap_or_else(|_| format!("{:?}", "serialization error"))
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_config_tool_test.rs"]
-mod tests;

@@ -36,7 +36,3 @@ pub fn count_tokens(text: &str) -> usize {
 pub fn count_message_tokens(text: &str) -> usize {
     count_tokens(text) + 4
 }
-
-#[cfg(test)]
-#[path = "../tests/brain_tokenizer_test.rs"]
-mod tests;

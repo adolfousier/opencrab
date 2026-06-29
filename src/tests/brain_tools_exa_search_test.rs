@@ -1,5 +1,6 @@
-use super::*;
+use crate::brain::tools::Tool;
 use crate::brain::tools::ToolCapability;
+use crate::brain::tools::exa_search::*;
 
 fn make_tool() -> ExaSearchTool {
     ExaSearchTool::new(None)

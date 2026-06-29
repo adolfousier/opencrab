@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::tools::fuzzy::*;
 
 #[test]
 fn seek_exact() {

@@ -1,5 +1,5 @@
-use super::*;
 use crate::brain::tools::ToolError;
+use crate::brain::tools::error::*;
 
 #[test]
 fn test_tool_error_display() {

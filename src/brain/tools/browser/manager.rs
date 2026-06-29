@@ -587,15 +587,15 @@ impl BrowserManager {
 }
 
 /// Detected browser info.
-struct BrowserInfo {
-    name: String,
-    path: PathBuf,
+pub(crate) struct BrowserInfo {
+    pub(crate) name: String,
+    pub(crate) path: PathBuf,
     /// The browser's native user-data directory (where cookies/logins live).
     user_data_dir: Option<PathBuf>,
 }
 
 /// All known Chromium-based browsers with their executable paths and profile dirs.
-struct BrowserCandidate {
+pub(crate) struct BrowserCandidate {
     name: &'static str,
     /// Bundle ID (macOS) or desktop file (Linux) or ProgId (Windows) for default detection.
     #[cfg(target_os = "macos")]
@@ -617,7 +617,7 @@ struct BrowserCandidate {
 }
 
 /// Known Chromium-based browsers in preference order (most popular first).
-fn known_browsers() -> Vec<BrowserCandidate> {
+pub(crate) fn known_browsers() -> Vec<BrowserCandidate> {
     vec![
         BrowserCandidate {
             name: "Google Chrome",
@@ -824,7 +824,7 @@ fn resolve_profile_dir(candidate: &BrowserCandidate) -> Option<PathBuf> {
 }
 
 /// Check if a profile directory is locked by a running browser instance.
-fn is_profile_locked(profile_dir: &std::path::Path) -> bool {
+pub(crate) fn is_profile_locked(profile_dir: &std::path::Path) -> bool {
     // Chrome-family browsers create a "SingletonLock" or "lockfile" when running
     let lock = profile_dir.join("SingletonLock");
     if lock.exists() {
@@ -998,7 +998,7 @@ pub(crate) fn clean_stale_locks(profile_dir: &std::path::Path) {
 /// nested PreferredVersions dict at depth 3), and emit the pair
 /// `(scheme, role)` when the block closes.
 #[cfg(target_os = "macos")]
-fn detect_default_browser_id() -> Option<String> {
+pub(crate) fn detect_default_browser_id() -> Option<String> {
     let output = std::process::Command::new("defaults")
         .args([
             "read",
@@ -1176,7 +1176,7 @@ fn matches_default(candidate: &BrowserCandidate, default_id: &str) -> bool {
 
 /// Smart browser detection: finds the user's default browser, then falls back
 /// to the first installed Chromium-based browser.
-fn detect_browser() -> Option<BrowserInfo> {
+pub(crate) fn detect_browser() -> Option<BrowserInfo> {
     let browsers = known_browsers();
 
     // 1. Try the user's default browser first
@@ -1216,7 +1216,3 @@ fn detect_browser() -> Option<BrowserInfo> {
     tracing::warn!("No Chromium-based browser found on system");
     None
 }
-
-#[cfg(test)]
-#[path = "../../../tests/brain_tools_browser_manager_test.rs"]
-mod tests;

@@ -458,7 +458,3 @@ fn ends_with_url(text: &str) -> bool {
     let tail = &trimmed[boundary..];
     tail.contains("://")
 }
-
-#[cfg(test)]
-#[path = "../../../tests/brain_agent_service_phantom_test.rs"]
-mod tests;

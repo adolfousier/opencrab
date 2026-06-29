@@ -493,7 +493,7 @@ impl DocParserTool {
     }
 
     /// Strip HTML tags from content
-    fn strip_html_tags(html: &str) -> String {
+    pub(crate) fn strip_html_tags(html: &str) -> String {
         let mut text = String::new();
         let mut in_tag = false;
         let mut in_script = false;
@@ -537,7 +537,7 @@ impl DocParserTool {
     }
 
     /// Extract title from HTML
-    fn extract_html_title(html: &str) -> Option<String> {
+    pub(crate) fn extract_html_title(html: &str) -> Option<String> {
         let lowercase = html.to_lowercase();
         if let Some(start) = lowercase.find("<title>") {
             let start = start + 7;
@@ -607,7 +607,3 @@ impl DocParserTool {
         Ok((text.trim().to_string(), metadata))
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_doc_parser_test.rs"]
-mod tests;

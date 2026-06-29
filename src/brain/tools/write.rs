@@ -178,7 +178,3 @@ impl Tool for WriteTool {
             .with_metadata("bytes".to_string(), input.content.len().to_string()))
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_write_test.rs"]
-mod tests;

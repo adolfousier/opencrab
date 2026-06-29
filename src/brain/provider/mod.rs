@@ -7,7 +7,7 @@ pub mod json_repair;
 pub mod placeholder;
 pub mod rate_limiter;
 #[allow(clippy::module_inception)]
-mod r#trait;
+pub(crate) mod r#trait;
 pub mod types;
 
 // Re-exports

@@ -135,7 +135,7 @@ impl Tool for A2aSendTool {
     }
 }
 
-fn auth_headers(api_key: Option<&str>) -> reqwest::header::HeaderMap {
+pub(crate) fn auth_headers(api_key: Option<&str>) -> reqwest::header::HeaderMap {
     let mut headers = reqwest::header::HeaderMap::new();
     if let Some(key) = api_key
         && let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", key))
@@ -364,7 +364,7 @@ async fn cancel_task(base_url: &str, api_key: Option<&str>, task_id: &str) -> Re
 }
 
 /// Extract readable text from a task's artifacts and status message.
-fn extract_response_text(task: &Value) -> String {
+pub(crate) fn extract_response_text(task: &Value) -> String {
     let mut texts = Vec::new();
 
     // Check status message
@@ -393,7 +393,3 @@ fn extract_response_text(task: &Value) -> String {
 
     texts.join("\n")
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_a2a_send_test.rs"]
-mod tests;

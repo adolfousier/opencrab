@@ -1,4 +1,5 @@
-use super::*;
+use crate::brain::provider::Provider;
+use crate::brain::provider::anthropic::*;
 
 #[test]
 fn test_anthropic_provider_creation() {

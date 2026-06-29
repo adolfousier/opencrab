@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::agent::service::phantom_lang::*;
 
 #[test]
 fn en_toml_loads() {

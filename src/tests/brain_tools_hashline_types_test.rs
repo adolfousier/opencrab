@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::tools::hashline::types::*;
 
 #[test]
 fn test_parse_hashref_valid() {

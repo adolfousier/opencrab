@@ -54,15 +54,15 @@ const ES_TOML: &str = include_str!("es.toml");
 const PT_TOML: &str = include_str!("pt.toml");
 const FR_TOML: &str = include_str!("fr.toml");
 
-static LANG_EN: LazyLock<LangConfig> =
+pub(crate) static LANG_EN: LazyLock<LangConfig> =
     LazyLock::new(|| toml::from_str(EN_TOML).expect("BUG: en.toml failed to parse at runtime"));
-static LANG_RU: LazyLock<LangConfig> =
+pub(crate) static LANG_RU: LazyLock<LangConfig> =
     LazyLock::new(|| toml::from_str(RU_TOML).expect("BUG: ru.toml failed to parse at runtime"));
-static LANG_ES: LazyLock<LangConfig> =
+pub(crate) static LANG_ES: LazyLock<LangConfig> =
     LazyLock::new(|| toml::from_str(ES_TOML).expect("BUG: es.toml failed to parse at runtime"));
-static LANG_PT: LazyLock<LangConfig> =
+pub(crate) static LANG_PT: LazyLock<LangConfig> =
     LazyLock::new(|| toml::from_str(PT_TOML).expect("BUG: pt.toml failed to parse at runtime"));
-static LANG_FR: LazyLock<LangConfig> =
+pub(crate) static LANG_FR: LazyLock<LangConfig> =
     LazyLock::new(|| toml::from_str(FR_TOML).expect("BUG: fr.toml failed to parse at runtime"));
 
 /// Detect language from text content using character-set heuristics.
@@ -148,7 +148,3 @@ pub fn detect_language(text: &str) -> &'static LangConfig {
 pub fn all_langs() -> [&'static LangConfig; 5] {
     [&LANG_EN, &LANG_RU, &LANG_ES, &LANG_PT, &LANG_FR]
 }
-
-#[cfg(test)]
-#[path = "../../../../tests/brain_agent_service_phantom_lang_test.rs"]
-mod tests;

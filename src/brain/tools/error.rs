@@ -215,7 +215,3 @@ pub fn validate_directory_path(
 
     Ok(path)
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_error_test.rs"]
-mod tests;

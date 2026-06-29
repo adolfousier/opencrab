@@ -1,8 +1,9 @@
-use super::*;
 use crate::brain::provider::LLMRequest;
 use crate::brain::provider::LLMResponse;
 use crate::brain::provider::ProviderCapabilities;
 use crate::brain::provider::ProviderStream;
+use crate::brain::provider::error::Result;
+use crate::brain::provider::r#trait::Provider;
 use async_trait::async_trait;
 
 /// Mock provider for testing

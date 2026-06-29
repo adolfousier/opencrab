@@ -1,10 +1,11 @@
-//! Tests for the `load_brain_file` tool.
-//!
-//! Covers the on-demand context retrieval flow: the agent calls `load_brain_file`
-//! only when the current request actually needs that context, rather than having
-//! all brain files injected on every turn.
+use crate::brain::tools::Tool;
+// Tests for the `load_brain_file` tool.
+//
+// Covers the on-demand context retrieval flow: the agent calls `load_brain_file`
+// only when the current request actually needs that context, rather than having
+// all brain files injected on every turn.
 
-use super::*;
+use crate::brain::tools::load_brain_file::*;
 
 use crate::brain::tools::ToolExecutionContext;
 use tempfile::TempDir;

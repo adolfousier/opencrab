@@ -232,7 +232,3 @@ pub trait Tool: Send + Sync {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_trait_test.rs"]
-mod tests;

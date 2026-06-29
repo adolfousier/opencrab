@@ -181,7 +181,3 @@ impl CommandLoader {
         section
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/brain_commands_test.rs"]
-mod tests;

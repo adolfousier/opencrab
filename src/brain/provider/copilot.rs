@@ -22,13 +22,13 @@ pub const COPILOT_CHAT_URL: &str = "https://api.githubcopilot.com/chat/completio
 pub const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 
 /// Copilot internal token exchange endpoint.
-const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
+pub(crate) const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
 /// GitHub device code request endpoint.
-const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
+pub(crate) const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 
 /// GitHub OAuth token polling endpoint.
-const OAUTH_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+pub(crate) const OAUTH_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 
 /// Response from the device code request (step 1).
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -296,7 +296,3 @@ pub async fn fetch_copilot_models(oauth_token: &str) -> anyhow::Result<Vec<Strin
     entries.sort_by_key(|e| std::cmp::Reverse(e.created));
     Ok(entries.into_iter().map(|m| m.id).collect())
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_copilot_test.rs"]
-mod tests;

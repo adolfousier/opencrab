@@ -318,7 +318,3 @@ impl Default for ToolRegistry {
         Self::new()
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_registry_test.rs"]
-mod tests;

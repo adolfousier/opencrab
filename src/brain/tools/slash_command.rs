@@ -919,7 +919,3 @@ impl SlashCommandTool {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_slash_command_test.rs"]
-mod tests;

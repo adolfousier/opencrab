@@ -7,7 +7,7 @@ pub mod brain_file_safety;
 pub mod catalog;
 pub mod error;
 pub mod registry;
-mod r#trait;
+pub(crate) mod r#trait;
 
 pub mod fuzzy;
 pub mod tool_name_heal;

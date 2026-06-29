@@ -19,7 +19,7 @@ const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
 /// EXA search tool — works out of the box via free MCP endpoint.
 /// Set `EXA_API_KEY` for direct API access with higher rate limits.
 pub struct ExaSearchTool {
-    api_key: Option<String>,
+    pub(crate) api_key: Option<String>,
     mcp_session_id: Arc<RwLock<Option<String>>>,
 }
 
@@ -31,7 +31,7 @@ impl ExaSearchTool {
         }
     }
 
-    fn use_mcp(&self) -> bool {
+    pub(crate) fn use_mcp(&self) -> bool {
         self.api_key.as_ref().is_none_or(|k| k.is_empty())
     }
 
@@ -256,7 +256,7 @@ impl ExaSearchTool {
     }
 
     /// Parse SSE response body into the last JSON-RPC message.
-    fn parse_sse_response(body: &str) -> Result<Value> {
+    pub(crate) fn parse_sse_response(body: &str) -> Result<Value> {
         let mut last_json = None;
         for line in body.lines() {
             let line = line.trim();
@@ -273,7 +273,7 @@ impl ExaSearchTool {
     }
 
     /// Extract the text result from a JSON-RPC tools/call response.
-    fn extract_mcp_result(json: &Value, query: &str) -> Result<ToolResult> {
+    pub(crate) fn extract_mcp_result(json: &Value, query: &str) -> Result<ToolResult> {
         // Check for JSON-RPC error
         if let Some(error) = json.get("error") {
             let msg = error
@@ -387,17 +387,17 @@ impl ExaSearchTool {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct ExaSearchInput {
+pub(crate) struct ExaSearchInput {
     /// Search query
-    query: String,
+    pub(crate) query: String,
 
     /// Maximum number of results to return
     #[serde(default = "default_max_results")]
-    max_results: usize,
+    pub(crate) max_results: usize,
 
     /// Search type: "auto", "neural", "fast", "deep-lite", "deep", "deep-reasoning", or "instant"
     #[serde(default = "default_search_type")]
-    search_type: String,
+    pub(crate) search_type: String,
 }
 
 fn default_max_results() -> usize {
@@ -503,7 +503,3 @@ impl Tool for ExaSearchTool {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_exa_search_test.rs"]
-mod tests;

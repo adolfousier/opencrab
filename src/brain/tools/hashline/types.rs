@@ -129,7 +129,3 @@ pub enum ResolvedOp {
         new_lines: Vec<String>,
     },
 }
-
-#[cfg(test)]
-#[path = "../../../tests/brain_tools_hashline_types_test.rs"]
-mod tests;

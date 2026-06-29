@@ -1552,7 +1552,3 @@ fn try_create_anthropic(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
 
     Ok(Some(Arc::new(provider)))
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_factory_test.rs"]
-mod tests;

@@ -120,7 +120,3 @@ pub fn fuzzy_replace_once(content: &str, old_str: &str, new_str: &str) -> Result
 
     Ok(new_content)
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_fuzzy_test.rs"]
-mod tests;

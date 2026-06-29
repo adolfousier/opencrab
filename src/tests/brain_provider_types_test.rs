@@ -1,7 +1,7 @@
-use super::*;
 use crate::brain::provider::LLMRequest;
 use crate::brain::provider::Message;
 use crate::brain::provider::Role;
+use crate::brain::provider::types::*;
 
 #[test]
 fn test_message_creation() {

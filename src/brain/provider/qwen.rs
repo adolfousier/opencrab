@@ -78,7 +78,7 @@ pub fn qwen_extra_headers() -> Vec<(String, String)> {
 /// DashScope tracks per-session quota, so reusing one id across the process
 /// lifetime keeps us in a single bucket instead of looking like a fresh
 /// client on every request.
-fn qwen_session_id() -> &'static str {
+pub(crate) fn qwen_session_id() -> &'static str {
     use std::sync::OnceLock;
     static SESSION: OnceLock<String> = OnceLock::new();
     SESSION.get_or_init(|| uuid::Uuid::new_v4().to_string())
@@ -86,7 +86,7 @@ fn qwen_session_id() -> &'static str {
 
 /// Per-request id, mirroring qwen-cli's `metadata.promptId`. qwen-cli uses
 /// a short hex string; we use 13 hex chars derived from a random u64.
-fn qwen_prompt_id() -> String {
+pub(crate) fn qwen_prompt_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -102,7 +102,7 @@ fn qwen_prompt_id() -> String {
 /// Vision-capable model identifiers recognized by qwen-cli's
 /// `DashScopeOpenAICompatibleProvider.isVisionModel()`: exact match on
 /// `coder-model`, or prefix on `qwen-vl`, `qwen3-vl-plus`, `qwen3.5-plus`.
-fn is_vision_model(model: &str) -> bool {
+pub(crate) fn is_vision_model(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
     if m == "coder-model" {
         return true;
@@ -254,7 +254,3 @@ pub fn qwen_body_transform(mut body: serde_json::Value) -> serde_json::Value {
 
     body
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_qwen_test.rs"]
-mod tests;

@@ -186,7 +186,3 @@ pub fn try_repair(raw: &str) -> Option<String> {
 
     Some(out)
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_json_repair_test.rs"]
-mod tests;

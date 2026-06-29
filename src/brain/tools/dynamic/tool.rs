@@ -230,7 +230,7 @@ impl DynamicTool {
         Self { def }
     }
 
-    fn extract_params(&self, input: &Value) -> Value {
+    pub(crate) fn extract_params(&self, input: &Value) -> Value {
         let mut out = serde_json::Map::new();
         let obj = input.as_object();
         for p in &self.def.params {
@@ -463,7 +463,3 @@ impl Tool for DynamicTool {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../../tests/brain_tools_dynamic_tool_test.rs"]
-mod tests;

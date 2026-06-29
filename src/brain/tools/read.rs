@@ -325,7 +325,3 @@ impl ReadTool {
         Ok((output, total_lines, warning))
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_read_test.rs"]
-mod tests;

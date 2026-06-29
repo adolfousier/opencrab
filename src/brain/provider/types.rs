@@ -339,7 +339,3 @@ pub struct MessageDelta {
     pub stop_reason: Option<StopReason>,
     pub stop_sequence: Option<String>,
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_provider_types_test.rs"]
-mod tests;

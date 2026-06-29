@@ -90,7 +90,3 @@ impl Tool for MemorySearchTool {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_memory_search_test.rs"]
-mod tests;

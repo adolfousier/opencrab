@@ -273,7 +273,3 @@ fn file_stale(path: &Path, cutoff: &SystemTime) -> bool {
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }
-
-#[cfg(test)]
-#[path = "../../../tests/brain_tools_subagent_status_test.rs"]
-mod tests;

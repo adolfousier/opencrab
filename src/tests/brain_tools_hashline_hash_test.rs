@@ -1,4 +1,4 @@
-use super::*;
+use crate::brain::tools::hashline::hash::*;
 
 #[test]
 fn test_hash_deterministic() {

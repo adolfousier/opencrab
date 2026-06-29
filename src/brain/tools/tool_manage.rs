@@ -317,7 +317,3 @@ impl ToolManageTool {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/brain_tools_tool_manage_test.rs"]
-mod tests;
