@@ -426,47 +426,95 @@ fn split_message_small_limit() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dedup_strips_exact_intermediate() {
+fn dedup_exact_match_suppresses_final() {
     let response = "Let me commit. Done. Committed as abc123.";
-    let intermediate = "Let me commit.";
-    let remaining = response.replace(intermediate, "").trim().to_string();
-    assert_eq!(remaining, "Done. Committed as abc123.");
+    let intermediates = ["Let me commit. Done. Committed as abc123."];
+    let result = if intermediates.iter().any(|i| i.trim() == response.trim()) {
+        String::new()
+    } else {
+        response.to_string()
+    };
+    assert!(result.is_empty(), "exact match should suppress final");
 }
 
 #[test]
-fn dedup_strips_multiple_intermediates() {
+fn dedup_substring_match_does_not_strip() {
+    // The #252 fix: streaming diff chunks are substrings of the final
+    // response. OLD behavior stripped them (breaking numbered lists).
+    // NEW behavior only suppresses on exact match.
     let response = "Step 1. Step 2. Final result.";
-    let intermediates = vec!["Step 1.", "Step 2."];
-    let mut remaining = response.to_string();
-    for inter in &intermediates {
-        remaining = remaining.replace(inter, "");
-    }
-    let remaining = remaining.trim().to_string();
-    assert_eq!(remaining, "Final result.");
+    let intermediates = ["Step 1.", "Step 2."];
+    let result = if intermediates.iter().any(|i| i.trim() == response.trim()) {
+        String::new()
+    } else {
+        response.to_string()
+    };
+    assert_eq!(result, "Step 1. Step 2. Final result.");
 }
 
 #[test]
 fn dedup_noop_when_intermediate_not_in_response() {
     let response = "Done. Committed as abc123.";
-    let intermediate = "Let me commit.";
-    let remaining = response.replace(intermediate, "").trim().to_string();
-    assert_eq!(remaining, "Done. Committed as abc123.");
+    let intermediates = ["Let me commit."];
+    let result = if intermediates.iter().any(|i| i.trim() == response.trim()) {
+        String::new()
+    } else {
+        response.to_string()
+    };
+    assert_eq!(result, "Done. Committed as abc123.");
 }
 
 #[test]
-fn dedup_empty_after_full_strip() {
+fn dedup_empty_after_exact_match() {
     let response = "Let me commit.";
-    let intermediate = "Let me commit.";
-    let remaining = response.replace(intermediate, "").trim().to_string();
-    assert!(remaining.is_empty());
+    let intermediates = ["Let me commit."];
+    let result = if intermediates.iter().any(|i| i.trim() == response.trim()) {
+        String::new()
+    } else {
+        response.to_string()
+    };
+    assert!(result.is_empty(), "exact match should suppress final");
 }
 
 #[test]
 fn dedup_preserves_unrelated_text() {
     let response = "Hello world. Goodbye moon.";
-    let intermediate = "Something else entirely.";
-    let remaining = response.replace(intermediate, "").trim().to_string();
-    assert_eq!(remaining, "Hello world. Goodbye moon.");
+    let intermediates = ["Something else entirely."];
+    let result = if intermediates.iter().any(|i| i.trim() == response.trim()) {
+        String::new()
+    } else {
+        response.to_string()
+    };
+    assert_eq!(result, "Hello world. Goodbye moon.");
+}
+
+#[test]
+fn dedup_trim_tolerates_whitespace() {
+    // Trailing newline/whitespace from streaming should not break exact match
+    let response = "All done!\n";
+    let intermediates = ["All done!"];
+    let result = if intermediates.iter().any(|i| i.trim() == response.trim()) {
+        String::new()
+    } else {
+        response.to_string()
+    };
+    assert!(result.is_empty(), "trimmed match should suppress final");
+}
+
+#[test]
+fn dedup_17_item_list_not_gutted() {
+    // Regression #252: 17-item numbered list sent as streaming diffs.
+    // Items 1-16 are diff intermediates, item 17 is the last chunk.
+    // Final response = all 17 items. OLD replace() stripped items 1-16.
+    // NEW exact-match keeps the full list intact.
+    let response = "1. Alpha\n2. Beta\n3. Gamma\n4. Delta\n5. Epsilon\n6. Zeta\n7. Eta\n8. Theta\n9. Iota\n10. Kappa\n11. Lambda\n12. Mu\n13. Nu\n14. Xi\n15. Omicron\n16. Pi\n17. Rho";
+    let intermediates = ["1. Alpha", "2. Beta", "17. Rho"];
+    let result = if intermediates.iter().any(|i| i.trim() == response.trim()) {
+        String::new()
+    } else {
+        response.to_string()
+    };
+    assert_eq!(result, response, "full list must survive dedup");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

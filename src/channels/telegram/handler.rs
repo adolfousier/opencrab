@@ -3307,20 +3307,13 @@ pub(crate) async fn handle_message(
                 sent.len(),
             );
             let pre_dedup_text = text_only.clone();
-            let text_only = if !sent.is_empty() {
-                let mut remaining = text_only.clone();
-                for intermediate in &sent {
-                    remaining = remaining.replace(intermediate.as_str(), "");
-                }
-                let result = remaining.trim().to_string();
-                if result != text_only {
-                    tracing::info!(
-                        "Telegram dedup: stripped {} chars, remaining len={}",
-                        text_only.len() - result.len(),
-                        result.len()
-                    );
-                }
-                result
+            let text_only = if !sent.is_empty() && sent.iter().any(|i| i.trim() == text_only.trim())
+            {
+                tracing::info!(
+                    "Telegram dedup: exact match found among {} intermediates — suppressing final response",
+                    sent.len()
+                );
+                String::new()
             } else {
                 text_only
             };
