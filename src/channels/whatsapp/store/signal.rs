@@ -157,6 +157,31 @@ impl SignalStore for Store {
         Ok(())
     }
 
+    async fn mark_prekeys_uploaded(&self, ids: &[u32]) -> Result<()> {
+        // Flip the uploaded flag for keys still present. UPDATE (not upsert) so a
+        // key consumed/deleted between the upload snapshot and this call stays
+        // deleted and is never resurrected.
+        let did = self.device_id;
+        let ids: Vec<u32> = ids.to_vec();
+        self.pool
+            .get()
+            .await
+            .map_err(pool_err)?
+            .interact(move |conn| {
+                for id in &ids {
+                    conn.execute(
+                        "UPDATE wa_prekeys SET uploaded = 1 WHERE id = ?1 AND device_id = ?2",
+                        params![id, did],
+                    )?;
+                }
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .map_err(interact_to_store_err)?
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     async fn load_prekey(&self, id: u32) -> Result<Option<Bytes>> {
         let did = self.device_id;
         let vec_opt = self

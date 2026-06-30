@@ -63,8 +63,10 @@ impl WhatsAppAgent {
                 let _ = std::fs::create_dir_all(parent);
             }
 
+            // `with_backend` takes the backend by value now (it wraps it
+            // internally); the old blanket `Backend for Arc<T>` impl is gone.
             let backend = match Store::new(db_path.to_string_lossy().as_ref()).await {
-                Ok(store) => Arc::new(store),
+                Ok(store) => store,
                 Err(e) => {
                     let msg = format!(
                         "Failed to open session store at {}: {}",
@@ -286,7 +288,7 @@ impl WhatsAppAgent {
                 .build()
                 .await;
 
-            let mut bot = match bot_result {
+            let bot = match bot_result {
                 Ok(b) => b,
                 Err(e) => {
                     let msg = format!("Failed to build WhatsApp bot: {}", e);
@@ -296,18 +298,13 @@ impl WhatsAppAgent {
                 }
             };
 
-            match bot.run().await {
-                Ok(handle) => {
-                    if let Err(e) = handle.await {
-                        tracing::warn!("WhatsApp bot handle cancelled: {:?}", e);
-                    }
-                }
-                Err(e) => {
-                    let msg = format!("WhatsApp agent failed to start: {}", e);
-                    tracing::error!("{}", msg);
-                    self.whatsapp_state.broadcast_error(&msg);
-                }
-            }
+            // `run()` drives the bot until the connection ends. The newer
+            // upstream API returns `()` (no Result, no separate handle —
+            // build/credential failures surface before this point). The live
+            // client is published to WhatsAppState from the Connected event
+            // callback, so we don't need a handle here.
+            bot.run().await;
+            tracing::info!("WhatsApp: bot run loop exited");
         })
     }
 }

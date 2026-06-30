@@ -41,7 +41,7 @@ pub const MSG_HEADER: &str = "\u{1f980} *OpenCrabs*";
 /// twice. The resend is spawned so the caller is never blocked.
 async fn send_resilient(client: &Arc<Client>, jid: wacore_binary::jid::Jid, msg: Message) {
     let opts = SendOptions {
-        message_id: Some(client.generate_message_id().await),
+        message_id: Some(client.generate_message_id()),
         ..Default::default()
     };
     if let Err(e) = client

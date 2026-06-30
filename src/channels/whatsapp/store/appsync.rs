@@ -181,6 +181,27 @@ impl AppSyncStore for Store {
         Ok(())
     }
 
+    async fn clear_mutation_macs(&self, name: &str) -> Result<()> {
+        // Snapshot re-sync rebuilds the MAC store from the snapshot; leftover
+        // entries for this collection would corrupt the next patch's ltHash.
+        let n = name.to_string();
+        let did = self.device_id;
+        self.pool
+            .get()
+            .await
+            .map_err(pool_err)?
+            .interact(move |conn| {
+                conn.execute(
+                    "DELETE FROM wa_app_state_mutation_macs WHERE name = ?1 AND device_id = ?2",
+                    params![n, did],
+                )
+            })
+            .await
+            .map_err(interact_to_store_err)?
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     async fn get_latest_sync_key_id(&self) -> Result<Option<Vec<u8>>> {
         let did = self.device_id;
         self.pool

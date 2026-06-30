@@ -5,6 +5,7 @@
 
 mod appsync;
 mod device;
+mod msgsecret;
 mod protocol;
 mod signal;
 
@@ -181,6 +182,16 @@ impl Store {
                 created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
                 device_id   INTEGER NOT NULL,
                 PRIMARY KEY (chat_jid, message_id, device_id)
+            );
+            CREATE TABLE IF NOT EXISTS wa_msg_secrets (
+                chat        TEXT NOT NULL,
+                sender      TEXT NOT NULL,
+                msg_id      TEXT NOT NULL,
+                secret      BLOB NOT NULL,
+                expires_at  INTEGER NOT NULL DEFAULT 0,
+                message_ts  INTEGER NOT NULL DEFAULT 0,
+                device_id   INTEGER NOT NULL,
+                PRIMARY KEY (chat, sender, msg_id, device_id)
             );
         "#;
 
