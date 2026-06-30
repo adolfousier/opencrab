@@ -775,17 +775,19 @@ fn vision_by_name(config: &Config, name: &str) -> Option<(String, String, String
     {
         let cfg = config.providers.custom.as_ref()?.get(name)?;
         if cfg.enabled
-            && let Some(vm) = &cfg.vision_model {
-                return Some(vision_tuple(cfg, vm));
-            }
+            && let Some(vm) = &cfg.vision_model
+        {
+            return Some(vision_tuple(cfg, vm));
+        }
         return None;
     }
     if let Some(custom_name) = name.strip_prefix("custom:") {
         let cfg = config.providers.custom.as_ref()?.get(custom_name)?;
         if cfg.enabled
-            && let Some(vm) = &cfg.vision_model {
-                return Some(vision_tuple(cfg, vm));
-            }
+            && let Some(vm) = &cfg.vision_model
+        {
+            return Some(vision_tuple(cfg, vm));
+        }
         return None;
     }
     // Built-in registry.
@@ -793,9 +795,10 @@ fn vision_by_name(config: &Config, name: &str) -> Option<(String, String, String
         if reg.session_id == name || reg.aliases.contains(&name) {
             let cfg = (reg.config_field)(config)?;
             if cfg.enabled
-                && let Some(vm) = &cfg.vision_model {
-                    return Some(vision_tuple(cfg, vm));
-                }
+                && let Some(vm) = &cfg.vision_model
+            {
+                return Some(vision_tuple(cfg, vm));
+            }
             return None;
         }
     }
