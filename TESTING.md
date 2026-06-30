@@ -80,6 +80,7 @@ cargo test --all-features
 | Tests — Phantom Cleanup Intent | 7 | `src/tests/phantom_cleanup_intent_test.rs` |
 | Tests — Qwen Tool Marker Strip | 7 | `src/tests/qwen_tool_marker_strip_test.rs` |
 | Tests — Telegram Impersonation | 7 | `src/tests/telegram_impersonation_test.rs` |
+| Tests — Telegram ACL | 10 | `src/tests/telegram_acl_test.rs` |
 | Tests — Subagent Tool Description | 7 | `src/tests/subagent_tool_description_test.rs` |
 | Tests — Fallback Streak | 7 | `src/tests/fallback_streak_test.rs` |
 | Tests — Phantom Work Announcement | 7 | `src/tests/phantom_work_announcement_test.rs` |
@@ -193,6 +194,7 @@ cargo test --all-features
 | **Brain Tools — Read** | 4 | `src/brain/tools/read.rs` |
 | **Brain Tools — Memory Search** | 2 | `src/brain/tools/memory_search.rs` |
 | **Brain Tools — Trait** | 3 | `src/brain/tools/trait.rs` |
+| **Brain Tools — WhatsApp Send** | 19 | `src/tests/brain_tools_whatsapp_send_test.rs` |
 | **Channels — Voice Local Whisper** | 25 | `src/channels/voice/local_whisper.rs` |
 | **Channels — Voice Service** | 14 | `src/channels/voice/service.rs` |
 | **Channels — Voice Local TTS** | 14 | `src/channels/voice/local_tts.rs` |
@@ -250,7 +252,7 @@ cargo test --all-features
 | Tests — Onboarding Field Nav | 49 | `src/tests/onboarding_field_nav_test.rs` |
 | Tests — GitHub Copilot Provider | 38 | `src/tests/github_provider_test.rs` |
 | Tests — File Extract | 37 | `src/tests/file_extract_test.rs` |
-| Tests — Fallback Vision | 40 | `src/tests/fallback_vision_test.rs` |
+| Tests — Fallback Vision | 26 | `src/tests/fallback_vision_test.rs` |
 | Tests — CLI Parsing | 28 | `src/tests/cli_test.rs` |
 | Tests — Custom Provider | 27 | `src/tests/custom_provider_test.rs` |
 | Tests — Onboarding Navigation | 26 | `src/tests/onboarding_navigation_test.rs` |
@@ -386,7 +388,7 @@ cargo test --all-features
 | Tests — Usage Cache | 15 | `src/tests/usage_cache_test.rs` |
 | Tests — Config Auto-Repair | 7 | `src/tests/config_repair_test.rs` — closes unterminated arrays/inline tables in a broken `config.toml`, gated on the result re-parsing; leaves valid/nested/string cases and unfixable errors alone |
 | Tests — Config Last-Good Recovery | 3 | `src/tests/config_last_good_recovery_test.rs` — a broken config never poisons the last-good snapshot; fixable configs auto-repair in place; unfixable ones recover from last-good (preserves auto-always so yolo mode survives a typo) |
-| **Total** | **4,248** | Authoritative count from `cargo test --all-features` (lib test binary): 4,248 run by default + 24 `#[ignore]`d. The per-category rows above are a maintained snapshot. Re-run `cargo test` for the live number. |
+| **Total** | **4,336** | Authoritative count from `cargo test --all-features` (lib test binary): 4,336 run by default + 28 `#[ignore]`d. The per-category rows above are a maintained snapshot. Re-run `cargo test` for the live number. |
 
 ---
 
