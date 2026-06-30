@@ -21,6 +21,7 @@ mod fallback_chain {
             enabled: true,
             provider: Some("openrouter".into()),
             providers: vec![],
+            vision: vec![],
         };
         assert_eq!(fallback_chain(&cfg), vec!["openrouter"]);
     }
@@ -31,6 +32,7 @@ mod fallback_chain {
             enabled: true,
             provider: None,
             providers: vec!["anthropic".into(), "openai".into()],
+            vision: vec![],
         };
         assert_eq!(fallback_chain(&cfg), vec!["anthropic", "openai"]);
     }
@@ -41,6 +43,7 @@ mod fallback_chain {
             enabled: true,
             provider: Some("gemini".into()),
             providers: vec!["anthropic".into(), "openai".into()],
+            vision: vec![],
         };
         assert_eq!(fallback_chain(&cfg), vec!["anthropic", "openai", "gemini"]);
     }
@@ -51,6 +54,7 @@ mod fallback_chain {
             enabled: true,
             provider: Some("anthropic".into()),
             providers: vec!["anthropic".into(), "openai".into()],
+            vision: vec![],
         };
         // "anthropic" already in array — should NOT be appended again
         assert_eq!(fallback_chain(&cfg), vec!["anthropic", "openai"]);
@@ -62,6 +66,7 @@ mod fallback_chain {
             enabled: true,
             provider: None,
             providers: vec!["minimax".into()],
+            vision: vec![],
         };
         assert_eq!(fallback_chain(&cfg), vec!["minimax"]);
     }
@@ -467,6 +472,7 @@ mod factory_fallback {
                     enabled: false,
                     provider: Some("anthropic".into()),
                     providers: vec![],
+                    vision: vec![],
                 }),
                 ..Default::default()
             },
@@ -502,6 +508,7 @@ mod factory_fallback {
                     enabled: true,
                     provider: None,
                     providers: vec!["anthropic".into(), "openai".into()],
+                    vision: vec![],
                 }),
                 ..Default::default()
             },

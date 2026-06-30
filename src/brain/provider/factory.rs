@@ -710,14 +710,31 @@ async fn create_fallback(config: &Config, fallback_type: &str) -> Result<Arc<dyn
 }
 
 /// Returns `(api_key, base_url, vision_model)` for the first enabled provider
-/// that has a `vision_model` configured. Scans ALL enabled providers in
-/// REGISTRATIONS priority order, not just the active one — the active provider
-/// (from `active_provider_and_model`) may lack a `vision_model` while another
-/// enabled provider has one (e.g. minimax when opencode is active).
+/// that has a `vision_model` configured.
+///
+/// Resolution order:
+/// 1. User-configured `[providers.fallback] vision = [...]` chain (first
+///    enabled match with a `vision_model` wins).
+/// 2. All enabled built-in providers in REGISTRATIONS priority order.
+/// 3. All enabled custom providers.
+///
+/// The fallback chain lets the user pin a specific provider for vision
+/// without affecting the active chat provider.  An empty chain is a
+/// no-op and falls straight through to the scan-all path.
+///
 /// Used to register the provider-native `analyze_image` tool when Gemini
-/// vision isn't set up. See issue #253.
+/// vision isn't set up.  See issue #253.
 pub fn active_provider_vision(config: &Config) -> Option<(String, String, String)> {
-    // Scan all built-in providers in REGISTRATIONS priority order.
+    // 1. User-configured vision fallback chain (priority override).
+    if let Some(fallback) = &config.providers.fallback {
+        for name in &fallback.vision {
+            if let Some(result) = vision_by_name(config, name) {
+                return Some(result);
+            }
+        }
+    }
+
+    // 2. Scan all built-in providers in REGISTRATIONS priority order.
     for reg in REGISTRATIONS.iter() {
         if let Some(cfg) = (reg.config_field)(config)
             && cfg.enabled
@@ -726,8 +743,9 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
             return Some(vision_tuple(cfg, vision_model));
         }
     }
-    // Check custom providers — the `config_field` for Custom returns `None`,
-    // so custom entries are never found via the REGISTRATIONS loop.
+    // 3. Check custom providers — the `config_field` for Custom returns
+    //    `None`, so custom entries are never found via the REGISTRATIONS
+    //    loop.
     if let Some(customs) = &config.providers.custom {
         for cfg in customs.values() {
             if cfg.enabled
@@ -738,6 +756,52 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
         }
     }
     // No provider-native vision — let cli/ui.rs fall back to Gemini if configured
+    None
+}
+
+/// Look up a single provider by `name` (REGISTRATIONS session_id / alias,
+/// or custom map key) and return its `(api_key, base_url, vision_model)`
+/// if it is enabled **and** has a `vision_model` configured.  Returns
+/// `None` when the provider doesn't exist, is disabled, or has no
+/// `vision_model`.
+fn vision_by_name(config: &Config, name: &str) -> Option<(String, String, String)> {
+    // Custom entries take precedence (same convention as create_fallback).
+    if !name.starts_with("custom:")
+        && config
+            .providers
+            .custom
+            .as_ref()
+            .is_some_and(|m| m.contains_key(name))
+    {
+        let cfg = config.providers.custom.as_ref()?.get(name)?;
+        if cfg.enabled {
+            if let Some(vm) = &cfg.vision_model {
+                return Some(vision_tuple(cfg, vm));
+            }
+        }
+        return None;
+    }
+    if let Some(custom_name) = name.strip_prefix("custom:") {
+        let cfg = config.providers.custom.as_ref()?.get(custom_name)?;
+        if cfg.enabled {
+            if let Some(vm) = &cfg.vision_model {
+                return Some(vision_tuple(cfg, vm));
+            }
+        }
+        return None;
+    }
+    // Built-in registry.
+    for reg in REGISTRATIONS.iter() {
+        if reg.session_id == name || reg.aliases.contains(&name) {
+            let cfg = (reg.config_field)(config)?;
+            if cfg.enabled {
+                if let Some(vm) = &cfg.vision_model {
+                    return Some(vision_tuple(cfg, vm));
+                }
+            }
+            return None;
+        }
+    }
     None
 }
 

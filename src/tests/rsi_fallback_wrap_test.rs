@@ -35,6 +35,7 @@ async fn rsi_wrap_returns_raw_when_fallback_disabled() {
         enabled: false,
         providers: vec!["minimax".to_string()],
         provider: None,
+        vision: vec![],
     });
 
     let primary: Arc<dyn Provider> = Arc::new(crate::tests::agent_service_mocks::MockProvider);
@@ -77,6 +78,7 @@ async fn rsi_wrap_actually_wraps_when_valid_fallback_configured() {
         enabled: true,
         providers: vec!["stub-fallback".to_string()],
         provider: None,
+        vision: vec![],
     });
 
     let primary: Arc<dyn Provider> = Arc::new(crate::tests::agent_service_mocks::MockProvider);
@@ -104,6 +106,7 @@ async fn rsi_wrap_skips_fallback_with_same_name_as_primary() {
         // MockProvider.name() returns "mock" — same as this fallback id.
         providers: vec!["mock".to_string()],
         provider: None,
+        vision: vec![],
     });
 
     let primary: Arc<dyn Provider> = Arc::new(crate::tests::agent_service_mocks::MockProvider);
