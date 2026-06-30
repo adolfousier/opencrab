@@ -244,4 +244,7 @@ harness = false
 path = "src/benches/memory.rs"
 
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(crates_publish)'] }
+
 [lints.clippy]

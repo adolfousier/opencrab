@@ -40,8 +40,12 @@ pub const MSG_HEADER: &str = "\u{1f980} *OpenCrabs*";
 /// recipients dedupe by id, so a first attempt that DID deliver is never shown
 /// twice. The resend is spawned so the caller is never blocked.
 async fn send_resilient(client: &Arc<Client>, jid: wacore_binary::jid::Jid, msg: Message) {
+    #[cfg(crates_publish)]
+    let _gen_id = client.generate_message_id().await;
+    #[cfg(not(crates_publish))]
+    let _gen_id = client.generate_message_id();
     let opts = SendOptions {
-        message_id: Some(client.generate_message_id()),
+        message_id: Some(_gen_id),
         ..Default::default()
     };
     if let Err(e) = client

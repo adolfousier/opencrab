@@ -5,6 +5,7 @@
 
 mod appsync;
 mod device;
+#[cfg(not(crates_publish))]
 mod msgsecret;
 mod protocol;
 mod signal;

@@ -102,8 +102,12 @@ impl WhatsAppAgent {
             let channel_msg_repo = self.channel_msg_repo.clone();
             let owner_jid_clone = owner_jid.clone();
 
-            let bot_result = Bot::builder()
-                .with_backend(backend)
+            let builder = Bot::builder();
+            #[cfg(crates_publish)]
+            let builder = builder.with_backend(std::sync::Arc::new(backend));
+            #[cfg(not(crates_publish))]
+            let builder = builder.with_backend(backend);
+            let bot_result = builder
                 .with_transport_factory(TokioWebSocketTransportFactory::new())
                 .with_http_client(UreqHttpClient::new())
                 .with_runtime(TokioRuntime)
@@ -288,7 +292,18 @@ impl WhatsAppAgent {
                 .build()
                 .await;
 
+            #[cfg(not(crates_publish))]
             let bot = match bot_result {
+                Ok(b) => b,
+                Err(e) => {
+                    let msg = format!("Failed to build WhatsApp bot: {}", e);
+                    tracing::error!("WhatsApp: {}", msg);
+                    self.whatsapp_state.broadcast_error(&msg);
+                    return;
+                }
+            };
+            #[cfg(crates_publish)]
+            let mut bot = match bot_result {
                 Ok(b) => b,
                 Err(e) => {
                     let msg = format!("Failed to build WhatsApp bot: {}", e);
@@ -303,7 +318,10 @@ impl WhatsAppAgent {
             // build/credential failures surface before this point). The live
             // client is published to WhatsAppState from the Connected event
             // callback, so we don't need a handle here.
+            #[cfg(not(crates_publish))]
             bot.run().await;
+            #[cfg(crates_publish)]
+            let _ = bot.run().await;
             tracing::info!("WhatsApp: bot run loop exited");
         })
     }

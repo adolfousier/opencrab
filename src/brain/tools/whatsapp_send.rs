@@ -705,17 +705,31 @@ impl Tool for WhatsAppSendTool {
                     ..Default::default()
                 };
 
+                #[cfg(crates_publish)]
+                let boxed_reaction = waproto::whatsapp::message::ReactionMessage {
+                    key: Some(message_key),
+                    text: if emoji.is_empty() {
+                        None
+                    } else {
+                        Some(emoji.clone())
+                    },
+                    sender_timestamp_ms: Some(chrono::Utc::now().timestamp_millis()),
+                    ..Default::default()
+                };
+                #[cfg(not(crates_publish))]
+                let boxed_reaction = Box::new(waproto::whatsapp::message::ReactionMessage {
+                    key: Some(message_key),
+                    text: if emoji.is_empty() {
+                        None
+                    } else {
+                        Some(emoji.clone())
+                    },
+                    sender_timestamp_ms: Some(chrono::Utc::now().timestamp_millis()),
+                    ..Default::default()
+                });
+
                 let reaction_msg = waproto::whatsapp::Message {
-                    reaction_message: Some(Box::new(waproto::whatsapp::message::ReactionMessage {
-                        key: Some(message_key),
-                        text: if emoji.is_empty() {
-                            None
-                        } else {
-                            Some(emoji.clone())
-                        },
-                        sender_timestamp_ms: Some(chrono::Utc::now().timestamp_millis()),
-                        ..Default::default()
-                    })),
+                    reaction_message: Some(boxed_reaction),
                     ..Default::default()
                 };
                 match client.send_message(jid, reaction_msg).await {
