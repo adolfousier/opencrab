@@ -38,7 +38,7 @@ impl WhatsAppSendTool {
 
 /// Extract a required non-empty string param, returning ToolResult::error on failure.
 #[allow(clippy::result_large_err)]
-fn get_str<'a>(input: &'a Value, key: &str) -> std::result::Result<&'a str, ToolResult> {
+pub(crate) fn get_str<'a>(input: &'a Value, key: &str) -> std::result::Result<&'a str, ToolResult> {
     match input.get(key).and_then(|v| v.as_str()) {
         Some(s) if !s.is_empty() => Ok(s),
         _ => Err(ToolResult::error(format!(
@@ -48,7 +48,7 @@ fn get_str<'a>(input: &'a Value, key: &str) -> std::result::Result<&'a str, Tool
 }
 
 /// Extract an optional f64 param.
-fn get_f64(input: &Value, key: &str) -> Option<f64> {
+pub(crate) fn get_f64(input: &Value, key: &str) -> Option<f64> {
     input.get(key).and_then(|v| v.as_f64())
 }
 
@@ -166,7 +166,7 @@ async fn read_local_media(
 }
 
 /// Detect MIME type from file extension.
-fn mime_from_extension(path: &str) -> Option<String> {
+pub(crate) fn mime_from_extension(path: &str) -> Option<String> {
     let ext = path.rsplit('.').next()?.to_lowercase();
     match ext.as_str() {
         "jpg" | "jpeg" => Some("image/jpeg".to_string()),
@@ -210,7 +210,7 @@ async fn upload_media(
 }
 
 /// Build a vCard string from name and phone number.
-fn build_vcard(name: &str, phone: &str) -> String {
+pub(crate) fn build_vcard(name: &str, phone: &str) -> String {
     format!(
         "BEGIN:VCARD\nVERSION:3.0\nFN:{}\nTEL;TYPE=CELL:{}\nEND:VCARD",
         name, phone
