@@ -1503,6 +1503,13 @@ pub struct FallbackProviderConfig {
     /// Each name must match a configured provider (e.g. "anthropic", "openrouter").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<String>,
+
+    /// Ordered list of provider names to check for `vision_model` before
+    /// falling back to the default REGISTRATIONS scan.  Each name must
+    /// match a configured provider (e.g. "minimax", "anthropic").
+    /// Empty = no override, scan all providers as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vision: Vec<String>,
 }
 
 /// STT (Speech-to-Text) provider configurations
