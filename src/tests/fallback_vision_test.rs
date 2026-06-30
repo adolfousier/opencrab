@@ -627,6 +627,8 @@ mod active_provider_vision {
 
     #[test]
     fn picks_first_provider_with_vision_by_priority() {
+        // REGISTRATIONS order: OpenAI (pos 9) before Minimax (pos 13).
+        // When both have vision_model, the one earlier in REGISTRATIONS wins.
         let config = Config {
             providers: ProviderConfigs {
                 minimax: Some(ProviderConfig {
@@ -653,7 +655,41 @@ mod active_provider_vision {
         };
 
         let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
-        // Minimax has higher priority
+        // OpenAI is earlier in REGISTRATIONS priority order
+        assert_eq!(api_key, "openai-key");
+        assert_eq!(vision_model, "gpt-5-nano");
+    }
+
+    #[test]
+    fn issue_253_active_provider_without_vision_falls_through() {
+        // Reproduces #253: opencode (requires_api_key=false) is the active
+        // provider because it's registered before minimax, but opencode has
+        // no vision_model. The scan should continue past it and find minimax.
+        let config = Config {
+            providers: ProviderConfigs {
+                opencode: Some(ProviderConfig {
+                    enabled: true,
+                    api_key: None,
+                    default_model: Some("opencode-model".into()),
+                    vision_model: None,
+                    ..Default::default()
+                }),
+                minimax: Some(ProviderConfig {
+                    enabled: true,
+                    api_key: Some("minimax-key".into()),
+                    base_url: Some("https://api.minimax.io/v1".into()),
+                    default_model: Some("MiniMax-M2.7".into()),
+                    vision_model: Some("MiniMax-Text-01".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // opencode is the active provider (first enabled in provider_registry),
+        // but has no vision_model — minimax's should still be found
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
         assert_eq!(api_key, "minimax-key");
         assert_eq!(vision_model, "MiniMax-Text-01");
     }

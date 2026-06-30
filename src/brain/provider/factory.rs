@@ -709,78 +709,63 @@ async fn create_fallback(config: &Config, fallback_type: &str) -> Result<Arc<dyn
     ))
 }
 
-/// Returns `(api_key, base_url, vision_model)` for the first active provider
-/// that has a `vision_model` configured. Used to register the provider-native
-/// `analyze_image` tool when Gemini vision isn't set up.
+/// Returns `(api_key, base_url, vision_model)` for the first enabled provider
+/// that has a `vision_model` configured. Scans ALL enabled providers in
+/// REGISTRATIONS priority order, not just the active one — the active provider
+/// (from `active_provider_and_model`) may lack a `vision_model` while another
+/// enabled provider has one (e.g. minimax when opencode is active).
+/// Used to register the provider-native `analyze_image` tool when Gemini
+/// vision isn't set up. See issue #253.
 pub fn active_provider_vision(config: &Config) -> Option<(String, String, String)> {
-    // Get the ACTUAL active provider — don't iterate all providers,
-    // otherwise MiniMax wins just because it's listed before OpenRouter.
-    let (name, _) = config.providers.active_provider_and_model();
-
-    // Custom entries take precedence over built-in names. If the user
-    // created a custom provider literally named "opencode" / "ollama" /
-    // anything that collides with a built-in id, the custom entry wins.
-    let custom_cfg = if !name.starts_with("custom:")
-        && config
-            .providers
-            .custom
-            .as_ref()
-            .is_some_and(|m| m.contains_key(name.as_str()))
-    {
-        config
-            .providers
-            .custom
-            .as_ref()
-            .and_then(|m| m.get(&name))
-            .cloned()
-    } else if let Some(custom_name) = name.strip_prefix("custom:") {
-        config
-            .providers
-            .custom
-            .as_ref()
-            .and_then(|m| m.get(custom_name))
-            .cloned()
-    } else {
-        None
-    };
-
-    // Try built-in registry
-    let native_cfg: Option<&ProviderConfig> = REGISTRATIONS
-        .iter()
-        .find(|reg| reg.session_id == name || reg.aliases.contains(&name.as_str()))
-        .and_then(|reg| (reg.config_field)(config));
-
-    // Custom wins if it exists (same priority as create_provider_by_name)
-    let active_cfg = custom_cfg.as_ref().or(native_cfg);
-
-    if let Some(cfg) = active_cfg
-        && let Some(vision_model) = &cfg.vision_model
-    {
-        // A configured `vision_model` is the gate — NOT the presence of an API
-        // key. Keyless and local providers (Ollama, llama.cpp, LM Studio, etc.)
-        // have no key but still serve vision, so requiring one wrongly hid
-        // `analyze_image` from those installs. A real user key wins; any
-        // keyless/local provider gets an empty Bearer. A provider that genuinely
-        // needs a key but has none simply fails at call time with a clear auth
-        // error, which is better than silently having no vision tool at all.
-        let api_key = cfg
-            .api_key
-            .clone()
-            .filter(|k| !k.is_empty())
-            .unwrap_or_default();
-        let base_url = cfg
-            .base_url
-            .clone()
-            .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
-        let base_url = if base_url.contains("/chat/completions") {
-            base_url
-        } else {
-            format!("{}/chat/completions", base_url.trim_end_matches('/'))
-        };
-        return Some((api_key, base_url, vision_model.clone()));
+    // Scan all built-in providers in REGISTRATIONS priority order.
+    for reg in REGISTRATIONS.iter() {
+        if let Some(cfg) = (reg.config_field)(config)
+            && cfg.enabled
+            && let Some(vision_model) = &cfg.vision_model
+        {
+            return Some(vision_tuple(cfg, vision_model));
+        }
+    }
+    // Check custom providers — the `config_field` for Custom returns `None`,
+    // so custom entries are never found via the REGISTRATIONS loop.
+    if let Some(customs) = &config.providers.custom {
+        for cfg in customs.values() {
+            if cfg.enabled
+                && let Some(vision_model) = &cfg.vision_model
+            {
+                return Some(vision_tuple(cfg, vision_model));
+            }
+        }
     }
     // No provider-native vision — let cli/ui.rs fall back to Gemini if configured
     None
+}
+
+/// Shared helper: extract `(api_key, base_url, vision_model)` from a provider config.
+///
+/// A configured `vision_model` is the gate — NOT the presence of an API
+/// key. Keyless and local providers (Ollama, llama.cpp, LM Studio, etc.)
+/// have no key but still serve vision, so requiring one wrongly hid
+/// `analyze_image` from those installs. A real user key wins; any
+/// keyless/local provider gets an empty Bearer. A provider that genuinely
+/// needs a key but has none simply fails at call time with a clear auth
+/// error, which is better than silently having no vision tool at all.
+fn vision_tuple(cfg: &ProviderConfig, vision_model: &str) -> (String, String, String) {
+    let api_key = cfg
+        .api_key
+        .clone()
+        .filter(|k| !k.is_empty())
+        .unwrap_or_default();
+    let base_url = cfg
+        .base_url
+        .clone()
+        .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
+    let base_url = if base_url.contains("/chat/completions") {
+        base_url
+    } else {
+        format!("{}/chat/completions", base_url.trim_end_matches('/'))
+    };
+    (api_key, base_url, vision_model.to_string())
 }
 
 /// Returns `(api_key, base_url, generation_model)` for the active provider
