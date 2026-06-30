@@ -298,9 +298,13 @@ impl Tool for PlanTool {
          dependencies), so the plan doubles as durable memory across context compactions — call \
          `start` with no args to re-surface the in-progress task's details after a compaction. \
          \n\nWHEN TO USE: call `plan` BEFORE starting any task with 3+ distinct steps, dependencies \
-         between steps, or that touches multiple files; when the user asks for a plan/roadmap; when a \
-         request describes >2 deliverables; or when the user will step away while you work. Skip \
-         planning for trivial single-tool answers. \
+         between steps, that touches multiple files, or that spans multiple commits; when the user \
+         asks for a plan/roadmap; when a request describes >2 deliverables; or when the user will \
+         step away while you work. Skip planning for trivial single-tool answers. \
+         \n\nMARK PROGRESS AS YOU GO: after each task's work is VERIFIED done (command exited 0, file \
+         written, tests/clippy pass), immediately call `complete` for it before moving on. The TUI \
+         progress widget counts only completed tasks, so a stale 0/N while work is done means a \
+         `complete` was skipped, not that progress is tracked some other way. \
          \n\nDETAILS: `start` is idempotent on an in-progress task and resets a failed task for retry; \
          the first `start` auto-approves the plan. `complete` takes action=\"success\" (default), \
          \"fail\", or \"skip\". Day-of-week of dependencies is by task order number (1-based). \
