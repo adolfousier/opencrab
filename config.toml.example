@@ -244,6 +244,16 @@ enabled = false
 providers = ["openrouter", "anthropic"]  # Tried in order on failure
 # provider = "openrouter"               # Legacy: single fallback (use providers array instead)
 
+# Vision provider priority — overrides the default REGISTRATIONS scan
+# order for the analyze_image tool.  Each entry is a provider name
+# (e.g. "minimax", "anthropic").  Resolution order:
+#   1. This list (first enabled match with vision_model wins)
+#   2. All enabled providers in REGISTRATIONS priority order
+#   3. Custom providers
+#   4. Gemini [image.vision] fallback
+# Empty or absent = scan all providers as before.
+# vision = ["minimax", "anthropic"]
+
 # ========================================
 # STT (Speech-to-Text) Providers
 # ========================================
