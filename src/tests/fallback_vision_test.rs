@@ -702,7 +702,280 @@ mod active_provider_vision {
     }
 }
 
-// --- Active provider generation discovery ---
+// --- Vision fallback chain ([providers.fallback].vision) ---
+
+mod vision_fallback_chain {
+    use crate::brain::provider::factory::active_provider_vision;
+    use crate::config::{Config, FallbackProviderConfig, ProviderConfig, ProviderConfigs};
+    use std::collections::BTreeMap;
+
+    /// Helper: config with two built-in providers. openai is earlier in
+    /// REGISTRATIONS, minimax is later.
+    fn two_providers_config() -> Config {
+        Config {
+            providers: ProviderConfigs {
+                openai: Some(ProviderConfig {
+                    enabled: true,
+                    api_key: Some("openai-key".into()),
+                    base_url: None,
+                    default_model: None,
+                    models: vec![],
+                    vision_model: Some("gpt-5-nano".into()),
+                    ..Default::default()
+                }),
+                minimax: Some(ProviderConfig {
+                    enabled: true,
+                    api_key: Some("minimax-key".into()),
+                    base_url: Some("https://api.minimax.io/v1".into()),
+                    default_model: None,
+                    models: vec![],
+                    vision_model: Some("MiniMax-Text-01".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn empty_chain_falls_through_to_scan() {
+        // Empty vision chain = no override, scan-all still works.
+        let mut config = two_providers_config();
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec![],
+            ..Default::default()
+        });
+
+        let (_, _, vision_model) = active_provider_vision(&config).unwrap();
+        // openai is earlier in REGISTRATIONS
+        assert_eq!(vision_model, "gpt-5-nano");
+    }
+
+    #[test]
+    fn no_fallback_at_all_falls_through_to_scan() {
+        // No fallback configured at all — scan-all still works.
+        let config = two_providers_config();
+        assert!(config.providers.fallback.is_none());
+
+        let (_, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(vision_model, "gpt-5-nano");
+    }
+
+    #[test]
+    fn chain_match_wins() {
+        // Chain says minimax first — minimax should win even though
+        // openai is earlier in REGISTRATIONS.
+        let mut config = two_providers_config();
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["minimax".into()],
+            ..Default::default()
+        });
+
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "minimax-key");
+        assert_eq!(vision_model, "MiniMax-Text-01");
+    }
+
+    #[test]
+    fn chain_first_match_wins() {
+        // Chain has both minimax and openai — minimax is first in the
+        // chain so it wins.
+        let mut config = two_providers_config();
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["minimax".into(), "openai".into()],
+            ..Default::default()
+        });
+
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "minimax-key");
+        assert_eq!(vision_model, "MiniMax-Text-01");
+    }
+
+    #[test]
+    fn chain_second_match_wins_when_first_fails() {
+        // Chain has openai first (disabled), then minimax.
+        // openai is disabled so minimax should win.
+        let mut config = two_providers_config();
+        config.providers.openai.as_mut().unwrap().enabled = false;
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["openai".into(), "minimax".into()],
+            ..Default::default()
+        });
+
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "minimax-key");
+        assert_eq!(vision_model, "MiniMax-Text-01");
+    }
+
+    #[test]
+    fn chain_disabled_entry_skipped() {
+        // Chain entry is disabled — should be skipped, fall through.
+        let mut config = two_providers_config();
+        config.providers.minimax.as_mut().unwrap().enabled = false;
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["minimax".into()],
+            ..Default::default()
+        });
+
+        // minimax is disabled in chain, falls through to scan-all
+        // where openai (earlier in REGISTRATIONS) wins.
+        let (_, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(vision_model, "gpt-5-nano");
+    }
+
+    #[test]
+    fn chain_entry_no_vision_model_skipped() {
+        // Chain entry has no vision_model — should be skipped.
+        let mut config = two_providers_config();
+        config.providers.openai.as_mut().unwrap().vision_model = None;
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["openai".into()],
+            ..Default::default()
+        });
+
+        // openai has no vision_model in chain, falls through to scan-all
+        // where minimax wins (only one with vision_model).
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "minimax-key");
+        assert_eq!(vision_model, "MiniMax-Text-01");
+    }
+
+    #[test]
+    fn chain_nonexistent_provider_skipped() {
+        // Chain entry references a provider that doesn't exist in config.
+        let mut config = two_providers_config();
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["nonexistent".into()],
+            ..Default::default()
+        });
+
+        // nonexistent is skipped, falls through to scan-all where openai wins.
+        let (_, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(vision_model, "gpt-5-nano");
+    }
+
+    #[test]
+    fn chain_beats_scan_all_priority() {
+        // minimax is later in REGISTRATIONS than openai, but the chain
+        // pins minimax first — chain should override scan-all order.
+        let mut config = two_providers_config();
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["minimax".into()],
+            ..Default::default()
+        });
+
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "minimax-key");
+        assert_eq!(vision_model, "MiniMax-Text-01");
+    }
+
+    #[test]
+    fn scan_all_wins_when_all_chain_entries_fail() {
+        // All chain entries fail (disabled, no vision_model, nonexistent).
+        // Falls through to scan-all.
+        let mut config = two_providers_config();
+        config.providers.openai.as_mut().unwrap().vision_model = None;
+        config.providers.minimax.as_mut().unwrap().enabled = false;
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["nonexistent".into(), "openai".into(), "minimax".into()],
+            ..Default::default()
+        });
+
+        // nonexistent skipped, openai has no vision_model, minimax disabled.
+        // Both scan-all entries also fail (openai no vision, minimax disabled).
+        assert!(active_provider_vision(&config).is_none());
+    }
+
+    #[test]
+    fn chain_custom_provider() {
+        // Custom provider in the fallback chain.
+        let mut custom = BTreeMap::new();
+        custom.insert(
+            "localllm".to_string(),
+            ProviderConfig {
+                enabled: true,
+                api_key: None,
+                base_url: Some("http://localhost:11434/v1".into()),
+                vision_model: Some("llava".into()),
+                ..Default::default()
+            },
+        );
+
+        let mut config = two_providers_config();
+        config.providers.custom = Some(custom);
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["localllm".into()],
+            ..Default::default()
+        });
+
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "");
+        assert_eq!(vision_model, "llava");
+    }
+
+    #[test]
+    fn chain_custom_with_prefix() {
+        // custom:name prefix convention.
+        let mut custom = BTreeMap::new();
+        custom.insert(
+            "myvision".to_string(),
+            ProviderConfig {
+                enabled: true,
+                api_key: Some("custom-key".into()),
+                base_url: Some("http://localhost:8080/v1".into()),
+                vision_model: Some("my-model".into()),
+                ..Default::default()
+            },
+        );
+
+        let mut config = two_providers_config();
+        config.providers.custom = Some(custom);
+        config.providers.fallback = Some(FallbackProviderConfig {
+            enabled: true,
+            vision: vec!["custom:myvision".into()],
+            ..Default::default()
+        });
+
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "custom-key");
+        assert_eq!(vision_model, "my-model");
+    }
+
+    #[test]
+    fn toml_deserialization_with_vision_field() {
+        let toml_str = r#"
+enabled = true
+providers = ["openrouter", "anthropic"]
+vision = ["minimax", "anthropic"]
+"#;
+        let cfg: FallbackProviderConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.providers, vec!["openrouter", "anthropic"]);
+        assert_eq!(cfg.vision, vec!["minimax", "anthropic"]);
+    }
+
+    #[test]
+    fn toml_deserialization_without_vision_field() {
+        // Old configs without vision field should still work (default empty).
+        let toml_str = r#"
+enabled = true
+providers = ["openrouter", "anthropic"]
+"#;
+        let cfg: FallbackProviderConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.vision.is_empty());
+    }
+}
 // Mirrors the vision-helper suite above. `generation_model` is the
 // 2026-05-18 follow-up so binary users can override the image-gen
 // model without leaving the TUI.
