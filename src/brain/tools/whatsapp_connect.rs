@@ -100,6 +100,8 @@ pub fn subscribe_whatsapp_pairing(
         let _ = std::fs::remove_file(wa_dir.join("session.db"));
         let _ = std::fs::remove_file(wa_dir.join("session.db-wal"));
         let _ = std::fs::remove_file(wa_dir.join("session.db-shm"));
+        // Force the ChannelManager to abort the live agent and respawn fresh.
+        wa_state.request_restart();
     }
 
     WhatsAppConnectHandle {
@@ -188,6 +190,11 @@ impl Tool for WhatsAppConnectTool {
                 tracing::warn!("Failed to remove WhatsApp {}: {}", f, e);
             }
         }
+        // Force the ChannelManager to abort the live agent and respawn fresh.
+        // Without this, the old in-memory client survives the session wipe and
+        // keeps its orphaned socket alive — creating phantom dual-connection
+        // reports where the old number's companion lingers alongside the new one.
+        self.whatsapp_state.request_restart();
         if let Err(e) = crate::config::Config::write_key("channels.whatsapp", "enabled", "true") {
             tracing::error!("Failed to enable WhatsApp in config: {}", e);
         }

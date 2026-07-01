@@ -206,3 +206,105 @@ fn test_subdirectory_created_on_write() {
     std::fs::write(&path, "content").unwrap();
     assert!(path.exists());
 }
+
+// ── NFC normalization for replace ────────────────────────────────────────────
+
+/// Verify that NFC normalization makes replace work when the file has NFD
+/// bytes but the search string uses NFC (the common macOS copy-paste case).
+/// Regression test for issue #256.
+#[test]
+fn test_replace_nfc_normalizes_both_sides() {
+    use unicode_normalization::UnicodeNormalization;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("MEMORY.md");
+
+    // Em-dash: U+2014. In NFC it's 3 bytes (E2 80 94). In NFD it's the same
+    // (em-dash has no decomposition). Multiplication sign: U+00D7.
+    // In NFC: C3 97. In NFD: same (no decomposition).
+    // The real-world issue is with accented characters, e.g. é:
+    // NFC: C3 A9 (single codepoint U+00E9)
+    // NFD: 65 CC 81 (e + combining acute accent U+0301)
+
+    // Write file with NFD-normalized content (as macOS might produce)
+    let nfd_content: String = "café résumé".nfd().collect();
+    std::fs::write(&path, &nfd_content).unwrap();
+
+    // Search with NFC-normalized text (as most users would type)
+    let search_nfc: String = "café".nfc().collect();
+    let replace_nfc: String = "coffee".nfc().collect();
+
+    // Verify they're different byte sequences
+    let search_nfd: String = search_nfc.nfd().collect();
+    assert_ne!(
+        search_nfc.as_bytes(),
+        search_nfd.as_bytes(),
+        "NFC and NFD should differ for accented chars"
+    );
+
+    // Raw contains() would FAIL because NFC search won't match NFD file
+    let raw_file = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !raw_file.contains(search_nfc.as_str()),
+        "raw contains should fail with mixed normalization"
+    );
+
+    // NFC-normalize both sides (what write_opencrabs_file now does)
+    let file_nfc: String = raw_file.nfc().collect();
+    let search_nfc_norm: String = search_nfc.nfc().collect();
+    assert!(
+        file_nfc.contains(search_nfc_norm.as_str()),
+        "NFC-normalized contains should match"
+    );
+
+    // Do the replacement
+    let updated = file_nfc.replacen(search_nfc_norm.as_str(), replace_nfc.as_str(), 1);
+    std::fs::write(&path, &updated).unwrap();
+
+    let result = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        result.contains("coffee"),
+        "replacement should have succeeded: got {:?}",
+        result
+    );
+    assert!(
+        result.contains("résumé"),
+        "unrelated text should be preserved: got {:?}",
+        result
+    );
+}
+
+/// Verify that replace with Unicode symbols (em-dash, multiplication sign,
+/// less-than-or-equal) works through NFC normalization.
+#[test]
+fn test_replace_unicode_symbols_via_nfc() {
+    use unicode_normalization::UnicodeNormalization;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("test.md");
+
+    // Content with various Unicode symbols
+    let content = "price: 10×2 ≤ 25 — final";
+    std::fs::write(&path, content).unwrap();
+
+    let search = "10×2";
+    let replacement = "10x2";
+
+    // NFC normalize both sides
+    let raw = std::fs::read_to_string(&path).unwrap();
+    let file_nfc: String = raw.nfc().collect();
+    let search_nfc: String = search.nfc().collect();
+
+    assert!(
+        file_nfc.contains(search_nfc.as_str()),
+        "multiplication sign should match after NFC normalization"
+    );
+
+    let updated = file_nfc.replacen(search_nfc.as_str(), replacement, 1);
+    std::fs::write(&path, &updated).unwrap();
+
+    let result = std::fs::read_to_string(&path).unwrap();
+    assert!(result.contains("10x2"), "replacement succeeded: {:?}", result);
+    assert!(result.contains("≤"), "other Unicode preserved: {:?}", result);
+    assert!(result.contains("—"), "em-dash preserved: {:?}", result);
+}

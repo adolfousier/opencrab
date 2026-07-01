@@ -3799,6 +3799,34 @@ On a channel you can do it in one line: `/onboard:channels telegram <BOT_TOKEN> 
 
 **Why you have to provide your numeric ID:** Telegram's Bot API exposes only the *bot's* identity from a token (via `getMe`) — it has **no way to reveal who created the bot** in BotFather. A bot only learns a human's ID when that human messages it (the incoming update carries the sender's ID). The onboarding wizard auto-detects your ID via `getUpdates` when you leave the field blank, **but** that only works if (a) you've already messaged the bot and (b) the bot isn't already running and consuming those updates — which is exactly the case during a *reconnect*. So on reconnect, message the bot first, or just paste the ID (get it from [@userinfobot](https://t.me/userinfobot)).
 
+### WhatsApp Won't Connect / Wrong Number Replying
+
+Each OpenCrabs instance supports **one WhatsApp account** (one companion device). If you connected multiple numbers or the wrong number is replying, you need to do a full reset before connecting a new number. The bot always uses the **last number you connected**, so if you tried multiple, only the most recent one replies.
+
+**The bot talks to itself:** Like Telegram DMs, if you message the bot's own paired number, the bot replies to you. This is by design. The paired account's self-chat is always allowed.
+
+**Allowlist behavior:** Anyone messaging the paired number who is on the `allowed_phones` list gets a reply. The `response_policy` (`auto`/`owner_only`/`allowlist`/`open`) controls who else can interact.
+
+> **Critical:** Always reset the connection before connecting a new number. OpenCrabs only keeps the last paired number.
+
+**Full reset steps (required before connecting a new number):**
+
+1. **Remove the OpenCrabs device from WhatsApp** — open WhatsApp on your phone, go to **Settings → Linked Devices**, find the `opencrabs` device, and **remove it**. This is mandatory.
+2. **Reset the connection in OpenCrabs** — in the TUI or from a channel, go to `/onboard:channels` and press **R** to reset the WhatsApp connection. Wait for confirmation that the reset is complete.
+3. **Re-pair from scratch** — after the reset is confirmed, go to WhatsApp → **Settings → Linked Devices** → **Link a Device** and scan the new QR code shown by OpenCrabs.
+
+If the bot still shows the old number after resetting, make sure you completed step 1 (removing the device from WhatsApp) before step 2.
+
+**Common issues:**
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Old number still replying | Old device not removed from WhatsApp app | Remove `opencrabs` from WhatsApp → Settings → Linked Devices, then press **R** in `/onboard:channels` |
+| QR code doesn't appear | Agent is still connected (no restart triggered) | Press **R** in `/onboard:channels` to force a restart, then wait for the new QR |
+| Bot doesn't reply to anyone | `response_policy` is too restrictive | Set `response_policy = "allowlist"` and add phone numbers to `allowed_phones` in `config.toml` |
+| Bot replies to everyone | `response_policy` is `open` | Set `response_policy = "allowlist"` or `"owner_only"` in `config.toml` |
+| Bot doesn't reply to self-chat | `allowed_phones` doesn't include the paired number | The paired number's self-chat is always allowed, regardless of `allowed_phones`. If it's not working, check that `response_policy` isn't `dm_only` with no owner set |
+
 ### Agent Hallucinating Tool Calls
 
 If the agent starts sending tool call approvals that don't render in the UI — meaning it believes it executed actions that never actually ran — the session context has become corrupted.
