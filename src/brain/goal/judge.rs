@@ -50,7 +50,7 @@ pub async fn judge_goal(
 
     let request = LLMRequest::new(model.to_string(), vec![Message::user(user_prompt)])
         .with_system(JUDGE_SYSTEM.to_string())
-        .with_max_tokens(512);
+        .with_max_tokens(4096);
 
     match provider.complete(request).await {
         Ok(response) => {
