@@ -2462,7 +2462,18 @@ pub(crate) async fn handle_message(
     let agent_input = format!(
         "[Channel: Telegram — your text response is automatically sent to this chat. \
          Do NOT call telegram_send to deliver your answer. Only use telegram_send for: \
-         sending to a different chat_id, media, polls, buttons, reactions, or moderation.]\n{agent_input}"
+         sending to a different chat_id, media, polls, buttons, reactions, or moderation.]\n\
+         \n\
+         [Reaction directive: You can react to the user's message using <<react:EMOJI>>. \
+         This is for UTILITARIAN acknowledgment only — not decorative or companion behavior. \
+         Use it sparingly when:\n\
+         - A simple acknowledgment suffices (thumbs up for confirmations, checkmark for completed tasks)\n\
+         - The user shared a link and you have nothing to add (eyes emoji)\n\
+         - A quick yes/no reaction is more appropriate than a text response\n\
+         To react-only (no text), output ONLY the directive: <<react:👍>>\n\
+         To react AND respond, include the directive at the start: <<react:✅>> Done, uploaded to Drive.\n\
+         Do NOT use for: expressing emotions, being cute, filling silence, or replacing substantive answers.]\n\
+         {agent_input}"
     );
 
     // ── Streaming setup ───────────────────────────────────────────────────────
