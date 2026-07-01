@@ -63,7 +63,7 @@ impl Tool for FollowUpQuestionTool {
                     "items": { "type": "string" },
                     "minItems": 2,
                     "maxItems": MAX_OPTIONS,
-                    "description": "Between 2 and 8 distinct option strings. Each becomes one clickable button."
+                    "description": "Between 2 and 8 distinct option strings. Each becomes one clickable button. Recommended under 40 chars for clean rendering on all channels."
                 }
             },
             "required": ["question", "options"]
