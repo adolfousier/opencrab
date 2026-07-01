@@ -460,7 +460,7 @@ fn test_supports_model_fetch() {
         ("openrouter", true),
         ("minimax", false),
         ("zhipu", true),
-        ("claude-cli", false),
+        ("claude-cli", true),
         ("opencode-cli", true),
         ("codex-cli", true),
         ("codex", true),

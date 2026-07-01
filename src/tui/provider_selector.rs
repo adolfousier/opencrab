@@ -152,6 +152,7 @@ impl ProviderSelectorState {
                 | "codex-cli"
                 | "codex"
                 | "opencode"
+                | "claude-cli"
                 | "ollama"
         )
     }
