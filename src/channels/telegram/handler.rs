@@ -2472,6 +2472,9 @@ pub(crate) async fn handle_message(
          - A quick yes/no reaction is more appropriate than a text response\n\
          To react-only (no text), output ONLY the directive: <<react:👍>>\n\
          To react AND respond, include the directive at the start: <<react:✅>> Done, uploaded to Drive.\n\
+         The value must be a literal emoji character (👍 ✅ 👀 🔥), never a word or placeholder like 'emoji'.\n\
+         When you MENTION the directive in prose (docs, code discussion, examples) instead of using it, \
+         always wrap it in backticks so it is not executed.\n\
          Do NOT use for: expressing emotions, being cute, filling silence, or replacing substantive answers.]\n\
          {agent_input}"
     );
@@ -2690,6 +2693,16 @@ pub(crate) async fn handle_message(
                                     // along with the raw marker token).
                                     let (text, _img_paths) =
                                         crate::utils::extract_img_markers(&text);
+                                    // Strip <<react:emoji>> directives too: a
+                                    // directive streamed mid-turn must neither
+                                    // leak raw into the chat nor differ from
+                                    // the final text (which extracts it BEFORE
+                                    // its dedup pass, so an unstripped copy
+                                    // here breaks exact-match and both copies
+                                    // land). The reaction itself fires from
+                                    // the final-response path.
+                                    let (text, _react_emoji) =
+                                        crate::utils::extract_react_marker(&text);
 
                                     // Pre-send dedup: if this exact text was
                                     // already delivered as an intermediate in
@@ -3231,6 +3244,8 @@ pub(crate) async fn handle_message(
                 let text = redact_secrets(&text);
                 // Strip <<IMG:path>> markers — see edit-loop site above.
                 let (text, _img_paths) = crate::utils::extract_img_markers(&text);
+                // Strip <<react:emoji>> too; see edit-loop site above.
+                let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
                 // Pre-send dedup — see matching block in edit-loop above.
                 {
                     let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -3328,9 +3343,7 @@ pub(crate) async fn handle_message(
             // whitespace (including newlines) to single spaces so that
             // minor formatting differences between the streamed
             // intermediate and the final response don't bypass dedup.
-            let norm = |s: &str| -> String {
-                s.split_whitespace().collect::<Vec<_>>().join(" ")
-            };
+            let norm = |s: &str| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
             let text_only = if !sent.is_empty() {
                 let norm_final = norm(&text_only);
                 if sent.iter().any(|i| norm(i) == norm_final) {
@@ -3889,6 +3902,9 @@ pub(crate) async fn resume_session(
                                     // Strip <<IMG:path>> markers — see handle_message.
                                     let (text, _img_paths) =
                                         crate::utils::extract_img_markers(&text);
+                                    // Strip <<react:emoji>> too; see handle_message.
+                                    let (text, _react_emoji) =
+                                        crate::utils::extract_react_marker(&text);
                                     // Pre-send dedup — see handle_message.
                                     {
                                         let s = st.lock().unwrap_or_else(|e| e.into_inner());
@@ -4190,6 +4206,8 @@ pub(crate) async fn resume_session(
                 let text = redact_secrets(&text);
                 // Strip <<IMG:path>> markers — see handle_message.
                 let (text, _img_paths) = crate::utils::extract_img_markers(&text);
+                // Strip <<react:emoji>> too; see handle_message.
+                let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
                 // Pre-send dedup — see handle_message.
                 {
                     let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -4518,10 +4536,16 @@ pub(crate) async fn handle_reaction(
     let chat_id = reaction.chat.id;
     let chat_id_str = chat_id.0.to_string();
     let is_dm = matches!(reaction.chat.kind, ChatKind::Private { .. });
-    if !cfg.channels.telegram.user_allowed(&user_id.to_string(), &chat_id_str, is_dm) {
+    if !cfg
+        .channels
+        .telegram
+        .user_allowed(&user_id.to_string(), &chat_id_str, is_dm)
+    {
         tracing::debug!(
             "Telegram reaction: ignoring non-allowed user {} ({}), emoji={}",
-            user_id, user_name, emoji
+            user_id,
+            user_name,
+            emoji
         );
         return Ok(());
     }
@@ -4537,11 +4561,7 @@ pub(crate) async fn handle_reaction(
     // Only proceed if the message was sent by the bot.
     let msg_id = reaction.message_id;
     let content = match channel_msg_repo
-        .bot_content_by_platform_message_id(
-            "telegram",
-            &chat_id_str,
-            &msg_id.0.to_string(),
-        )
+        .bot_content_by_platform_message_id("telegram", &chat_id_str, &msg_id.0.to_string())
         .await
     {
         Ok(Some(c)) => c,
@@ -4553,7 +4573,11 @@ pub(crate) async fn handle_reaction(
             return Ok(());
         }
         Err(e) => {
-            tracing::warn!("Telegram reaction: DB lookup failed for msg {}: {}", msg_id.0, e);
+            tracing::warn!(
+                "Telegram reaction: DB lookup failed for msg {}: {}",
+                msg_id.0,
+                e
+            );
             return Ok(());
         }
     };
@@ -4586,14 +4610,23 @@ pub(crate) async fn handle_reaction(
     tracing::info!(
         "Telegram reaction: {} ({}) reacted with {} on bot message {} in chat {}, \
          forwarding to session {}",
-        user_name, user_id, emoji, msg_id.0, chat_id.0, session_id
+        user_name,
+        user_id,
+        emoji,
+        msg_id.0,
+        chat_id.0,
+        session_id
     );
 
     // ── 8. Call agent ───────────────────────────────────────────────────
     let response = match agent.send_message(session_id, prompt, None).await {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!("Telegram reaction: agent error for session {}: {}", session_id, e);
+            tracing::warn!(
+                "Telegram reaction: agent error for session {}: {}",
+                session_id,
+                e
+            );
             return Ok(());
         }
     };
@@ -4620,7 +4653,8 @@ pub(crate) async fn handle_reaction(
         if text_only.trim().is_empty() {
             tracing::info!(
                 "Telegram reaction: reaction-only ack ({}) on message {}",
-                r_emoji, msg_id.0
+                r_emoji,
+                msg_id.0
             );
             return Ok(());
         }
@@ -5068,6 +5102,8 @@ pub(crate) async fn flush_intermediates(
             let text = crate::utils::sanitize::strip_llm_artifacts(&text);
             let text = redact_secrets(&text);
             let (text, _img_paths) = crate::utils::extract_img_markers(&text);
+            // Strip <<react:emoji>> too; see edit-loop site in handle_message.
+            let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
             {
                 let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 if s.sent_intermediates.iter().any(|prev| prev == &text) {
