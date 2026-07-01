@@ -211,3 +211,32 @@ fn tool_metadata_is_sane() {
     assert!(props.contains_key("question"));
     assert!(props.contains_key("options"));
 }
+
+/// Options longer than 40 chars are accepted (hard cap was removed).
+/// This is a regression test for issue #255.
+#[tokio::test]
+async fn long_options_pass_through() {
+    let mut ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+    ctx.question_callback = Some(callback_returning("long option"));
+
+    let long_option = "A deliberately long option that exceeds forty characters and should still work";
+    assert!(
+        long_option.len() > 40,
+        "test fixture must be >40 chars, got {}",
+        long_option.len()
+    );
+
+    let result = FollowUpQuestionTool
+        .execute(
+            json!({
+                "question": "Pick one",
+                "options": ["short", long_option]
+            }),
+            &ctx,
+        )
+        .await
+        .expect("execute");
+
+    assert!(result.success, "long option should be accepted: {:?}", result.error);
+    assert!(result.output.contains("long option"));
+}
