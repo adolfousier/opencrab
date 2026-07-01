@@ -14,6 +14,23 @@ pub fn extract_vid_markers(text: &str) -> (String, Vec<String>) {
     extract_markers_with_prefix(text, "<<VID:")
 }
 
+/// Extract `<<react:emoji>>` directive from text.
+///
+/// Returns `(cleaned_text, Option<emoji>)` — the text has all `<<react:...>>`
+/// markers removed and trimmed, and the first valid emoji is returned.
+/// Follows the same `<<PREFIX:value>>` pattern as `<<IMG:path>>` and
+/// `<<VID:path>>`. Multiple directives are stripped but only the first
+/// emoji is returned.
+///
+/// The LLM outputs `<<react:👍>>` to signal a reaction-only response
+/// (or a reaction alongside text). Channel handlers use the returned
+/// emoji to call `set_message_reaction` on the user's message.
+pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
+    let (cleaned, markers) = extract_markers_with_prefix(text, "<<react:");
+    let emoji = markers.into_iter().next();
+    (cleaned, emoji)
+}
+
 /// Generic `<<PREFIX:path>>` marker extractor. Walks the text, removes every
 /// `<<PREFIX:...>>` occurrence, and collects the inner paths in order. UTF-8
 /// safe (works on byte indices that lie on char boundaries — `find`/`replace_range`
@@ -36,4 +53,71 @@ fn extract_markers_with_prefix(text: &str, prefix: &str) -> (String, Vec<String>
     }
 
     (out.trim().to_string(), paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── extract_react_marker ─────────────────────────────────────────────
+
+    #[test]
+    fn react_bare_directive() {
+        let (text, emoji) = extract_react_marker("<<react:👍>>");
+        assert_eq!(text, "");
+        assert_eq!(emoji.as_deref(), Some("👍"));
+    }
+
+    #[test]
+    fn react_directive_with_text() {
+        let (text, emoji) = extract_react_marker("Sure thing! <<react:✅>>");
+        assert_eq!(text, "Sure thing!");
+        assert_eq!(emoji.as_deref(), Some("✅"));
+    }
+
+    #[test]
+    fn react_no_directive() {
+        let (text, emoji) = extract_react_marker("Just a normal message.");
+        assert_eq!(text, "Just a normal message.");
+        assert!(emoji.is_none());
+    }
+
+    #[test]
+    fn react_multiple_directives_uses_first() {
+        let (text, emoji) = extract_react_marker("<<react:👍>> and <<react:❤️>>");
+        assert_eq!(text, "and");
+        assert_eq!(emoji.as_deref(), Some("👍"));
+    }
+
+    #[test]
+    fn react_empty_directive_ignored() {
+        let (text, emoji) = extract_react_marker("<<react:>>");
+        assert_eq!(text, "");
+        assert!(emoji.is_none());
+    }
+
+    #[test]
+    fn react_malformed_no_closing() {
+        // Missing >> — should be left untouched
+        let (text, emoji) = extract_react_marker("<<react:👍");
+        assert_eq!(text, "<<react:👍");
+        assert!(emoji.is_none());
+    }
+
+    #[test]
+    fn react_whitespace_trimmed() {
+        let (text, emoji) = extract_react_marker("  <<react:🔥>>  ");
+        assert_eq!(text, "");
+        assert_eq!(emoji.as_deref(), Some("🔥"));
+    }
+
+    // ── extract_img_markers (existing, regression) ───────────────────────
+
+    #[test]
+    fn img_basic() {
+        let (text, paths) = extract_img_markers("here <<IMG:/tmp/a.png>> done");
+        // The extractor removes the marker but doesn't collapse interior whitespace.
+        assert_eq!(text, "here  done");
+        assert_eq!(paths, vec!["/tmp/a.png"]);
+    }
 }
