@@ -3358,7 +3358,7 @@ pub(crate) async fn handle_message(
                 } else {
                     format!("{pre_dedup_text}\n\n{footer}")
                 };
-                match super::rich::api::send_rich_markdown(
+                match super::rich::api::send_rich_markdown_id(
                     bot.token(),
                     msg.chat.id.0,
                     thread_id,
@@ -3366,7 +3366,7 @@ pub(crate) async fn handle_message(
                 )
                 .await
                 {
-                    Ok(()) => {
+                    Ok(rich_msg_id) => {
                         // Delete the HTML intermediates now that rich message succeeded
                         let intermediate_ids = {
                             let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -3401,7 +3401,7 @@ pub(crate) async fn handle_message(
                                 bot_display_name,
                                 pre_dedup_text.clone(),
                                 "text".to_string(),
-                                None,
+                                Some(rich_msg_id.to_string()),
                             )
                             .with_thread(thread_id_str, None);
                             if let Err(e) = channel_msg_repo.insert(&cm).await {

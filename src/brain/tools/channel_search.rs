@@ -156,7 +156,12 @@ impl Tool for ChannelSearchTool {
                     .rev() // oldest first for readability
                     .map(|m| {
                         let ts = m.created_at.format("%m-%d %H:%M");
-                        format!("[{}] {}: {}", ts, m.sender_name, m.content)
+                        let pmid = m
+                            .platform_message_id
+                            .as_deref()
+                            .map(|id| format!(" [msgid:{}]", id))
+                            .unwrap_or_default();
+                        format!("[{}]{} {}: {}", ts, pmid, m.sender_name, m.content)
                     })
                     .collect();
 
@@ -208,9 +213,14 @@ impl Tool for ChannelSearchTool {
                             .as_deref()
                             .map(|t| format!(" ({})", t))
                             .unwrap_or_default();
+                        let pmid = m
+                            .platform_message_id
+                            .as_deref()
+                            .map(|id| format!(" [msgid:{}]", id))
+                            .unwrap_or_default();
                         format!(
-                            "[{}] [{}:{}]{}{}: {}: {}",
-                            ts, m.channel, chat, thread, topic, m.sender_name, m.content
+                            "[{}] [{}:{}]{}{}{}: {}: {}",
+                            ts, m.channel, chat, thread, topic, pmid, m.sender_name, m.content
                         )
                     })
                     .collect();

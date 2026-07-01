@@ -720,4 +720,128 @@ mod tool {
         let msg = result.error.as_deref().unwrap_or(&result.output);
         assert!(msg.contains("Unknown operation"));
     }
+
+    fn insert_msg_with_pmid(
+        channel: &str,
+        chat_id: &str,
+        chat_name: &str,
+        sender: &str,
+        content: &str,
+        platform_message_id: &str,
+    ) -> ChannelMessage {
+        ChannelMessage::new(
+            channel.into(),
+            chat_id.into(),
+            Some(chat_name.into()),
+            "u1".into(),
+            sender.into(),
+            content.into(),
+            "text".into(),
+            Some(platform_message_id.into()),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_recent_includes_platform_message_id() {
+        let (_db, repo, tool) = setup().await;
+        let m = insert_msg_with_pmid(
+            "telegram",
+            "-100111",
+            "OC Dev",
+            "Alice",
+            "hello world",
+            "6895",
+        );
+        repo.insert(&m).await.unwrap();
+
+        let input = serde_json::json!({"operation": "recent", "chat_id": "-100111"});
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success);
+        assert!(
+            result.output.contains("[msgid:6895]"),
+            "recent output should contain [msgid:6895], got: {}",
+            result.output
+        );
+        assert!(result.output.contains("Alice"));
+        assert!(result.output.contains("hello world"));
+    }
+
+    #[tokio::test]
+    async fn test_recent_omits_msgid_when_none() {
+        let (_db, repo, tool) = setup().await;
+        let m = insert_msg("telegram", "-100111", "Group", "Bob", "no id here");
+        repo.insert(&m).await.unwrap();
+
+        let input = serde_json::json!({"operation": "recent", "chat_id": "-100111"});
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success);
+        assert!(
+            !result.output.contains("[msgid:"),
+            "recent output should NOT contain [msgid:] when platform_message_id is None, got: {}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_includes_platform_message_id() {
+        let (_db, repo, tool) = setup().await;
+        let m1 = insert_msg_with_pmid(
+            "telegram",
+            "-100111",
+            "OC Dev",
+            "Alice",
+            "deploy failed",
+            "ts_42",
+        );
+        let m2 = insert_msg("slack", "C999", "General", "Carol", "deploy succeeded");
+        repo.insert(&m1).await.unwrap();
+        repo.insert(&m2).await.unwrap();
+
+        let input = serde_json::json!({"operation": "search", "query": "deploy"});
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success);
+        assert!(
+            result.output.contains("[msgid:ts_42]"),
+            "search output should contain [msgid:ts_42], got: {}",
+            result.output
+        );
+        // Carol's message has no pmid so no [msgid:] for her
+        assert!(
+            !result.output.contains("[msgid:] "),
+            "should not have empty [msgid:]"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_mixed_pmid_and_none() {
+        let (_db, repo, tool) = setup().await;
+        let m1 = insert_msg_with_pmid(
+            "telegram",
+            "-100111",
+            "Group",
+            "Alice",
+            "first msg",
+            "msg_100",
+        );
+        let m2 = insert_msg("telegram", "-100111", "Group", "Bob", "second msg");
+        repo.insert(&m1).await.unwrap();
+        repo.insert(&m2).await.unwrap();
+
+        let input = serde_json::json!({"operation": "search", "query": "msg"});
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success);
+        assert!(
+            result.output.contains("[msgid:msg_100]"),
+            "Alice's message should have [msgid:msg_100], got: {}",
+            result.output
+        );
+        // Bob's line should not have [msgid:]
+        let lines: Vec<&str> = result.output.lines().collect();
+        let bob_line = lines.iter().find(|l| l.contains("Bob")).unwrap();
+        assert!(
+            !bob_line.contains("[msgid:"),
+            "Bob's line should not have [msgid:], got: {}",
+            bob_line
+        );
+    }
 }
