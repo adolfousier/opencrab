@@ -63,6 +63,18 @@ OpenCrabs runs as a **single binary on your terminal** — no server, no gateway
 - Browser automation (optional, `browser` feature — auto-detects Chromium-based browsers via CDP, not Firefox)
 - Dynamic tool HTTP requests (only when you define HTTP tools in `tools.toml`)
 
+### 🔒 Zero Telemetry — Not Even Opt-In
+
+**OpenCrabs does not phone home. Ever.**
+
+No analytics. No tracking. No usage statistics. No remote logging. No crash reports. No "anonymous telemetry." Nothing.
+
+Your data stays on your machine. Your conversations, your tools, your memory, your configuration, your API keys — all of it. The only outbound traffic is what you explicitly initiate: LLM API calls, web searches, GitHub commands, browser automation.
+
+Other AI harnesses silently collect usage data, performance metrics, and behavioral analytics. OpenCrabs makes a different bet: **what happens on your machine stays on your machine.**
+
+This isn't a privacy policy checkbox. It's an architectural decision. There is no telemetry code to disable, no opt-out flag to set, no analytics service to block. There's simply nothing to send.
+
 ---
 
 ## Table of Contents
