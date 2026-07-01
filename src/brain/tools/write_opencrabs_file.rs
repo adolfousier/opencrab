@@ -325,13 +325,20 @@ impl Tool for WriteOpenCrabsFileTool {
                         )));
                     }
                 };
-                if !existing.contains(old_text) {
+                // NFC-normalize both sides so that NFD-encoded files still match
+                // NFC search strings (and vice versa). Common with macOS which
+                // stores filenames in NFD; copy-paste can leak NFD into brain files.
+                use unicode_normalization::UnicodeNormalization;
+                let existing_nfc: String = existing.nfc().collect();
+                let old_text_nfc: String = old_text.nfc().collect();
+                if !existing_nfc.contains(old_text_nfc.as_str()) {
                     return Ok(ToolResult::error(format!(
                         "old_text not found in {}. No changes made.",
                         path_str
                     )));
                 }
-                let updated = existing.replacen(old_text, new_text, 1);
+                let new_text_nfc: String = new_text.nfc().collect();
+                let updated = existing_nfc.replacen(old_text_nfc.as_str(), new_text_nfc.as_str(), 1);
                 use crate::brain::tools::brain_file_safety;
                 let dedup_intent = input
                     .get("dedup_intent")
@@ -344,7 +351,7 @@ impl Tool for WriteOpenCrabsFileTool {
                 if let brain_file_safety::ShrinkCheck::Rejected { message } =
                     brain_file_safety::check_no_shrink(
                         &full_path,
-                        &existing,
+                        &existing_nfc,
                         &updated,
                         dedup_intent,
                         cleanup_intent,
@@ -355,7 +362,7 @@ impl Tool for WriteOpenCrabsFileTool {
                 // Record pruned sections when shrinking is allowed (dedup/cleanup)
                 if dedup_intent || cleanup_intent {
                     let removed =
-                        crate::brain::rsi_pruned::detect_removed_sections(&existing, &updated);
+                        crate::brain::rsi_pruned::detect_removed_sections(&existing_nfc, &updated);
                     if !removed.is_empty() {
                         let mut pruned_state = crate::brain::rsi_pruned::PrunedState::load();
                         pruned_state.record_pruned(path_str, removed);
