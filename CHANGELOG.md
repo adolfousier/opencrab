@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.3.57] - 2026-06-30
+
+29 commits since v0.3.56. 37 files changed, +2616 / -474 lines.
+
+### ✨ Features
+
+- `7fbd37c1` **Vision fallback chain**: wire vision fallback chain into active_provider_vision()
+- `6b6c431a` **Vision fallback config**: add vision fallback chain field to FallbackProviderConfig
+- `290f9063` **WhatsApp response_policy**: owner_only/allowlist/open modes with operator-aware filter
+- `adb15e52` **WhatsApp connection test**: greet the paired account's own self-chat on connect
+- `41e8e5b7` **WhatsApp action-based send tool**: refactor WhatsAppSendTool with 14 actions
+- `7693a3eb` **TUI /onboard:channels shortcut**: jump straight to a channel's onboarding dialog
+
+### 🔧 Fixes
+
+- `c978987e` **Telegram progress events**: surface RetryAttempt and ProviderSwitched in Telegram
+- `10f1e747` **Channel progress events**: surface RetryAttempt and ProviderSwitched in Discord, Slack, WhatsApp
+- `79f7f540` **Telegram send persistence**: persist telegram_send posts so replies to them are recoverable
+- `6942f5a3` **Telegram bot dedup**: only match THIS bot in replied_to_bot, silently drop bot senders
+- `999c3265` **Telegram exact-match dedup**: exact-match only, not substring replace (#252)
+- `d3ee1ccc` **Per-group /respond_to**: persist /respond_to per-group when called from a group
+- `85eca3fa` **WhatsApp self-chat routing**: route owner self-chat reply to the PAIRED account number
+- `19fbe85f` **WhatsApp connection gate**: gate connection test on is_connected + retry on transient drop
+- `895b10ed` **Vision provider scan**: scan all enabled providers for vision_model, not just active (#253)
+- `ed7476c7` **TUI markdown colours**: keep markdown colours in user messages, don't flatten to white
+- `544d526c` **Brain plan ops**: correct plan op names + proactive planning and complete-as-you-go
+- `06d4bf8f` **WhatsApp LID/PN registry**: migrate to upstream HEAD for device registry
+
+### 📖 Documentation
+
+- `18b411b1` document WhatsApp pairing any owned number + response_policy
+- `764f8e3d` correct WhatsApp QR pairing: TUI only, not channel-scannable
+- `c6be08ae` add vision fallback chain to config.toml.example
+- `b1ac5eb4` update test counts in README and TESTING.md
+
+### 🧹 Miscellaneous
+
+- `536c48f7` style: collapse nested if blocks in vision fallback resolution (clippy)
+- `17957b26` style: apply rustfmt to telegram and discord handlers
+- `511db80b` test(vision): 14 tests for vision fallback chain resolution
+- `2677be3c` test(whatsapp): 19 tests for whatsapp_send helpers and schema
+
+### 🔨 Build
+
+- `d1495539` cfg(crates_publish) for crates.io compat without breaking git-HEAD build
+- `3ef4c8d9` add crates_publish cfg for crates.io compatibility
+- `79a65de9` add version = "0.6.0" to whatsapp-rust git deps for cargo publish
+
+### 📊 Stats
+
+- 29 commits since v0.3.56
+- 37 files changed, +2616 / -474 lines
+- 4,350 tests (4,350 passed, 0 failed, 24 ignored)
+
+
 ## [0.3.56] - 2026-06-29
 
 51 commits since v0.3.55. 256 files changed, +14841 / -17680 lines.
@@ -6214,5 +6269,7 @@ fixes.
 [0.3.51]: https://github.com/adolfousier/opencrabs/compare/v0.3.50...v0.3.51
 [0.3.52]: https://github.com/adolfousier/opencrabs/compare/v0.3.51...v0.3.52
 [0.3.53]: https://github.com/adolfousier/opencrabs/compare/v0.3.52...v0.3.53
-[0.3.54]: https://github.com/adolfousier/opencrabs/compare/v0.3.53...v0.3.54[0.3.55]: https://github.com/adolfousier/opencrabs/compare/v0.3.54...v0.3.55
+[0.3.54]: https://github.com/adolfousier/opencrabs/compare/v0.3.53...v0.3.54
+[0.3.55]: https://github.com/adolfousier/opencrabs/compare/v0.3.54...v0.3.55
 [0.3.56]: https://github.com/adolfousier/opencrabs/compare/v0.3.55...v0.3.56
+[0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57
