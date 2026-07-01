@@ -111,6 +111,36 @@ mod tests {
         assert_eq!(emoji.as_deref(), Some("🔥"));
     }
 
+    #[test]
+    fn react_non_emoji_text_still_extracted() {
+        // Even non-standard emoji text is extracted as-is; the caller decides validity
+        let (text, emoji) = extract_react_marker("<<react:hello>>");
+        assert_eq!(text, "");
+        assert_eq!(emoji.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn react_with_surrounding_newlines() {
+        let (text, emoji) = extract_react_marker("\n\n<<react:🔥>>\n\n");
+        assert_eq!(text, "");
+        assert_eq!(emoji.as_deref(), Some("🔥"));
+    }
+
+    #[test]
+    fn react_embedded_in_middle() {
+        let (text, emoji) = extract_react_marker("Hello <<react:👋>> world");
+        assert_eq!(text, "Hello  world");
+        assert_eq!(emoji.as_deref(), Some("👋"));
+    }
+
+    #[test]
+    fn react_only_react_with_no_extra_text() {
+        // The common reaction-only case: LLM outputs just the directive
+        let (text, emoji) = extract_react_marker("<<react:✅>>");
+        assert!(text.trim().is_empty());
+        assert_eq!(emoji.as_deref(), Some("✅"));
+    }
+
     // ── extract_img_markers (existing, regression) ───────────────────────
 
     #[test]
