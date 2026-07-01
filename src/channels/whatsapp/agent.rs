@@ -195,6 +195,11 @@ impl WhatsAppAgent {
                                     wa_state
                                         .set_owner_jid(format!("{num}@s.whatsapp.net"))
                                         .await;
+                                    // Flag this as a fresh pairing so the
+                                    // Connected handler knows to fire the
+                                    // one-time greeting (not suppress it as a
+                                    // routine restart).
+                                    wa_state.set_first_pair_pending();
                                 }
                             }
                             Event::Connected(_) => {
@@ -206,14 +211,15 @@ impl WhatsAppAgent {
                                     Some(j) => Some(j),
                                     None => owner_jid.clone(),
                                 };
-                                // Greet only on the FIRST connect of this run, not
-                                // on every reconnect. Keepalive timeouts force
-                                // frequent reconnects, each emitting Connected; the
-                                // `connected` flag stays set across them (only a
-                                // user reset clears it), so a true reading here
-                                // means this is a reconnect and the greeting must
-                                // be suppressed. Otherwise the owner is spammed
-                                // with the same confirmation over and over.
+                                // Greet only on a fresh pairing (first-time or
+                                // re-pair after reset), not on every app restart
+                                // or reconnect. The `first_pair_pending` flag is
+                                // set by PairSuccess and consumed here: it is
+                                // `true` exactly once per pairing, so a plain
+                                // restart (where no PairSuccess fires) never
+                                // triggers the greeting. The `was_connected`
+                                // guard still suppresses keepalive reconnects
+                                // within the same session.
                                 let was_connected = wa_state.is_connected().await;
                                 wa_state.set_connected(client.clone(), owner.clone()).await;
                                 if was_connected {
@@ -221,22 +227,29 @@ impl WhatsAppAgent {
                                         "WhatsApp: reconnected — suppressing duplicate \
                                          confirmation greeting"
                                     );
-                                } else if let Some(jid) = owner {
-                                    // First connect: a real agent turn into the
+                                } else if wa_state.take_first_pair_pending() {
+                                    // Fresh pairing: a real agent turn into the
                                     // owner's self-chat. Spawned so the event loop
                                     // is never blocked by a full agent turn.
-                                    let num = jid.split('@').next().unwrap_or(&jid).to_string();
-                                    tokio::spawn(handler::send_connection_greeting(
-                                        client.clone(),
-                                        agent.clone(),
-                                        session_svc.clone(),
-                                        wa_state.clone(),
-                                        num,
-                                    ));
+                                    if let Some(jid) = owner {
+                                        let num = jid.split('@').next().unwrap_or(&jid).to_string();
+                                        tokio::spawn(handler::send_connection_greeting(
+                                            client.clone(),
+                                            agent.clone(),
+                                            session_svc.clone(),
+                                            wa_state.clone(),
+                                            num,
+                                        ));
+                                    } else {
+                                        tracing::warn!(
+                                            "WhatsApp: connected but no owner number known — \
+                                             skipping confirmation greeting"
+                                        );
+                                    }
                                 } else {
-                                    tracing::warn!(
-                                        "WhatsApp: connected but no owner number known — \
-                                         skipping confirmation greeting"
+                                    tracing::debug!(
+                                        "WhatsApp: connected (app restart) — no fresh pair, \
+                                         staying silent"
                                     );
                                 }
                             }

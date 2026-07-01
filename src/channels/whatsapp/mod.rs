@@ -82,6 +82,12 @@ pub struct WhatsAppState {
     /// flashes a QR after the account is already linked. Reset by
     /// `request_restart` when a fresh pairing is requested.
     connected: std::sync::atomic::AtomicBool,
+    /// Set on `Event::PairSuccess` so the subsequent `Event::Connected`
+    /// knows this is a fresh pairing (first-time or re-pair after reset),
+    /// not a routine reconnect after a restart. Consumed by
+    /// `take_first_pair_pending` so the greeting fires only once per
+    /// pairing and never on a plain app restart.
+    first_pair_pending: std::sync::atomic::AtomicBool,
     /// Photo batching buffer: (chat_jid) → Vec<(img_marker, caption)>
     /// When multiple photos arrive in quick succession (WhatsApp sends
     /// each as a separate message), we buffer them and dispatch together.
@@ -116,6 +122,7 @@ impl WhatsAppState {
             last_qr: std::sync::Mutex::new(None),
             restart_requested: std::sync::atomic::AtomicBool::new(false),
             connected: std::sync::atomic::AtomicBool::new(false),
+            first_pair_pending: std::sync::atomic::AtomicBool::new(false),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
         }
@@ -219,6 +226,21 @@ impl WhatsAppState {
     /// Consume the restart request (returns whether one was pending).
     pub fn take_restart_request(&self) -> bool {
         self.restart_requested
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Mark that a fresh pairing just succeeded. The next `Connected` event
+    /// will fire the one-time connection greeting.
+    pub fn set_first_pair_pending(&self) {
+        self.first_pair_pending
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Consume the first-pair flag. Returns `true` exactly once per pairing
+    /// (first-time or re-pair after reset), then resets to `false` so a plain
+    /// app restart never re-triggers the greeting.
+    pub fn take_first_pair_pending(&self) -> bool {
+        self.first_pair_pending
             .swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
