@@ -4468,6 +4468,197 @@ pub(crate) async fn resume_session(
     Ok(())
 }
 
+/// Handle an inbound reaction event (user reacted to a message in a chat).
+///
+/// When a user adds an emoji reaction to one of the bot's messages, we:
+/// 1. Extract newly-added emoji reactions (ignore removals and non-emoji)
+/// 2. Check the reactor is allowlisted and not the bot itself
+/// 3. Look up the bot's original message content from `channel_messages`
+/// 4. Forward a synthetic prompt to the LLM: "User reacted with 🤔 to your message: ..."
+/// 5. Deliver the LLM's response — which may be text, a reaction-only ack, or both
+///
+/// Reactions on user-to-user messages (not the bot's messages) are silently skipped
+/// since we have no bot content to contextualise.
+pub(crate) async fn handle_reaction(
+    bot: Bot,
+    reaction: teloxide::types::MessageReactionUpdated,
+    agent: Arc<AgentService>,
+    shared_session: Arc<Mutex<Option<Uuid>>>,
+    telegram_state: Arc<TelegramState>,
+    config_rx: tokio::sync::watch::Receiver<Config>,
+    channel_msg_repo: ChannelMessageRepository,
+) -> ResponseResult<()> {
+    // ── 1. Extract newly-added emoji reactions ──────────────────────────
+    // new_reaction is the FULL current set; old_reaction was the previous set.
+    // The difference tells us what was *added*.
+    let added: Vec<&teloxide::types::ReactionType> = reaction
+        .new_reaction
+        .iter()
+        .filter(|r| !reaction.old_reaction.contains(r))
+        .collect();
+    if added.is_empty() {
+        return Ok(()); // Only removals, nothing to process
+    }
+
+    let emoji = match added.first() {
+        Some(teloxide::types::ReactionType::Emoji { emoji }) => emoji.clone(),
+        _ => return Ok(()), // Custom-emoji or paid reaction — skip
+    };
+
+    // ── 2. Resolve the actor ────────────────────────────────────────────
+    let (user_id, user_name) = if let Some(user) = reaction.actor.user() {
+        (user.id.0 as i64, user.first_name.clone())
+    } else {
+        // Anonymous channel/chat reaction — skip
+        return Ok(());
+    };
+
+    // ── 3. Allowlist check ──────────────────────────────────────────────
+    let cfg = config_rx.borrow().clone();
+    let chat_id = reaction.chat.id;
+    let chat_id_str = chat_id.0.to_string();
+    let is_dm = matches!(reaction.chat.kind, ChatKind::Private { .. });
+    if !cfg.channels.telegram.user_allowed(&user_id.to_string(), &chat_id_str, is_dm) {
+        tracing::debug!(
+            "Telegram reaction: ignoring non-allowed user {} ({}), emoji={}",
+            user_id, user_name, emoji
+        );
+        return Ok(());
+    }
+
+    // ── 4. Ignore bot's own reactions ───────────────────────────────────
+    if let Some(bot_uid) = telegram_state.bot_user_id().await
+        && user_id == bot_uid
+    {
+        return Ok(());
+    }
+
+    // ── 5. Look up the reacted-to message in channel_messages ───────────
+    // Only proceed if the message was sent by the bot.
+    let msg_id = reaction.message_id;
+    let content = match channel_msg_repo
+        .bot_content_by_platform_message_id(
+            "telegram",
+            &chat_id_str,
+            &msg_id.0.to_string(),
+        )
+        .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            tracing::debug!(
+                "Telegram reaction: message {} not a stored bot message — skipping",
+                msg_id.0
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            tracing::warn!("Telegram reaction: DB lookup failed for msg {}: {}", msg_id.0, e);
+            return Ok(());
+        }
+    };
+
+    // ── 6. Resolve session ──────────────────────────────────────────────
+    // Reactions carry no forum-thread info, so topic_id = None.
+    let session_id = if let Some(sid) = telegram_state.chat_session(chat_id.0, None).await {
+        sid
+    } else if let Some(sid) = *shared_session.lock().await {
+        sid
+    } else {
+        tracing::debug!(
+            "Telegram reaction: no session for chat {} — skipping",
+            chat_id.0
+        );
+        return Ok(());
+    };
+
+    // ── 7. Build synthetic prompt ───────────────────────────────────────
+    // Truncate the original message to keep the prompt lightweight.
+    let preview: String = content.chars().take(500).collect();
+    let prompt = format!(
+        "[Reaction notification] User \"{}\" reacted with {} to your message:\n\"{}\"\n\n\
+         You may react back (use <<react:EMOJI>>), reply with text, \
+         or do both. If the reaction doesn't warrant a response, reply with \
+         <<react:{}>> to silently acknowledge.",
+        user_name, emoji, preview, emoji
+    );
+
+    tracing::info!(
+        "Telegram reaction: {} ({}) reacted with {} on bot message {} in chat {}, \
+         forwarding to session {}",
+        user_name, user_id, emoji, msg_id.0, chat_id.0, session_id
+    );
+
+    // ── 8. Call agent ───────────────────────────────────────────────────
+    let response = match agent.send_message(session_id, prompt, None).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("Telegram reaction: agent error for session {}: {}", session_id, e);
+            return Ok(());
+        }
+    };
+
+    // ── 9. Sanitize ─────────────────────────────────────────────────────
+    let (text_only, _img_paths) = crate::utils::extract_img_markers(&response.content);
+    let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
+    let text_only = redact_secrets(&text_only);
+    let (text_only, react_emoji) = crate::utils::extract_react_marker(&text_only);
+
+    // ── 10. Deliver reaction back on the original message ───────────────
+    if let Some(ref r_emoji) = react_emoji {
+        let reaction_type = teloxide::types::ReactionType::Emoji {
+            emoji: r_emoji.clone(),
+        };
+        if let Err(e) = bot
+            .set_message_reaction(chat_id, msg_id)
+            .reaction(vec![reaction_type])
+            .is_big(false)
+            .await
+        {
+            tracing::warn!("Telegram reaction: failed to set reaction: {}", e);
+        }
+        if text_only.trim().is_empty() {
+            tracing::info!(
+                "Telegram reaction: reaction-only ack ({}) on message {}",
+                r_emoji, msg_id.0
+            );
+            return Ok(());
+        }
+    }
+
+    // ── 11. Deliver text response ───────────────────────────────────────
+    if !text_only.trim().is_empty() {
+        let html = md_to_html(&text_only);
+        if let Err(e) = message_in_thread(&bot, chat_id, None, html).await {
+            tracing::warn!("Telegram reaction: failed to send text reply: {}", e);
+            return Ok(());
+        }
+
+        // Record in channel_messages so conversation history sees the reply
+        let bot_display_name = telegram_state
+            .bot_username()
+            .await
+            .map(|u| format!("@{}", u))
+            .unwrap_or_else(|| "OpenCrabs".to_string());
+        let chat_title = reaction.chat.title().unwrap_or("DM");
+        let cm = DbChannelMessage::new(
+            "telegram".to_string(),
+            chat_id.0.to_string(),
+            Some(chat_title.to_string()),
+            "bot:opencrabs".to_string(),
+            bot_display_name,
+            text_only,
+            "text".to_string(),
+            None,
+        );
+        if let Err(e) = channel_msg_repo.insert(&cm).await {
+            tracing::warn!("Telegram reaction: failed to record bot reply: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
 /// Format a reply-to context line for the agent prompt.
 ///
 /// When a Telegram user replies to a message they can optionally

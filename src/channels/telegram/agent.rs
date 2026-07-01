@@ -3,7 +3,7 @@
 //! Agent struct and startup logic.
 
 use super::TelegramState;
-use super::handler::handle_message;
+use super::handler::{handle_message, handle_reaction};
 use crate::brain::agent::AgentService;
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
@@ -1063,10 +1063,25 @@ impl TelegramAgent {
             // updates in teloxide 0.17+ — they flow through msg_handler and are
             // captured in handler.rs BEFORE the allowlist check so bot/user IDs
             // are logged even when the joining user isn't allowlisted yet.
+
+            // Inbound reaction handler: user reacts on a bot message, bot may
+            // react back or respond with text. See handle.rs for details.
+            let reaction_handler = Update::filter_message_reaction_updated().endpoint({
+                let deps = deps.clone();
+                move |bot: Bot, reaction: teloxide::types::MessageReactionUpdated| {
+                    let deps = deps.clone();
+                    async move {
+                        spawn_handle_reaction(bot, reaction, deps);
+                        ResponseResult::Ok(())
+                    }
+                }
+            });
+
             let tree = dptree::entry()
                 .branch(msg_handler)
                 .branch(edited_handler)
-                .branch(cb_handler);
+                .branch(cb_handler)
+                .branch(reaction_handler);
 
             // Retry loop: if the dispatcher exits (network hiccup, Telegram conflict
             // from another process using the same token, etc.), wait and reconnect.
@@ -1149,9 +1164,40 @@ fn spawn_handle_message(bot: Bot, msg: Message, deps: DispatchDeps) {
     });
 }
 
+/// Dispatch an inbound reaction to the agent in the background.
+/// Same pattern as `spawn_handle_message`: isolate panics, keep dispatcher free.
+fn spawn_handle_reaction(
+    bot: Bot,
+    reaction: teloxide::types::MessageReactionUpdated,
+    deps: DispatchDeps,
+) {
+    tokio::spawn(async move {
+        let result = tokio::task::spawn(async move {
+            handle_reaction(
+                bot,
+                reaction,
+                deps.agent,
+                deps.shared_session,
+                deps.telegram_state,
+                deps.config_rx,
+                deps.channel_msg_repo,
+            )
+            .await
+        })
+        .await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::error!("Telegram handle_reaction error: {e}"),
+            Err(panic_err) => {
+                tracing::error!("Telegram handle_reaction panicked: {:?}", panic_err)
+            }
+        }
+    });
+}
+
 /// Wait for a peer bot's edit stream to go quiet, then process the final
 /// text. If a newer frame arrived while we waited (generation moved on) we
-/// bow out — that frame's own watcher will fire. The matching watcher
+/// bow out: that frame's own watcher will fire. The matching watcher
 /// removes the pending entry, so the map self-cleans.
 fn spawn_settle_watcher(
     key: (ChatId, MessageId),
