@@ -135,6 +135,118 @@ mod session_db {
     }
 }
 
+// --- create_channel_session working_directory inheritance (#258) ---
+
+mod channel_session_wd_inherit {
+    use crate::channels::session_init::create_channel_session;
+    use crate::db::Database;
+    use crate::services::{ServiceContext, SessionService};
+
+    async fn setup() -> SessionService {
+        let db = Database::connect_in_memory().await.unwrap();
+        db.run_migrations().await.unwrap();
+        SessionService::new(ServiceContext::new(db.pool().clone()))
+    }
+
+    #[tokio::test]
+    async fn inherits_working_directory_from_prior_session() {
+        let svc = setup().await;
+
+        // Create a prior session with a working directory set
+        let prior = svc.create_session(Some("Prior".into())).await.unwrap();
+        svc.update_session_working_directory(prior.id, Some("/home/user/my-project".into()))
+            .await
+            .unwrap();
+
+        // create_channel_session should inherit the working directory
+        let new_session = create_channel_session(&svc, Some("Channel".into()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            new_session.working_directory,
+            Some("/home/user/my-project".into()),
+            "create_channel_session must inherit working_directory from the most recent session"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_working_directory_when_no_prior_session() {
+        let svc = setup().await;
+
+        // No prior session exists
+        let new_session = create_channel_session(&svc, Some("First".into()))
+            .await
+            .unwrap();
+
+        assert!(
+            new_session.working_directory.is_none(),
+            "create_channel_session should set working_directory=None when no prior session exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_working_directory_when_prior_has_none() {
+        let svc = setup().await;
+
+        // Prior session exists but has no working directory
+        let _prior = svc.create_session(Some("Prior No WD".into())).await.unwrap();
+
+        let new_session = create_channel_session(&svc, Some("Channel".into()))
+            .await
+            .unwrap();
+
+        assert!(
+            new_session.working_directory.is_none(),
+            "create_channel_session should be None when prior session has no working_directory"
+        );
+    }
+
+    #[tokio::test]
+    async fn inherits_latest_session_wd_not_earlier() {
+        let svc = setup().await;
+
+        // Session A has /project-a, created first
+        let s_a = svc.create_session(Some("A".into())).await.unwrap();
+        svc.update_session_working_directory(s_a.id, Some("/project-a".into()))
+            .await
+            .unwrap();
+
+        // Backdate A's updated_at so B is unambiguously more recent.
+        // SQLite stores timestamps at second precision so rapid-fire
+        // creates can race.
+        {
+            let conn = svc.pool().get().await.unwrap();
+            let sid = s_a.id.to_string();
+            conn.interact(move |c| {
+                c.execute(
+                    "UPDATE sessions SET updated_at = updated_at - 60 WHERE id = ?1",
+                    rusqlite::params![sid],
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        }
+
+        // Session B is more recent and has /project-b
+        let s_b = svc.create_session(Some("B".into())).await.unwrap();
+        svc.update_session_working_directory(s_b.id, Some("/project-b".into()))
+            .await
+            .unwrap();
+
+        let new_session = create_channel_session(&svc, Some("Channel".into()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            new_session.working_directory,
+            Some("/project-b".into()),
+            "should inherit from the MOST RECENT session (B), not an earlier one (A)"
+        );
+    }
+}
+
 // --- Update checker semver comparison ---
 
 mod update_checker {
