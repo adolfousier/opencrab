@@ -332,6 +332,25 @@ impl Tool for WriteOpenCrabsFileTool {
                 let existing_nfc: String = existing.nfc().collect();
                 let old_text_nfc: String = old_text.nfc().collect();
                 if !existing_nfc.contains(old_text_nfc.as_str()) {
+                    // Trace hex bytes of both sides for encoding debugging.
+                    // Useful when NFD/NFC or invisible chars cause silent mismatches.
+                    let file_hex: String = existing_nfc
+                        .bytes()
+                        .take(120)
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let search_hex: String = old_text_nfc
+                        .bytes()
+                        .take(120)
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    tracing::trace!(
+                        "write_opencrabs_file replace miss: file[0..120] hex={} | search[0..120] hex={}",
+                        file_hex,
+                        search_hex
+                    );
                     return Ok(ToolResult::error(format!(
                         "old_text not found in {}. No changes made.",
                         path_str
