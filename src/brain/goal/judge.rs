@@ -31,6 +31,10 @@ Rules:
 /// Uses the same provider as the session (no separate auxiliary model).
 /// The judge call is lightweight: system prompt + goal + last response.
 ///
+/// Retries once on parse failure (empty response or unparseable JSON) before
+/// returning the fail-open Continue decision. This handles transient issues
+/// like reasoning models burning all tokens on CoT.
+///
 /// Returns a `JudgeDecision`. On any error, fail-open (Continue).
 pub async fn judge_goal(
     provider: &dyn Provider,
@@ -48,41 +52,76 @@ pub async fn judge_goal(
 
     let user_prompt = format!("GOAL:\n{}\n\nLAST RESPONSE:\n{}", goal, truncated_response);
 
-    let request = LLMRequest::new(model.to_string(), vec![Message::user(user_prompt)])
-        .with_system(JUDGE_SYSTEM.to_string())
-        .with_max_tokens(4096);
+    // Try up to 2 times: original call + one retry on parse/empty failure.
+    for attempt in 1..=2 {
+        let request = LLMRequest::new(model.to_string(), vec![Message::user(user_prompt.clone())])
+            .with_system(JUDGE_SYSTEM.to_string())
+            .with_max_tokens(4096);
 
-    match provider.complete(request).await {
-        Ok(response) => {
-            let raw = extract_text(&response);
-            if raw.trim().is_empty() {
-                tracing::warn!("Goal judge returned empty response — defaulting to CONTINUE");
-                JudgeDecision {
-                    verdict: GoalVerdict::Continue,
-                    reason: "judge returned empty response".to_string(),
-                    corrections: None,
+        match provider.complete(request).await {
+            Ok(response) => {
+                let raw = extract_text(&response);
+                if raw.trim().is_empty() {
+                    tracing::warn!(
+                        "Goal judge returned empty response (attempt {}/2)",
+                        attempt
+                    );
+                    if attempt < 2 {
+                        continue;
+                    }
+                    return JudgeDecision {
+                        verdict: GoalVerdict::Continue,
+                        reason: "judge returned empty response".to_string(),
+                        corrections: None,
+                    };
                 }
-            } else {
+
                 let decision = JudgeDecision::parse_or_continue(&raw);
+
+                // Retry once on parse error (unparseable JSON)
+                if decision.verdict == GoalVerdict::Continue
+                    && decision.reason.starts_with("judge parse error")
+                {
+                    tracing::warn!(
+                        "Goal judge parse failed (attempt {}/2): {}",
+                        attempt,
+                        decision.reason
+                    );
+                    if attempt < 2 {
+                        continue;
+                    }
+                }
+
                 tracing::info!(
                     "Goal judge verdict: {:?} — {}",
                     decision.verdict,
                     decision.reason
                 );
-                decision
+                return decision;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Goal judge LLM call failed (attempt {}/2): {}",
+                    attempt,
+                    e
+                );
+                if attempt < 2 {
+                    continue;
+                }
+                return JudgeDecision {
+                    verdict: GoalVerdict::Continue,
+                    reason: format!("judge call error: {}", e),
+                    corrections: None,
+                };
             }
         }
-        Err(e) => {
-            tracing::warn!(
-                "Goal judge LLM call failed: {} — defaulting to CONTINUE (fail-open)",
-                e
-            );
-            JudgeDecision {
-                verdict: GoalVerdict::Continue,
-                reason: format!("judge call error: {}", e),
-                corrections: None,
-            }
-        }
+    }
+
+    // Unreachable — the loop always returns. Satisfies the compiler.
+    JudgeDecision {
+        verdict: GoalVerdict::Continue,
+        reason: "judge unreachable".to_string(),
+        corrections: None,
     }
 }
 
