@@ -3324,13 +3324,24 @@ pub(crate) async fn handle_message(
                 sent.len(),
             );
             let pre_dedup_text = text_only.clone();
-            let text_only = if !sent.is_empty() && sent.iter().any(|i| i.trim() == text_only.trim())
-            {
-                tracing::info!(
-                    "Telegram dedup: exact match found among {} intermediates — suppressing final response",
-                    sent.len()
-                );
-                String::new()
+            // Normalize whitespace for comparison — collapse runs of
+            // whitespace (including newlines) to single spaces so that
+            // minor formatting differences between the streamed
+            // intermediate and the final response don't bypass dedup.
+            let norm = |s: &str| -> String {
+                s.split_whitespace().collect::<Vec<_>>().join(" ")
+            };
+            let text_only = if !sent.is_empty() {
+                let norm_final = norm(&text_only);
+                if sent.iter().any(|i| norm(i) == norm_final) {
+                    tracing::info!(
+                        "Telegram dedup: match found among {} intermediates (normalized) — suppressing final response",
+                        sent.len()
+                    );
+                    String::new()
+                } else {
+                    text_only
+                }
             } else {
                 text_only
             };
