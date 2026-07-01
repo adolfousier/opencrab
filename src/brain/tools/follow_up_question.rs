@@ -113,13 +113,6 @@ impl Tool for FollowUpQuestionTool {
         }
         let mut seen = std::collections::HashSet::new();
         for opt in &options {
-            if opt.len() > 40 {
-                return Ok(ToolResult::error(format!(
-                    "Option '{}' is {} chars. Cap is 40. Shorten it.",
-                    opt,
-                    opt.len()
-                )));
-            }
             if !seen.insert(opt.as_str()) {
                 return Ok(ToolResult::error(format!(
                     "Duplicate option '{}'. Options must be distinct.",
