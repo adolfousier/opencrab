@@ -334,7 +334,7 @@ async fn resolve_or_create_cron_session(ctx: &ServiceContext) -> anyhow::Result<
     let provider = config.cron.default_provider.clone();
     let model = config.cron.default_model.clone();
     let session = session_svc
-        .create_session_with_provider(Some(CRON_SESSION_NAME.to_string()), provider, model)
+        .create_session_with_provider(Some(CRON_SESSION_NAME.to_string()), provider, model, None)
         .await?;
     Ok(session.id)
 }

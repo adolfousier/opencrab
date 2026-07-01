@@ -49,6 +49,6 @@ pub async fn create_channel_session(
     }
 
     session_svc
-        .create_session_with_provider(title, inherited_provider, inherited_model)
+        .create_session_with_provider(title, inherited_provider, inherited_model, None)
         .await
 }

@@ -526,6 +526,7 @@ async fn run_rsi_agent_cycle(
                     Some("RSI autonomous cycle".to_string()),
                     Some(provider_name.to_string()),
                     config.agent.self_improvement_model.clone(),
+                    None,
                 )
                 .await?
         }
