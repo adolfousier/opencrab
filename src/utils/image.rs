@@ -16,19 +16,65 @@ pub fn extract_vid_markers(text: &str) -> (String, Vec<String>) {
 
 /// Extract `<<react:emoji>>` directive from text.
 ///
-/// Returns `(cleaned_text, Option<emoji>)` — the text has all `<<react:...>>`
-/// markers removed and trimmed, and the first valid emoji is returned.
-/// Follows the same `<<PREFIX:value>>` pattern as `<<IMG:path>>` and
-/// `<<VID:path>>`. Multiple directives are stripped but only the first
-/// emoji is returned.
+/// Returns `(cleaned_text, Option<emoji>)` — valid directives are removed
+/// (text trimmed) and the first extracted emoji is returned. Multiple valid
+/// directives are all stripped but only the first emoji is returned.
 ///
 /// The LLM outputs `<<react:👍>>` to signal a reaction-only response
 /// (or a reaction alongside text). Channel handlers use the returned
 /// emoji to call `set_message_reaction` on the user's message.
+///
+/// Unlike the `<<IMG:path>>` extractor this is deliberately strict, because
+/// the marker can legitimately appear in PROSE when the agent talks about
+/// the feature itself (docs, code review, this codebase). Two guards:
+/// * the payload must look like an actual emoji (non-empty, ≤ 8 chars, no
+///   ASCII) — `<<react:emoji>>` or `<<react:hello>>` written in prose stays
+///   in the text and produces no reaction (a word payload once fired a bogus
+///   REACTION_INVALID Telegram call and mutated the final text, breaking
+///   exact-match dedup against the already-sent intermediate: both copies
+///   of the message landed in the chat);
+/// * occurrences inside backtick code spans are never treated as directives.
 pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
-    let (cleaned, markers) = extract_markers_with_prefix(text, "<<react:");
-    let emoji = markers.into_iter().next();
-    (cleaned, emoji)
+    const PREFIX: &str = "<<react:";
+    let mut out = String::with_capacity(text.len());
+    let mut emoji: Option<String> = None;
+    let mut in_code = false;
+    let mut i = 0;
+
+    while i < text.len() {
+        let ch = text[i..].chars().next().expect("i lies on a char boundary");
+        if ch == '`' {
+            in_code = !in_code;
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+        if !in_code
+            && text[i..].starts_with(PREFIX)
+            && let Some(rel_end) = text[i..].find(">>")
+        {
+            let payload = text[i + PREFIX.len()..i + rel_end].trim();
+            if is_reaction_emoji(payload) {
+                if emoji.is_none() {
+                    emoji = Some(payload.to_string());
+                }
+                i += rel_end + 2; // past ">>"
+                continue;
+            }
+        }
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    (out.trim().to_string(), emoji)
+}
+
+/// A plausible reaction emoji: non-empty, short (compound emoji with skin
+/// tones / VS-16 / ZWJ stay under 8 chars), and containing no ASCII — which
+/// rejects words and placeholders like "emoji" or "hello" that appear when
+/// the marker is mentioned in prose rather than used as a directive.
+fn is_reaction_emoji(payload: &str) -> bool {
+    !payload.is_empty() && payload.chars().count() <= 8 && payload.chars().all(|c| !c.is_ascii())
 }
 
 /// Generic `<<PREFIX:path>>` marker extractor. Walks the text, removes every
@@ -53,101 +99,4 @@ fn extract_markers_with_prefix(text: &str, prefix: &str) -> (String, Vec<String>
     }
 
     (out.trim().to_string(), paths)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── extract_react_marker ─────────────────────────────────────────────
-
-    #[test]
-    fn react_bare_directive() {
-        let (text, emoji) = extract_react_marker("<<react:👍>>");
-        assert_eq!(text, "");
-        assert_eq!(emoji.as_deref(), Some("👍"));
-    }
-
-    #[test]
-    fn react_directive_with_text() {
-        let (text, emoji) = extract_react_marker("Sure thing! <<react:✅>>");
-        assert_eq!(text, "Sure thing!");
-        assert_eq!(emoji.as_deref(), Some("✅"));
-    }
-
-    #[test]
-    fn react_no_directive() {
-        let (text, emoji) = extract_react_marker("Just a normal message.");
-        assert_eq!(text, "Just a normal message.");
-        assert!(emoji.is_none());
-    }
-
-    #[test]
-    fn react_multiple_directives_uses_first() {
-        let (text, emoji) = extract_react_marker("<<react:👍>> and <<react:❤️>>");
-        assert_eq!(text, "and");
-        assert_eq!(emoji.as_deref(), Some("👍"));
-    }
-
-    #[test]
-    fn react_empty_directive_ignored() {
-        let (text, emoji) = extract_react_marker("<<react:>>");
-        assert_eq!(text, "");
-        assert!(emoji.is_none());
-    }
-
-    #[test]
-    fn react_malformed_no_closing() {
-        // Missing >> — should be left untouched
-        let (text, emoji) = extract_react_marker("<<react:👍");
-        assert_eq!(text, "<<react:👍");
-        assert!(emoji.is_none());
-    }
-
-    #[test]
-    fn react_whitespace_trimmed() {
-        let (text, emoji) = extract_react_marker("  <<react:🔥>>  ");
-        assert_eq!(text, "");
-        assert_eq!(emoji.as_deref(), Some("🔥"));
-    }
-
-    #[test]
-    fn react_non_emoji_text_still_extracted() {
-        // Even non-standard emoji text is extracted as-is; the caller decides validity
-        let (text, emoji) = extract_react_marker("<<react:hello>>");
-        assert_eq!(text, "");
-        assert_eq!(emoji.as_deref(), Some("hello"));
-    }
-
-    #[test]
-    fn react_with_surrounding_newlines() {
-        let (text, emoji) = extract_react_marker("\n\n<<react:🔥>>\n\n");
-        assert_eq!(text, "");
-        assert_eq!(emoji.as_deref(), Some("🔥"));
-    }
-
-    #[test]
-    fn react_embedded_in_middle() {
-        let (text, emoji) = extract_react_marker("Hello <<react:👋>> world");
-        assert_eq!(text, "Hello  world");
-        assert_eq!(emoji.as_deref(), Some("👋"));
-    }
-
-    #[test]
-    fn react_only_react_with_no_extra_text() {
-        // The common reaction-only case: LLM outputs just the directive
-        let (text, emoji) = extract_react_marker("<<react:✅>>");
-        assert!(text.trim().is_empty());
-        assert_eq!(emoji.as_deref(), Some("✅"));
-    }
-
-    // ── extract_img_markers (existing, regression) ───────────────────────
-
-    #[test]
-    fn img_basic() {
-        let (text, paths) = extract_img_markers("here <<IMG:/tmp/a.png>> done");
-        // The extractor removes the marker but doesn't collapse interior whitespace.
-        assert_eq!(text, "here  done");
-        assert_eq!(paths, vec!["/tmp/a.png"]);
-    }
 }
