@@ -3290,6 +3290,12 @@ pub(crate) async fn handle_message(
             let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
             let text_only = redact_secrets(&text_only);
 
+            // Extract <<react:emoji>> directive — the LLM outputs this to
+            // signal a reaction-only response (no text bubble). If the
+            // response is ONLY a reaction, the emoji is sent as a Telegram
+            // reaction on the user's message and text delivery is skipped.
+            let (text_only, react_emoji) = crate::utils::extract_react_marker(&text_only);
+
             // Dedup: strip text that was already sent as intermediate messages
             // to avoid duplicating content on Telegram. An intermediate chunk
             // that already carries the final answer (e.g. "Done. Uploaded to
@@ -3317,6 +3323,34 @@ pub(crate) async fn handle_message(
             } else {
                 text_only
             };
+
+            // Reaction directive: if the LLM included <<react:emoji>>, send
+            // a reaction on the user's message. For reaction-only responses
+            // (empty text after stripping the directive), skip all text/TTS
+            // delivery and just react.
+            if let Some(ref emoji) = react_emoji {
+                let reaction = teloxide::types::ReactionType::Emoji {
+                    emoji: emoji.clone(),
+                };
+                if let Err(e) = bot
+                    .set_message_reaction(msg.chat.id, msg.id)
+                    .reaction(vec![reaction])
+                    .is_big(false)
+                    .await
+                {
+                    tracing::warn!("Telegram: failed to set reaction: {}", e);
+                }
+                if text_only.trim().is_empty() {
+                    tracing::info!(
+                        "Telegram: reaction-only response ({}), skipping text delivery",
+                        emoji
+                    );
+                    if let Some(mid) = streaming_msg_id {
+                        let _ = bot.delete_message(msg.chat.id, mid).await;
+                    }
+                    return Ok(());
+                }
+            }
 
             // Context budget footer is appended to the response text for
             // display only. It must NOT be stored in the session/messages
@@ -4191,6 +4225,9 @@ pub(crate) async fn resume_session(
             let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
             let text_only = redact_secrets(&text_only);
 
+            // Extract <<react:emoji>> directive — see handle_message.
+            let (text_only, react_emoji) = crate::utils::extract_react_marker(&text_only);
+
             // Dedup intermediates already delivered so we don't duplicate
             // them when editing the streaming placeholder with the final.
             let sent = {
@@ -4207,6 +4244,23 @@ pub(crate) async fn resume_session(
             } else {
                 text_only
             };
+
+            // Reaction-only: if text is empty after dedup and the LLM used
+            // <<react:emoji>>, skip delivery. Unlike handle_message, resume
+            // has no user message to react to (the original message id is
+            // lost across restarts), so we just clean up the placeholder.
+            if text_only.trim().is_empty()
+                && let Some(ref emoji) = react_emoji
+            {
+                tracing::info!(
+                    "Telegram resume: reaction-only response ({}), skipping delivery",
+                    emoji
+                );
+                if let Some(mid) = streaming_msg_id {
+                    let _ = bot.delete_message(chat_id, mid).await;
+                }
+                return Ok(());
+            }
 
             // Context budget footer is appended to display text, not sent as separate message
             let ctx_max = agent.context_limit_for_session(session_id);
