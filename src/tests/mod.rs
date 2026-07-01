@@ -397,6 +397,7 @@ pub mod telegram_pre_tool_rolling_test;
 pub mod telegram_quote_reply_test;
 pub mod telegram_rich_parse_test;
 pub mod telegram_rich_test;
+pub mod telegram_send_caption_test;
 pub mod telegram_send_input_file_test;
 pub mod telegram_send_thread_id_override_test;
 pub mod telegram_status_message_test;
