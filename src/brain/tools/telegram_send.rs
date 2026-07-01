@@ -11,7 +11,9 @@ use crate::channels::telegram::TelegramState;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
+use teloxide::payloads::SendDocumentSetters;
 use teloxide::payloads::SendMessageSetters;
+use teloxide::payloads::SendPhotoSetters;
 use teloxide::prelude::*;
 use teloxide::types::{
     ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ReactionType,
@@ -232,9 +234,13 @@ impl Tool for TelegramSendTool {
                     "type": "integer",
                     "description": "Optional forum-topic ID for groups with topics enabled. Omit to auto-route to the most recent topic seen in the chat (the usual case for replies to ongoing conversations). Pass an explicit value to route to a DIFFERENT topic — e.g. post a release announcement in #announcements when the latest message came from #dev. Ignored for non-forum chats."
                 },
+                "caption": {
+                    "type": "string",
+                    "description": "Caption for send_photo / send_document (0-1024 chars). Attaches text context to the media."
+                },
                 "message_id": {
                     "type": "integer",
-                    "description": "Target message ID for reply/edit/delete/pin/unpin/forward/set_reaction"
+                    "description": "Target message ID for reply/edit/delete/pin/unpin/forward/set_reaction, or the message to reply to when used with send_photo/send_document"
                 },
                 "from_chat_id": {
                     "type": "integer",
@@ -482,7 +488,14 @@ impl Tool for TelegramSendTool {
                 let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
                 let reference = pget!(get_str(&input, "photo_url")).to_string();
                 let file = pget!(resolve_input_file(&reference, "photo_url").await);
-                match bot.send_photo(ChatId(chat_id), file).await {
+                let mut req = bot.send_photo(ChatId(chat_id), file);
+                if let Some(caption) = input.get("caption").and_then(|v| v.as_str()) {
+                    req = req.caption(caption);
+                }
+                if let Some(mid) = input.get("message_id").and_then(|v| v.as_i64()) {
+                    req = req.reply_parameters(ReplyParameters::new(MessageId(mid as i32)));
+                }
+                match req.await {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Photo sent to chat {chat_id}."
                     ))),
@@ -495,7 +508,14 @@ impl Tool for TelegramSendTool {
                 let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
                 let reference = pget!(get_str(&input, "document_url")).to_string();
                 let file = pget!(resolve_input_file(&reference, "document_url").await);
-                match bot.send_document(ChatId(chat_id), file).await {
+                let mut req = bot.send_document(ChatId(chat_id), file);
+                if let Some(caption) = input.get("caption").and_then(|v| v.as_str()) {
+                    req = req.caption(caption);
+                }
+                if let Some(mid) = input.get("message_id").and_then(|v| v.as_i64()) {
+                    req = req.reply_parameters(ReplyParameters::new(MessageId(mid as i32)));
+                }
+                match req.await {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Document sent to chat {chat_id}."
                     ))),
