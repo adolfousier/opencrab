@@ -24,31 +24,35 @@ use anyhow::Result;
 use crate::db::models::Session;
 use crate::services::SessionService;
 
-/// Create a new channel session, inheriting provider + model from the most
-/// recent existing session (TUI or any channel) when available.
+/// Create a new channel session, inheriting provider + model +
+/// working_directory from the most recent existing session (TUI or any
+/// channel) when available.
 ///
-/// Returns the created `Session`. Provider inheritance is best-effort: if the
+/// Returns the created `Session`. Inheritance is best-effort: if the
 /// most-recent-session lookup fails for any reason, the session is still
-/// created with `provider_name = None` / `model = None`, matching the old
-/// behavior so callers never fail because of this helper.
+/// created with `provider_name = None` / `model = None` /
+/// `working_directory = None`, matching the old behavior so callers never
+/// fail because of this helper.
 pub async fn create_channel_session(
     session_svc: &SessionService,
     title: Option<String>,
 ) -> Result<Session> {
-    let (inherited_provider, inherited_model) = match session_svc.get_most_recent_session().await {
-        Ok(Some(prev)) => (prev.provider_name, prev.model),
-        _ => (None, None),
-    };
+    let (inherited_provider, inherited_model, inherited_wd) =
+        match session_svc.get_most_recent_session().await {
+            Ok(Some(prev)) => (prev.provider_name, prev.model, prev.working_directory),
+            _ => (None, None, None),
+        };
 
     if inherited_provider.is_some() {
         tracing::info!(
-            "Channel session inherited provider {:?} / model {:?} from most recent session",
+            "Channel session inherited provider {:?} / model {:?} / wd {:?} from most recent session",
             inherited_provider,
             inherited_model,
+            inherited_wd,
         );
     }
 
     session_svc
-        .create_session_with_provider(title, inherited_provider, inherited_model, None)
+        .create_session_with_provider(title, inherited_provider, inherited_model, inherited_wd)
         .await
 }
