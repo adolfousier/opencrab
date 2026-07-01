@@ -197,6 +197,38 @@ impl ChannelMessageRepository {
             .context("Failed to look up channel message by platform id")
     }
 
+    /// Like [`content_by_platform_message_id`] but only returns content when the
+    /// message was sent by the bot (sender_id = 'bot:opencrabs'). Used by the
+    /// inbound reaction handler to skip reactions on user-to-user messages.
+    pub async fn bot_content_by_platform_message_id(
+        &self,
+        channel: &str,
+        chat_id: &str,
+        platform_message_id: &str,
+    ) -> Result<Option<String>> {
+        let ch = channel.to_string();
+        let cid = chat_id.to_string();
+        let pmid = platform_message_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT content FROM channel_messages \
+                     WHERE channel = ?1 AND channel_chat_id = ?2 \
+                     AND platform_message_id = ?3 AND sender_id = 'bot:opencrabs' \
+                     ORDER BY created_at DESC LIMIT 1",
+                    params![ch, cid, pmid],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to look up bot message by platform id")
+    }
+
     /// Most recent non-null forum topic name for a thread, used to label the
     /// session after the topic ("Devops") instead of its numeric thread id
     /// ("topic:2"). Telegram only carries the name on regular topic messages
