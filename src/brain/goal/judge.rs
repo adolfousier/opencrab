@@ -62,10 +62,7 @@ pub async fn judge_goal(
             Ok(response) => {
                 let raw = extract_text(&response);
                 if raw.trim().is_empty() {
-                    tracing::warn!(
-                        "Goal judge returned empty response (attempt {}/2)",
-                        attempt
-                    );
+                    tracing::warn!("Goal judge returned empty response (attempt {}/2)", attempt);
                     if attempt < 2 {
                         continue;
                     }
@@ -100,11 +97,7 @@ pub async fn judge_goal(
                 return decision;
             }
             Err(e) => {
-                tracing::warn!(
-                    "Goal judge LLM call failed (attempt {}/2): {}",
-                    attempt,
-                    e
-                );
+                tracing::warn!("Goal judge LLM call failed (attempt {}/2): {}", attempt, e);
                 if attempt < 2 {
                     continue;
                 }

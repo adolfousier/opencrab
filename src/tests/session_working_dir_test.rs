@@ -190,7 +190,10 @@ mod channel_session_wd_inherit {
         let svc = setup().await;
 
         // Prior session exists but has no working directory
-        let _prior = svc.create_session(Some("Prior No WD".into())).await.unwrap();
+        let _prior = svc
+            .create_session(Some("Prior No WD".into()))
+            .await
+            .unwrap();
 
         let new_session = create_channel_session(&svc, Some("Channel".into()))
             .await

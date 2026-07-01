@@ -7,8 +7,8 @@ use crate::brain::provider::{
     ContentBlock, LLMRequest, LLMResponse, Provider, ProviderStream, StopReason, TokenUsage,
 };
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------------------
 // Mock provider
@@ -55,10 +55,14 @@ impl Provider for MockProvider {
                 responses.retain(|s| s.is_some());
                 match taken {
                     Some(r) => r,
-                    None => Err(ProviderError::Internal("no more mock responses".to_string())),
+                    None => Err(ProviderError::Internal(
+                        "no more mock responses".to_string(),
+                    )),
                 }
             }
-            None => Err(ProviderError::Internal("no more mock responses".to_string())),
+            None => Err(ProviderError::Internal(
+                "no more mock responses".to_string(),
+            )),
         }
     }
 
@@ -149,10 +153,7 @@ async fn valid_continue_response_no_retry() {
 async fn empty_response_retries_and_succeeds() {
     let provider = MockProvider::new(vec![
         Ok(make_response("", StopReason::EndTurn)),
-        Ok(make_response(
-            &done_json("recovered"),
-            StopReason::EndTurn,
-        )),
+        Ok(make_response(&done_json("recovered"), StopReason::EndTurn)),
     ]);
 
     let decision = judge_goal(&provider, "mock-model", "goal", "response").await;
@@ -211,10 +212,7 @@ async fn consecutive_parse_failures_fails_open() {
 async fn api_error_retries_and_succeeds() {
     let provider = MockProvider::new(vec![
         Err(ProviderError::Internal("transient".to_string())),
-        Ok(make_response(
-            &done_json("fixed"),
-            StopReason::EndTurn,
-        )),
+        Ok(make_response(&done_json("fixed"), StopReason::EndTurn)),
     ]);
 
     let decision = judge_goal(&provider, "mock-model", "goal", "response").await;

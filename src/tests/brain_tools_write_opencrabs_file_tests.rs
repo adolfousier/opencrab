@@ -304,7 +304,15 @@ fn test_replace_unicode_symbols_via_nfc() {
     std::fs::write(&path, &updated).unwrap();
 
     let result = std::fs::read_to_string(&path).unwrap();
-    assert!(result.contains("10x2"), "replacement succeeded: {:?}", result);
-    assert!(result.contains("≤"), "other Unicode preserved: {:?}", result);
+    assert!(
+        result.contains("10x2"),
+        "replacement succeeded: {:?}",
+        result
+    );
+    assert!(
+        result.contains("≤"),
+        "other Unicode preserved: {:?}",
+        result
+    );
     assert!(result.contains("—"), "em-dash preserved: {:?}", result);
 }

@@ -5,9 +5,9 @@
 //! verify the schema contract and the graceful error path when the bot is not
 //! connected. The parameter-extraction patterns are also exercised directly.
 
+use crate::brain::tools::telegram_send::TelegramSendTool;
 use crate::brain::tools::r#trait::Tool;
 use crate::brain::tools::r#trait::ToolExecutionContext;
-use crate::brain::tools::telegram_send::TelegramSendTool;
 use crate::channels::telegram::TelegramState;
 use serde_json::json;
 use std::sync::Arc;
@@ -149,10 +149,7 @@ fn caption_extraction_from_json() {
     );
 
     let input_null = json!({"caption": null});
-    assert_eq!(
-        input_null.get("caption").and_then(|v| v.as_str()),
-        None
-    );
+    assert_eq!(input_null.get("caption").and_then(|v| v.as_str()), None);
 
     let input_number = json!({"caption": 123});
     assert_eq!(

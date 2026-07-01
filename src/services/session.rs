@@ -30,7 +30,8 @@ impl SessionService {
 
     /// Create a new session
     pub async fn create_session(&self, title: Option<String>) -> Result<Session> {
-        self.create_session_with_provider(title, None, None, None).await
+        self.create_session_with_provider(title, None, None, None)
+            .await
     }
 
     /// Create a new session with explicit provider and model

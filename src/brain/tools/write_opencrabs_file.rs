@@ -357,7 +357,8 @@ impl Tool for WriteOpenCrabsFileTool {
                     )));
                 }
                 let new_text_nfc: String = new_text.nfc().collect();
-                let updated = existing_nfc.replacen(old_text_nfc.as_str(), new_text_nfc.as_str(), 1);
+                let updated =
+                    existing_nfc.replacen(old_text_nfc.as_str(), new_text_nfc.as_str(), 1);
                 use crate::brain::tools::brain_file_safety;
                 let dedup_intent = input
                     .get("dedup_intent")

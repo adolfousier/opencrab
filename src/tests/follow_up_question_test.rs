@@ -219,7 +219,8 @@ async fn long_options_pass_through() {
     let mut ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
     ctx.question_callback = Some(callback_returning("long option"));
 
-    let long_option = "A deliberately long option that exceeds forty characters and should still work";
+    let long_option =
+        "A deliberately long option that exceeds forty characters and should still work";
     assert!(
         long_option.len() > 40,
         "test fixture must be >40 chars, got {}",
@@ -237,6 +238,10 @@ async fn long_options_pass_through() {
         .await
         .expect("execute");
 
-    assert!(result.success, "long option should be accepted: {:?}", result.error);
+    assert!(
+        result.success,
+        "long option should be accepted: {:?}",
+        result.error
+    );
     assert!(result.output.contains("long option"));
 }
