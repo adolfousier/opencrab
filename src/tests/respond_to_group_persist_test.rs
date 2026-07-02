@@ -123,3 +123,51 @@ async fn respond_to_in_dm_writes_channel_level() {
     assert!(matches!(cfg.channels.telegram.respond_to, RespondTo::All));
     assert!(cfg.channels.telegram.groups.is_empty());
 }
+
+// Regression: when the requested mode MATCHES the global fallback (no
+// per-group override yet), the handler must still CREATE the per-group
+// section instead of short-circuiting with "Already in … mode".
+#[cfg(unix)]
+#[tokio::test]
+async fn respond_to_in_group_same_as_global_still_creates_override() {
+    let tmp = tempfile::tempdir().unwrap();
+    let _guard = HomeGuard::new(tmp.path());
+    let home = tmp.path().join(".opencrabs");
+    std::fs::create_dir_all(&home).unwrap();
+    // Global is "mention", no per-group overrides.
+    std::fs::write(
+        home.join("config.toml"),
+        "[channels.telegram]\nenabled = true\nrespond_to = \"mention\"\n",
+    )
+    .unwrap();
+
+    let chat_id = "-5324478558";
+    // Set the same mode as the global — must still write per-group.
+    let reply = handle_respond_to("mention", Some(chat_id)).await;
+    assert!(
+        reply.starts_with("✅"),
+        "expected success (not 'already in'), got: {reply}"
+    );
+
+    // Verify the per-group section was written to disk.
+    let raw = std::fs::read_to_string(home.join("config.toml")).unwrap();
+    assert!(
+        raw.contains("groups") && raw.contains(chat_id),
+        "config.toml is missing the groups override when value == global:\n{raw}"
+    );
+
+    // Fresh load must see the per-group override.
+    let cfg = Config::load().expect("config must reload after group write");
+    let group = cfg
+        .channels
+        .telegram
+        .groups
+        .get(chat_id)
+        .expect("groups entry must exist even when value matches global");
+    assert!(matches!(group.respond_to, Some(RespondTo::Mention)));
+    // Channel-level is untouched.
+    assert!(matches!(
+        cfg.channels.telegram.respond_to,
+        RespondTo::Mention
+    ));
+}

@@ -1701,16 +1701,18 @@ pub(crate) async fn handle_respond_to(arg: &str, chat_id: Option<&str>) -> Strin
     };
 
     // When in a group, prefer per-group override; fall back to channel-level.
-    let current = if let Some(cid) = chat_id {
+    // Track whether a per-group override ACTUALLY EXISTS so we don't skip the
+    // write when the global fallback happens to match the requested value.
+    let (current, group_has_override) = if let Some(cid) = chat_id {
         let group_cfg = config.channels.telegram.groups.get(cid);
         let group_override = group_cfg.and_then(|g| g.respond_to.as_ref());
         if let Some(override_val) = group_override {
-            *override_val
+            (*override_val, true)
         } else {
-            config.channels.telegram.respond_to
+            (config.channels.telegram.respond_to, false)
         }
     } else {
-        config.channels.telegram.respond_to
+        (config.channels.telegram.respond_to, true) // channel-level: "has override"
     };
 
     let current_label = match &current {
@@ -1751,7 +1753,10 @@ pub(crate) async fn handle_respond_to(arg: &str, chat_id: Option<&str>) -> Strin
         }
     };
 
-    if current_label == new_label {
+    // Only early-return when a real override already exists at this scope.
+    // If the group has no per-group override yet but the global happens to
+    // match, we must still write so the per-group section gets created.
+    if current_label == new_label && group_has_override {
         return format!("ℹ️ Already in **{}** mode.", current_label);
     }
 
