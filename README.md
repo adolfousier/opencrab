@@ -295,7 +295,7 @@ The `/cowork` command creates a team workspace directly from Telegram. It is **T
 2. User sends workspace name → bot generates a `?startgroup=cowork_<id>` deep link as an inline button
 3. User taps the button → Telegram's native "create group" UI opens — user names the group, Telegram creates it and adds the bot
 4. Bot detects the startgroup parameter → generates an invite link, creates a QR code PNG, sends it to the user's DM
-5. New members who join the group via the invite link auto-register in `config.telegram.allowed_users` — the owner gets a confirmation message
+5. Members auto-register to the **group's allowlist** (`[channels.telegram.groups.<chat_id>].allowed_users`), not the global one. Both new joiners (via invite link) and existing members (on their first message) get registered. Cowork members can talk in the group but cannot DM the bot privately unless also on the global `allowed_users`. The owner gets a confirmation for each registration.
 
 **Cross-channel behavior:** `/cowork` works from any surface. In Telegram DMs, the native flow activates directly. From the TUI, Discord, Slack, or WhatsApp, the agent calls the `cowork_connect` tool which mints a session, registers it with the bot, and returns the `t.me` deep link plus a scannable QR code PNG. The TUI shows the clickable link; channels deliver the QR as a photo.
 
@@ -354,6 +354,8 @@ respond_to = "all"                       # per-group override of the global resp
 ```
 
 `respond_to` accepts `all`, `mention`, `dm_only`, or `auto` (reply to all while there is at most one active sender, then switch to mention-only once a second unique sender appears).
+
+The `/cowork` command uses per-group ACL automatically: when you create a cowork workspace, all members register into the group's `allowed_users` only, not the global list. This means coworkers can chat with the bot in their group but get no private DM access, which is the whole point of group-scoped oversight.
 
 #### Voice and file pickup in groups
 
