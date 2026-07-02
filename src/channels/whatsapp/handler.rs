@@ -682,11 +682,15 @@ pub(crate) async fn handle_message(
         }
     };
 
-    // Follow-up interrupt: cancel any in-flight agent for this session
-    wa_state.cancel_session(session_id).await;
-
-    // Fast-cancel: "stop" exact match — cancel and reply immediately
+    // Fast-cancel: "stop" exact match — cancel and reply immediately.
+    //
+    // Cancellation is scoped to explicit stop requests and genuine follow-up
+    // messages (handled at dispatch by store_cancel_token, which cancels the
+    // prior token before starting new work). Channel commands like /models,
+    // /help, /usage, /new must NEVER abort an in-flight task: switching models
+    // applies to the next run, it does not drop current work (#266).
     if content.trim().eq_ignore_ascii_case("stop") {
+        wa_state.cancel_session(session_id).await;
         let reply = waproto::whatsapp::Message {
             conversation: Some("Operation cancelled.".to_string()),
             ..Default::default()

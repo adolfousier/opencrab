@@ -300,12 +300,15 @@ pub(crate) async fn handle_message(
         }
     };
 
-    // Follow-up interrupt: cancel any in-flight agent for this session
-    // so the new message replaces the old one (like pressing ESC twice)
-    discord_state.cancel_session(session_id).await;
-
-    // Fast-cancel: "stop" exact match — cancel and reply immediately
+    // Fast-cancel: "stop" exact match — cancel and reply immediately.
+    //
+    // Cancellation is scoped to explicit stop requests and genuine follow-up
+    // messages (handled at dispatch by store_cancel_token, which cancels the
+    // prior token before starting new work). Channel commands like /models,
+    // /help, /usage, /new must NEVER abort an in-flight task: switching models
+    // applies to the next run, it does not drop current work (#266).
     if msg.content.trim().eq_ignore_ascii_case("stop") {
+        discord_state.cancel_session(session_id).await;
         let _ = msg.channel_id.say(&ctx.http, "Operation cancelled.").await;
         return;
     }
