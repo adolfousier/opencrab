@@ -466,6 +466,33 @@ OpenCrabs's behavior lives in plain-markdown **brain files** in `~/.opencrabs/`.
 
 > **Deep dive:** for the full directive lifecycle (how directives flow from human/RSI through storage to system prompt), see the [Brain Constitution](src/docs/reference/BRAIN_CONSTITUTION.md).
 
+### Project Directive Files — Auto-Discovery
+
+Brain files are OpenCrabs's own. **Project directive files** are the rule files that *other* AI coding tools drop in a repo, and OpenCrabs discovers them automatically. Point the agent at any repository (via `/cd`, a channel workspace, or launching inside one) and it scans that directory for the conventions the repo already ships for Claude Code, Cursor, Windsurf, Cline, Gemini, GitHub Copilot, OpenCode, and the cross-tool `AGENTS.md` standard. No config, no import step: if the files are there, the agent knows.
+
+What it looks for:
+
+| Source | Files |
+|--------|-------|
+| Cross-tool standard | `AGENTS.md` |
+| Claude Code | `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, `.claude/rules/**/*.md` |
+| Cursor | `.cursorrules`, `.cursor/rules/**/*.mdc` |
+| Windsurf | `.windsurfrules` |
+| Cline | `.clinerules` (file or `.clinerules/**/*.{md,txt}`) |
+| Gemini CLI | `GEMINI.md` |
+| GitHub Copilot | `.github/copilot-instructions.md` |
+| OpenCode | `.opencode/AGENTS.md` |
+
+For directory-based rule systems (Cursor `.mdc`, Claude/Cline rules), the frontmatter is parsed and each rule is sorted into one of three tiers, so the agent knows *when* each is relevant:
+
+| Tier | Trigger | How it is surfaced |
+|------|---------|--------------------|
+| **Always apply** | plain root files; Cursor `alwaysApply: true`; Claude/Cline rules with no `paths` | listed as always-relevant for this project |
+| **Conditional** | Cursor `globs`; Claude/Cline `paths` | listed with the glob/path patterns so the agent reads them when touching matching files |
+| **On-demand** | Cursor `.mdc` with only a `description` | listed with the description text so the agent judges relevance from the task |
+
+The scan produces a compact **filenames-only index** in the system prompt (not the full file contents), so it costs almost nothing and the agent pulls a file with `read_file` when it actually needs it. The index rebuilds when you `/cd` to another repo and when a directive file is added or edited, and it survives context compaction because it is part of the always-rebuilt preamble. Nothing is added when a project has no directive files.
+
 ### Profiles — Multi-Instance Crab Agents
 
 Run multiple isolated OpenCrabs instances from the same installation. Each profile gets its own config, brain files, memory, sessions, database, and gateway service.
