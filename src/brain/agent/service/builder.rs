@@ -39,11 +39,24 @@ struct BrainRebuildInner {
     core: bool,
     /// Append `LAZY_TOOLS_PROMPT` after the brain, matching startup assembly.
     lazy_tools: bool,
+    /// Live working-directory handle shared with tool execution. `/cd` mutates
+    /// it, so reading it each render lets the project-directive scan follow the
+    /// current directory instead of the frozen startup path baked into
+    /// `runtime_info`. `None` disables the follow (brain rebuild without a
+    /// working-dir source, e.g. some tests).
+    live_cwd: Option<Arc<std::sync::RwLock<std::path::PathBuf>>>,
     cache: std::sync::RwLock<BrainCache>,
 }
 
 struct BrainCache {
     mtime: std::time::SystemTime,
+    /// The working directory this render was built for. A `/cd` changes it and
+    /// forces a rebuild so the directive index follows the current project.
+    cwd: Option<std::path::PathBuf>,
+    /// Newest mtime across the directive files under `cwd`. Advances when a
+    /// directive file is added/edited/removed, forcing a rebuild so the index
+    /// never goes stale.
+    dir_mtime: Option<std::time::SystemTime>,
     rendered: String,
 }
 
@@ -57,16 +70,26 @@ impl BrainRebuild {
         core: bool,
         lazy_tools: bool,
         seed: String,
+        live_cwd: Option<Arc<std::sync::RwLock<std::path::PathBuf>>>,
     ) -> Self {
         let mtime = loader.brain_files_mtime();
+        let cwd = live_cwd
+            .as_ref()
+            .and_then(|h| h.read().ok().map(|p| p.clone()));
+        let dir_mtime = cwd
+            .as_deref()
+            .and_then(crate::brain::directives::directives_mtime);
         Self {
             inner: Arc::new(BrainRebuildInner {
                 loader,
                 runtime_info,
                 core,
                 lazy_tools,
+                live_cwd,
                 cache: std::sync::RwLock::new(BrainCache {
                     mtime,
+                    cwd,
+                    dir_mtime,
                     rendered: seed,
                 }),
             }),
@@ -74,21 +97,31 @@ impl BrainRebuild {
     }
 
     /// The system brain for this turn. Returns the cached render unless a
-    /// brain file's mtime is newer than the last render, in which case it
-    /// rebuilds from disk and updates the cache.
+    /// brain file changed, the working directory changed (`/cd`), or a project
+    /// directive file was added/edited/removed. In any of those cases it
+    /// rebuilds from disk and updates the cache; otherwise it returns the
+    /// byte-identical cached render so the provider prompt cache stays warm.
     pub fn render(&self) -> String {
         let i = &self.inner;
         let latest = i.loader.brain_files_mtime();
+        let cwd = i
+            .live_cwd
+            .as_ref()
+            .and_then(|h| h.read().ok().map(|p| p.clone()));
+        let dir_mtime = cwd
+            .as_deref()
+            .and_then(crate::brain::directives::directives_mtime);
         {
             let cache = i.cache.read().expect("brain cache lock poisoned");
-            if latest <= cache.mtime {
+            if latest <= cache.mtime && cwd == cache.cwd && dir_mtime <= cache.dir_mtime {
                 return cache.rendered.clone();
             }
         }
+        let runtime_info = self.effective_runtime_info(cwd.as_deref());
         let mut brain = if i.core {
-            i.loader.build_core_brain(i.runtime_info.as_ref())
+            i.loader.build_core_brain(runtime_info.as_ref())
         } else {
-            i.loader.build_system_brain(i.runtime_info.as_ref())
+            i.loader.build_system_brain(runtime_info.as_ref())
         };
         if i.lazy_tools {
             brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
@@ -96,9 +129,28 @@ impl BrainRebuild {
         let mut cache = i.cache.write().expect("brain cache lock poisoned");
         *cache = BrainCache {
             mtime: latest,
+            cwd,
+            dir_mtime,
             rendered: brain.clone(),
         };
         brain
+    }
+
+    /// The frozen `runtime_info` with its `working_directory` overridden by the
+    /// live cwd (tilde-collapsed for display and cache-key stability), so the
+    /// directive scan and the "Working directory" line follow `/cd`. When no
+    /// live cwd is available the frozen value is used unchanged.
+    fn effective_runtime_info(
+        &self,
+        cwd: Option<&std::path::Path>,
+    ) -> Option<crate::brain::prompt_builder::RuntimeInfo> {
+        match (self.inner.runtime_info.clone(), cwd) {
+            (Some(mut ri), Some(path)) => {
+                ri.working_directory = Some(crate::brain::tools::error::collapse_home(path));
+                Some(ri)
+            }
+            (other, _) => other,
+        }
     }
 }
 
@@ -409,12 +461,17 @@ impl AgentService {
         lazy_tools: bool,
     ) -> Self {
         let seed = self.default_system_brain.clone().unwrap_or_default();
+        // Share the live working-directory handle so the directive scan follows
+        // `/cd`. Same Arc that tool execution and `set_working_directory` use,
+        // so runtime mutations are visible to `render`.
+        let live_cwd = Some(Arc::clone(&self.working_directory));
         self.brain_rebuild = Some(BrainRebuild::new(
             loader,
             runtime_info,
             core,
             lazy_tools,
             seed,
+            live_cwd,
         ));
         self
     }

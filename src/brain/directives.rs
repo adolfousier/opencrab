@@ -55,6 +55,16 @@ const NESTED_FILES: &[&str] = &[
     ".opencode/AGENTS.md",
 ];
 
+/// Directory-based rule systems: `(dir, rule-file extensions)`. `.clinerules`
+/// may also be a single file, which `discover` handles separately, but its
+/// directory form and mtime are covered here. Kept in sync with the rule-dir
+/// arms of `discover`; `directives_mtime` walks the same set.
+const RULE_DIRS: &[(&str, &[&str])] = &[
+    (".clinerules", &["md", "txt"]),
+    (".claude/rules", &["md"]),
+    (".cursor/rules", &["mdc"]),
+];
+
 /// How a rule directory's frontmatter maps to tiers.
 enum FrontmatterKind {
     /// Cursor `.mdc`: `alwaysApply` (bool) / `globs` (list) / `description`.
@@ -135,6 +145,55 @@ pub fn discover(root: &Path) -> Vec<DirectiveFile> {
     found.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     found.dedup_by(|a, b| a.rel_path == b.rel_path);
     found
+}
+
+/// Newest modification time across every directive file under `root`, or
+/// `None` when `root` is not a directory or holds no directive files.
+///
+/// Drives brain-rebuild staleness: when a directive file is added, edited, or
+/// removed, its own mtime (or its parent rule dir's mtime, for add/remove)
+/// advances, so the cached system prompt is rebuilt on the next turn. Cheap:
+/// stats a fixed set of root and nested paths and globs the rule dirs, which
+/// are tiny or absent in the common case.
+pub fn directives_mtime(root: &Path) -> Option<std::time::SystemTime> {
+    if !root.is_dir() {
+        return None;
+    }
+    let mut newest: Option<std::time::SystemTime> = None;
+    let mut consider = |p: &Path| {
+        if let Ok(m) = std::fs::metadata(p).and_then(|md| md.modified()) {
+            newest = Some(newest.map_or(m, |n| n.max(m)));
+        }
+    };
+    for name in ROOT_FILES {
+        consider(&root.join(name));
+    }
+    for rel in NESTED_FILES {
+        consider(&root.join(rel));
+    }
+    for (dir, exts) in RULE_DIRS {
+        let d = root.join(dir);
+        // The dir's own mtime catches add/remove (and the single-file
+        // `.clinerules` form); the walked files catch in-place edits.
+        consider(&d);
+        for ext in *exts {
+            let Some(pat) = d
+                .join("**")
+                .join(format!("*.{ext}"))
+                .to_str()
+                .map(String::from)
+            else {
+                continue;
+            };
+            let Ok(paths) = glob::glob(&pat) else {
+                continue;
+            };
+            for path in paths.flatten() {
+                consider(&path);
+            }
+        }
+    }
+    newest
 }
 
 /// Recursively collect rule files with the given extensions from `dir`,
@@ -311,13 +370,13 @@ pub fn render(root_display: &str, files: &[DirectiveFile]) -> String {
     if !conditional.is_empty() {
         out.push_str("\nConditional (read when touching matching files):\n");
         for (path, pat) in &conditional {
-            out.push_str(&format!("  {} — matches: {}\n", path, pat));
+            out.push_str(&format!("  {} (matches: {})\n", path, pat));
         }
     }
     if !on_demand.is_empty() {
         out.push_str("\nOn-demand (read when the description matches your task):\n");
         for (path, desc) in &on_demand {
-            out.push_str(&format!("  {} — \"{}\"\n", path, desc));
+            out.push_str(&format!("  {}: \"{}\"\n", path, desc));
         }
     }
     out.push('\n');

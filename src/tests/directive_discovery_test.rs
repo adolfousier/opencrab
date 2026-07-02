@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::brain::directives::{DirectiveTier, discover, render};
+use crate::brain::directives::{DirectiveTier, directives_mtime, discover, render};
 use crate::brain::tools::error::expand_tilde;
 
 fn write(root: &Path, rel: &str, body: &str) {
@@ -235,5 +235,41 @@ fn tilde_path_is_expanded_before_scan() {
     assert!(
         files.iter().any(|f| f.rel_path == "AGENTS.md"),
         "tilde path must expand and discover the directive file"
+    );
+}
+
+#[test]
+fn directives_mtime_is_none_for_empty_or_missing() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write(dir.path(), "main.rs", "fn main() {}");
+    assert!(
+        directives_mtime(dir.path()).is_none(),
+        "a project with no directive files has no directive mtime"
+    );
+    assert!(directives_mtime(Path::new("/no/such/dir/anywhere")).is_none());
+}
+
+#[test]
+fn directives_mtime_advances_when_a_directive_file_is_added() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write(dir.path(), "AGENTS.md", "root rules");
+    let before = directives_mtime(dir.path()).expect("AGENTS.md gives an mtime");
+
+    // Add a second directive file with a strictly newer mtime.
+    let nested = dir.path().join(".cursor/rules/api.mdc");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::write(&nested, "---\nalwaysApply: true\n---\nbody").unwrap();
+    let newer = before + std::time::Duration::from_secs(120);
+    fs::File::options()
+        .write(true)
+        .open(&nested)
+        .unwrap()
+        .set_modified(newer)
+        .unwrap();
+
+    let after = directives_mtime(dir.path()).expect("still has directive files");
+    assert!(
+        after >= newer,
+        "adding a newer directive file must advance the fingerprint: {after:?} < {newer:?}"
     );
 }

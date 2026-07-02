@@ -12,7 +12,9 @@
 //! granularity.
 
 use crate::brain::agent::BrainRebuild;
-use crate::brain::prompt_builder::BrainLoader;
+use crate::brain::prompt_builder::{BrainLoader, RuntimeInfo};
+use crate::brain::tools::error::collapse_home;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 use tempfile::TempDir;
 
@@ -46,6 +48,7 @@ fn render_returns_seed_until_a_brain_file_changes() {
         true,  // core brain
         false, // no lazy-tools suffix
         "SEED-VERBATIM".to_string(),
+        None, // no live-cwd handle
     );
 
     // Nothing changed since construction → exact seed, no disk rebuild.
@@ -74,7 +77,7 @@ fn rebuild_is_cached_after_a_change_until_the_next_change() {
     write_with_mtime(&soul, "--- SOUL.md ---\nv1\n", t0());
 
     let loader = BrainLoader::new(dir.path().to_path_buf());
-    let rebuild = BrainRebuild::new(loader, None, true, false, "SEED".to_string());
+    let rebuild = BrainRebuild::new(loader, None, true, false, "SEED".to_string(), None);
 
     // Trigger a rebuild.
     write_with_mtime(
@@ -98,6 +101,80 @@ fn no_rebuild_handle_falls_back_to_static_brain() {
     // seed is what render hands back when the dir has no newer files.
     let dir = TempDir::new().unwrap();
     let loader = BrainLoader::new(dir.path().to_path_buf());
-    let rebuild = BrainRebuild::new(loader, None, true, false, "ONLY-SEED".to_string());
+    let rebuild = BrainRebuild::new(loader, None, true, false, "ONLY-SEED".to_string(), None);
     assert_eq!(rebuild.render(), "ONLY-SEED");
+}
+
+/// Gap 1: the directive scan must follow `/cd`. The live working-directory
+/// handle is shared with tool execution; mutating it (as `/cd` does) must make
+/// the next render rebuild against the new directory, not the frozen startup
+/// one.
+#[test]
+fn render_follows_working_directory_change() {
+    let proj_a = TempDir::new().unwrap();
+    std::fs::write(proj_a.path().join("AGENTS.md"), "project a rules").unwrap();
+    let proj_b = TempDir::new().unwrap();
+    std::fs::write(proj_b.path().join("CLAUDE.md"), "project b rules").unwrap();
+
+    let brain_dir = TempDir::new().unwrap();
+    let loader = BrainLoader::new(brain_dir.path().to_path_buf());
+    let cwd = Arc::new(RwLock::new(proj_a.path().to_path_buf()));
+    let rebuild = BrainRebuild::new(
+        loader,
+        Some(RuntimeInfo::default()),
+        true,
+        false,
+        "SEED".to_string(),
+        Some(Arc::clone(&cwd)),
+    );
+
+    // Simulate `/cd` into project B.
+    *cwd.write().unwrap() = proj_b.path().to_path_buf();
+    let out = rebuild.render();
+
+    let b_header = format!(
+        "Project Directive Files (in {}/)",
+        collapse_home(proj_b.path())
+    );
+    assert!(
+        out.contains(&b_header),
+        "render must scan the new cwd (project B), got:\n{out}"
+    );
+    assert!(
+        !out.contains(&collapse_home(proj_a.path())),
+        "the old startup directory (project A) must not leak into the index"
+    );
+}
+
+/// Gap 2: adding a directive file to the current directory must invalidate the
+/// cache even though no `~/.opencrabs` brain file changed.
+#[test]
+fn render_rebuilds_when_a_directive_file_is_added() {
+    let proj = TempDir::new().unwrap(); // starts with no directive files
+    let brain_dir = TempDir::new().unwrap();
+    let loader = BrainLoader::new(brain_dir.path().to_path_buf());
+    let cwd = Arc::new(RwLock::new(proj.path().to_path_buf()));
+    let rebuild = BrainRebuild::new(
+        loader,
+        Some(RuntimeInfo::default()),
+        true,
+        false,
+        "SEED".to_string(),
+        Some(Arc::clone(&cwd)),
+    );
+
+    // No directive files yet and no brain-file change → warm seed.
+    assert_eq!(rebuild.render(), "SEED");
+
+    // Drop an AGENTS.md into the project → directive mtime advances → rebuild.
+    std::fs::write(proj.path().join("AGENTS.md"), "freshly added rules").unwrap();
+    let out = rebuild.render();
+    assert_ne!(
+        out, "SEED",
+        "a new directive file must invalidate the cache"
+    );
+    assert!(
+        out.contains("Project Directive Files"),
+        "rebuilt brain must include the directive index, got:\n{out}"
+    );
 }
