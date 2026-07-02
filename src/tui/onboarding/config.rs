@@ -488,12 +488,27 @@ impl OnboardingWizard {
                 _ => {}
             }
 
-            // Write models array for providers that have static model lists
-            if !self.ps.config_models.is_empty()
+            // Persist the model list. Use the live-fetched catalogue merged
+            // with any config-persisted names (`all_model_names`: fetched on
+            // top, config-only appended), NOT the stale `config_models` that
+            // was loaded from disk. Writing `config_models` back meant a
+            // successful `/v1/models` fetch was thrown away, so custom
+            // providers stayed frozen on whatever list was there first while
+            // Telegram/`/models` kept showing stale placeholder names (#267).
+            // Fetched names first, then any config-only names appended. No
+            // static-catalogue fallback here: if nothing was fetched and
+            // nothing is in config, write nothing (preserves prior behavior).
+            let mut models_to_write: Vec<String> = self.ps.models.clone();
+            for m in &self.ps.config_models {
+                if !models_to_write.contains(m) {
+                    models_to_write.push(m.clone());
+                }
+            }
+            if !models_to_write.is_empty()
                 && (matches!(self.ps.provider_id(), "github" | "minimax" | "zhipu" | "")
                     || self.ps.selected_provider >= CUSTOM_PROVIDER_IDX)
             {
-                try_write_array!(write_errors, section, "models", &self.ps.config_models);
+                try_write_array!(write_errors, section, "models", &models_to_write);
             }
             // Write enable_thinking for Qwen (thinking mode on by default)
             if self.ps.provider_id() == "qwen" {

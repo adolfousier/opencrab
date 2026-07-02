@@ -1365,17 +1365,23 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
             };
         }
 
-        let current_model = config_models
-            .first()
-            .cloned()
-            .or(config_default)
+        // The configured `default_model` is the authoritative current model:
+        // it is what the TUI shows as selected. Prefer it over the first entry
+        // of the stored `models` list, which can be a stale placeholder that
+        // does not match the real default (#267).
+        let current_model = config_default
+            .or_else(|| config_models.first().cloned())
             .expect("has_real_model guard ensures one of these is Some");
 
-        let models = if !config_models.is_empty() {
+        // Surface the current/default model on top, marked as selected, even
+        // when it is absent from (or buried inside) the stored list.
+        let mut models = if !config_models.is_empty() {
             config_models
         } else {
             vec![current_model.clone()]
         };
+        models.retain(|m| m != &current_model);
+        models.insert(0, current_model.clone());
 
         let mut text_lines = vec![
             format!("🤖 *{} Models*", display_name),

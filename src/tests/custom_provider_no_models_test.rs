@@ -144,3 +144,46 @@ default_model = "qwen3-7b-mlx-4bit"
         "must NEVER include the pre-fix placeholder string"
     );
 }
+
+/// #267: the configured `default_model` is the authoritative current model
+/// and must be surfaced on top, marked selected — even when the stored
+/// `models` list starts with a stale placeholder that is not the default.
+#[tokio::test]
+async fn default_model_shown_on_top_over_stale_models_list() {
+    let temp = write_temp_home(
+        r#"
+[providers.custom.modelscope]
+enabled = true
+base_url = "https://api-inference.modelscope.ai/v1"
+api_key = "test-key"
+default_model = "Qwen-Ambassador/Qwen3.7-Max"
+models = ["kimi-k2.5", "glm-5", "MiniMax-M2.7"]
+"#,
+    );
+    let _guard = HomeGuard::new(temp.path());
+
+    let resp = models_for_provider("custom:modelscope").await;
+
+    assert_eq!(
+        resp.current_model, "Qwen-Ambassador/Qwen3.7-Max",
+        "current must be the configured default_model, not the first stored (stale) entry"
+    );
+    assert_eq!(
+        resp.models.first().map(String::as_str),
+        Some("Qwen-Ambassador/Qwen3.7-Max"),
+        "the default_model must be listed on top, got: {:?}",
+        resp.models
+    );
+    // The stale entries are still offered (the list is not discarded), but the
+    // default is no longer buried or missing.
+    assert!(
+        resp.models.contains(&"kimi-k2.5".to_string()),
+        "stored models remain available, got: {:?}",
+        resp.models
+    );
+    assert!(
+        resp.text.contains("Current: `Qwen-Ambassador/Qwen3.7-Max`"),
+        "header must show the default as current, got: {}",
+        resp.text
+    );
+}
