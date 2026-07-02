@@ -626,85 +626,35 @@ impl BrainLoader {
         prompt.push('\n');
     }
 
-    /// Scan the working directory for project directive files and append
-    /// a "Project Directive Files" index to the prompt.
+    /// Scan the working directory for project directive files and append a
+    /// tiered "Project Directive Files" index to the prompt.
     ///
-    /// This closes gap #1 from the original Alexey issue: auto-discovering
-    /// directive files (AGENTS.md, CLAUDE.md, .cursorrules, etc.) in an
-    /// arbitrary repo root and surfacing them as fetchable contextual files.
+    /// Auto-discovers the directive / rule files of the major AI coding agents
+    /// (Claude Code, Cursor, Windsurf, Cline, Gemini, GitHub Copilot, OpenCode,
+    /// and the cross-tool AGENTS.md convention) in an arbitrary repo root and
+    /// surfaces them as fetchable contextual files. `.cursor/rules`,
+    /// `.claude/rules` and `.clinerules` directories are walked recursively and
+    /// their frontmatter classifies each rule into always / conditional /
+    /// on-demand tiers (see `crate::brain::directives`).
     ///
-    /// Pattern: filenames-only index (not full content injection), so it's
-    /// cheap and survives compaction since the preamble rebuilds every turn.
-    /// The agent reads them on demand via `read_file`.
+    /// Filenames-only index (not full content injection), so it's cheap and
+    /// survives compaction since the preamble rebuilds every turn. The agent
+    /// reads them on demand via `read_file`.
     ///
-    /// Gated on existence — nothing is added when no directive files are found.
+    /// `working_dir` arrives tilde-collapsed (`~/...`) per the `RuntimeInfo`
+    /// contract, so it MUST be expanded before any filesystem op. Gated on
+    /// existence: nothing is added when no directive files are found.
     fn push_project_directives(&self, prompt: &mut String, working_dir: Option<&str>) {
         let Some(wd) = working_dir else {
             return;
         };
-        let wd_path = std::path::Path::new(wd);
-        if !wd_path.is_dir() {
+        let root = crate::brain::tools::error::expand_tilde(wd);
+        let files = crate::brain::directives::discover(&root);
+        if files.is_empty() {
             return;
         }
-
-        // Known directive files to scan for in the working directory root.
-        // Covers the major AI coding agent ecosystems: Claude, Cursor, Windsurf,
-        // Cline, Copilot, and the cross-tool AGENTS.md convention.
-        const DIRECTIVE_FILES: &[(&str, &str)] = &[
-            ("AGENTS.md", "project directives (cross-tool convention)"),
-            ("CLAUDE.md", "Claude Code directives"),
-            ("GEMINI.md", "Gemini CLI directives"),
-            (".cursorrules", "Cursor directives"),
-            (".windsurfrules", "Windsurf directives"),
-            (".clinerules", "Cline directives"),
-        ];
-
-        // Also check for nested directive files (e.g. .cursor/rules/*.mdc,
-        // .github/copilot-instructions.md).
-        let nested_patterns = &[".cursor/rules/*.mdc", ".github/copilot-instructions.md"];
-
-        let mut found: Vec<String> = Vec::new();
-
-        // Check root-level files
-        for (filename, _desc) in DIRECTIVE_FILES {
-            if wd_path.join(filename).is_file() {
-                found.push(filename.to_string());
-            }
-        }
-
-        // Check nested patterns via glob
-        for pattern in nested_patterns {
-            let full_pattern = wd_path.join(pattern);
-            if let Some(pattern_str) = full_pattern.to_str()
-                && let Ok(paths) = glob::glob(pattern_str)
-            {
-                for path in paths.flatten() {
-                    if path.is_file() {
-                        // Use relative path from working dir
-                        if let Ok(rel) = path.strip_prefix(wd_path) {
-                            found.push(rel.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        if found.is_empty() {
-            return;
-        }
-
-        // Sort for deterministic output
-        found.sort();
-
-        let wd_collapsed = crate::brain::tools::error::collapse_home(wd_path);
-        prompt.push_str(&format!(
-            "--- Project Directive Files (in {}/) ---\n\
-             Found: {}\n\
-             Load with `read_file` when working in this project. \
-             These hold project-specific conventions that take precedence over defaults.\n\n",
-            wd_collapsed,
-            found.join(", ")
-        ));
+        let display = crate::brain::tools::error::collapse_home(&root);
+        prompt.push_str(&crate::brain::directives::render(&display, &files));
     }
 }
 

@@ -154,7 +154,7 @@ impl Skill {
 /// any BOM. The opening fence must be the very first line (`---\n`);
 /// the closing fence is the next standalone `---` line. Returns `None`
 /// if either fence is missing.
-fn split_frontmatter(raw: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_frontmatter(raw: &str) -> Option<(&str, &str)> {
     let after_open = raw.strip_prefix("---\n")?;
 
     // Closing fence: a line that is exactly "---". Find its byte offset
