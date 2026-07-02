@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.3.58] - 2026-07-02
+
+29 commits since v0.3.57. 31 files changed, +1743 / -99 lines.
+
+### ✨ Features
+
+- `42be5cf4` **Inbound reaction handler**: Telegram bot now processes user reactions with dispatcher wiring and bot message content lookup
+- `696f3bf5` **Bot message lookup DB**: added bot_content_by_platform_message_id for inbound reaction context retrieval
+- `cefd4f4c` **Reaction directive instructions**: channel prompts now include rules for when to react vs reply
+- `fdfb6b7f` **Reaction-only delivery**: Telegram responses can now deliver as reactions only when appropriate
+- `871c62d0` **Extract react marker utility**: added utility to parse and validate emoji reactions from text
+- `2674f333` **Telegram photo captions and replies**: send_photo/send_document now support caption and reply_parameters
+- `9b347f70` **Write opencrabs file trace logging**: replace operations now log hex bytes on miss for debugging
+- `70879f81` **Goal judge retry**: retry once on parse failure in judge_goal for resilience
+
+### 🔧 Fixes
+
+- `79ea3768` **Group-chat self-silencing**: templates no longer instruct bot to silence itself in group chats
+- `f580a35d` **React directive stripping**: intermediates no longer leak react directives to users
+- `faa8e8c8` **Emoji validation**: extract_react_marker only accepts real emoji, skips code spans
+- `a1d79b5b` **Whitespace normalization**: Telegram dedup comparison now normalizes whitespace
+- `1855a8e5` **Claude-cli model selector**: TUI selector now fetches full SUPPORTED_MODELS instead of stale hardcoded list
+- `870c47c0` **WhatsApp greeting**: greeting now only sends on fresh pairing, not every restart
+- `36ef8117` **Channel search message IDs**: channel_search now returns platform_message_id for rich fallback
+- `a597098f` **Session working_directory inheritance**: new sessions inherit working_directory from most recent session
+- `63bbda12` **Unicode NFC normalization**: write_opencrabs_file now NFC-normalizes both sides before replace
+- `9846de4e` **Follow-up question options**: removed 40-char hard cap from follow_up_question options
+- `29ae4e03` **Goal judge max_tokens**: increased from 512 to 4096 for complex reasoning
+
+### 📖 Documentation
+
+- `3fec2b95` add Zero Telemetry section to README
+
+### 🧹 Miscellaneous
+
+- `88606987` test(reactions): add edge-case tests for extract_react_marker
+- `1d902695` test(session): add tests for working_directory inheritance on /new
+- `23340557` refactor(session): add working_directory param to create_session_with_provider
+- `be94f65f` test(telegram): caption and reply_parameters for send_photo/send_document
+- `0dd609f1` test(write_opencrabs_file): add Unicode NFC normalization tests
+- `8d259aa1` docs(tools): update follow_up_question schema with 40-char recommendation
+- `7e6794f5` test(tools): add regression test for long options passing through
+- `679cfd00` test(goal): add tests for judge retry and max_tokens
+- `eaa108ee` style: cargo fmt
+
+### 📊 Stats
+
+- 29 commits since v0.3.57
+- 31 files changed, +1743 / -99 lines
+- 4398 tests (4398 passed, 0 failed, 24 ignored)
+
+
 ## [0.3.57] - 2026-06-30
 
 29 commits since v0.3.56. 37 files changed, +2616 / -474 lines.
@@ -6272,4 +6324,4 @@ fixes.
 [0.3.54]: https://github.com/adolfousier/opencrabs/compare/v0.3.53...v0.3.54
 [0.3.55]: https://github.com/adolfousier/opencrabs/compare/v0.3.54...v0.3.55
 [0.3.56]: https://github.com/adolfousier/opencrabs/compare/v0.3.55...v0.3.56
-[0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57
+[0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57[0.3.58]: https://github.com/adolfousier/opencrabs/compare/v0.3.57...v0.3.58
