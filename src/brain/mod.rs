@@ -6,6 +6,7 @@
 pub mod agent;
 pub mod commands;
 pub mod dedup_scan;
+pub mod directives;
 pub mod feedback_policy;
 pub mod filter;
 pub mod goal;
