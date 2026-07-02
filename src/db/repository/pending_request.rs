@@ -86,6 +86,27 @@ impl PendingRequestRepository {
         Ok(())
     }
 
+    /// Bump `updated_at` for every pending row of a session. The agent's
+    /// mid-turn persistence calls this (it knows the session, not the row id)
+    /// so a long-running turn's last interaction stays fresh.
+    pub async fn touch_session(&self, session_id: Uuid) -> Result<()> {
+        let sid = session_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE pending_requests SET updated_at = unixepoch() WHERE session_id = ?1",
+                    params![sid],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to touch pending requests for session")?;
+        Ok(())
+    }
+
     /// Delete a request (called when it finishes, regardless of outcome)
     pub async fn delete(&self, id: Uuid) -> Result<()> {
         let id_s = id.to_string();

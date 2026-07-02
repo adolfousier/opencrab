@@ -1018,12 +1018,94 @@ impl AgentService {
         let cli_segments: std::sync::Arc<std::sync::Mutex<Vec<CliSegment>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
+        // Progressive persister for CLI turns (#269). The CLI subprocess runs
+        // the whole agentic loop internally, so until now NOTHING reached the
+        // messages table before the turn ended: a restart mid-turn lost every
+        // intermediate and tool result that had been on screen (the display
+        // and the DB disagreed). This writer appends each displayed segment
+        // to the assistant row AS IT STREAMS, mirroring the non-CLI path's
+        // per-iteration persistence, and bumps the pending-request row's
+        // last-interaction so long turns stay inside the resume window.
+        // A `Flush` message barriers pending tool markers before the drain
+        // sites append reasoning / cancel banners, keeping content ordered.
+        enum CliPersist {
+            Seg(CliSegment),
+            Flush(tokio::sync::oneshot::Sender<()>),
+        }
+        // The writer targets the CURRENT assistant row — it is re-created
+        // mid-turn when a queued user message is injected, so the id lives
+        // in a shared cell rather than being captured once.
+        let cli_persist_msg_id = std::sync::Arc::new(std::sync::Mutex::new(assistant_db_msg.id));
+        let cli_persist_tx: Option<tokio::sync::mpsc::UnboundedSender<CliPersist>> =
+            if is_cli_provider {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CliPersist>();
+                let svc = message_service.clone();
+                let msg_id_cell = cli_persist_msg_id.clone();
+                let pending_repo = crate::db::PendingRequestRepository::new(self.context.pool());
+                let persist_session = session_id;
+                tokio::spawn(async move {
+                    let mut pending_tools: Vec<serde_json::Value> = Vec::new();
+                    let drain_tools = |tools: &mut Vec<serde_json::Value>| -> String {
+                        let marker = format!(
+                            "\n<!-- tools-v2: {} -->\n",
+                            serde_json::to_string(tools).unwrap_or_default()
+                        );
+                        tools.clear();
+                        marker
+                    };
+                    let append = |delta: String| {
+                        let svc = svc.clone();
+                        let cell = msg_id_cell.clone();
+                        async move {
+                            let id = *cell.lock().unwrap_or_else(|e| e.into_inner());
+                            if let Err(e) = svc.append_content(id, &delta).await {
+                                tracing::warn!("CLI live persist: append failed: {e}");
+                            }
+                        }
+                    };
+                    while let Some(m) = rx.recv().await {
+                        match m {
+                            CliPersist::Seg(CliSegment::Text(text)) => {
+                                let mut delta = String::new();
+                                if !pending_tools.is_empty() {
+                                    delta.push_str(&drain_tools(&mut pending_tools));
+                                }
+                                delta.push_str(&format!("{}\n\n", text));
+                                append(delta).await;
+                                if let Err(e) = pending_repo.touch_session(persist_session).await {
+                                    tracing::debug!("CLI live persist: touch failed: {e}");
+                                }
+                            }
+                            CliPersist::Seg(CliSegment::Tool(entry)) => {
+                                pending_tools.push(entry);
+                            }
+                            CliPersist::Flush(ack) => {
+                                if !pending_tools.is_empty() {
+                                    append(drain_tools(&mut pending_tools)).await;
+                                }
+                                if ack.send(()).is_err() {
+                                    tracing::debug!("CLI live persist: flush ack receiver dropped");
+                                }
+                            }
+                        }
+                    }
+                    // All senders gone (turn over) — flush trailing tools.
+                    if !pending_tools.is_empty() {
+                        append(drain_tools(&mut pending_tools)).await;
+                    }
+                });
+                Some(tx)
+            } else {
+                None
+            };
+
         // Wrap progress_callback for CLI providers to intercept IntermediateText
         // and ToolCompleted events, preserving their streaming order.
         let progress_callback: Option<ProgressCallback> = if is_cli_provider {
             if let Some(ref original_cb) = progress_callback {
                 let orig = original_cb.clone();
                 let segs = cli_segments.clone();
+                let persist_tx = cli_persist_tx.clone();
                 Some(std::sync::Arc::new(
                     move |sid: Uuid, event: ProgressEvent| {
                         match event {
@@ -1032,6 +1114,15 @@ impl AgentService {
                             {
                                 if let Ok(mut acc) = segs.lock() {
                                     acc.push(CliSegment::Text(text.clone()));
+                                }
+                                if let Some(ref tx) = persist_tx
+                                    && tx
+                                        .send(CliPersist::Seg(CliSegment::Text(text.clone())))
+                                        .is_err()
+                                {
+                                    tracing::warn!(
+                                        "CLI live persist: writer gone, text segment not persisted live"
+                                    );
                                 }
                             }
                             ProgressEvent::ToolCompleted {
@@ -1051,7 +1142,14 @@ impl AgentService {
                                     serde_json::json!({"d": desc, "s": success, "o": summary, "i": tool_input})
                                 };
                                 if let Ok(mut acc) = segs.lock() {
-                                    acc.push(CliSegment::Tool(entry));
+                                    acc.push(CliSegment::Tool(entry.clone()));
+                                }
+                                if let Some(ref tx) = persist_tx
+                                    && tx.send(CliPersist::Seg(CliSegment::Tool(entry))).is_err()
+                                {
+                                    tracing::warn!(
+                                        "CLI live persist: writer gone, tool segment not persisted live"
+                                    );
                                 }
                             }
                             _ => {}
@@ -2821,21 +2919,11 @@ impl AgentService {
                 && token.is_cancelled()
             {
                 if is_cli_provider {
-                    // CLI providers: persist interleaved text + tool markers from
-                    // streaming events. These were accumulated by the wrapped callback.
-                    let mut cancel_content = String::new();
-
-                    // Reasoning
-                    if let Some(ref reasoning) = reasoning_text
-                        && !reasoning.trim().is_empty()
-                    {
-                        cancel_content.push_str(&format!(
-                            "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
-                            reasoning
-                        ));
-                    }
-
-                    // Build interleaved content from ordered segments
+                    // CLI providers: text + tool segments were already written
+                    // to the assistant row by the live persister (#269) — the
+                    // cancel only needs to rebuild accumulated_text for the
+                    // in-memory response and append what the persister does
+                    // not cover (reasoning + trailing response text).
                     let segments: Vec<CliSegment> = cli_segments
                         .lock()
                         .map(|mut s| s.drain(..).collect())
@@ -2850,11 +2938,9 @@ impl AgentService {
                                         "\n<!-- tools-v2: {} -->\n",
                                         serde_json::to_string(&pending_tools).unwrap_or_default()
                                     );
-                                    cancel_content.push_str(&marker);
                                     accumulated_text.push_str(&marker);
                                     pending_tools.clear();
                                 }
-                                cancel_content.push_str(&format!("{}\n\n", text));
                                 if !accumulated_text.is_empty() {
                                     accumulated_text.push_str("\n\n");
                                 }
@@ -2871,8 +2957,27 @@ impl AgentService {
                             "\n<!-- tools-v2: {} -->\n",
                             serde_json::to_string(&pending_tools).unwrap_or_default()
                         );
-                        cancel_content.push_str(&marker);
                         accumulated_text.push_str(&marker);
+                    }
+
+                    // Barrier: buffered tool markers land before the cancel tail.
+                    if let Some(ref tx) = cli_persist_tx {
+                        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                        if tx.send(CliPersist::Flush(ack_tx)).is_ok() && ack_rx.await.is_err() {
+                            tracing::warn!("CLI live persist: flush ack dropped (cancel)");
+                        }
+                    }
+
+                    let mut cancel_content = String::new();
+
+                    // Reasoning
+                    if let Some(ref reasoning) = reasoning_text
+                        && !reasoning.trim().is_empty()
+                    {
+                        cancel_content.push_str(&format!(
+                            "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
+                            reasoning
+                        ));
                     }
 
                     // Also extract any text from the partial response not yet
@@ -2881,8 +2986,8 @@ impl AgentService {
                         if let ContentBlock::Text { text } = block
                             && !text.trim().is_empty()
                         {
-                            // Only append if not already covered by segments
-                            if cancel_content.is_empty() || !cancel_content.contains(text.trim()) {
+                            // Only append if not already covered by streamed segments
+                            if !accumulated_text.contains(text.trim()) {
                                 cancel_content.push_str(&format!("{}\n\n", text));
                                 if !accumulated_text.is_empty() {
                                     accumulated_text.push_str("\n\n");
@@ -2892,11 +2997,12 @@ impl AgentService {
                         }
                     }
 
-                    // Single atomic write
-                    if !cancel_content.is_empty() {
-                        let _ = message_service
+                    if !cancel_content.is_empty()
+                        && let Err(e) = message_service
                             .append_content(assistant_db_msg.id, &cancel_content)
-                            .await;
+                            .await
+                    {
+                        tracing::warn!("CLI cancel persist: append failed: {e}");
                     }
                 } else {
                     // Non-CLI: persist partial reasoning + text from response blocks
@@ -3250,27 +3356,15 @@ impl AgentService {
             }
 
             // ── DB persistence ──────────────────────────────────────────
-            // CLI providers: build interleaved content from ordered segments
-            // (text + tool markers in streaming order) for a single atomic write.
-            // This preserves the text→tools→text sequence seen during live streaming
-            // and survives Esc×2 cancel + restart.
+            // CLI providers: text + tool segments were already appended to the
+            // assistant row AS THEY STREAMED by the live persister (#269) — a
+            // restart mid-turn keeps everything up to the last completed
+            // segment. Here we only rebuild accumulated_text from the ordered
+            // segments (for the in-memory response) and append the reasoning
+            // block, after a Flush barrier so trailing tool markers land first.
             if is_cli_provider {
-                let mut cli_content = String::new();
-
-                // CLI providers (opencode, claude, qwen-cli) maintain their own
-                // conversation history server-side via session IDs, so writing
-                // reasoning markers into our DB content doesn't feed back into
-                // the model's context — no leak risk like the non-CLI path.
-                if let Some(ref reasoning) = reasoning_text
-                    && !reasoning.trim().is_empty()
-                {
-                    cli_content.push_str(&format!(
-                        "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
-                        reasoning
-                    ));
-                }
-
-                // Interleaved text + tool markers from streaming events
+                // Interleaved text + tool markers from streaming events —
+                // display/accumulation only, the DB copy is already written.
                 let segments: Vec<CliSegment> = cli_segments
                     .lock()
                     .map(|mut s| s.drain(..).collect())
@@ -3285,11 +3379,9 @@ impl AgentService {
                                     "\n<!-- tools-v2: {} -->\n",
                                     serde_json::to_string(&pending_tools).unwrap_or_default()
                                 );
-                                cli_content.push_str(&marker);
                                 accumulated_text.push_str(&marker);
                                 pending_tools.clear();
                             }
-                            cli_content.push_str(&format!("{}\n\n", text));
                             if !accumulated_text.is_empty() {
                                 accumulated_text.push_str("\n\n");
                             }
@@ -3306,15 +3398,36 @@ impl AgentService {
                         "\n<!-- tools-v2: {} -->\n",
                         serde_json::to_string(&pending_tools).unwrap_or_default()
                     );
-                    cli_content.push_str(&marker);
                     accumulated_text.push_str(&marker);
                 }
 
-                // Single atomic write — no partial state visible to load_session
-                if !cli_content.is_empty() {
-                    let _ = message_service
-                        .append_content(assistant_db_msg.id, &cli_content)
-                        .await;
+                // Barrier: let the live persister write any buffered tool
+                // markers before the reasoning block so content stays ordered.
+                if let Some(ref tx) = cli_persist_tx {
+                    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                    if tx.send(CliPersist::Flush(ack_tx)).is_ok() && ack_rx.await.is_err() {
+                        tracing::warn!("CLI live persist: flush ack dropped (final)");
+                    }
+                }
+
+                // CLI providers (opencode, claude, qwen-cli) maintain their own
+                // conversation history server-side via session IDs, so writing
+                // reasoning markers into our DB content doesn't feed back into
+                // the model's context — no leak risk like the non-CLI path.
+                // The block lands after the streamed segments (chronologically
+                // it belongs to this turn either way; only the position within
+                // the row changed when live persistence arrived).
+                if let Some(ref reasoning) = reasoning_text
+                    && !reasoning.trim().is_empty()
+                {
+                    let reasoning_block =
+                        format!("<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n", reasoning);
+                    if let Err(e) = message_service
+                        .append_content(assistant_db_msg.id, &reasoning_block)
+                        .await
+                    {
+                        tracing::warn!("CLI persist: reasoning append failed: {e}");
+                    }
                 }
             } else {
                 // Non-CLI: per-iteration write of `<!-- reasoning -->` marker +
@@ -3459,6 +3572,10 @@ impl AgentService {
                         .create_message(session_id, "assistant".to_string(), String::new())
                         .await
                         .map_err(|e| AgentError::Database(e.to_string()))?;
+                    // Retarget the CLI live persister at the fresh row so
+                    // segments streamed after the queued message land below it.
+                    *cli_persist_msg_id.lock().unwrap_or_else(|e| e.into_inner()) =
+                        assistant_db_msg.id;
                     continue;
                 }
 
