@@ -63,6 +63,29 @@ impl PendingRequestRepository {
         Ok(())
     }
 
+    /// Bump a request's `updated_at` to now — its "last interaction". Called
+    /// as mid-turn progress persists so a long-running turn never trips the
+    /// 24h crash-debris cutoff in [`get_interrupted`].
+    ///
+    /// [`get_interrupted`]: Self::get_interrupted
+    pub async fn touch(&self, id: Uuid) -> Result<()> {
+        let id_s = id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE pending_requests SET updated_at = unixepoch() WHERE id = ?1",
+                    params![id_s],
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to touch pending request")?;
+        Ok(())
+    }
+
     /// Delete a request (called when it finishes, regardless of outcome)
     pub async fn delete(&self, id: Uuid) -> Result<()> {
         let id_s = id.to_string();
@@ -79,23 +102,30 @@ impl PendingRequestRepository {
         Ok(())
     }
 
-    /// Get surviving rows from the last 10 minutes (process crashed while these were in-flight).
-    /// Older rows are stale leftovers from prior restarts where delete() never ran — they've
-    /// already been handled and must NOT be replayed.
+    /// Get ALL surviving rows (process died while these were in-flight).
+    ///
+    /// A row only exists while a request is PROCESSING — completion deletes it
+    /// and the startup resume path clears the table after reading — so any
+    /// surviving row IS interrupted work, no matter how long ago the turn
+    /// STARTED. The old 10-minute created_at window silently dropped exactly
+    /// the turns that most need resuming: long agentic runs (an interrupted
+    /// 28-minute CLI coding turn was purged while a 5-minute-old one resumed).
+    /// The only age guard left is a 24h cap on updated_at (last interaction)
+    /// to clear crash debris from installs that never reached the resume path.
     pub async fn get_interrupted(&self) -> Result<Vec<PendingRequest>> {
         self.pool
             .get()
             .await
             .context("Failed to get connection")?
             .interact(|conn| {
-                // Purge stale rows first (>10 min old) so they don't accumulate forever
+                // Crash debris only: rows whose LAST interaction is over a day old.
                 let _ = conn.execute(
-                    "DELETE FROM pending_requests WHERE created_at < unixepoch() - 600",
+                    "DELETE FROM pending_requests WHERE updated_at < unixepoch() - 86400",
                     [],
                 );
                 let mut stmt = conn.prepare(
                     "SELECT id, session_id, user_message, channel, channel_chat_id \
-                     FROM pending_requests WHERE created_at >= unixepoch() - 600 \
+                     FROM pending_requests \
                      ORDER BY created_at ASC",
                 )?;
                 let rows = stmt.query_map([], |row| {
@@ -114,7 +144,11 @@ impl PendingRequestRepository {
             .context("Failed to get interrupted requests")
     }
 
-    /// Get interrupted requests for a specific channel (last 10 minutes only).
+    /// Get interrupted requests for a specific channel. Same semantics as
+    /// [`get_interrupted`]: every surviving row is interrupted work; only
+    /// 24h-stale crash debris (by last interaction) is purged.
+    ///
+    /// [`get_interrupted`]: Self::get_interrupted
     pub async fn get_interrupted_for_channel(&self, channel: &str) -> Result<Vec<PendingRequest>> {
         let ch = channel.to_string();
         self.pool
@@ -123,12 +157,12 @@ impl PendingRequestRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 let _ = conn.execute(
-                    "DELETE FROM pending_requests WHERE channel = ?1 AND created_at < unixepoch() - 600",
+                    "DELETE FROM pending_requests WHERE channel = ?1 AND updated_at < unixepoch() - 86400",
                     params![ch],
                 );
                 let mut stmt = conn.prepare(
                     "SELECT id, session_id, user_message, channel, channel_chat_id \
-                     FROM pending_requests WHERE channel = ?1 AND created_at >= unixepoch() - 600 \
+                     FROM pending_requests WHERE channel = ?1 \
                      ORDER BY created_at ASC",
                 )?;
                 let rows = stmt.query_map(params![ch], |row| {

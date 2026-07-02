@@ -163,6 +163,7 @@ pub mod mimo_tool_call_hint_test;
 pub mod mission_control_command_test;
 pub mod mission_control_report_test;
 pub mod new_session_pane_binding_test;
+pub mod pending_request_age_test;
 pub mod phantom_going_to_test;
 pub mod phantom_work_announcement_test;
 pub mod profile_pid_lock_test;
