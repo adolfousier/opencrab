@@ -437,6 +437,26 @@ pub(crate) fn find_all_recent_tmp_files(
     results.into_iter().map(|(_, p)| p).collect()
 }
 
+/// Fire a Telegram emoji reaction on `msg_id` in `chat_id`. Best-effort: a
+/// failed reaction is logged and swallowed so it never aborts message
+/// delivery. Used by the intermediate display paths so a `<<react:emoji>>`
+/// directive emitted mid-turn (e.g. inside a thinking block) acknowledges the
+/// user immediately, instead of only firing from the final-response path after
+/// the whole turn completes (#261).
+async fn fire_reaction(bot: &Bot, chat_id: ChatId, msg_id: MessageId, emoji: &str) {
+    let reaction = teloxide::types::ReactionType::Emoji {
+        emoji: emoji.to_string(),
+    };
+    if let Err(e) = bot
+        .set_message_reaction(chat_id, msg_id)
+        .reaction(vec![reaction])
+        .is_big(false)
+        .await
+    {
+        tracing::warn!("Telegram: failed to set intermediate reaction: {}", e);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_message(
     bot: Bot,
@@ -2699,10 +2719,15 @@ pub(crate) async fn handle_message(
                                     // the final text (which extracts it BEFORE
                                     // its dedup pass, so an unstripped copy
                                     // here breaks exact-match and both copies
-                                    // land). The reaction itself fires from
-                                    // the final-response path.
-                                    let (text, _react_emoji) =
+                                    // land). Fire the reaction NOW so a
+                                    // mid-turn directive acknowledges the user
+                                    // immediately instead of only at the end
+                                    // (#261).
+                                    let (text, react_emoji) =
                                         crate::utils::extract_react_marker(&text);
+                                    if let Some(ref emoji) = react_emoji {
+                                        fire_reaction(&bot, msg.chat.id, msg.id, emoji).await;
+                                    }
 
                                     // Pre-send dedup: if this exact text was
                                     // already delivered as an intermediate in
@@ -2910,7 +2935,14 @@ pub(crate) async fn handle_message(
                                     s.msg_id
                                 };
                                 if let Some(mid) = msg_id {
-                                    let html = markdown_to_telegram_html(&snap.response_text);
+                                    // Strip any complete <<react:emoji>>
+                                    // directive from the streaming snapshot so
+                                    // the raw marker never flashes in the
+                                    // placeholder (#261). The reaction itself
+                                    // fires from the intermediate/final paths.
+                                    let (clean, _) =
+                                        crate::utils::extract_react_marker(&snap.response_text);
+                                    let html = markdown_to_telegram_html(&clean);
                                     let display = format!("{}\u{258b}", html); // ▋ cursor
                                     let _ = bot
                                         .edit_message_text(chat, mid, display)
@@ -3244,8 +3276,13 @@ pub(crate) async fn handle_message(
                 let text = redact_secrets(&text);
                 // Strip <<IMG:path>> markers — see edit-loop site above.
                 let (text, _img_paths) = crate::utils::extract_img_markers(&text);
-                // Strip <<react:emoji>> too; see edit-loop site above.
-                let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
+                // Strip <<react:emoji>> too; see edit-loop site above. Fire
+                // the reaction immediately (#261), not just from the final
+                // path.
+                let (text, react_emoji) = crate::utils::extract_react_marker(&text);
+                if let Some(ref emoji) = react_emoji {
+                    fire_reaction(&bot, msg.chat.id, msg.id, emoji).await;
+                }
                 // Pre-send dedup — see matching block in edit-loop above.
                 {
                     let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -3903,6 +3940,9 @@ pub(crate) async fn resume_session(
                                     let (text, _img_paths) =
                                         crate::utils::extract_img_markers(&text);
                                     // Strip <<react:emoji>> too; see handle_message.
+                                    // A resumed session has no inbound user
+                                    // message to react to, so the directive is
+                                    // stripped but no reaction fires here (#261).
                                     let (text, _react_emoji) =
                                         crate::utils::extract_react_marker(&text);
                                     // Pre-send dedup — see handle_message.
@@ -3980,7 +4020,14 @@ pub(crate) async fn resume_session(
                                     s.msg_id
                                 };
                                 if let Some(mid) = msg_id {
-                                    let html = markdown_to_telegram_html(&snap.response_text);
+                                    // Strip any complete <<react:emoji>>
+                                    // directive from the streaming snapshot so
+                                    // the raw marker never flashes in the
+                                    // placeholder (#261). Reaction fires from
+                                    // the intermediate/final paths.
+                                    let (clean, _) =
+                                        crate::utils::extract_react_marker(&snap.response_text);
+                                    let html = markdown_to_telegram_html(&clean);
                                     let display = format!("{}\u{258b}", html);
                                     let _ = bot
                                         .edit_message_text(chat_id, mid, display)
@@ -4206,7 +4253,9 @@ pub(crate) async fn resume_session(
                 let text = redact_secrets(&text);
                 // Strip <<IMG:path>> markers — see handle_message.
                 let (text, _img_paths) = crate::utils::extract_img_markers(&text);
-                // Strip <<react:emoji>> too; see handle_message.
+                // Strip <<react:emoji>> too; see handle_message. Resumed
+                // sessions have no inbound user message to react to, so the
+                // directive is stripped but no reaction fires here (#261).
                 let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
                 // Pre-send dedup — see handle_message.
                 {
@@ -5103,6 +5152,9 @@ pub(crate) async fn flush_intermediates(
             let text = redact_secrets(&text);
             let (text, _img_paths) = crate::utils::extract_img_markers(&text);
             // Strip <<react:emoji>> too; see edit-loop site in handle_message.
+            // flush_intermediates has no inbound user message in scope (called
+            // from resume + follow-up paths), so the directive is stripped but
+            // no reaction fires here (#261).
             let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
             {
                 let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
