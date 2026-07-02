@@ -11,7 +11,7 @@ use crate::config::types::WaResponsePolicy::{Allowlist, Auto, Open, OwnerOnly};
 
 // Convenience: legacy behaviour is policy = Auto with no operators.
 fn legacy(is_from_me: bool, sender: &str, chat: &str, allowed: &[String]) -> bool {
-    wa_should_respond(Auto, is_from_me, sender, chat, allowed, &[])
+    wa_should_respond(Auto, is_from_me, sender, None, chat, allowed, &[])
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn owner_self_chat_always_authorized() {
     let allowed = vec!["19998887777".to_string()];
     for p in [Auto, OwnerOnly, Allowlist, Open] {
         assert!(
-            wa_should_respond(p, true, "15550001111", "15550001111", &allowed, &[]),
+            wa_should_respond(p, true, "15550001111", None, "15550001111", &allowed, &[]),
             "self-chat must be allowed under {p:?}"
         );
     }
@@ -40,7 +40,15 @@ fn operator_always_authorized() {
     let operators = vec!["15550001111".to_string()];
     for p in [Auto, OwnerOnly, Allowlist, Open] {
         assert!(
-            wa_should_respond(p, false, "15550001111", "15550001111", &[], &operators),
+            wa_should_respond(
+                p,
+                false,
+                "15550001111",
+                None,
+                "15550001111",
+                &[],
+                &operators
+            ),
             "operator must be allowed under {p:?}"
         );
     }
@@ -72,6 +80,7 @@ fn owner_only_drops_everyone_else() {
         OwnerOnly,
         false,
         "15550003333",
+        None,
         "15550003333",
         &allowed,
         &[]
@@ -85,6 +94,7 @@ fn allowlist_serves_only_listed_contacts() {
         Allowlist,
         false,
         "15550003333",
+        None,
         "15550003333",
         &allowed,
         &[]
@@ -93,6 +103,7 @@ fn allowlist_serves_only_listed_contacts() {
         Allowlist,
         false,
         "15559990000",
+        None,
         "15559990000",
         &allowed,
         &[]
@@ -106,6 +117,7 @@ fn open_serves_every_incoming_dm() {
         Open,
         false,
         "15559990000",
+        None,
         "15559990000",
         &[],
         &[]
@@ -118,4 +130,84 @@ fn plus_prefix_normalized_both_sides() {
     assert!(legacy(false, "15550003333", "15550003333", &allowed));
     let allowed_bare = vec!["15550003333".to_string()];
     assert!(legacy(false, "+15550003333", "+15550003333", &allowed_bare));
+}
+
+// ── LID-addressed senders (#276) ─────────────────────────────────────────
+// WhatsApp addresses most DMs by LID (the privacy id), whose digits never
+// equal a phone number. The allow/operator lists hold phone numbers, so a
+// LID sender must match through its PN twin (`sender_alt`).
+
+#[test]
+fn lid_sender_matches_allowlist_via_pn_alt() {
+    let allowed = vec!["15550003333".to_string()];
+    assert!(wa_should_respond(
+        Auto,
+        false,
+        "98765432101234", // LID digits
+        Some("15550003333"),
+        "98765432101234",
+        &allowed,
+        &[]
+    ));
+}
+
+#[test]
+fn lid_sender_without_alt_is_dropped() {
+    let allowed = vec!["15550003333".to_string()];
+    assert!(!wa_should_respond(
+        Auto,
+        false,
+        "98765432101234",
+        None,
+        "98765432101234",
+        &allowed,
+        &[]
+    ));
+}
+
+#[test]
+fn lid_sender_with_unlisted_alt_is_dropped() {
+    let allowed = vec!["15550003333".to_string()];
+    assert!(!wa_should_respond(
+        Allowlist,
+        false,
+        "98765432101234",
+        Some("15559990000"),
+        "98765432101234",
+        &allowed,
+        &[]
+    ));
+}
+
+#[test]
+fn operator_recognized_via_pn_alt() {
+    let operators = vec!["15550001111".to_string()];
+    for p in [Auto, OwnerOnly, Allowlist, Open] {
+        assert!(
+            wa_should_respond(
+                p,
+                false,
+                "98765432101234",
+                Some("15550001111"),
+                "98765432101234",
+                &[],
+                &operators
+            ),
+            "operator via alt must be allowed under {p:?}"
+        );
+    }
+}
+
+#[test]
+fn alt_plus_prefix_normalized() {
+    let allowed = vec!["+15550003333".to_string()];
+    assert!(wa_should_respond(
+        Allowlist,
+        false,
+        "98765432101234",
+        Some("+15550003333"),
+        "98765432101234",
+        &allowed,
+        &[]
+    ));
 }

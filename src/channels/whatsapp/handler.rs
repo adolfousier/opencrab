@@ -268,14 +268,24 @@ pub(crate) fn wa_should_respond(
     policy: crate::config::types::WaResponsePolicy,
     is_from_me: bool,
     sender_user: &str,
+    sender_alt_user: Option<&str>,
     chat_user: &str,
     allowed: &[String],
     operators: &[String],
 ) -> bool {
     use crate::config::types::WaResponsePolicy;
     let sender = sender_user.trim_start_matches('+');
+    // The sender's OTHER identity: WhatsApp addresses DMs by LID (privacy id)
+    // or PN (phone number) and the allow list holds phone numbers, so a
+    // LID-addressed sender only ever matches through its PN twin (#276).
+    let alt = sender_alt_user.map(|a| a.trim_start_matches('+'));
     let chat = chat_user.trim_start_matches('+');
-    let in_list = |list: &[String]| list.iter().any(|a| a.trim_start_matches('+') == sender);
+    let in_list = |list: &[String]| {
+        list.iter().any(|entry| {
+            let entry = entry.trim_start_matches('+');
+            entry == sender || alt.is_some_and(|a| a == entry)
+        })
+    };
     // The paired account messaging itself (self-chat) or a configured operator
     // (bot_owner) DMing the bot — always allowed regardless of policy.
     if (is_from_me && sender == chat) || in_list(operators) {
@@ -411,19 +421,28 @@ pub(crate) async fn handle_message(
     // self-chat number-agnostically — a config/paired-number mismatch can never
     // lock the owner out — plus any explicitly allow-listed contact. Everything
     // else is dropped. Open mode when `allowed_phones` is empty.
+    //
+    // LID vs PN (#276): most DMs now arrive addressed by LID (the privacy id),
+    // whose digits never equal a phone number, so matching only the raw sender
+    // silently dropped every allow-listed contact. `sender_alt` carries the
+    // other identity (the PN JID for a LID sender, from the stanza's
+    // `sender_pn`) — the gate matches the allow/operator lists against both.
     let sender_user = phone.trim_start_matches('+').to_string();
+    let sender_alt_user = info.source.sender_alt.as_ref().map(|j| j.user.to_string());
     let chat_user_part = chat_user(&info);
     if !wa_should_respond(
         wa_cfg.response_policy,
         info.source.is_from_me,
         &sender_user,
+        sender_alt_user.as_deref(),
         &chat_user_part,
         &wa_cfg.allowed_phones,
         &wa_cfg.bot_owner,
     ) {
         tracing::debug!(
-            "WhatsApp: ignoring message from={} chat={} is_from_me={}",
+            "WhatsApp: ignoring message from={} (alt={:?}) chat={} is_from_me={}",
             sender_user,
+            sender_alt_user,
             chat_user_part,
             info.source.is_from_me,
         );
