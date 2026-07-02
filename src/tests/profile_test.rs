@@ -9,7 +9,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 
 use crate::config::profile::{
     ProfileEntry, ProfileRegistry, acquire_token_lock, active_profile, base_opencrabs_dir,
@@ -18,12 +17,17 @@ use crate::config::profile::{
     set_active_profile, validate_profile_name,
 };
 
-/// Global mutex to serialize all tests that write to ~/.opencrabs/profiles.toml.
-/// Without this, parallel test execution corrupts the shared TOML file.
+/// Serialize all tests that read or write under the $HOME-resolved
+/// ~/.opencrabs (profiles.toml, locks/). This must be the SAME lock the
+/// HOME-mutating tests take (crate::tests::HOME_ENV_LOCK), not a private
+/// one: these tests resolve paths through the live $HOME, so interleaving
+/// with a test that has HOME pointed at a tempdir makes writes land in the
+/// temp home while the assertions check the real one — the source of rare
+/// cross-file flakes in the parallel run (profile_test /
+/// config_last_good_recovery_test failing only in full-suite runs).
 /// Uses unwrap_or_else to recover from poisoned state (prior test panic).
 fn fs_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+    crate::tests::HOME_ENV_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

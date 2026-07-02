@@ -11,8 +11,18 @@ use crate::config::profile::{
     base_opencrabs_dir, home_for_profile, resolve_profile_home, with_profile_home,
 };
 
+/// These tests resolve paths through the live `$HOME` (twice per assertion),
+/// so they must never interleave with a test that points HOME at a tempdir —
+/// take the same process-wide lock every HOME-mutating test holds.
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    crate::tests::HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn home_for_profile_maps_default_to_base() {
+    let _guard = env_lock();
     let base = base_opencrabs_dir();
     // None and the literal "default" both resolve to the base dir, never a
     // profiles/ subdir — the base profile is unannotated on disk.
@@ -22,6 +32,7 @@ fn home_for_profile_maps_default_to_base() {
 
 #[test]
 fn home_for_profile_maps_named_to_subdir() {
+    let _guard = env_lock();
     let base = base_opencrabs_dir();
     assert_eq!(
         home_for_profile(Some("ops")),
@@ -35,6 +46,7 @@ fn home_for_profile_maps_named_to_subdir() {
 
 #[test]
 fn with_profile_home_applies_override_inside_closure() {
+    let _guard = env_lock();
     let ops_home = home_for_profile(Some("ops"));
     // Inside the scope, all home resolution points at the ops profile, which is
     // how Config::load() and the brain loader pick up the foreign profile.
@@ -44,6 +56,7 @@ fn with_profile_home_applies_override_inside_closure() {
 
 #[test]
 fn with_profile_home_clears_override_after_closure() {
+    let _guard = env_lock();
     let ops_home = home_for_profile(Some("ops"));
     let _ = with_profile_home(Some("ops"), resolve_profile_home);
     // After the scope, the override is gone: resolution falls back to the
@@ -54,12 +67,14 @@ fn with_profile_home_clears_override_after_closure() {
 
 #[test]
 fn with_profile_home_returns_closure_value() {
+    let _guard = env_lock();
     let value = with_profile_home(Some("ops"), || 42);
     assert_eq!(value, 42);
 }
 
 #[test]
 fn with_profile_home_default_resolves_to_base() {
+    let _guard = env_lock();
     let base = base_opencrabs_dir();
     let seen = with_profile_home(Some("default"), resolve_profile_home);
     assert_eq!(seen, base);
