@@ -562,15 +562,40 @@ pub async fn create_provider_by_name(config: &Config, name: &str) -> Result<Arc<
         }
     }
 
-    // Try custom: prefix
-    if let Some(custom_name) = name.strip_prefix("custom:") {
-        return try_create_custom_by_name(config, custom_name)?
-            .ok_or_else(|| anyhow::anyhow!("Custom provider '{}' not configured", custom_name));
+    // Try custom: (colon) or custom. (dotted TOML key) prefix. Fallback
+    // chains in config.toml are often written with the dotted form
+    // "custom.mimo" (mirroring the [providers.custom.mimo] table path), but
+    // the custom map is keyed by the bare name "mimo". Accept either spelling
+    // so a natural config resolves instead of failing as "Unknown provider"
+    // (#260).
+    if let Some(custom_name) = name
+        .strip_prefix("custom:")
+        .or_else(|| name.strip_prefix("custom."))
+    {
+        return try_create_custom_by_name(config, custom_name)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "custom provider '{name}' is named but could not be built \
+                 (missing base_url/api_key, or the entry is absent) — \
+                 check [providers.custom.{custom_name}] in config.toml"
+            )
+        });
     }
 
     // Try as a custom provider name directly (legacy sessions)
-    try_create_custom_by_name(config, name)?
-        .ok_or_else(|| anyhow::anyhow!("Unknown provider: {}", name))
+    try_create_custom_by_name(config, name)?.ok_or_else(|| {
+        let available = config
+            .providers
+            .custom
+            .as_ref()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>().join(", "))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "none".to_string());
+        anyhow::anyhow!(
+            "unknown provider '{name}': not a built-in id and no matching \
+             [providers.custom.*] entry. Reference a custom provider as \
+             'custom.<name>' or '<name>'. Available custom providers: {available}"
+        )
+    })
 }
 
 /// Try to create a specific named custom provider (ignores enabled flag).
