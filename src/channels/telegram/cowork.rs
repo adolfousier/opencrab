@@ -86,21 +86,40 @@ pub fn build_invite_qr(invite_link: &str) -> Option<(Vec<u8>, std::path::PathBuf
     Some((png_bytes, path))
 }
 
-/// Append a user_id to config.telegram.allowed_users if not already present.
+/// Append a user_id to a group's per-group allowlist
+/// (`channels.telegram.groups.<chat_id>.allowed_users`) if not already present.
+/// This keeps cowork members scoped to their group — they cannot DM the bot
+/// privately unless also listed in the global `allowed_users` or `bot_owner`.
 /// Returns Ok(true) if newly registered, Ok(false) if already existed.
-pub fn auto_register_user(user_id: i64) -> Result<bool, String> {
+pub fn auto_register_to_group(user_id: i64, chat_id: i64) -> Result<bool, String> {
     let config = Config::load().map_err(|e| format!("Failed to load config: {e}"))?;
 
     let id_str = user_id.to_string();
-    if config.channels.telegram.allowed_users.contains(&id_str) {
+    let chat_id_str = chat_id.to_string();
+
+    // Check if already in this group's allowlist
+    if let Some(group) = config.channels.telegram.groups.get(&chat_id_str)
+        && group.allowed_users.contains(&id_str)
+    {
         return Ok(false);
     }
 
-    let mut users = config.channels.telegram.allowed_users.clone();
+    // Build the new allowlist for this group (existing + new user)
+    let mut users: Vec<String> = config
+        .channels
+        .telegram
+        .groups
+        .get(&chat_id_str)
+        .map(|g| g.allowed_users.clone())
+        .unwrap_or_default();
     users.push(id_str);
 
-    Config::write_array("channels.telegram", "allowed_users", &users)
-        .map_err(|e| format!("Failed to write allowed_users: {e}"))?;
+    Config::write_array(
+        &format!("channels.telegram.groups.{}", chat_id_str),
+        "allowed_users",
+        &users,
+    )
+    .map_err(|e| format!("Failed to write group allowed_users: {e}"))?;
 
     Ok(true)
 }

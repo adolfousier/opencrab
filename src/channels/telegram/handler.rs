@@ -610,9 +610,9 @@ pub(crate) async fn handle_message(
                 }
             }
 
-            // Auto-register non-bot members in cowork groups
+            // Auto-register non-bot members in cowork groups (group-scoped ACL)
             if !is_bot && super::cowork::is_cowork_group(chat_id, &telegram_state).await {
-                match super::cowork::auto_register_user(uid as i64) {
+                match super::cowork::auto_register_to_group(uid as i64, chat_id) {
                     Ok(true) => {
                         tracing::info!(
                             "[cowork] Auto-registered user {} ({}) in group {}",
@@ -733,7 +733,31 @@ pub(crate) async fn handle_message(
     // In groups, only reply "not authorized" when the bot is @mentioned or
     // replied-to; otherwise silently drop. In DMs, always reply so the user
     // knows to ask the owner for access.
-    if !tg_cfg.user_allowed(&user_id.to_string(), &chat_id_str, is_dm) {
+    let mut acl_passed = tg_cfg.user_allowed(&user_id.to_string(), &chat_id_str, is_dm);
+
+    // Lazy registration: non-allowed users in cowork groups get auto-registered
+    // to the group ACL on first message. This catches existing members who were
+    // in the group before the bot joined (new_chat_members doesn't fire for them).
+    if !acl_passed && !is_dm
+        && super::cowork::is_cowork_group(msg.chat.id.0, &telegram_state).await
+    {
+        match super::cowork::auto_register_to_group(user_id, msg.chat.id.0) {
+            Ok(_) => {
+                tracing::info!(
+                    "[cowork] Lazy-registered user {} ({}) to group {} on first message",
+                    user_id,
+                    user.username.as_deref().unwrap_or("unknown"),
+                    msg.chat.id.0,
+                );
+                acl_passed = true;
+            }
+            Err(e) => {
+                tracing::warn!("[cowork] Failed to lazy-register user {}: {}", user_id, e);
+            }
+        }
+    }
+
+    if !acl_passed {
         let is_group = !is_dm;
         if is_group {
             // Silently drop messages from other bots — sending "not authorized"
