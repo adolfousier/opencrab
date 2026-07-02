@@ -1686,7 +1686,7 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
 /// persisted per-group under `[channels.telegram.groups.<chat_id>]`.
 /// When `None` (command issued from a DM), it falls back to the channel-level
 /// `[channels.telegram]` setting.
-async fn handle_respond_to(arg: &str, chat_id: Option<&str>) -> String {
+pub(crate) async fn handle_respond_to(arg: &str, chat_id: Option<&str>) -> String {
     use crate::config::RespondTo;
 
     let config = match Config::load() {
