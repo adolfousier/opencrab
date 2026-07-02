@@ -1714,8 +1714,13 @@ impl AgentService {
                         }
                         None => {
                             tracing::error!(
-                                "All {} fallback providers exhausted",
-                                candidates.len()
+                                "All {} fallback providers exhausted: [{}]",
+                                candidates.len(),
+                                candidates
+                                    .iter()
+                                    .map(|p| p.name())
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
                             );
                             return Err(AgentError::Provider(last_err));
                         }
@@ -2056,8 +2061,13 @@ impl AgentService {
                             Some(resp) => resp,
                             None => {
                                 tracing::error!(
-                                    "All {} stream fallback providers exhausted",
-                                    stream_candidates.len()
+                                    "All {} stream fallback providers exhausted: [{}]",
+                                    stream_candidates.len(),
+                                    stream_candidates
+                                        .iter()
+                                        .map(|p| p.name())
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
                                 );
                                 return Err(AgentError::Provider(last_err));
                             }
@@ -2320,8 +2330,13 @@ impl AgentService {
                             resp
                         } else {
                             tracing::error!(
-                                "All {} 5xx fallback providers exhausted",
-                                stream_candidates.len()
+                                "All {} 5xx fallback providers exhausted: [{}]",
+                                stream_candidates.len(),
+                                stream_candidates
+                                    .iter()
+                                    .map(|p| p.name())
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
                             );
                             return Err(AgentError::Provider(last_err));
                         }
@@ -2456,8 +2471,13 @@ impl AgentService {
                         resp
                     } else {
                         tracing::error!(
-                            "All {} fallback providers exhausted",
-                            fallback_candidates.len()
+                            "All {} fallback providers exhausted: [{}]",
+                            fallback_candidates.len(),
+                            fallback_candidates
+                                .iter()
+                                .map(|p| p.name())
+                                .collect::<Vec<_>>()
+                                .join(", "),
                         );
                         return Err(AgentError::Provider(last_err));
                     }
@@ -2953,15 +2973,17 @@ impl AgentService {
                     iteration -= 1;
                     continue;
                 } else {
-                    let drop_msg = format!(
-                        "Provider stream dropped {} times consecutively. \
-                         The request could not be completed. \
-                         Check the logs (see Known paths) for details.",
+                    // Primary stream exhausted its retries. This is NOT a
+                    // definitive failure yet — a fallback provider may still
+                    // complete the request, so log a WARN here and reserve the
+                    // "could not be completed" ERROR for the no-fallback branch
+                    // below. Emitting the scary ERROR before the fallback made
+                    // operators blame the primary for an outcome the fallback
+                    // recovered from (#260).
+                    tracing::warn!(
+                        "⚠️ Provider stream dropped {} times consecutively with 0 content \
+                         (content_blocks: {}, stop_reason: None) — attempting fallback before failing.",
                         MAX_STREAM_RETRIES,
-                    );
-                    tracing::error!(
-                        "🚨 {} Content blocks: {}, stop_reason: None",
-                        drop_msg,
                         response.content.len(),
                     );
 
@@ -3012,7 +3034,20 @@ impl AgentService {
                         continue;
                     }
 
-                    // No fallback available — inject error and accept partial
+                    // No fallback available — NOW it's a definitive failure.
+                    // Log the ERROR here (not before the fallback attempt) and
+                    // inject the message so the partial response carries it.
+                    let drop_msg = format!(
+                        "Provider stream dropped {} times consecutively. \
+                         The request could not be completed. \
+                         Check the logs (see Known paths) for details.",
+                        MAX_STREAM_RETRIES,
+                    );
+                    tracing::error!(
+                        "🚨 {} No fallback provider available. Content blocks: {}, stop_reason: None",
+                        drop_msg,
+                        response.content.len(),
+                    );
                     if response.content.iter().all(
                         |b| !matches!(b, ContentBlock::Text { text } if !text.trim().is_empty()),
                     ) {
