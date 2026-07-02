@@ -738,8 +738,7 @@ pub(crate) async fn handle_message(
     // Lazy registration: non-allowed users in cowork groups get auto-registered
     // to the group ACL on first message. This catches existing members who were
     // in the group before the bot joined (new_chat_members doesn't fire for them).
-    if !acl_passed && !is_dm
-        && super::cowork::is_cowork_group(msg.chat.id.0, &telegram_state).await
+    if !acl_passed && !is_dm && super::cowork::is_cowork_group(msg.chat.id.0, &telegram_state).await
     {
         match super::cowork::auto_register_to_group(user_id, msg.chat.id.0) {
             Ok(_) => {
