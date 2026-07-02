@@ -637,12 +637,17 @@ impl App {
             // to the picker affects both; no separate ModelSelector dialog.
             s if s.starts_with("/onboard") || s == "/doctor" || s == "/models" => {
                 use crate::tui::onboarding::OnboardingStep;
+                // Use the full input (not just the first word) so arguments
+                // like `/onboard:channels whatsapp` are preserved. The `cmd`
+                // variable only holds the first word, which drops the channel
+                // name and causes the deep-link to fall back to the menu.
                 let suffix = if s == "/doctor" {
                     "health"
                 } else if s == "/models" {
                     "provider"
                 } else {
-                    s.strip_prefix("/onboard")
+                    input
+                        .strip_prefix("/onboard")
                         .unwrap_or("")
                         .trim_start_matches(':')
                 };
