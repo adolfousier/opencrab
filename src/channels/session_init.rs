@@ -18,34 +18,52 @@
 //! `None` if no such session exists, which then falls through to the config
 //! priority list — the previous behavior). Call this instead of
 //! `session_svc.create_session(...)` in every channel handler.
+//!
+//! Working directory is scoped differently on purpose (#263). Provider/model
+//! come from the global most-recent session so a channel adopts whatever
+//! provider the user last actively selected. The working directory, however,
+//! comes ONLY from `inherit_wd_from`: the session that received the `/new`
+//! command (or the idle-expired session being replaced) in this same chat.
+//! Sourcing the cwd from the global most-recent session let a TUI session in
+//! one directory bleed its cwd into an unrelated channel chat, so `/new` in a
+//! Telegram group could silently adopt the directory the operator happened to
+//! be using in the TUI. Same-chat scoping keeps within-chat continuity without
+//! the cross-channel leak.
 
 use anyhow::Result;
 
 use crate::db::models::Session;
 use crate::services::SessionService;
 
-/// Create a new channel session, inheriting provider + model +
-/// working_directory from the most recent existing session (TUI or any
-/// channel) when available.
+/// Create a new channel session, inheriting provider + model from the most
+/// recent existing session (TUI or any channel) when available, and the
+/// working directory from `inherit_wd_from` — the session that received the
+/// `/new` in this same chat (pass `None` for a brand-new chat with no prior
+/// session).
 ///
 /// Returns the created `Session`. Inheritance is best-effort: if the
 /// most-recent-session lookup fails for any reason, the session is still
-/// created with `provider_name = None` / `model = None` /
-/// `working_directory = None`, matching the old behavior so callers never
-/// fail because of this helper.
+/// created with `provider_name = None` / `model = None`, matching the old
+/// behavior so callers never fail because of this helper. When
+/// `inherit_wd_from` is `None` or its session has no working directory, the
+/// new session gets `working_directory = None`.
 pub async fn create_channel_session(
     session_svc: &SessionService,
     title: Option<String>,
+    inherit_wd_from: Option<&Session>,
 ) -> Result<Session> {
-    let (inherited_provider, inherited_model, inherited_wd) =
-        match session_svc.get_most_recent_session().await {
-            Ok(Some(prev)) => (prev.provider_name, prev.model, prev.working_directory),
-            _ => (None, None, None),
-        };
+    let (inherited_provider, inherited_model) = match session_svc.get_most_recent_session().await {
+        Ok(Some(prev)) => (prev.provider_name, prev.model),
+        _ => (None, None),
+    };
 
-    if inherited_provider.is_some() {
+    // Same-chat scoping: the working directory follows the session that
+    // received /new, never the global most-recent session (#263).
+    let inherited_wd = inherit_wd_from.and_then(|s| s.working_directory.clone());
+
+    if inherited_provider.is_some() || inherited_wd.is_some() {
         tracing::info!(
-            "Channel session inherited provider {:?} / model {:?} / wd {:?} from most recent session",
+            "Channel session inherited provider {:?} / model {:?} (most recent) / wd {:?} (same chat)",
             inherited_provider,
             inherited_model,
             inherited_wd,

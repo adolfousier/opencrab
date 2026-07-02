@@ -1046,29 +1046,32 @@ async fn handle_message(
                 };
                 let suffix = session_resolve::chat_id_suffix(&id_str);
                 let session_title = format!("{legacy_title} {suffix}");
-                if !is_owner {
-                    let prior = match state
+                // The new session inherits its working directory from the
+                // session that received this /new (same chat), not the global
+                // most-recent session (#263).
+                let prior_session = match state
+                    .session_svc
+                    .find_session_by_title_suffix(&suffix)
+                    .await
+                {
+                    Ok(Some(s)) => Some(s),
+                    _ => state
                         .session_svc
-                        .find_session_by_title_suffix(&suffix)
+                        .find_session_by_title(&legacy_title)
                         .await
-                    {
-                        Ok(Some(s)) => Some(s),
-                        _ => state
-                            .session_svc
-                            .find_session_by_title(&legacy_title)
-                            .await
-                            .ok()
-                            .flatten(),
-                    };
-                    if let Some(old) = prior
-                        && let Err(e) = state.session_svc.archive_session(old.id).await
-                    {
-                        tracing::error!("Slack: failed to archive old session {}: {}", old.id, e);
-                    }
+                        .ok()
+                        .flatten(),
+                };
+                if !is_owner
+                    && let Some(old) = prior_session.as_ref()
+                    && let Err(e) = state.session_svc.archive_session(old.id).await
+                {
+                    tracing::error!("Slack: failed to archive old session {}: {}", old.id, e);
                 }
                 match crate::channels::session_init::create_channel_session(
                     &state.session_svc,
                     Some(session_title),
+                    prior_session.as_ref(),
                 )
                 .await
                 {

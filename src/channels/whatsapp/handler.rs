@@ -736,12 +736,20 @@ pub(crate) async fn handle_message(
             }
             ChannelCommand::NewSession => {
                 let session_title = format!("WhatsApp: {}", phone);
+                // The new session inherits its working directory from the
+                // session that received this /new (same chat), not the global
+                // most-recent session (#263).
+                let prior_session = session_svc
+                    .find_session_by_title(&session_title)
+                    .await
+                    .ok()
+                    .flatten();
                 // Archive the previous session on /new, except for the owner —
                 // owner sessions stay non-archived so they remain visible in
                 // /sessions for history review. Guest sessions get archived
                 // so the next title lookup resolves cleanly to the new row.
                 if !is_owner
-                    && let Ok(Some(old)) = session_svc.find_session_by_title(&session_title).await
+                    && let Some(old) = prior_session.as_ref()
                     && let Err(e) = session_svc.archive_session(old.id).await
                 {
                     tracing::error!("WhatsApp: failed to archive old session {}: {}", old.id, e);
@@ -749,6 +757,7 @@ pub(crate) async fn handle_message(
                 match crate::channels::session_init::create_channel_session(
                     &session_svc,
                     Some(session_title),
+                    prior_session.as_ref(),
                 )
                 .await
                 {

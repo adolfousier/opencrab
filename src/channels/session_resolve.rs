@@ -104,6 +104,7 @@ pub async fn resolve_or_create_channel_session(
             let new_session = crate::channels::session_init::create_channel_session(
                 session_svc,
                 Some(current_title.to_string()),
+                Some(&session),
             )
             .await?;
             tracing::info!(
@@ -120,6 +121,7 @@ pub async fn resolve_or_create_channel_session(
         let new_session = crate::channels::session_init::create_channel_session(
             session_svc,
             Some(current_title.to_string()),
+            None,
         )
         .await?;
         tracing::info!(

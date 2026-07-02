@@ -60,6 +60,7 @@ pub async fn process_comment(
                 match crate::channels::session_init::create_channel_session(
                     &session_svc,
                     Some("Trello".to_string()),
+                    None,
                 )
                 .await
                 {
@@ -93,6 +94,7 @@ pub async fn process_comment(
                 match crate::channels::session_init::create_channel_session(
                     &session_svc,
                     Some(session_title),
+                    Some(&session),
                 )
                 .await
                 {
@@ -113,6 +115,7 @@ pub async fn process_comment(
             match crate::channels::session_init::create_channel_session(
                 &session_svc,
                 Some(session_title),
+                None,
             )
             .await
             {

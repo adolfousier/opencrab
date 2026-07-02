@@ -1704,6 +1704,7 @@ pub(crate) async fn handle_message(
                 match crate::channels::session_init::create_channel_session(
                     &session_svc,
                     Some(session_title.clone()),
+                    Some(&bound),
                 )
                 .await
                 {
@@ -1800,6 +1801,7 @@ pub(crate) async fn handle_message(
                     match crate::channels::session_init::create_channel_session(
                         &session_svc,
                         Some(session_title.clone()),
+                        Some(&session),
                     )
                     .await
                     {
@@ -1861,6 +1863,7 @@ pub(crate) async fn handle_message(
                 match crate::channels::session_init::create_channel_session(
                     &session_svc,
                     Some(session_title.clone()),
+                    None,
                 )
                 .await
                 {
@@ -2039,6 +2042,16 @@ pub(crate) async fn handle_message(
                     topic_id,
                     topic_name.as_deref(),
                 );
+                // The new session inherits its working directory from the
+                // session that received this /new (same chat), not the global
+                // most-recent session (#263).
+                let prior_session = session_svc
+                    .find_session_by_title_suffix(&session_resolve::chat_id_suffix(
+                        chat_id, topic_id,
+                    ))
+                    .await
+                    .ok()
+                    .flatten();
                 // Archive the previous session on /new, except for the owner —
                 // owner sessions stay non-archived so they remain visible in
                 // /sessions for history review. Guest sessions get archived
@@ -2052,6 +2065,7 @@ pub(crate) async fn handle_message(
                 match crate::channels::session_init::create_channel_session(
                     &session_svc,
                     Some(session_title),
+                    prior_session.as_ref(),
                 )
                 .await
                 {
@@ -3134,6 +3148,7 @@ pub(crate) async fn handle_message(
             match crate::channels::session_init::create_channel_session(
                 &session_svc,
                 Some("Chat".to_string()),
+                None,
             )
             .await
             {

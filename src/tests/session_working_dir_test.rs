@@ -135,7 +135,7 @@ mod session_db {
     }
 }
 
-// --- create_channel_session working_directory inheritance (#258) ---
+// --- create_channel_session working_directory inheritance (#258, #263) ---
 
 mod channel_session_wd_inherit {
     use crate::channels::session_init::create_channel_session;
@@ -149,24 +149,25 @@ mod channel_session_wd_inherit {
     }
 
     #[tokio::test]
-    async fn inherits_working_directory_from_prior_session() {
+    async fn inherits_working_directory_from_given_session() {
         let svc = setup().await;
 
-        // Create a prior session with a working directory set
+        // The session that received /new (same chat) has a working directory.
         let prior = svc.create_session(Some("Prior".into())).await.unwrap();
         svc.update_session_working_directory(prior.id, Some("/home/user/my-project".into()))
             .await
             .unwrap();
+        let prior = svc.get_session_required(prior.id).await.unwrap();
 
-        // create_channel_session should inherit the working directory
-        let new_session = create_channel_session(&svc, Some("Channel".into()))
+        // create_channel_session inherits the working directory from it.
+        let new_session = create_channel_session(&svc, Some("Channel".into()), Some(&prior))
             .await
             .unwrap();
 
         assert_eq!(
             new_session.working_directory,
             Some("/home/user/my-project".into()),
-            "create_channel_session must inherit working_directory from the most recent session"
+            "create_channel_session must inherit working_directory from the session that received /new"
         );
     }
 
@@ -174,14 +175,14 @@ mod channel_session_wd_inherit {
     async fn no_working_directory_when_no_prior_session() {
         let svc = setup().await;
 
-        // No prior session exists
-        let new_session = create_channel_session(&svc, Some("First".into()))
+        // Brand-new chat: no same-chat session to inherit from.
+        let new_session = create_channel_session(&svc, Some("First".into()), None)
             .await
             .unwrap();
 
         assert!(
             new_session.working_directory.is_none(),
-            "create_channel_session should set working_directory=None when no prior session exists"
+            "create_channel_session should set working_directory=None when no prior session is given"
         );
     }
 
@@ -189,63 +190,49 @@ mod channel_session_wd_inherit {
     async fn no_working_directory_when_prior_has_none() {
         let svc = setup().await;
 
-        // Prior session exists but has no working directory
-        let _prior = svc
+        // The same-chat session exists but has no working directory.
+        let prior = svc
             .create_session(Some("Prior No WD".into()))
             .await
             .unwrap();
 
-        let new_session = create_channel_session(&svc, Some("Channel".into()))
+        let new_session = create_channel_session(&svc, Some("Channel".into()), Some(&prior))
             .await
             .unwrap();
 
         assert!(
             new_session.working_directory.is_none(),
-            "create_channel_session should be None when prior session has no working_directory"
+            "create_channel_session should be None when the given session has no working_directory"
         );
     }
 
     #[tokio::test]
-    async fn inherits_latest_session_wd_not_earlier() {
+    async fn uses_given_session_wd_not_global_latest() {
         let svc = setup().await;
 
-        // Session A has /project-a, created first
+        // Session A is the same-chat session that received /new; it has /project-a.
         let s_a = svc.create_session(Some("A".into())).await.unwrap();
         svc.update_session_working_directory(s_a.id, Some("/project-a".into()))
             .await
             .unwrap();
+        let s_a = svc.get_session_required(s_a.id).await.unwrap();
 
-        // Backdate A's updated_at so B is unambiguously more recent.
-        // SQLite stores timestamps at second precision so rapid-fire
-        // creates can race.
-        {
-            let conn = svc.pool().get().await.unwrap();
-            let sid = s_a.id.to_string();
-            conn.interact(move |c| {
-                c.execute(
-                    "UPDATE sessions SET updated_at = updated_at - 60 WHERE id = ?1",
-                    rusqlite::params![sid],
-                )
-            })
-            .await
-            .unwrap()
-            .unwrap();
-        }
-
-        // Session B is more recent and has /project-b
+        // Session B is created later (globally most recent) with /project-b and
+        // belongs to a different chat. Its cwd must NOT leak into the new
+        // session (#263 — the cross-channel working-directory bleed).
         let s_b = svc.create_session(Some("B".into())).await.unwrap();
         svc.update_session_working_directory(s_b.id, Some("/project-b".into()))
             .await
             .unwrap();
 
-        let new_session = create_channel_session(&svc, Some("Channel".into()))
+        let new_session = create_channel_session(&svc, Some("Channel".into()), Some(&s_a))
             .await
             .unwrap();
 
         assert_eq!(
             new_session.working_directory,
-            Some("/project-b".into()),
-            "should inherit from the MOST RECENT session (B), not an earlier one (A)"
+            Some("/project-a".into()),
+            "working_directory must come from the given same-chat session (A), not the global most-recent (B)"
         );
     }
 }
