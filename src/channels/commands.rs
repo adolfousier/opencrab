@@ -284,6 +284,29 @@ pub struct ProfilesResponse {
     pub text: String,
 }
 
+/// Strip a `@botname` suffix from the COMMAND TOKEN only, preserving the
+/// arguments: `/cd@yourbot /tmp` becomes `/cd /tmp`. Telegram appends the
+/// handle when a command is picked from the menu in groups. Cutting at the
+/// first `@` in the whole line (the previous behaviour) also discarded the
+/// arguments, turning `/respond_to@yourbot mention` into a bare
+/// `/respond_to`, and truncated arguments that legitimately contain `@`
+/// (#265). Non-command text is returned trimmed but otherwise untouched.
+pub(crate) fn strip_command_handle(text: &str) -> String {
+    let trimmed = text.trim();
+    if !trimmed.starts_with('/') {
+        return trimmed.to_string();
+    }
+    let (head, rest) = match trimmed.split_once(char::is_whitespace) {
+        Some((h, r)) => (h, Some(r)),
+        None => (trimmed, None),
+    };
+    match (head.find('@'), rest) {
+        (Some(at), Some(r)) => format!("{} {}", &head[..at], r),
+        (Some(at), None) => head[..at].to_string(),
+        (None, _) => trimmed.to_string(),
+    }
+}
+
 /// Check if a message is a known channel command and return the response.
 /// Commands that produce output are persisted to session history so they
 /// appear in TUI and give the agent context about what happened.
@@ -295,16 +318,11 @@ pub async fn handle_command(
     is_owner: bool,
     chat_id: Option<&str>,
 ) -> ChannelCommand {
-    let trimmed = text.trim();
-    // Strip @botname suffix that Telegram appends in groups
-    // (e.g., "/cd@opencrabsbot" → "/cd"). Defense-in-depth: handler.rs
-    // already strips this, but if bot_username() returns None there,
-    // this catch ensures commands still match.
-    let trimmed = if let Some(at_pos) = trimmed.find('@') {
-        &trimmed[..at_pos]
-    } else {
-        trimmed
-    };
+    // Strip @botname from the command token — defense-in-depth: handler.rs
+    // already strips this bot's own handle, but if bot_username() returns
+    // None there, this catch ensures commands still match.
+    let normalized = strip_command_handle(text);
+    let trimmed = normalized.as_str();
     let result = match trimmed {
         "/compact" => ChannelCommand::Compact,
         "/doctor" => ChannelCommand::Doctor,
@@ -1707,7 +1725,10 @@ async fn handle_respond_to(arg: &str, chat_id: Option<&str>) -> String {
              Usage: `/respond_to <all|mention|auto>`\n\n\
              • **all** — respond to every message\n\
              • **mention** — only respond when @mentioned\n\
-             • **auto** — respond to all when ≤1 sender, mention-only when >1 sender",
+             • **auto** — respond to all when ≤1 sender, mention-only when >1 sender\n\n\
+             ⚠️ In groups with several bots, command autocomplete can target \
+             ANOTHER bot's handle — then this bot never sees the command. \
+             Type it manually or pick this bot's handle from the menu.",
             scope, current_label
         );
     }
