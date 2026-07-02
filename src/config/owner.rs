@@ -28,10 +28,21 @@ pub fn is_owner(allowed: &[String], bot_owner: &[String], user_id: &str) -> bool
     if allowed.is_empty() {
         return true;
     }
+    // Normalize the leading plus on BOTH sides: users naturally paste
+    // international numbers as "+15551234567" into allowed_phones/bot_owner,
+    // while the digits extracted from a WhatsApp JID never carry one. A raw
+    // comparison silently broke owner gating for those configs (#277). The
+    // other channels' ids (numeric strings, handles) never start with '+',
+    // so the trim is a no-op there.
+    let user_id = user_id.trim_start_matches('+');
     if !bot_owner.is_empty() {
-        bot_owner.iter().any(|o| o == user_id)
+        bot_owner
+            .iter()
+            .any(|o| o.trim_start_matches('+') == user_id)
     } else {
-        allowed.first().is_some_and(|o| o == user_id)
+        allowed
+            .first()
+            .is_some_and(|o| o.trim_start_matches('+') == user_id)
     }
 }
 
