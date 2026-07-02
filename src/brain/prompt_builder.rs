@@ -328,7 +328,13 @@ impl BrainLoader {
             prompt.push('\n');
         }
 
-        // 7.5 Available commands & skills (awareness layer — see the method).
+        // 7.5 Project directive files — scan the working directory for directive
+        // files (AGENTS.md, CLAUDE.md, .cursorrules, etc.) and list them so the
+        // agent knows to read them when working in this project.
+        let wd = runtime_info.and_then(|info| info.working_directory.as_deref());
+        self.push_project_directives(&mut prompt, wd);
+
+        // 7.6 Available commands & skills (awareness layer — see the method).
         self.push_commands_and_skills(&mut prompt);
 
         // 8. SOUL.md — personality, tone. Injected near the end so personality
@@ -367,6 +373,10 @@ impl BrainLoader {
     /// All other brain files (MEMORY.md, SECURITY.md, etc.) are listed in a
     /// "Available Context Files" index section so the agent knows they exist and can
     /// load them on demand via the `load_brain_file` tool — only when actually needed.
+    ///
+    /// Project directive files (AGENTS.md, CLAUDE.md, .cursorrules, etc.) in the
+    /// working directory are also scanned and listed as "Project Directive Files"
+    /// so the agent knows to read them when working in that project.
     ///
     /// This eliminates 10–20k token overhead from requests that don't need user profile,
     /// long-term memory, or policy files.
@@ -489,7 +499,14 @@ impl BrainLoader {
             }
         }
 
-        // 3.5 Available commands & skills — the always-on awareness layer for
+        // 3.5 Project directive files — scan the working directory for directive
+        // files (AGENTS.md, CLAUDE.md, .cursorrules, etc.) and list them so the
+        // agent knows to read them when working in this project. Closes gap #1
+        // from the original directive-discovery issue.
+        let wd = runtime_info.and_then(|info| info.working_directory.as_deref());
+        self.push_project_directives(&mut prompt, wd);
+
+        // 3.6 Available commands & skills — the always-on awareness layer for
         // runtime-added slash commands / skills (see push_commands_and_skills).
         self.push_commands_and_skills(&mut prompt);
 
@@ -607,6 +624,87 @@ impl BrainLoader {
             }
         }
         prompt.push('\n');
+    }
+
+    /// Scan the working directory for project directive files and append
+    /// a "Project Directive Files" index to the prompt.
+    ///
+    /// This closes gap #1 from the original Alexey issue: auto-discovering
+    /// directive files (AGENTS.md, CLAUDE.md, .cursorrules, etc.) in an
+    /// arbitrary repo root and surfacing them as fetchable contextual files.
+    ///
+    /// Pattern: filenames-only index (not full content injection), so it's
+    /// cheap and survives compaction since the preamble rebuilds every turn.
+    /// The agent reads them on demand via `read_file`.
+    ///
+    /// Gated on existence — nothing is added when no directive files are found.
+    fn push_project_directives(&self, prompt: &mut String, working_dir: Option<&str>) {
+        let Some(wd) = working_dir else {
+            return;
+        };
+        let wd_path = std::path::Path::new(wd);
+        if !wd_path.is_dir() {
+            return;
+        }
+
+        // Known directive files to scan for in the working directory root.
+        // Covers the major AI coding agent ecosystems: Claude, Cursor, Windsurf,
+        // Cline, Copilot, and the cross-tool AGENTS.md convention.
+        const DIRECTIVE_FILES: &[(&str, &str)] = &[
+            ("AGENTS.md", "project directives (cross-tool convention)"),
+            ("CLAUDE.md", "Claude Code directives"),
+            ("GEMINI.md", "Gemini CLI directives"),
+            (".cursorrules", "Cursor directives"),
+            (".windsurfrules", "Windsurf directives"),
+            (".clinerules", "Cline directives"),
+        ];
+
+        // Also check for nested directive files (e.g. .cursor/rules/*.mdc,
+        // .github/copilot-instructions.md).
+        let nested_patterns = &[".cursor/rules/*.mdc", ".github/copilot-instructions.md"];
+
+        let mut found: Vec<String> = Vec::new();
+
+        // Check root-level files
+        for (filename, _desc) in DIRECTIVE_FILES {
+            if wd_path.join(filename).is_file() {
+                found.push(filename.to_string());
+            }
+        }
+
+        // Check nested patterns via glob
+        for pattern in nested_patterns {
+            let full_pattern = wd_path.join(pattern);
+            if let Some(pattern_str) = full_pattern.to_str()
+                && let Ok(paths) = glob::glob(pattern_str)
+            {
+                for path in paths.flatten() {
+                    if path.is_file() {
+                        // Use relative path from working dir
+                        if let Ok(rel) = path.strip_prefix(wd_path) {
+                            found.push(rel.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        if found.is_empty() {
+            return;
+        }
+
+        // Sort for deterministic output
+        found.sort();
+
+        let wd_collapsed = crate::brain::tools::error::collapse_home(wd_path);
+        prompt.push_str(&format!(
+            "--- Project Directive Files (in {}/) ---\n\
+             Found: {}\n\
+             Load with `read_file` when working in this project. \
+             These hold project-specific conventions that take precedence over defaults.\n\n",
+            wd_collapsed,
+            found.join(", ")
+        ));
     }
 }
 
