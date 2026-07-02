@@ -534,6 +534,55 @@ pub(crate) async fn wrap_with_fallback_chain(
     )))
 }
 
+/// Force-enable a built-in provider's section in a CLONED config so a
+/// by-name creation can honour its "ignoring the `enabled` flag" contract:
+/// each `try_create_*` gates on `cfg.enabled` internally, so a session
+/// pinned to a provider whose section was disabled (or, for the keyless CLI
+/// providers, absent) could never be restored after a restart — a claude-cli
+/// session silently landed on another provider (#270). CLI providers get a
+/// default section synthesized when missing because they need no API key;
+/// keyed providers without a section stay un-creatable (there is no key to
+/// use anyway).
+pub(crate) fn force_enable_section(config: &mut Config, session_id: &str) -> bool {
+    let p = &mut config.providers;
+    let slot: Option<&mut Option<ProviderConfig>> = match session_id {
+        "xiaomi" => Some(&mut p.xiaomi),
+        "claude-cli" => Some(&mut p.claude_cli),
+        "opencode-cli" => Some(&mut p.opencode_cli),
+        "codex-cli" => Some(&mut p.codex_cli),
+        "codex" => Some(&mut p.codex),
+        "opencode" => Some(&mut p.opencode),
+        "qwen" => Some(&mut p.qwen),
+        "anthropic" => Some(&mut p.anthropic),
+        "openai" => Some(&mut p.openai),
+        "github" => Some(&mut p.github),
+        "gemini" => Some(&mut p.gemini),
+        "openrouter" => Some(&mut p.openrouter),
+        "minimax" => Some(&mut p.minimax),
+        "zhipu" => Some(&mut p.zhipu),
+        "ollama" => Some(&mut p.ollama),
+        _ => None,
+    };
+    let Some(slot) = slot else {
+        return false;
+    };
+    let cli_auth = matches!(session_id, "claude-cli" | "opencode-cli" | "codex-cli");
+    match slot {
+        Some(cfg) => {
+            cfg.enabled = true;
+            true
+        }
+        None if cli_auth => {
+            *slot = Some(ProviderConfig {
+                enabled: true,
+                ..ProviderConfig::default()
+            });
+            true
+        }
+        None => false,
+    }
+}
+
 /// Create a provider by name, ignoring the `enabled` flag.
 /// Used for per-session provider restoration without toggling disk config.
 /// Accepts names like "anthropic", "openai", "minimax", "openrouter", or "custom:<name>".
@@ -555,10 +604,26 @@ pub async fn create_provider_by_name(config: &Config, name: &str) -> Result<Arc<
     // Try built-in registry by session_id or alias
     for reg in REGISTRATIONS.iter() {
         if reg.session_id == name || reg.aliases.contains(&name) {
-            let provider = (reg.factory)(config).await?.ok_or_else(|| {
-                anyhow::anyhow!("{} not configured (missing API key)", reg.display_name)
-            })?;
-            return Ok(provider);
+            if let Some(provider) = (reg.factory)(config).await? {
+                return Ok(provider);
+            }
+            // Creation by NAME means the user explicitly pinned or listed
+            // this provider — the `enabled` startup gate must not veto it.
+            // Retry with the section force-enabled in a cloned config (#270).
+            let mut forced = config.clone();
+            if force_enable_section(&mut forced, reg.session_id)
+                && let Some(provider) = (reg.factory)(&forced).await?
+            {
+                tracing::info!(
+                    "{}: created by name with its disabled/absent config section force-enabled",
+                    reg.display_name
+                );
+                return Ok(provider);
+            }
+            return Err(anyhow::anyhow!(
+                "{} not configured (no usable config section, API key, or CLI binary)",
+                reg.display_name
+            ));
         }
     }
 
