@@ -5,6 +5,54 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
+## [0.3.59] - 2026-07-02
+
+25 commits since v0.3.58. 36 files changed, +2374 / -237 lines.
+
+### ✨ Features
+
+- `36373e98` **Three-tier project directive-file discovery**: CLAUDE.md, GEMINI.md, .cursorrules, and other directive files auto-loaded from working directory at session start
+- `4e759c44` **Auto-discover project directive files**: working directory scanned for directive files on every session create
+
+### 🔧 Fixes
+
+- `33b95290` **Plus prefix normalization**: is_owner comparisons now strip leading + from phone numbers (#277)
+- `8fc0044c` **WhatsApp LID DM allow list**: match against sender's PN twin for LID-based DMs (#276)
+- `d6787884` **Directive scan follows /cd**: project directive files re-scanned when working directory changes
+- `b0199001` **Per-group /respond_to override**: creates group-specific override even when value matches global default
+- `5395fd43` **/cowork group ACL**: registers users to group allowlist, not global allowlist
+- `eeeec2dc` **/onboard:channels deep-link fix**: channel argument no longer dropped from deep-link URL
+- `df8d2830` **Custom provider ignore-enabled**: by-name creation now honours ignore-enabled contract (#270)
+- `95eb1978` **CLI turn streaming persistence**: turns persisted to DB as they stream, not at turn end (#269)
+- `bf4bc21e` **In-flight turn resume**: never age out in-flight turns, resume every surviving row (#268)
+- `a632f782` **Live model persistence**: fetched models for custom providers now appended to config, real default shown (#267)
+- `69a816ed` **Channel command interrupt fix**: /models, /help, /usage no longer abort in-flight tasks (#266)
+- `758f1881` **/new working directory scope**: inherits from same chat session, not global-latest (#263)
+- `f60f26e7` **@botname strip fix**: strips @botname from command token only, keeps arguments intact (#265)
+- `eaaa07b3` **Intermediate reactions**: fire reactions mid-thinking, strip directive from streaming placeholder
+- `c39fdc5f` **Fallback error clarity**: stop scaring operators before fallback, name exhausted providers
+- `3073bf84` **Fallback chain summary**: one-line log summarising fallback chain build result
+- `ff442e1e` **Custom provider resolution**: resolve custom.<name> fallback entries with actionable error messages
+
+### 📖 Documentation
+
+- `38bfb593` document project directive-file auto-discovery in README
+- `e3e6f823` clarify /cowork registers to group allowlist, not global
+
+### 🧹 Miscellaneous
+
+- `36778b59` style(telegram): collapse handle_message ACL guard to one line
+- `351a66bc` test: serialize real-home tests on shared HOME env lock, kill flakes
+- `30676628` test(telegram): prove per-group /respond_to persists and survives reload (#264)
+- `0545b875` style(telegram): add trailing newline to agent.rs
+
+### 📊 Stats
+
+- 25 commits since v0.3.58
+- 36 files changed, +2374 / -237 lines
+- 4453 tests (4453 passed, 0 failed, 24 ignored)
+
+
 
 
 ## [0.3.58] - 2026-07-02
@@ -6325,3 +6373,4 @@ fixes.
 [0.3.55]: https://github.com/adolfousier/opencrabs/compare/v0.3.54...v0.3.55
 [0.3.56]: https://github.com/adolfousier/opencrabs/compare/v0.3.55...v0.3.56
 [0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57[0.3.58]: https://github.com/adolfousier/opencrabs/compare/v0.3.57...v0.3.58
+[0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59

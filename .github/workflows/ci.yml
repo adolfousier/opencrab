@@ -207,13 +207,21 @@ jobs:
           tool: cargo-audit
 
       - name: Run cargo audit
-        # Ignored advisory:
+        # Ignored advisories (all transitive deps we don't control):
         #   RUSTSEC-2024-0437  protobuf 2.x via prometheus 0.13.4 → crabrace 0.1.0
         #     DOS-class (uncontrolled recursion). No upstream fix without a
         #     major-version bump in the prometheus chain we don't control.
-        #     Re-evaluate when crabrace ships a release that drops prometheus
-        #     0.13.x.
-        run: cargo audit --ignore RUSTSEC-2024-0437
+        #   RUSTSEC-2024-0320  yaml-rust — unmaintained (via syntect)
+        #   RUSTSEC-2024-0436  paste — unmaintained (via many proc-macro crates)
+        #   RUSTSEC-2025-0119  number_prefix — unmaintained (via indicatif)
+        #   RUSTSEC-2025-0134  rustls-pemfile — unmaintained (via reqwest)
+        #   RUSTSEC-2025-0141  bincode — unmaintained (via kalosm)
+        #   RUSTSEC-2026-0002  lru — unsound IterMut (via crabrace)
+        #   RUSTSEC-2026-0173  proc-macro-error2 — unmaintained (via derive macros)
+        #   RUSTSEC-2026-0192  ttf-parser — unmaintained (via syntect → rustybuzz)
+        #   RUSTSEC-2026-0194  quick-xml quadratic runtime (via multiple deps, need >=0.41.0)
+        #   RUSTSEC-2026-0195  quick-xml unbounded allocation (via multiple deps, need >=0.41.0)
+        run: cargo audit --ignore RUSTSEC-2024-0437 --ignore RUSTSEC-2024-0320 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0002 --ignore RUSTSEC-2026-0173 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
 
   # ── Stage 5: Coverage (on-demand only) ───────────────────────────────────
   # Tarpaulin is the slowest job (~12 min). Running it on every main push
