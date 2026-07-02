@@ -1044,6 +1044,7 @@ impl AgentService {
         {
             let chain = crate::brain::provider::factory::fallback_chain(fallback);
             let mut providers = Vec::new();
+            let mut skipped: Vec<String> = Vec::new();
             for name in &chain {
                 match crate::brain::provider::factory::create_provider_by_name(config, name).await {
                     Ok(p) => {
@@ -1052,9 +1053,19 @@ impl AgentService {
                     }
                     Err(e) => {
                         tracing::warn!("AgentService: fallback provider '{}' skipped: {}", name, e);
+                        skipped.push(name.clone());
                     }
                 }
             }
+            // Summarise the chain result so operators see the totals in one
+            // line instead of reconstructing them from per-provider logs (#260).
+            tracing::info!(
+                "AgentService: fallback chain built — {} ready, {} skipped (chain: [{}], skipped: [{}])",
+                providers.len(),
+                skipped.len(),
+                chain.join(", "),
+                skipped.join(", "),
+            );
             providers
         } else {
             Vec::new()
