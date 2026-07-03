@@ -381,6 +381,7 @@ pub mod voice_stt_dispatch_test;
 pub mod wait_agent_resolver_test;
 pub mod web_browser_routing_test;
 pub mod web_scrape_clean_test;
+pub mod web_scrape_extract_test;
 pub mod web_scrape_ssrf_test;
 pub mod whatsapp_state_test;
 
