@@ -1139,7 +1139,8 @@ impl App {
             tokio::spawn(async move {
                 let wake_up = format!(
                     "[System: You just hot-reloaded to a new version. \
-                    Greet the user, confirm the upgrade, and continue \
+                    Greet the user by name if you know it from context \
+                    (USER.md or memory), confirm the upgrade, and continue \
                     where you left off.{evolution_context}]"
                 );
                 match agent_service
@@ -1209,9 +1210,10 @@ impl App {
             unsafe { std::env::remove_var("OPENCRABS_EVOLVED_FROM") };
             if old_version != crate::VERSION && self.current_session.is_some() {
                 let msg = format!(
-                    "[SYSTEM: You just upgraded from v{old} to v{new}. \
+                    "[System: You just upgraded from v{old} to v{new}. \
                      You're already running the new version, no restart needed. \
                      Run `opencrabs --version` to confirm, then greet the user \
+                     by name if you know it from context (USER.md or memory), \
                      and mention one cool thing from the upgrade. Keep it brief.]",
                     old = old_version,
                     new = crate::VERSION,
