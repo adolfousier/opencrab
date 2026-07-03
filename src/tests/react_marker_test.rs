@@ -71,6 +71,56 @@ fn react_compound_emoji_accepted() {
     assert_eq!(emoji.as_deref(), Some("👍🏽"));
 }
 
+// ── mangled prefix (models that escape the angle brackets) ───────────────
+
+#[test]
+fn react_escaped_single_backslash_prefix() {
+    // Some models emit `<\react:` instead of `<<react:`, escaping the second
+    // angle bracket. The reaction must still fire.
+    let (text, emoji) = extract_react_marker(r"<\react:👍>>");
+    assert_eq!(text, "");
+    assert_eq!(emoji.as_deref(), Some("👍"));
+}
+
+#[test]
+fn react_escaped_double_backslash_prefix() {
+    let (text, emoji) = extract_react_marker(r"<\\react:👍>>");
+    assert_eq!(text, "");
+    assert_eq!(emoji.as_deref(), Some("👍"));
+}
+
+#[test]
+fn react_single_angle_prefix() {
+    // A single opening angle also normalizes to the same extraction.
+    let (text, emoji) = extract_react_marker("<react:👍>>");
+    assert_eq!(text, "");
+    assert_eq!(emoji.as_deref(), Some("👍"));
+}
+
+#[test]
+fn react_escaped_prefix_with_text() {
+    let (text, emoji) = extract_react_marker(r"All set <\react:✅>>");
+    assert_eq!(text, "All set");
+    assert_eq!(emoji.as_deref(), Some("✅"));
+}
+
+#[test]
+fn react_mangled_prefix_word_payload_stays() {
+    // The emoji-validation guard still applies to a mangled prefix: a word
+    // payload is not a directive and must survive intact.
+    let (text, emoji) = extract_react_marker(r"<\react:emoji>>");
+    assert_eq!(text, r"<\react:emoji>>");
+    assert!(emoji.is_none());
+}
+
+#[test]
+fn react_mangled_prefix_in_code_span_untouched() {
+    // Code-span protection still applies to a mangled prefix.
+    let (text, emoji) = extract_react_marker(r"use `<\react:👍>>` to react");
+    assert_eq!(text, r"use `<\react:👍>>` to react");
+    assert!(emoji.is_none());
+}
+
 // ── no directive ─────────────────────────────────────────────────────────
 
 #[test]

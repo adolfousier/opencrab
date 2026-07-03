@@ -24,6 +24,11 @@ pub fn extract_vid_markers(text: &str) -> (String, Vec<String>) {
 /// (or a reaction alongside text). Channel handlers use the returned
 /// emoji to call `set_message_reaction` on the user's message.
 ///
+/// The opening prefix is matched tolerantly: some models escape the angle
+/// brackets and emit `<\react:` or `<\\react:` instead of `<<react:`. All of
+/// these normalize to the same extraction, so the reaction still fires and the
+/// mangled marker never leaks into the chat as raw text.
+///
 /// Unlike the `<<IMG:path>>` extractor this is deliberately strict, because
 /// the marker can legitimately appear in PROSE when the agent talks about
 /// the feature itself (docs, code review, this codebase). Two guards:
@@ -35,7 +40,6 @@ pub fn extract_vid_markers(text: &str) -> (String, Vec<String>) {
 ///   of the message landed in the chat);
 /// * occurrences inside backtick code spans are never treated as directives.
 pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
-    const PREFIX: &str = "<<react:";
     let mut out = String::with_capacity(text.len());
     let mut emoji: Option<String> = None;
     let mut in_code = false;
@@ -50,15 +54,15 @@ pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
             continue;
         }
         if !in_code
-            && text[i..].starts_with(PREFIX)
-            && let Some(rel_end) = text[i..].find(">>")
+            && let Some(open_len) = match_react_open(&text[i..])
+            && let Some(rel_end) = text[i + open_len..].find(">>")
         {
-            let payload = text[i + PREFIX.len()..i + rel_end].trim();
+            let payload = text[i + open_len..i + open_len + rel_end].trim();
             if is_reaction_emoji(payload) {
                 if emoji.is_none() {
                     emoji = Some(payload.to_string());
                 }
-                i += rel_end + 2; // past ">>"
+                i += open_len + rel_end + 2; // past ">>"
                 continue;
             }
         }
@@ -67,6 +71,32 @@ pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
     }
 
     (out.trim().to_string(), emoji)
+}
+
+/// Match a reaction-marker opening at the start of `s`, tolerating prefixes
+/// mangled by models that escape the angle brackets. Accepts a leading `<`
+/// followed by any run of `<` or `\` characters, then `react:`, so the
+/// canonical `<<react:` as well as `<\react:`, `<\\react:`, and `<react:` all
+/// match. Returns the byte length of the matched opening (through `react:`),
+/// or `None` when `s` does not begin with a marker opening.
+///
+/// All matched bytes are ASCII (`<`, `\`, `react:`), so the returned length
+/// always lands on a char boundary.
+fn match_react_open(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'<') {
+        return None;
+    }
+    let mut j = 1;
+    while matches!(bytes.get(j), Some(b'<') | Some(b'\\')) {
+        j += 1;
+    }
+    const TAG: &str = "react:";
+    if s[j..].starts_with(TAG) {
+        Some(j + TAG.len())
+    } else {
+        None
+    }
 }
 
 /// A plausible reaction emoji: non-empty, short (compound emoji with skin
