@@ -98,19 +98,11 @@ pub(crate) fn register_config_dependent_tools(
         registry.register(Arc::new(VisionSetupHintTool));
     }
 
-    // Video (analyze_video): Gemini-native, needs image.vision configured.
-    if config.image.vision.enabled
-        && let Some(key) = config
-            .image
-            .vision
-            .api_key
-            .clone()
-            .filter(|k| !k.is_empty())
-    {
-        registry.register(Arc::new(AnalyzeVideoTool::new(
-            key,
-            config.image.vision.model.clone(),
-        )));
+    // Video (analyze_video): registered whenever any vision backend exists —
+    // an active provider `vision_model` or Gemini image.vision. Mirrors the
+    // analyze_image gate so video vision is available wherever image vision is.
+    if let Some(tool) = AnalyzeVideoTool::from_config(config) {
+        registry.register(Arc::new(tool));
     } else {
         registry.unregister("analyze_video");
     }

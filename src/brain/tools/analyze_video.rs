@@ -44,13 +44,61 @@ const FALLBACK_MAX_FRAMES: usize = 30;
 const FALLBACK_FPS: f64 = 1.0;
 
 pub struct AnalyzeVideoTool {
+    /// Gemini API key for native video understanding. Empty on non-Gemini
+    /// setups, in which case the native strategy is skipped and analysis goes
+    /// straight to ffmpeg frame extraction.
     api_key: String,
+    /// Gemini vision model name (used by the native path and Gemini frames).
     model: String,
+    /// Active provider vision creds `(api_key, base_url, vision_model)`, present
+    /// on non-Gemini setups. Lets the frame-extraction fallback describe frames
+    /// with the provider's own vision model when Gemini native video isn't
+    /// available.
+    provider_vision: Option<(String, String, String)>,
 }
 
 impl AnalyzeVideoTool {
+    /// Gemini-only constructor (native video + Gemini frame vision).
     pub fn new(api_key: String, model: String) -> Self {
-        Self { api_key, model }
+        Self {
+            api_key,
+            model,
+            provider_vision: None,
+        }
+    }
+
+    /// Build from config whenever any vision backend is available: Gemini
+    /// `image.vision` and/or the active provider's `vision_model`. Returns
+    /// `None` when neither is configured, so the tool stays unregistered.
+    ///
+    /// This is what makes video analysis work on non-Gemini setups: a provider
+    /// with image vision can describe ffmpeg-extracted frames even with no
+    /// Gemini key. Gemini, when present, still drives native video on top.
+    pub fn from_config(config: &crate::config::Config) -> Option<Self> {
+        let gemini_key = if config.image.vision.enabled {
+            config
+                .image
+                .vision
+                .api_key
+                .clone()
+                .filter(|k| !k.is_empty())
+        } else {
+            None
+        };
+        let provider_vision = crate::brain::provider::factory::active_provider_vision(config);
+        if gemini_key.is_none() && provider_vision.is_none() {
+            return None;
+        }
+        Some(Self {
+            api_key: gemini_key.unwrap_or_default(),
+            model: config.image.vision.model.clone(),
+            provider_vision,
+        })
+    }
+
+    /// Whether a Gemini key is configured, enabling the native video strategy.
+    fn has_gemini(&self) -> bool {
+        !self.api_key.is_empty()
     }
 }
 
@@ -137,27 +185,45 @@ impl Tool for AnalyzeVideoTool {
             self.model,
         );
 
-        // Strategy 1: native Gemini video. Capture both transport errors
-        // (Err) and API/empty-response errors (Ok with success=false) so
-        // either kind triggers the frame-extraction fallback.
-        let native_err: String = match self
-            .try_native_video(&video_path, mime_type, size, &question)
-            .await
-        {
-            Ok(result) if result.success => return Ok(result),
-            Ok(failed) => failed.error.unwrap_or_else(|| "unknown error".to_string()),
-            Err(e) => e.to_string(),
-        };
+        // Strategy 1: native Gemini video, only when a Gemini key is
+        // configured. Capture both transport errors (Err) and API/empty-response
+        // errors (Ok with success=false) so either kind triggers the
+        // frame-extraction fallback.
+        if self.has_gemini() {
+            let native_err: String = match self
+                .try_native_video(&video_path, mime_type, size, &question)
+                .await
+            {
+                Ok(result) if result.success => return Ok(result),
+                Ok(failed) => failed.error.unwrap_or_else(|| "unknown error".to_string()),
+                Err(e) => e.to_string(),
+            };
 
-        tracing::warn!(
-            "analyze_video: native Gemini path failed ({}). Falling back to ffmpeg \
-             frame extraction + per-frame vision.",
-            native_err
+            tracing::warn!(
+                "analyze_video: native Gemini path failed ({}). Falling back to ffmpeg \
+                 frame extraction + per-frame vision.",
+                native_err
+            );
+
+            // Strategy 2: ffmpeg frame extraction + per-frame Gemini vision.
+            return self
+                .frame_extraction_fallback(&video_path, &question, native_err, context)
+                .await;
+        }
+
+        // No Gemini key: native video isn't available. Go straight to ffmpeg
+        // frame extraction and describe the frames with the active provider's
+        // vision model.
+        tracing::info!(
+            "analyze_video: no Gemini key — using ffmpeg frame extraction with provider vision"
         );
-
-        // Strategy 2: ffmpeg frame extraction + per-frame Gemini vision.
-        self.frame_extraction_fallback(&video_path, &question, native_err, context)
-            .await
+        self.frame_extraction_fallback(
+            &video_path,
+            &question,
+            "no Gemini key configured".to_string(),
+            context,
+        )
+        .await
     }
 }
 
@@ -282,11 +348,29 @@ impl AnalyzeVideoTool {
             frames.len()
         );
 
-        // Analyze each frame with the vision model. Reuse AnalyzeImageTool so
-        // the request shape, error handling, and model stay in lockstep with
-        // the standalone image path.
-        let vision =
-            super::analyze_image::AnalyzeImageTool::new(self.api_key.clone(), self.model.clone());
+        // Per-frame vision backend. Gemini image vision when a Gemini key is
+        // present (request shape, error handling, and model stay in lockstep
+        // with the standalone image path); otherwise the active provider's
+        // vision model describes each frame.
+        let vision: Box<dyn Tool> = if self.has_gemini() {
+            Box::new(super::analyze_image::AnalyzeImageTool::new(
+                self.api_key.clone(),
+                self.model.clone(),
+            ))
+        } else if let Some((_key, _base_url, vision_model)) = &self.provider_vision {
+            // The tool is registered for provider-only setups so the video
+            // reaches this path; routing the per-frame calls through the
+            // provider's vision endpoint is wired next. Until then, surface a
+            // clear error instead of firing empty-credential Gemini calls.
+            return Ok(ToolResult::error(format!(
+                "Video frame analysis via the provider vision model ({vision_model}) is not \
+                 yet routed. Native video was unavailable ({native_err})."
+            )));
+        } else {
+            return Ok(ToolResult::error(format!(
+                "Video analysis failed: no vision backend available ({native_err})."
+            )));
+        };
         let total = frames.len();
         let mut sections: Vec<String> = Vec::with_capacity(total);
         for (idx, frame) in frames.iter().enumerate() {

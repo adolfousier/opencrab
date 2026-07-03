@@ -9,7 +9,53 @@
 //! fallback constants stay wired (they were dead code before the fallback
 //! was implemented and produced build warnings).
 
-use crate::brain::tools::analyze_video::detect_video_mime_type;
+use crate::brain::tools::analyze_video::{AnalyzeVideoTool, detect_video_mime_type};
+use crate::config::{Config, ProviderConfig, ProviderConfigs};
+
+/// #280: the tool must be constructible whenever any vision backend exists.
+/// Before the fix it was registered only when a Gemini key was present, so a
+/// non-Gemini provider with image vision had no `analyze_video` tool at all.
+#[test]
+fn from_config_builds_for_provider_vision_without_gemini() {
+    let config = Config {
+        providers: ProviderConfigs {
+            openai: Some(ProviderConfig {
+                enabled: true,
+                api_key: Some("provider-key".to_string()),
+                vision_model: Some("gpt-vision".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(
+        !config.image.vision.enabled,
+        "no Gemini image.vision configured"
+    );
+    assert!(
+        AnalyzeVideoTool::from_config(&config).is_some(),
+        "a provider vision_model must register analyze_video (#280)"
+    );
+}
+
+/// With no vision backend at all, the tool is not built (stays unregistered).
+#[test]
+fn from_config_none_without_any_vision_backend() {
+    let config = Config {
+        providers: ProviderConfigs {
+            openai: Some(ProviderConfig {
+                enabled: true,
+                api_key: Some("provider-key".to_string()),
+                vision_model: None,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(AnalyzeVideoTool::from_config(&config).is_none());
+}
 
 #[test]
 fn detects_common_video_mime_types() {
