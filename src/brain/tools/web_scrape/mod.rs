@@ -20,4 +20,5 @@
 //! images: there is zero AI in the extraction path.
 
 pub mod clean;
+pub mod extract;
 pub mod ssrf;

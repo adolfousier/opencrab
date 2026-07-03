@@ -161,6 +161,7 @@ llama-cpp-2 = "0.1.137"
 emojis = "0.8.0"
 url = "2.5.8"
 unicode-normalization = "0.1.25"
+scraper = "0.27.0"
 
 [dev-dependencies]
 rstest = "0.25"
