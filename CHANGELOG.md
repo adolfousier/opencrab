@@ -4,6 +4,46 @@ All notable changes to OpenCrabs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.3.60] - 2026-07-03
+
+17 commits since v0.3.59. 32 files changed, +2360 / -59 lines.
+
+### ✨ Features
+
+- `50328e90` **SSRF guard**: URL validation rejects private IPs (10.x, 172.16-31.x, 192.168.x), localhost, loopback IPv6, link-local, cloud metadata (169.254.169.254), and non-http(s) schemes. Uses `url::Host` enum to properly classify IPv6 literals like `[::1]`.
+- `3fc75911` **Structural HTML cleaner**: Language-agnostic cleaning strips scripts, styles, inline handlers, HTML comments. Decodes entities, collapses blank lines. Genericized from insight_forge (removed Portuguese-specific filters).
+- `2d5467fc` **Main-content extraction**: CSS selector cascade (article, main, .content, etc.) isolates primary content from HTML, falling back to body with junk selectors (header, nav, sidebar, ads) removed.
+- `5633132f` **HTML-to-markdown**: htmd converts cleaned HTML to markdown. `absolutize_urls` resolves relative src/href against page base URL. Images preserved as `![alt](url)` tags for selective agent vision.
+- `7fedb1ee` **HTTP fetch + JS detection**: reqwest with browser UA and timeout. `is_js_shell` heuristic detects JS-heavy pages (React/Vue/Angular/Svelte shells, `<div id="app">`, no `<article>`). Escalates to browser manager when available.
+- `149a4b66` **Sitemap discovery**: Discovers /sitemap.xml, /sitemap_index.xml, and common variations. Recursively crawls sitemap indexes (iterative worklist, 1000-URL cap, 3 levels deep). Returns URL list for agent to pick from.
+- `ce2bf212` **Profile/project-aware export**: Sitemap mode exports markdown to directory. Output path resolves to project files dir if session is assigned, else profile-scoped opencrabs home. Never writes outside managed workspace.
+- `c8d497d1` **web_scrape orchestrator**: Thin Tool trait impl wiring validate → fetch → extract → clean → markdown → export. Registered in tool_setup.rs, categorized as `web`, kept out of CORE_TOOLS for deferred loading via tool_search.
+
+### 🔧 Fixes
+
+- `6afb4cc0` **Vision video/GIF gate**: Accepts provider vision_model, not just Gemini. Fixes routing when active provider has vision capabilities.
+- `70dbc4f6` **Vision registration**: Register analyze_video whenever any vision backend exists, not just when Gemini is configured.
+- `8490aed3` **Vision fallback routing**: Route video frame fallback through the active provider instead of hardcoded model.
+- `540e2ddd` **Personalize greeting**: /evolve wake-up greeting now evolves with context instead of static message.
+
+### 📖 Documentation
+
+- `a5e4459a` README.md: Added web_scrape to Search & Web tools table.
+- `e53d7af1` tools.toml.example: Added `web` category (http_request, web_scrape) to built-in tools comment. Documented core vs deferred distinction for lazy-tools users.
+
+### 🧹 Miscellaneous
+
+- `a710c7d5` style: cargo fmt line-wrap in web_scrape markdown test.
+- `50508c1d` test: Added benchmark suite comparing old approach (http_request + agent loop) vs new web_scrape tool.
+- `305989ef` test: Added real-world comparison table: Claude CLI + Opus 4.8 (62s, 20k tokens) vs OpenCrabs + Qwen 3.7 max (15s, 1 tool call) on meetneura.ai.
+
+### 📊 Stats
+
+- 17 commits since v0.3.59
+- 32 files changed, +2360 / -59 lines
+- 4,507 tests (4,507 passed, 0 failed, 29 ignored)
+
 ## [Unreleased]
 ## [0.3.59] - 2026-07-02
 
@@ -6373,4 +6413,4 @@ fixes.
 [0.3.55]: https://github.com/adolfousier/opencrabs/compare/v0.3.54...v0.3.55
 [0.3.56]: https://github.com/adolfousier/opencrabs/compare/v0.3.55...v0.3.56
 [0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57[0.3.58]: https://github.com/adolfousier/opencrabs/compare/v0.3.57...v0.3.58
-[0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59
+[0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59[0.3.60]: https://github.com/adolfousier/opencrabs/compare/v0.3.59...v0.3.60
