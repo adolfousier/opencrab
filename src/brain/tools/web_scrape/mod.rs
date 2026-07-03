@@ -19,4 +19,5 @@
 //! ones a task needs. Nothing here renders pages to screenshots or auto-OCRs
 //! images: there is zero AI in the extraction path.
 
+pub mod clean;
 pub mod ssrf;
