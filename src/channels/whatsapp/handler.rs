@@ -663,11 +663,34 @@ pub(crate) async fn handle_message(
     // streamed intermediate text and the final reply must use this, or a
     // streamed turn (which suppresses the final reply) goes only to the LID and
     // is dropped. Non-owner chats keep their original chat JID.
+    //
+    // LID-addressed DMs (#276 follow-up): non-owner contacts also send from LID
+    // JIDs now, and the same encrypt fan-out issue applies. When the chat JID is
+    // a LID and sender_alt carries the PN, convert to PN JID so the response
+    // can be delivered.
     let reply_target: wacore_binary::jid::Jid = match (is_owner_self_chat, &owner_number) {
         (true, Some(num)) => format!("{num}@s.whatsapp.net")
             .parse()
             .unwrap_or_else(|_| info.source.chat.clone()),
-        _ => info.source.chat.clone(),
+        _ => {
+            // For non-owner DMs, if the chat JID is a LID (privacy-preserving),
+            // convert to PN JID using sender_alt so the response can be delivered.
+            // LID JIDs can't receive messages (same encrypt fan-out issue as owner self-chat).
+            if !info.source.is_group && info.source.chat.is_lid() {
+                if let Some(ref alt) = sender_alt_user {
+                    let alt_jid = format!("{alt}@s.whatsapp.net");
+                    if let Ok(jid) = alt_jid.parse() {
+                        jid
+                    } else {
+                        info.source.chat.clone()
+                    }
+                } else {
+                    info.source.chat.clone()
+                }
+            } else {
+                info.source.chat.clone()
+            }
+        }
     };
 
     // is_owner gates /new archiving and owner-only flows. The self-chat is
@@ -714,7 +737,7 @@ pub(crate) async fn handle_message(
             conversation: Some("Operation cancelled.".to_string()),
             ..Default::default()
         };
-        let _ = client.send_message(info.source.chat.clone(), reply).await;
+        let _ = client.send_message(reply_target.clone(), reply).await;
         return;
     }
 
@@ -743,7 +766,7 @@ pub(crate) async fn handle_message(
                 conversation: Some(reply_text),
                 ..Default::default()
             };
-            let _ = client.send_message(info.source.chat.clone(), reply).await;
+            let _ = client.send_message(reply_target.clone(), reply).await;
             return;
         }
 
@@ -754,7 +777,7 @@ pub(crate) async fn handle_message(
                     conversation: Some(resp.text),
                     ..Default::default()
                 };
-                let _ = client.send_message(info.source.chat.clone(), reply).await;
+                let _ = client.send_message(reply_target.clone(), reply).await;
                 return;
             }
             ChannelCommand::NewSession => {
@@ -805,7 +828,7 @@ pub(crate) async fn handle_message(
                             conversation: Some(msg_text),
                             ..Default::default()
                         };
-                        let _ = client.send_message(info.source.chat.clone(), reply).await;
+                        let _ = client.send_message(reply_target.clone(), reply).await;
                         tracing::info!(
                             "WhatsApp /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
                             footer,
@@ -819,7 +842,7 @@ pub(crate) async fn handle_message(
                             conversation: Some("Failed to create session.".to_string()),
                             ..Default::default()
                         };
-                        let _ = client.send_message(info.source.chat.clone(), reply).await;
+                        let _ = client.send_message(reply_target.clone(), reply).await;
                     }
                 }
                 return;
@@ -830,7 +853,7 @@ pub(crate) async fn handle_message(
                     conversation: Some(resp.text),
                     ..Default::default()
                 };
-                let _ = client.send_message(info.source.chat.clone(), reply).await;
+                let _ = client.send_message(reply_target.clone(), reply).await;
                 return;
             }
             ChannelCommand::Stop => {
@@ -844,7 +867,7 @@ pub(crate) async fn handle_message(
                     conversation: Some(text.to_string()),
                     ..Default::default()
                 };
-                let _ = client.send_message(info.source.chat.clone(), reply).await;
+                let _ = client.send_message(reply_target.clone(), reply).await;
                 return;
             }
             ChannelCommand::Compact => {
@@ -852,7 +875,7 @@ pub(crate) async fn handle_message(
                     conversation: Some("⏳ Compacting context...".to_string()),
                     ..Default::default()
                 };
-                let _ = client.send_message(info.source.chat.clone(), status).await;
+                let _ = client.send_message(reply_target.clone(), status).await;
                 content =
                     "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                         .to_string();
@@ -868,7 +891,7 @@ pub(crate) async fn handle_message(
                     conversation: Some(resp.text.clone()),
                     ..Default::default()
                 };
-                let _ = client.send_message(info.source.chat.clone(), reply).await;
+                let _ = client.send_message(reply_target.clone(), reply).await;
                 return;
             }
             _ => {}
@@ -963,7 +986,7 @@ pub(crate) async fn handle_message(
     let typing_cancel = CancellationToken::new();
     tokio::spawn({
         let client = client.clone();
-        let chat_jid = info.source.chat.clone();
+        let chat_jid = reply_target.clone();
         let cancel = typing_cancel.clone();
         async move {
             loop {
@@ -1089,7 +1112,7 @@ pub(crate) async fn handle_message(
         use crate::utils::{check_approval_policy, persist_auto_session_policy};
 
         let client = client.clone();
-        let chat_jid = info.source.chat.clone();
+        let chat_jid = reply_target.clone();
         let phone_key = phone.clone();
         let wa_state = wa_state.clone();
         Arc::new(move |tool_info| {
@@ -1191,7 +1214,7 @@ pub(crate) async fn handle_message(
     let wa_chat_id = format!("{}", info.source.chat);
     let question_cb = super::follow_up_question::make_question_callback(
         client.clone(),
-        info.source.chat.clone(),
+        reply_target.clone(),
         phone.clone(),
         wa_state.clone(),
         intermediate_handles.clone(),
@@ -1427,9 +1450,7 @@ pub(crate) async fn handle_message(
                 )),
                 ..Default::default()
             };
-            let _ = client
-                .send_message(info.source.chat.clone(), error_msg)
-                .await;
+            let _ = client.send_message(reply_target.clone(), error_msg).await;
         }
     }
 }
