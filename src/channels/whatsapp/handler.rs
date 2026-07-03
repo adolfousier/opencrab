@@ -286,9 +286,13 @@ pub(crate) fn wa_should_respond(
             entry == sender || alt.is_some_and(|a| a == entry)
         })
     };
-    // The paired account messaging itself (self-chat) or a configured operator
-    // (bot_owner) DMing the bot — always allowed regardless of policy.
-    if (is_from_me && sender == chat) || in_list(operators) {
+    // The paired account messaging itself (self-chat) — always allowed.
+    // Operators (bot_owner) messaging the bot from a DIFFERENT account — always
+    // allowed. But when the paired account DMs someone else, is_from_me is true
+    // and the sender matches bot_owner — that should NOT trigger a response in
+    // the other person's chat (the bot should stay silent in the owner's DMs
+    // with other people).
+    if (is_from_me && sender == chat) || (!is_from_me && in_list(operators)) {
         return true;
     }
     match policy {
