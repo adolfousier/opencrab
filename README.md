@@ -2378,6 +2378,7 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `exa_search` | Neural web search via EXA AI (free via MCP, no API key needed; set key in `keys.toml` for higher rate limits) |
 | `brave_search` | Web search via Brave Search (set key in `keys.toml` — free $5/mo credits at brave.com/search/api) |
 | `http_request` | Make HTTP requests |
+| `web_scrape` | Native URL-to-markdown scraping (zero AI, zero API cost). Fetches a URL, extracts clean markdown, keeps images as `![alt](url)` tags so the agent can vision only what it needs. Includes SSRF protection, sitemap crawling, and profile/project-aware markdown export. Surfaced via `tool_search` (deferred, not in core set) |
 | `memory_search` | Hybrid semantic search across past memory logs — FTS5 keyword + vector embeddings combined via RRF. Local GGUF, OpenAI-compatible API, or FTS5-only mode |
 | `session_search` | Hybrid FTS5 + vector search across every past session's message history. Same backends as `memory_search` |
 
