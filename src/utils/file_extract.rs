@@ -176,10 +176,16 @@ pub fn is_video_mime(mime: &str) -> bool {
     mime.to_lowercase().starts_with("video/")
 }
 
-/// Returns true if a video-capable analysis backend is configured. Phase 1
-/// only recognises Gemini-native video — provider-vision fallback (frame
-/// extraction with ffmpeg) is wired in a follow-up phase.
-fn is_video_vision_available(config: &Config) -> bool {
+/// Returns true if a video-capable analysis backend is configured.
+///
+/// Mirrors [`is_vision_available`]: any active provider `vision_model` counts,
+/// not just Gemini. A provider with image vision can describe ffmpeg-extracted
+/// frames, so video vision is available wherever image vision is. Gemini adds
+/// native video understanding on top, but is no longer required.
+pub(crate) fn is_video_vision_available(config: &Config) -> bool {
+    if crate::brain::provider::factory::active_provider_vision(config).is_some() {
+        return true;
+    }
     config.image.vision.enabled
         && config
             .image
@@ -349,9 +355,9 @@ pub fn process_file_with_vision(
             };
         }
         return FileContent::Unsupported(format!(
-            "[Video attachment: {filename} — no video-capable vision model configured. \
-             Set `image.vision.enabled = true` with a Gemini API key in config.toml. \
-             (Frame-fallback for non-Gemini providers is not yet wired.)]"
+            "[Video attachment: {filename} — no vision model configured. \
+             Set `image.vision.enabled = true` with an API key, or add `vision_model` \
+             to your provider config in config.toml.]"
         ));
     }
 
