@@ -28,6 +28,7 @@ pub mod doc_parser;
 pub mod exa_search;
 pub mod notebook;
 pub mod pdf_to_images;
+pub mod web_scrape;
 pub mod web_search;
 
 // Tool implementations - Phase 3: Workflow & Integration
