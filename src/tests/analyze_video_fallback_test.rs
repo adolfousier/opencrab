@@ -129,6 +129,29 @@ fn fallback_constants_are_used_by_extraction() {
 }
 
 #[test]
+fn frame_fallback_routes_through_provider_vision_when_no_gemini() {
+    // #281: on a non-Gemini setup the per-frame vision must go through the
+    // provider's own vision model, not a hardcoded Gemini key. Pin the wiring
+    // so a refactor can't quietly drop provider routing back to Gemini-only.
+    let code: String = ANALYZE_VIDEO_SRC
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        code.contains("provider_vision") && code.contains("ProviderVisionTool::new"),
+        "the frame fallback must construct a ProviderVisionTool from the provider \
+         vision creds when no Gemini key is present (#281)."
+    );
+    assert!(
+        !code.contains("yet routed"),
+        "the #280 placeholder guard (\"not yet routed\") must be replaced by real \
+         provider routing."
+    );
+}
+
+#[test]
 fn native_failure_triggers_fallback_not_immediate_error() {
     let code: String = ANALYZE_VIDEO_SRC
         .lines()

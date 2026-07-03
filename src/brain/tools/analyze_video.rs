@@ -10,13 +10,15 @@
 //!      poll the file resource until `state == "ACTIVE"`, then reference it
 //!      via `file_data: { file_uri }` in `generateContent`.
 //!
-//! 2. **Frame extraction fallback**: if the primary path fails (network
-//!    error, Files-API FAILED state, Gemini API error, etc.), fall back to
-//!    ffmpeg-based frame extraction. Extract N frames at 1 fps (capped at
-//!    30 frames), analyze each frame with the same Gemini vision API used
-//!    by `analyze_image`, then stitch the per-frame results into a single
-//!    chronological description. This works on any provider that has a
-//!    Gemini key configured for vision.
+//! 2. **Frame extraction fallback**: used when native video isn't available,
+//!    either because the primary Gemini path failed (network error, Files-API
+//!    FAILED state, Gemini API error) or no Gemini key is configured at all.
+//!    Extract N frames at 1 fps (capped at 30 frames) with ffmpeg, analyze
+//!    each frame with the available image-vision backend, then stitch the
+//!    per-frame results into a single chronological description. The per-frame
+//!    backend is Gemini when a Gemini key is present, otherwise the active
+//!    provider's own vision model (`ProviderVisionTool`), so video analysis
+//!    works on any provider that has image vision, not just Gemini.
 
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
@@ -357,15 +359,16 @@ impl AnalyzeVideoTool {
                 self.api_key.clone(),
                 self.model.clone(),
             ))
-        } else if let Some((_key, _base_url, vision_model)) = &self.provider_vision {
-            // The tool is registered for provider-only setups so the video
-            // reaches this path; routing the per-frame calls through the
-            // provider's vision endpoint is wired next. Until then, surface a
-            // clear error instead of firing empty-credential Gemini calls.
-            return Ok(ToolResult::error(format!(
-                "Video frame analysis via the provider vision model ({vision_model}) is not \
-                 yet routed. Native video was unavailable ({native_err})."
-            )));
+        } else if let Some((key, base_url, vision_model)) = &self.provider_vision {
+            // Non-Gemini setup: describe each frame with the active provider's
+            // own vision model. ffmpeg extracted the frames locally, so any
+            // provider with image vision can analyze them. This is what makes
+            // video work provider-agnostically.
+            Box::new(super::provider_vision::ProviderVisionTool::new(
+                key.clone(),
+                base_url.clone(),
+                vision_model.clone(),
+            ))
         } else {
             return Ok(ToolResult::error(format!(
                 "Video analysis failed: no vision backend available ({native_err})."
