@@ -26,3 +26,6 @@ pub mod fetch;
 pub mod sitemap;
 pub mod ssrf;
 pub mod to_markdown;
+pub mod tool;
+
+pub use tool::WebScrapeTool;

@@ -162,6 +162,7 @@ pub fn tool_category(name: &str) -> &'static str {
         {
             "utility"
         }
+        "web_scrape" => "web",
         _ => "other",
     }
 }
