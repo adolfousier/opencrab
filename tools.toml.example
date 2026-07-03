@@ -180,9 +180,16 @@ coerce_empty_to = "omit"
 # discord_send, slack_send, trello_send, channel_search, a2a_send),
 # agent/session (plan, task_manager, config_manager, cron_manage,
 # rename_session, follow_up_question, slash_command, load_brain_file,
-# write_opencrabs_file), and RSI (feedback_record, feedback_analyze,
-# self_improve). See the "Tool System" section in README.md for the
-# full catalog.
+# write_opencrabs_file), RSI (feedback_record, feedback_analyze,
+# self_improve), and web (http_request, web_scrape). See the
+# "Tool System" section in README.md for the full catalog.
+#
+# CORE vs DEFERRED: most built-in tools are "core" and appear in the
+# LLM tool list immediately. A few (web_scrape, browser tools, PDF
+# rendering, image/video generation) are "deferred" — they are
+# compiled in but surface only via tool_search on demand. This keeps
+# the default tool list lean while keeping the full arsenal available
+# without rebuilds or config changes.
 #
 # Tool executions are auto-recorded to the feedback ledger — the agent
 # also calls feedback_record / feedback_analyze manually when it
