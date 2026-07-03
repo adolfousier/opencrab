@@ -21,5 +21,6 @@
 
 pub mod clean;
 pub mod extract;
+pub mod fetch;
 pub mod ssrf;
 pub mod to_markdown;
