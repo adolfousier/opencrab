@@ -37,7 +37,8 @@ fn absolutize_handles_protocol_relative() {
 
 #[test]
 fn markdown_keeps_headings_and_links() {
-    let md = to_markdown(r#"<h1>Title</h1><p>Some <a href="https://example.com/x">link</a> text.</p>"#);
+    let md =
+        to_markdown(r#"<h1>Title</h1><p>Some <a href="https://example.com/x">link</a> text.</p>"#);
     assert!(md.contains("# Title"));
     assert!(md.contains("[link](https://example.com/x)"));
     assert!(md.contains("text."));
@@ -47,7 +48,8 @@ fn markdown_keeps_headings_and_links() {
 fn markdown_keeps_images_as_url_tags() {
     // The core design guarantee: an <img> becomes a markdown image reference,
     // never OCR'd or dropped.
-    let md = to_markdown(r#"<p>chart:</p><img src="https://cdn.example.com/q3.png" alt="Q3 revenue">"#);
+    let md =
+        to_markdown(r#"<p>chart:</p><img src="https://cdn.example.com/q3.png" alt="Q3 revenue">"#);
     assert!(md.contains("https://cdn.example.com/q3.png"));
     assert!(md.contains("Q3 revenue"));
     assert!(md.contains("!["));
