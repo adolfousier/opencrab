@@ -615,7 +615,7 @@ impl DocParserTool {
         let path = path.to_path_buf();
 
         tokio::task::spawn_blocking(move || {
-            use calamine::{open_workbook, Reader, Xlsx, Xls};
+            use calamine::{Reader, Xls, Xlsx, open_workbook};
 
             let extension = path
                 .extension()
@@ -641,11 +641,7 @@ impl DocParserTool {
                                     .iter()
                                     .map(|cell| {
                                         let val = cell.to_string();
-                                        if val.is_empty() {
-                                            "".to_string()
-                                        } else {
-                                            val
-                                        }
+                                        if val.is_empty() { "".to_string() } else { val }
                                     })
                                     .collect();
 
@@ -670,11 +666,7 @@ impl DocParserTool {
                                     .iter()
                                     .map(|cell| {
                                         let val = cell.to_string();
-                                        if val.is_empty() {
-                                            "".to_string()
-                                        } else {
-                                            val
-                                        }
+                                        if val.is_empty() { "".to_string() } else { val }
                                     })
                                     .collect();
 
@@ -728,9 +720,7 @@ impl DocParserTool {
             }
 
             // Replace tabs and multiple spaces with pipes for better readability
-            let formatted = line
-                .replace('\t', " | ")
-                .replace("  ", " | ");
+            let formatted = line.replace('\t', " | ").replace("  ", " | ");
 
             output.push_str(&formatted);
             output.push('\n');

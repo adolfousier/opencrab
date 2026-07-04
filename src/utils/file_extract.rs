@@ -389,9 +389,9 @@ pub fn process_file_with_vision(
                     path_str, path_str
                 ))
             }
-            Err(e) => FileContent::Unsupported(format!(
-                "[Excel file: {filename} — failed to save: {e}]"
-            )),
+            Err(e) => {
+                FileContent::Unsupported(format!("[Excel file: {filename} — failed to save: {e}]"))
+            }
         };
     }
 

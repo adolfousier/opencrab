@@ -128,7 +128,7 @@ impl Tool for AnalyzeImageTool {
             // Local file
             let resolved_path = resolve_tool_path(&image_src, &context.working_dir());
             let resolved_str = resolved_path.to_string_lossy().to_string();
-            
+
             let bytes = tokio::fs::read(&resolved_path).await.map_err(|e| {
                 super::error::ToolError::Execution(format!(
                     "Failed to read image file '{}': {}",
