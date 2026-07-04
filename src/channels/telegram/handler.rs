@@ -114,6 +114,31 @@ pub(crate) struct StreamingState {
     user_message_preview: Option<String>,
 }
 
+/// Render a group of tool calls as a collapsible `<details>` block.
+/// Groups consecutive tool calls into a single expandable message to reduce
+/// visual noise while preserving full transparency (user can expand to see
+/// each individual call with its status and context).
+fn render_tool_group(tools: &[(String, String)]) -> String {
+    let count = tools.len();
+    let summary = if count == 1 {
+        tools[0].0.clone()
+    } else {
+        format!("{} tool calls", count)
+    };
+    
+    let mut result = format!("<details><summary>{}</summary>\n\n", summary);
+    for (status_label, context) in tools {
+        if context.is_empty() {
+            result.push_str(status_label);
+        } else {
+            result.push_str(&format!("{} {}", status_label, context));
+        }
+        result.push('\n');
+    }
+    result.push_str("\n</details>");
+    result
+}
+
 impl StreamingState {
     /// Render response message: response only. Thinking/reasoning is
     /// internal model reasoning — it must never leak into the delivered
@@ -2696,34 +2721,64 @@ pub(crate) async fn handle_message(
                         // Lock is now released
 
                         // ── Ordered display: tools and intermediates in chronological order ──
+                        // Buffer consecutive tool calls to group them into collapsible blocks
+                        let mut tool_buffer: Vec<usize> = Vec::new();
+                        
                         for item in &snap.display_items {
                             match item {
                                 DisplayItem::NewTool(idx) => {
-                                    let tool_info = {
-                                        let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                        s.tool_msgs.get(*idx).map(|t| {
-                                            let label = format!("**{}**{}", t.name, t.context);
-                                            (label, t.completed, t.msg_id)
-                                        })
-                                    };
-                                    if let Some((label, completed, existing_mid)) = tool_info {
-                                        let text = match completed {
-                                            None => format!("⚙️ {}", label),
-                                            Some(true) => format!("✅ {}", label),
-                                            Some(false) => format!("❌ {}", label),
-                                        };
-                                        let html = markdown_to_telegram_html(&text);
-                                        if existing_mid.is_none()
-                                            && let Ok(mid) = send_html_or_plain(&bot, chat, thread_id, &html).await
-                                        {
-                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            if let Some(tool) = s.tool_msgs.get_mut(*idx) {
-                                                tool.msg_id = Some(mid);
-                                            }
-                                        }
-                                    }
+                                    // Buffer this tool call
+                                    tool_buffer.push(*idx);
                                 }
                                 DisplayItem::Intermediate(text) => {
+                                    // Flush buffered tools as a grouped block
+                                    if !tool_buffer.is_empty() {
+                                        // Render grouped tool calls
+                                        let tools_text = {
+                                            let s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                            let mut lines = Vec::new();
+                                            for &idx in &tool_buffer {
+                                                if let Some(t) = s.tool_msgs.get(idx) {
+                                                    let label = format!("**{}**{}", t.name, t.context);
+                                                    let status = match t.completed {
+                                                        None => "⚙️",
+                                                        Some(true) => "✅",
+                                                        Some(false) => "❌",
+                                                    };
+                                                    lines.push(format!("{} {}", status, label));
+                                                }
+                                            }
+                                            let count = tool_buffer.len();
+                                            let summary = if count == 1 {
+                                                lines[0].clone()
+                                            } else {
+                                                format!("**{} tool calls**", count)
+                                            };
+                                            if count == 1 {
+                                                summary
+                                            } else {
+                                                format!(
+                                                    "<details><summary>{}</summary>\n{}</details>",
+                                                    summary,
+                                                    lines.join("\n")
+                                                )
+                                            }
+                                        };
+                                        
+                                        let html = markdown_to_telegram_html(&tools_text);
+                                        if let Ok(mid) = send_html_or_plain(&bot, chat, thread_id, &html).await {
+                                            // Mark all buffered tools as having messages
+                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                            for &idx in &tool_buffer {
+                                                if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                                                    tool.msg_id = Some(mid);
+                                                }
+                                            }
+                                        }
+                                        tool_buffer.clear();
+                                    }
+                                    
+                                    // Now process the intermediate text
                                     // Apply the same sanitization chain as the
                                     // final response path: strip LLM artifacts
                                     // AND redact secrets. Without the redact
@@ -2836,6 +2891,50 @@ pub(crate) async fn handle_message(
                                             s.sent_intermediates.push(text.clone());
                                             s.intermediate_msg_ids.extend(sent_ids);
                                         }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Flush any remaining buffered tools after the loop
+                        if !tool_buffer.is_empty() {
+                            let tools_text = {
+                                let s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                let mut lines = Vec::new();
+                                for &idx in &tool_buffer {
+                                    if let Some(t) = s.tool_msgs.get(idx) {
+                                        let label = format!("**{}**{}", t.name, t.context);
+                                        let status = match t.completed {
+                                            None => "⚙️",
+                                            Some(true) => "✅",
+                                            Some(false) => "❌",
+                                        };
+                                        lines.push(format!("{} {}", status, label));
+                                    }
+                                }
+                                let count = tool_buffer.len();
+                                let summary = if count == 1 {
+                                    lines[0].clone()
+                                } else {
+                                    format!("**{} tool calls**", count)
+                                };
+                                if count == 1 {
+                                    summary
+                                } else {
+                                    format!(
+                                        "<details><summary>{}</summary>\n{}</details>",
+                                        summary,
+                                        lines.join("\n")
+                                    )
+                                }
+                            };
+                            
+                            let html = markdown_to_telegram_html(&tools_text);
+                            if let Ok(mid) = send_html_or_plain(&bot, chat, thread_id, &html).await {
+                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                for &idx in &tool_buffer {
+                                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                                        tool.msg_id = Some(mid);
                                     }
                                 }
                             }
@@ -3286,35 +3385,47 @@ pub(crate) async fn handle_message(
     }
 
     // Send any remaining display items that weren't flushed by the edit loop
+    // Buffer consecutive tool calls to group them into collapsible blocks
+    let mut tool_buffer: Vec<usize> = Vec::new();
+    
     for item in remaining_display {
         match item {
             DisplayItem::NewTool(idx) => {
-                let tool_info = {
-                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    s.tool_msgs.get(idx).map(|t| {
-                        let label = format!("**{}**{}", t.name, t.context);
-                        (label, t.completed, t.msg_id)
-                    })
-                };
-                if let Some((label, completed, existing_mid)) = tool_info {
-                    let text = match completed {
-                        None => format!("⚙️ {}", label),
-                        Some(true) => format!("✅ {}", label),
-                        Some(false) => format!("❌ {}", label),
-                    };
-                    let html = markdown_to_telegram_html(&text);
-                    if existing_mid.is_none()
-                        && let Ok(mid) =
-                            send_html_or_plain(&bot, msg.chat.id, thread_id, &html).await
-                    {
-                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                            tool.msg_id = Some(mid);
-                        }
-                    }
-                }
+                tool_buffer.push(idx);
             }
             DisplayItem::Intermediate(text) => {
+                // Flush tool buffer as grouped block before sending intermediate
+                if !tool_buffer.is_empty() {
+                    let buffer_copy = tool_buffer.clone();
+                    let tool_details: Vec<(String, String)> = buffer_copy
+                        .iter()
+                        .filter_map(|&idx| {
+                            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                            s.tool_msgs.get(idx).map(|t| {
+                                let status = match t.completed {
+                                    None => "⚙️",
+                                    Some(true) => "✅",
+                                    Some(false) => "❌",
+                                };
+                                (format!("{} {}", status, t.name), t.context.clone())
+                            })
+                        })
+                        .collect();
+                    
+                    if !tool_details.is_empty() {
+                        let grouped = render_tool_group(&tool_details);
+                        let html = markdown_to_telegram_html(&grouped);
+                        if let Ok(mid) = send_html_or_plain(&bot, msg.chat.id, thread_id, &html).await {
+                            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                            for &idx in &tool_buffer {
+                                if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                                    tool.msg_id = Some(mid);
+                                }
+                            }
+                        }
+                    }
+                    tool_buffer.clear();
+                }
                 let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                 let text = redact_secrets(&text);
                 // Strip <<IMG:path>> markers — see edit-loop site above.
@@ -3376,6 +3487,37 @@ pub(crate) async fn handle_message(
                         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                         s.sent_intermediates.push(text.clone());
                         s.intermediate_msg_ids.extend(sent_ids);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Flush any remaining tools in buffer as grouped block
+    if !tool_buffer.is_empty() {
+        let tool_details: Vec<(String, String)> = tool_buffer
+            .iter()
+            .filter_map(|&idx| {
+                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                s.tool_msgs.get(idx).map(|t| {
+                    let status = match t.completed {
+                        None => "⚙️",
+                        Some(true) => "✅",
+                        Some(false) => "❌",
+                    };
+                    (format!("{} {}", status, t.name), t.context.clone())
+                })
+            })
+            .collect();
+        
+        if !tool_details.is_empty() {
+            let grouped = render_tool_group(&tool_details);
+            let html = markdown_to_telegram_html(&grouped);
+            if let Ok(mid) = send_html_or_plain(&bot, msg.chat.id, thread_id, &html).await {
+                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                for &idx in &tool_buffer {
+                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                        tool.msg_id = Some(mid);
                     }
                 }
             }
@@ -3949,34 +4091,46 @@ pub(crate) async fn resume_session(
                         };
 
                         // Process display items (tools + intermediates)
+                        // Buffer consecutive tool calls to group them into collapsible blocks
+                        let mut tool_buffer: Vec<usize> = Vec::new();
+                        
                         for item in snap.display_items {
                             match item {
                                 DisplayItem::NewTool(idx) => {
-                                    let tool_info = {
-                                        let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                        s.tool_msgs.get(idx).map(|t| {
-                                            let label = format!("**{}**{}", t.name, t.context);
-                                            (label, t.completed, t.msg_id)
-                                        })
-                                    };
-                                    if let Some((label, completed, existing_mid)) = tool_info {
-                                        let text = match completed {
-                                            None => format!("⚙️ {}", label),
-                                            Some(true) => format!("✅ {}", label),
-                                            Some(false) => format!("❌ {}", label),
-                                        };
-                                        let html = markdown_to_telegram_html(&text);
-                                        if existing_mid.is_none()
-                                            && let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await
-                                        {
-                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                                                tool.msg_id = Some(mid);
-                                            }
-                                        }
-                                    }
+                                    tool_buffer.push(idx);
                                 }
                                 DisplayItem::Intermediate(text) => {
+                                    // Flush tool buffer as grouped block before sending intermediate
+                                    if !tool_buffer.is_empty() {
+                                        let tool_details: Vec<(String, String)> = tool_buffer
+                                            .iter()
+                                            .filter_map(|&idx| {
+                                                let s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                                s.tool_msgs.get(idx).map(|t| {
+                                                    let status = match t.completed {
+                                                        None => "⚙️",
+                                                        Some(true) => "✅",
+                                                        Some(false) => "❌",
+                                                    };
+                                                    (format!("{} {}", status, t.name), t.context.clone())
+                                                })
+                                            })
+                                            .collect();
+                                        
+                                        if !tool_details.is_empty() {
+                                            let grouped = render_tool_group(&tool_details);
+                                            let html = markdown_to_telegram_html(&grouped);
+                                            if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await {
+                                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                                for &idx in &tool_buffer {
+                                                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                                                        tool.msg_id = Some(mid);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        tool_buffer.clear();
+                                    }
                                     let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                                     let text = redact_secrets(&text);
                                     // Strip <<IMG:path>> markers — see handle_message.
@@ -4032,6 +4186,37 @@ pub(crate) async fn resume_session(
                                             let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                                             s.sent_intermediates.push(text.clone());
                                             s.intermediate_msg_ids.extend(sent_ids);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Flush any remaining tools in buffer as grouped block
+                        if !tool_buffer.is_empty() {
+                            let tool_details: Vec<(String, String)> = tool_buffer
+                                .iter()
+                                .filter_map(|&idx| {
+                                    let s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                    s.tool_msgs.get(idx).map(|t| {
+                                        let status = match t.completed {
+                                            None => "⚙️",
+                                            Some(true) => "✅",
+                                            Some(false) => "❌",
+                                        };
+                                        (format!("{} {}", status, t.name), t.context.clone())
+                                    })
+                                })
+                                .collect();
+                            
+                            if !tool_details.is_empty() {
+                                let grouped = render_tool_group(&tool_details);
+                                let html = markdown_to_telegram_html(&grouped);
+                                if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await {
+                                    let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                    for &idx in &tool_buffer {
+                                        if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                                            tool.msg_id = Some(mid);
                                         }
                                     }
                                 }
@@ -4264,34 +4449,46 @@ pub(crate) async fn resume_session(
     }
 
     // Send remaining display items
+    // Buffer consecutive tool calls to group them into collapsible blocks
+    let mut tool_buffer: Vec<usize> = Vec::new();
+    
     for item in remaining_display {
         match item {
             DisplayItem::NewTool(idx) => {
-                let tool_info = {
-                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    s.tool_msgs.get(idx).map(|t| {
-                        let label = format!("**{}**{}", t.name, t.context);
-                        (label, t.completed, t.msg_id)
-                    })
-                };
-                if let Some((label, completed, existing_mid)) = tool_info {
-                    let text = match completed {
-                        None => format!("⚙️ {}", label),
-                        Some(true) => format!("✅ {}", label),
-                        Some(false) => format!("❌ {}", label),
-                    };
-                    let html = markdown_to_telegram_html(&text);
-                    if existing_mid.is_none()
-                        && let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await
-                    {
-                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                            tool.msg_id = Some(mid);
-                        }
-                    }
-                }
+                tool_buffer.push(idx);
             }
             DisplayItem::Intermediate(text) => {
+                // Flush tool buffer as grouped block before sending intermediate
+                if !tool_buffer.is_empty() {
+                    let tool_details: Vec<(String, String)> = tool_buffer
+                        .iter()
+                        .filter_map(|&idx| {
+                            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                            s.tool_msgs.get(idx).map(|t| {
+                                let status = match t.completed {
+                                    None => "⚙️",
+                                    Some(true) => "✅",
+                                    Some(false) => "❌",
+                                };
+                                (format!("{} {}", status, t.name), t.context.clone())
+                            })
+                        })
+                        .collect();
+                    
+                    if !tool_details.is_empty() {
+                        let grouped = render_tool_group(&tool_details);
+                        let html = markdown_to_telegram_html(&grouped);
+                        if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await {
+                            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                            for &idx in &tool_buffer {
+                                if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                                    tool.msg_id = Some(mid);
+                                }
+                            }
+                        }
+                    }
+                    tool_buffer.clear();
+                }
                 let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                 let text = redact_secrets(&text);
                 // Strip <<IMG:path>> markers — see handle_message.
@@ -4345,6 +4542,37 @@ pub(crate) async fn resume_session(
                         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                         s.sent_intermediates.push(text.clone());
                         s.intermediate_msg_ids.extend(sent_ids);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Flush any remaining tools in buffer as grouped block
+    if !tool_buffer.is_empty() {
+        let tool_details: Vec<(String, String)> = tool_buffer
+            .iter()
+            .filter_map(|&idx| {
+                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                s.tool_msgs.get(idx).map(|t| {
+                    let status = match t.completed {
+                        None => "⚙️",
+                        Some(true) => "✅",
+                        Some(false) => "❌",
+                    };
+                    (format!("{} {}", status, t.name), t.context.clone())
+                })
+            })
+            .collect();
+        
+        if !tool_details.is_empty() {
+            let grouped = render_tool_group(&tool_details);
+            let html = markdown_to_telegram_html(&grouped);
+            if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await {
+                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                for &idx in &tool_buffer {
+                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                        tool.msg_id = Some(mid);
                     }
                 }
             }
