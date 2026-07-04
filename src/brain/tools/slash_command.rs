@@ -423,8 +423,8 @@ impl SlashCommandTool {
              /approve  — Get or set approval policy (args: approve-only|auto-session|auto-always)\n\
              /cd       — Change working directory (args: path)\n\
              /compact  — Compact context (summarize + trim)\n\
-             /rebuild  — Build from source & hot-restart\n\
-             /evolve   — Download latest release & hot-restart\n\
+             /rebuild  — Compile LOCAL source edits & hot-restart (maintainers, rare)\n\
+             /evolve   — Upgrade to the latest RELEASE & hot-restart (normal update path)\n\
              /goal     — Set/view/pause/clear session goal\n\
              /profiles — List/switch/create/manage profiles\n\
              /whisper  — Voice-to-text (TUI only)\n\

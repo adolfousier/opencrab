@@ -114,6 +114,15 @@ If source already exists at `~/.opencrabs/source/`, `/rebuild` runs `git pull --
 
 **Key:** Binary users CAN modify code — they just need the source fetched first. `/rebuild` handles this automatically.
 
+## Rebuild vs Evolve
+
+Two different commands for two different jobs — do not mix them up:
+
+- `/rebuild` (and the `rebuild` tool) COMPILES WHAT IS ON DISK. Maintainer/dev path, rare: use it only to apply local source edits.
+- `/evolve` (and the `evolve` tool) UPGRADES TO THE LATEST PUBLISHED RELEASE. Normal update path for users; it detects the install method and does NOT apply uncommitted local changes.
+
+If the user asks to "update" or "upgrade", that is evolve. If you (or they) just edited OpenCrabs source and want the changes live, that is rebuild.
+
 ## Two Ways to Run: TUI vs Daemon
 
 There are two run modes. For one profile, only one runs at a time.

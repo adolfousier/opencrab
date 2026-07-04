@@ -34,7 +34,9 @@ impl Tool for RebuildTool {
 
     fn description(&self) -> &str {
         "Build OpenCrabs from source (cargo build --release) in the BACKGROUND and auto-reload \
-         when it's done. Call this after editing source code to apply your changes. Returns \
+         when it's done. MAINTAINER path, rare: only for applying LOCAL SOURCE EDITS. To \
+         upgrade to the latest published release use the `evolve` tool instead (rebuild \
+         compiles what is on disk; evolve fetches what was released). Returns \
          immediately — the build runs out-of-band (it does not block you), and OpenCrabs \
          exec-restarts into the new binary automatically when the build finishes, resuming \
          this session. On build failure a message is delivered; nothing restarts."

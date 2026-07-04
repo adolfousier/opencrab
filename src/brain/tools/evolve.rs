@@ -491,10 +491,13 @@ impl Tool for EvolveTool {
     }
 
     fn description(&self) -> &str {
-        "Check for and install the latest OpenCrabs release. \
+        "Check for and install the latest OpenCrabs release. This is the \
+         UPGRADE path for users: it fetches what was RELEASED. \
          Automatically detects the install method (pre-built binary, \
          cargo install, or source) and uses the right update strategy. \
-         Hot-restarts into the new version after installation."
+         Hot-restarts into the new version after installation. To compile \
+         local source edits instead (rare, maintainers), use the `rebuild` \
+         tool — evolve does not apply uncommitted local changes."
     }
 
     fn input_schema(&self) -> Value {
