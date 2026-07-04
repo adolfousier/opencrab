@@ -3738,14 +3738,17 @@ pub(crate) async fn handle_message(
 
             // #300 follow-up: the final answer for CLI providers arrives as a
             // trailing IntermediateText folded into the collapsed block, while
-            // response.content comes back empty. Pull that trailing folded text
-            // back out so the completion always lands as its own bubble below,
-            // never buried inside the expandable block (100% of the time). When
-            // response.content already carried the answer (text_only non-empty),
-            // the folded copy was a duplicate we've now removed from the block.
-            let folded_final = take_folded_final(&bot, msg.chat.id, &streaming).await;
+            // response.content comes back empty. Only when we have no separate
+            // answer to deliver (text_only empty) do we reclaim that trailing
+            // folded text out of the block, so the completion always lands as
+            // its own bubble below instead of staying buried in the expandable
+            // block. When response.content already carried the answer, we leave
+            // the block untouched — never disturbing a mid-turn narration line
+            // that happens to sit last.
             let text_only = if text_only.trim().is_empty() {
-                folded_final.unwrap_or(text_only)
+                take_folded_final(&bot, msg.chat.id, &streaming)
+                    .await
+                    .unwrap_or(text_only)
             } else {
                 text_only
             };
@@ -4520,12 +4523,14 @@ pub(crate) async fn resume_session(
                 text_only
             };
 
-            // #300 follow-up: pull the trailing folded final answer out of the
-            // collapsed block so the completion lands as its own bubble below
-            // (see handle_message for the full rationale).
-            let folded_final = take_folded_final(&bot, chat_id, &streaming).await;
+            // #300 follow-up: only when there's no separate answer to deliver do
+            // we reclaim the trailing folded final out of the collapsed block so
+            // the completion lands as its own bubble below (see handle_message
+            // for the full rationale).
             let text_only = if text_only.trim().is_empty() {
-                folded_final.unwrap_or(text_only)
+                take_folded_final(&bot, chat_id, &streaming)
+                    .await
+                    .unwrap_or(text_only)
             } else {
                 text_only
             };
