@@ -219,6 +219,38 @@ fn brain_preamble_references_compiled_features_line() {
 }
 
 #[test]
+fn brain_preamble_has_vision_fallback_directive() {
+    use crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    assert!(
+        BRAIN_PREAMBLE.contains("VISION FALLBACK"),
+        "preamble must include the VISION FALLBACK section header so the agent \
+         self-extracts media when analyze_image/analyze_video isn't exposed by \
+         the harness"
+    );
+}
+
+#[test]
+fn brain_preamble_vision_fallback_names_ffmpeg_frame_extraction() {
+    use crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    let lower = BRAIN_PREAMBLE.to_lowercase();
+    // The concrete recovery: read images directly, extract video frames with
+    // ffmpeg. Both must be named so the agent doesn't reason abstractly and
+    // doesn't fall back to describing media from its filename (hallucination).
+    assert!(
+        lower.contains("ffmpeg"),
+        "vision-fallback directive must name ffmpeg for video frame extraction"
+    );
+    assert!(
+        lower.contains("analyze_image") && lower.contains("analyze_video"),
+        "vision-fallback directive must reference both media tools it stands in for"
+    );
+    assert!(
+        lower.contains("filename"),
+        "directive must forbid describing media from its filename"
+    );
+}
+
+#[test]
 fn brain_preamble_names_concrete_capabilities_users_might_ask_to_reimplement() {
     use crate::brain::prompt_builder::BRAIN_PREAMBLE;
     // The user incident was specifically STT/TTS. Other common ones:
