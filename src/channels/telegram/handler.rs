@@ -3414,8 +3414,7 @@ pub(crate) async fn handle_message(
                     
                     if !tool_details.is_empty() {
                         let grouped = render_tool_group(&tool_details);
-                        let html = markdown_to_telegram_html(&grouped);
-                        if let Ok(mid) = send_html_or_plain(&bot, msg.chat.id, thread_id, &html).await {
+                        if let Ok(mid) = send_tool_group_rich(&bot, msg.chat.id, thread_id, &grouped).await {
                             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                             for &idx in &tool_buffer {
                                 if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -3512,8 +3511,7 @@ pub(crate) async fn handle_message(
         
         if !tool_details.is_empty() {
             let grouped = render_tool_group(&tool_details);
-            let html = markdown_to_telegram_html(&grouped);
-            if let Ok(mid) = send_html_or_plain(&bot, msg.chat.id, thread_id, &html).await {
+            if let Ok(mid) = send_tool_group_rich(&bot, msg.chat.id, thread_id, &grouped).await {
                 let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 for &idx in &tool_buffer {
                     if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -4119,8 +4117,7 @@ pub(crate) async fn resume_session(
                                         
                                         if !tool_details.is_empty() {
                                             let grouped = render_tool_group(&tool_details);
-                                            let html = markdown_to_telegram_html(&grouped);
-                                            if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await {
+                                            if let Ok(mid) = send_tool_group_rich(&bot, chat_id, thread_id, &grouped).await {
                                                 let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                                                 for &idx in &tool_buffer {
                                                     if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -4211,8 +4208,7 @@ pub(crate) async fn resume_session(
                             
                             if !tool_details.is_empty() {
                                 let grouped = render_tool_group(&tool_details);
-                                let html = markdown_to_telegram_html(&grouped);
-                                if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await {
+                                if let Ok(mid) = send_tool_group_rich(&bot, chat_id, thread_id, &grouped).await {
                                     let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                                     for &idx in &tool_buffer {
                                         if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -4477,8 +4473,7 @@ pub(crate) async fn resume_session(
                     
                     if !tool_details.is_empty() {
                         let grouped = render_tool_group(&tool_details);
-                        let html = markdown_to_telegram_html(&grouped);
-                        if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await {
+                        if let Ok(mid) = send_tool_group_rich(&bot, chat_id, thread_id, &grouped).await {
                             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                             for &idx in &tool_buffer {
                                 if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -4567,8 +4562,7 @@ pub(crate) async fn resume_session(
         
         if !tool_details.is_empty() {
             let grouped = render_tool_group(&tool_details);
-            let html = markdown_to_telegram_html(&grouped);
-            if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &html).await {
+            if let Ok(mid) = send_tool_group_rich(&bot, chat_id, thread_id, &grouped).await {
                 let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 for &idx in &tool_buffer {
                     if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -5559,6 +5553,28 @@ async fn try_send_intermediate_rich(
         Err(e) => {
             tracing::warn!("Telegram: intermediate rich send failed, using HTML: {e}");
             None
+        }
+    }
+}
+
+/// Send a tool group as a rich message with collapsible <details> blocks.
+/// Tries the rich API first (which supports <details>), falls back to regular
+/// HTML if the rich API fails or isn't available.
+async fn send_tool_group_rich(
+    bot: &Bot,
+    chat_id: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    markdown: &str,
+) -> std::result::Result<MessageId, teloxide::RequestError> {
+    // Try rich API first (supports <details> tags)
+    match super::rich::api::send_rich_markdown_id(bot.token(), chat_id.0, thread_id, markdown).await
+    {
+        Ok(id) => Ok(MessageId(id)),
+        Err(e) => {
+            tracing::debug!("Rich API failed for tool group, falling back to HTML: {e}");
+            // Fall back to regular HTML (without <details> tags)
+            let html = markdown_to_telegram_html(markdown);
+            send_html_or_plain(bot, chat_id, thread_id, &html).await
         }
     }
 }
