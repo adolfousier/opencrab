@@ -1,7 +1,7 @@
 //! Tests for reaction sentiment classification and prompt framing (#302 Stage 1).
 
 use crate::channels::telegram::reaction_prompt::{
-    ReactionSentiment, build_reaction_prompt, classify_reaction,
+    ReactionSentiment, build_midturn_reaction_message, build_reaction_prompt, classify_reaction,
 };
 
 #[test]
@@ -63,4 +63,27 @@ fn negative_prompt_frames_pause_and_ask() {
     let out = build_reaction_prompt("Felipe", "👎", "here is the plan");
     assert!(out.to_lowercase().contains("pause"));
     assert!(out.to_lowercase().contains("ask"));
+}
+
+#[test]
+fn midturn_positive_frames_keep_going() {
+    let out = build_midturn_reaction_message("Adolfo", "🔥");
+    assert!(out.contains("Adolfo"));
+    assert!(out.contains("Live feedback"));
+    assert!(out.to_lowercase().contains("keep going"));
+}
+
+#[test]
+fn midturn_negative_frames_pause() {
+    let out = build_midturn_reaction_message("Carlos", "🛑");
+    assert!(out.contains("Carlos"));
+    assert!(out.contains("PAUSE"));
+    assert!(out.to_lowercase().contains("ask"));
+}
+
+#[test]
+fn midturn_neutral_still_addresses_by_name() {
+    let out = build_midturn_reaction_message("Ruhul", "🎉");
+    assert!(out.contains("Ruhul"));
+    assert!(out.contains("Live feedback"));
 }

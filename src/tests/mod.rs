@@ -417,6 +417,7 @@ pub mod telegram_plan_render_test;
 pub mod telegram_pre_tool_rolling_test;
 pub mod telegram_quote_reply_test;
 pub mod telegram_reaction_prompt_test;
+pub mod telegram_reaction_queue_test;
 pub mod telegram_rich_parse_test;
 pub mod telegram_rich_test;
 pub mod telegram_send_caption_test;

@@ -141,8 +141,13 @@ impl ChannelManager {
                         tracing::warn!("ChannelManager: Telegram token lock denied — {}", e);
                         return;
                     }
+                    // Wire the reaction queue so a mid-turn reaction is injected
+                    // into the running loop (#302 Stage 2).
+                    let reaction_cb = self.telegram_state.reaction_queue_callback();
                     let agent = crate::channels::telegram::TelegramAgent::new(
-                        self.channel_factory.create_agent_service().await,
+                        self.channel_factory
+                            .create_agent_service_with_queue(Some(reaction_cb))
+                            .await,
                         self.channel_factory.service_context(),
                         self.channel_factory.shared_session_id(),
                         self.telegram_state.clone(),

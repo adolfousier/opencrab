@@ -108,11 +108,38 @@ pub struct TelegramState {
     /// downstream tmp-photo pickup can `drain + await` before scanning,
     /// eliminating the race between fire-and-forget saves and mention handling.
     pending_file_saves: Mutex<HashMap<i64, Vec<tokio::task::JoinHandle<()>>>>,
+    /// Reactions that landed while a turn was already running, waiting to be
+    /// injected into that turn's tool loop between rounds. Keyed by session_id,
+    /// drained FIFO (#302 Stage 2). `std::sync::Mutex` (not tokio) so the drain
+    /// callback and the RAII active-turn guard can touch it without awaiting.
+    pending_reactions: std::sync::Mutex<HashMap<Uuid, std::collections::VecDeque<String>>>,
+    /// Sessions with an agent turn currently in flight, so `handle_reaction` can
+    /// tell mid-turn (enqueue for injection) from idle (fire a standalone turn).
+    /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
+    /// session looking permanently busy.
+    active_turns: std::sync::Mutex<std::collections::HashSet<Uuid>>,
 }
 
 impl Default for TelegramState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// RAII guard that keeps a session marked "turn active" for its lifetime and
+/// clears the flag on drop (#302 Stage 2). Held for the whole span of a
+/// `handle_message` turn so a reaction arriving mid-turn is enqueued for
+/// injection rather than firing a second concurrent turn on the same session.
+pub(crate) struct ActiveTurnGuard {
+    state: std::sync::Arc<TelegramState>,
+    session_id: Uuid,
+}
+
+impl Drop for ActiveTurnGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.state.active_turns.lock() {
+            set.remove(&self.session_id);
+        }
     }
 }
 
@@ -139,6 +166,8 @@ impl TelegramState {
             dir_browsers: Mutex::new(HashMap::new()),
             prof_create_states: Mutex::new(HashMap::new()),
             pending_file_saves: Mutex::new(HashMap::new()),
+            pending_reactions: std::sync::Mutex::new(HashMap::new()),
+            active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -357,6 +386,68 @@ impl TelegramState {
         {
             tokens.remove(&session_id);
         }
+    }
+
+    /// Mark `session_id` as having a turn in flight, returning an RAII guard
+    /// that clears the flag on drop — normal return, early return, panic, or
+    /// cancellation — so a crashed turn never leaves a session looking busy
+    /// (which would silently queue every future reaction forever). #302 Stage 2.
+    ///
+    /// Deliberately does NOT reuse `cancel_tokens`: `remove_cancel_token` keeps
+    /// a completed (non-cancelled) token in the map until the next turn, so
+    /// `cancel_tokens.contains_key` yields false positives for idle sessions.
+    pub(crate) fn mark_turn_active(
+        self: &std::sync::Arc<Self>,
+        session_id: Uuid,
+    ) -> ActiveTurnGuard {
+        if let Ok(mut set) = self.active_turns.lock() {
+            set.insert(session_id);
+        }
+        ActiveTurnGuard {
+            state: self.clone(),
+            session_id,
+        }
+    }
+
+    /// True while a turn is in flight for `session_id`.
+    pub(crate) fn is_turn_active(&self, session_id: Uuid) -> bool {
+        self.active_turns
+            .lock()
+            .map(|s| s.contains(&session_id))
+            .unwrap_or(false)
+    }
+
+    /// Enqueue a mid-turn reaction message for injection into the running loop.
+    pub(crate) fn enqueue_reaction(&self, session_id: Uuid, text: String) {
+        if let Ok(mut map) = self.pending_reactions.lock() {
+            map.entry(session_id).or_default().push_back(text);
+        }
+    }
+
+    /// Pop the next queued reaction for `session_id` (FIFO), if any. Removes the
+    /// per-session entry once its queue is empty so the map doesn't grow.
+    pub(crate) fn drain_reaction(&self, session_id: Uuid) -> Option<String> {
+        let mut map = self.pending_reactions.lock().ok()?;
+        let queue = map.get_mut(&session_id)?;
+        let msg = queue.pop_front();
+        if queue.is_empty() {
+            map.remove(&session_id);
+        }
+        msg
+    }
+
+    /// A [`MessageQueueCallback`](crate::brain::agent::MessageQueueCallback) that
+    /// drains this state's pending reactions, keyed per session. Wired into the
+    /// Telegram `AgentService` so the tool loop injects a queued reaction between
+    /// rounds (the same rail the TUI uses for follow-up messages).
+    pub(crate) fn reaction_queue_callback(
+        self: &std::sync::Arc<Self>,
+    ) -> crate::brain::agent::MessageQueueCallback {
+        let state = self.clone();
+        std::sync::Arc::new(move |session_id: Uuid| {
+            let state = state.clone();
+            Box::pin(async move { state.drain_reaction(session_id) })
+        })
     }
 
     /// Buffer a photo marker for batching. Returns the current buffer size.

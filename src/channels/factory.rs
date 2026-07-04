@@ -90,6 +90,17 @@ impl ChannelFactory {
     /// set, otherwise the override is ignored. A2A and headless tools that have no interactive
     /// user can set their own auto-approval via session context.
     pub async fn create_agent_service(&self) -> Arc<AgentService> {
+        self.create_agent_service_with_queue(None).await
+    }
+
+    /// Like [`create_agent_service`](Self::create_agent_service) but wires a
+    /// per-session message-queue callback so the tool loop can inject a queued
+    /// message between rounds. Telegram uses this to surface a mid-turn reaction
+    /// into the running loop (#302 Stage 2); channels without one pass `None`.
+    pub async fn create_agent_service_with_queue(
+        &self,
+        message_queue_callback: Option<crate::brain::agent::MessageQueueCallback>,
+    ) -> Arc<AgentService> {
         let config = self.config_rx.borrow().clone();
         let mut builder =
             AgentService::new(self.provider.clone(), self.service_context.clone(), &config)
@@ -114,6 +125,10 @@ impl ChannelFactory {
 
         if let Some(tx) = self.session_updated_tx.get() {
             builder = builder.with_session_updated_tx(tx.clone());
+        }
+
+        if message_queue_callback.is_some() {
+            builder = builder.with_message_queue_callback(message_queue_callback);
         }
 
         Arc::new(builder)

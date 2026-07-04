@@ -3384,6 +3384,11 @@ pub(crate) async fn handle_message(
         .store_cancel_token(session_id, cancel_token.clone())
         .await;
 
+    // Mark this session as having a turn in flight so a reaction that lands
+    // mid-turn is injected into this loop instead of firing a second turn
+    // (#302 Stage 2). The guard clears the flag on drop, including on panic.
+    let turn_guard = telegram_state.mark_turn_active(session_id);
+
     let chat_id_str = msg.chat.id.0.to_string();
     let result = agent
         .send_message_with_tools_and_display(
@@ -3433,6 +3438,9 @@ pub(crate) async fn handle_message(
                     telegram_state
                         .store_cancel_token(new_id, cancel_token2.clone())
                         .await;
+                    // The retried turn runs under the fresh session; mark it
+                    // active too so mid-turn reactions inject correctly (#302).
+                    let _retry_turn_guard = telegram_state.mark_turn_active(new_id);
                     let retry_result = agent
                         .send_message_with_tools_and_display(
                             new_id,
@@ -4030,6 +4038,43 @@ pub(crate) async fn handle_message(
             } else {
                 message_in_thread(&bot, msg.chat.id, thread_id, user_msg).await?;
             }
+        }
+    }
+
+    // Drop the active-turn guard before flushing so any reaction arriving during
+    // the flush is treated as fresh, not re-queued against a finished turn.
+    drop(turn_guard);
+
+    // #302 Stage 2 safeguard: a reaction that landed during the final round (no
+    // further between-rounds drain follows it) was queued but never injected.
+    // Flush any leftovers as one short standalone follow-up so a mid-turn
+    // reaction is never silently stranded. Empty is the common case (one cheap
+    // lock check) — a real inference only fires when something was queued.
+    let mut leftover_reactions = Vec::new();
+    while let Some(r) = telegram_state.drain_reaction(session_id) {
+        leftover_reactions.push(r);
+    }
+    if !leftover_reactions.is_empty() {
+        let combined = leftover_reactions.join("\n\n");
+        match agent.send_message(session_id, combined, None).await {
+            Ok(resp) => {
+                let (txt, _imgs) = crate::utils::extract_img_markers(&resp.content);
+                let txt = crate::utils::sanitize::strip_llm_artifacts(&txt);
+                let txt = redact_secrets(&txt);
+                let (txt, react_emoji) = crate::utils::extract_react_marker(&txt);
+                if let Some(em) = react_emoji {
+                    fire_reaction(&bot, msg.chat.id, msg.id, &em).await;
+                }
+                if !txt.trim().is_empty() {
+                    let html = markdown_to_telegram_html(&txt);
+                    if let Err(e) = send_html_or_plain(&bot, msg.chat.id, thread_id, &html).await {
+                        tracing::warn!("Telegram: failed to deliver flushed reaction reply: {e}");
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(
+                "Telegram: flushed reaction turn failed for session {session_id}: {e}"
+            ),
         }
     }
 
@@ -4780,6 +4825,24 @@ pub(crate) async fn handle_reaction(
     // reads the reaction's sentiment (positive = encouragement / green light,
     // negative = pause and ask) and addresses the user by first name (#302).
     let preview: String = content.chars().take(500).collect();
+
+    // If a turn is already running on this session, inject the reaction into
+    // that live loop between rounds rather than firing a second concurrent turn
+    // on the same session (which would double-charge the provider and interleave
+    // history). The running loop drains it via reaction_queue_callback; a final
+    // round leftover is flushed by handle_message's drain-on-exit (#302 Stage 2).
+    if telegram_state.is_turn_active(session_id) {
+        let midturn = super::reaction_prompt::build_midturn_reaction_message(&user_name, &emoji);
+        telegram_state.enqueue_reaction(session_id, midturn);
+        tracing::info!(
+            "Telegram reaction: {} reacted with {} mid-turn on session {} — queued for injection",
+            user_name,
+            emoji,
+            session_id
+        );
+        return Ok(());
+    }
+
     let prompt = super::reaction_prompt::build_reaction_prompt(&user_name, &emoji, &preview);
 
     tracing::info!(

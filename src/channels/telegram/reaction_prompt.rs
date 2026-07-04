@@ -66,3 +66,27 @@ pub(crate) fn build_reaction_prompt(first_name: &str, emoji: &str, preview: &str
          acknowledge."
     )
 }
+
+/// Framing for a reaction that lands while a turn is already running, injected
+/// into the loop between tool rounds as live steering (#302 Stage 2). Unlike
+/// [`build_reaction_prompt`] this is not a fresh turn — it is an out-of-band
+/// signal telling the in-flight agent how the person feels about the work so
+/// far, so the framing makes clear it arrived mid-work.
+pub(crate) fn build_midturn_reaction_message(first_name: &str, emoji: &str) -> String {
+    match classify_reaction(emoji) {
+        ReactionSentiment::Positive => format!(
+            "[Live feedback from {first_name}: reacted {emoji}] They approve of the current \
+             direction, you're on the right path. Keep going with the current plan, no need to \
+             stop or re-confirm. Acknowledge {first_name} by first name when you next reply."
+        ),
+        ReactionSentiment::Negative => format!(
+            "[Live feedback from {first_name}: reacted {emoji}] They want you to PAUSE. Stop at \
+             the next safe point, summarize what you've done so far, and ask {first_name} (by \
+             first name) what they'd like changed before continuing."
+        ),
+        ReactionSentiment::Neutral => format!(
+            "[Live feedback from {first_name}: reacted {emoji}] Take it into account and \
+             acknowledge {first_name} by first name when you next reply."
+        ),
+    }
+}

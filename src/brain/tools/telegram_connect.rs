@@ -118,9 +118,13 @@ impl Tool for TelegramConnectTool {
             tracing::error!("Failed to save Telegram allowed_users: {}", e);
         }
 
-        // Create and spawn the Telegram agent
+        // Create and spawn the Telegram agent. Wire the reaction queue so a
+        // mid-turn reaction is injected into the running loop (#302 Stage 2).
         let factory = self.channel_factory.clone();
-        let agent = factory.create_agent_service().await;
+        let reaction_cb = self.telegram_state.reaction_queue_callback();
+        let agent = factory
+            .create_agent_service_with_queue(Some(reaction_cb))
+            .await;
         let service_context = factory.service_context();
         let shared_session = factory.shared_session_id();
         let telegram_state = self.telegram_state.clone();
