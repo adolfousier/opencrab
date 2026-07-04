@@ -4,6 +4,7 @@
 //! Two backends: Google Gemini (default) or provider-native vision model
 //! (uses the same OpenAI-compatible API with a vision-capable model).
 
+use super::error::resolve_tool_path;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -62,7 +63,7 @@ impl Tool for AnalyzeImageTool {
     async fn execute(
         &self,
         input: Value,
-        _context: &ToolExecutionContext,
+        context: &ToolExecutionContext,
     ) -> super::error::Result<ToolResult> {
         let image_src = match input["image"].as_str() {
             Some(s) if !s.is_empty() => s.to_string(),
@@ -125,14 +126,17 @@ impl Tool for AnalyzeImageTool {
             })
         } else {
             // Local file
-            let bytes = tokio::fs::read(&image_src).await.map_err(|e| {
+            let resolved_path = resolve_tool_path(&image_src, &context.working_dir());
+            let resolved_str = resolved_path.to_string_lossy().to_string();
+            
+            let bytes = tokio::fs::read(&resolved_path).await.map_err(|e| {
                 super::error::ToolError::Execution(format!(
                     "Failed to read image file '{}': {}",
-                    image_src, e
+                    resolved_str, e
                 ))
             })?;
 
-            let mime_type = detect_mime_type(&image_src);
+            let mime_type = detect_mime_type(&resolved_str);
             let b64 = base64_encode(&bytes);
             serde_json::json!({
                 "inlineData": {
