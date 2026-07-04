@@ -63,6 +63,12 @@ pub(crate) struct StreamingState {
     tool_msgs: Vec<ToolMsg>,
     /// Ordered queue of new display items (tools + intermediates in chronological order)
     display_queue: Vec<DisplayItem>,
+    /// Message ID of the currently open tool-call group. Consecutive tool calls
+    /// are appended to this one message (edited in place) so a run of tools
+    /// collapses into a single growing `<blockquote expandable>` block instead
+    /// of one message per flush window. Set when a group is opened, cleared when
+    /// an intermediate text or the final response breaks the run.
+    open_group_msg_id: Option<MessageId>,
     /// Response text from streaming chunks — own message at bottom
     response: String,
     dirty: bool,
@@ -145,6 +151,128 @@ pub(crate) fn render_tool_group(tools: &[(String, String)]) -> String {
         tools.len(),
         body
     )
+}
+
+/// Status glyph for a tool call: running, succeeded, or failed.
+fn tool_status_icon(completed: Option<bool>) -> &'static str {
+    match completed {
+        None => "⚙️",
+        Some(true) => "✅",
+        Some(false) => "❌",
+    }
+}
+
+/// Build `(label, context)` render pairs for the given tool indices.
+fn tool_group_details(
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    indices: &[usize],
+) -> Vec<(String, String)> {
+    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+    indices
+        .iter()
+        .filter_map(|&idx| {
+            s.tool_msgs.get(idx).map(|t| {
+                (
+                    format!("{} {}", tool_status_icon(t.completed), t.name),
+                    t.context.clone(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// Re-render every tool sharing `group_mid` and edit that message in place.
+/// Used both to grow an open group (append) and to reflect a tool's status
+/// change (⚙️ → ✅/❌) after it completes. A no-op edit ("message is not
+/// modified") and transient errors are ignored: the message already shows the
+/// correct content and the next tick retries.
+async fn refresh_tool_group(
+    bot: &Bot,
+    chat: ChatId,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    group_mid: MessageId,
+) {
+    let details: Vec<(String, String)> = {
+        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.tool_msgs
+            .iter()
+            .filter(|t| t.msg_id == Some(group_mid))
+            .map(|t| {
+                (
+                    format!("{} {}", tool_status_icon(t.completed), t.name),
+                    t.context.clone(),
+                )
+            })
+            .collect()
+    };
+    if details.is_empty() {
+        return;
+    }
+    let html = render_tool_group(&details);
+    let _ = bot
+        .edit_message_text(chat, group_mid, html)
+        .parse_mode(ParseMode::Html)
+        .await;
+}
+
+/// Append buffered tool calls to the current open group, editing that message
+/// in place so consecutive tool calls collapse into one growing block. When no
+/// group is open, a new message is sent and becomes the open group. The open
+/// group is closed via `close_tool_group` when an intermediate text or the
+/// final response breaks the run of consecutive tool calls.
+async fn append_tool_group(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    buffer: &[usize],
+) {
+    if buffer.is_empty() {
+        return;
+    }
+    let open = streaming
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .open_group_msg_id;
+    match open {
+        Some(mid) => {
+            {
+                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                for &idx in buffer {
+                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                        tool.msg_id = Some(mid);
+                    }
+                }
+            }
+            refresh_tool_group(bot, chat, streaming, mid).await;
+        }
+        None => {
+            let details = tool_group_details(streaming, buffer);
+            if details.is_empty() {
+                return;
+            }
+            let html = render_tool_group(&details);
+            if let Ok(mid) = send_html_or_plain(bot, chat, thread_id, &html).await {
+                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                for &idx in buffer {
+                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                        tool.msg_id = Some(mid);
+                    }
+                }
+                s.open_group_msg_id = Some(mid);
+            }
+        }
+    }
+}
+
+/// Close the current open tool group so the next tool call starts a fresh
+/// message. Called when an intermediate text or the final response interrupts
+/// the run of consecutive tool calls.
+fn close_tool_group(streaming: &Arc<std::sync::Mutex<StreamingState>>) {
+    streaming
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .open_group_msg_id = None;
 }
 
 impl StreamingState {
@@ -2581,6 +2709,7 @@ pub(crate) async fn handle_message(
         thinking: String::new(),
         tool_msgs: Vec::new(),
         display_queue: Vec::new(),
+        open_group_msg_id: None,
         response: String::new(),
         dirty: false,
         recreate: false,
@@ -2739,41 +2868,13 @@ pub(crate) async fn handle_message(
                                     tool_buffer.push(*idx);
                                 }
                                 DisplayItem::Intermediate(text) => {
-                                    // Flush buffered tools as a grouped block
-                                    if !tool_buffer.is_empty() {
-                                        // Render grouped tool calls
-                                        let tool_details: Vec<(String, String)> = {
-                                            let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            tool_buffer
-                                                .iter()
-                                                .filter_map(|&idx| {
-                                                    s.tool_msgs.get(idx).map(|t| {
-                                                        let status = match t.completed {
-                                                            None => "⚙️",
-                                                            Some(true) => "✅",
-                                                            Some(false) => "❌",
-                                                        };
-                                                        (
-                                                            format!("{} {}", status, t.name),
-                                                            t.context.clone(),
-                                                        )
-                                                    })
-                                                })
-                                                .collect()
-                                        };
-
-                                        let html = render_tool_group(&tool_details);
-                                        if let Ok(mid) = send_html_or_plain(&bot, chat, thread_id, &html).await {
-                                            // Mark all buffered tools as having messages
-                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            for &idx in &tool_buffer {
-                                                if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                                                    tool.msg_id = Some(mid);
-                                                }
-                                            }
-                                        }
-                                        tool_buffer.clear();
-                                    }
+                                    // Flush buffered tools into the open group, then
+                                    // close it: an intermediate breaks the run so the
+                                    // next tool call starts a fresh block.
+                                    append_tool_group(&bot, chat, thread_id, &st, &tool_buffer)
+                                        .await;
+                                    close_tool_group(&st);
+                                    tool_buffer.clear();
 
                                     // Now process the intermediate text
                                     // Apply the same sanitization chain as the
@@ -2893,49 +2994,22 @@ pub(crate) async fn handle_message(
                             }
                         }
 
-                        // Flush any remaining buffered tools after the loop
-                        if !tool_buffer.is_empty() {
-                            let tool_details: Vec<(String, String)> = {
-                                let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                tool_buffer
-                                    .iter()
-                                    .filter_map(|&idx| {
-                                        s.tool_msgs.get(idx).map(|t| {
-                                            let status = match t.completed {
-                                                None => "⚙️",
-                                                Some(true) => "✅",
-                                                Some(false) => "❌",
-                                            };
-                                            (format!("{} {}", status, t.name), t.context.clone())
-                                        })
-                                    })
-                                    .collect()
-                            };
+                        // Flush any remaining buffered tools into the open group.
+                        // No close here: the run may continue on the next tick, in
+                        // which case those tools append to this same message.
+                        append_tool_group(&bot, chat, thread_id, &st, &tool_buffer).await;
 
-                            let html = render_tool_group(&tool_details);
-                            if let Ok(mid) = send_html_or_plain(&bot, chat, thread_id, &html).await {
-                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                for &idx in &tool_buffer {
-                                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                                        tool.msg_id = Some(mid);
-                                    }
-                                }
+                        // ── Update tool-group messages for tools that changed status ──
+                        // A completed tool shares its group's message with its
+                        // siblings, so re-render the whole group (never a single
+                        // tool line, which would overwrite the block). Refresh each
+                        // distinct group once.
+                        let mut refreshed: Vec<MessageId> = Vec::new();
+                        for (_, _, _, mid) in &snap.tool_edits {
+                            if !refreshed.contains(mid) {
+                                refreshed.push(*mid);
+                                refresh_tool_group(&bot, chat, &st, *mid).await;
                             }
-                        }
-
-                        // ── Edit existing tool messages (status updates) ──
-                        for (idx, label, completed, mid) in &snap.tool_edits {
-                            let _ = idx; // used for identification only
-                            let text = match completed {
-                                None => format!("⚙️ {}", label),
-                                Some(true) => format!("✅ {}", label),
-                                Some(false) => format!("❌ {}", label),
-                            };
-                            let html = markdown_to_telegram_html(&text);
-                            let _ = bot
-                                .edit_message_text(chat, *mid, &html)
-                                .parse_mode(ParseMode::Html)
-                                .await;
                         }
 
                         // ── Rolling context-aware status during processing ──
@@ -3377,39 +3451,11 @@ pub(crate) async fn handle_message(
                 tool_buffer.push(idx);
             }
             DisplayItem::Intermediate(text) => {
-                // Flush tool buffer as grouped block before sending intermediate
-                if !tool_buffer.is_empty() {
-                    let buffer_copy = tool_buffer.clone();
-                    let tool_details: Vec<(String, String)> = buffer_copy
-                        .iter()
-                        .filter_map(|&idx| {
-                            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                            s.tool_msgs.get(idx).map(|t| {
-                                let status = match t.completed {
-                                    None => "⚙️",
-                                    Some(true) => "✅",
-                                    Some(false) => "❌",
-                                };
-                                (format!("{} {}", status, t.name), t.context.clone())
-                            })
-                        })
-                        .collect();
-
-                    if !tool_details.is_empty() {
-                        let grouped = render_tool_group(&tool_details);
-                        if let Ok(mid) =
-                            send_html_or_plain(&bot, msg.chat.id, thread_id, &grouped).await
-                        {
-                            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                            for &idx in &tool_buffer {
-                                if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                                    tool.msg_id = Some(mid);
-                                }
-                            }
-                        }
-                    }
-                    tool_buffer.clear();
-                }
+                // Flush tool buffer into the open group, then close it: the
+                // intermediate breaks the run of consecutive tool calls.
+                append_tool_group(&bot, msg.chat.id, thread_id, &streaming, &tool_buffer).await;
+                close_tool_group(&streaming);
+                tool_buffer.clear();
                 let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                 let text = redact_secrets(&text);
                 // Strip <<IMG:path>> markers — see edit-loop site above.
@@ -3477,35 +3523,9 @@ pub(crate) async fn handle_message(
         }
     }
 
-    // Flush any remaining tools in buffer as grouped block
-    if !tool_buffer.is_empty() {
-        let tool_details: Vec<(String, String)> = tool_buffer
-            .iter()
-            .filter_map(|&idx| {
-                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                s.tool_msgs.get(idx).map(|t| {
-                    let status = match t.completed {
-                        None => "⚙️",
-                        Some(true) => "✅",
-                        Some(false) => "❌",
-                    };
-                    (format!("{} {}", status, t.name), t.context.clone())
-                })
-            })
-            .collect();
-
-        if !tool_details.is_empty() {
-            let grouped = render_tool_group(&tool_details);
-            if let Ok(mid) = send_html_or_plain(&bot, msg.chat.id, thread_id, &grouped).await {
-                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                for &idx in &tool_buffer {
-                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                        tool.msg_id = Some(mid);
-                    }
-                }
-            }
-        }
-    }
+    // Flush any remaining tools into the open group (merges the final batch
+    // into the running collapsible block instead of opening a new message).
+    append_tool_group(&bot, msg.chat.id, thread_id, &streaming, &tool_buffer).await;
 
     tracing::info!(
         "Telegram: agent call completed for session {} — delivering final response",
@@ -4014,6 +4034,7 @@ pub(crate) async fn resume_session(
         thinking: String::new(),
         tool_msgs: Vec::new(),
         display_queue: Vec::new(),
+        open_group_msg_id: None,
         response: String::new(),
         dirty: false,
         recreate: false,
@@ -4083,36 +4104,12 @@ pub(crate) async fn resume_session(
                                     tool_buffer.push(idx);
                                 }
                                 DisplayItem::Intermediate(text) => {
-                                    // Flush tool buffer as grouped block before sending intermediate
-                                    if !tool_buffer.is_empty() {
-                                        let tool_details: Vec<(String, String)> = tool_buffer
-                                            .iter()
-                                            .filter_map(|&idx| {
-                                                let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                                s.tool_msgs.get(idx).map(|t| {
-                                                    let status = match t.completed {
-                                                        None => "⚙️",
-                                                        Some(true) => "✅",
-                                                        Some(false) => "❌",
-                                                    };
-                                                    (format!("{} {}", status, t.name), t.context.clone())
-                                                })
-                                            })
-                                            .collect();
-
-                                        if !tool_details.is_empty() {
-                                            let grouped = render_tool_group(&tool_details);
-                                            if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &grouped).await {
-                                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                                for &idx in &tool_buffer {
-                                                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                                                        tool.msg_id = Some(mid);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        tool_buffer.clear();
-                                    }
+                                    // Flush tool buffer into the open group, then close
+                                    // it: the intermediate breaks the run.
+                                    append_tool_group(&bot, chat_id, thread_id, &st, &tool_buffer)
+                                        .await;
+                                    close_tool_group(&st);
+                                    tool_buffer.clear();
                                     let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                                     let text = redact_secrets(&text);
                                     // Strip <<IMG:path>> markers — see handle_message.
@@ -4174,35 +4171,9 @@ pub(crate) async fn resume_session(
                             }
                         }
 
-                        // Flush any remaining tools in buffer as grouped block
-                        if !tool_buffer.is_empty() {
-                            let tool_details: Vec<(String, String)> = tool_buffer
-                                .iter()
-                                .filter_map(|&idx| {
-                                    let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                    s.tool_msgs.get(idx).map(|t| {
-                                        let status = match t.completed {
-                                            None => "⚙️",
-                                            Some(true) => "✅",
-                                            Some(false) => "❌",
-                                        };
-                                        (format!("{} {}", status, t.name), t.context.clone())
-                                    })
-                                })
-                                .collect();
-
-                            if !tool_details.is_empty() {
-                                let grouped = render_tool_group(&tool_details);
-                                if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &grouped).await {
-                                    let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                    for &idx in &tool_buffer {
-                                        if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                                            tool.msg_id = Some(mid);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // Flush any remaining tools into the open group (kept open
+                        // so the next tick's tools append to this same message).
+                        append_tool_group(&bot, chat_id, thread_id, &st, &tool_buffer).await;
 
                         // Response message (streaming)
                         if snap.dirty || snap.recreate {
@@ -4439,38 +4410,11 @@ pub(crate) async fn resume_session(
                 tool_buffer.push(idx);
             }
             DisplayItem::Intermediate(text) => {
-                // Flush tool buffer as grouped block before sending intermediate
-                if !tool_buffer.is_empty() {
-                    let tool_details: Vec<(String, String)> = tool_buffer
-                        .iter()
-                        .filter_map(|&idx| {
-                            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                            s.tool_msgs.get(idx).map(|t| {
-                                let status = match t.completed {
-                                    None => "⚙️",
-                                    Some(true) => "✅",
-                                    Some(false) => "❌",
-                                };
-                                (format!("{} {}", status, t.name), t.context.clone())
-                            })
-                        })
-                        .collect();
-
-                    if !tool_details.is_empty() {
-                        let grouped = render_tool_group(&tool_details);
-                        if let Ok(mid) =
-                            send_html_or_plain(&bot, chat_id, thread_id, &grouped).await
-                        {
-                            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                            for &idx in &tool_buffer {
-                                if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                                    tool.msg_id = Some(mid);
-                                }
-                            }
-                        }
-                    }
-                    tool_buffer.clear();
-                }
+                // Flush tool buffer into the open group, then close it: the
+                // intermediate breaks the run of consecutive tool calls.
+                append_tool_group(&bot, chat_id, thread_id, &streaming, &tool_buffer).await;
+                close_tool_group(&streaming);
+                tool_buffer.clear();
                 let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                 let text = redact_secrets(&text);
                 // Strip <<IMG:path>> markers — see handle_message.
@@ -4530,35 +4474,9 @@ pub(crate) async fn resume_session(
         }
     }
 
-    // Flush any remaining tools in buffer as grouped block
-    if !tool_buffer.is_empty() {
-        let tool_details: Vec<(String, String)> = tool_buffer
-            .iter()
-            .filter_map(|&idx| {
-                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                s.tool_msgs.get(idx).map(|t| {
-                    let status = match t.completed {
-                        None => "⚙️",
-                        Some(true) => "✅",
-                        Some(false) => "❌",
-                    };
-                    (format!("{} {}", status, t.name), t.context.clone())
-                })
-            })
-            .collect();
-
-        if !tool_details.is_empty() {
-            let grouped = render_tool_group(&tool_details);
-            if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &grouped).await {
-                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                for &idx in &tool_buffer {
-                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                        tool.msg_id = Some(mid);
-                    }
-                }
-            }
-        }
-    }
+    // Flush any remaining tools into the open group (merges the final batch
+    // into the running collapsible block instead of opening a new message).
+    append_tool_group(&bot, chat_id, thread_id, &streaming, &tool_buffer).await;
 
     match result {
         Ok(response) => {
