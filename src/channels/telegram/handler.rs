@@ -260,6 +260,15 @@ async fn append_tool_group(
                     }
                 }
                 s.open_group_msg_id = Some(mid);
+                // A NEW message just landed below the streaming placeholder —
+                // re-post it next tick so the response stays at the bottom.
+                // This is the ONLY tool-driven recreate: consecutive tool
+                // completions merely edit this group in place, so the old
+                // recreate-per-ToolCompleted was a delete+send pair per tick
+                // against Telegram's ~20/min per-group send budget (#299).
+                if s.msg_id.is_some() {
+                    s.recreate = true;
+                }
             }
         }
     }
@@ -3253,10 +3262,11 @@ pub(crate) async fn handle_message(
                             tool.completed = Some(success);
                             tool.dirty = true;
                         }
-                        // Push response to bottom so it stays below tool/approval messages
-                        if s.msg_id.is_some() {
-                            s.recreate = true;
-                        }
+                        // No recreate here (#299): a completion only edits the
+                        // open group block in place — nothing new lands below
+                        // the placeholder. The re-post happens where a message
+                        // is actually SENT (fresh group in append_tool_group,
+                        // and the IntermediateText arm below).
                     }
                 }
                 ProgressEvent::IntermediateText { text, reasoning: _ } => {
@@ -4314,9 +4324,9 @@ pub(crate) async fn resume_session(
                         tool.completed = Some(success);
                         tool.dirty = true;
                     }
-                    if s.msg_id.is_some() {
-                        s.recreate = true;
-                    }
+                    // No recreate here (#299) — see the handle_message arm:
+                    // completions edit the group in place, nothing new lands
+                    // below the placeholder.
                 }
             }
             ProgressEvent::IntermediateText { text, reasoning: _ } => {
