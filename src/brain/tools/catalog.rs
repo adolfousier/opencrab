@@ -93,6 +93,7 @@ pub fn is_protected_builtin(name: &str) -> bool {
                 | "trello_connect"
                 | "cowork_connect"
                 | "cron_manage"
+                | "goal_manage"
                 | "session_search"
                 | "channel_search"
                 | "mission_control_report"
@@ -156,6 +157,7 @@ pub fn tool_category(name: &str) -> &'static str {
             "system"
         }
         n if n == "cron_manage"
+            || n == "goal_manage"
             || n == "session_search"
             || n == "channel_search"
             || n == "a2a_send" =>

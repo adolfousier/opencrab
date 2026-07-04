@@ -82,6 +82,11 @@ pub(crate) fn register_core_agent_tools(
             db.pool().clone(),
         )),
     ));
+    // Goal management — agent can set/manage its own autonomous session goal,
+    // so it can drive multi-turn test/review/fix cycles instead of waiting for
+    // the human to type /goal. The post-turn judge already activates on any
+    // active goal row, tool-set or slash-set alike.
+    tool_registry.register(Arc::new(crate::brain::tools::goal_manage::GoalManageTool));
     // A2A send — agent can communicate with remote A2A agents
     tool_registry.register(Arc::new(crate::brain::tools::a2a_send::A2aSendTool::new()));
     // Config management (read/write config.toml, commands.toml)

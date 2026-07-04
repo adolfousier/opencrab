@@ -1193,6 +1193,7 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "plan",
     "task_manager",
     "cron_manage",
+    "goal_manage",
     "memory_search",
     "session_search",
     "lsp",

@@ -155,6 +155,7 @@ pub mod git_branch_test;
 pub mod glob_tool_test;
 pub mod goal_command_test;
 pub mod goal_judge_test;
+pub mod goal_manage_test;
 pub mod intermediate_text_strip_guard_test;
 pub mod logging_log_files_test;
 pub mod logging_logger_test;
