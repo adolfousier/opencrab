@@ -54,6 +54,20 @@ pub(crate) enum DisplayItem {
     Intermediate(String),
 }
 
+/// One entry in the in-place processing log (the growing `<blockquote
+/// expandable>` message). Tool entries reference `tool_msgs` by index so a
+/// status flip (⚙️ → ✅/❌) re-renders live; text entries hold the already
+/// sanitized intermediate text (escaped at render time). Interleaving both in
+/// one ordered flow lets tool calls and intermediate text share a single
+/// collapsed block instead of each landing as a separate message.
+#[derive(Clone)]
+pub(crate) enum FlowEntry {
+    /// A tool call at this index in `tool_msgs`.
+    Tool(usize),
+    /// Sanitized intermediate text (plain; escaped when rendered).
+    Text(String),
+}
+
 pub(crate) struct StreamingState {
     /// Response/thinking message (always at bottom)
     msg_id: Option<MessageId>,
@@ -63,12 +77,17 @@ pub(crate) struct StreamingState {
     tool_msgs: Vec<ToolMsg>,
     /// Ordered queue of new display items (tools + intermediates in chronological order)
     display_queue: Vec<DisplayItem>,
-    /// Message ID of the currently open tool-call group. Consecutive tool calls
-    /// are appended to this one message (edited in place) so a run of tools
-    /// collapses into a single growing `<blockquote expandable>` block instead
-    /// of one message per flush window. Set when a group is opened, cleared when
-    /// an intermediate text or the final response breaks the run.
+    /// Message ID of the open processing-log message. Tool calls and
+    /// intermediate text are appended to this one message (edited in place) so
+    /// the whole procedural trace of a turn collapses into a single growing
+    /// `<blockquote expandable>` block instead of one message per event. Set
+    /// when the first entry lands; stays open for the rest of the turn so the
+    /// final response is the only clean message at the bottom.
     open_group_msg_id: Option<MessageId>,
+    /// Ordered entries in the open processing-log message (tool calls +
+    /// intermediate text, in chronological order). Rendered together into the
+    /// `open_group_msg_id` message on every append/status change.
+    flow_entries: Vec<FlowEntry>,
     /// Response text from streaming chunks — own message at bottom
     response: String,
     dirty: bool,
@@ -120,36 +139,62 @@ pub(crate) struct StreamingState {
     user_message_preview: Option<String>,
 }
 
-/// Render a group of tool calls as final Telegram HTML.
-/// Groups consecutive tool calls into a single `<blockquote expandable>`
-/// block: native Telegram HTML (Bot API 7.3+) that renders collapsed with a
-/// tap-to-expand arrow in groups, DMs, and all official clients, with no
-/// dependency on the rich message API. A single tool call renders as a plain
-/// one-liner. Output is ready to send via `send_html_or_plain` — do NOT pass
-/// it through `markdown_to_telegram_html` (it would double-process the HTML).
-pub(crate) fn render_tool_group(tools: &[(String, String)]) -> String {
-    fn line(label: &str, context: &str) -> String {
-        if context.is_empty() {
-            format!("<b>{}</b>", escape_html(label))
-        } else {
-            format!("<b>{}</b> {}", escape_html(label), escape_html(context))
+/// A resolved line in the processing-log flow, ready to render. Tool lines
+/// carry the status label (icon + name) and context; text lines carry the
+/// sanitized intermediate text. Both are HTML-escaped at render time.
+pub(crate) enum FlowLine {
+    Tool { label: String, context: String },
+    Text(String),
+}
+
+/// Render resolved flow lines into final Telegram HTML. A lone tool line with
+/// no other content stays a plain one-liner (mirrors #296); anything else
+/// collapses into a single `<blockquote expandable>` block (Bot API 7.3+) that
+/// renders with a tap-to-expand arrow in groups, DMs, and all official clients
+/// with no rich-API dependency. Tool calls and intermediate text share the same
+/// block so only the final response stays clean at the bottom (#300). Output is
+/// final HTML — send via `send_html_or_plain`, never through
+/// `markdown_to_telegram_html` (it would double-process the HTML).
+pub(crate) fn render_flow_html(lines: &[FlowLine]) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut tool_count = 0usize;
+    for line in lines {
+        match line {
+            FlowLine::Tool { label, context } => {
+                tool_count += 1;
+                if context.is_empty() {
+                    out.push(format!("<b>{}</b>", escape_html(label)));
+                } else {
+                    out.push(format!(
+                        "<b>{}</b> {}",
+                        escape_html(label),
+                        escape_html(context)
+                    ));
+                }
+            }
+            FlowLine::Text(text) => {
+                let text = text.trim();
+                if !text.is_empty() {
+                    out.push(escape_html(text));
+                }
+            }
         }
     }
-    if tools.is_empty() {
+    if out.is_empty() {
         return String::new();
     }
-    if tools.len() == 1 {
-        return line(&tools[0].0, &tools[0].1);
+    if out.len() == 1 && tool_count == 1 {
+        return out.remove(0);
     }
-    let body = tools
-        .iter()
-        .map(|(label, context)| line(label, context))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let header = if tool_count > 0 {
+        format!("{} tool calls", tool_count)
+    } else {
+        "Processing log".to_string()
+    };
     format!(
-        "<blockquote expandable><b>{} tool calls</b>\n{}</blockquote>",
-        tools.len(),
-        body
+        "<blockquote expandable><b>{}</b>\n{}</blockquote>",
+        header,
+        out.join("\n")
     )
 }
 
@@ -162,64 +207,73 @@ fn tool_status_icon(completed: Option<bool>) -> &'static str {
     }
 }
 
-/// Build `(label, context)` render pairs for the given tool indices.
-fn tool_group_details(
-    streaming: &Arc<std::sync::Mutex<StreamingState>>,
-    indices: &[usize],
-) -> Vec<(String, String)> {
-    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-    indices
+/// Resolve the open processing-log flow (tool calls + intermediate text, in
+/// order) into final Telegram HTML via `render_flow_html`.
+fn render_flow(s: &StreamingState) -> String {
+    let lines: Vec<FlowLine> = s
+        .flow_entries
         .iter()
-        .filter_map(|&idx| {
-            s.tool_msgs.get(idx).map(|t| {
-                (
-                    format!("{} {}", tool_status_icon(t.completed), t.name),
-                    t.context.clone(),
-                )
-            })
+        .filter_map(|entry| match entry {
+            FlowEntry::Tool(idx) => s.tool_msgs.get(*idx).map(|t| FlowLine::Tool {
+                label: format!("{} {}", tool_status_icon(t.completed), t.name),
+                context: t.context.clone(),
+            }),
+            FlowEntry::Text(text) => Some(FlowLine::Text(text.clone())),
         })
-        .collect()
+        .collect();
+    render_flow_html(&lines)
 }
 
-/// Re-render every tool sharing `group_mid` and edit that message in place.
-/// Used both to grow an open group (append) and to reflect a tool's status
-/// change (⚙️ → ✅/❌) after it completes. A no-op edit ("message is not
-/// modified") and transient errors are ignored: the message already shows the
-/// correct content and the next tick retries.
-async fn refresh_tool_group(
-    bot: &Bot,
-    chat: ChatId,
-    streaming: &Arc<std::sync::Mutex<StreamingState>>,
-    group_mid: MessageId,
-) {
-    let details: Vec<(String, String)> = {
+/// Re-render the open processing-log flow and edit its message in place. Used
+/// after appending an entry and after a tool status flip (⚙️ → ✅/❌). A no-op
+/// edit ("message is not modified") and transient errors are ignored: the
+/// message already shows the correct content and the next tick retries.
+async fn refresh_flow(bot: &Bot, chat: ChatId, streaming: &Arc<std::sync::Mutex<StreamingState>>) {
+    let (mid, html) = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        s.tool_msgs
-            .iter()
-            .filter(|t| t.msg_id == Some(group_mid))
-            .map(|t| {
-                (
-                    format!("{} {}", tool_status_icon(t.completed), t.name),
-                    t.context.clone(),
-                )
-            })
-            .collect()
+        match s.open_group_msg_id {
+            Some(mid) => (mid, render_flow(&s)),
+            None => return,
+        }
     };
-    if details.is_empty() {
+    if html.is_empty() {
         return;
     }
-    let html = render_tool_group(&details);
     let _ = bot
-        .edit_message_text(chat, group_mid, html)
+        .edit_message_text(chat, mid, html)
         .parse_mode(ParseMode::Html)
         .await;
 }
 
-/// Append buffered tool calls to the current open group, editing that message
-/// in place so consecutive tool calls collapse into one growing block. When no
-/// group is open, a new message is sent and becomes the open group. The open
-/// group is closed via `close_tool_group` when an intermediate text or the
-/// final response breaks the run of consecutive tool calls.
+/// Send the open processing-log message for the first time and record its id.
+/// A newly landed message re-posts the streaming placeholder next tick so the
+/// response stays at the bottom (the only flow-driven recreate; subsequent
+/// entries merely edit this message in place — #299).
+async fn open_flow(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+) {
+    let html = {
+        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        render_flow(&s)
+    };
+    if html.is_empty() {
+        return;
+    }
+    if let Ok(mid) = send_html_or_plain(bot, chat, thread_id, &html).await {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.open_group_msg_id = Some(mid);
+        if s.msg_id.is_some() {
+            s.recreate = true;
+        }
+    }
+}
+
+/// Append buffered tool calls to the open processing-log flow, editing that one
+/// message in place (or opening it if none is live yet) so consecutive tool
+/// calls collapse into a single growing block.
 async fn append_tool_group(
     bot: &Bot,
     chat: ChatId,
@@ -230,58 +284,65 @@ async fn append_tool_group(
     if buffer.is_empty() {
         return;
     }
-    let open = streaming
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .open_group_msg_id;
-    match open {
-        Some(mid) => {
-            {
-                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                for &idx in buffer {
-                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                        tool.msg_id = Some(mid);
-                    }
-                }
-            }
-            refresh_tool_group(bot, chat, streaming, mid).await;
+    let open = {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        for &idx in buffer {
+            s.flow_entries.push(FlowEntry::Tool(idx));
         }
-        None => {
-            let details = tool_group_details(streaming, buffer);
-            if details.is_empty() {
-                return;
+        s.open_group_msg_id
+    };
+    if open.is_some() {
+        // Tag the tools with the open message so status flips find them.
+        {
+            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            let mid = s.open_group_msg_id;
+            for &idx in buffer {
+                if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                    tool.msg_id = mid;
+                }
             }
-            let html = render_tool_group(&details);
-            if let Ok(mid) = send_html_or_plain(bot, chat, thread_id, &html).await {
-                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                for &idx in buffer {
-                    if let Some(tool) = s.tool_msgs.get_mut(idx) {
-                        tool.msg_id = Some(mid);
-                    }
-                }
-                s.open_group_msg_id = Some(mid);
-                // A NEW message just landed below the streaming placeholder —
-                // re-post it next tick so the response stays at the bottom.
-                // This is the ONLY tool-driven recreate: consecutive tool
-                // completions merely edit this group in place, so the old
-                // recreate-per-ToolCompleted was a delete+send pair per tick
-                // against Telegram's ~20/min per-group send budget (#299).
-                if s.msg_id.is_some() {
-                    s.recreate = true;
-                }
+        }
+        refresh_flow(bot, chat, streaming).await;
+    } else {
+        open_flow(bot, chat, thread_id, streaming).await;
+        let mid = streaming
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .open_group_msg_id;
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        for &idx in buffer {
+            if let Some(tool) = s.tool_msgs.get_mut(idx) {
+                tool.msg_id = mid;
             }
         }
     }
 }
 
-/// Close the current open tool group so the next tool call starts a fresh
-/// message. Called when an intermediate text or the final response interrupts
-/// the run of consecutive tool calls.
-fn close_tool_group(streaming: &Arc<std::sync::Mutex<StreamingState>>) {
-    streaming
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .open_group_msg_id = None;
+/// Append sanitized intermediate text to the open processing-log flow, editing
+/// that one message in place (or opening it if none is live yet). The text is
+/// folded into the collapsed block instead of landing as its own message, so
+/// only the final response stays clean at the bottom. Empty text (e.g. a
+/// react-only intermediate) is ignored.
+async fn append_intermediate_to_flow(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    text: &str,
+) {
+    if text.trim().is_empty() {
+        return;
+    }
+    let open = {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.flow_entries.push(FlowEntry::Text(text.to_string()));
+        s.open_group_msg_id
+    };
+    if open.is_some() {
+        refresh_flow(bot, chat, streaming).await;
+    } else {
+        open_flow(bot, chat, thread_id, streaming).await;
+    }
 }
 
 impl StreamingState {
@@ -2755,6 +2816,7 @@ pub(crate) async fn handle_message(
         tool_msgs: Vec::new(),
         display_queue: Vec::new(),
         open_group_msg_id: None,
+        flow_entries: Vec::new(),
         response: String::new(),
         dirty: false,
         recreate: false,
@@ -2913,128 +2975,40 @@ pub(crate) async fn handle_message(
                                     tool_buffer.push(*idx);
                                 }
                                 DisplayItem::Intermediate(text) => {
-                                    // Flush buffered tools into the open group, then
-                                    // close it: an intermediate breaks the run so the
-                                    // next tool call starts a fresh block.
+                                    // Flush buffered tools into the open flow,
+                                    // then fold this intermediate into the SAME
+                                    // in-place processing-log message. It no
+                                    // longer lands as its own message, so only
+                                    // the final response stays clean at the
+                                    // bottom (#300).
                                     append_tool_group(&bot, chat, thread_id, &st, &tool_buffer)
                                         .await;
-                                    close_tool_group(&st);
                                     tool_buffer.clear();
 
-                                    // Now process the intermediate text
-                                    // Apply the same sanitization chain as the
-                                    // final response path: strip LLM artifacts
-                                    // AND redact secrets. Without the redact
-                                    // step here, an intermediate carrying a
-                                    // Drive URL `…/file/d/<id>/view` goes out
-                                    // with the raw id, while the final-response
-                                    // edit of the same text gets redacted to
-                                    // `[REDACTED_TOKEN]`. Two different strings
-                                    // → dedup's substring replace fails → both
-                                    // shown verbatim as back-to-back duplicate
-                                    // messages (2026-04-18 20:57 + 21:21 TG
-                                    // screenshots). Redact here so both sides
-                                    // match.
-                                    let text =
-                                        crate::utils::sanitize::strip_llm_artifacts(text);
+                                    // Sanitize exactly as before folding:
+                                    // strip LLM artifacts, redact secrets, strip
+                                    // <<IMG:>> markers (the final-response
+                                    // handler sends the image), and extract +
+                                    // fire <<react:>> now so a mid-turn reaction
+                                    // acknowledges the user immediately (#261).
+                                    let text = crate::utils::sanitize::strip_llm_artifacts(text);
                                     let text = redact_secrets(&text);
-                                    // Strip <<IMG:path>> markers from
-                                    // intermediates. The final-response handler
-                                    // already does this and sends the image via
-                                    // send_photo; if the LLM emits the marker
-                                    // mid-stream it leaks raw into the chat
-                                    // (2026-05-05 18:45 incident: a generated-
-                                    // image turn shipped two intermediates,
-                                    // one clean "There it is..." and one
-                                    // prefixed with <<IMG:/Users/.../...png>>
-                                    // + the same body — the marker prefix
-                                    // broke exact-equality dedup, both
-                                    // landed, and the user saw the duplicate
-                                    // along with the raw marker token).
                                     let (text, _img_paths) =
                                         crate::utils::extract_img_markers(&text);
-                                    // Strip <<react:emoji>> directives too: a
-                                    // directive streamed mid-turn must neither
-                                    // leak raw into the chat nor differ from
-                                    // the final text (which extracts it BEFORE
-                                    // its dedup pass, so an unstripped copy
-                                    // here breaks exact-match and both copies
-                                    // land). Fire the reaction NOW so a
-                                    // mid-turn directive acknowledges the user
-                                    // immediately instead of only at the end
-                                    // (#261).
                                     let (text, react_emoji) =
                                         crate::utils::extract_react_marker(&text);
                                     if let Some(ref emoji) = react_emoji {
                                         fire_reaction(&bot, msg.chat.id, msg.id, emoji).await;
                                     }
 
-                                    // Pre-send dedup: if this exact text was
-                                    // already delivered as an intermediate in
-                                    // this turn, skip. Downstream dedup only
-                                    // strips the final-placeholder edit — it
-                                    // cannot un-send intermediates already in
-                                    // the chat. Twin intermediates from a
-                                    // retry loop (e.g. truncation-retry
-                                    // firing on a URL-terminated response
-                                    // and producing the same text in
-                                    // iteration N+1) would otherwise land
-                                    // verbatim twice (2026-04-18 23:12/23:13).
-                                    {
-                                        let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                        if s.sent_intermediates.iter().any(|prev| prev == &text) {
-                                            tracing::info!(
-                                                "Telegram: suppressing duplicate intermediate (len={})",
-                                                text.len()
-                                            );
-                                            continue;
-                                        }
-                                    }
-
-                                    // Rich-first: a structured intermediate
-                                    // (table / heading / list / math) is sent as
-                                    // a native rich message and tracked by id; no
-                                    // structure or a rich rejection falls through
-                                    // to the HTML chunking path below.
-                                    if let Some(id) =
-                                        try_send_intermediate_rich(&bot, chat, thread_id, &text)
-                                            .await
-                                    {
-                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                        s.sent_intermediates.push(text.clone());
-                                        s.intermediate_msg_ids.push(id);
-                                        continue;
-                                    }
-
-                                    let html = markdown_to_telegram_html(&text);
-                                    if !html.is_empty() {
-                                        // Chunk to 4096 and only record as delivered if every
-                                        // chunk succeeded — if we record on failure, dedup later
-                                        // strips text the user never saw.
-                                        let chunks: Vec<String> = split_message(&html, 4096)
-                                            .into_iter()
-                                            .map(|s| s.to_string())
-                                            .collect();
-                                        let mut sent_ids: Vec<MessageId> = Vec::new();
-                                        let mut all_ok = true;
-                                        for chunk in &chunks {
-                                            match send_html_or_plain(&bot, chat, thread_id, chunk).await {
-                                                Ok(id) => sent_ids.push(id),
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "Telegram edit-loop intermediate send failed ({e}) — NOT marking as delivered; final response will carry it",
-                                                    );
-                                                    all_ok = false;
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        if all_ok {
-                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            s.sent_intermediates.push(text.clone());
-                                            s.intermediate_msg_ids.extend(sent_ids);
-                                        }
-                                    }
+                                    // Folded intermediates are hidden inside the
+                                    // collapsed log, so they are NOT recorded in
+                                    // sent_intermediates: the final-response
+                                    // dedup must not suppress the visible answer
+                                    // just because it also appears in the
+                                    // collapsed trace.
+                                    append_intermediate_to_flow(&bot, chat, thread_id, &st, &text)
+                                        .await;
                                 }
                             }
                         }
@@ -3049,12 +3023,11 @@ pub(crate) async fn handle_message(
                         // siblings, so re-render the whole group (never a single
                         // tool line, which would overwrite the block). Refresh each
                         // distinct group once.
-                        let mut refreshed: Vec<MessageId> = Vec::new();
-                        for (_, _, _, mid) in &snap.tool_edits {
-                            if !refreshed.contains(mid) {
-                                refreshed.push(*mid);
-                                refresh_tool_group(&bot, chat, &st, *mid).await;
-                            }
+                        // A tool status flip (⚙️ → ✅/❌) re-renders the whole
+                        // processing-log flow (tools + folded intermediates) in
+                        // its single message.
+                        if !snap.tool_edits.is_empty() {
+                            refresh_flow(&bot, chat, &st).await;
                         }
 
                         // ── Rolling context-aware status during processing ──
@@ -3497,74 +3470,19 @@ pub(crate) async fn handle_message(
                 tool_buffer.push(idx);
             }
             DisplayItem::Intermediate(text) => {
-                // Flush tool buffer into the open group, then close it: the
-                // intermediate breaks the run of consecutive tool calls.
+                // Fold the intermediate into the open processing-log flow
+                // instead of sending it as its own message (#300). Sanitize as
+                // before folding; fire any <<react:>> now (#261).
                 append_tool_group(&bot, msg.chat.id, thread_id, &streaming, &tool_buffer).await;
-                close_tool_group(&streaming);
                 tool_buffer.clear();
                 let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                 let text = redact_secrets(&text);
-                // Strip <<IMG:path>> markers — see edit-loop site above.
                 let (text, _img_paths) = crate::utils::extract_img_markers(&text);
-                // Strip <<react:emoji>> too; see edit-loop site above. Fire
-                // the reaction immediately (#261), not just from the final
-                // path.
                 let (text, react_emoji) = crate::utils::extract_react_marker(&text);
                 if let Some(ref emoji) = react_emoji {
                     fire_reaction(&bot, msg.chat.id, msg.id, emoji).await;
                 }
-                // Pre-send dedup — see matching block in edit-loop above.
-                {
-                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    if s.sent_intermediates.iter().any(|prev| prev == &text) {
-                        tracing::info!(
-                            "Telegram: suppressing duplicate intermediate (len={})",
-                            text.len()
-                        );
-                        continue;
-                    }
-                }
-                // Rich-first: structured intermediates render natively; no
-                // structure or a rich rejection falls through to HTML below.
-                if let Some(id) =
-                    try_send_intermediate_rich(&bot, msg.chat.id, thread_id, &text).await
-                {
-                    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    s.sent_intermediates.push(text.clone());
-                    s.intermediate_msg_ids.push(id);
-                    continue;
-                }
-
-                let html = markdown_to_telegram_html(&text);
-                if !html.is_empty() {
-                    // Chunk to Telegram's 4096-char limit and send each chunk.
-                    // Only record as "sent" if every chunk succeeded — otherwise
-                    // the dedup pass on the final response would strip a message
-                    // the user never actually saw, leaving them with no reply.
-                    let chunks: Vec<String> = split_message(&html, 4096)
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect();
-                    let mut sent_ids: Vec<MessageId> = Vec::new();
-                    let mut all_ok = true;
-                    for chunk in &chunks {
-                        match send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await {
-                            Ok(id) => sent_ids.push(id),
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Telegram intermediate send failed ({e}) — NOT marking as delivered; final response will carry it",
-                                );
-                                all_ok = false;
-                                break;
-                            }
-                        }
-                    }
-                    if all_ok {
-                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                        s.sent_intermediates.push(text.clone());
-                        s.intermediate_msg_ids.extend(sent_ids);
-                    }
-                }
+                append_intermediate_to_flow(&bot, msg.chat.id, thread_id, &streaming, &text).await;
             }
         }
     }
@@ -4081,6 +3999,7 @@ pub(crate) async fn resume_session(
         tool_msgs: Vec::new(),
         display_queue: Vec::new(),
         open_group_msg_id: None,
+        flow_entries: Vec::new(),
         response: String::new(),
         dirty: false,
         recreate: false,
@@ -4150,69 +4069,24 @@ pub(crate) async fn resume_session(
                                     tool_buffer.push(idx);
                                 }
                                 DisplayItem::Intermediate(text) => {
-                                    // Flush tool buffer into the open group, then close
-                                    // it: the intermediate breaks the run.
+                                    // Fold the intermediate into the open
+                                    // processing-log flow (#300). A resumed
+                                    // session has no inbound user message, so a
+                                    // <<react:>> directive is stripped but no
+                                    // reaction fires (#261).
                                     append_tool_group(&bot, chat_id, thread_id, &st, &tool_buffer)
                                         .await;
-                                    close_tool_group(&st);
                                     tool_buffer.clear();
                                     let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                                     let text = redact_secrets(&text);
-                                    // Strip <<IMG:path>> markers — see handle_message.
                                     let (text, _img_paths) =
                                         crate::utils::extract_img_markers(&text);
-                                    // Strip <<react:emoji>> too; see handle_message.
-                                    // A resumed session has no inbound user
-                                    // message to react to, so the directive is
-                                    // stripped but no reaction fires here (#261).
                                     let (text, _react_emoji) =
                                         crate::utils::extract_react_marker(&text);
-                                    // Pre-send dedup — see handle_message.
-                                    {
-                                        let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                        if s.sent_intermediates.iter().any(|prev| prev == &text) {
-                                            tracing::info!(
-                                                "Telegram resume: suppressing duplicate intermediate (len={})",
-                                                text.len()
-                                            );
-                                            continue;
-                                        }
-                                    }
-                                    if let Some(id) =
-                                        try_send_intermediate_rich(&bot, chat_id, thread_id, &text)
-                                            .await
-                                    {
-                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                        s.sent_intermediates.push(text.clone());
-                                        s.intermediate_msg_ids.push(id);
-                                        continue;
-                                    }
-                                    let html = markdown_to_telegram_html(&text);
-                                    if !html.is_empty() {
-                                        let chunks: Vec<String> = split_message(&html, 4096)
-                                            .into_iter()
-                                            .map(|s| s.to_string())
-                                            .collect();
-                                        let mut sent_ids: Vec<MessageId> = Vec::new();
-                                        let mut all_ok = true;
-                                        for chunk in &chunks {
-                                            match send_html_or_plain(&bot, chat_id, thread_id, chunk).await {
-                                                Ok(id) => sent_ids.push(id),
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "Telegram (voice) edit-loop intermediate send failed ({e}) — NOT marking as delivered",
-                                                    );
-                                                    all_ok = false;
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        if all_ok {
-                                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            s.sent_intermediates.push(text.clone());
-                                            s.intermediate_msg_ids.extend(sent_ids);
-                                        }
-                                    }
+                                    append_intermediate_to_flow(
+                                        &bot, chat_id, thread_id, &st, &text,
+                                    )
+                                    .await;
                                 }
                             }
                         }
@@ -4456,66 +4330,16 @@ pub(crate) async fn resume_session(
                 tool_buffer.push(idx);
             }
             DisplayItem::Intermediate(text) => {
-                // Flush tool buffer into the open group, then close it: the
-                // intermediate breaks the run of consecutive tool calls.
+                // Fold the intermediate into the open processing-log flow
+                // (#300). Resumed sessions have no inbound user message, so a
+                // <<react:>> directive is stripped but no reaction fires (#261).
                 append_tool_group(&bot, chat_id, thread_id, &streaming, &tool_buffer).await;
-                close_tool_group(&streaming);
                 tool_buffer.clear();
                 let text = crate::utils::sanitize::strip_llm_artifacts(&text);
                 let text = redact_secrets(&text);
-                // Strip <<IMG:path>> markers — see handle_message.
                 let (text, _img_paths) = crate::utils::extract_img_markers(&text);
-                // Strip <<react:emoji>> too; see handle_message. Resumed
-                // sessions have no inbound user message to react to, so the
-                // directive is stripped but no reaction fires here (#261).
                 let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
-                // Pre-send dedup — see handle_message.
-                {
-                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    if s.sent_intermediates.iter().any(|prev| prev == &text) {
-                        tracing::info!(
-                            "Telegram resume: suppressing duplicate intermediate (len={})",
-                            text.len()
-                        );
-                        continue;
-                    }
-                }
-                if let Some(id) = try_send_intermediate_rich(&bot, chat_id, thread_id, &text).await
-                {
-                    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    s.sent_intermediates.push(text.clone());
-                    s.intermediate_msg_ids.push(id);
-                    continue;
-                }
-                let html = markdown_to_telegram_html(&text);
-                if !html.is_empty() {
-                    // Same chunk-and-confirm pattern as the group handler —
-                    // don't mark as delivered unless every chunk succeeded,
-                    // otherwise dedup will strip a message the user never saw.
-                    let chunks: Vec<String> = split_message(&html, 4096)
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect();
-                    let mut sent_ids: Vec<MessageId> = Vec::new();
-                    let mut all_ok = true;
-                    for chunk in &chunks {
-                        match send_html_or_plain(&bot, chat_id, thread_id, chunk).await {
-                            Ok(id) => sent_ids.push(id),
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Telegram (DM) intermediate send failed ({e}) — NOT marking as delivered",
-                                );
-                                all_ok = false;
-                                break;
-                            }
-                        }
-                    }
-                    if all_ok {
-                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                        s.sent_intermediates.push(text.clone());
-                        s.intermediate_msg_ids.extend(sent_ids);
-                    }
-                }
+                append_intermediate_to_flow(&bot, chat_id, thread_id, &streaming, &text).await;
             }
         }
     }
