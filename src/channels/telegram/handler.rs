@@ -4776,15 +4776,11 @@ pub(crate) async fn handle_reaction(
     };
 
     // ── 7. Build synthetic prompt ───────────────────────────────────────
-    // Truncate the original message to keep the prompt lightweight.
+    // Truncate the original message to keep the prompt lightweight. The prompt
+    // reads the reaction's sentiment (positive = encouragement / green light,
+    // negative = pause and ask) and addresses the user by first name (#302).
     let preview: String = content.chars().take(500).collect();
-    let prompt = format!(
-        "[Reaction notification] User \"{}\" reacted with {} to your message:\n\"{}\"\n\n\
-         You may react back (use <<react:EMOJI>>), reply with text, \
-         or do both. If the reaction doesn't warrant a response, reply with \
-         <<react:{}>> to silently acknowledge.",
-        user_name, emoji, preview, emoji
-    );
+    let prompt = super::reaction_prompt::build_reaction_prompt(&user_name, &emoji, &preview);
 
     tracing::info!(
         "Telegram reaction: {} ({}) reacted with {} on bot message {} in chat {}, \
