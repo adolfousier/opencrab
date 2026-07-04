@@ -22,7 +22,7 @@ fn empty_group_renders_nothing() {
 #[test]
 fn single_tool_renders_plain_line_without_blockquote() {
     let out = render_flow_html(&[tline("✅ bash", "git status")]);
-    assert_eq!(out, "<b>✅ bash</b> git status");
+    assert_eq!(out, "<b>✅ bash</b> <code>git status</code>");
     assert!(!out.contains("<blockquote"));
 }
 
@@ -41,9 +41,9 @@ fn multiple_tools_render_expandable_blockquote() {
     ]);
     assert!(out.starts_with("<blockquote expandable><b>3 tool calls</b>\n"));
     assert!(out.ends_with("</blockquote>"));
-    assert!(out.contains("<b>✅ bash</b> cargo fmt"));
-    assert!(out.contains("<b>✅ read_file</b> handler.rs"));
-    assert!(out.contains("<b>❌ grep</b> pattern"));
+    assert!(out.contains("<b>✅ bash</b> <code>cargo fmt</code>"));
+    assert!(out.contains("<b>✅ read_file</b> <code>handler.rs</code>"));
+    assert!(out.contains("<b>❌ grep</b> <code>pattern</code>"));
 }
 
 #[test]
@@ -56,8 +56,37 @@ fn blocks_are_separated_by_blank_lines() {
     // Blank line after the header and between every block, so the collapsed
     // log reads as separated entries instead of a cramped wall.
     assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n\n"));
-    assert!(out.contains("<b>✅ bash</b> cargo fmt\n\nReformatted three files."));
-    assert!(out.contains("Reformatted three files.\n\n<b>✅ read_file</b> handler.rs"));
+    assert!(out.contains("<b>✅ bash</b> <code>cargo fmt</code>\n\nReformatted three files."));
+    assert!(
+        out.contains("Reformatted three files.\n\n<b>✅ read_file</b> <code>handler.rs</code>")
+    );
+}
+
+#[test]
+fn tool_context_renders_as_monospace() {
+    // Paths / commands / queries read as code, not prose, in the expanded block.
+    let out = render_flow_html(&[
+        tline("✅ read", "src/channels/telegram/handler.rs"),
+        tline("✅ bash", "cargo clippy --all-features"),
+    ]);
+    assert!(out.contains("<b>✅ read</b> <code>src/channels/telegram/handler.rs</code>"));
+    assert!(out.contains("<b>✅ bash</b> <code>cargo clippy --all-features</code>"));
+}
+
+#[test]
+fn intermediate_text_renders_inline_markdown() {
+    // Narration folded into the block gets the same inline markdown as the final
+    // completion below it: `code` spans, **bold**, *italic* render, not raw.
+    let out = render_flow_html(&[
+        tline("✅ bash", "grep foo"),
+        FlowLine::Text("Calling `analyze_image` then **committing** the *fix*.".to_string()),
+    ]);
+    assert!(out.contains("<code>analyze_image</code>"));
+    assert!(out.contains("<b>committing</b>"));
+    assert!(out.contains("<i>fix</i>"));
+    // No raw markdown markers survive around the rendered spans.
+    assert!(!out.contains("`analyze_image`"));
+    assert!(!out.contains("**committing**"));
 }
 
 #[test]
@@ -90,9 +119,9 @@ fn tool_plus_text_folds_into_one_blockquote() {
     ]);
     assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n"));
     assert!(out.ends_with("</blockquote>"));
-    assert!(out.contains("<b>✅ bash</b> git status"));
+    assert!(out.contains("<b>✅ bash</b> <code>git status</code>"));
     assert!(out.contains("Checked the tree, all clean."));
-    assert!(out.contains("<b>✅ read_file</b> handler.rs"));
+    assert!(out.contains("<b>✅ read_file</b> <code>handler.rs</code>"));
     assert!(!out.contains("<details>"));
 }
 
@@ -119,7 +148,7 @@ fn intermediate_text_is_html_escaped_in_flow() {
 fn blank_text_entries_are_dropped() {
     let out = render_flow_html(&[tline("✅ bash", "x"), FlowLine::Text("   ".to_string())]);
     // A lone tool with only blank text collapses to the one-liner.
-    assert_eq!(out, "<b>✅ bash</b> x");
+    assert_eq!(out, "<b>✅ bash</b> <code>x</code>");
 }
 
 #[test]

@@ -165,8 +165,10 @@ pub(crate) fn render_flow_html(lines: &[FlowLine]) -> String {
                 if context.is_empty() {
                     out.push(format!("<b>{}</b>", escape_html(label)));
                 } else {
+                    // Context (path / command / query) as monospace so it reads
+                    // as code, not prose, inside the expanded block (#306).
                     out.push(format!(
-                        "<b>{}</b> {}",
+                        "<b>{}</b> <code>{}</code>",
                         escape_html(label),
                         escape_html(context)
                     ));
@@ -175,7 +177,12 @@ pub(crate) fn render_flow_html(lines: &[FlowLine]) -> String {
             FlowLine::Text(text) => {
                 let text = text.trim();
                 if !text.is_empty() {
-                    out.push(escape_html(text));
+                    // Render intermediate narration with the same inline markdown
+                    // (bold, italics, `code`, links) as the final completion, so
+                    // the expanded block is formatted, not raw markdown source
+                    // (#306). format_inline emits only inline tags, which are
+                    // valid inside <blockquote>; no block-level <pre> to break it.
+                    out.push(format_inline(&escape_html(text)));
                 }
             }
         }
