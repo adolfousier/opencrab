@@ -1199,7 +1199,6 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "slack_send",
     "telegram_send",
     "discord_send",
-    "whatsapp_send",
     "trello_send",
 ];
 
