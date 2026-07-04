@@ -11,6 +11,21 @@ use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
+/// Map an originating channel + chat id to a cron `deliver_to` target so the
+/// background rebuild can report completion/failure into the chat that asked
+/// (#305). Only channels with a scheduler delivery arm map; the TUI has its
+/// own notifier (#304) and everything else returns None.
+pub(crate) fn rebuild_deliver_target(channel: &str, chat_id: Option<&str>) -> Option<String> {
+    let chat_id = chat_id?.trim();
+    if chat_id.is_empty() {
+        return None;
+    }
+    match channel {
+        "telegram" | "discord" | "slack" => Some(format!("{channel}:{chat_id}")),
+        _ => None,
+    }
+}
+
 /// Agent-callable tool that schedules a background rebuild from source.
 pub struct RebuildTool;
 
@@ -69,7 +84,34 @@ impl Tool for RebuildTool {
             }
         };
 
-        match crate::cron::schedule_background_rebuild(pool, context.session_id, None).await {
+        // Resolve WHERE this turn came from so the build's completion and
+        // failure notices land back in that chat (#305). The pending-request
+        // row for the current turn is alive while this tool runs and carries
+        // channel + chat id. TUI turns map to None: the TUI has its own
+        // failure notifier and the post-restart wake-up covers success.
+        let deliver_to = match crate::db::PendingRequestRepository::new(pool.clone())
+            .find_latest_for_session(context.session_id)
+            .await
+        {
+            Ok(Some(req)) => {
+                let target = rebuild_deliver_target(&req.channel, req.channel_chat_id.as_deref());
+                match &target {
+                    Some(t) => tracing::info!("rebuild: status will be delivered to {t}"),
+                    None => tracing::debug!(
+                        "rebuild: no channel delivery target for channel '{}'",
+                        req.channel
+                    ),
+                }
+                target
+            }
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!("rebuild: pending-request lookup failed (no delivery): {e}");
+                None
+            }
+        };
+
+        match crate::cron::schedule_background_rebuild(pool, context.session_id, deliver_to).await {
             Ok(()) => Ok(ToolResult::success(
                 "🔨 Rebuild scheduled in the background. The build runs out-of-band; \
                  OpenCrabs will reload into the new binary automatically when it's \

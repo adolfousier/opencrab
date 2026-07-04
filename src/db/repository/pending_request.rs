@@ -63,6 +63,45 @@ impl PendingRequestRepository {
         Ok(())
     }
 
+    /// Latest in-flight request for a session, if any. Used by the rebuild
+    /// tool to learn WHICH channel/chat asked for the rebuild (the row for
+    /// the current turn is alive while the tool runs), so completion and
+    /// failure notices can be delivered back there (#305).
+    pub async fn find_latest_for_session(
+        &self,
+        session_id: Uuid,
+    ) -> Result<Option<PendingRequest>> {
+        let sid = session_id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                conn.prepare(
+                    "SELECT id, session_id, user_message, channel, channel_chat_id \
+                     FROM pending_requests WHERE session_id = ?1 \
+                     ORDER BY created_at DESC LIMIT 1",
+                )?
+                .query_row(rusqlite::params![sid], |row| {
+                    Ok(PendingRequest {
+                        id: row.get("id")?,
+                        session_id: row.get("session_id")?,
+                        user_message: row.get("user_message")?,
+                        channel: row.get("channel")?,
+                        channel_chat_id: row.get("channel_chat_id")?,
+                    })
+                })
+                .map(Some)
+                .or_else(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    other => Err(other),
+                })
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to look up pending request for session")
+    }
+
     /// Bump a request's `updated_at` to now — its "last interaction". Called
     /// as mid-turn progress persists so a long-running turn never trips the
     /// 24h crash-debris cutoff in [`get_interrupted`].

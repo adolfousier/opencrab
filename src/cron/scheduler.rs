@@ -84,7 +84,11 @@ pub async fn schedule_background_rebuild(
 /// retry on the 60s tick), build from source, then exec-restart into the
 /// freshly-built binary (replaces the whole process). On failure it reports
 /// to `deliver_to` and returns. The originating session id is in `job.prompt`.
-async fn run_rebuild_job(job: &CronJob, ctx: &ServiceContext) -> anyhow::Result<()> {
+async fn run_rebuild_job(
+    job: &CronJob,
+    ctx: &ServiceContext,
+    session_notifier: Option<&SessionNotifier>,
+) -> anyhow::Result<()> {
     use crate::brain::SelfUpdater;
 
     // Delete up front so a long/failed build can't re-trigger next tick.
@@ -122,7 +126,14 @@ async fn run_rebuild_job(job: &CronJob, ctx: &ServiceContext) -> anyhow::Result<
         }
         Err(out) => {
             tracing::error!("Background rebuild failed: {out}");
-            deliver_rebuild_status(job, &format!("⚠️ Background rebuild failed:\n{out}")).await;
+            let msg = format!("⚠️ Background rebuild failed:\n{out}");
+            // TUI (#304): surface the failure in the session that asked. It
+            // was told "reloading automatically when ready" and would
+            // otherwise wait forever on a log-only error.
+            if let Some(notify) = session_notifier {
+                notify(session_id, msg.clone());
+            }
+            deliver_rebuild_status(job, &msg).await;
             Ok(())
         }
     }
@@ -142,12 +153,20 @@ async fn deliver_rebuild_status(job: &CronJob, msg: &str) {
     }
 }
 
+/// Callback for surfacing scheduler events into a live session UI (the TUI).
+/// Args: originating session id, message text. Daemon callers run without one.
+pub type SessionNotifier = Arc<dyn Fn(Uuid, String) + Send + Sync>;
+
 /// Background cron scheduler that polls the database and executes due jobs.
 pub struct CronScheduler {
     repo: CronJobRepository,
     run_repo: CronJobRunRepository,
     factory: Arc<ChannelFactory>,
     service_context: ServiceContext,
+    /// Surfaces rebuild outcomes into the originating TUI session (#304):
+    /// without it a failed background build was visible only in the log
+    /// while the user waited for a reload that would never come.
+    session_notifier: Option<SessionNotifier>,
 }
 
 impl CronScheduler {
@@ -162,7 +181,14 @@ impl CronScheduler {
             run_repo,
             factory,
             service_context,
+            session_notifier: None,
         }
+    }
+
+    /// Wire a live-session notifier (TUI mode). Daemon callers skip this.
+    pub fn with_session_notifier(mut self, notifier: SessionNotifier) -> Self {
+        self.session_notifier = Some(notifier);
+        self
     }
 
     /// Spawn the scheduler as a background tokio task.
@@ -220,6 +246,7 @@ impl CronScheduler {
                 let factory = self.factory.clone();
                 let ctx = self.service_context.clone();
                 let run_repo = self.run_repo.clone();
+                let notifier = self.session_notifier.clone();
                 tokio::spawn(async move {
                     // For foreign-profile jobs, wrap the ENTIRE execution in a
                     // task-local profile home scope. This means every tool call
@@ -248,7 +275,15 @@ impl CronScheduler {
                             );
                             match resolve_or_create_cron_session(&ctx).await {
                                 Ok(cron_sid) => {
-                                    execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await
+                                    execute_job(
+                                        &job,
+                                        &factory,
+                                        &ctx,
+                                        cron_sid,
+                                        &run_repo,
+                                        notifier.as_ref(),
+                                    )
+                                    .await
                                 }
                                 Err(e) => Err(e),
                             }
@@ -257,7 +292,15 @@ impl CronScheduler {
                     } else {
                         match resolve_or_create_cron_session(&ctx).await {
                             Ok(cron_sid) => {
-                                execute_job(&job, &factory, &ctx, cron_sid, &run_repo).await
+                                execute_job(
+                                    &job,
+                                    &factory,
+                                    &ctx,
+                                    cron_sid,
+                                    &run_repo,
+                                    notifier.as_ref(),
+                                )
+                                .await
                             }
                             Err(e) => Err(e),
                         }
@@ -408,11 +451,12 @@ async fn execute_job(
     ctx: &ServiceContext,
     cron_session_id: Uuid,
     run_repo: &CronJobRunRepository,
+    session_notifier: Option<&SessionNotifier>,
 ) -> anyhow::Result<()> {
     // Reserved one-shot background rebuild — build + exec-restart, never an
     // agent prompt.
     if job.name == REBUILD_JOB_NAME {
-        return run_rebuild_job(job, ctx).await;
+        return run_rebuild_job(job, ctx, session_notifier).await;
     }
 
     // Resolve the config + agent for this job's profile. A job created in a
