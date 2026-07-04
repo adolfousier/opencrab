@@ -159,6 +159,8 @@ pub fn mime_from_ext(filename: &str) -> &'static str {
         "webp" => "image/webp",
         "bmp" => "image/bmp",
         "pdf" => "application/pdf",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xls" => "application/vnd.ms-excel",
         "zip" => "application/zip",
         "mp4" | "m4v" => "video/mp4",
         "mov" => "video/quicktime",
@@ -369,6 +371,28 @@ pub fn process_file_with_vision(
     // ── ZIP archives ──
     if effective == "application/zip" || effective == "application/x-zip-compressed" {
         return extract_zip_contents(bytes, filename, config);
+    }
+
+    // ── Excel spreadsheets ──
+    if matches!(
+        effective,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // .xlsx
+        | "application/vnd.ms-excel" // .xls
+        | "application/xlsx"
+        | "application/xls"
+    ) {
+        return match save_to_temp(bytes, filename) {
+            Ok(path) => {
+                let path_str = path.to_string_lossy();
+                FileContent::Text(format!(
+                    "[Excel file received: {filename}]\n\nFile saved at: {}\n\nCall `parse_document(path='{}')` to extract and view the spreadsheet contents.",
+                    path_str, path_str
+                ))
+            }
+            Err(e) => FileContent::Unsupported(format!(
+                "[Excel file: {filename} — failed to save: {e}]"
+            )),
+        };
     }
 
     // ── Text files ──

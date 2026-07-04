@@ -101,10 +101,11 @@ impl Tool for DocParserTool {
     }
 
     fn description(&self) -> &str {
-        "Parse and extract text content from documents (PDF, DOCX, TXT, MD, HTML, JSON, XML). \
+        "Parse and extract text content from documents (PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML, JSON, XML). \
         Use this whenever an incoming PDF's inline preview was truncated — the file is \
         saved at the path included in the preview message; pass that path here with \
         `page_range` (e.g. \"31-60\") or `pages` to read the rest. \
+        For spreadsheets (Excel/CSV), extracts all sheets and formats as readable tables. \
         For multi-page PDFs prefer `page_range` (string like \"1-30\" or \"5,7,10-15\") \
         over `pages` (raw array) — it's shorter and more natural for spans. \
         Returns full document text with `--- Page N ---` markers when a range is requested."
@@ -116,7 +117,7 @@ impl Tool for DocParserTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the document file (PDF, DOCX, TXT, MD, HTML, JSON, XML)"
+                    "description": "Path to the document file (PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML, JSON, XML)"
                 },
                 "max_chars": {
                     "type": "integer",
@@ -198,6 +199,8 @@ impl Tool for DocParserTool {
         let (text, metadata) = match extension.as_str() {
             "pdf" => self.parse_pdf(&path, &input).await?,
             "docx" => self.parse_docx(&path).await?,
+            "xlsx" | "xls" => self.parse_excel(&path).await?,
+            "csv" => self.parse_csv(&path).await?,
             "txt" | "md" | "markdown" | "rst" | "text" => {
                 self.parse_text(&path, &extension).await?
             }
@@ -206,7 +209,7 @@ impl Tool for DocParserTool {
             "xml" => self.parse_xml(&path).await?,
             _ => {
                 return Ok(ToolResult::error(format!(
-                    "Unsupported document format: .{}. Supported formats: PDF, DOCX, TXT, MD, HTML, JSON, XML",
+                    "Unsupported document format: .{}. Supported formats: PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML, JSON, XML",
                     extension
                 )));
             }
@@ -605,5 +608,140 @@ impl DocParserTool {
         };
 
         Ok((text.trim().to_string(), metadata))
+    }
+
+    /// Parse Excel spreadsheets (XLSX, XLS)
+    async fn parse_excel(&self, path: &Path) -> Result<(String, ParsedMetadata)> {
+        let path = path.to_path_buf();
+
+        tokio::task::spawn_blocking(move || {
+            use calamine::{open_workbook, Reader, Xlsx, Xls};
+
+            let extension = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+
+            let mut output = String::new();
+
+            match extension.as_str() {
+                "xlsx" => {
+                    let mut workbook: Xlsx<_> = open_workbook(&path)
+                        .map_err(|e| ToolError::Execution(format!("Failed to open XLSX: {}", e)))?;
+
+                    let sheet_names = workbook.sheet_names().to_vec();
+
+                    for sheet_name in &sheet_names {
+                        if let Ok(range) = workbook.worksheet_range(sheet_name) {
+                            output.push_str(&format!("\n=== Sheet: {} ===\n", sheet_name));
+
+                            for row in range.rows() {
+                                let cells: Vec<String> = row
+                                    .iter()
+                                    .map(|cell| {
+                                        let val = cell.to_string();
+                                        if val.is_empty() {
+                                            "".to_string()
+                                        } else {
+                                            val
+                                        }
+                                    })
+                                    .collect();
+
+                                output.push_str(&cells.join(" | "));
+                                output.push('\n');
+                            }
+                        }
+                    }
+                }
+                "xls" => {
+                    let mut workbook: Xls<_> = open_workbook(&path)
+                        .map_err(|e| ToolError::Execution(format!("Failed to open XLS: {}", e)))?;
+
+                    let sheet_names = workbook.sheet_names().to_vec();
+
+                    for sheet_name in &sheet_names {
+                        if let Ok(range) = workbook.worksheet_range(sheet_name) {
+                            output.push_str(&format!("\n=== Sheet: {} ===\n", sheet_name));
+
+                            for row in range.rows() {
+                                let cells: Vec<String> = row
+                                    .iter()
+                                    .map(|cell| {
+                                        let val = cell.to_string();
+                                        if val.is_empty() {
+                                            "".to_string()
+                                        } else {
+                                            val
+                                        }
+                                    })
+                                    .collect();
+
+                                output.push_str(&cells.join(" | "));
+                                output.push('\n');
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    return Err(ToolError::Execution(format!(
+                        "Unsupported Excel format: .{}",
+                        extension
+                    )));
+                }
+            }
+
+            let metadata = ParsedMetadata {
+                page_count: None,
+                title: None,
+                author: None,
+            };
+
+            Ok((output.trim().to_string(), metadata))
+        })
+        .await
+        .map_err(|e| ToolError::Execution(format!("Excel parsing task failed: {}", e)))?
+    }
+
+    /// Parse CSV files
+    async fn parse_csv(&self, path: &Path) -> Result<(String, ParsedMetadata)> {
+        let csv_text = tokio::fs::read_to_string(path)
+            .await
+            .map_err(ToolError::Io)?;
+
+        // CSV is already readable, just format it nicely
+        let mut output = String::new();
+        let lines: Vec<&str> = csv_text.lines().collect();
+
+        // Cap at 1000 rows to prevent context overflow
+        let max_rows = 1000;
+        let truncated = lines.len() > max_rows;
+
+        for (i, line) in lines.iter().enumerate() {
+            if i >= max_rows {
+                output.push_str(&format!(
+                    "\n... [truncated: {} more rows]",
+                    lines.len() - max_rows
+                ));
+                break;
+            }
+
+            // Replace tabs and multiple spaces with pipes for better readability
+            let formatted = line
+                .replace('\t', " | ")
+                .replace("  ", " | ");
+
+            output.push_str(&formatted);
+            output.push('\n');
+        }
+
+        let metadata = ParsedMetadata {
+            page_count: Some(if truncated { max_rows } else { lines.len() }),
+            title: None,
+            author: None,
+        };
+
+        Ok((output.trim().to_string(), metadata))
     }
 }
