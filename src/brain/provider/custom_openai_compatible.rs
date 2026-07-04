@@ -1187,6 +1187,7 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "web_search",
     "web_fetch",
     "web_request",
+    "web_scrape",
     "http_request",
     "tool_search",
     "plan",
@@ -1200,6 +1201,7 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "telegram_send",
     "discord_send",
     "trello_send",
+    "whatsapp_send",
 ];
 
 /// Extract `<TOOLNAME><PARAM>value</PARAM>…</TOOLNAME>` invocations. The
