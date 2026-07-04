@@ -5,6 +5,55 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.61] - 2026-07-04
+
+27 commits since v0.3.60. 38 files changed, +2296 / -474 lines.
+
+### ✨ Features
+
+- `5f2633a2` **Group tool calls**: consecutive tool calls collapse into one expandable block (#291)
+- `8a66620b` **Fold intermediate text**: intermediates fold into the same in-place processing log as tool calls (#300)
+- `6b82665e` **Deliver build outcomes**: rebuild results reach whoever asked (#304, #305)
+- `ab71d45c` **Frame reactions**: inbound reactions read by sentiment and address the user by first name (#302)
+- `2b3943b9` **Mid-turn reactions**: a reaction during a running turn injects into that loop instead of firing a second turn (#302)
+- `88f8d5e9` **Self-goaling**: goal_manage tool lets the agent set and drive its own multi-turn goals (#307)
+
+### 🔧 Fixes
+
+- `5f5e8225` **Expandable blockquote**: grouped tool calls render as a native blockquote (#295)
+- `64bc05fd` **Rich API for tool groups**: route collapsible blocks through the rich API
+- `a2b25927` **Edit tool group in place**: consecutive calls stay one block (#296)
+- `7a586fe3` **Command replies vs 429**: wait out rate limits instead of dropping (#297)
+- `41eb0976` **Streaming placeholder**: re-post only when a message lands below it (#299)
+- `a448c233` **Reaction decision tree**: clearer react-vs-respond directive (#298)
+- `9aeb33b9` **Completion out of the block**: keep the final answer from being folded away (#300)
+- `23e220b2` **Reclaim only when needed**: pull the folded final only when no separate answer exists (#300)
+- `6644d5c6` **Formatted grouped content**: render block content inline, not raw markdown (#306)
+- `493c1358` **analyze_image tilde**: expand `~/` paths via resolve_tool_path
+- `3830f29e` **Tool allowlist**: add web_scrape, restore whatsapp_send to KNOWN_TOOL_NAMES
+- `84f44b4e` **Separator recovery**: recover tool calls with non-ASCII corrupted separators
+- `75a7b5f3` **Separator recovery**: recover a corrupted non-ASCII separator
+- `0d86583e` **WhatsApp owner DMs**: stop responding to the owner's DMs with other people
+- `cf4f3e19` **Reaction marker**: tolerate an escaped marker prefix so the reaction fires
+- `8171e302` **WhatsApp LID JIDs**: convert LID chat JIDs to PN for non-owner DM responses
+
+### 📖 Documentation
+
+- `aaca6be1` make the rebuild-vs-evolve distinction explicit for the agent
+- `6d7511e5` add bug fix tracking workflow to CODE.md template
+- `ec792613` add bug fix tracking workflow to AGENTS.md template
+
+### 🧹 Miscellaneous
+
+- `c85dd572` add Excel/spreadsheet parsing support (XLSX, XLS, CSV)
+- `374eb94d` cargo fmt (analyze_image, doc_parser, file_extract)
+
+### 📊 Stats
+
+- 27 commits since v0.3.60
+- 38 files changed, +2296 / -474 lines
+- 4563 tests (4563 passed, 0 failed, 29 ignored)
+
 ## [0.3.60] - 2026-07-03
 
 17 commits since v0.3.59. 32 files changed, +2360 / -59 lines.
@@ -6414,3 +6463,4 @@ fixes.
 [0.3.56]: https://github.com/adolfousier/opencrabs/compare/v0.3.55...v0.3.56
 [0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57[0.3.58]: https://github.com/adolfousier/opencrabs/compare/v0.3.57...v0.3.58
 [0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59[0.3.60]: https://github.com/adolfousier/opencrabs/compare/v0.3.59...v0.3.60
+[0.3.61]: https://github.com/adolfousier/opencrabs/compare/v0.3.60...v0.3.61
