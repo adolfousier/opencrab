@@ -192,9 +192,9 @@ pub(crate) fn render_flow_html(lines: &[FlowLine]) -> String {
         "Processing log".to_string()
     };
     format!(
-        "<blockquote expandable><b>{}</b>\n{}</blockquote>",
+        "<blockquote expandable><b>{}</b>\n\n{}</blockquote>",
         header,
-        out.join("\n")
+        out.join("\n\n")
     )
 }
 
@@ -343,6 +343,60 @@ async fn append_intermediate_to_flow(
     } else {
         open_flow(bot, chat, thread_id, streaming).await;
     }
+}
+
+/// Pull the trailing folded intermediate out of the collapsed processing-log
+/// block so it can be delivered as its own message below.
+///
+/// For CLI providers the final assistant answer is emitted mid-stream as an
+/// `IntermediateText` event (and cleared from the returned `response.content`),
+/// so #300's fold buries it inside the expandable block and the completion
+/// never lands as a separate bubble. Mid-turn narration is always followed by
+/// more tool calls, so a `Text` entry sitting LAST in the flow is always the
+/// final answer, never interstitial text. This pops it, re-renders the block
+/// without it (or deletes the block if it becomes empty), and returns the text.
+/// Returns `None` when the flow ended on a tool call — then the answer is in
+/// `response.content` and the normal delivery path handles it.
+async fn take_folded_final(
+    bot: &Bot,
+    chat: ChatId,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+) -> Option<String> {
+    let text = {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(s.flow_entries.last(), Some(FlowEntry::Text(_))) {
+            match s.flow_entries.pop() {
+                Some(FlowEntry::Text(t)) => Some(t),
+                other => {
+                    if let Some(e) = other {
+                        s.flow_entries.push(e);
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+    text.as_ref()?;
+    // Re-render the block without the promoted answer, or remove it entirely if
+    // that answer was its only remaining entry.
+    let now_empty = {
+        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.flow_entries.is_empty()
+    };
+    if now_empty {
+        let mid = {
+            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            s.open_group_msg_id.take()
+        };
+        if let Some(mid) = mid {
+            let _ = bot.delete_message(chat, mid).await;
+        }
+    } else {
+        refresh_flow(bot, chat, streaming).await;
+    }
+    text
 }
 
 impl StreamingState {
@@ -3682,6 +3736,20 @@ pub(crate) async fn handle_message(
                 text_only
             };
 
+            // #300 follow-up: the final answer for CLI providers arrives as a
+            // trailing IntermediateText folded into the collapsed block, while
+            // response.content comes back empty. Pull that trailing folded text
+            // back out so the completion always lands as its own bubble below,
+            // never buried inside the expandable block (100% of the time). When
+            // response.content already carried the answer (text_only non-empty),
+            // the folded copy was a duplicate we've now removed from the block.
+            let folded_final = take_folded_final(&bot, msg.chat.id, &streaming).await;
+            let text_only = if text_only.trim().is_empty() {
+                folded_final.unwrap_or(text_only)
+            } else {
+                text_only
+            };
+
             // Deliver final response — prefer editing the streaming message in-place
             // to avoid the delete+send race that causes duplicates.
             let html = markdown_to_telegram_html(&text_only);
@@ -4448,6 +4516,16 @@ pub(crate) async fn resume_session(
                         text_only
                     }
                 }
+            } else {
+                text_only
+            };
+
+            // #300 follow-up: pull the trailing folded final answer out of the
+            // collapsed block so the completion lands as its own bubble below
+            // (see handle_message for the full rationale).
+            let folded_final = take_folded_final(&bot, chat_id, &streaming).await;
+            let text_only = if text_only.trim().is_empty() {
+                folded_final.unwrap_or(text_only)
             } else {
                 text_only
             };

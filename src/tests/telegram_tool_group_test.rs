@@ -47,6 +47,20 @@ fn multiple_tools_render_expandable_blockquote() {
 }
 
 #[test]
+fn blocks_are_separated_by_blank_lines() {
+    let out = render_flow_html(&[
+        tline("✅ bash", "cargo fmt"),
+        FlowLine::Text("Reformatted three files.".to_string()),
+        tline("✅ read_file", "handler.rs"),
+    ]);
+    // Blank line after the header and between every block, so the collapsed
+    // log reads as separated entries instead of a cramped wall.
+    assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n\n"));
+    assert!(out.contains("<b>✅ bash</b> cargo fmt\n\nReformatted three files."));
+    assert!(out.contains("Reformatted three files.\n\n<b>✅ read_file</b> handler.rs"));
+}
+
+#[test]
 fn never_emits_details_tags() {
     let out = render_flow_html(&[tline("✅ a", "x"), tline("✅ b", "y")]);
     assert!(!out.contains("<details>"));
