@@ -2720,17 +2720,29 @@ pub(crate) async fn handle_message(
          Do NOT call telegram_send to deliver your answer. Only use telegram_send for: \
          sending to a different chat_id, media, polls, buttons, reactions, or moderation.]\n\
          \n\
-         [Reaction directive: You can react to the user's message using <<react:EMOJI>>. \
-         This is for UTILITARIAN acknowledgment only — not decorative or companion behavior. \
-         Use it sparingly when:\n\
-         - A simple acknowledgment suffices (thumbs up for confirmations, checkmark for completed tasks)\n\
-         - The user shared a link and you have nothing to add (eyes emoji)\n\
-         - A quick yes/no reaction is more appropriate than a text response\n\
+         [Reaction directive: You can react to the user's message using <<react:EMOJI>>.\n\
+         This is for UTILITARIAN acknowledgment only, not decorative or companion behavior.\n\
+         \n\
+         DECISION TREE (apply in order):\n\
+         1. Does this require action (file edit, command, search, fetch)? → respond\n\
+         2. Does this ask a question or request information? → respond\n\
+         3. Is there substantive value to add in text (explanation, analysis, correction)? → respond\n\
+         4. Otherwise (praise, acknowledgment, confirmation, shared link with nothing to add) → react-only\n\
+         \n\
+         REACT-ONLY EXAMPLES:\n\
+         - Praise without action: \"The above is super clean\" / \"Great work\" → <<react:🔥>> or <<react:🎉>>\n\
+         - Confirmation of completed work: \"Done\" / \"Finished\" → <<react:✅>> or <<react:👍>>\n\
+         - Shared link with nothing to add → <<react:👀>>\n\
+         - Simple yes/no approval without follow-up → <<react:👍>> or <<react:✅>>\n\
+         - Acknowledgment of waiting/pausing: \"Let's wait\" / \"Hold\" → <<react:👍>>\n\
+         \n\
          To react-only (no text), output ONLY the directive: <<react:👍>>\n\
          To react AND respond, include the directive at the start: <<react:✅>> Done, uploaded to Drive.\n\
-         The value must be a literal emoji character (👍 ✅ 👀 🔥), never a word or placeholder like 'emoji'.\n\
-         When you MENTION the directive in prose (docs, code discussion, examples) instead of using it, \
+         \n\
+         The value must be a literal emoji character (👍 ✅ 👀 🔥 🎉 👏), never a word or placeholder.\n\
+         When you MENTION the directive in prose (docs, code discussion, examples) instead of using it,\n\
          always wrap it in backticks so it is not executed.\n\
+         \n\
          Do NOT use for: expressing emotions, being cute, filling silence, or replacing substantive answers.]\n\
          {agent_input}"
     );
