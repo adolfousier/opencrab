@@ -114,29 +114,37 @@ pub(crate) struct StreamingState {
     user_message_preview: Option<String>,
 }
 
-/// Render a group of tool calls as a collapsible `<details>` block.
-/// Groups consecutive tool calls into a single expandable message to reduce
-/// visual noise while preserving full transparency (user can expand to see
-/// each individual call with its status and context).
-fn render_tool_group(tools: &[(String, String)]) -> String {
-    let count = tools.len();
-    let summary = if count == 1 {
-        tools[0].0.clone()
-    } else {
-        format!("{} tool calls", count)
-    };
-    
-    let mut result = format!("<details><summary>{}</summary>\n\n", summary);
-    for (status_label, context) in tools {
+/// Render a group of tool calls as final Telegram HTML.
+/// Groups consecutive tool calls into a single `<blockquote expandable>`
+/// block: native Telegram HTML (Bot API 7.3+) that renders collapsed with a
+/// tap-to-expand arrow in groups, DMs, and all official clients, with no
+/// dependency on the rich message API. A single tool call renders as a plain
+/// one-liner. Output is ready to send via `send_html_or_plain` — do NOT pass
+/// it through `markdown_to_telegram_html` (it would double-process the HTML).
+pub(crate) fn render_tool_group(tools: &[(String, String)]) -> String {
+    fn line(label: &str, context: &str) -> String {
         if context.is_empty() {
-            result.push_str(status_label);
+            format!("<b>{}</b>", escape_html(label))
         } else {
-            result.push_str(&format!("{} {}", status_label, context));
+            format!("<b>{}</b> {}", escape_html(label), escape_html(context))
         }
-        result.push('\n');
     }
-    result.push_str("\n</details>");
-    result
+    if tools.is_empty() {
+        return String::new();
+    }
+    if tools.len() == 1 {
+        return line(&tools[0].0, &tools[0].1);
+    }
+    let body = tools
+        .iter()
+        .map(|(label, context)| line(label, context))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "<blockquote expandable><b>{} tool calls</b>\n{}</blockquote>",
+        tools.len(),
+        body
+    )
 }
 
 impl StreamingState {
@@ -2723,7 +2731,7 @@ pub(crate) async fn handle_message(
                         // ── Ordered display: tools and intermediates in chronological order ──
                         // Buffer consecutive tool calls to group them into collapsible blocks
                         let mut tool_buffer: Vec<usize> = Vec::new();
-                        
+
                         for item in &snap.display_items {
                             match item {
                                 DisplayItem::NewTool(idx) => {
@@ -2734,38 +2742,27 @@ pub(crate) async fn handle_message(
                                     // Flush buffered tools as a grouped block
                                     if !tool_buffer.is_empty() {
                                         // Render grouped tool calls
-                                        let tools_text = {
+                                        let tool_details: Vec<(String, String)> = {
                                             let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                            let mut lines = Vec::new();
-                                            for &idx in &tool_buffer {
-                                                if let Some(t) = s.tool_msgs.get(idx) {
-                                                    let label = format!("**{}**{}", t.name, t.context);
-                                                    let status = match t.completed {
-                                                        None => "⚙️",
-                                                        Some(true) => "✅",
-                                                        Some(false) => "❌",
-                                                    };
-                                                    lines.push(format!("{} {}", status, label));
-                                                }
-                                            }
-                                            let count = tool_buffer.len();
-                                            let summary = if count == 1 {
-                                                lines[0].clone()
-                                            } else {
-                                                format!("**{} tool calls**", count)
-                                            };
-                                            if count == 1 {
-                                                summary
-                                            } else {
-                                                format!(
-                                                    "<details><summary>{}</summary>\n{}</details>",
-                                                    summary,
-                                                    lines.join("\n")
-                                                )
-                                            }
+                                            tool_buffer
+                                                .iter()
+                                                .filter_map(|&idx| {
+                                                    s.tool_msgs.get(idx).map(|t| {
+                                                        let status = match t.completed {
+                                                            None => "⚙️",
+                                                            Some(true) => "✅",
+                                                            Some(false) => "❌",
+                                                        };
+                                                        (
+                                                            format!("{} {}", status, t.name),
+                                                            t.context.clone(),
+                                                        )
+                                                    })
+                                                })
+                                                .collect()
                                         };
-                                        
-                                        let html = markdown_to_telegram_html(&tools_text);
+
+                                        let html = render_tool_group(&tool_details);
                                         if let Ok(mid) = send_html_or_plain(&bot, chat, thread_id, &html).await {
                                             // Mark all buffered tools as having messages
                                             let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
@@ -2777,7 +2774,7 @@ pub(crate) async fn handle_message(
                                         }
                                         tool_buffer.clear();
                                     }
-                                    
+
                                     // Now process the intermediate text
                                     // Apply the same sanitization chain as the
                                     // final response path: strip LLM artifacts
@@ -2895,41 +2892,27 @@ pub(crate) async fn handle_message(
                                 }
                             }
                         }
-                        
+
                         // Flush any remaining buffered tools after the loop
                         if !tool_buffer.is_empty() {
-                            let tools_text = {
+                            let tool_details: Vec<(String, String)> = {
                                 let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                let mut lines = Vec::new();
-                                for &idx in &tool_buffer {
-                                    if let Some(t) = s.tool_msgs.get(idx) {
-                                        let label = format!("**{}**{}", t.name, t.context);
-                                        let status = match t.completed {
-                                            None => "⚙️",
-                                            Some(true) => "✅",
-                                            Some(false) => "❌",
-                                        };
-                                        lines.push(format!("{} {}", status, label));
-                                    }
-                                }
-                                let count = tool_buffer.len();
-                                let summary = if count == 1 {
-                                    lines[0].clone()
-                                } else {
-                                    format!("**{} tool calls**", count)
-                                };
-                                if count == 1 {
-                                    summary
-                                } else {
-                                    format!(
-                                        "<details><summary>{}</summary>\n{}</details>",
-                                        summary,
-                                        lines.join("\n")
-                                    )
-                                }
+                                tool_buffer
+                                    .iter()
+                                    .filter_map(|&idx| {
+                                        s.tool_msgs.get(idx).map(|t| {
+                                            let status = match t.completed {
+                                                None => "⚙️",
+                                                Some(true) => "✅",
+                                                Some(false) => "❌",
+                                            };
+                                            (format!("{} {}", status, t.name), t.context.clone())
+                                        })
+                                    })
+                                    .collect()
                             };
-                            
-                            let html = markdown_to_telegram_html(&tools_text);
+
+                            let html = render_tool_group(&tool_details);
                             if let Ok(mid) = send_html_or_plain(&bot, chat, thread_id, &html).await {
                                 let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                                 for &idx in &tool_buffer {
@@ -3387,7 +3370,7 @@ pub(crate) async fn handle_message(
     // Send any remaining display items that weren't flushed by the edit loop
     // Buffer consecutive tool calls to group them into collapsible blocks
     let mut tool_buffer: Vec<usize> = Vec::new();
-    
+
     for item in remaining_display {
         match item {
             DisplayItem::NewTool(idx) => {
@@ -3411,10 +3394,12 @@ pub(crate) async fn handle_message(
                             })
                         })
                         .collect();
-                    
+
                     if !tool_details.is_empty() {
                         let grouped = render_tool_group(&tool_details);
-                        if let Ok(mid) = send_tool_group_rich(&bot, msg.chat.id, thread_id, &grouped).await {
+                        if let Ok(mid) =
+                            send_html_or_plain(&bot, msg.chat.id, thread_id, &grouped).await
+                        {
                             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                             for &idx in &tool_buffer {
                                 if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -3491,7 +3476,7 @@ pub(crate) async fn handle_message(
             }
         }
     }
-    
+
     // Flush any remaining tools in buffer as grouped block
     if !tool_buffer.is_empty() {
         let tool_details: Vec<(String, String)> = tool_buffer
@@ -3508,10 +3493,10 @@ pub(crate) async fn handle_message(
                 })
             })
             .collect();
-        
+
         if !tool_details.is_empty() {
             let grouped = render_tool_group(&tool_details);
-            if let Ok(mid) = send_tool_group_rich(&bot, msg.chat.id, thread_id, &grouped).await {
+            if let Ok(mid) = send_html_or_plain(&bot, msg.chat.id, thread_id, &grouped).await {
                 let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 for &idx in &tool_buffer {
                     if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -4091,7 +4076,7 @@ pub(crate) async fn resume_session(
                         // Process display items (tools + intermediates)
                         // Buffer consecutive tool calls to group them into collapsible blocks
                         let mut tool_buffer: Vec<usize> = Vec::new();
-                        
+
                         for item in snap.display_items {
                             match item {
                                 DisplayItem::NewTool(idx) => {
@@ -4114,10 +4099,10 @@ pub(crate) async fn resume_session(
                                                 })
                                             })
                                             .collect();
-                                        
+
                                         if !tool_details.is_empty() {
                                             let grouped = render_tool_group(&tool_details);
-                                            if let Ok(mid) = send_tool_group_rich(&bot, chat_id, thread_id, &grouped).await {
+                                            if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &grouped).await {
                                                 let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                                                 for &idx in &tool_buffer {
                                                     if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -4188,7 +4173,7 @@ pub(crate) async fn resume_session(
                                 }
                             }
                         }
-                        
+
                         // Flush any remaining tools in buffer as grouped block
                         if !tool_buffer.is_empty() {
                             let tool_details: Vec<(String, String)> = tool_buffer
@@ -4205,10 +4190,10 @@ pub(crate) async fn resume_session(
                                     })
                                 })
                                 .collect();
-                            
+
                             if !tool_details.is_empty() {
                                 let grouped = render_tool_group(&tool_details);
-                                if let Ok(mid) = send_tool_group_rich(&bot, chat_id, thread_id, &grouped).await {
+                                if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &grouped).await {
                                     let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                                     for &idx in &tool_buffer {
                                         if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -4447,7 +4432,7 @@ pub(crate) async fn resume_session(
     // Send remaining display items
     // Buffer consecutive tool calls to group them into collapsible blocks
     let mut tool_buffer: Vec<usize> = Vec::new();
-    
+
     for item in remaining_display {
         match item {
             DisplayItem::NewTool(idx) => {
@@ -4470,10 +4455,12 @@ pub(crate) async fn resume_session(
                             })
                         })
                         .collect();
-                    
+
                     if !tool_details.is_empty() {
                         let grouped = render_tool_group(&tool_details);
-                        if let Ok(mid) = send_tool_group_rich(&bot, chat_id, thread_id, &grouped).await {
+                        if let Ok(mid) =
+                            send_html_or_plain(&bot, chat_id, thread_id, &grouped).await
+                        {
                             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                             for &idx in &tool_buffer {
                                 if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -4542,7 +4529,7 @@ pub(crate) async fn resume_session(
             }
         }
     }
-    
+
     // Flush any remaining tools in buffer as grouped block
     if !tool_buffer.is_empty() {
         let tool_details: Vec<(String, String)> = tool_buffer
@@ -4559,10 +4546,10 @@ pub(crate) async fn resume_session(
                 })
             })
             .collect();
-        
+
         if !tool_details.is_empty() {
             let grouped = render_tool_group(&tool_details);
-            if let Ok(mid) = send_tool_group_rich(&bot, chat_id, thread_id, &grouped).await {
+            if let Ok(mid) = send_html_or_plain(&bot, chat_id, thread_id, &grouped).await {
                 let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 for &idx in &tool_buffer {
                     if let Some(tool) = s.tool_msgs.get_mut(idx) {
@@ -5553,28 +5540,6 @@ async fn try_send_intermediate_rich(
         Err(e) => {
             tracing::warn!("Telegram: intermediate rich send failed, using HTML: {e}");
             None
-        }
-    }
-}
-
-/// Send a tool group as a rich message with collapsible <details> blocks.
-/// Tries the rich API first (which supports <details>), falls back to regular
-/// HTML if the rich API fails or isn't available.
-async fn send_tool_group_rich(
-    bot: &Bot,
-    chat_id: ChatId,
-    thread_id: Option<teloxide::types::ThreadId>,
-    markdown: &str,
-) -> std::result::Result<MessageId, teloxide::RequestError> {
-    // Try rich API first (supports <details> tags)
-    match super::rich::api::send_rich_markdown_id(bot.token(), chat_id.0, thread_id, markdown).await
-    {
-        Ok(id) => Ok(MessageId(id)),
-        Err(e) => {
-            tracing::debug!("Rich API failed for tool group, falling back to HTML: {e}");
-            // Fall back to regular HTML (without <details> tags)
-            let html = markdown_to_telegram_html(markdown);
-            send_html_or_plain(bot, chat_id, thread_id, &html).await
         }
     }
 }
