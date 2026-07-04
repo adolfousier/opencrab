@@ -502,6 +502,28 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
     // already 5000+ lines, no point cramming another 100-line pattern
     // inline.
     let has_bare_name_args = super::bare_tool_call_extractor::has_bare_name_args_signal(text);
+
+    // Corrupted-tool-call signal: 2026-07-03 mimo-v2.5 (opencode-go)
+    // tokenizer bug. When the user converses in Bengali, the model
+    // sometimes emits a tool call where the tool name and JSON params
+    // are correct but the separator between them becomes non-ASCII
+    // garbage (Bengali script like "ব্যক"). Shape:
+    // `tool_search ব্যক{"query":"..."}`. The fix is model-agnostic —
+    // any model producing this pattern is handled. Without this pass
+    // the call falls through as plain text and never dispatches.
+    let has_corrupted_tool_signal = KNOWN_TOOL_NAMES.iter().any(|&tool| {
+        text.find(tool).is_some_and(|pos| {
+            let after = &text[pos + tool.len()..];
+            after.find('{').is_some_and(|brace_pos| {
+                let gap = &after[..brace_pos];
+                // Gap must contain non-ASCII bytes (the corruption) and
+                // NO ASCII letters (so prose like "tool_search for {reason}"
+                // is never swept in).
+                gap.bytes().any(|b| b >= 0x80) && !gap.bytes().any(|b| b.is_ascii_alphabetic())
+            })
+        })
+    });
+
     if !text.contains("<tool_call>")
         && !text.contains("<tool_call_list>")
         && !text.contains("<function=")
@@ -514,6 +536,7 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
         && !has_bare_command_args
         && !has_invoke_signal
         && !has_bare_name_args
+        && !has_corrupted_tool_signal
     {
         return (Vec::new(), text.to_string());
     }
@@ -1102,6 +1125,21 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
         }
     }
 
+    // Pass 1.10 — corrupted separator recovery. 2026-07-03 mimo-v2.5
+    // (opencode-go): when conversing in Bengali, the model emits valid
+    // tool name and valid JSON params but corrupts the separator into
+    // non-ASCII garbage (Bengali script). Shape:
+    // `tool_search ব্যক{"query":"..."}`. Model-agnostic — handles any
+    // model producing this pattern. Must run after all marker-based
+    // passes so tool names inside `<tool_call>` wrappers are already
+    // claimed.
+    if has_corrupted_tool_signal {
+        for (start, end, name, args) in extract_corrupted_tool_calls(text, &strip_ranges) {
+            tool_calls.push((name, args));
+            strip_ranges.push((start, end));
+        }
+    }
+
     if strip_ranges.is_empty() {
         return (tool_calls, text.to_string());
     }
@@ -1150,6 +1188,7 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "web_fetch",
     "web_request",
     "http_request",
+    "tool_search",
     "plan",
     "task_manager",
     "cron_manage",
@@ -1160,12 +1199,92 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "slack_send",
     "telegram_send",
     "discord_send",
+    "whatsapp_send",
     "trello_send",
 ];
 
 /// Extract `<TOOLNAME><PARAM>value</PARAM>…</TOOLNAME>` invocations. The
 /// outer tag name must be one of `KNOWN_TOOL_NAMES`; the body must
 /// contain at least one `<param>value</param>` pair with matching
+/// Recover tool calls whose separator between the tool name and JSON
+/// params was corrupted into non-ASCII garbage. 2026-07-03 mimo-v2.5
+/// (opencode-go) tokenizer bug: when the user converses in Bengali,
+/// the model sometimes emits `tool_search ব্যক{"query":"..."}` where
+/// the tool name and JSON are correct but the gap between them is
+/// Bengali script instead of a proper separator. Model-agnostic —
+/// any model producing this pattern is handled.
+///
+/// Detection criteria (all must hold):
+///   1. A `KNOWN_TOOL_NAMES` entry appears in the text.
+///   2. Immediately after it, there is a gap containing non-ASCII bytes
+///      AND no ASCII letters (so prose like "tool_search for {x}" is
+///      never swept in).
+///   3. The gap is followed by a `{` that starts valid balanced JSON
+///      parsing to an object (the tool params).
+///
+/// Returns `(start_byte, end_byte, tool_name, args_json)` per match.
+fn extract_corrupted_tool_calls(
+    text: &str,
+    existing_strip_ranges: &[(usize, usize)],
+) -> Vec<(usize, usize, String, serde_json::Value)> {
+    let mut results = Vec::new();
+    for &tool in KNOWN_TOOL_NAMES {
+        let mut search_from = 0;
+        while let Some(rel) = text[search_from..].find(tool) {
+            let abs = search_from + rel;
+
+            // Skip if already claimed by an earlier pass.
+            if existing_strip_ranges
+                .iter()
+                .any(|(s, e)| *s <= abs && abs < *e)
+            {
+                search_from = abs + tool.len();
+                continue;
+            }
+
+            let after_tool = abs + tool.len();
+            let rest = &text[after_tool..];
+
+            // Find the next `{` after the tool name.
+            let Some(brace_rel) = rest.find('{') else {
+                search_from = after_tool;
+                continue;
+            };
+
+            let gap = &rest[..brace_rel];
+            // Gap must contain non-ASCII bytes (the corruption) and no
+            // ASCII letters (so prose mentions are never swept in).
+            let has_non_ascii = gap.bytes().any(|b| b >= 0x80);
+            let has_ascii_alpha = gap.bytes().any(|b| b.is_ascii_alphabetic());
+            if !has_non_ascii || has_ascii_alpha {
+                search_from = after_tool;
+                continue;
+            }
+
+            // Try to extract balanced JSON from the `{`.
+            let brace_abs = after_tool + brace_rel;
+            let Some(consumed) = extract_balanced_json(&text[brace_abs..]) else {
+                search_from = brace_abs;
+                continue;
+            };
+            let json_str = &text[brace_abs..brace_abs + consumed];
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) else {
+                search_from = brace_abs + consumed;
+                continue;
+            };
+            if !v.is_object() {
+                search_from = brace_abs + consumed;
+                continue;
+            }
+
+            let end = brace_abs + consumed;
+            results.push((abs, end, tool.to_string(), v));
+            search_from = end;
+        }
+    }
+    results
+}
+
 /// open/close tag. Returns `(start, end, name, args)` byte ranges so
 /// the caller can add them to `strip_ranges`.
 fn extract_claude_style_tool_calls(text: &str) -> Vec<(usize, usize, String, serde_json::Value)> {

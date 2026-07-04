@@ -128,6 +128,7 @@ pub mod config_types_loader_test;
 pub mod config_update_test;
 pub mod config_watcher_test;
 pub mod context_window_test;
+pub mod corrupted_tool_call_test;
 #[cfg(feature = "telegram")]
 pub mod cowork_connect_test;
 pub mod cron_profile_isolation_test;
