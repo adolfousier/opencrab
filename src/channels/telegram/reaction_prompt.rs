@@ -4,8 +4,13 @@
 //! When a user reacts to one of the bot's messages, `handle_reaction` turns the
 //! emoji into an agent turn. These helpers give that turn meaning: a positive
 //! reaction reads as approval / "on the right path, keep going", a negative one
-//! as "pause and ask what to change", and every prompt addresses the person by
-//! their first name so the acknowledgement lands naturally.
+//! as "pause and ask what to change".
+//!
+//! A reaction is a lightweight acknowledgement, not a request, so the default
+//! response is to react back with a single emoji and NO text. Answering every
+//! reaction with prose is noise, and in a group where several people react it
+//! multiplies into spam. Only a negative reaction (someone flagging a problem)
+//! genuinely warrants a text reply.
 //!
 //! Pure and channel-agnostic so it stays unit-testable without a live bot.
 
@@ -40,30 +45,43 @@ pub(crate) fn classify_reaction(emoji: &str) -> ReactionSentiment {
 }
 
 /// Build the synthetic prompt handed to the agent when `first_name` reacts with
-/// `emoji` to the bot message previewed by `preview`. Frames the sentiment and
-/// tells the agent to address the person by first name.
-pub(crate) fn build_reaction_prompt(first_name: &str, emoji: &str, preview: &str) -> String {
+/// `emoji` to the bot message previewed by `preview`. React-only is the default;
+/// only a negative reaction warrants text. `is_group` hardens the react-only
+/// steer, since in a group a text reply per reaction is noise for everyone else.
+pub(crate) fn build_reaction_prompt(
+    first_name: &str,
+    emoji: &str,
+    preview: &str,
+    is_group: bool,
+) -> String {
     let steer = match classify_reaction(emoji) {
-        ReactionSentiment::Positive => format!(
-            "This reads as approval from {first_name}: you're on the right path. Acknowledge \
-             {first_name} by first name and keep the momentum. If you had proposed a next \
-             step or a turn is in progress, treat it as a green light to proceed."
-        ),
         ReactionSentiment::Negative => format!(
-            "This reads as {first_name} flagging that something is off. Address {first_name} \
-             by first name, pause rather than press on, and ask what they'd like changed."
+            "This reads as {first_name} flagging that something is off. This is the one case \
+             that warrants a short reply: address {first_name} by first name, pause rather than \
+             press on, and ask what they'd like changed."
         ),
-        ReactionSentiment::Neutral => {
-            format!("Acknowledge {first_name} by first name and respond naturally.")
+        ReactionSentiment::Positive | ReactionSentiment::Neutral => {
+            let group_note = if is_group {
+                " This is a group, so a text reply is noise for everyone else: react-only unless \
+                 a text response is genuinely necessary."
+            } else {
+                ""
+            };
+            format!(
+                "This is a lightweight acknowledgement from {first_name}, not a request. Default \
+                 to reacting back with a single emoji and NO text.{group_note} Only write text if \
+                 you have something genuinely new and useful to add, which a reaction almost never \
+                 calls for."
+            )
         }
     };
     format!(
         "[Reaction notification] {first_name} reacted with {emoji} to your message:\n\
          \"{preview}\"\n\n\
          {steer}\n\n\
-         You may react back (use <<react:EMOJI>>), reply with text, or do both. If the \
-         reaction doesn't warrant a text response, reply with <<react:{emoji}>> to silently \
-         acknowledge."
+         To acknowledge silently, reply with ONLY <<react:EMOJI>> (e.g. <<react:🙏>> or \
+         <<react:{emoji}>>) and no other text. That is the expected response for a routine \
+         reaction."
     )
 }
 

@@ -40,7 +40,7 @@ fn classification_ignores_surrounding_whitespace() {
 
 #[test]
 fn prompt_addresses_user_by_first_name() {
-    let out = build_reaction_prompt("Adolfo", "🔥", "the fold fix is committed");
+    let out = build_reaction_prompt("Adolfo", "🔥", "the fold fix is committed", false);
     // First name appears, not the generic User "..." framing.
     assert!(out.contains("Adolfo"));
     assert!(!out.contains("User \""));
@@ -52,15 +52,31 @@ fn prompt_addresses_user_by_first_name() {
 }
 
 #[test]
-fn positive_prompt_frames_encouragement_and_greenlight() {
-    let out = build_reaction_prompt("Carlos", "💯", "shipping it now");
-    assert!(out.to_lowercase().contains("approval"));
-    assert!(out.to_lowercase().contains("proceed"));
+fn positive_reaction_defaults_to_react_only() {
+    // A positive reaction is an ack, not a request: default to reacting back
+    // with no text, not writing a paragraph (the group-spam bug, #309).
+    let out = build_reaction_prompt("Carlos", "💯", "shipping it now", false);
+    let lower = out.to_lowercase();
+    assert!(lower.contains("no text"));
+    assert!(lower.contains("react"));
+    // Must not carry the old "keep the momentum / proceed" text bias.
+    assert!(!lower.contains("keep the momentum"));
+}
+
+#[test]
+fn group_reaction_hardens_react_only_but_dm_does_not() {
+    // In a group a text reply per reaction is noise, so the steer says so;
+    // a DM keeps the plain react-only default without the group note.
+    let group = build_reaction_prompt("Carlos", "👍", "done", true);
+    let dm = build_reaction_prompt("Carlos", "👍", "done", false);
+    assert!(group.to_lowercase().contains("group"));
+    assert!(!dm.to_lowercase().contains("this is a group"));
 }
 
 #[test]
 fn negative_prompt_frames_pause_and_ask() {
-    let out = build_reaction_prompt("Felipe", "👎", "here is the plan");
+    // The one sentiment that DOES warrant text: pause and ask what to change.
+    let out = build_reaction_prompt("Felipe", "👎", "here is the plan", true);
     assert!(out.to_lowercase().contains("pause"));
     assert!(out.to_lowercase().contains("ask"));
 }

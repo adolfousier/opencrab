@@ -4843,7 +4843,8 @@ pub(crate) async fn handle_reaction(
         return Ok(());
     }
 
-    let prompt = super::reaction_prompt::build_reaction_prompt(&user_name, &emoji, &preview);
+    let prompt =
+        super::reaction_prompt::build_reaction_prompt(&user_name, &emoji, &preview, !is_dm);
 
     tracing::info!(
         "Telegram reaction: {} ({}) reacted with {} on bot message {} in chat {}, \
