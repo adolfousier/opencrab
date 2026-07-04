@@ -361,6 +361,8 @@ pub mod split_pane_test;
 pub mod subagent_test;
 pub mod subagent_tool_description_test;
 pub mod telegram_resume_test;
+#[cfg(feature = "telegram")]
+pub mod telegram_send_retry_test;
 pub mod telegram_session_resolve_test;
 pub mod template_governance_test;
 pub mod token_tracking_test;

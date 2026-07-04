@@ -2208,10 +2208,12 @@ pub(crate) async fn handle_message(
                     })
                     .collect();
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(keyboard)
-                    .await?;
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
+                        .parse_mode(ParseMode::Html)
+                        .reply_markup(keyboard.clone())
+                })
+                .await?;
                 return Ok(());
             }
             ChannelCommand::NewSession => {
@@ -2278,7 +2280,10 @@ pub(crate) async fn handle_message(
                         let ctx_max = agent.context_limit_for_session(new_session.id);
                         let footer = crate::utils::format_ctx_footer(baseline, ctx_max, None);
                         let msg_text = format!("✅ New session started.\n\n{footer}");
-                        message_in_thread(&bot, msg.chat.id, thread_id, &msg_text).await?;
+                        send_retrying_rate_limit("command reply", || {
+                            message_in_thread(&bot, msg.chat.id, thread_id, &msg_text)
+                        })
+                        .await?;
                         tracing::info!(
                             "Telegram /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
                             footer,
@@ -2288,12 +2293,14 @@ pub(crate) async fn handle_message(
                     }
                     Err(e) => {
                         tracing::error!("Telegram: failed to create session: {}", e);
-                        message_in_thread(
-                            &bot,
-                            msg.chat.id,
-                            thread_id,
-                            "Failed to create session.",
-                        )
+                        send_retrying_rate_limit("command reply", || {
+                            message_in_thread(
+                                &bot,
+                                msg.chat.id,
+                                thread_id,
+                                "Failed to create session.",
+                            )
+                        })
                         .await?;
                     }
                 }
@@ -2316,10 +2323,12 @@ pub(crate) async fn handle_message(
                     })
                     .collect();
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(keyboard)
-                    .await?;
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
+                        .parse_mode(ParseMode::Html)
+                        .reply_markup(keyboard.clone())
+                })
+                .await?;
                 return Ok(());
             }
             ChannelCommand::Stop => {
@@ -2329,7 +2338,10 @@ pub(crate) async fn handle_message(
                 } else {
                     "No operation in progress."
                 };
-                message_in_thread(&bot, msg.chat.id, thread_id, reply).await?;
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(&bot, msg.chat.id, thread_id, reply)
+                })
+                .await?;
                 return Ok(());
             }
             ChannelCommand::ChangeDir(resp) => {
@@ -2345,23 +2357,30 @@ pub(crate) async fn handle_message(
 
                 let rows = build_cd_keyboard(&resp);
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(keyboard)
-                    .await?;
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
+                        .parse_mode(ParseMode::Html)
+                        .reply_markup(keyboard.clone())
+                })
+                .await?;
                 return Ok(());
             }
             ChannelCommand::Profiles(resp) => {
                 let rows = build_profiles_keyboard(&resp);
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(keyboard)
-                    .await?;
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(&bot, msg.chat.id, thread_id, command_md_to_html(&resp.text))
+                        .parse_mode(ParseMode::Html)
+                        .reply_markup(keyboard.clone())
+                })
+                .await?;
                 return Ok(());
             }
             ChannelCommand::Compact => {
-                message_in_thread(&bot, msg.chat.id, thread_id, "⏳ Compacting context...").await?;
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(&bot, msg.chat.id, thread_id, "⏳ Compacting context...")
+                })
+                .await?;
                 text = "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                     .to_string();
                 // fall through to agent
@@ -2391,14 +2410,16 @@ pub(crate) async fn handle_message(
                     path.display(),
                     resp.text
                 );
-                message_in_thread(
-                    &bot,
-                    msg.chat.id,
-                    thread_id,
-                    command_md_to_html(&success_text),
-                )
-                .parse_mode(ParseMode::Html)
-                .reply_markup(keyboard)
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(
+                        &bot,
+                        msg.chat.id,
+                        thread_id,
+                        command_md_to_html(&success_text),
+                    )
+                    .parse_mode(ParseMode::Html)
+                    .reply_markup(keyboard.clone())
+                })
                 .await?;
                 return Ok(());
             }
@@ -2407,7 +2428,10 @@ pub(crate) async fn handle_message(
                     "❌ Failed to create profile: {}\n\nTry again with /profiles",
                     e
                 );
-                message_in_thread(&bot, msg.chat.id, thread_id, &err_text).await?;
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(&bot, msg.chat.id, thread_id, &err_text)
+                })
+                .await?;
                 return Ok(());
             }
         }
@@ -5458,6 +5482,47 @@ async fn try_send_intermediate_rich(
         Err(e) => {
             tracing::warn!("Telegram: intermediate rich send failed, using HTML: {e}");
             None
+        }
+    }
+}
+
+/// Run a Telegram send, waiting out `RetryAfter` (429) up to 3 attempts.
+///
+/// Command replies are programmatic: a per-chat rate limit (typically a
+/// streaming turn editing its placeholder into the same chat) must DELAY
+/// them, never drop them. The command branches used a bare `.await?`, so
+/// the 429 propagated out of the handler and the reply vanished with a
+/// single error log line — /models looked "stuck" while a turn streamed
+/// and worked right after it completed (#297). Non-429 errors and
+/// exhausted retries still propagate to the caller.
+pub(crate) async fn send_retrying_rate_limit<T, F, Fut>(
+    what: &str,
+    mut send: F,
+) -> std::result::Result<T, teloxide::RequestError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::IntoFuture<Output = std::result::Result<T, teloxide::RequestError>>,
+{
+    const MAX_RETRIES: u32 = 3;
+    let mut attempt = 0u32;
+    loop {
+        match send().await {
+            Err(teloxide::RequestError::RetryAfter(secs)) if attempt < MAX_RETRIES => {
+                attempt += 1;
+                tracing::warn!(
+                    "Telegram: {what} rate-limited, waiting {}s before retry ({attempt}/{MAX_RETRIES})",
+                    secs.seconds()
+                );
+                tokio::time::sleep(secs.duration()).await;
+            }
+            Err(teloxide::RequestError::RetryAfter(secs)) => {
+                tracing::error!(
+                    "Telegram: {what} still rate-limited after {MAX_RETRIES} retries ({}s) — giving up",
+                    secs.seconds()
+                );
+                return Err(teloxide::RequestError::RetryAfter(secs));
+            }
+            other => return other,
         }
     }
 }
