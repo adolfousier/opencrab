@@ -4,6 +4,12 @@
 //! comes out via `printpdf` using built-in PDF fonts (Helvetica), so no
 //! font files or host dependencies are needed. Layout is a simple top-down
 //! flow with word wrapping and automatic page breaks.
+//!
+//! Built-in PDF fonts are WinAnsi-encoded and printpdf writes text bytes
+//! through unre-encoded, so any non-ASCII character renders as mojibake
+//! ("â€™" instead of an apostrophe). All text is therefore transliterated
+//! to ASCII up front: common punctuation maps to close equivalents, known
+//! status emoji map to readable tags, anything else becomes '?'.
 
 use super::docx::BlockSpec;
 use printpdf::{
@@ -40,6 +46,21 @@ fn wrap(text: &str, size_pt: f32, width_mm: f32) -> Vec<String> {
     for raw_line in text.split('\n') {
         let mut current = String::new();
         for word in raw_line.split_whitespace() {
+            // Hard-split words longer than a full line (paths, URLs) so
+            // they wrap instead of running over the column/page edge.
+            let mut word = word;
+            while word.chars().count() > max_chars {
+                if !current.is_empty() {
+                    lines.push(std::mem::take(&mut current));
+                }
+                let split_at = word
+                    .char_indices()
+                    .nth(max_chars)
+                    .map(|(i, _)| i)
+                    .unwrap_or(word.len());
+                lines.push(word[..split_at].to_string());
+                word = &word[split_at..];
+            }
             let candidate_len = if current.is_empty() {
                 word.chars().count()
             } else {
@@ -66,6 +87,33 @@ fn cell_text(cell: &Value) -> String {
     }
 }
 
+/// Transliterate to ASCII so builtin WinAnsi fonts render it correctly.
+/// Never drops content silently: unmappable characters become '?'.
+fn ascii_safe(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            _ if c.is_ascii() => out.push(c),
+            '\u{2014}' | '\u{2013}' | '\u{2212}' => out.push('-'),
+            '\u{2018}' | '\u{2019}' => out.push('\''),
+            '\u{201c}' | '\u{201d}' => out.push('"'),
+            '\u{2026}' => out.push_str("..."),
+            '\u{2022}' | '\u{00b7}' => out.push('-'),
+            '\u{00a0}' => out.push(' '),
+            '\u{2705}' | '\u{2714}' | '\u{2713}' => out.push_str("[OK]"),
+            '\u{274c}' | '\u{2716}' => out.push_str("[X]"),
+            '\u{26a0}' => out.push_str("[!]"),
+            '\u{2192}' => out.push_str("->"),
+            '\u{2190}' => out.push_str("<-"),
+            // Zero-width / variation selectors: drop, they are formatting
+            // artifacts of emoji sequences, not content.
+            '\u{fe0f}' | '\u{200d}' | '\u{200b}' => {}
+            _ => out.push('?'),
+        }
+    }
+    out
+}
+
 fn heading_size(level: u8) -> f32 {
     match level {
         1 => 20.0,
@@ -82,7 +130,10 @@ fn layout(blocks: &[BlockSpec]) -> Vec<Line> {
         match block {
             BlockSpec::Heading { text, level } => {
                 let size = heading_size((*level).clamp(1, 3));
-                for (i, l) in wrap(text, size, body_width).into_iter().enumerate() {
+                for (i, l) in wrap(&ascii_safe(text), size, body_width)
+                    .into_iter()
+                    .enumerate()
+                {
                     lines.push(Line {
                         text: l,
                         bold: true,
@@ -93,7 +144,10 @@ fn layout(blocks: &[BlockSpec]) -> Vec<Line> {
                 }
             }
             BlockSpec::Paragraph { text, bold } => {
-                for (i, l) in wrap(text, 11.0, body_width).into_iter().enumerate() {
+                for (i, l) in wrap(&ascii_safe(text), 11.0, body_width)
+                    .into_iter()
+                    .enumerate()
+                {
                     lines.push(Line {
                         text: l,
                         bold: *bold,
@@ -110,7 +164,10 @@ fn layout(blocks: &[BlockSpec]) -> Vec<Line> {
                     } else {
                         "• ".to_string()
                     };
-                    for (i, l) in wrap(item, 11.0, body_width - 6.0).into_iter().enumerate() {
+                    for (i, l) in wrap(&ascii_safe(item), 11.0, body_width - 6.0)
+                        .into_iter()
+                        .enumerate()
+                    {
                         lines.push(Line {
                             text: if i == 0 { format!("{marker}{l}") } else { l },
                             bold: false,
@@ -127,12 +184,22 @@ fn layout(blocks: &[BlockSpec]) -> Vec<Line> {
                 for (r, row) in rows.iter().enumerate() {
                     // Wrap every cell, then emit line-by-line so multi-line
                     // cells keep the row aligned.
+                    // Wrap 2mm short of the column edge; header rows are
+                    // bold (wider glyphs), so give them extra slack.
+                    let slack = if *header_bold && r == 0 { 4.0 } else { 2.0 };
                     let wrapped: Vec<Vec<String>> = row
                         .iter()
-                        .map(|c| wrap(&cell_text(c), 10.0, col_width - 2.0))
+                        .map(|c| wrap(&ascii_safe(&cell_text(c)), 10.0, col_width - slack))
                         .collect();
                     let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
                     for line_idx in 0..height {
+                        // The FIRST emitted cell of each visual row-line
+                        // advances the baseline; the rest share it. Keying
+                        // the advance on column 0 skipped the advance
+                        // whenever column 0 had fewer wrapped lines than a
+                        // sibling, stacking later cells onto the previous
+                        // line (visible as overlapping table text).
+                        let mut advanced = false;
                         for (c, cell_lines) in wrapped.iter().enumerate() {
                             if let Some(text) = cell_lines.get(line_idx)
                                 && !text.is_empty()
@@ -142,11 +209,9 @@ fn layout(blocks: &[BlockSpec]) -> Vec<Line> {
                                     bold: *header_bold && r == 0,
                                     size: 10.0,
                                     indent_mm: c as f32 * col_width,
-                                    // Only the first cell of the first line of
-                                    // a row advances the cursor; siblings are
-                                    // placed on the same baseline.
-                                    gap_before_mm: if c == 0 { 0.0 } else { -1.0 },
+                                    gap_before_mm: if advanced { -1.0 } else { 0.0 },
                                 });
+                                advanced = true;
                             }
                         }
                     }
