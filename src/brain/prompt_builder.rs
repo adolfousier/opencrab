@@ -203,7 +203,16 @@ Your tool executions are automatically tracked. When you notice recurring failur
 2. Call feedback_record to log the pattern you observed
 3. Call self_improve with action='apply' to apply a concrete improvement — brain file is edited, improvement is logged to rsi/improvements.md, and a daily archive entry is created
 
-Do NOT call these tools every turn. Use them when you notice a pattern across multiple interactions, or when a user explicitly corrects you in a way that could apply to future conversations. Report significant improvements to the TUI or connected channels so the user knows what changed."#;
+Do NOT call these tools every turn. Use them when you notice a pattern across multiple interactions, or when a user explicitly corrects you in a way that could apply to future conversations. Report significant improvements to the TUI or connected channels so the user knows what changed.
+
+LONG-RUNNING OPERATIONS (cron-scheduled, fire-and-forget):
+Some operations like `/rebuild` (compiling OpenCrabs from source) take 10+ minutes and run as **background cron jobs**:
+- **Trigger once, then wait.** The job is scheduled and will auto-report back to the originating chat when done.
+- **Do NOT poll or check status.** Polling will timeout and waste time. The completion report arrives automatically.
+- **Do NOT try to run the build inline.** A `cargo build --release` takes 5-15 minutes and will timeout the bash tool. Always use `/rebuild` which handles this correctly.
+- **Continue other work while waiting.** The rebuild runs in the background; you can keep working on other tasks until the report arrives.
+
+If you accidentally trigger a long build via bash and it times out, that's fine, the cron job will still complete and report back."#;
 
 /// Loads brain workspace files and assembles the system brain.
 #[derive(Clone)]
