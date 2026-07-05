@@ -74,7 +74,11 @@ impl Tool for GenerateDocumentTool {
         metadata title). \
         PPTX: pass `slides`, each {title, bullets?:[...], notes?}. \
         Use this instead of CSV/markdown files whenever the user asks for a \
-        spreadsheet, formulas, a Word document, a PDF, or a slide deck."
+        spreadsheet, formulas, a Word document, a PDF, or a slide deck. \
+        On channels, deliver the generated file as a downloadable attachment in \
+        the same turn: telegram_send `send_document` (document_url takes the \
+        local path), whatsapp_send `send_document`, or discord_send `send_file`. \
+        Do not just paste the file path unless the user asked where it is saved."
     }
 
     fn input_schema(&self) -> Value {
