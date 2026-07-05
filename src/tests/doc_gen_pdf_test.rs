@@ -153,7 +153,7 @@ fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
     // different heights) and simulate the emitter's y accounting. Any two
     // lines in the SAME column must land on DIFFERENT baselines; lines on a
     // shared baseline must be in different columns.
-    use crate::brain::tools::doc_gen::pdf::layout;
+    use crate::brain::tools::doc_gen::pdf::{LayoutItem, layout};
 
     let specs = blocks(json!([
         {"type": "table", "rows": [
@@ -166,19 +166,25 @@ fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
              "Yes - draft_streaming, ProviderStream", "WRONG - WE HAVE IT"]
         ]}
     ]));
-    let lines = layout(&specs);
-    assert!(lines.len() > 10, "table must produce many lines");
+    let items = layout(&specs);
 
     // Simulate the emitter: negative gap = same baseline, else advance.
     let mut y = 297.0f32 - 20.0;
     let mut placed: Vec<(f32, f32, String)> = Vec::new(); // (y, x, text)
-    for l in &lines {
-        let h = l.size * 0.352_778 * 1.35;
-        if l.gap_before_mm >= 0.0 {
-            y -= l.gap_before_mm + h;
+    for item in &items {
+        match item {
+            LayoutItem::Gap(mm) => y -= mm,
+            LayoutItem::Rule { .. } => {}
+            LayoutItem::Text(l) => {
+                let h = l.size * 0.352_778 * 1.35;
+                if l.gap_before_mm >= 0.0 {
+                    y -= l.gap_before_mm + h;
+                }
+                placed.push((y, l.indent_mm, l.text.clone()));
+            }
         }
-        placed.push((y, l.indent_mm, l.text.clone()));
     }
+    assert!(placed.len() > 10, "table must produce many lines");
     for (i, a) in placed.iter().enumerate() {
         for b in placed.iter().skip(i + 1) {
             if (a.0 - b.0).abs() < 0.01 {
@@ -193,4 +199,66 @@ fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
             }
         }
     }
+}
+
+#[test]
+fn table_columns_size_to_content() {
+    // A single-digit "#" column must stay narrow while verbose columns get
+    // the freed space; no column may exceed the max share cap.
+    use crate::brain::tools::doc_gen::pdf::{LayoutItem, layout};
+
+    let specs = blocks(json!([
+        {"type": "table", "rows": [
+            ["#", "Feature", "Verdict"],
+            ["1", "Multiple bot accounts", "TRUE GAP"],
+            ["2", "Rich messages (image+text)", "WRONG: rich/api.rs"],
+            ["17", "Slash commands", "WRONG: commands.toml"]
+        ]}
+    ]));
+    let items = layout(&specs);
+    // Collect the distinct x offsets used by table text: these are the
+    // column starts. The second column's start is the first column's width.
+    let mut xs: Vec<f32> = items
+        .iter()
+        .filter_map(|i| match i {
+            LayoutItem::Text(l) => Some(l.indent_mm),
+            _ => None,
+        })
+        .collect();
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    xs.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+    assert_eq!(xs.len(), 3, "three column starts, got {xs:?}");
+    let body = 210.0 - 40.0;
+    let col0_width = xs[1] - xs[0];
+    assert!(
+        col0_width < body * 0.15,
+        "digit column must stay narrow, got {col0_width}mm of {body}mm"
+    );
+    // No column exceeds the cap (45% of body width).
+    let col1_width = xs[2] - xs[1];
+    assert!(col1_width <= body * 0.45 + 0.1);
+}
+
+#[test]
+fn tables_emit_header_separator_and_row_rules() {
+    use crate::brain::tools::doc_gen::pdf::{LayoutItem, layout};
+
+    let specs = blocks(json!([
+        {"type": "table", "rows": [
+            ["A", "B"],
+            ["1", "2"],
+            ["3", "4"]
+        ]}
+    ]));
+    let items = layout(&specs);
+    let heavy = items
+        .iter()
+        .filter(|i| matches!(i, LayoutItem::Rule { heavy: true, .. }))
+        .count();
+    let light = items
+        .iter()
+        .filter(|i| matches!(i, LayoutItem::Rule { heavy: false, .. }))
+        .count();
+    assert_eq!(heavy, 1, "exactly one header separator");
+    assert_eq!(light, 1, "one light rule between the two data rows");
 }
