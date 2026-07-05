@@ -5249,7 +5249,7 @@ fn build_status_message(
     };
 
     Some(format!(
-        "<b>⚙️ {}{}</b>",
+        "⚙️ {}{}",
         action,
         if tool_round_count > 0 && elapsed_secs >= 5 {
             format!(" (tool {}, {})", tool_round_count, elapsed)
