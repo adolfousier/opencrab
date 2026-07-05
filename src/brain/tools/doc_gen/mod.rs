@@ -9,6 +9,7 @@
 //! (spec in, file out) so it is testable without the tool plumbing.
 
 pub(crate) mod docx;
+pub(crate) mod pdf;
 pub(crate) mod xlsx;
 
 use super::error::{Result, ToolError};
@@ -17,9 +18,9 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// Generate Document Tool: creates XLSX (native, with formulas) and DOCX
-/// (native, styled blocks) files from structured content. Further formats
-/// get native backends as they land.
+/// Generate Document Tool: creates XLSX (native, with formulas), DOCX and
+/// PDF (native, styled blocks) files from structured content. All backends
+/// run inside the binary with zero host dependencies.
 pub struct GenerateDocumentTool;
 
 #[derive(Debug, Deserialize)]
@@ -34,9 +35,14 @@ pub(crate) struct GenerateDocumentInput {
     #[serde(default)]
     pub sheets: Vec<xlsx::SheetSpec>,
 
-    /// DOCX: content blocks in order (required when format is "docx").
+    /// DOCX/PDF: content blocks in order (required for those formats).
     #[serde(default)]
     pub blocks: Vec<docx::BlockSpec>,
+
+    /// PDF: document title for the PDF metadata (optional; defaults to the
+    /// output file stem).
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[async_trait]
@@ -46,19 +52,21 @@ impl Tool for GenerateDocumentTool {
     }
 
     fn description(&self) -> &str {
-        "Create documents from structured content. Formats: \"xlsx\" and \"docx\", \
-        both generated natively. \
+        "Create documents from structured content. Formats: \"xlsx\", \"docx\", \"pdf\", \
+        all generated natively. \
         XLSX: pass `sheets`, each with a `name` and `rows` (array of rows, each row \
         an array of cells). A cell is a string, number, or boolean; a string \
         starting with \"=\" is written as a live Excel FORMULA (e.g. \
         \"=SUM(B2:B10)\"), so totals recalculate when the user edits the file. \
         Optional per sheet: `header_bold` (default true), `column_widths`. \
-        DOCX: pass `blocks` in order, each one of: {type:\"heading\", text, level \
-        1-3}, {type:\"paragraph\", text, bold?}, {type:\"list\", items:[...], \
-        ordered?}, {type:\"table\", rows:[[...]], header_bold?}. Headings become \
-        real Word styles, lists real numbering. \
+        DOCX and PDF: pass `blocks` in order, each one of: {type:\"heading\", text, \
+        level 1-3}, {type:\"paragraph\", text, bold?}, {type:\"list\", items:[...], \
+        ordered?}, {type:\"table\", rows:[[...]], header_bold?}. In Word output, \
+        headings become real styles and lists real numbering; PDF output is A4 \
+        with automatic wrapping and page breaks (optional `title` sets the PDF \
+        metadata title). \
         Use this instead of CSV/markdown files whenever the user asks for a \
-        spreadsheet, formulas, or a Word document."
+        spreadsheet, formulas, a Word document, or a PDF."
     }
 
     fn input_schema(&self) -> Value {
@@ -67,8 +75,8 @@ impl Tool for GenerateDocumentTool {
             "properties": {
                 "format": {
                     "type": "string",
-                    "enum": ["xlsx", "docx"],
-                    "description": "Output format. \"xlsx\" creates an Excel workbook, \"docx\" a Word document."
+                    "enum": ["xlsx", "docx", "pdf"],
+                    "description": "Output format. \"xlsx\" creates an Excel workbook, \"docx\" a Word document, \"pdf\" a PDF."
                 },
                 "output": {
                     "type": "string",
@@ -102,9 +110,13 @@ impl Tool for GenerateDocumentTool {
                         "required": ["name", "rows"]
                     }
                 },
+                "title": {
+                    "type": "string",
+                    "description": "PDF metadata title (pdf only; defaults to the output file stem)."
+                },
                 "blocks": {
                     "type": "array",
-                    "description": "Content blocks in order (docx). At least one required.",
+                    "description": "Content blocks in order (docx/pdf). At least one required.",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -149,16 +161,17 @@ impl Tool for GenerateDocumentTool {
                 }
                 Ok(())
             }
-            "docx" => {
+            "docx" | "pdf" => {
                 if parsed.blocks.is_empty() {
-                    return Err(ToolError::InvalidInput(
-                        "format \"docx\" requires at least one entry in `blocks`".to_string(),
-                    ));
+                    return Err(ToolError::InvalidInput(format!(
+                        "format \"{}\" requires at least one entry in `blocks`",
+                        parsed.format
+                    )));
                 }
                 Ok(())
             }
             other => Err(ToolError::InvalidInput(format!(
-                "Unsupported format \"{other}\" (supported: xlsx, docx)"
+                "Unsupported format \"{other}\" (supported: xlsx, docx, pdf)"
             ))),
         }
     }
@@ -190,8 +203,22 @@ impl Tool for GenerateDocumentTool {
                 ))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to create document: {e}"))),
             },
+            "pdf" => {
+                let title = input.title.clone().unwrap_or_else(|| {
+                    path.file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "Document".to_string())
+                });
+                match pdf::write_pdf(&path, &input.blocks, &title) {
+                    Ok(summary) => Ok(ToolResult::success(format!(
+                        "Created {} ({summary})",
+                        path.display()
+                    ))),
+                    Err(e) => Ok(ToolResult::error(format!("Failed to create PDF: {e}"))),
+                }
+            }
             other => Ok(ToolResult::error(format!(
-                "Unsupported format \"{other}\" (supported: xlsx, docx)"
+                "Unsupported format \"{other}\" (supported: xlsx, docx, pdf)"
             ))),
         }
     }
