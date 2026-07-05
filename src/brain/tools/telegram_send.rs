@@ -360,14 +360,20 @@ impl Tool for TelegramSendTool {
                 if !sent_rich {
                     for chunk in crate::channels::telegram::handler::split_message(&text, 4096) {
                         let chunk_str = chunk.to_string();
-                        match crate::channels::telegram::send::message_in_thread(
+                        // Convert markdown to Telegram HTML for consistent formatting
+                        // with auto-delivered agent responses (fixes #315).
+                        let html = crate::channels::telegram::handler::markdown_to_telegram_html(
+                            &chunk_str,
+                        );
+                        let result = crate::channels::telegram::send::message_in_thread(
                             &bot,
                             ChatId(chat_id),
                             thread_id,
-                            chunk_str.clone(),
+                            html,
                         )
-                        .await
-                        {
+                        .parse_mode(teloxide::types::ParseMode::Html)
+                        .await;
+                        match result {
                             Ok(m) => sent.push((m.id.0, chunk_str)),
                             Err(e) => {
                                 return Ok(ToolResult::error(format!("Failed to send: {e}")));
