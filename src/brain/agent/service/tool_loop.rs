@@ -3543,7 +3543,7 @@ impl AgentService {
                         cb(
                             session_id,
                             ProgressEvent::QueuedUserMessage {
-                                text: queued_msg.clone(),
+                                text: queued_msg.display_text.clone(),
                             },
                         );
                     }
@@ -3558,11 +3558,14 @@ impl AgentService {
                         .collect::<Vec<_>>()
                         .join("\n");
                     context.add_message(Message::assistant(assistant_text));
-                    let injected = Message::user(queued_msg.clone());
+                    let injected = Message::user(queued_msg.context_text.clone());
                     context.add_message(injected);
-                    let _ = message_service
-                        .create_message(session_id, "user".to_string(), queued_msg)
-                        .await;
+                    if let Err(e) = message_service
+                        .create_message(session_id, "user".to_string(), queued_msg.display_text)
+                        .await
+                    {
+                        tracing::error!("Failed to persist queued user message: {e}");
+                    }
                     // Create a NEW assistant placeholder so the next response
                     // gets a sequence number AFTER the queued user message.
                     // Without this, the next LLM response appends to the old
@@ -5163,18 +5166,21 @@ impl AgentService {
                     cb(
                         session_id,
                         ProgressEvent::QueuedUserMessage {
-                            text: queued_msg.clone(),
+                            text: queued_msg.display_text.clone(),
                         },
                     );
                 }
 
-                let injected = Message::user(queued_msg.clone());
+                let injected = Message::user(queued_msg.context_text.clone());
                 context.add_message(injected);
 
                 // Save to database so conversation history stays consistent
-                let _ = message_service
-                    .create_message(session_id, "user".to_string(), queued_msg)
-                    .await;
+                if let Err(e) = message_service
+                    .create_message(session_id, "user".to_string(), queued_msg.display_text)
+                    .await
+                {
+                    tracing::error!("Failed to persist queued user message: {e}");
+                }
                 // Create a NEW assistant placeholder so the next response
                 // gets a sequence number AFTER the queued user message.
                 assistant_db_msg = message_service

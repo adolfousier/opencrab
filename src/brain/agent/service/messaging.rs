@@ -19,9 +19,25 @@ impl AgentService {
         user_message: String,
         model: Option<String>,
     ) -> Result<AgentResponse> {
+        self.send_message_with_display(session_id, user_message, None, model)
+            .await
+    }
+
+    /// Like [`send_message`](Self::send_message) but history persists
+    /// `display_text` (when set) instead of the full `user_message`, which
+    /// only feeds the LLM context for this turn. Use for synthetic prompts
+    /// (reaction guidance, queued mid-turn feedback) so scaffolding never
+    /// shows in the TUI or re-enters future context.
+    pub async fn send_message_with_display(
+        &self,
+        session_id: Uuid,
+        user_message: String,
+        display_text: Option<String>,
+        model: Option<String>,
+    ) -> Result<AgentResponse> {
         // Prepare message context (common setup logic)
         let (_model_name, request, message_service, session_service) = self
-            .prepare_message_context(session_id, user_message, model)
+            .prepare_message_context_with_display(session_id, user_message, display_text, model)
             .await?;
 
         // Send to provider — use session's provider so a concurrent

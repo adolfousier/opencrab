@@ -114,7 +114,9 @@ pub struct TelegramState {
     /// injected into that turn's tool loop between rounds. Keyed by session_id,
     /// drained FIFO (#302 Stage 2). `std::sync::Mutex` (not tokio) so the drain
     /// callback and the RAII active-turn guard can touch it without awaiting.
-    pending_reactions: std::sync::Mutex<HashMap<Uuid, std::collections::VecDeque<String>>>,
+    pending_reactions: std::sync::Mutex<
+        HashMap<Uuid, std::collections::VecDeque<crate::brain::agent::QueuedUserMessage>>,
+    >,
     /// Sessions with an agent turn currently in flight, so `handle_reaction` can
     /// tell mid-turn (enqueue for injection) from idle (fire a standalone turn).
     /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
@@ -420,15 +422,22 @@ impl TelegramState {
     }
 
     /// Enqueue a mid-turn reaction message for injection into the running loop.
-    pub(crate) fn enqueue_reaction(&self, session_id: Uuid, text: String) {
+    pub(crate) fn enqueue_reaction(
+        &self,
+        session_id: Uuid,
+        msg: crate::brain::agent::QueuedUserMessage,
+    ) {
         if let Ok(mut map) = self.pending_reactions.lock() {
-            map.entry(session_id).or_default().push_back(text);
+            map.entry(session_id).or_default().push_back(msg);
         }
     }
 
     /// Pop the next queued reaction for `session_id` (FIFO), if any. Removes the
     /// per-session entry once its queue is empty so the map doesn't grow.
-    pub(crate) fn drain_reaction(&self, session_id: Uuid) -> Option<String> {
+    pub(crate) fn drain_reaction(
+        &self,
+        session_id: Uuid,
+    ) -> Option<crate::brain::agent::QueuedUserMessage> {
         let mut map = self.pending_reactions.lock().ok()?;
         let queue = map.get_mut(&session_id)?;
         let msg = queue.pop_front();

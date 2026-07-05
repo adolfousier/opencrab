@@ -33,6 +33,22 @@ impl AgentService {
         user_message: String,
         model: Option<String>,
     ) -> Result<(String, LLMRequest, MessageService, SessionService)> {
+        self.prepare_message_context_with_display(session_id, user_message, None, model)
+            .await
+    }
+
+    /// Like [`prepare_message_context`](Self::prepare_message_context) but
+    /// persists `display_text` (when set) to the DB instead of the full
+    /// `user_message`. The LLM context still receives `user_message`, so
+    /// turn-scoped scaffolding (reaction guidance, steering prefaces) reaches
+    /// the model without polluting session history or future context.
+    pub(super) async fn prepare_message_context_with_display(
+        &self,
+        session_id: Uuid,
+        user_message: String,
+        display_text: Option<String>,
+        model: Option<String>,
+    ) -> Result<(String, LLMRequest, MessageService, SessionService)> {
         // Get or create session
         let session_service = SessionService::new(self.context.clone());
         let _session = session_service
@@ -82,9 +98,14 @@ impl AgentService {
         let user_msg = Message::user(context_user_message);
         context.add_message(user_msg);
 
-        // Save user message to database
+        // Save user message to database. When a display override is set,
+        // history records the compact form; the full text was context-only.
         message_service
-            .create_message(session_id, "user".to_string(), user_message)
+            .create_message(
+                session_id,
+                "user".to_string(),
+                display_text.unwrap_or(user_message),
+            )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 

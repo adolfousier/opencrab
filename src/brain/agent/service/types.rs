@@ -189,8 +189,32 @@ pub type SshPasswordCallback = SudoCallback;
 /// was nullary and read from a single process-wide slot, so when two panes
 /// (or two channels) had concurrent agent loops, a message queued in pane A
 /// could be drained by pane B's agent and injected into the wrong session.
-pub type MessageQueueCallback =
-    Arc<dyn Fn(Uuid) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
+pub type MessageQueueCallback = Arc<
+    dyn Fn(Uuid) -> Pin<Box<dyn Future<Output = Option<QueuedUserMessage>> + Send>> + Send + Sync,
+>;
+
+/// A user message queued for injection between tool rounds, split into what
+/// the LLM sees and what persists. Synthetic steering prefaces and reaction
+/// guidance belong in `context_text` for the live turn ONLY; the DB and the
+/// TUI history get `display_text` (the user's actual words, or a compact
+/// "[System: ...]" tag), so prompt scaffolding never pollutes the session.
+#[derive(Debug, Clone)]
+pub struct QueuedUserMessage {
+    /// Full text injected into the LLM context for the live turn.
+    pub context_text: String,
+    /// What persists to the DB and shows in the session history.
+    pub display_text: String,
+}
+
+impl QueuedUserMessage {
+    /// A plain message with no synthetic framing: context and display match.
+    pub fn plain(text: String) -> Self {
+        Self {
+            context_text: text.clone(),
+            display_text: text,
+        }
+    }
+}
 
 /// Response from the agent
 #[derive(Debug, Clone)]

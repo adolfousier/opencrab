@@ -107,7 +107,12 @@ async fn test_message_queue_injection_between_tool_calls() {
     let queues_clone = queues.clone();
     let message_queue_callback: MessageQueueCallback = Arc::new(move |session_id: Uuid| {
         let q = queues_clone.clone();
-        Box::pin(async move { q.lock().await.remove(&session_id) })
+        Box::pin(async move {
+            q.lock()
+                .await
+                .remove(&session_id)
+                .map(crate::brain::agent::QueuedUserMessage::plain)
+        })
     });
 
     let agent_service = AgentService::new_for_test(provider, context.clone())
@@ -166,7 +171,12 @@ async fn test_message_queue_empty_no_injection() {
     let queues_clone = queues.clone();
     let message_queue_callback: MessageQueueCallback = Arc::new(move |session_id: Uuid| {
         let q = queues_clone.clone();
-        Box::pin(async move { q.lock().await.remove(&session_id) })
+        Box::pin(async move {
+            q.lock()
+                .await
+                .remove(&session_id)
+                .map(crate::brain::agent::QueuedUserMessage::plain)
+        })
     });
 
     let agent_service = AgentService::new_for_test(provider, context.clone())
@@ -231,7 +241,12 @@ async fn test_message_queue_isolated_per_session() {
     let queues_clone = queues.clone();
     let message_queue_callback: MessageQueueCallback = Arc::new(move |session_id: Uuid| {
         let q = queues_clone.clone();
-        Box::pin(async move { q.lock().await.remove(&session_id) })
+        Box::pin(async move {
+            q.lock()
+                .await
+                .remove(&session_id)
+                .map(crate::brain::agent::QueuedUserMessage::plain)
+        })
     });
 
     let provider = Arc::new(MockProviderWithTools::new());

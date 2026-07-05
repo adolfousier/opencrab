@@ -614,7 +614,9 @@ async fn cmd_chat_inner(
                 // which also joined accumulated sends.
                 let joined = std::mem::take(entry).join("\n");
                 map.remove(&session_id);
-                Some(joined)
+                // TUI-typed follow-ups carry no synthetic framing: what the
+                // user typed is both the context and the persisted text.
+                Some(crate::brain::agent::QueuedUserMessage::plain(joined))
             })
         });
 

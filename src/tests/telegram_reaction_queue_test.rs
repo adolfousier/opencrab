@@ -1,5 +1,6 @@
 //! Tests for the mid-turn reaction queue and active-turn tracking (#302 Stage 2).
 
+use crate::brain::agent::QueuedUserMessage;
 use crate::channels::telegram::TelegramState;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -9,16 +10,17 @@ fn reactions_drain_fifo_per_session() {
     let state = Arc::new(TelegramState::new());
     let s1 = Uuid::new_v4();
     let s2 = Uuid::new_v4();
-    state.enqueue_reaction(s1, "first".to_string());
-    state.enqueue_reaction(s1, "second".to_string());
-    state.enqueue_reaction(s2, "other".to_string());
+    state.enqueue_reaction(s1, QueuedUserMessage::plain("first".to_string()));
+    state.enqueue_reaction(s1, QueuedUserMessage::plain("second".to_string()));
+    state.enqueue_reaction(s2, QueuedUserMessage::plain("other".to_string()));
 
     // FIFO drain, and s2's queue is never touched by draining s1.
-    assert_eq!(state.drain_reaction(s1).as_deref(), Some("first"));
-    assert_eq!(state.drain_reaction(s1).as_deref(), Some("second"));
-    assert_eq!(state.drain_reaction(s1), None);
-    assert_eq!(state.drain_reaction(s2).as_deref(), Some("other"));
-    assert_eq!(state.drain_reaction(s2), None);
+    let drained = |v: Option<QueuedUserMessage>| v.map(|m| m.context_text);
+    assert_eq!(drained(state.drain_reaction(s1)).as_deref(), Some("first"));
+    assert_eq!(drained(state.drain_reaction(s1)).as_deref(), Some("second"));
+    assert!(state.drain_reaction(s1).is_none());
+    assert_eq!(drained(state.drain_reaction(s2)).as_deref(), Some("other"));
+    assert!(state.drain_reaction(s2).is_none());
 }
 
 #[test]
@@ -52,10 +54,13 @@ async fn queue_callback_drains_the_same_state() {
     // queue handle_reaction enqueues into.
     let state = Arc::new(TelegramState::new());
     let sid = Uuid::new_v4();
-    state.enqueue_reaction(sid, "queued".to_string());
+    state.enqueue_reaction(sid, QueuedUserMessage::plain("queued".to_string()));
 
     let cb = state.reaction_queue_callback();
-    assert_eq!(cb(sid).await.as_deref(), Some("queued"));
+    assert_eq!(
+        cb(sid).await.map(|m| m.context_text).as_deref(),
+        Some("queued")
+    );
     // Drained — nothing left.
-    assert_eq!(cb(sid).await, None);
+    assert!(cb(sid).await.is_none());
 }

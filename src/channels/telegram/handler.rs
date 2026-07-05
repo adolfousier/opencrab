@@ -3742,10 +3742,15 @@ pub(crate) async fn handle_message(
         );
         telegram_state.enqueue_reaction(
             session_id,
-            format!(
-                "[The user sent this follow-up while you were still working —                  factor it into the CURRENT task now, do not restart from scratch]:\n{}",
-                display_text
-            ),
+            crate::brain::agent::QueuedUserMessage {
+                context_text: format!(
+                    "[The user sent this follow-up while you were still working: factor it \
+                     into the CURRENT task now, do not restart from scratch]:\n{}",
+                    display_text
+                ),
+                // History shows what the user typed, not the steering preface.
+                display_text: display_text.clone(),
+            },
         );
         // Visible acknowledgment so the message never looks silently eaten.
         fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
@@ -4454,8 +4459,20 @@ pub(crate) async fn handle_message(
         leftover_reactions.push(r);
     }
     if !leftover_reactions.is_empty() {
-        let combined = leftover_reactions.join("\n\n");
-        match agent.send_message(session_id, combined, None).await {
+        let combined = leftover_reactions
+            .iter()
+            .map(|m| m.context_text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let combined_display = leftover_reactions
+            .iter()
+            .map(|m| m.display_text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        match agent
+            .send_message_with_display(session_id, combined, Some(combined_display), None)
+            .await
+        {
             Ok(resp) => {
                 let (txt, _imgs) = crate::utils::extract_img_markers(&resp.content);
                 let txt = crate::utils::sanitize::strip_llm_artifacts(&txt);
@@ -5239,7 +5256,13 @@ pub(crate) async fn handle_reaction(
     // round leftover is flushed by handle_message's drain-on-exit (#302 Stage 2).
     if telegram_state.is_turn_active(session_id) {
         let midturn = super::reaction_prompt::build_midturn_reaction_message(&user_name, &emoji);
-        telegram_state.enqueue_reaction(session_id, midturn);
+        telegram_state.enqueue_reaction(
+            session_id,
+            crate::brain::agent::QueuedUserMessage {
+                context_text: midturn,
+                display_text: format!("[System: {user_name} reacted with {emoji} mid-turn]"),
+            },
+        );
         tracing::info!(
             "Telegram reaction: {} reacted with {} mid-turn on session {} — queued for injection",
             user_name,
@@ -5264,7 +5287,14 @@ pub(crate) async fn handle_reaction(
     );
 
     // ── 8. Call agent ───────────────────────────────────────────────────
-    let response = match agent.send_message(session_id, prompt, None).await {
+    // The reaction guidance is turn-scoped scaffolding: the LLM gets the full
+    // prompt for THIS turn, but history persists only a compact system tag so
+    // the scaffolding never shows in the TUI or re-enters future context.
+    let display = format!("[System: {user_name} reacted with {emoji}]");
+    let response = match agent
+        .send_message_with_display(session_id, prompt, Some(display), None)
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(

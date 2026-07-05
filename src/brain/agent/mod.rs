@@ -13,5 +13,6 @@ pub use error::{AgentError, Result, format_user_error};
 pub use service::{
     AgentResponse, AgentService, AgentStreamResponse, ApprovalCallback, BrainRebuild,
     ChannelSessionEvent, FollowUpQuestionInfo, MessageQueueCallback, ProgressCallback,
-    ProgressEvent, QuestionCallback, SshPasswordCallback, SudoCallback, ToolApprovalInfo,
+    ProgressEvent, QuestionCallback, QueuedUserMessage, SshPasswordCallback, SudoCallback,
+    ToolApprovalInfo,
 };

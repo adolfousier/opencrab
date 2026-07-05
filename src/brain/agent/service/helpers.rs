@@ -103,7 +103,7 @@ impl AgentService {
         cancel_token: Option<&CancellationToken>,
         override_cb: Option<&ProgressCallback>,
         queue_cb: Option<&MessageQueueCallback>,
-        queued_out: Option<&tokio::sync::Mutex<Option<String>>>,
+        queued_out: Option<&tokio::sync::Mutex<Option<super::types::QueuedUserMessage>>>,
         suppress_callback: bool,
     ) -> std::result::Result<(LLMResponse, Option<String>), crate::brain::provider::ProviderError>
     {
