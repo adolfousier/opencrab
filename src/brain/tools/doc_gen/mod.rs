@@ -50,10 +50,11 @@ pub(crate) struct GenerateDocumentInput {
     #[serde(default)]
     pub slides: Vec<pptx::SlideSpec>,
 
-    /// PDF: optional visual styling (brand colors, page header/footer,
-    /// zebra tables). Defaults to the plain look.
+    /// Optional visual styling, interpreted per format (PDF: brand colors,
+    /// page furniture, zebra; XLSX: header fill, zebra, freeze, autofilter,
+    /// tab color). Defaults to the plain look.
     #[serde(default)]
-    pub style: Option<pdf::StyleSpec>,
+    pub style: Option<Value>,
 }
 
 #[async_trait]
@@ -157,7 +158,7 @@ impl Tool for GenerateDocumentTool {
                 },
                 "style": {
                     "type": "object",
-                    "description": "PDF only: visual styling. All fields optional.",
+                    "description": "Visual styling, interpreted per format. All fields optional. PDF: accent_color, text_color, page_header{text,logo_path}, page_footer{text,page_numbers}, zebra_rows. XLSX: header_fill, header_font_color, zebra_rows, freeze_header, autofilter, tab_color (hex colors); per-sheet column_formats on each sheet. Use when the user wants polished or branded output.",
                     "properties": {
                         "accent_color": {"type": "string", "description": "Hex color (\"#0A84FF\") for headings, H1 underline bar, and table header separator."},
                         "text_color": {"type": "string", "description": "Hex color for body text (default near-black)."},
@@ -252,13 +253,24 @@ impl Tool for GenerateDocumentTool {
             )));
         }
         match input.format.as_str() {
-            "xlsx" => match xlsx::write_workbook(&path, &input.sheets) {
-                Ok(summary) => Ok(ToolResult::success(format!(
-                    "Created {} ({summary})",
-                    path.display()
-                ))),
-                Err(e) => Ok(ToolResult::error(format!("Failed to create workbook: {e}"))),
-            },
+            "xlsx" => {
+                let style: xlsx::XlsxStyle = match input.style.clone() {
+                    Some(v) => match serde_json::from_value(v) {
+                        Ok(st) => st,
+                        Err(e) => {
+                            return Ok(ToolResult::error(format!("Invalid xlsx style: {e}")));
+                        }
+                    },
+                    None => xlsx::XlsxStyle::default(),
+                };
+                match xlsx::write_workbook(&path, &input.sheets, &style) {
+                    Ok(summary) => Ok(ToolResult::success(format!(
+                        "Created {} ({summary})",
+                        path.display()
+                    ))),
+                    Err(e) => Ok(ToolResult::error(format!("Failed to create workbook: {e}"))),
+                }
+            }
             "docx" => match docx::write_document(&path, &input.blocks) {
                 Ok(summary) => Ok(ToolResult::success(format!(
                     "Created {} ({summary})",
@@ -272,7 +284,15 @@ impl Tool for GenerateDocumentTool {
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_else(|| "Document".to_string())
                 });
-                let style = input.style.unwrap_or_default();
+                let style: pdf::StyleSpec = match input.style.clone() {
+                    Some(v) => match serde_json::from_value(v) {
+                        Ok(st) => st,
+                        Err(e) => {
+                            return Ok(ToolResult::error(format!("Invalid pdf style: {e}")));
+                        }
+                    },
+                    None => pdf::StyleSpec::default(),
+                };
                 match pdf::write_pdf(&path, &input.blocks, &title, &style) {
                     Ok(summary) => Ok(ToolResult::success(format!(
                         "Created {} ({summary})",

@@ -4,7 +4,7 @@
 //! `calamine` (the same crate `parse_document` uses), so the round trip
 //! proves the generated file is consumable by our own read side.
 
-use crate::brain::tools::doc_gen::xlsx::{SheetSpec, write_workbook};
+use crate::brain::tools::doc_gen::xlsx::{SheetSpec, XlsxStyle, write_workbook};
 use calamine::{DataType, Reader, Xlsx, open_workbook};
 use serde_json::json;
 
@@ -24,7 +24,7 @@ fn writes_values_and_reads_back_with_calamine() {
             ["Pears", 4, 3.0]
         ]
     }))];
-    let summary = write_workbook(&path, &sheets).expect("workbook written");
+    let summary = write_workbook(&path, &sheets, &XlsxStyle::default()).expect("workbook written");
     assert!(summary.contains("1 sheet(s)"));
     assert!(summary.contains("3 row(s)"));
 
@@ -49,7 +49,7 @@ fn equals_prefixed_strings_become_live_formulas() {
             ["", "", "=SUM(C2:C3)"]
         ]
     }))];
-    let summary = write_workbook(&path, &sheets).expect("workbook written");
+    let summary = write_workbook(&path, &sheets, &XlsxStyle::default()).expect("workbook written");
     assert!(summary.contains("3 formula(s)"));
 
     let mut wb: Xlsx<_> = open_workbook(&path).expect("readable workbook");
@@ -74,7 +74,7 @@ fn multiple_sheets_all_land() {
         spec(json!({"name": "One", "rows": [["a"]]})),
         spec(json!({"name": "Two", "rows": [["b"]]})),
     ];
-    write_workbook(&path, &sheets).expect("workbook written");
+    write_workbook(&path, &sheets, &XlsxStyle::default()).expect("workbook written");
     let wb: Xlsx<_> = open_workbook(&path).expect("readable workbook");
     let names = wb.sheet_names();
     assert!(names.contains(&"One".to_string()));
@@ -89,7 +89,7 @@ fn invalid_sheet_names_are_sanitized_not_fatal() {
         "name": "Q1/Q2: results [draft]? a very long sheet name over the limit",
         "rows": [["ok"]]
     }))];
-    write_workbook(&path, &sheets).expect("sanitized name still writes");
+    write_workbook(&path, &sheets, &XlsxStyle::default()).expect("sanitized name still writes");
     let wb: Xlsx<_> = open_workbook(&path).expect("readable workbook");
     let names = wb.sheet_names();
     assert_eq!(names.len(), 1);
@@ -107,7 +107,7 @@ fn null_cells_are_skipped_and_nested_json_is_stringified() {
         "header_bold": false,
         "rows": [[null, true, {"k": 1}]]
     }))];
-    write_workbook(&path, &sheets).expect("workbook written");
+    write_workbook(&path, &sheets, &XlsxStyle::default()).expect("workbook written");
     let mut wb: Xlsx<_> = open_workbook(&path).expect("readable workbook");
     let range = wb.worksheet_range("Mixed").expect("sheet exists");
     assert!(range.get_value((0, 0)).is_none() || range.get_value((0, 0)).unwrap().is_empty());
@@ -116,4 +116,60 @@ fn null_cells_are_skipped_and_nested_json_is_stringified() {
         "true"
     );
     assert!(range.get_value((0, 2)).unwrap().to_string().contains('k'));
+}
+
+#[test]
+fn styled_workbook_writes_freeze_autofilter_and_fills() {
+    use std::io::Read;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("styled.xlsx");
+    let style: XlsxStyle = serde_json::from_value(json!({
+        "header_fill": "#0A84FF",
+        "header_font_color": "#FFFFFF",
+        "zebra_rows": true,
+        "freeze_header": true,
+        "autofilter": true,
+        "tab_color": "#0A84FF"
+    }))
+    .expect("style parses");
+    let sheets = vec![spec(json!({
+        "name": "Data",
+        "rows": [
+            ["Item", "Total"],
+            ["a", "=1+1"],
+            ["b", 3],
+            ["c", 4]
+        ],
+        "column_formats": ["", "currency"]
+    }))];
+    write_workbook(&path, &sheets, &style).expect("styled workbook written");
+
+    // Inspect the raw OOXML parts for the styling artifacts.
+    let file = std::fs::File::open(&path).expect("xlsx opens");
+    let mut archive = zip::ZipArchive::new(file).expect("xlsx is a zip");
+    let mut sheet_xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .expect("sheet part")
+        .read_to_string(&mut sheet_xml)
+        .expect("sheet xml");
+    assert!(sheet_xml.contains("autoFilter"), "autofilter present");
+    assert!(sheet_xml.contains("<pane"), "freeze pane present");
+    let mut styles_xml = String::new();
+    archive
+        .by_name("xl/styles.xml")
+        .expect("styles part")
+        .read_to_string(&mut styles_xml)
+        .expect("styles xml");
+    assert!(styles_xml.contains("0A84FF"), "header fill color present");
+    assert!(styles_xml.contains("F2F2F2"), "zebra fill present");
+    // Read side still consumes it and the formula survived.
+    let mut wb: calamine::Xlsx<_> = calamine::open_workbook(&path).expect("readable");
+    let formulas = wb.worksheet_formula("Data").expect("formula sheet");
+    let any: Vec<String> = formulas
+        .rows()
+        .flat_map(|r| r.iter().cloned())
+        .filter(|f| !f.is_empty())
+        .collect();
+    assert!(any.iter().any(|f| f.contains("1+1")), "formulas: {any:?}");
 }
