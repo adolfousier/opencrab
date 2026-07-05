@@ -362,6 +362,8 @@ pub mod slash_autocomplete_dimensions_test;
 pub mod split_pane_test;
 pub mod subagent_test;
 pub mod subagent_tool_description_test;
+#[cfg(feature = "telegram")]
+pub mod telegram_reaction_map_test;
 pub mod telegram_resume_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_send_retry_test;

@@ -775,9 +775,114 @@ pub(crate) fn find_all_recent_tmp_files(
 /// directive emitted mid-turn (e.g. inside a thinking block) acknowledges the
 /// user immediately, instead of only firing from the final-response path after
 /// the whole turn completes (#261).
+/// Telegram message reactions only accept a FIXED emoji set — anything else
+/// is rejected with REACTION_INVALID. The model picks emojis freely (a crab,
+/// a checkmark), and a rejected reaction on a reaction-only turn used to mean
+/// the user got NOTHING at all (#353: four silent turns in one day). Pass
+/// allowed emojis through (normalizing the variation selector, which the API
+/// list omits), alias common out-of-set picks, and fall back to 👍.
+pub(crate) fn map_to_allowed_reaction(requested: &str) -> String {
+    const ALLOWED: &[&str] = &[
+        "👍",
+        "👎",
+        "❤",
+        "🔥",
+        "🥰",
+        "👏",
+        "😁",
+        "🤔",
+        "🤯",
+        "😱",
+        "🤬",
+        "😢",
+        "🎉",
+        "🤩",
+        "🤮",
+        "💩",
+        "🙏",
+        "👌",
+        "🕊",
+        "🤡",
+        "🥱",
+        "🥴",
+        "😍",
+        "🐳",
+        "❤‍🔥",
+        "🌚",
+        "🌭",
+        "💯",
+        "🤣",
+        "⚡",
+        "🍌",
+        "🏆",
+        "💔",
+        "🤨",
+        "😐",
+        "🍓",
+        "🍾",
+        "💋",
+        "🖕",
+        "😈",
+        "😴",
+        "😭",
+        "🤓",
+        "👻",
+        "👨‍💻",
+        "👀",
+        "🎃",
+        "🙈",
+        "😇",
+        "😨",
+        "🤝",
+        "✍",
+        "🤗",
+        "🫡",
+        "🎅",
+        "🎄",
+        "☃",
+        "💅",
+        "🤪",
+        "🗿",
+        "🆒",
+        "💘",
+        "🙉",
+        "🦄",
+        "😘",
+        "💊",
+        "🙊",
+        "😎",
+        "👾",
+        "🤷‍♂",
+        "🤷",
+        "🤷‍♀",
+        "😡",
+    ];
+    let norm: String = requested
+        .trim()
+        .chars()
+        .filter(|c| *c != '\u{fe0f}')
+        .collect();
+    if ALLOWED.contains(&norm.as_str()) {
+        return norm;
+    }
+    match norm.as_str() {
+        "😂" | "😆" | "😅" => "🤣",
+        "😊" | "🙂" | "😄" | "😃" => "😁",
+        "🚀" => "🔥",
+        "🙌" | "👐" => "👏",
+        "⭐" | "🌟" | "✨" => "🤩",
+        "💡" | "🧠" => "🤔",
+        "🤖" => "👾",
+        "❤️‍🩹" | "💖" | "💕" | "🧡" | "💛" | "💚" | "💙" | "💜" => "❤",
+        // ✅ ☑ ✔ 💪 🆗 🦀 and everything else: a plain acknowledgment.
+        _ => "👍",
+    }
+    .to_string()
+}
+
 async fn fire_reaction(bot: &Bot, chat_id: ChatId, msg_id: MessageId, emoji: &str) {
     let reaction = teloxide::types::ReactionType::Emoji {
-        emoji: emoji.to_string(),
+        emoji: map_to_allowed_reaction(emoji),
     };
     if let Err(e) = bot
         .set_message_reaction(chat_id, msg_id)
@@ -2899,9 +3004,11 @@ pub(crate) async fn handle_message(
          - Acknowledgment of waiting/pausing: \"Let's wait\" / \"Hold\" → <<react:👍>>\n\
          \n\
          To react-only (no text), output ONLY the directive: <<react:👍>>\n\
-         To react AND respond, include the directive at the start: <<react:✅>> Done, uploaded to Drive.\n\
+         To react AND respond, include the directive at the start: <<react:👌>> Done, uploaded to Drive.\n\
          \n\
-         The value must be a literal emoji character (👍 ✅ 👀 🔥 🎉 👏), never a word or placeholder.\n\
+         The value must be a literal emoji character, never a word or placeholder. Telegram only \
+         accepts its fixed reaction set — stick to these: 👍 👀 🔥 🎉 👏 💯 🤝 👌 🤔 ❤ 🤣 🏆 ⚡. \
+         Anything else gets remapped to 👍.\n\
          When you MENTION the directive in prose (docs, code discussion, examples) instead of using it,\n\
          always wrap it in backticks so it is not executed.\n\
          \n\
@@ -3669,22 +3776,37 @@ pub(crate) async fn handle_message(
             // (empty text after stripping the directive), skip all text/TTS
             // delivery and just react.
             if let Some(ref emoji) = react_emoji {
+                let mapped = map_to_allowed_reaction(emoji);
                 let reaction = teloxide::types::ReactionType::Emoji {
-                    emoji: emoji.clone(),
+                    emoji: mapped.clone(),
                 };
-                if let Err(e) = bot
+                let react_result = bot
                     .set_message_reaction(msg.chat.id, msg.id)
                     .reaction(vec![reaction])
                     .is_big(false)
-                    .await
-                {
-                    tracing::warn!("Telegram: failed to set reaction: {}", e);
+                    .await;
+                if let Err(ref e) = react_result {
+                    tracing::warn!("Telegram: failed to set reaction ({mapped}): {}", e);
                 }
                 if text_only.trim().is_empty() {
-                    tracing::info!(
-                        "Telegram: reaction-only response ({}), skipping text delivery",
-                        emoji
-                    );
+                    // Never-silent guard (#353): a reaction-only turn whose
+                    // reaction FAILED must degrade to text, not to nothing.
+                    if react_result.is_err() {
+                        tracing::warn!(
+                            "Telegram: reaction-only turn with failed reaction — \
+                             delivering the emoji as text instead"
+                        );
+                        if let Err(e) =
+                            message_in_thread(&bot, msg.chat.id, thread_id, emoji.as_str()).await
+                        {
+                            tracing::error!("Telegram: emoji text fallback also failed: {}", e);
+                        }
+                    } else {
+                        tracing::info!(
+                            "Telegram: reaction-only response ({}), skipping text delivery",
+                            mapped
+                        );
+                    }
                     if let Some(mid) = streaming_msg_id {
                         let _ = bot.delete_message(msg.chat.id, mid).await;
                     }
@@ -4951,7 +5073,7 @@ pub(crate) async fn handle_reaction(
     // ── 10. Deliver reaction back on the original message ───────────────
     if let Some(ref r_emoji) = react_emoji {
         let reaction_type = teloxide::types::ReactionType::Emoji {
-            emoji: r_emoji.clone(),
+            emoji: map_to_allowed_reaction(r_emoji),
         };
         if let Err(e) = bot
             .set_message_reaction(chat_id, msg_id)
