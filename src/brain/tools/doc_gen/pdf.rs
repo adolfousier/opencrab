@@ -28,14 +28,17 @@ const PT_TO_MM: f32 = 0.352_778;
 /// the right margin.
 const AVG_CHAR_WIDTH: f32 = 0.55;
 
-/// One laid-out line ready for emission.
-struct Line {
-    text: String,
-    bold: bool,
-    size: f32,
-    indent_mm: f32,
-    /// Extra vertical gap (mm) before this line.
-    gap_before_mm: f32,
+/// One laid-out line ready for emission. Fields are crate-visible so the
+/// layout invariants (every wrapped line gets its own baseline) are testable
+/// without parsing the serialized PDF back.
+pub(crate) struct Line {
+    pub(crate) text: String,
+    pub(crate) bold: bool,
+    pub(crate) size: f32,
+    pub(crate) indent_mm: f32,
+    /// Extra vertical gap (mm) before this line. Negative means "render on
+    /// the SAME baseline as the previous line" (table row siblings).
+    pub(crate) gap_before_mm: f32,
 }
 
 /// Greedy word wrap by estimated glyph width. `width_mm` is the available
@@ -123,7 +126,7 @@ fn heading_size(level: u8) -> f32 {
 }
 
 /// Flatten blocks into positioned lines (pure layout, no PDF objects yet).
-fn layout(blocks: &[BlockSpec]) -> Vec<Line> {
+pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<Line> {
     let body_width = PAGE_W_MM - 2.0 * MARGIN_MM;
     let mut lines: Vec<Line> = Vec::new();
     for block in blocks {

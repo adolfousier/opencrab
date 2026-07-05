@@ -145,3 +145,52 @@ fn unbroken_long_words_hard_split() {
     assert!(text.contains("/very/long/"));
     assert!(text.contains("file.rs"));
 }
+
+#[test]
+fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
+    // Regression proof for the overlapping-table garble: reproduce the
+    // audit-report shape (4 columns, bold header, cells wrapping to
+    // different heights) and simulate the emitter's y accounting. Any two
+    // lines in the SAME column must land on DIFFERENT baselines; lines on a
+    // shared baseline must be in different columns.
+    use crate::brain::tools::doc_gen::pdf::layout;
+
+    let specs = blocks(json!([
+        {"type": "table", "rows": [
+            ["Feature", "Adi says OpenClaw", "OpenCrabs actually", "Verdict"],
+            ["Basic send/reply/edit/delete", "Yes", "Yes - handler.rs", "Match"],
+            ["Photo/Doc/Location/Poll", "Yes", "Yes - telegram_send.rs", "Match"],
+            ["Rich messages (Bot API 10.1)", "Yes - tables, formulas",
+             "Yes - rich/api.rs with tables, headings, math", "WRONG - WE HAVE IT"],
+            ["Streaming preview + reasoning", "Yes - preview stream",
+             "Yes - draft_streaming, ProviderStream", "WRONG - WE HAVE IT"]
+        ]}
+    ]));
+    let lines = layout(&specs);
+    assert!(lines.len() > 10, "table must produce many lines");
+
+    // Simulate the emitter: negative gap = same baseline, else advance.
+    let mut y = 297.0f32 - 20.0;
+    let mut placed: Vec<(f32, f32, String)> = Vec::new(); // (y, x, text)
+    for l in &lines {
+        let h = l.size * 0.352_778 * 1.35;
+        if l.gap_before_mm >= 0.0 {
+            y -= l.gap_before_mm + h;
+        }
+        placed.push((y, l.indent_mm, l.text.clone()));
+    }
+    for (i, a) in placed.iter().enumerate() {
+        for b in placed.iter().skip(i + 1) {
+            if (a.0 - b.0).abs() < 0.01 {
+                assert!(
+                    (a.1 - b.1).abs() > 0.01,
+                    "two lines share baseline y={} AND column x={}: {:?} vs {:?}",
+                    a.0,
+                    a.1,
+                    a.2,
+                    b.2
+                );
+            }
+        }
+    }
+}
