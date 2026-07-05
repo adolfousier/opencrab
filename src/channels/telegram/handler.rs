@@ -88,6 +88,11 @@ pub(crate) struct StreamingState {
     /// intermediate text, in chronological order). Rendered together into the
     /// `open_group_msg_id` message on every append/status change.
     flow_entries: Vec<FlowEntry>,
+    /// Live status shown in the open block's header while the turn runs
+    /// ("read_file · 45s"). The block is the SINGLE progress surface (#360):
+    /// no standalone status ticker exists while a block is open. HTML-safe
+    /// (escaped at build time). None once the final response lands.
+    flow_status: Option<String>,
     /// Response text from streaming chunks — own message at bottom
     response: String,
     dirty: bool,
@@ -155,7 +160,7 @@ pub(crate) enum FlowLine {
 /// block so only the final response stays clean at the bottom (#300). Output is
 /// final HTML — send via `send_html_or_plain`, never through
 /// `markdown_to_telegram_html` (it would double-process the HTML).
-pub(crate) fn render_flow_html(lines: &[FlowLine]) -> String {
+pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -191,18 +196,41 @@ pub(crate) fn render_flow_html(lines: &[FlowLine]) -> String {
         return String::new();
     }
     if out.len() == 1 && tool_count == 1 {
-        return out.remove(0);
+        // Lone tool line stays plain (#296); the live status rides on it so
+        // the single surface still shows progress from the first call (#360).
+        return match live_status {
+            Some(st) => format!("{} · {}", out.remove(0), st),
+            None => out.remove(0),
+        };
     }
-    let header = if tool_count > 0 {
+    let mut header = if tool_count > 0 {
         format!("{} tool calls", tool_count)
     } else {
         "Processing log".to_string()
     };
+    // Live turn: the header IS the progress line (#360) — "N tool calls ·
+    // read_file · 45s", edited in place. Settles to the plain header when
+    // the final response lands (live_status cleared).
+    if let Some(st) = live_status {
+        header = format!("⚙️ {} · {}", header, st);
+    }
     format!(
         "<blockquote expandable><b>{}</b>\n\n{}</blockquote>",
         header,
         out.join("\n\n")
     )
+}
+
+/// Compact elapsed time for the block header ("45s", "1m 20s"). Sub-minute
+/// values snap to 5s steps so the header edit fires at most every ~5s
+/// instead of every tick (#360 — header edits share the per-chat budget).
+pub(crate) fn humanize_elapsed(secs: u64) -> String {
+    let secs = (secs / 5) * 5;
+    if secs >= 60 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        format!("{}s", secs)
+    }
 }
 
 /// Status glyph for a tool call: running, succeeded, or failed.
@@ -228,7 +256,7 @@ fn render_flow(s: &StreamingState) -> String {
             FlowEntry::Text(text) => Some(FlowLine::Text(text.clone())),
         })
         .collect();
-    render_flow_html(&lines)
+    render_flow_html(&lines, s.flow_status.as_deref())
 }
 
 /// Re-render the open processing-log flow and edit its message in place. Used
@@ -3198,6 +3226,7 @@ pub(crate) async fn handle_message(
         display_queue: Vec::new(),
         open_group_msg_id: None,
         flow_entries: Vec::new(),
+        flow_status: None,
         response: String::new(),
         dirty: false,
         recreate: false,
@@ -3265,6 +3294,7 @@ pub(crate) async fn handle_message(
                             draft_id: Option<i32>,
                         }
 
+                        let mut settle_flow = false;
                         let snap = {
                             let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                             let has_display = !s.display_queue.is_empty();
@@ -3339,6 +3369,12 @@ pub(crate) async fn handle_message(
                                 s.status_msg_id = None;
                                 s.tools_started_at = None;
                                 s.tool_round_count = 0;
+                                // Header settles to the plain "N tool calls"
+                                // via an immediate refresh below (#360).
+                                if s.flow_status.take().is_some() && s.open_group_msg_id.is_some()
+                                {
+                                    settle_flow = true;
+                                }
                             }
 
                             snap
@@ -3407,17 +3443,58 @@ pub(crate) async fn handle_message(
                         // A tool status flip (⚙️ → ✅/❌) re-renders the whole
                         // processing-log flow (tools + folded intermediates) in
                         // its single message.
-                        if !snap.tool_edits.is_empty() {
-                            refresh_flow(&bot, chat, &st).await;
-                        }
-
-                        // ── Rolling context-aware status during processing ──
-                        // Show status when: tools are active, OR tools ran but no
+                        // Show progress when: tools are active, OR tools ran but no
                         // response yet, OR still processing (initial wait).
                         let show_status = snap.has_active_tools
                             || (snap.tool_round_count > 0 && snap.response_text.is_empty())
                             || snap.processing;
-                        if show_status {
+
+                        // ── Single progress surface (#360) ──
+                        // While a processing-log block is open, the live status
+                        // rides in ITS header ("N tool calls · read_file · 45s")
+                        // and no standalone ticker exists. Re-read the block id:
+                        // the display loop above may have just opened one.
+                        let open_block = {
+                            let s = st.lock().unwrap_or_else(|e| e.into_inner());
+                            s.open_group_msg_id
+                        };
+                        let mut flow_needs_refresh = !snap.tool_edits.is_empty() || settle_flow;
+                        if show_status && open_block.is_some() {
+                            let elapsed_total = snap
+                                .tools_started_at
+                                .map(|t| t.elapsed().as_secs())
+                                .unwrap_or(0);
+                            let label = snap
+                                .active_tools
+                                .first()
+                                .or(snap.last_completed_tool.as_ref())
+                                .map(|(n, _)| n.as_str());
+                            let status = match (label, elapsed_total) {
+                                (Some(name), t) => Some(format!(
+                                    "{} · {}",
+                                    escape_html(name),
+                                    humanize_elapsed(t)
+                                )),
+                                (None, t) if t > 0 => Some(humanize_elapsed(t)),
+                                _ => None,
+                            };
+                            if let Some(status) = status {
+                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                if s.flow_status.as_deref() != Some(status.as_str()) {
+                                    s.flow_status = Some(status);
+                                    flow_needs_refresh = true;
+                                }
+                            }
+                        }
+                        if flow_needs_refresh {
+                            refresh_flow(&bot, chat, &st).await;
+                        }
+
+                        // ── Rolling standalone status — blockless turns only ──
+                        // (pre-tool wait, or turns that never open a
+                        // processing-log block). Once a block opens, the header
+                        // above is the one and only progress surface (#360).
+                        if show_status && open_block.is_none() {
                             let now = std::time::Instant::now();
                             let shown_elapsed = snap.status_shown_at
                                 .map(|t| now.duration_since(t).as_secs())
@@ -3493,6 +3570,24 @@ pub(crate) async fn handle_message(
                                         s.status_shown_at = Some(now);
                                     }
                                 }
+                            }
+                        } else if open_block.is_some()
+                            && snap.draft_id.is_none()
+                            && let Some(mid) = snap.status_msg_id
+                        {
+                            // A block opened mid-turn: retire the standalone
+                            // ticker so the block header is the only progress
+                            // surface left (#360). Drafts auto-expire on their
+                            // own once we stop re-sending them.
+                            if let Err(e) = bot.delete_message(chat, mid).await {
+                                tracing::debug!(
+                                    "Telegram: could not retire standalone status ticker mid={:?}: {e}",
+                                    mid
+                                );
+                            }
+                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                            if s.status_msg_id == Some(mid) {
+                                s.status_msg_id = None;
                             }
                         }
 
@@ -4479,6 +4574,7 @@ pub(crate) async fn resume_session(
         display_queue: Vec::new(),
         open_group_msg_id: None,
         flow_entries: Vec::new(),
+        flow_status: None,
         response: String::new(),
         dirty: false,
         recreate: false,
