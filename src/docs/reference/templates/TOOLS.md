@@ -22,6 +22,7 @@ convenience.
 | `channels` | Telegram / Discord / Slack / WhatsApp / Trello — send + connect | "send a telegram photo" |
 | `agents` | spawn / wait / send-input / close / resume sub-agents, teams | "spawn a sub-agent" |
 | `media` | generate / analyze images, analyze video, provider vision | "generate an image" |
+| `documents` | generate XLSX (live formulas) / DOCX / PDF / PPTX with branding, parse documents, PDF to images | "create a spreadsheet with formulas" |
 | `system` | feedback_record/analyze, self_improve, rebuild, evolve, tool_manage, rsi_proposals | "rebuild from source" |
 | `utility` | cron_manage, session_search, channel_search, mission_control_report, a2a_send | "create a cron job" |
 

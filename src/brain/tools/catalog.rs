@@ -24,7 +24,9 @@ pub const LAZY_TOOLS_PROMPT: &str = "\n\n--- Tool Access ---\n\
     web/exa/memory search, task/context/plan, http, the brain-file loader, config, session). \
     You do NOT see every tool by default. For anything else — browsing or clicking web pages, \
     sending channel messages (Telegram/Discord/Slack/WhatsApp), spawning sub-agents or teams, \
-    generating or analyzing images/video, cron jobs, self-improvement/rebuild/evolve — call \
+    generating or analyzing images/video, creating real documents (Excel with live \
+    formulas, Word, PDF, PowerPoint via generate_document), parsing documents, cron jobs, \
+    self-improvement/rebuild/evolve — call \
     `tool_search` FIRST with a short description of what you need. It returns the exact tool's \
     schema and makes it callable for the rest of the session. NEVER say you can't do something \
     before searching for the tool.\n";
@@ -163,6 +165,9 @@ pub fn tool_category(name: &str) -> &'static str {
             || n == "tool_manage" =>
         {
             "system"
+        }
+        n if n == "generate_document" || n == "parse_document" || n == "pdf_to_images" => {
+            "documents"
         }
         n if n == "cron_manage"
             || n == "goal_manage"
