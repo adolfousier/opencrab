@@ -3726,6 +3726,32 @@ pub(crate) async fn handle_message(
         streaming.clone(),
     );
 
+    // ── Mid-turn steering ──────────────────────────────────────────────────
+    // A turn is already running on this session: queue this message for
+    // injection between tool rounds (the #302 Stage 2 rail reactions use)
+    // instead of starting a new agent call. Starting a new call would make
+    // store_cancel_token hard-cancel the in-flight one MID-TOOL (vision,
+    // long bash), truncating the running tool call and forcing the
+    // recovery preamble. Leftovers that miss the last between-rounds drain
+    // are flushed by drain-on-exit below. An explicit /stop still cancels
+    // immediately via the fast-cancel path above.
+    if telegram_state.is_turn_active(session_id) {
+        tracing::info!(
+            "Telegram: message arrived mid-turn on session {} — queued for injection              between tool rounds",
+            session_id
+        );
+        telegram_state.enqueue_reaction(
+            session_id,
+            format!(
+                "[The user sent this follow-up while you were still working —                  factor it into the CURRENT task now, do not restart from scratch]:\n{}",
+                display_text
+            ),
+        );
+        // Visible acknowledgment so the message never looks silently eaten.
+        fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
+        return Ok(());
+    }
+
     // ── Agent call ────────────────────────────────────────────────────────────
     let cancel_token = tokio_util::sync::CancellationToken::new();
     telegram_state
