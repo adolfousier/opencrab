@@ -50,10 +50,14 @@ fn catalog_splits_core_from_extended() {
     assert!(catalog::is_core("bash"));
     assert!(catalog::is_core("read_file"));
     assert!(catalog::is_core("tool_search"));
+    assert!(catalog::is_core("analyze_image"));
+    assert!(catalog::is_core("analyze_video"));
     assert!(!catalog::is_core("browser_navigate"));
     assert!(!catalog::is_core("telegram_send"));
 
     assert_eq!(catalog::tool_category("bash"), "core");
+    assert_eq!(catalog::tool_category("analyze_image"), "core");
+    assert_eq!(catalog::tool_category("analyze_video"), "core");
     assert_eq!(catalog::tool_category("browser_click"), "browser");
     assert_eq!(catalog::tool_category("telegram_send"), "channels");
     assert_eq!(catalog::tool_category("spawn_agent"), "agents");
@@ -127,5 +131,33 @@ fn activate_tools_is_per_session() {
     assert!(
         reg.active_tools(s2).is_empty(),
         "activation must not leak across sessions"
+    );
+}
+
+#[test]
+fn vision_tools_are_core_when_registered() {
+    // When vision is configured, analyze_image/analyze_video are registered
+    // and should appear in the core set without needing tool_search activation.
+    let reg = registry_with(&[
+        ("bash", "run a shell command"),
+        ("analyze_image", "analyze an image with vision"),
+        ("analyze_video", "analyze a video with vision"),
+        ("browser_navigate", "open a web page"),
+    ]);
+
+    let core_only = reg.get_tool_definitions_filtered(&HashSet::new());
+    let names: HashSet<&str> = core_only.iter().map(|t| t.name.as_str()).collect();
+
+    assert!(
+        names.contains("analyze_image"),
+        "analyze_image should be in core set when registered; got {names:?}"
+    );
+    assert!(
+        names.contains("analyze_video"),
+        "analyze_video should be in core set when registered; got {names:?}"
+    );
+    assert!(
+        !names.contains("browser_navigate"),
+        "browser_navigate is extended, should not be in core set"
     );
 }

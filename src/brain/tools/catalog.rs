@@ -33,6 +33,11 @@ pub const LAZY_TOOLS_PROMPT: &str = "\n\n--- Tool Access ---\n\
 /// task without a discovery round-trip: file I/O, shell, the common searches,
 /// core workflow/orchestration, the brain-file loader, and config/session
 /// basics. Everything else is reached through `tool_search`.
+///
+/// Vision tools (`analyze_image`, `analyze_video`) are included here so they're
+/// always available when configured. They're only registered by
+/// `register_config_dependent_tools` when a vision backend exists, so they
+/// won't appear in the active set if vision isn't configured.
 pub const CORE_TOOLS: &[&str] = &[
     // File I/O + shell — the bread and butter
     "read_file",
@@ -59,6 +64,9 @@ pub const CORE_TOOLS: &[&str] = &[
     "slash_command",
     "rename_session",
     "follow_up_question",
+    // Vision — always available when configured (only registered if vision backend exists)
+    "analyze_image",
+    "analyze_video",
     // The discovery tool itself
     TOOL_SEARCH_NAME,
 ];
