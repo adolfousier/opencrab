@@ -5,7 +5,7 @@
 //! regular HTML parse mode does not support `<details>`, so that tag leaks
 //! into the chat as literal text.
 
-use crate::channels::telegram::handler::{FlowLine, render_flow_html};
+use crate::channels::telegram::handler::{FlowLine, folded_duplicates_final, render_flow_html};
 
 fn tline(label: &str, context: &str) -> FlowLine {
     FlowLine::Tool {
@@ -154,4 +154,49 @@ fn blank_text_entries_are_dropped() {
 #[test]
 fn empty_flow_renders_nothing() {
     assert_eq!(render_flow_html(&[]), "");
+}
+
+// ── folded_duplicates_final: block dedup against the final answer ──
+// A streamed copy of the final answer can land folded in the collapsed block.
+// On API providers the answer also comes back in response.content, so it must
+// be dropped from the block or it renders twice (once folded, once as the
+// completion). Streaming often folds only a truncated head, so the check must
+// catch a PREFIX, not just an exact match.
+
+#[test]
+fn folded_dup_matches_exact_final() {
+    let answer = "The rebuild finished and the binary is swapped in.";
+    assert!(folded_duplicates_final(answer, answer));
+}
+
+#[test]
+fn folded_dup_matches_truncated_prefix() {
+    // The block captured only the streamed head, cut off mid-sentence.
+    let folded = "Yes, Adolfo. After you told me to search for the tool, I";
+    let final_text =
+        "Yes, Adolfo. After you told me to search for the tool, I found it and used it.";
+    assert!(folded_duplicates_final(folded, final_text));
+}
+
+#[test]
+fn folded_dup_ignores_whitespace_differences() {
+    let folded = "line one\n\n  line two three four five";
+    let final_text = "line one line two three four five and the rest of the answer here";
+    assert!(folded_duplicates_final(folded, final_text));
+}
+
+#[test]
+fn folded_dup_rejects_distinct_narration() {
+    // A genuine mid-turn narration line that isn't the final answer.
+    let folded = "Let me trace the delivery path first.";
+    let final_text = "The root cause is an exact-equality dedup that misses a truncated prefix.";
+    assert!(!folded_duplicates_final(folded, final_text));
+}
+
+#[test]
+fn folded_dup_rejects_short_shared_opening() {
+    // Too short an overlap to be sure it's the answer, not a coincidental start.
+    let folded = "Done.";
+    let final_text = "Done. Here is the full breakdown of everything that changed this turn.";
+    assert!(!folded_duplicates_final(folded, final_text));
 }

@@ -246,10 +246,22 @@ async fn refresh_flow(bot: &Bot, chat: ChatId, streaming: &Arc<std::sync::Mutex<
     if html.is_empty() {
         return;
     }
-    let _ = bot
+    if let Err(e) = bot
         .edit_message_text(chat, mid, html)
         .parse_mode(ParseMode::Html)
-        .await;
+        .await
+    {
+        tracing::warn!(
+            "Telegram: refresh_flow edit failed for mid={:?}: {} — deleting stale blockquote",
+            mid,
+            e
+        );
+        // Edit failed (rate limit, message too old, parse error, etc.).
+        // Delete the stale blockquote rather than leaving duplicate content.
+        let _ = bot.delete_message(chat, mid).await;
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.open_group_msg_id = None;
+    }
 }
 
 /// Send the open processing-log message for the first time and record its id.
@@ -404,6 +416,24 @@ async fn take_folded_final(
         refresh_flow(bot, chat, streaming).await;
     }
     text
+}
+
+/// Whether a folded intermediate is a duplicate of the final answer.
+///
+/// Streaming can fold only a truncated head of the final response into the
+/// block (a mid-sentence prefix), so an exact match misses it: the copy left in
+/// the block is usually a PREFIX of the delivered completion, not equal to it.
+/// That gap is why an answer returned in `response.content` (API providers)
+/// rendered both inside the collapsed block and as the completion below, while
+/// the CLI path (answer reclaimed from the block) did not. Treat a substantial
+/// prefix overlap in either direction as a duplicate, with a length guard so a
+/// short distinct narration line that merely shares an opening is not mistaken
+/// for the answer.
+pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
+    let norm_folded: String = folded.split_whitespace().collect::<Vec<_>>().join(" ");
+    let norm_final: String = final_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let overlap = norm_folded.len().min(norm_final.len());
+    overlap >= 20 && (norm_final.starts_with(&norm_folded) || norm_folded.starts_with(&norm_final))
 }
 
 impl StreamingState {
@@ -3751,20 +3781,34 @@ pub(crate) async fn handle_message(
                 text_only
             };
 
-            // #300 follow-up: the final answer for CLI providers arrives as a
-            // trailing IntermediateText folded into the collapsed block, while
-            // response.content comes back empty. Only when we have no separate
-            // answer to deliver (text_only empty) do we reclaim that trailing
-            // folded text out of the block, so the completion always lands as
-            // its own bubble below instead of staying buried in the expandable
-            // block. When response.content already carried the answer, we leave
-            // the block untouched — never disturbing a mid-turn narration line
-            // that happens to sit last.
+            // #300 follow-up: ALWAYS check if the trailing folded text matches the
+            // final answer and remove it to prevent duplication. For CLI providers,
+            // the final answer arrives as a trailing IntermediateText folded into
+            // the collapsed block while response.content comes back empty, so we
+            // reclaim it. For other providers (or CLI turns where the answer stayed
+            // in content), if the same text ended up both folded and in the final
+            // response, remove the folded copy to avoid showing it twice.
             let text_only = if text_only.trim().is_empty() {
+                // CLI provider case: no separate answer, reclaim the folded final
                 take_folded_final(&bot, msg.chat.id, &streaming)
                     .await
                     .unwrap_or(text_only)
             } else {
+                // Non-CLI case: check if the trailing folded text matches the final
+                // answer and remove it to prevent duplication
+                let trailing_matches = {
+                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    match s.flow_entries.last() {
+                        Some(FlowEntry::Text(folded)) => {
+                            folded_duplicates_final(folded, &text_only)
+                        }
+                        _ => false,
+                    }
+                };
+                if trailing_matches {
+                    // Remove the duplicate from the block
+                    take_folded_final(&bot, msg.chat.id, &streaming).await;
+                }
                 text_only
             };
 
@@ -4575,15 +4619,26 @@ pub(crate) async fn resume_session(
                 text_only
             };
 
-            // #300 follow-up: only when there's no separate answer to deliver do
-            // we reclaim the trailing folded final out of the collapsed block so
-            // the completion lands as its own bubble below (see handle_message
-            // for the full rationale).
+            // #300 follow-up: ALWAYS check if the trailing folded text matches the
+            // final answer and remove it to prevent duplication (same logic as
+            // handle_message above).
             let text_only = if text_only.trim().is_empty() {
                 take_folded_final(&bot, chat_id, &streaming)
                     .await
                     .unwrap_or(text_only)
             } else {
+                let trailing_matches = {
+                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    match s.flow_entries.last() {
+                        Some(FlowEntry::Text(folded)) => {
+                            folded_duplicates_final(folded, &text_only)
+                        }
+                        _ => false,
+                    }
+                };
+                if trailing_matches {
+                    take_folded_final(&bot, chat_id, &streaming).await;
+                }
                 text_only
             };
 
