@@ -165,6 +165,7 @@ unicode-normalization = "0.1.25"
 scraper = "0.27.0"
 htmd = "0.5.4"
 rust_xlsxwriter = "0.96.0"
+docx-rs = "0.4.20"
 
 [dev-dependencies]
 rstest = "0.25"

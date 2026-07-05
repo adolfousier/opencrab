@@ -8,6 +8,7 @@
 //! Backends land format by format; each format module stays small and pure
 //! (spec in, file out) so it is testable without the tool plumbing.
 
+pub(crate) mod docx;
 pub(crate) mod xlsx;
 
 use super::error::{Result, ToolError};
@@ -16,8 +17,9 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// Generate Document Tool: creates XLSX (native, with formulas) files from
-/// structured content. Further formats get native backends as they land.
+/// Generate Document Tool: creates XLSX (native, with formulas) and DOCX
+/// (native, styled blocks) files from structured content. Further formats
+/// get native backends as they land.
 pub struct GenerateDocumentTool;
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +33,10 @@ pub(crate) struct GenerateDocumentInput {
     /// XLSX: worksheets to create (required when format is "xlsx").
     #[serde(default)]
     pub sheets: Vec<xlsx::SheetSpec>,
+
+    /// DOCX: content blocks in order (required when format is "docx").
+    #[serde(default)]
+    pub blocks: Vec<docx::BlockSpec>,
 }
 
 #[async_trait]
@@ -40,15 +46,19 @@ impl Tool for GenerateDocumentTool {
     }
 
     fn description(&self) -> &str {
-        "Create documents from structured content. Currently supports format \
-        \"xlsx\" (Excel workbook, generated natively): pass `sheets`, each with a \
-        `name` and `rows` (array of rows, each row an array of cells). A cell is a \
-        string, number, or boolean; a string starting with \"=\" is written as a \
-        live Excel FORMULA (e.g. \"=SUM(B2:B10)\"), so totals recalculate when the \
-        user edits the file. Optional per sheet: `header_bold` (bold first row, \
-        default true), `column_widths` (array of numbers). Use this instead of \
-        writing CSV when the user asks for a spreadsheet, formulas, or styled \
-        tabular output."
+        "Create documents from structured content. Formats: \"xlsx\" and \"docx\", \
+        both generated natively. \
+        XLSX: pass `sheets`, each with a `name` and `rows` (array of rows, each row \
+        an array of cells). A cell is a string, number, or boolean; a string \
+        starting with \"=\" is written as a live Excel FORMULA (e.g. \
+        \"=SUM(B2:B10)\"), so totals recalculate when the user edits the file. \
+        Optional per sheet: `header_bold` (default true), `column_widths`. \
+        DOCX: pass `blocks` in order, each one of: {type:\"heading\", text, level \
+        1-3}, {type:\"paragraph\", text, bold?}, {type:\"list\", items:[...], \
+        ordered?}, {type:\"table\", rows:[[...]], header_bold?}. Headings become \
+        real Word styles, lists real numbering. \
+        Use this instead of CSV/markdown files whenever the user asks for a \
+        spreadsheet, formulas, or a Word document."
     }
 
     fn input_schema(&self) -> Value {
@@ -57,8 +67,8 @@ impl Tool for GenerateDocumentTool {
             "properties": {
                 "format": {
                     "type": "string",
-                    "enum": ["xlsx"],
-                    "description": "Output format. \"xlsx\" creates an Excel workbook."
+                    "enum": ["xlsx", "docx"],
+                    "description": "Output format. \"xlsx\" creates an Excel workbook, \"docx\" a Word document."
                 },
                 "output": {
                     "type": "string",
@@ -91,6 +101,28 @@ impl Tool for GenerateDocumentTool {
                         },
                         "required": ["name", "rows"]
                     }
+                },
+                "blocks": {
+                    "type": "array",
+                    "description": "Content blocks in order (docx). At least one required.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["heading", "paragraph", "list", "table"],
+                                "description": "Block kind."
+                            },
+                            "text": {"type": "string", "description": "Text for heading/paragraph blocks."},
+                            "level": {"type": "integer", "minimum": 1, "maximum": 3, "description": "Heading level (default 1)."},
+                            "bold": {"type": "boolean", "description": "Bold the paragraph text."},
+                            "items": {"type": "array", "items": {"type": "string"}, "description": "List items."},
+                            "ordered": {"type": "boolean", "description": "Numbered list instead of bullets (default false)."},
+                            "rows": {"type": "array", "items": {"type": "array"}, "description": "Table rows of cells."},
+                            "header_bold": {"type": "boolean", "description": "Bold the first table row (default true)."}
+                        },
+                        "required": ["type"]
+                    }
                 }
             },
             "required": ["format", "output"]
@@ -117,8 +149,16 @@ impl Tool for GenerateDocumentTool {
                 }
                 Ok(())
             }
+            "docx" => {
+                if parsed.blocks.is_empty() {
+                    return Err(ToolError::InvalidInput(
+                        "format \"docx\" requires at least one entry in `blocks`".to_string(),
+                    ));
+                }
+                Ok(())
+            }
             other => Err(ToolError::InvalidInput(format!(
-                "Unsupported format \"{other}\" (supported: xlsx)"
+                "Unsupported format \"{other}\" (supported: xlsx, docx)"
             ))),
         }
     }
@@ -143,8 +183,15 @@ impl Tool for GenerateDocumentTool {
                 ))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to create workbook: {e}"))),
             },
+            "docx" => match docx::write_document(&path, &input.blocks) {
+                Ok(summary) => Ok(ToolResult::success(format!(
+                    "Created {} ({summary})",
+                    path.display()
+                ))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to create document: {e}"))),
+            },
             other => Ok(ToolResult::error(format!(
-                "Unsupported format \"{other}\" (supported: xlsx)"
+                "Unsupported format \"{other}\" (supported: xlsx, docx)"
             ))),
         }
     }
