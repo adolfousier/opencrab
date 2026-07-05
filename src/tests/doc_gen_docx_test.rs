@@ -4,7 +4,7 @@
 //! word/document.xml payload is asserted directly, so the round trip proves
 //! the archive is well-formed and the content actually landed.
 
-use crate::brain::tools::doc_gen::docx::{BlockSpec, write_document};
+use crate::brain::tools::doc_gen::docx::{BlockSpec, DocxStyle, write_document};
 use serde_json::json;
 use std::io::Read;
 
@@ -35,6 +35,7 @@ fn headings_paragraphs_lists_and_tables_land() {
             {"type": "list", "items": ["first point", "second point"]},
             {"type": "table", "rows": [["Metric", "Value"], ["Uptime", 99.9]]}
         ])),
+        &DocxStyle::default(),
     )
     .expect("document written");
     assert!(summary.contains("1 heading(s)"));
@@ -64,6 +65,7 @@ fn lists_use_real_numbering_definitions() {
             {"type": "list", "items": ["alpha"], "ordered": false},
             {"type": "list", "items": ["beta"], "ordered": true}
         ])),
+        &DocxStyle::default(),
     )
     .expect("document written");
 
@@ -90,6 +92,7 @@ fn heading_level_is_clamped_not_fatal() {
     write_document(
         &path,
         &blocks(json!([{"type": "heading", "text": "Deep", "level": 9}])),
+        &DocxStyle::default(),
     )
     .expect("out-of-range level still writes");
     let xml = document_xml(&path);
@@ -105,9 +108,68 @@ fn table_cells_stringify_non_string_json() {
         &blocks(json!([
             {"type": "table", "rows": [[true, {"k": 1}, null]], "header_bold": false}
         ])),
+        &DocxStyle::default(),
     )
     .expect("document written");
     let xml = document_xml(&path);
     assert!(xml.contains("true"));
     assert!(xml.contains("k"));
+}
+
+#[test]
+fn styled_document_carries_colors_furniture_and_shading() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("styled.docx");
+    let style: DocxStyle = serde_json::from_value(json!({
+        "accent_color": "#0A84FF",
+        "page_header": "OpenCrabs Research",
+        "page_footer": "confidential",
+        "table_header_fill": "#0A84FF",
+        "zebra_rows": true
+    }))
+    .expect("style parses");
+    write_document(
+        &path,
+        &blocks(json!([
+            {"type": "heading", "text": "Branded", "level": 1},
+            {"type": "table", "rows": [["H1", "H2"], ["a", "b"], ["c", "d"]]}
+        ])),
+        &style,
+    )
+    .expect("styled document written");
+
+    let file = std::fs::File::open(&path).expect("docx opens");
+    let mut archive = zip::ZipArchive::new(file).expect("docx is a zip");
+    let mut styles = String::new();
+    archive
+        .by_name("word/styles.xml")
+        .expect("styles part")
+        .read_to_string(&mut styles)
+        .expect("styles xml");
+    assert!(styles.contains("0A84FF"), "accent on heading styles");
+
+    let mut doc = String::new();
+    archive
+        .by_name("word/document.xml")
+        .expect("document part")
+        .read_to_string(&mut doc)
+        .expect("document xml");
+    assert!(doc.contains("0A84FF"), "header row shading present");
+    assert!(doc.contains("F2F2F2"), "zebra shading present");
+
+    let mut header = String::new();
+    archive
+        .by_name("word/header1.xml")
+        .expect("header part present")
+        .read_to_string(&mut header)
+        .expect("header xml");
+    assert!(header.contains("OpenCrabs Research"));
+
+    let mut footer = String::new();
+    archive
+        .by_name("word/footer1.xml")
+        .expect("footer part present")
+        .read_to_string(&mut footer)
+        .expect("footer xml");
+    assert!(footer.contains("confidential"));
 }

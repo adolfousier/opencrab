@@ -158,7 +158,7 @@ impl Tool for GenerateDocumentTool {
                 },
                 "style": {
                     "type": "object",
-                    "description": "Visual styling, interpreted per format. All fields optional. PDF: accent_color, text_color, page_header{text,logo_path}, page_footer{text,page_numbers}, zebra_rows. XLSX: header_fill, header_font_color, zebra_rows, freeze_header, autofilter, tab_color (hex colors); per-sheet column_formats on each sheet. Use when the user wants polished or branded output.",
+                    "description": "Visual styling, interpreted per format. All fields optional. PDF: accent_color, text_color, page_header{text,logo_path}, page_footer{text,page_numbers}, zebra_rows. XLSX: header_fill, header_font_color, zebra_rows, freeze_header, autofilter, tab_color (hex colors); per-sheet column_formats on each sheet. DOCX: accent_color (heading color), page_header, page_footer, table_header_fill, zebra_rows. Use when the user wants polished or branded output.",
                     "properties": {
                         "accent_color": {"type": "string", "description": "Hex color (\"#0A84FF\") for headings, H1 underline bar, and table header separator."},
                         "text_color": {"type": "string", "description": "Hex color for body text (default near-black)."},
@@ -271,13 +271,24 @@ impl Tool for GenerateDocumentTool {
                     Err(e) => Ok(ToolResult::error(format!("Failed to create workbook: {e}"))),
                 }
             }
-            "docx" => match docx::write_document(&path, &input.blocks) {
-                Ok(summary) => Ok(ToolResult::success(format!(
-                    "Created {} ({summary})",
-                    path.display()
-                ))),
-                Err(e) => Ok(ToolResult::error(format!("Failed to create document: {e}"))),
-            },
+            "docx" => {
+                let style: docx::DocxStyle = match input.style.clone() {
+                    Some(v) => match serde_json::from_value(v) {
+                        Ok(st) => st,
+                        Err(e) => {
+                            return Ok(ToolResult::error(format!("Invalid docx style: {e}")));
+                        }
+                    },
+                    None => docx::DocxStyle::default(),
+                };
+                match docx::write_document(&path, &input.blocks, &style) {
+                    Ok(summary) => Ok(ToolResult::success(format!(
+                        "Created {} ({summary})",
+                        path.display()
+                    ))),
+                    Err(e) => Ok(ToolResult::error(format!("Failed to create document: {e}"))),
+                }
+            }
             "pdf" => {
                 let title = input.title.clone().unwrap_or_else(|| {
                     path.file_stem()
