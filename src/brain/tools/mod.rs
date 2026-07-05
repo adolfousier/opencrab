@@ -24,6 +24,7 @@ pub mod write;
 // Tool implementations - Phase 2: Advanced Features
 pub mod brave_search;
 pub mod code_exec;
+pub mod doc_gen;
 pub mod doc_parser;
 pub mod exa_search;
 pub mod notebook;

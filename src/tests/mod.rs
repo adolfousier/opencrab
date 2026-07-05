@@ -151,6 +151,7 @@ pub mod db_repository_project_test;
 pub mod db_repository_session_test;
 pub mod db_retry_test;
 pub mod directive_discovery_test;
+pub mod doc_gen_xlsx_test;
 pub mod git_branch_test;
 pub mod glob_tool_test;
 pub mod goal_command_test;

@@ -28,9 +28,10 @@ pub(crate) fn register_core_agent_tools(
 ) {
     use crate::brain::tools::{
         bash::BashTool, code_exec::CodeExecTool, config_tool::ConfigTool, context::ContextTool,
-        doc_parser::DocParserTool, edit::EditTool, follow_up_question::FollowUpQuestionTool,
-        glob::GlobTool, grep::GrepTool, http::HttpClientTool, load_brain_file::LoadBrainFileTool,
-        ls::LsTool, memory_search::MemorySearchTool, notebook::NotebookEditTool,
+        doc_gen::GenerateDocumentTool, doc_parser::DocParserTool, edit::EditTool,
+        follow_up_question::FollowUpQuestionTool, glob::GlobTool, grep::GrepTool,
+        http::HttpClientTool, load_brain_file::LoadBrainFileTool, ls::LsTool,
+        memory_search::MemorySearchTool, notebook::NotebookEditTool,
         pdf_to_images::PdfToImagesTool, plan_tool::PlanTool, read::ReadTool,
         rename_session::RenameSessionTool, session_search::SessionSearchTool,
         slash_command::SlashCommandTool, task::TaskTool, web_search::WebSearchTool,
@@ -50,6 +51,7 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(CodeExecTool));
     tool_registry.register(Arc::new(NotebookEditTool));
     tool_registry.register(Arc::new(DocParserTool));
+    tool_registry.register(Arc::new(GenerateDocumentTool));
     tool_registry.register(Arc::new(PdfToImagesTool));
     // Phase 3: Workflow & integration
     tool_registry.register(Arc::new(TaskTool));
