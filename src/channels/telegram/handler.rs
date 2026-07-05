@@ -246,21 +246,96 @@ async fn refresh_flow(bot: &Bot, chat: ChatId, streaming: &Arc<std::sync::Mutex<
     if html.is_empty() {
         return;
     }
-    if let Err(e) = bot
+    // Proactive freeze: past Telegram's 4096-char edit limit the edit can
+    // only fail. Keep the message as last rendered and start a new block.
+    if html.chars().count() > 4000 {
+        freeze_flow_block(streaming, mid, "size limit reached");
+        return;
+    }
+    match bot
         .edit_message_text(chat, mid, html)
         .parse_mode(ParseMode::Html)
         .await
     {
-        tracing::warn!(
-            "Telegram: refresh_flow edit failed for mid={:?}: {} — deleting stale blockquote",
-            mid,
-            e
-        );
-        // Edit failed (rate limit, message too old, parse error, etc.).
-        // Delete the stale blockquote rather than leaving duplicate content.
-        let _ = bot.delete_message(chat, mid).await;
-        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(_) => {}
+        // Transient rate limit: wait it out and retry once with fresh
+        // content. Deleting here used to wipe a fully rendered report off
+        // the screen over a 9-second throttle (#356).
+        Err(teloxide::RequestError::RetryAfter(secs)) => {
+            tracing::warn!(
+                "Telegram: refresh_flow rate-limited for mid={:?} — waiting {}s, then retrying",
+                mid,
+                secs.seconds()
+            );
+            tokio::time::sleep(secs.duration()).await;
+            let retry_html = {
+                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                if s.open_group_msg_id != Some(mid) {
+                    return; // block closed/replaced while waiting
+                }
+                render_flow(&s)
+            };
+            if let Err(e) = bot
+                .edit_message_text(chat, mid, retry_html)
+                .parse_mode(ParseMode::Html)
+                .await
+            {
+                tracing::warn!(
+                    "Telegram: refresh_flow retry failed for mid={:?}: {} — keeping message, next tick retries",
+                    mid,
+                    e
+                );
+            }
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("message is not modified") {
+                // Content already correct — nothing to do.
+            } else if msg.contains("MESSAGE_TOO_LONG") {
+                freeze_flow_block(streaming, mid, "MESSAGE_TOO_LONG");
+            } else if msg.contains("message to edit not found") {
+                // Genuinely gone (deleted externally) — forget the id.
+                tracing::warn!(
+                    "Telegram: refresh_flow target mid={:?} no longer exists — starting a new block",
+                    mid
+                );
+                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                if s.open_group_msg_id == Some(mid) {
+                    s.open_group_msg_id = None;
+                    s.flow_entries.clear();
+                }
+            } else {
+                // Parse error or anything else: NEVER delete displayed
+                // content over a failed update — the message still shows the
+                // last successful render and the next tick retries (#356).
+                tracing::warn!(
+                    "Telegram: refresh_flow edit failed for mid={:?}: {} — keeping message",
+                    mid,
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Freeze the current processing-log block: keep the rendered message on
+/// screen exactly as it is, close it, and let subsequent entries start a
+/// fresh block. Used when the block can no longer be edited (size limit).
+/// The entries rendered into the frozen message are dropped from state so
+/// the next block starts small instead of instantly overflowing again.
+fn freeze_flow_block(
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    mid: MessageId,
+    reason: &str,
+) {
+    tracing::info!(
+        "Telegram: freezing processing-log block mid={:?} ({reason}) — content stays visible, next entries start a new block",
+        mid
+    );
+    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+    if s.open_group_msg_id == Some(mid) {
         s.open_group_msg_id = None;
+        s.flow_entries.clear();
     }
 }
 
