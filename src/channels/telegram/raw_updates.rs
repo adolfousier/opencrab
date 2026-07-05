@@ -349,7 +349,7 @@ fn synthesize_unknown_content(m: &mut Value) {
                 "[A message{origin_note} arrived in a format the Bot API client cannot \
                  decode natively. Its raw content payload follows — read the content \
                  directly from it:]\n```json\n{}\n```",
-                crate::utils::truncate_str(&pretty, 3200)
+                crate::utils::truncate_str(&pretty, 4096)
             )
         }
     };

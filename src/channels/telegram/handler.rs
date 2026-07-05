@@ -99,14 +99,10 @@ pub(crate) struct StreamingState {
     /// When true, the edit loop deletes the response message and creates a fresh one
     /// at the bottom of the chat (so it appears below tool/approval messages).
     recreate: bool,
-    /// Rolling status message shown during long tool execution (single message, edited in-place)
-    status_msg_id: Option<MessageId>,
     /// Number of tool rounds completed (for display)
     tool_round_count: usize,
     /// When tool execution started (for elapsed time)
     tools_started_at: Option<std::time::Instant>,
-    /// When the current status message was shown (for show/vanish timing)
-    status_shown_at: Option<std::time::Instant>,
     /// Client-chosen draft_id for `sendRichMessageDraft` (DMs with rich_messages).
     /// `None` when using the standard message path. When set, status updates
     /// re-send the draft with this id instead of editing a persistent message.
@@ -3237,10 +3233,8 @@ pub(crate) async fn handle_message(
         response: String::new(),
         dirty: false,
         recreate: false,
-        status_msg_id: None,
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
-        status_shown_at: None,
         draft_id: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
@@ -3273,10 +3267,8 @@ pub(crate) async fn handle_message(
                             recreate: bool,
                             response_text: String,
                             msg_id: Option<MessageId>,
-                            status_msg_id: Option<MessageId>,
                             tool_round_count: usize,
                             tools_started_at: Option<std::time::Instant>,
-                            status_shown_at: Option<std::time::Instant>,
                             /// Currently running tools: (name, context) pairs
                             active_tools: Vec<(String, String)>,
                             /// Last successfully completed tool: (name, context)
@@ -3341,10 +3333,8 @@ pub(crate) async fn handle_message(
                                 recreate: s.recreate,
                                 response_text,
                                 msg_id: s.msg_id,
-                                status_msg_id: s.status_msg_id,
                                 tool_round_count: s.tool_round_count,
                                 tools_started_at: s.tools_started_at,
-                                status_shown_at: s.status_shown_at,
                                 active_tools: s.tool_msgs.iter()
                                     .filter(|t| t.completed.is_none())
                                     .map(|t| (t.name.clone(), t.context.clone()))
@@ -3373,7 +3363,6 @@ pub(crate) async fn handle_message(
                             // edit it in place throughout multi-tool sequences, so we get one
                             // updating message instead of N+1 separate messages.
                             if snap.dirty && !snap.response_text.is_empty() {
-                                s.status_msg_id = None;
                                 s.tools_started_at = None;
                                 s.tool_round_count = 0;
                                 // Header settles to the plain "N tool calls"
@@ -3497,26 +3486,24 @@ pub(crate) async fn handle_message(
                             refresh_flow(&bot, chat, &st).await;
                         }
 
-                        // ── Rolling standalone status — blockless turns only ──
-                        // (pre-tool wait, or turns that never open a
-                        // processing-log block). Once a block opens, the header
-                        // above is the one and only progress surface (#360).
-                        if show_status && open_block.is_none() {
-                            let now = std::time::Instant::now();
-                            let shown_elapsed = snap.status_shown_at
-                                .map(|t| now.duration_since(t).as_secs())
-                                .unwrap_or(999);
-
+                        // ── Blockless progress: DM drafts only ──
+                        // The processing-log block (edited in place, status in
+                        // its header) is the ONLY real progress message. No
+                        // standalone status message is ever sent: its delete
+                        // could fail while state cleared, orphaning duplicate
+                        // "Working on" bubbles. Before the block opens, DMs
+                        // with rich_messages get an auto-expiring draft
+                        // preview; a failed draft send just logs (the old
+                        // real-message fallback was the orphan source).
+                        if show_status && open_block.is_none() && use_drafts {
                             let elapsed_total = snap.tools_started_at
                                 .map(|t| t.elapsed().as_secs())
                                 .unwrap_or(0);
-
                             let active_refs: Vec<(&str, &str)> = snap.active_tools.iter()
                                 .map(|(n, c)| (n.as_str(), c.as_str()))
                                 .collect();
                             let last_ref = snap.last_completed_tool.as_ref()
                                 .map(|(n, c)| (n.as_str(), c.as_str()));
-
                             if let Some(status) = build_status_message(
                                 &active_refs,
                                 last_ref,
@@ -3526,88 +3513,26 @@ pub(crate) async fn handle_message(
                                 snap.thinking_excerpt.as_deref(),
                                 snap.user_message_preview.as_deref(),
                             ) {
-                                if use_drafts {
-                                    // Draft path (DMs + rich_messages): re-send or create draft
-                                    let did = snap.draft_id.unwrap_or(1);
-                                    let token = bot.token();
-                                    let cid = chat.0;
-                                    match super::rich::api::send_rich_message_draft(
-                                        token, cid, did, &status,
-                                    )
-                                    .await
-                                    {
-                                        Ok(_) => {
-                                            let mut s =
-                                                st.lock().unwrap_or_else(|e| e.into_inner());
-                                            s.draft_id = Some(did);
-                                        }
-                                        Err(e) => {
-                                            tracing::debug!("Draft send failed, falling back: {e}");
-                                            // Fallback to standard message
-                                            if shown_elapsed >= 2
-                                                && snap.status_msg_id.is_none()
-                                                && snap.draft_id.is_none()
-                                                && let Ok(m) = message_in_thread(
-                                                    &bot, chat, thread_id, &status,
-                                                )
-                                                .parse_mode(ParseMode::Html)
-                                                .await
-                                            {
-                                                let mut s = st
-                                                    .lock()
-                                                    .unwrap_or_else(|e| e.into_inner());
-                                                s.status_msg_id = Some(m.id);
-                                                s.status_shown_at = Some(now);
-                                            }
-                                        }
+                                let did = snap.draft_id.unwrap_or(1);
+                                let token = bot.token();
+                                let cid = chat.0;
+                                match super::rich::api::send_rich_message_draft(
+                                    token, cid, did, &status,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        let mut s =
+                                            st.lock().unwrap_or_else(|e| e.into_inner());
+                                        s.draft_id = Some(did);
                                     }
-                                } else if let Some(mid) = snap.status_msg_id {
-                                    // Existing message — edit in place (no flicker, no extra API call)
-                                    let _ = bot.edit_message_text(chat, mid, &status)
-                                        .parse_mode(ParseMode::Html)
-                                        .await;
-                                } else if shown_elapsed >= 2 {
-                                    // No message yet — create one
-                                    if let Ok(m) = message_in_thread(&bot, chat, thread_id, &status)
-                                        .parse_mode(ParseMode::Html)
-                                        .await
-                                    {
-                                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                        s.status_msg_id = Some(m.id);
-                                        s.status_shown_at = Some(now);
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            "Telegram: status draft send failed (no fallback): {e}"
+                                        );
                                     }
                                 }
                             }
-                        } else if open_block.is_some()
-                            && snap.draft_id.is_none()
-                            && let Some(mid) = snap.status_msg_id
-                        {
-                            // A block opened mid-turn: retire the standalone
-                            // ticker so the block header is the only progress
-                            // surface left (#360). Drafts auto-expire on their
-                            // own once we stop re-sending them.
-                            if let Err(e) = bot.delete_message(chat, mid).await {
-                                tracing::debug!(
-                                    "Telegram: could not retire standalone status ticker mid={:?}: {e}",
-                                    mid
-                                );
-                            }
-                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                            if s.status_msg_id == Some(mid) {
-                                s.status_msg_id = None;
-                            }
-                        }
-
-                        // ── Delete status when final response arrives ── (#313)
-                        // Only delete when the actual response text lands, not on intermediates.
-                        // This keeps the status message alive and edited in place throughout
-                        // multi-tool sequences. Drafts auto-expire; only delete standard messages.
-                        if snap.draft_id.is_none()
-                            && snap.dirty
-                            && !snap.response_text.is_empty()
-                            && let Some(mid) = snap.status_msg_id
-                        {
-                            let _ = bot.delete_message(chat, mid).await;
                         }
 
                         // ── Response message (thinking + response, always at bottom) ──
@@ -3620,12 +3545,6 @@ pub(crate) async fn handle_message(
                                 s.msg_id = None;
                             }
                             if !snap.response_text.is_empty() {
-                                // Delete status msg if still present
-                                if let Some(mid) = snap.status_msg_id {
-                                    let _ = bot.delete_message(chat, mid).await;
-                                    let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                    s.status_msg_id = None;
-                                }
                                 let current_msg_id = {
                                     let s = st.lock().unwrap_or_else(|e| e.into_inner());
                                     s.msg_id
@@ -3909,16 +3828,12 @@ pub(crate) async fn handle_message(
     let _ = edit_loop_handle.await;
     // _typing_guard drop cancels typing loop
 
-    // Grab streaming message id and clean up status message
-    let (mut streaming_msg_id, status_msg_id, remaining_display) = {
+    // Grab streaming message id and drain queued display items
+    let (mut streaming_msg_id, remaining_display) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
-        (s.msg_id, s.status_msg_id, display)
+        (s.msg_id, display)
     };
-    // Delete rolling status message if still present
-    if let Some(mid) = status_msg_id {
-        let _ = bot.delete_message(msg.chat.id, mid).await;
-    }
 
     // Guard against stale delivery BEFORE sending remaining display items:
     // if a newer message cancelled this call, any queued tool/intermediate
@@ -4585,10 +4500,8 @@ pub(crate) async fn resume_session(
         response: String::new(),
         dirty: false,
         recreate: false,
-        status_msg_id: None,
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
-        status_shown_at: None,
         draft_id: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
@@ -4879,14 +4792,11 @@ pub(crate) async fn resume_session(
     let _ = edit_loop_handle.await;
 
     // ── Final delivery ─────────────────────────────────────────────────────
-    let (mut streaming_msg_id, status_msg_id, remaining_display) = {
+    let (mut streaming_msg_id, remaining_display) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
-        (s.msg_id, s.status_msg_id, display)
+        (s.msg_id, display)
     };
-    if let Some(mid) = status_msg_id {
-        let _ = bot.delete_message(chat_id, mid).await;
-    }
 
     if cancel_token.is_cancelled() {
         tracing::info!(
