@@ -880,6 +880,32 @@ pub(crate) fn map_to_allowed_reaction(requested: &str) -> String {
     .to_string()
 }
 
+/// Human label for a forwarded message's origin ("Some Person", "Some Bot
+/// (bot)", a chat/channel title). None when the message is not a forward.
+fn forward_origin_label(msg: &Message) -> Option<String> {
+    use teloxide::types::MessageOrigin;
+    Some(match msg.forward_origin()? {
+        MessageOrigin::User { sender_user, .. } => {
+            let mut label = sender_user.first_name.clone();
+            if let Some(ref last) = sender_user.last_name {
+                label.push(' ');
+                label.push_str(last);
+            }
+            if sender_user.is_bot {
+                label.push_str(" (bot)");
+            }
+            label
+        }
+        MessageOrigin::HiddenUser {
+            sender_user_name, ..
+        } => sender_user_name.clone(),
+        MessageOrigin::Chat { sender_chat, .. } => {
+            sender_chat.title().unwrap_or("a private chat").to_string()
+        }
+        MessageOrigin::Channel { chat, .. } => chat.title().unwrap_or("a channel").to_string(),
+    })
+}
+
 async fn fire_reaction(bot: &Bot, chat_id: ChatId, msg_id: MessageId, emoji: &str) {
     let reaction = teloxide::types::ReactionType::Emoji {
         emoji: map_to_allowed_reaction(emoji),
@@ -1983,10 +2009,41 @@ pub(crate) async fn handle_message(
         let result = inject_file_content(&content).0;
         let result = prepend_caption(caption, result);
         (result, false)
+    } else if let Some(origin) = forward_origin_label(&msg) {
+        // A forwarded message whose content type this Bot API client cannot
+        // decode (e.g. a rich/table message forwarded from another bot).
+        // NEVER drop it silently: the forward was fully visible in the chat
+        // while the agent denied it existed. Hand the agent an explicit
+        // placeholder so it knows a forward arrived and can ask for a paste.
+        tracing::warn!(
+            "Telegram: forwarded message from {origin} has no decodable content \
+             (kind unsupported by this Bot API client) — passing placeholder to agent"
+        );
+        (
+            format!(
+                "[A message forwarded from \"{origin}\" was received, but its content \
+                 type could not be decoded (likely a rich-formatted bot message). If \
+                 you need its content, ask the user to paste it as plain text.]"
+            ),
+            false,
+        )
     } else {
-        // Non-text, non-voice, non-photo message -- ignore
+        // Non-text, non-voice, non-photo, non-forward message (service
+        // updates etc.) -- ignore
         return Ok(());
     };
+
+    // Forwarded messages with readable content: tag the provenance so the
+    // agent KNOWS this is forwarded material (and from whom), not something
+    // the user typed. Without the tag the agent treats forwarded text as the
+    // user's own words and can't connect "I just forwarded it" to anything.
+    // The undecodable-forward placeholder above already carries its origin.
+    if let Some(origin) = forward_origin_label(&msg)
+        && !text.trim().is_empty()
+        && !text.starts_with("[A message forwarded from")
+    {
+        text = format!("[Forwarded from \"{origin}\"]:\n{text}");
+    }
 
     // Prepend any voice transcript picked up from tmp
     if let Some(vt) = tmp_voice_transcript {
