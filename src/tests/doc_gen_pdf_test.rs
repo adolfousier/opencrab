@@ -333,3 +333,54 @@ fn invalid_hex_colors_fall_back_to_defaults() {
     let text = pdf_extract::extract_text(&path).expect("pdf extracts");
     assert!(text.contains("Still Works"));
 }
+
+#[test]
+fn logo_embeds_when_readable_and_skips_when_missing() {
+    // A tiny valid PNG (1x1 white pixel).
+    const PNG_1X1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8,
+        0xFF, 0xFF, 0x3F, 0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59, 0xE7, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let dir = tempfile::tempdir().expect("tempdir");
+    let logo_path = dir.path().join("logo.png");
+    std::fs::write(&logo_path, PNG_1X1).expect("logo written");
+
+    let path = dir.path().join("withlogo.pdf");
+    let style: StyleSpec = serde_json::from_value(json!({
+        "page_header": {"text": "Brand", "logo_path": logo_path.to_string_lossy()},
+    }))
+    .expect("style parses");
+    write_pdf(
+        &path,
+        &blocks(json!([{"type": "paragraph", "text": "content"}])),
+        "Logo",
+        &style,
+    )
+    .expect("pdf with logo written");
+    // The PDF must embed an image XObject.
+    let raw = std::fs::read(&path).expect("pdf readable");
+    let hay = String::from_utf8_lossy(&raw);
+    assert!(
+        hay.contains("/XObject") || hay.contains("/Image"),
+        "image embedded"
+    );
+
+    // Missing logo file: generation still succeeds, just without the image.
+    let path2 = dir.path().join("nologo.pdf");
+    let style2: StyleSpec = serde_json::from_value(json!({
+        "page_header": {"text": "Brand", "logo_path": "/nonexistent/logo.png"},
+    }))
+    .expect("style parses");
+    write_pdf(
+        &path2,
+        &blocks(json!([{"type": "paragraph", "text": "content"}])),
+        "Logo",
+        &style2,
+    )
+    .expect("missing logo never fails generation");
+    let text = pdf_extract::extract_text(&path2).expect("pdf extracts");
+    assert!(text.contains("content"));
+}

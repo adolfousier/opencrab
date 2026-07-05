@@ -17,7 +17,8 @@
 use super::docx::BlockSpec;
 use printpdf::{
     BuiltinFont, Color, LinePoint, Mm, Op, PaintMode, PdfDocument, PdfFontHandle, PdfPage,
-    PdfSaveOptions, Point, Polygon, PolygonRing, Pt, Rgb, TextItem, WindingOrder,
+    PdfSaveOptions, Point, Polygon, PolygonRing, Pt, RawImage, Rgb, TextItem, WindingOrder,
+    XObjectId, XObjectTransform,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -504,35 +505,76 @@ fn fill_rect_ops(x0: f32, x1: f32, y_top: f32, y_bottom: f32) -> Vec<Op> {
     ]
 }
 
+/// A page-header logo registered with the document.
+struct Logo {
+    id: XObjectId,
+    /// dpi that renders the image at the target header height.
+    dpi: f32,
+    /// Rendered width (mm) at that dpi, for placing header text beside it.
+    width_mm: f32,
+}
+
+/// Target rendered height of a header logo (mm).
+const LOGO_H_MM: f32 = 8.0;
+
+/// Load and register the header logo, if configured. A missing or
+/// undecodable image logs a warning and the PDF renders without it; a bad
+/// logo must never fail the whole document.
+fn load_logo(style: &StyleSpec, doc: &mut PdfDocument) -> Option<Logo> {
+    let path = style.page_header.as_ref()?.logo_path.as_deref()?;
+    let expanded = crate::brain::tools::error::expand_tilde(path);
+    let bytes = match std::fs::read(&expanded) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("generate_document: logo not readable at {path}: {e} — skipping logo");
+            return None;
+        }
+    };
+    let mut warnings = Vec::new();
+    let image = match RawImage::decode_from_bytes(&bytes, &mut warnings) {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::warn!("generate_document: logo at {path} failed to decode: {e} — skipping");
+            return None;
+        }
+    };
+    let logo_h_pt = LOGO_H_MM / PT_TO_MM;
+    // dpi maps pixels to points: rendered_pt = px * 72 / dpi.
+    let dpi = image.height as f32 * 72.0 / logo_h_pt;
+    let width_mm = image.width as f32 * 72.0 / dpi * PT_TO_MM;
+    let id = doc.add_image(&image);
+    Some(Logo { id, dpi, width_mm })
+}
+
 /// Header/footer furniture ops for one page.
 fn furniture_ops(
     style: &StyleSpec,
     palette: &Palette,
+    logo: Option<&Logo>,
     page_no: usize,
     page_total: usize,
 ) -> Vec<Op> {
     let mut ops = Vec::new();
-    if let Some(header) = &style.page_header
-        && let Some(text) = header.text.as_deref()
-    {
+    let has_header_content = style
+        .page_header
+        .as_ref()
+        .is_some_and(|h| h.text.is_some() || h.logo_path.is_some());
+    if has_header_content {
         let y = PAGE_H_MM - 12.0;
-        ops.extend([
-            Op::StartTextSection,
-            Op::SetTextCursor {
-                pos: Point::new(Mm(MARGIN_MM), Mm(y)),
-            },
-            Op::SetFont {
-                font: PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
-                size: Pt(9.0),
-            },
-            Op::SetFillColor {
-                col: rgb(palette.accent),
-            },
-            Op::ShowText {
-                items: vec![TextItem::Text(ascii_safe(text))],
-            },
-            Op::EndTextSection,
-        ]);
+        let mut text_x = MARGIN_MM;
+        if let Some(logo) = logo {
+            // Bottom-align the logo band with the header text baseline.
+            ops.push(Op::UseXobject {
+                id: logo.id.clone(),
+                transform: XObjectTransform {
+                    translate_x: Some(Pt(MARGIN_MM / PT_TO_MM)),
+                    translate_y: Some(Pt((y - 2.0) / PT_TO_MM)),
+                    dpi: Some(logo.dpi),
+                    ..Default::default()
+                },
+            });
+            text_x += logo.width_mm + 3.0;
+        }
         ops.extend(rule_ops(
             MARGIN_MM,
             PAGE_W_MM - MARGIN_MM,
@@ -540,6 +582,25 @@ fn furniture_ops(
             palette.accent,
             0.8,
         ));
+        if let Some(text) = style.page_header.as_ref().and_then(|h| h.text.as_deref()) {
+            ops.extend([
+                Op::StartTextSection,
+                Op::SetTextCursor {
+                    pos: Point::new(Mm(text_x), Mm(y)),
+                },
+                Op::SetFont {
+                    font: PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
+                    size: Pt(9.0),
+                },
+                Op::SetFillColor {
+                    col: rgb(palette.accent),
+                },
+                Op::ShowText {
+                    items: vec![TextItem::Text(ascii_safe(text))],
+                },
+                Op::EndTextSection,
+            ]);
+        }
     }
     if let Some(footer) = &style.page_footer {
         let y = 11.0;
@@ -711,19 +772,21 @@ pub(crate) fn write_pdf(
     }
     page_ops.push(ops);
 
+    let mut doc = PdfDocument::new(title);
+    let logo = load_logo(style, &mut doc);
     let page_total = page_ops.len();
     let pages: Vec<PdfPage> = page_ops
         .into_iter()
         .enumerate()
         .map(|(i, mut content)| {
-            let mut all = furniture_ops(style, &palette, i + 1, page_total);
+            let mut all = furniture_ops(style, &palette, logo.as_ref(), i + 1, page_total);
             all.append(&mut content);
             PdfPage::new(Mm(PAGE_W_MM), Mm(PAGE_H_MM), all)
         })
         .collect();
 
     let mut warnings = Vec::new();
-    let bytes = PdfDocument::new(title)
+    let bytes = doc
         .with_pages(pages)
         .save(&PdfSaveOptions::default(), &mut warnings);
     if !warnings.is_empty() {
