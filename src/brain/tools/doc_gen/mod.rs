@@ -10,6 +10,7 @@
 
 pub(crate) mod docx;
 pub(crate) mod pdf;
+pub(crate) mod pptx;
 pub(crate) mod xlsx;
 
 use super::error::{Result, ToolError};
@@ -19,8 +20,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 /// Generate Document Tool: creates XLSX (native, with formulas), DOCX and
-/// PDF (native, styled blocks) files from structured content. All backends
-/// run inside the binary with zero host dependencies.
+/// PDF (native, styled blocks) files from structured content, plus PPTX via
+/// the host's python-pptx when available. The native backends run inside
+/// the binary with zero host dependencies.
 pub struct GenerateDocumentTool;
 
 #[derive(Debug, Deserialize)]
@@ -43,6 +45,10 @@ pub(crate) struct GenerateDocumentInput {
     /// output file stem).
     #[serde(default)]
     pub title: Option<String>,
+
+    /// PPTX: slides to create (required when format is "pptx").
+    #[serde(default)]
+    pub slides: Vec<pptx::SlideSpec>,
 }
 
 #[async_trait]
@@ -52,8 +58,9 @@ impl Tool for GenerateDocumentTool {
     }
 
     fn description(&self) -> &str {
-        "Create documents from structured content. Formats: \"xlsx\", \"docx\", \"pdf\", \
-        all generated natively. \
+        "Create documents from structured content. Formats: \"xlsx\", \"docx\", \
+        \"pdf\" (all generated natively) and \"pptx\" (needs python-pptx on the \
+        host). \
         XLSX: pass `sheets`, each with a `name` and `rows` (array of rows, each row \
         an array of cells). A cell is a string, number, or boolean; a string \
         starting with \"=\" is written as a live Excel FORMULA (e.g. \
@@ -65,8 +72,9 @@ impl Tool for GenerateDocumentTool {
         headings become real styles and lists real numbering; PDF output is A4 \
         with automatic wrapping and page breaks (optional `title` sets the PDF \
         metadata title). \
+        PPTX: pass `slides`, each {title, bullets?:[...], notes?}. \
         Use this instead of CSV/markdown files whenever the user asks for a \
-        spreadsheet, formulas, a Word document, or a PDF."
+        spreadsheet, formulas, a Word document, a PDF, or a slide deck."
     }
 
     fn input_schema(&self) -> Value {
@@ -75,8 +83,8 @@ impl Tool for GenerateDocumentTool {
             "properties": {
                 "format": {
                     "type": "string",
-                    "enum": ["xlsx", "docx", "pdf"],
-                    "description": "Output format. \"xlsx\" creates an Excel workbook, \"docx\" a Word document, \"pdf\" a PDF."
+                    "enum": ["xlsx", "docx", "pdf", "pptx"],
+                    "description": "Output format. \"xlsx\" creates an Excel workbook, \"docx\" a Word document, \"pdf\" a PDF, \"pptx\" a PowerPoint deck (requires python-pptx on the host)."
                 },
                 "output": {
                     "type": "string",
@@ -135,6 +143,19 @@ impl Tool for GenerateDocumentTool {
                         },
                         "required": ["type"]
                     }
+                },
+                "slides": {
+                    "type": "array",
+                    "description": "Slides to create (pptx). At least one required.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Slide title."},
+                            "bullets": {"type": "array", "items": {"type": "string"}, "description": "Bullet lines for the slide body."},
+                            "notes": {"type": "string", "description": "Optional speaker notes."}
+                        },
+                        "required": ["title"]
+                    }
                 }
             },
             "required": ["format", "output"]
@@ -170,8 +191,16 @@ impl Tool for GenerateDocumentTool {
                 }
                 Ok(())
             }
+            "pptx" => {
+                if parsed.slides.is_empty() {
+                    return Err(ToolError::InvalidInput(
+                        "format \"pptx\" requires at least one entry in `slides`".to_string(),
+                    ));
+                }
+                Ok(())
+            }
             other => Err(ToolError::InvalidInput(format!(
-                "Unsupported format \"{other}\" (supported: xlsx, docx, pdf)"
+                "Unsupported format \"{other}\" (supported: xlsx, docx, pdf, pptx)"
             ))),
         }
     }
@@ -217,8 +246,15 @@ impl Tool for GenerateDocumentTool {
                     Err(e) => Ok(ToolResult::error(format!("Failed to create PDF: {e}"))),
                 }
             }
+            "pptx" => match pptx::write_deck(&path, &input.slides).await {
+                Ok(summary) => Ok(ToolResult::success(format!(
+                    "Created {} ({summary})",
+                    path.display()
+                ))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to create deck: {e}"))),
+            },
             other => Ok(ToolResult::error(format!(
-                "Unsupported format \"{other}\" (supported: xlsx, docx, pdf)"
+                "Unsupported format \"{other}\" (supported: xlsx, docx, pdf, pptx)"
             ))),
         }
     }
