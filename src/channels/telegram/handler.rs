@@ -432,6 +432,16 @@ async fn take_folded_final(
 pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
     let norm_folded: String = folded.split_whitespace().collect::<Vec<_>>().join(" ");
     let norm_final: String = final_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if norm_folded.is_empty() || norm_final.is_empty() {
+        return false;
+    }
+    // Exact equality is a duplicate at ANY length — identical strings carry
+    // zero false-positive risk. A short final answer folded verbatim used to
+    // slip under the prefix length guard below and render twice: once inside
+    // the collapsed block and once as the completion (#316).
+    if norm_folded == norm_final {
+        return true;
+    }
     let overlap = norm_folded.len().min(norm_final.len());
     overlap >= 20 && (norm_final.starts_with(&norm_folded) || norm_folded.starts_with(&norm_final))
 }

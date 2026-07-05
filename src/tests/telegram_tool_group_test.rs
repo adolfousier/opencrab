@@ -200,3 +200,23 @@ fn folded_dup_rejects_short_shared_opening() {
     let final_text = "Done. Here is the full breakdown of everything that changed this turn.";
     assert!(!folded_duplicates_final(folded, final_text));
 }
+
+#[test]
+fn folded_dup_exact_short_answer_matches() {
+    // #316: a short final answer folded verbatim used to slip under the
+    // 20-char prefix guard and render twice (in the block AND as the
+    // completion). Exact equality is a duplicate at any length.
+    assert!(folded_duplicates_final("Dropped it.", "Dropped it."));
+}
+
+#[test]
+fn folded_dup_exact_short_with_whitespace_matches() {
+    assert!(folded_duplicates_final("  Dropped   it.\n", "Dropped it."));
+}
+
+#[test]
+fn folded_dup_empty_sides_never_match() {
+    assert!(!folded_duplicates_final("", ""));
+    assert!(!folded_duplicates_final("", "Dropped it."));
+    assert!(!folded_duplicates_final("Dropped it.", ""));
+}
