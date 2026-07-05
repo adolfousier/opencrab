@@ -2084,28 +2084,69 @@ pub(crate) async fn handle_message(
         let result = inject_file_content(&content).0;
         let result = prepend_caption(caption, result);
         (result, false)
-    } else if let Some(origin) = forward_origin_label(&msg) {
-        // A forwarded message whose content type this Bot API client cannot
-        // decode (e.g. a rich/table message forwarded from another bot).
-        // NEVER drop it silently: the forward was fully visible in the chat
-        // while the agent denied it existed. Hand the agent an explicit
-        // placeholder so it knows a forward arrived and can ask for a paste.
-        tracing::warn!(
-            "Telegram: forwarded message from {origin} has no decodable content \
-             (kind unsupported by this Bot API client) — passing placeholder to agent"
-        );
-        (
-            format!(
-                "[A message forwarded from \"{origin}\" was received, but its content \
-                 type could not be decoded (likely a rich-formatted bot message). If \
-                 you need its content, ask the user to paste it as plain text.]"
-            ),
-            false,
-        )
     } else {
-        // Non-text, non-voice, non-photo, non-forward message (service
-        // updates etc.) -- ignore
-        return Ok(());
+        // A message that reached the handler with NO typed content. Forwards
+        // of rich-formatted messages land here: teloxide's typed parse drops
+        // content fields it does not know, sometimes together with the
+        // forward metadata (forward_origin() exists only on Common kinds).
+        // The bytes still arrived — the raw-aware listener (#354) stashed the
+        // message's raw JSON before the typed parse could lose it.
+        let typed_origin = forward_origin_label(&msg);
+        let raw = super::raw_updates::take_raw_message(msg.chat.id.0, msg.id.0);
+        let raw_origin = raw
+            .as_ref()
+            .and_then(super::raw_updates::raw_forward_origin);
+        let origin = typed_origin.or(raw_origin);
+        tracing::warn!(
+            "Telegram: message {} in chat {} has no typed content — origin={:?}, raw_stashed={}, kind={}",
+            msg.id.0,
+            msg.chat.id.0,
+            origin,
+            raw.is_some(),
+            truncate_str(&format!("{:?}", msg.kind), 400),
+        );
+        let relevant = is_dm || origin.is_some();
+        match (raw, relevant) {
+            (Some(raw), true) => {
+                // Hand the agent the ACTUAL raw content to read.
+                let origin_note = origin
+                    .map(|o| format!(" forwarded from \"{o}\""))
+                    .unwrap_or_default();
+                let payload = super::raw_updates::raw_content_for_agent(&raw);
+                (
+                    format!(
+                        "[A message{origin_note} arrived in a format the Bot API \
+                         client cannot decode. Its raw Bot API payload follows — read \
+                         the content directly from it:]\n```json\n{payload}\n```"
+                    ),
+                    false,
+                )
+            }
+            (None, true) => {
+                // Raw stash missed too (restart raced the stash, or another
+                // consumer took it). NEVER silent: tell the user plainly.
+                tracing::error!(
+                    "Telegram: undecodable message {} in chat {} and no raw payload \
+                     available — informing the user",
+                    msg.id.0,
+                    msg.chat.id.0,
+                );
+                message_in_thread(
+                    &bot,
+                    msg.chat.id,
+                    thread_id,
+                    "⚠️ I received your message but could not decode its content \
+                     (unsupported message type) and the raw payload was unavailable. \
+                     Please paste it as text.",
+                )
+                .await?;
+                return Ok(());
+            }
+            (_, false) => {
+                // Group service messages (pins, topic events, ...) — ignore.
+                return Ok(());
+            }
+        }
     };
 
     // Forwarded messages with readable content: tag the provenance so the

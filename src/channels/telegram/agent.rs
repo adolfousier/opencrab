@@ -89,6 +89,9 @@ impl TelegramAgent {
             );
 
             let bot = Bot::new(token.clone());
+            // Kept for the raw-aware update listener (`token` itself is moved
+            // into the shared deps as `bot_token` further down).
+            let listener_token = token.clone();
 
             // Verify token works with Telegram API before setting up dispatcher
             match bot.get_me().await {
@@ -1087,10 +1090,23 @@ impl TelegramAgent {
             // from another process using the same token, etc.), wait and reconnect.
             // Without this, daemon mode silently loses the Telegram connection forever.
             loop {
-                tracing::info!("Telegram: starting dispatcher polling loop");
+                tracing::info!("Telegram: starting dispatcher polling loop (raw-aware listener)");
+                // Raw-aware listener (#354): fetches updates as raw JSON,
+                // stashes each message's payload, and synthesizes readable
+                // text for content types the Bot API client cannot decode
+                // (forwarded rich messages), so they flow through the normal
+                // pipeline. The typed parse goes through from_str ONLY —
+                // from_value yields Error kinds for everything and took the
+                // whole intake down once (see telegram_raw_update_parse_test).
+                let listener = super::raw_updates::raw_polling_listener(listener_token.clone());
                 Dispatcher::builder(bot.clone(), tree.clone())
                     .build()
-                    .dispatch()
+                    .dispatch_with_listener(
+                        listener,
+                        teloxide::error_handlers::LoggingErrorHandler::with_custom_text(
+                            "Telegram raw update listener error",
+                        ),
+                    )
                     .await;
                 tracing::warn!("Telegram: dispatcher exited unexpectedly — reconnecting in 5s");
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;

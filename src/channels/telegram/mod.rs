@@ -7,6 +7,7 @@ mod agent;
 pub(crate) mod cowork;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
+pub(crate) mod raw_updates;
 pub(crate) mod reaction_prompt;
 pub(crate) mod rich;
 pub(crate) mod rolling_status_quips;
