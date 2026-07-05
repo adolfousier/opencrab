@@ -2960,7 +2960,6 @@ pub(crate) async fn handle_message(
                             /// Dirty tools that already have messages (need editing, not new sends)
                             tool_edits: Vec<(usize, String, Option<bool>, MessageId)>,
                             has_active_tools: bool,
-                            has_intermediates: bool,
                             processing: bool,
                             /// Short excerpt of the latest reasoning chunk used as
                             /// a context-aware status line during the pre-tool
@@ -2988,7 +2987,6 @@ pub(crate) async fn handle_message(
 
                             // Drain the ordered display queue
                             let display_items: Vec<DisplayItem> = s.display_queue.drain(..).collect();
-                            let has_intermediates = display_items.iter().any(|d| matches!(d, DisplayItem::Intermediate(_)));
 
                             // Collect dirty tools that already have messages (for editing)
                             let tool_edits: Vec<_> = s.tool_msgs.iter().enumerate()
@@ -3030,7 +3028,6 @@ pub(crate) async fn handle_message(
                                 display_items,
                                 tool_edits,
                                 has_active_tools,
-                                has_intermediates,
                                 processing,
                                 thinking_excerpt: thinking_status_excerpt(&s.thinking),
                                 user_message_preview: s.user_message_preview.clone(),
@@ -3044,8 +3041,11 @@ pub(crate) async fn handle_message(
                             if s.dirty {
                                 s.dirty = false;
                             }
-                            // Clear status tracking if content arriving
-                            if snap.has_intermediates || (snap.dirty && !snap.response_text.is_empty()) {
+                            // Clear status tracking only when final response arrives (#313)
+                            // Don't clear on intermediates — keep the status message alive and
+                            // edit it in place throughout multi-tool sequences, so we get one
+                            // updating message instead of N+1 separate messages.
+                            if snap.dirty && !snap.response_text.is_empty() {
                                 s.status_msg_id = None;
                                 s.tools_started_at = None;
                                 s.tool_round_count = 0;
@@ -3202,10 +3202,13 @@ pub(crate) async fn handle_message(
                             }
                         }
 
-                        // ── Delete status when real content arrives ──
-                        // Drafts auto-expire; only delete standard messages.
+                        // ── Delete status when final response arrives ── (#313)
+                        // Only delete when the actual response text lands, not on intermediates.
+                        // This keeps the status message alive and edited in place throughout
+                        // multi-tool sequences. Drafts auto-expire; only delete standard messages.
                         if snap.draft_id.is_none()
-                            && (snap.has_intermediates || (snap.dirty && !snap.response_text.is_empty()))
+                            && snap.dirty
+                            && !snap.response_text.is_empty()
                             && let Some(mid) = snap.status_msg_id
                         {
                             let _ = bot.delete_message(chat, mid).await;
@@ -5241,13 +5244,17 @@ fn build_status_message(
         return None;
     };
 
-    Some(if tool_round_count > 0 && elapsed_secs >= 5 {
-        format!("⚙️ {} (tool {}, {})", action, tool_round_count, elapsed)
-    } else if elapsed_secs >= 5 {
-        format!("⚙️ {} ({})", action, elapsed)
-    } else {
-        format!("⚙️ {}", action)
-    })
+    Some(format!(
+        "<b>⚙️ {}{}</b>",
+        action,
+        if tool_round_count > 0 && elapsed_secs >= 5 {
+            format!(" (tool {}, {})", tool_round_count, elapsed)
+        } else if elapsed_secs >= 5 {
+            format!(" ({})", elapsed)
+        } else {
+            String::new()
+        }
+    ))
 }
 
 /// Pre-tool rolling phrase for the status line.
