@@ -2136,19 +2136,26 @@ pub(crate) async fn handle_message(
         let relevant = is_dm || origin.is_some();
         match (raw, relevant) {
             (Some(raw), true) => {
-                // Hand the agent the ACTUAL raw content to read.
                 let origin_note = origin
                     .map(|o| format!(" forwarded from \"{o}\""))
                     .unwrap_or_default();
-                let payload = super::raw_updates::raw_content_for_agent(&raw);
-                (
-                    format!(
-                        "[A message{origin_note} arrived in a format the Bot API \
-                         client cannot decode. Its raw Bot API payload follows — read \
-                         the content directly from it:]\n```json\n{payload}\n```"
-                    ),
-                    false,
-                )
+                // Decode recognized rich content types into readable text
+                // (#359); the raw-JSON dump stays as the safety net for
+                // whatever content type comes next.
+                match super::rich_decode::decode_rich_content(&raw) {
+                    Some(decoded) => (format!("[A rich message{origin_note}]:\n{decoded}"), false),
+                    None => {
+                        let payload = super::raw_updates::raw_content_for_agent(&raw);
+                        (
+                            format!(
+                                "[A message{origin_note} arrived in a format the Bot API \
+                                 client cannot decode. Its raw Bot API payload follows — read \
+                                 the content directly from it:]\n```json\n{payload}\n```"
+                            ),
+                            false,
+                        )
+                    }
+                }
             }
             (None, true) => {
                 // Raw stash missed too (restart raced the stash, or another

@@ -259,6 +259,32 @@ const KNOWN_CONTENT_KEYS: &[&str] = &[
     "video_chat_participants_invited",
     "web_app_data",
     "proximity_alert_triggered",
+    // Known to teloxide-core 0.13 (verified against its serde definitions):
+    // these parse into typed kinds, so they must NOT take the synthesize
+    // detour; content-carrying ones are rendered readably by `rich_decode`
+    // in the handler's no-content branch (#359).
+    "checklist",
+    "checklist_tasks_done",
+    "checklist_tasks_added",
+    "paid_media",
+    "giveaway",
+    "giveaway_created",
+    "giveaway_winners",
+    "giveaway_completed",
+    "gift",
+    "unique_gift",
+    "users_shared",
+    "chat_shared",
+    "refunded_payment",
+    "boost_added",
+    "chat_background_set",
+    "connected_website",
+    "write_access_allowed",
+    "passport_data",
+    "direct_message_price_changed",
+    "paid_message_price_changed",
+    "general_forum_topic_hidden",
+    "general_forum_topic_unhidden",
 ];
 
 /// If the raw message carries NONE of the known content keys, rewrite it in
@@ -312,14 +338,21 @@ fn synthesize_unknown_content(m: &mut Value) {
     let origin_note = raw_forward_origin(m)
         .map(|o| format!(" forwarded from \"{o}\""))
         .unwrap_or_default();
-    let pretty = serde_json::to_string_pretty(&Value::Object(unknown.clone()))
-        .unwrap_or_else(|_| "<unrenderable>".to_string());
-    let text = format!(
-        "[A message{origin_note} arrived in a format the Bot API client cannot \
-         decode natively. Its raw content payload follows — read the content \
-         directly from it:]\n```json\n{}\n```",
-        crate::utils::truncate_str(&pretty, 3200)
-    );
+    // A future unknown type may still carry a payload a decoder recognizes;
+    // try readable decoding first, fall back to the raw-JSON dump (#359).
+    let text = match super::rich_decode::decode_rich_content(m) {
+        Some(decoded) => format!("[A rich message{origin_note}]:\n{decoded}"),
+        None => {
+            let pretty = serde_json::to_string_pretty(&Value::Object(unknown.clone()))
+                .unwrap_or_else(|_| "<unrenderable>".to_string());
+            format!(
+                "[A message{origin_note} arrived in a format the Bot API client cannot \
+                 decode natively. Its raw content payload follows — read the content \
+                 directly from it:]\n```json\n{}\n```",
+                crate::utils::truncate_str(&pretty, 3200)
+            )
+        }
+    };
     tracing::warn!(
         "Telegram raw poll: synthesizing text for unknown content keys {:?} (chat={:?}, msg={:?})",
         unknown.keys().collect::<Vec<_>>(),
