@@ -3176,6 +3176,7 @@ pub(crate) async fn handle_message(
                                                 && let Ok(m) = message_in_thread(
                                                     &bot, chat, thread_id, &status,
                                                 )
+                                                .parse_mode(ParseMode::Html)
                                                 .await
                                             {
                                                 let mut s = st
@@ -3193,7 +3194,10 @@ pub(crate) async fn handle_message(
                                         .await;
                                 } else if shown_elapsed >= 2 {
                                     // No message yet — create one
-                                    if let Ok(m) = message_in_thread(&bot, chat, thread_id, &status).await {
+                                    if let Ok(m) = message_in_thread(&bot, chat, thread_id, &status)
+                                        .parse_mode(ParseMode::Html)
+                                        .await
+                                    {
                                         let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                                         s.status_msg_id = Some(m.id);
                                         s.status_shown_at = Some(now);
