@@ -859,6 +859,25 @@ pub struct AgentConfig {
     #[serde(default)]
     pub self_improvement_model: Option<String>,
 
+    /// Default provider for main chat sessions. When set, new sessions use this
+    /// provider instead of inheriting from the most recent session or falling back
+    /// to the config priority list. When changed at runtime, existing sessions
+    /// pick up the new default on next resume (via sync_provider_for_session).
+    ///
+    /// Example in config.toml:
+    /// ```toml
+    /// [agent]
+    /// default_provider = "xiaomi"
+    /// default_model = "mimo-v2.5-pro"
+    /// ```
+    #[serde(default)]
+    pub default_provider: Option<String>,
+
+    /// Default model for main chat sessions. Only used when default_provider is set.
+    /// Matches the semantics of CronConfig's default_provider/default_model pair.
+    #[serde(default)]
+    pub default_model: Option<String>,
+
     /// Suppress the agent's playful post-compaction narration. Default
     /// `false` (= keep the personality moments). When true, the
     /// compaction-recovery prompts switch to a silent-continuation
@@ -933,6 +952,8 @@ impl Default for AgentConfig {
             auto_update: default_auto_update(),
             self_improvement_provider: None,
             self_improvement_model: None,
+            default_provider: None,
+            default_model: None,
             silent_compaction: false,
             lazy_tools: default_lazy_tools(),
             redact_sensitive_data: default_redact_sensitive_data(),

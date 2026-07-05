@@ -33,14 +33,30 @@ pub async fn sync_provider_for_session(
         }
     };
 
+    // Check if [agent] has default_provider/default_model set.
+    // When set, these override the session's stored provider/model on resume,
+    // ensuring config changes propagate to existing sessions (#314).
+    let (effective_provider, effective_model) = if config.agent.default_provider.is_some() {
+        tracing::debug!(
+            "sync_provider_for_session[{}]: [agent] defaults override session provider/model",
+            session_id,
+        );
+        (
+            config.agent.default_provider.as_deref(),
+            config.agent.default_model.as_deref(),
+        )
+    } else {
+        (session_provider, session_model)
+    };
+
     // If the session has an explicit provider, restore it (ignoring global config)
-    if let Some(sess_prov) = session_provider {
+    if let Some(sess_prov) = effective_provider {
         let agent_provider = agent.provider_name_for_session(session_id);
         let agent_model = agent.provider_model_for_session(session_id);
         let sess_prov_norm = normalize_provider_name(sess_prov);
         let agent_prov_norm = normalize_provider_name(&agent_provider);
         let same_provider = provider_names_match(&sess_prov_norm, &agent_prov_norm);
-        let same_model = session_model.is_none_or(|m| m == agent_model);
+        let same_model = effective_model.is_none_or(|m| m == agent_model);
 
         if same_provider && same_model {
             tracing::debug!(
@@ -56,7 +72,7 @@ pub async fn sync_provider_for_session(
             "sync_provider_for_session[{}]: session wants {}/{}, agent currently on {}/{} — attempting restore",
             session_id,
             sess_prov,
-            session_model.unwrap_or("<default>"),
+            effective_model.unwrap_or("<default>"),
             agent_provider,
             agent_model,
         );
@@ -82,12 +98,12 @@ pub async fn sync_provider_for_session(
                     "sync_provider_for_session[{}]: restored {}/{} (was {}/{})",
                     session_id,
                     sess_prov,
-                    session_model.unwrap_or("<default>"),
+                    effective_model.unwrap_or("<default>"),
                     agent_provider,
                     agent_model,
                 );
                 // Restore the saved provider+model pair atomically.
-                let model = session_model
+                let model = effective_model
                     .map(str::to_string)
                     .unwrap_or_else(|| new_provider.default_model().to_string());
                 agent.swap_provider_for_session(session_id, new_provider, model);

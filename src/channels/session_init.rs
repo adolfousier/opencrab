@@ -32,6 +32,7 @@
 
 use anyhow::Result;
 
+use crate::config::Config;
 use crate::db::models::Session;
 use crate::services::SessionService;
 
@@ -52,10 +53,27 @@ pub async fn create_channel_session(
     title: Option<String>,
     inherit_wd_from: Option<&Session>,
 ) -> Result<Session> {
-    let (inherited_provider, inherited_model) = match session_svc.get_most_recent_session().await {
-        Ok(Some(prev)) => (prev.provider_name, prev.model),
-        _ => (None, None),
-    };
+    // First, try to inherit from the most recent session (TUI or any channel).
+    let (mut inherited_provider, mut inherited_model) =
+        match session_svc.get_most_recent_session().await {
+            Ok(Some(prev)) => (prev.provider_name, prev.model),
+            _ => (None, None),
+        };
+
+    // If no recent session exists, check if [agent] has default_provider/default_model set.
+    // This lets config drive the fallback instead of relying on the config priority list.
+    if inherited_provider.is_none()
+        && let Ok(config) = Config::load()
+        && config.agent.default_provider.is_some()
+    {
+        inherited_provider = config.agent.default_provider.clone();
+        inherited_model = config.agent.default_model.clone();
+        tracing::info!(
+            "Channel session using [agent] defaults: provider {:?} / model {:?}",
+            inherited_provider,
+            inherited_model,
+        );
+    }
 
     // Same-chat scoping: the working directory follows the session that
     // received /new, never the global most-recent session (#263).
@@ -63,7 +81,7 @@ pub async fn create_channel_session(
 
     if inherited_provider.is_some() || inherited_wd.is_some() {
         tracing::info!(
-            "Channel session inherited provider {:?} / model {:?} (most recent) / wd {:?} (same chat)",
+            "Channel session inherited provider {:?} / model {:?} / wd {:?}",
             inherited_provider,
             inherited_model,
             inherited_wd,

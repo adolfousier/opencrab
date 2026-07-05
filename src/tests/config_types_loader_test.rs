@@ -254,3 +254,56 @@ fn test_config_save_with_agent_section() {
     assert_eq!(loaded.agent.approval_policy, "auto-always");
     assert_eq!(loaded.agent.max_concurrent, 2);
 }
+
+#[test]
+fn test_agent_config_default_provider_and_model() {
+    let agent = AgentConfig::default();
+    assert_eq!(agent.default_provider, None);
+    assert_eq!(agent.default_model, None);
+}
+
+#[test]
+fn test_agent_config_default_provider_and_model_from_toml() {
+    let toml_content = r#"
+[agent]
+default_provider = "xiaomi"
+default_model = "mimo-v2.5-pro"
+        "#;
+
+    let config: Config = toml::from_str(toml_content).unwrap();
+    assert_eq!(config.agent.default_provider, Some("xiaomi".to_string()));
+    assert_eq!(
+        config.agent.default_model,
+        Some("mimo-v2.5-pro".to_string())
+    );
+}
+
+#[test]
+fn test_agent_config_default_provider_only() {
+    let toml_content = r#"
+[agent]
+default_provider = "anthropic"
+        "#;
+
+    let config: Config = toml::from_str(toml_content).unwrap();
+    assert_eq!(config.agent.default_provider, Some("anthropic".to_string()));
+    assert_eq!(config.agent.default_model, None);
+}
+
+#[test]
+fn test_agent_config_save_with_default_provider() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let mut config = Config::default();
+    config.agent.default_provider = Some("xiaomi".to_string());
+    config.agent.default_model = Some("mimo-v2.5-pro".to_string());
+
+    config.save(temp_file.path()).unwrap();
+
+    let contents = fs::read_to_string(temp_file.path()).unwrap();
+    let loaded: Config = toml::from_str(&contents).unwrap();
+    assert_eq!(loaded.agent.default_provider, Some("xiaomi".to_string()));
+    assert_eq!(
+        loaded.agent.default_model,
+        Some("mimo-v2.5-pro".to_string())
+    );
+}
