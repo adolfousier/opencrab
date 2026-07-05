@@ -4,7 +4,7 @@
 //! test runs only where that stack exists (it self-skips otherwise, since
 //! the dependency is environmental); the error-path tests always run.
 
-use crate::brain::tools::doc_gen::pptx::{SlideSpec, write_deck};
+use crate::brain::tools::doc_gen::pptx::{PptxStyle, SlideSpec, write_deck};
 use serde_json::json;
 
 fn slides(v: serde_json::Value) -> Vec<SlideSpec> {
@@ -33,6 +33,7 @@ async fn deck_generates_when_python_pptx_present() {
             {"title": "Kickoff", "bullets": ["goal one", "goal two"], "notes": "greet everyone"},
             {"title": "Roadmap"}
         ])),
+        &PptxStyle::default(),
     )
     .await
     .expect("deck written");
@@ -60,9 +61,13 @@ async fn missing_python_pptx_reports_actionable_error() {
     }
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("deck.pptx");
-    let err = write_deck(&path, &slides(json!([{"title": "T"}])))
-        .await
-        .expect_err("must fail without python-pptx");
+    let err = write_deck(
+        &path,
+        &slides(json!([{"title": "T"}])),
+        &PptxStyle::default(),
+    )
+    .await
+    .expect_err("must fail without python-pptx");
     assert!(
         err.contains("python-pptx"),
         "error must name the missing dependency: {err}"
@@ -83,4 +88,52 @@ fn slide_titles_with_quotes_serialize_safely() {
     let payload = serde_json::json!({ "slides": specs }).to_string();
     let parsed: serde_json::Value = serde_json::from_str(&payload).expect("round trips");
     assert_eq!(parsed["slides"][0]["title"], "He said \"hello\"; import os");
+}
+
+#[tokio::test]
+async fn template_and_accent_apply_when_python_pptx_present() {
+    if !host_has_python_pptx() {
+        eprintln!("skipping: python3/python-pptx not available on this host");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Build a base deck to act as the brand template.
+    let template = dir.path().join("template.pptx");
+    write_deck(
+        &template,
+        &slides(json!([{"title": "Template seed"}])),
+        &PptxStyle::default(),
+    )
+    .await
+    .expect("template deck written");
+
+    let path = dir.path().join("branded.pptx");
+    let style: PptxStyle = serde_json::from_value(json!({
+        "template_path": template.to_string_lossy(),
+        "accent_color": "#0A84FF"
+    }))
+    .expect("style parses");
+    let summary = write_deck(
+        &path,
+        &slides(json!([{"title": "Branded slide", "bullets": ["point"]}])),
+        &style,
+    )
+    .await
+    .expect("branded deck written");
+    assert!(summary.contains("1 slide(s)"));
+    assert!(path.exists());
+}
+
+#[tokio::test]
+async fn missing_template_errors_before_spawning_python() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("deck.pptx");
+    let style: PptxStyle = serde_json::from_value(json!({
+        "template_path": "/nonexistent/brand.pptx"
+    }))
+    .expect("style parses");
+    let err = write_deck(&path, &slides(json!([{"title": "T"}])), &style)
+        .await
+        .expect_err("missing template must error");
+    assert!(err.contains("Template not found"), "err: {err}");
 }
