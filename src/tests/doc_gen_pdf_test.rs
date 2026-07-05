@@ -86,27 +86,27 @@ fn long_paragraph_wraps_instead_of_overflowing() {
 }
 
 #[test]
-fn non_ascii_transliterates_instead_of_mojibake() {
-    // Builtin WinAnsi fonts render raw UTF-8 bytes as garbage ("â€™"), so
-    // all text must be transliterated to ASCII before layout.
+fn unicode_text_renders_through_bundled_font() {
+    // The bundled DejaVu faces carry real Unicode: punctuation and accents
+    // pass through, emoji map to glyphs or tags, and nothing renders as
+    // WinAnsi mojibake.
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("ascii.pdf");
+    let path = dir.path().join("unicode.pdf");
     write_pdf(
         &path,
         &blocks(json!([
             {"type": "heading", "text": "Audit — Results ✅"},
-            {"type": "paragraph", "text": "It’s “done”… → next 📱"}
+            {"type": "paragraph", "text": "It’s “done”… naïve café → next 📱"}
         ])),
         "Audit",
         &StyleSpec::default(),
     )
     .expect("pdf written");
     let text = pdf_extract::extract_text(&path).expect("pdf extracts");
-    assert!(text.contains("Audit - Results [OK]"), "text: {text}");
-    assert!(text.contains("It's \"done\"... -> next ?"), "text: {text}");
-    // No raw multibyte sequences leak through.
-    assert!(!text.contains('\u{2019}'));
-    assert!(!text.contains("â"));
+    assert!(text.contains("Audit — Results ✓"), "text: {text}");
+    assert!(text.contains("naïve café → next ?"), "text: {text}");
+    // No WinAnsi mojibake artifacts.
+    assert!(!text.contains("â"), "text: {text}");
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
              "Yes - draft_streaming, ProviderStream", "WRONG - WE HAVE IT"]
         ]}
     ]));
-    let items = layout(&specs, &StyleSpec::default());
+    let items = layout(&specs, &StyleSpec::default(), false);
 
     // Simulate the emitter: negative gap = same baseline, else advance.
     let mut y = 297.0f32 - 20.0;
@@ -221,7 +221,7 @@ fn table_columns_size_to_content() {
             ["17", "Slash commands", "WRONG: commands.toml"]
         ]}
     ]));
-    let items = layout(&specs, &StyleSpec::default());
+    let items = layout(&specs, &StyleSpec::default(), false);
     // Collect the distinct x offsets used by table text: these are the
     // column starts. The second column's start is the first column's width.
     let mut xs: Vec<f32> = items
@@ -256,7 +256,7 @@ fn tables_emit_header_separator_and_row_rules() {
             ["3", "4"]
         ]}
     ]));
-    let items = layout(&specs, &StyleSpec::default());
+    let items = layout(&specs, &StyleSpec::default(), false);
     let heavy = items
         .iter()
         .filter(|i| {

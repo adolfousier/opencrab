@@ -8,17 +8,18 @@
 //! the header row plus light rules between rows, and get breathing room
 //! around them so they read as actual tables.
 //!
-//! Built-in PDF fonts are WinAnsi-encoded and printpdf writes text bytes
-//! through unre-encoded, so any non-ASCII character renders as mojibake
-//! ("â€™" instead of an apostrophe). All text is therefore transliterated
-//! to ASCII up front: common punctuation maps to close equivalents, known
-//! status emoji map to readable tags, anything else becomes '?'.
+//! Text renders through bundled DejaVu Sans faces (#363), embedded and
+//! subset by printpdf, so real Unicode (accents, Cyrillic, arrows, check
+//! marks) prints correctly. No TTF carries color emoji, so emoji are still
+//! mapped to readable tags ([OK], [X], [!]) or '?' by `glyph_safe`. If the
+//! bundled faces ever fail to parse, generation falls back to the builtin
+//! WinAnsi Helvetica plus full ASCII transliteration rather than failing.
 
 use super::docx::BlockSpec;
 use printpdf::{
-    BuiltinFont, Color, LinePoint, Mm, Op, PaintMode, PdfDocument, PdfFontHandle, PdfPage,
-    PdfSaveOptions, Point, Polygon, PolygonRing, Pt, RawImage, Rgb, TextItem, WindingOrder,
-    XObjectId, XObjectTransform,
+    BuiltinFont, Color, LinePoint, Mm, Op, PaintMode, ParsedFont, PdfDocument, PdfFontHandle,
+    PdfPage, PdfSaveOptions, Point, Polygon, PolygonRing, Pt, RawImage, Rgb, TextItem,
+    WindingOrder, XObjectId, XObjectTransform,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -245,6 +246,93 @@ fn ascii_safe(text: &str) -> String {
     out
 }
 
+/// Bundled text faces (DejaVu Sans 2.37, free Bitstream Vera-derived
+/// license; see fonts/LICENSE). Embedded so Unicode text renders on every
+/// host with zero dependencies.
+const DEJAVU_REGULAR: &[u8] = include_bytes!("fonts/DejaVuSans.ttf");
+const DEJAVU_BOLD: &[u8] = include_bytes!("fonts/DejaVuSans-Bold.ttf");
+
+/// Resolved regular/bold handles for text emission.
+#[derive(Clone)]
+struct Faces {
+    regular: PdfFontHandle,
+    bold: PdfFontHandle,
+    /// True when running on the builtin WinAnsi fallback: text must then be
+    /// fully ASCII-transliterated.
+    ascii_only: bool,
+}
+
+impl Faces {
+    fn pick(&self, bold: bool) -> PdfFontHandle {
+        if bold {
+            self.bold.clone()
+        } else {
+            self.regular.clone()
+        }
+    }
+}
+
+/// Register the bundled faces with the document, falling back to builtin
+/// Helvetica (plus ASCII transliteration) if parsing ever fails.
+fn load_faces(doc: &mut PdfDocument) -> Faces {
+    let mut warnings = Vec::new();
+    match (
+        ParsedFont::from_bytes(DEJAVU_REGULAR, 0, &mut warnings),
+        ParsedFont::from_bytes(DEJAVU_BOLD, 0, &mut warnings),
+    ) {
+        (Some(regular), Some(bold)) => Faces {
+            regular: PdfFontHandle::External(doc.add_font(&regular)),
+            bold: PdfFontHandle::External(doc.add_font(&bold)),
+            ascii_only: false,
+        },
+        _ => {
+            tracing::warn!(
+                "generate_document: bundled DejaVu faces failed to parse — falling back \
+                 to builtin Helvetica with ASCII transliteration"
+            );
+            Faces {
+                regular: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                bold: PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
+                ascii_only: true,
+            }
+        }
+    }
+}
+
+/// Sanitize text for the bundled Unicode faces: emoji become readable tags
+/// (no TTF carries color emoji), formatting-only codepoints are dropped,
+/// unsupported symbol/emoji ranges become '?'. Regular Unicode text
+/// (accents, Cyrillic, Greek, punctuation, arrows, check marks) passes
+/// through untouched.
+fn glyph_safe(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\u{2705}' | '\u{2714}' => out.push('\u{2713}'),
+            '\u{274c}' | '\u{2716}' => out.push('\u{2717}'),
+            '\u{26a0}' => out.push_str("[!]"),
+            // Formatting artifacts of emoji sequences.
+            '\u{fe0f}' | '\u{200d}' | '\u{200b}' => {}
+            // Emoji planes and symbol blocks DejaVu does not cover.
+            c if ('\u{1F000}'..='\u{1FAFF}').contains(&c) => out.push('?'),
+            c if ('\u{2600}'..='\u{26FF}').contains(&c) => out.push('?'),
+            c if ('\u{2728}'..='\u{27BF}').contains(&c) => out.push('?'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Sanitizer for the active faces: full ASCII transliteration on the
+/// builtin fallback, glyph-aware cleanup on the bundled Unicode faces.
+fn text_safe(text: &str, ascii_only: bool) -> String {
+    if ascii_only {
+        ascii_safe(text)
+    } else {
+        glyph_safe(text)
+    }
+}
+
 fn heading_size(level: u8) -> f32 {
     match level {
         1 => 20.0,
@@ -302,7 +390,7 @@ fn column_widths(rows: &[Vec<Value>], cols: usize, body_width: f32, header_bold:
 
 /// Flatten blocks into positioned layout items (pure layout, no PDF objects
 /// yet).
-pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec) -> Vec<LayoutItem> {
+pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec, ascii_only: bool) -> Vec<LayoutItem> {
     let accent_set = style.accent_color.as_deref().and_then(parse_hex).is_some();
     let body_width = PAGE_W_MM - 2.0 * MARGIN_MM;
     let mut items: Vec<LayoutItem> = Vec::new();
@@ -310,7 +398,7 @@ pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec) -> Vec<LayoutItem>
         match block {
             BlockSpec::Heading { text, level } => {
                 let size = heading_size((*level).clamp(1, 3));
-                for (i, l) in wrap(&ascii_safe(text), size, body_width)
+                for (i, l) in wrap(&text_safe(text, ascii_only), size, body_width)
                     .into_iter()
                     .enumerate()
                 {
@@ -335,7 +423,7 @@ pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec) -> Vec<LayoutItem>
                 }
             }
             BlockSpec::Paragraph { text, bold } => {
-                for (i, l) in wrap(&ascii_safe(text), 11.0, body_width)
+                for (i, l) in wrap(&text_safe(text, ascii_only), 11.0, body_width)
                     .into_iter()
                     .enumerate()
                 {
@@ -359,7 +447,7 @@ pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec) -> Vec<LayoutItem>
                     } else {
                         "- ".to_string()
                     };
-                    for (i, l) in wrap(&ascii_safe(item), 11.0, body_width - 6.0)
+                    for (i, l) in wrap(&text_safe(item, ascii_only), 11.0, body_width - 6.0)
                         .into_iter()
                         .enumerate()
                     {
@@ -397,7 +485,13 @@ pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec) -> Vec<LayoutItem>
                     let wrapped: Vec<Vec<String>> = row
                         .iter()
                         .enumerate()
-                        .map(|(c, cell)| wrap(&ascii_safe(&cell_text(cell)), 10.0, widths[c] - 2.5))
+                        .map(|(c, cell)| {
+                            wrap(
+                                &text_safe(&cell_text(cell), ascii_only),
+                                10.0,
+                                widths[c] - 2.5,
+                            )
+                        })
                         .collect();
                     let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
                     // Zebra fill behind every second data row.
@@ -547,9 +641,11 @@ fn load_logo(style: &StyleSpec, doc: &mut PdfDocument) -> Option<Logo> {
 }
 
 /// Header/footer furniture ops for one page.
+#[allow(clippy::too_many_arguments)]
 fn furniture_ops(
     style: &StyleSpec,
     palette: &Palette,
+    faces: &Faces,
     logo: Option<&Logo>,
     page_no: usize,
     page_total: usize,
@@ -589,14 +685,14 @@ fn furniture_ops(
                     pos: Point::new(Mm(text_x), Mm(y)),
                 },
                 Op::SetFont {
-                    font: PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
+                    font: faces.pick(true),
                     size: Pt(9.0),
                 },
                 Op::SetFillColor {
                     col: rgb(palette.accent),
                 },
                 Op::ShowText {
-                    items: vec![TextItem::Text(ascii_safe(text))],
+                    items: vec![TextItem::Text(text_safe(text, faces.ascii_only))],
                 },
                 Op::EndTextSection,
             ]);
@@ -618,14 +714,14 @@ fn furniture_ops(
                     pos: Point::new(Mm(MARGIN_MM), Mm(y)),
                 },
                 Op::SetFont {
-                    font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                    font: faces.pick(false),
                     size: Pt(8.0),
                 },
                 Op::SetFillColor {
                     col: rgb((0.45, 0.45, 0.45)),
                 },
                 Op::ShowText {
-                    items: vec![TextItem::Text(ascii_safe(text))],
+                    items: vec![TextItem::Text(text_safe(text, faces.ascii_only))],
                 },
                 Op::EndTextSection,
             ]);
@@ -639,7 +735,7 @@ fn furniture_ops(
                     pos: Point::new(Mm(x), Mm(y)),
                 },
                 Op::SetFont {
-                    font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                    font: faces.pick(false),
                     size: Pt(8.0),
                 },
                 Op::SetFillColor {
@@ -663,6 +759,9 @@ pub(crate) fn write_pdf(
     style: &StyleSpec,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let palette = Palette::from_style(style);
+    let mut doc = PdfDocument::new(title);
+    let faces = load_faces(&mut doc);
+    let logo = load_logo(style, &mut doc);
     // Reserve room for page furniture when configured.
     let has_header = style
         .page_header
@@ -680,7 +779,7 @@ pub(crate) fn write_pdf(
         MARGIN_MM
     };
 
-    let items = layout(blocks, style);
+    let items = layout(blocks, style, faces.ascii_only);
     let mut page_ops: Vec<Vec<Op>> = Vec::new();
     let mut ops: Vec<Op> = Vec::new();
     let mut y_mm = content_top;
@@ -742,11 +841,6 @@ pub(crate) fn write_pdf(
                     page_ops.push(std::mem::take(&mut ops));
                     y_mm = content_top - line_height_mm;
                 }
-                let font = if line.bold {
-                    BuiltinFont::HelveticaBold
-                } else {
-                    BuiltinFont::Helvetica
-                };
                 let color = if line.accent && palette.accent_set {
                     palette.accent
                 } else {
@@ -758,7 +852,7 @@ pub(crate) fn write_pdf(
                         pos: Point::new(Mm(MARGIN_MM + line.indent_mm), Mm(y_mm)),
                     },
                     Op::SetFont {
-                        font: PdfFontHandle::Builtin(font),
+                        font: faces.pick(line.bold),
                         size: Pt(line.size),
                     },
                     Op::SetFillColor { col: rgb(color) },
@@ -772,14 +866,12 @@ pub(crate) fn write_pdf(
     }
     page_ops.push(ops);
 
-    let mut doc = PdfDocument::new(title);
-    let logo = load_logo(style, &mut doc);
     let page_total = page_ops.len();
     let pages: Vec<PdfPage> = page_ops
         .into_iter()
         .enumerate()
         .map(|(i, mut content)| {
-            let mut all = furniture_ops(style, &palette, logo.as_ref(), i + 1, page_total);
+            let mut all = furniture_ops(style, &palette, &faces, logo.as_ref(), i + 1, page_total);
             all.append(&mut content);
             PdfPage::new(Mm(PAGE_W_MM), Mm(PAGE_H_MM), all)
         })
