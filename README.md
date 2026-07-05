@@ -1866,6 +1866,8 @@ Full annotated example — the onboarding wizard writes this for you, but you ca
 approval_policy = "auto-always"  # auto-always (default) | auto-session | ask
 working_directory = "~/projects" # default working dir for Bash/file tools
 redact_sensitive_data = true     # redact IPs, tokens, passwords from tool output (set false for sysadmin work)
+default_provider = "xiaomi"      # main chat default provider (new sessions inherit, existing pick up on resume)
+default_model = "mimo-v2.5-pro"  # main chat default model
 
 # ── Channels ──────────────────────────────────────────────────────────────────
 
@@ -2461,6 +2463,16 @@ Autonomous feedback loop that tracks performance and enables the agent to improv
 > **How it works:** Every tool call automatically records success/failure to an append-only SQLite feedback ledger (fire-and-forget, never blocks). User corrections are detected via pattern matching (~30 negative signal phrases) and recorded automatically. On startup, a performance digest (failure rates, correction count, recent issues) is injected into the system prompt. The agent uses `feedback_analyze` to drill into patterns and `self_improve` to apply brain file edits autonomously — changes are logged to `~/.opencrabs/rsi/improvements.md` with daily archives. No human approval required.
 >
 > **Upstream template sync:** When a new OpenCrabs release is detected, the RSI engine automatically fetches updated brain file templates from the upstream repo, diffs them against your local files, and appends only new sections or subsections. Your personalized content is never overwritten. Backups are created before every merge. If no new release exists, zero network calls and zero tokens are spent.
+
+**Default Provider and Model** — set a global default provider and model for the main chat session. When `default_provider` and `default_model` are set under `[agent]`, new sessions inherit these values instead of the most recent session's provider/model. Existing sessions pick up the new defaults on next resume. Useful for enforcing a specific model across all sessions without manual `/models` switching.
+
+Priority: `[agent]` defaults > most recent session's provider/model > config active provider.
+
+```toml
+[agent]
+default_provider = "xiaomi"          # main chat default provider
+default_model = "mimo-v2.5-pro"      # main chat default model
+```
 
 **Self-Improvement Provider and Model** — run RSI cycles on a dedicated provider+model pair, separate from your interactive chat. Set both under `[agent]` in `config.toml`; the model is paired with the provider exactly like `subagent_provider`/`subagent_model`. When `self_improvement_provider` is unset, RSI inherits your active provider; when `self_improvement_model` is unset, it uses that provider's default model.
 

@@ -316,11 +316,15 @@ profile_id = ""
 # ========================================
 # Agent / Sub-Agent Defaults
 # ========================================
-# Default provider/model for spawned sub-agents (e.g., research tasks, parallel tool calls).
-# Priority: subagent_provider > session's active provider.
-# Useful for routing sub-agents to a cheaper/faster model while keeping the main session on a premium one.
+# Default provider/model for the main chat session.
+# When set, new sessions inherit these values instead of the most recent session's provider/model.
+# Existing sessions pick up the new defaults on next resume (via sync_provider_for_session).
+# Useful for enforcing a specific model across all sessions without manual /models switching.
+# Priority: agent defaults > most recent session > config active provider.
 [agent]
 # context_limit = 200000  # Context window in tokens (default: 200000)
+# default_provider = "xiaomi"
+# default_model = "mimo-v2.5-pro"
 # subagent_provider = "zhipu"
 # subagent_model = "GLM 5"
 
