@@ -16,9 +16,10 @@
 
 use super::docx::BlockSpec;
 use printpdf::{
-    BuiltinFont, Color, LinePoint, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions,
-    Point, Pt, Rgb, TextItem,
+    BuiltinFont, Color, LinePoint, Mm, Op, PaintMode, PdfDocument, PdfFontHandle, PdfPage,
+    PdfSaveOptions, Point, Polygon, PolygonRing, Pt, Rgb, TextItem, WindingOrder,
 };
+use serde::Deserialize;
 use serde_json::Value;
 use std::path::Path;
 
@@ -40,6 +41,86 @@ const MAX_COL_SHARE: f32 = 0.45;
 /// collapses below a readable sliver.
 const MIN_COL_MM: f32 = 8.0;
 
+/// Optional visual styling for a generated PDF (#362). Everything defaults
+/// to the plain look, so documents without a style render exactly as before.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct StyleSpec {
+    /// Hex color ("#0A84FF") for headings, the H1 underline bar, and the
+    /// table header separator.
+    pub accent_color: Option<String>,
+    /// Hex color for body text (default near-black).
+    pub text_color: Option<String>,
+    /// Band rendered at the top of every page.
+    pub page_header: Option<PageHeaderSpec>,
+    /// Line rendered at the bottom of every page.
+    pub page_footer: Option<PageFooterSpec>,
+    /// Alternating light fills behind table data rows.
+    #[serde(default)]
+    pub zebra_rows: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct PageHeaderSpec {
+    pub text: Option<String>,
+    /// Local PNG/JPEG path, scaled into the header band (#362, second stage).
+    pub logo_path: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct PageFooterSpec {
+    pub text: Option<String>,
+    #[serde(default)]
+    pub page_numbers: bool,
+}
+
+/// Parse "#RRGGBB" (with or without '#') into 0..1 RGB.
+fn parse_hex(hex: &str) -> Option<(f32, f32, f32)> {
+    let h = hex.trim().trim_start_matches('#');
+    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+    Some((
+        byte(0)? as f32 / 255.0,
+        byte(2)? as f32 / 255.0,
+        byte(4)? as f32 / 255.0,
+    ))
+}
+
+/// Resolved colors for emission.
+struct Palette {
+    accent: (f32, f32, f32),
+    text: (f32, f32, f32),
+    /// True when the user actually set an accent (enables accent-only
+    /// decorations like the H1 underline bar).
+    accent_set: bool,
+}
+
+impl Palette {
+    fn from_style(style: &StyleSpec) -> Self {
+        let accent = style.accent_color.as_deref().and_then(parse_hex);
+        let text = style
+            .text_color
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or((0.1, 0.1, 0.1));
+        Self {
+            accent: accent.unwrap_or((0.25, 0.25, 0.25)),
+            text,
+            accent_set: accent.is_some(),
+        }
+    }
+}
+
+fn rgb(c: (f32, f32, f32)) -> Color {
+    Color::Rgb(Rgb {
+        r: c.0,
+        g: c.1,
+        b: c.2,
+        icc_profile: None,
+    })
+}
+
 /// One laid-out text line ready for emission. Fields are crate-visible so
 /// the layout invariants (every wrapped line gets its own baseline) are
 /// testable without parsing the serialized PDF back.
@@ -51,19 +132,37 @@ pub(crate) struct TextLine {
     /// Extra vertical gap (mm) before this line. Negative means "render on
     /// the SAME baseline as the previous line" (table row siblings).
     pub(crate) gap_before_mm: f32,
+    /// Rendered in the accent color (headings).
+    pub(crate) accent: bool,
+}
+
+/// Visual weight/color class of a horizontal rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuleStyle {
+    /// Dark (or accent-colored) separator under a table header row.
+    HeaderSep,
+    /// Light gray rule between table data rows.
+    RowLight,
+    /// Accent-colored bar (H1 underline). Only emitted when an accent
+    /// color is configured.
+    Accent,
 }
 
 /// One item of the laid-out document flow.
 pub(crate) enum LayoutItem {
     Text(TextLine),
     /// Horizontal rule from `x0_mm` to `x1_mm`, drawn `gap_below_baseline_mm`
-    /// under the previous baseline. `heavy` renders the header separator
-    /// darker than the light between-row rules.
+    /// under the previous baseline.
     Rule {
         x0_mm: f32,
         x1_mm: f32,
         gap_below_baseline_mm: f32,
-        heavy: bool,
+        style: RuleStyle,
+    },
+    /// Light fill behind the UPCOMING `height_mm` of content (zebra table
+    /// rows). Drawn before the row's text so the text prints on top.
+    RowBg {
+        height_mm: f32,
     },
     /// Plain vertical whitespace (mm).
     Gap(f32),
@@ -202,7 +301,8 @@ fn column_widths(rows: &[Vec<Value>], cols: usize, body_width: f32, header_bold:
 
 /// Flatten blocks into positioned layout items (pure layout, no PDF objects
 /// yet).
-pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
+pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec) -> Vec<LayoutItem> {
+    let accent_set = style.accent_color.as_deref().and_then(parse_hex).is_some();
     let body_width = PAGE_W_MM - 2.0 * MARGIN_MM;
     let mut items: Vec<LayoutItem> = Vec::new();
     for block in blocks {
@@ -219,7 +319,18 @@ pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
                         size,
                         indent_mm: 0.0,
                         gap_before_mm: if i == 0 { 4.0 } else { 0.0 },
+                        accent: true,
                     }));
+                }
+                // Accent underline bar below H1 headings when branded.
+                if accent_set && (*level).clamp(1, 3) == 1 {
+                    items.push(LayoutItem::Rule {
+                        x0_mm: MARGIN_MM,
+                        x1_mm: MARGIN_MM + 26.0,
+                        gap_below_baseline_mm: 1.6,
+                        style: RuleStyle::Accent,
+                    });
+                    items.push(LayoutItem::Gap(1.2));
                 }
             }
             BlockSpec::Paragraph { text, bold } => {
@@ -233,6 +344,7 @@ pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
                         size: 11.0,
                         indent_mm: 0.0,
                         gap_before_mm: if i == 0 { 2.0 } else { 0.0 },
+                        accent: false,
                     }));
                 }
             }
@@ -256,6 +368,7 @@ pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
                             size: 11.0,
                             indent_mm: if i == 0 { 4.0 } else { 8.0 },
                             gap_before_mm: if i == 0 { 1.0 } else { 0.0 },
+                            accent: false,
                         }));
                     }
                 }
@@ -277,7 +390,7 @@ pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
                             x0_mm: MARGIN_MM,
                             x1_mm: MARGIN_MM + body_width,
                             gap_below_baseline_mm: 1.4,
-                            heavy: false,
+                            style: RuleStyle::RowLight,
                         });
                     }
                     let wrapped: Vec<Vec<String>> = row
@@ -286,6 +399,12 @@ pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
                         .map(|(c, cell)| wrap(&ascii_safe(&cell_text(cell)), 10.0, widths[c] - 2.5))
                         .collect();
                     let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+                    // Zebra fill behind every second data row.
+                    let data_row_idx = if *header_bold { r.wrapping_sub(1) } else { r };
+                    if style.zebra_rows && !is_header && data_row_idx % 2 == 1 {
+                        let row_h = height as f32 * 10.0 * PT_TO_MM * 1.35 + 0.8;
+                        items.push(LayoutItem::RowBg { height_mm: row_h });
+                    }
                     for line_idx in 0..height {
                         // The FIRST emitted cell of each visual row-line
                         // advances the baseline; the rest share it. Keying
@@ -305,6 +424,7 @@ pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
                                     size: 10.0,
                                     indent_mm: offsets[c],
                                     gap_before_mm: if advanced { -1.0 } else { row_gap },
+                                    accent: false,
                                 }));
                                 advanced = true;
                             }
@@ -316,7 +436,7 @@ pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
                             x0_mm: MARGIN_MM,
                             x1_mm: MARGIN_MM + body_width,
                             gap_below_baseline_mm: 1.6,
-                            heavy: true,
+                            style: RuleStyle::HeaderSep,
                         });
                         items.push(LayoutItem::Gap(0.8));
                     }
@@ -329,19 +449,17 @@ pub(crate) fn layout(blocks: &[BlockSpec]) -> Vec<LayoutItem> {
 }
 
 /// Ops drawing a horizontal rule at `y_mm`.
-fn rule_ops(x0_mm: f32, x1_mm: f32, y_mm: f32, heavy: bool) -> Vec<Op> {
-    let shade = if heavy { 0.25 } else { 0.75 };
+fn rule_ops(
+    x0_mm: f32,
+    x1_mm: f32,
+    y_mm: f32,
+    color: (f32, f32, f32),
+    thickness_pt: f32,
+) -> Vec<Op> {
     vec![
-        Op::SetOutlineColor {
-            col: Color::Rgb(Rgb {
-                r: shade,
-                g: shade,
-                b: shade,
-                icc_profile: None,
-            }),
-        },
+        Op::SetOutlineColor { col: rgb(color) },
         Op::SetOutlineThickness {
-            pt: Pt(if heavy { 0.8 } else { 0.4 }),
+            pt: Pt(thickness_pt),
         },
         Op::DrawLine {
             line: printpdf::Line {
@@ -361,17 +479,150 @@ fn rule_ops(x0_mm: f32, x1_mm: f32, y_mm: f32, heavy: bool) -> Vec<Op> {
     ]
 }
 
+/// Filled light-gray rectangle ops (zebra row background).
+fn fill_rect_ops(x0: f32, x1: f32, y_top: f32, y_bottom: f32) -> Vec<Op> {
+    let pts = [(x0, y_top), (x1, y_top), (x1, y_bottom), (x0, y_bottom)];
+    vec![
+        Op::SetFillColor {
+            col: rgb((0.94, 0.94, 0.94)),
+        },
+        Op::DrawPolygon {
+            polygon: Polygon {
+                rings: vec![PolygonRing {
+                    points: pts
+                        .iter()
+                        .map(|(x, y)| LinePoint {
+                            p: Point::new(Mm(*x), Mm(*y)),
+                            bezier: false,
+                        })
+                        .collect(),
+                }],
+                mode: PaintMode::Fill,
+                winding_order: WindingOrder::NonZero,
+            },
+        },
+    ]
+}
+
+/// Header/footer furniture ops for one page.
+fn furniture_ops(
+    style: &StyleSpec,
+    palette: &Palette,
+    page_no: usize,
+    page_total: usize,
+) -> Vec<Op> {
+    let mut ops = Vec::new();
+    if let Some(header) = &style.page_header
+        && let Some(text) = header.text.as_deref()
+    {
+        let y = PAGE_H_MM - 12.0;
+        ops.extend([
+            Op::StartTextSection,
+            Op::SetTextCursor {
+                pos: Point::new(Mm(MARGIN_MM), Mm(y)),
+            },
+            Op::SetFont {
+                font: PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
+                size: Pt(9.0),
+            },
+            Op::SetFillColor {
+                col: rgb(palette.accent),
+            },
+            Op::ShowText {
+                items: vec![TextItem::Text(ascii_safe(text))],
+            },
+            Op::EndTextSection,
+        ]);
+        ops.extend(rule_ops(
+            MARGIN_MM,
+            PAGE_W_MM - MARGIN_MM,
+            y - 2.0,
+            palette.accent,
+            0.8,
+        ));
+    }
+    if let Some(footer) = &style.page_footer {
+        let y = 11.0;
+        ops.extend(rule_ops(
+            MARGIN_MM,
+            PAGE_W_MM - MARGIN_MM,
+            y + 4.0,
+            (0.75, 0.75, 0.75),
+            0.4,
+        ));
+        if let Some(text) = footer.text.as_deref() {
+            ops.extend([
+                Op::StartTextSection,
+                Op::SetTextCursor {
+                    pos: Point::new(Mm(MARGIN_MM), Mm(y)),
+                },
+                Op::SetFont {
+                    font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                    size: Pt(8.0),
+                },
+                Op::SetFillColor {
+                    col: rgb((0.45, 0.45, 0.45)),
+                },
+                Op::ShowText {
+                    items: vec![TextItem::Text(ascii_safe(text))],
+                },
+                Op::EndTextSection,
+            ]);
+        }
+        if footer.page_numbers {
+            let label = format!("Page {page_no} of {page_total}");
+            let x = PAGE_W_MM - MARGIN_MM - est_width_mm(&label, 8.0, false);
+            ops.extend([
+                Op::StartTextSection,
+                Op::SetTextCursor {
+                    pos: Point::new(Mm(x), Mm(y)),
+                },
+                Op::SetFont {
+                    font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                    size: Pt(8.0),
+                },
+                Op::SetFillColor {
+                    col: rgb((0.45, 0.45, 0.45)),
+                },
+                Op::ShowText {
+                    items: vec![TextItem::Text(label)],
+                },
+                Op::EndTextSection,
+            ]);
+        }
+    }
+    ops
+}
+
 /// Write `blocks` to a PDF at `path`. Returns a short human summary.
 pub(crate) fn write_pdf(
     path: &Path,
     blocks: &[BlockSpec],
     title: &str,
+    style: &StyleSpec,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let items = layout(blocks);
-    let mut pages: Vec<PdfPage> = Vec::new();
+    let palette = Palette::from_style(style);
+    // Reserve room for page furniture when configured.
+    let has_header = style
+        .page_header
+        .as_ref()
+        .is_some_and(|h| h.text.is_some() || h.logo_path.is_some());
+    let has_footer = style.page_footer.is_some();
+    let content_top = if has_header {
+        PAGE_H_MM - MARGIN_MM - 6.0
+    } else {
+        PAGE_H_MM - MARGIN_MM
+    };
+    let content_bottom = if has_footer {
+        MARGIN_MM - 2.0 + 8.0
+    } else {
+        MARGIN_MM
+    };
+
+    let items = layout(blocks, style);
+    let mut page_ops: Vec<Vec<Op>> = Vec::new();
     let mut ops: Vec<Op> = Vec::new();
-    let mut y_mm = PAGE_H_MM - MARGIN_MM;
-    let mut page_count = 1usize;
+    let mut y_mm = content_top;
     let mut text_lines = 0usize;
 
     for item in &items {
@@ -383,13 +634,40 @@ pub(crate) fn write_pdf(
                 x0_mm,
                 x1_mm,
                 gap_below_baseline_mm,
-                heavy,
+                style: rule_style,
             } => {
                 let rule_y = y_mm - gap_below_baseline_mm;
                 // Rules never force a page break; if the page is full the
                 // next text line breaks the page and the rule is skipped.
-                if rule_y > MARGIN_MM {
-                    ops.extend(rule_ops(*x0_mm, *x1_mm, rule_y, *heavy));
+                if rule_y > content_bottom {
+                    let (color, thickness) = match rule_style {
+                        RuleStyle::HeaderSep => {
+                            let c = if palette.accent_set {
+                                palette.accent
+                            } else {
+                                (0.25, 0.25, 0.25)
+                            };
+                            (c, 0.8)
+                        }
+                        RuleStyle::RowLight => ((0.75, 0.75, 0.75), 0.4),
+                        RuleStyle::Accent => (palette.accent, 1.2),
+                    };
+                    ops.extend(rule_ops(*x0_mm, *x1_mm, rule_y, color, thickness));
+                }
+            }
+            LayoutItem::RowBg { height_mm } => {
+                // Painted from just under the previous baseline down over the
+                // upcoming row. Skipped when the row will page-break (the
+                // fill would land on the old page); imperfect but harmless.
+                let top = y_mm - 1.0;
+                let bottom = top - height_mm;
+                if bottom > content_bottom {
+                    ops.extend(fill_rect_ops(
+                        MARGIN_MM - 1.0,
+                        PAGE_W_MM - MARGIN_MM + 1.0,
+                        top,
+                        bottom,
+                    ));
                 }
             }
             LayoutItem::Text(line) => {
@@ -399,19 +677,19 @@ pub(crate) fn write_pdf(
                 if !same_baseline {
                     y_mm -= line.gap_before_mm + line_height_mm;
                 }
-                if y_mm < MARGIN_MM {
-                    pages.push(PdfPage::new(
-                        Mm(PAGE_W_MM),
-                        Mm(PAGE_H_MM),
-                        std::mem::take(&mut ops),
-                    ));
-                    page_count += 1;
-                    y_mm = PAGE_H_MM - MARGIN_MM - line_height_mm;
+                if y_mm < content_bottom {
+                    page_ops.push(std::mem::take(&mut ops));
+                    y_mm = content_top - line_height_mm;
                 }
                 let font = if line.bold {
                     BuiltinFont::HelveticaBold
                 } else {
                     BuiltinFont::Helvetica
+                };
+                let color = if line.accent && palette.accent_set {
+                    palette.accent
+                } else {
+                    palette.text
                 };
                 ops.extend([
                     Op::StartTextSection,
@@ -422,6 +700,7 @@ pub(crate) fn write_pdf(
                         font: PdfFontHandle::Builtin(font),
                         size: Pt(line.size),
                     },
+                    Op::SetFillColor { col: rgb(color) },
                     Op::ShowText {
                         items: vec![TextItem::Text(line.text.clone())],
                     },
@@ -430,7 +709,18 @@ pub(crate) fn write_pdf(
             }
         }
     }
-    pages.push(PdfPage::new(Mm(PAGE_W_MM), Mm(PAGE_H_MM), ops));
+    page_ops.push(ops);
+
+    let page_total = page_ops.len();
+    let pages: Vec<PdfPage> = page_ops
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut content)| {
+            let mut all = furniture_ops(style, &palette, i + 1, page_total);
+            all.append(&mut content);
+            PdfPage::new(Mm(PAGE_W_MM), Mm(PAGE_H_MM), all)
+        })
+        .collect();
 
     let mut warnings = Vec::new();
     let bytes = PdfDocument::new(title)
@@ -444,5 +734,5 @@ pub(crate) fn write_pdf(
         );
     }
     std::fs::write(path, bytes)?;
-    Ok(format!("{} page(s), {} line(s)", page_count, text_lines))
+    Ok(format!("{} page(s), {} line(s)", page_total, text_lines))
 }

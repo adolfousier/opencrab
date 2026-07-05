@@ -49,6 +49,11 @@ pub(crate) struct GenerateDocumentInput {
     /// PPTX: slides to create (required when format is "pptx").
     #[serde(default)]
     pub slides: Vec<pptx::SlideSpec>,
+
+    /// PDF: optional visual styling (brand colors, page header/footer,
+    /// zebra tables). Defaults to the plain look.
+    #[serde(default)]
+    pub style: Option<pdf::StyleSpec>,
 }
 
 #[async_trait]
@@ -71,7 +76,9 @@ impl Tool for GenerateDocumentTool {
         ordered?}, {type:\"table\", rows:[[...]], header_bold?}. In Word output, \
         headings become real styles and lists real numbering; PDF output is A4 \
         with automatic wrapping and page breaks (optional `title` sets the PDF \
-        metadata title). \
+        metadata title; optional `style` adds brand colors, a page header/footer \
+        with page numbers, and zebra table rows: use it when the user wants a \
+        polished or branded report). \
         PPTX: pass `slides`, each {title, bullets?:[...], notes?}. \
         Use this instead of CSV/markdown files whenever the user asks for a \
         spreadsheet, formulas, a Word document, a PDF, or a slide deck. \
@@ -146,6 +153,29 @@ impl Tool for GenerateDocumentTool {
                             "header_bold": {"type": "boolean", "description": "Bold the first table row (default true)."}
                         },
                         "required": ["type"]
+                    }
+                },
+                "style": {
+                    "type": "object",
+                    "description": "PDF only: visual styling. All fields optional.",
+                    "properties": {
+                        "accent_color": {"type": "string", "description": "Hex color (\"#0A84FF\") for headings, H1 underline bar, and table header separator."},
+                        "text_color": {"type": "string", "description": "Hex color for body text (default near-black)."},
+                        "page_header": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string", "description": "Brand/report name shown at the top of every page with an accent rule."},
+                                "logo_path": {"type": "string", "description": "Local PNG/JPEG path drawn in the page header band."}
+                            }
+                        },
+                        "page_footer": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string", "description": "Footer text on every page."},
+                                "page_numbers": {"type": "boolean", "description": "Render \"Page N of M\" bottom-right."}
+                            }
+                        },
+                        "zebra_rows": {"type": "boolean", "description": "Alternating light fills behind table rows."}
                     }
                 },
                 "slides": {
@@ -242,7 +272,8 @@ impl Tool for GenerateDocumentTool {
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_else(|| "Document".to_string())
                 });
-                match pdf::write_pdf(&path, &input.blocks, &title) {
+                let style = input.style.unwrap_or_default();
+                match pdf::write_pdf(&path, &input.blocks, &title, &style) {
                     Ok(summary) => Ok(ToolResult::success(format!(
                         "Created {} ({summary})",
                         path.display()

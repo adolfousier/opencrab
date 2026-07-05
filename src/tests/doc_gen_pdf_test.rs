@@ -5,7 +5,7 @@
 //! what we write.
 
 use crate::brain::tools::doc_gen::docx::BlockSpec;
-use crate::brain::tools::doc_gen::pdf::write_pdf;
+use crate::brain::tools::doc_gen::pdf::{StyleSpec, write_pdf};
 use serde_json::json;
 
 fn blocks(v: serde_json::Value) -> Vec<BlockSpec> {
@@ -25,6 +25,7 @@ fn pdf_contains_heading_paragraph_list_and_table_text() {
             {"type": "table", "rows": [["Metric", "Value"], ["Requests", 12345]]}
         ])),
         "Annual Summary",
+        &StyleSpec::default(),
     )
     .expect("pdf written");
     assert!(summary.contains("1 page(s)"));
@@ -45,7 +46,8 @@ fn long_content_breaks_across_pages() {
     let many: Vec<serde_json::Value> = (0..120)
         .map(|i| json!({"type": "paragraph", "text": format!("Paragraph number {i} of filler content.")}))
         .collect();
-    let summary = write_pdf(&path, &blocks(json!(many)), "Long").expect("pdf written");
+    let summary =
+        write_pdf(&path, &blocks(json!(many)), "Long", &StyleSpec::default()).expect("pdf written");
     let pages: usize = summary
         .split_whitespace()
         .next()
@@ -70,6 +72,7 @@ fn long_paragraph_wraps_instead_of_overflowing() {
         &path,
         &blocks(json!([{"type": "paragraph", "text": long_text}])),
         "Wrap",
+        &StyleSpec::default(),
     )
     .expect("pdf written");
     // 200 short words cannot fit one line: the layout must emit many lines.
@@ -95,6 +98,7 @@ fn non_ascii_transliterates_instead_of_mojibake() {
             {"type": "paragraph", "text": "It’s “done”… → next 📱"}
         ])),
         "Audit",
+        &StyleSpec::default(),
     )
     .expect("pdf written");
     let text = pdf_extract::extract_text(&path).expect("pdf extracts");
@@ -121,6 +125,7 @@ fn table_with_uneven_cell_heights_keeps_all_text() {
             ]}
         ])),
         "Uneven",
+        &StyleSpec::default(),
     )
     .expect("pdf written");
     let text = pdf_extract::extract_text(&path).expect("pdf extracts");
@@ -139,6 +144,7 @@ fn unbroken_long_words_hard_split() {
         &path,
         &blocks(json!([{"type": "paragraph", "text": long_path}])),
         "Longword",
+        &StyleSpec::default(),
     )
     .expect("pdf written");
     let text = pdf_extract::extract_text(&path).expect("pdf extracts");
@@ -166,7 +172,7 @@ fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
              "Yes - draft_streaming, ProviderStream", "WRONG - WE HAVE IT"]
         ]}
     ]));
-    let items = layout(&specs);
+    let items = layout(&specs, &StyleSpec::default());
 
     // Simulate the emitter: negative gap = same baseline, else advance.
     let mut y = 297.0f32 - 20.0;
@@ -174,7 +180,7 @@ fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
     for item in &items {
         match item {
             LayoutItem::Gap(mm) => y -= mm,
-            LayoutItem::Rule { .. } => {}
+            LayoutItem::Rule { .. } | LayoutItem::RowBg { .. } => {}
             LayoutItem::Text(l) => {
                 let h = l.size * 0.352_778 * 1.35;
                 if l.gap_before_mm >= 0.0 {
@@ -215,7 +221,7 @@ fn table_columns_size_to_content() {
             ["17", "Slash commands", "WRONG: commands.toml"]
         ]}
     ]));
-    let items = layout(&specs);
+    let items = layout(&specs, &StyleSpec::default());
     // Collect the distinct x offsets used by table text: these are the
     // column starts. The second column's start is the first column's width.
     let mut xs: Vec<f32> = items
@@ -241,7 +247,7 @@ fn table_columns_size_to_content() {
 
 #[test]
 fn tables_emit_header_separator_and_row_rules() {
-    use crate::brain::tools::doc_gen::pdf::{LayoutItem, layout};
+    use crate::brain::tools::doc_gen::pdf::{LayoutItem, RuleStyle, layout};
 
     let specs = blocks(json!([
         {"type": "table", "rows": [
@@ -250,15 +256,80 @@ fn tables_emit_header_separator_and_row_rules() {
             ["3", "4"]
         ]}
     ]));
-    let items = layout(&specs);
+    let items = layout(&specs, &StyleSpec::default());
     let heavy = items
         .iter()
-        .filter(|i| matches!(i, LayoutItem::Rule { heavy: true, .. }))
+        .filter(|i| {
+            matches!(
+                i,
+                LayoutItem::Rule {
+                    style: RuleStyle::HeaderSep,
+                    ..
+                }
+            )
+        })
         .count();
     let light = items
         .iter()
-        .filter(|i| matches!(i, LayoutItem::Rule { heavy: false, .. }))
+        .filter(|i| {
+            matches!(
+                i,
+                LayoutItem::Rule {
+                    style: RuleStyle::RowLight,
+                    ..
+                }
+            )
+        })
         .count();
     assert_eq!(heavy, 1, "exactly one header separator");
     assert_eq!(light, 1, "one light rule between the two data rows");
+}
+
+#[test]
+fn styled_pdf_renders_furniture_and_page_numbers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("styled.pdf");
+    let style: StyleSpec = serde_json::from_value(json!({
+        "accent_color": "#0A84FF",
+        "text_color": "#222222",
+        "page_header": {"text": "OpenCrabs Research"},
+        "page_footer": {"text": "confidential", "page_numbers": true},
+        "zebra_rows": true
+    }))
+    .expect("style parses");
+    write_pdf(
+        &path,
+        &blocks(json!([
+            {"type": "heading", "text": "Branded Report", "level": 1},
+            {"type": "table", "rows": [["A", "B"], ["1", "2"], ["3", "4"], ["5", "6"]]}
+        ])),
+        "Branded",
+        &style,
+    )
+    .expect("styled pdf written");
+    let text = pdf_extract::extract_text(&path).expect("pdf extracts");
+    assert!(text.contains("Branded Report"));
+    assert!(text.contains("OpenCrabs Research"));
+    assert!(text.contains("confidential"));
+    assert!(text.contains("Page 1 of 1"));
+}
+
+#[test]
+fn invalid_hex_colors_fall_back_to_defaults() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("badhex.pdf");
+    let style: StyleSpec = serde_json::from_value(json!({
+        "accent_color": "not-a-color",
+        "text_color": "#zzzzzz"
+    }))
+    .expect("style parses");
+    write_pdf(
+        &path,
+        &blocks(json!([{"type": "heading", "text": "Still Works"}])),
+        "Bad hex",
+        &style,
+    )
+    .expect("bad hex never fails generation");
+    let text = pdf_extract::extract_text(&path).expect("pdf extracts");
+    assert!(text.contains("Still Works"));
 }
