@@ -103,7 +103,7 @@ pub(crate) fn raw_content_for_agent(raw: &Value) -> String {
         }
     }
     let pretty = serde_json::to_string_pretty(&content).unwrap_or_else(|_| content.to_string());
-    crate::utils::truncate_str(&pretty, 3500).to_string()
+    crate::utils::truncate_str(&pretty, 4096).to_string()
 }
 
 struct RawPollState {
