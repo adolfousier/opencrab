@@ -4463,6 +4463,42 @@ impl AgentService {
             let mut tool_descriptions: Vec<String> = Vec::new(); // For DB persistence
             let mut tool_outputs: Vec<(bool, String)> = Vec::new(); // (success, output) parallel to descriptions
 
+            // ── Concurrent fast path (#361) ──
+            // A multi-tool batch where nothing needs interactive approval
+            // runs concurrently, capped by [agent] max_concurrent. Results
+            // come back in original order; the sequential loop below then
+            // sees an empty batch. Approval-gated or single-tool batches
+            // fall through unchanged.
+            let tool_uses = if self.batch_is_parallel_eligible(
+                &tool_uses,
+                &tool_context,
+                has_override_approval,
+            ) {
+                let batch = self
+                    .execute_tools_parallel(
+                        session_id,
+                        tool_uses,
+                        &tool_context,
+                        cancel_token.as_ref(),
+                        progress_callback.as_ref(),
+                        assistant_db_msg.id,
+                    )
+                    .await;
+                if batch.successes > 0 {
+                    phantom_retries_used = 0;
+                    tool_calls_completed_this_turn += batch.successes;
+                }
+                tool_results = batch.results;
+                tool_descriptions = batch.descriptions;
+                tool_outputs = batch.outputs;
+                if batch.cancelled {
+                    tracing::warn!("🛑 Tool execution cancelled mid-batch (parallel path)");
+                }
+                Vec::new()
+            } else {
+                tool_uses
+            };
+
             for (tool_id, tool_name, tool_input) in tool_uses {
                 // Check for cancellation before each tool
                 if let Some(ref token) = cancel_token

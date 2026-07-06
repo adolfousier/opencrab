@@ -260,6 +260,11 @@ pub struct AgentService {
     /// lazy_tools`. Default false — see `AgentConfig::lazy_tools`.
     pub(super) lazy_tools: bool,
 
+    /// Cap for concurrent tool execution within one turn (`[agent]
+    /// max_concurrent`, clamped to at least 1). Copied at construction like
+    /// its neighbors; config hot-reload rebuilds channel services.
+    pub(super) max_concurrent: usize,
+
     /// Context window limit in tokens from config
     pub(super) context_limit: u32,
 
@@ -332,6 +337,7 @@ impl AgentService {
             auto_approve_tools: false,
             silent_compaction: config.agent.silent_compaction,
             lazy_tools: config.agent.lazy_tools,
+            max_concurrent: (config.agent.max_concurrent as usize).max(1),
             context_limit: config.agent.context_limit,
             max_tokens: config.agent.max_tokens,
             approval_callback: None,
