@@ -382,8 +382,10 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
     assert!(out.starts_with("<details><summary><b>2 tool calls</b> ↳ "));
     assert!(out.ends_with("</details>"));
     assert!(!out.contains("<details open"));
-    assert!(out.contains("<b>✅ bash</b> <code>git status</code>"));
-    assert!(out.contains("<b>✅ read</b> <code>file.rs</code>"));
+    // Each entry is its own <p>: the rich HTML parser ignores raw newlines,
+    // so without block-level wrapping the log runs together as one wall.
+    assert!(out.contains("<p><b>✅ bash</b> <code>git status</code></p>"));
+    assert!(out.contains("<p><b>✅ read</b> <code>file.rs</code></p>"));
 }
 
 #[test]
