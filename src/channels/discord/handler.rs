@@ -630,13 +630,11 @@ pub(crate) async fn handle_message(
         use serenity::builder::EditMessage;
         use serenity::model::id::MessageId;
 
-        struct ToolEntry {
-            msg_id: Option<MessageId>,
-            name: String,
-            context: String,
-        }
+        use super::tool_group::{GroupEntry, GroupState};
 
-        let tools: Arc<Mutex<Vec<ToolEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let tools: Arc<Mutex<Vec<GroupEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let group_msg_id: Arc<Mutex<Option<MessageId>>> = Arc::new(Mutex::new(None));
+        let group_state_cb = discord_state.clone();
         let http = ctx.http.clone();
         let channel = msg.channel_id;
 
@@ -667,34 +665,116 @@ pub(crate) async fn handle_message(
                     tool_input,
                 } => {
                     let ctx_hint = crate::utils::tool_context_hint(&tool_name, &tool_input);
+                    let gmid = group_msg_id.clone();
+                    let dstate = group_state_cb.clone();
                     tokio::spawn(async move {
-                        let text = format!("⚙️ **{}**{}", tool_name, ctx_hint);
-                        if let Ok(sent) = channel.say(&http, &text).await {
+                        // One grouped message per turn (#380), collapsed by
+                        // default with an Expand toggle; edited in place.
+                        let entries = {
                             let mut t = tools.lock().await;
-                            t.push(ToolEntry {
-                                msg_id: Some(sent.id),
+                            t.push(GroupEntry {
                                 name: tool_name,
                                 context: ctx_hint,
+                                status: None,
                             });
+                            t.clone()
+                        };
+                        let mut mid_guard = gmid.lock().await;
+                        match *mid_guard {
+                            Some(mid) => {
+                                let group = dstate
+                                    .upsert_tool_group(
+                                        mid.get(),
+                                        GroupState {
+                                            channel_id: channel.get(),
+                                            entries,
+                                            expanded: false,
+                                        },
+                                    )
+                                    .await;
+                                let edit = EditMessage::new()
+                                    .content(super::tool_group::render_content(&group))
+                                    .components(super::tool_group::render_components(
+                                        &group,
+                                        mid.get(),
+                                    ));
+                                if let Err(e) = channel.edit_message(&http, mid, edit).await {
+                                    tracing::warn!("Discord: tool group edit failed (append): {e}");
+                                }
+                            }
+                            None => {
+                                let group = GroupState {
+                                    channel_id: channel.get(),
+                                    entries,
+                                    expanded: false,
+                                };
+                                let content = super::tool_group::render_content(&group);
+                                match channel.say(&http, &content).await {
+                                    Ok(sent) => {
+                                        let comps = super::tool_group::render_components(
+                                            &group,
+                                            sent.id.get(),
+                                        );
+                                        if !comps.is_empty()
+                                            && let Err(e) = channel
+                                                .edit_message(
+                                                    &http,
+                                                    sent.id,
+                                                    EditMessage::new().components(comps),
+                                                )
+                                                .await
+                                        {
+                                            tracing::warn!(
+                                                "Discord: tool group component fixup failed: {e}"
+                                            );
+                                        }
+                                        dstate.upsert_tool_group(sent.id.get(), group).await;
+                                        *mid_guard = Some(sent.id);
+                                    }
+                                    Err(e) => tracing::warn!(
+                                        "Discord: failed to post tool group message: {e}"
+                                    ),
+                                }
+                            }
                         }
                     });
                 }
                 ProgressEvent::ToolCompleted {
                     tool_name, success, ..
                 } => {
+                    let gmid = group_msg_id.clone();
+                    let dstate = group_state_cb.clone();
                     tokio::spawn(async move {
-                        let mut t = tools.lock().await;
-                        if let Some(entry) = t
-                            .iter_mut()
-                            .rev()
-                            .find(|e| e.name == tool_name && e.msg_id.is_some())
-                        {
-                            let icon = if success { "✅" } else { "❌" };
-                            let text = format!("{} **{}**{}", icon, entry.name, entry.context);
-                            if let Some(mid) = entry.msg_id.take() {
-                                let _ = channel
-                                    .edit_message(&http, mid, EditMessage::new().content(text))
-                                    .await;
+                        let entries = {
+                            let mut t = tools.lock().await;
+                            if let Some(entry) = t
+                                .iter_mut()
+                                .rev()
+                                .find(|e| e.name == tool_name && e.status.is_none())
+                            {
+                                entry.status = Some(success);
+                            }
+                            t.clone()
+                        };
+                        if let Some(mid) = *gmid.lock().await {
+                            let group = dstate
+                                .upsert_tool_group(
+                                    mid.get(),
+                                    GroupState {
+                                        channel_id: channel.get(),
+                                        entries,
+                                        expanded: false,
+                                    },
+                                )
+                                .await;
+                            let edit = EditMessage::new()
+                                .content(super::tool_group::render_content(&group))
+                                .components(super::tool_group::render_components(
+                                    &group,
+                                    mid.get(),
+                                ));
+                            if let Err(e) = channel.edit_message(&http, mid, edit).await {
+                                tracing::warn!("Discord: tool group edit failed (status): {e}");
                             }
                         }
                     });

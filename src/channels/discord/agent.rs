@@ -195,6 +195,36 @@ impl EventHandler for Handler {
             tracing::info!("Discord callback received: custom_id={}", custom_id);
 
             // Provider picker callback → show models for that provider
+            if let Some(mid_str) = custom_id.strip_prefix("toolgroup:") {
+                // Expand/Collapse toggle (#380): flip stored state and
+                // update THIS message via the interaction response (which
+                // also acks the click).
+                if let Ok(mid) = mid_str.parse::<u64>() {
+                    if let Some(group) = self.discord_state.toggle_tool_group(mid).await {
+                        use serenity::builder::{
+                            CreateInteractionResponse, CreateInteractionResponseMessage,
+                        };
+                        let resp = CreateInteractionResponse::UpdateMessage(
+                            CreateInteractionResponseMessage::new()
+                                .content(super::tool_group::render_content(&group))
+                                .components(super::tool_group::render_components(&group, mid)),
+                        );
+                        if let Err(e) = comp.create_response(&ctx.http, resp).await {
+                            tracing::warn!("Discord: tool group toggle response failed: {e}");
+                        }
+                    } else {
+                        tracing::debug!("Discord: tool group {mid} aged out — toggle ignored");
+                        let _ack = comp
+                            .create_response(
+                                &ctx.http,
+                                serenity::builder::CreateInteractionResponse::Acknowledge,
+                            )
+                            .await;
+                    }
+                }
+                return;
+            }
+
             if let Some(provider_name) = custom_id.strip_prefix("provider:") {
                 let resp = crate::channels::commands::models_for_provider(provider_name).await;
 
