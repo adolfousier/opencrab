@@ -2513,9 +2513,9 @@ Autonomous feedback loop that tracks performance and enables the agent to improv
 >
 > **Upstream template sync:** When a new OpenCrabs release is detected, the RSI engine automatically fetches updated brain file templates from the upstream repo, diffs them against your local files, and appends only new sections or subsections. Your personalized content is never overwritten. Backups are created before every merge. If no new release exists, zero network calls and zero tokens are spent.
 
-**Default Provider and Model** — set a global default provider and model for the main chat session. When `default_provider` and `default_model` are set under `[agent]`, new sessions inherit these values instead of the most recent session's provider/model. Existing sessions pick up the new defaults on next resume. Useful for enforcing a specific model across all sessions without manual `/models` switching.
+**Default Provider and Model** — fallback provider and model when the session's stored provider fails to load (missing API key, provider unavailable). When `default_provider` and `default_model` are set under `[agent]`, they kick in ONLY on provider load failure. They do NOT override sessions that have a working provider. This prevents split panes, different channels, and parallel provider testing from being clobbered on config reload.
 
-Priority: `[agent]` defaults > most recent session's provider/model > config active provider.
+Priority on provider load failure: `[agent]` defaults > config active provider.
 
 ```toml
 [agent]
