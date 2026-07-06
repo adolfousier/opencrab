@@ -472,6 +472,17 @@ pub struct DiscordConfig {
     /// Restrict bot to specific channel IDs. Empty = all channels.
     #[serde(default)]
     pub allowed_channels: Vec<String>,
+
+    /// Role IDs granted access in guilds, in addition to `allowed_users`.
+    /// A member carrying ANY of these roles may use the bot (#387).
+    #[serde(default)]
+    pub allowed_roles: Vec<String>,
+
+    /// Hours before interactive components (select menus, form buttons)
+    /// expire; stale clicks answer "expired" instead of firing (#386).
+    /// Default 24.
+    #[serde(default = "default_component_ttl_hours")]
+    pub component_ttl_hours: f64,
     /// When the bot should respond: "all", "dm_only", or "mention" (default)
     #[serde(default)]
     pub respond_to: RespondTo,
@@ -922,6 +933,10 @@ fn default_redact_sensitive_data() -> bool {
 
 fn default_approval_policy() -> String {
     "auto-always".to_string()
+}
+
+fn default_component_ttl_hours() -> f64 {
+    24.0
 }
 
 fn default_max_concurrent() -> u32 {

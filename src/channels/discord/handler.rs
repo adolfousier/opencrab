@@ -105,13 +105,26 @@ pub(crate) async fn handle_message(
         }
     };
 
-    // Allowlist check — if allowed list is empty, accept all
+    // Allowlist check — if allowed list is empty, accept all. Guild members
+    // may alternatively qualify through `allowed_roles` (#387): carrying ANY
+    // configured role grants access, evaluated per message.
     if !allowed.is_empty() && !allowed.contains(&user_id) {
-        tracing::debug!(
-            "Discord: ignoring message from non-allowed user {}",
-            user_id
-        );
-        return;
+        let role_granted = !dc_cfg.allowed_roles.is_empty()
+            && msg.member.as_ref().is_some_and(|m| {
+                m.roles.iter().any(|r| {
+                    dc_cfg
+                        .allowed_roles
+                        .iter()
+                        .any(|ar| ar == &r.get().to_string())
+                })
+            });
+        if !role_granted {
+            tracing::debug!(
+                "Discord: ignoring message from non-allowed user {} (no allowed role)",
+                user_id
+            );
+            return;
+        }
     }
 
     // respond_to / allowed_channels filtering — DMs always pass
@@ -119,14 +132,25 @@ pub(crate) async fn handle_message(
     if !is_dm {
         let channel_str = msg.channel_id.get().to_string();
 
-        // Check allowed_channels (empty = all channels allowed)
+        // Check allowed_channels (empty = all channels allowed). Threads and
+        // forum posts (#384) carry their own channel id, so a miss falls back
+        // to the PARENT channel: allow-listing a forum allows every post in
+        // it, each post keeping its own per-thread session.
         if !allowed_channels.is_empty() && !allowed_channels.contains(&channel_str) {
-            tracing::debug!(
-                "Discord: ignoring message in non-allowed channel {}",
-                channel_str
-            );
-            store_channel_msg(msg.content.clone()).await;
-            return;
+            let parent_allowed = match msg.channel_id.to_channel(&ctx.http).await {
+                Ok(serenity::model::channel::Channel::Guild(gc)) => gc
+                    .parent_id
+                    .is_some_and(|p| allowed_channels.contains(&p.get().to_string())),
+                _ => false,
+            };
+            if !parent_allowed {
+                tracing::debug!(
+                    "Discord: ignoring message in non-allowed channel {} (parent not allowed either)",
+                    channel_str
+                );
+                store_channel_msg(msg.content.clone()).await;
+                return;
+            }
         }
 
         match respond_to {

@@ -6,6 +6,7 @@
 mod agent;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
+pub(crate) mod interactions;
 pub(crate) mod reactions;
 pub(crate) mod tool_group;
 
@@ -44,6 +45,11 @@ pub struct DiscordState {
     pending_questions: Mutex<HashMap<String, PendingDiscordQuestion>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
+    /// Pending select menus: id -> (created, options) (#382). Lazy TTL:
+    /// stale picks answer "expired" (#386).
+    pending_selects: Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
+    /// Pending modal forms: id -> (created, spec) (#383). Same lazy TTL.
+    pending_forms: Mutex<HashMap<String, (std::time::Instant, interactions::FormSpec)>>,
     /// Collapsible tool groups keyed by message id, so the Expand/Collapse
     /// interaction can re-render after the turn ended. Insertion-ordered
     /// for pruning; bounded at [`Self::TOOL_GROUP_CAP`].
@@ -85,6 +91,55 @@ impl DiscordState {
         group
     }
 
+    /// Register a pending select menu (#382). Bounded by lazy TTL expiry.
+    pub(crate) async fn register_select(&self, id: String, options: Vec<String>) {
+        self.pending_selects
+            .lock()
+            .await
+            .insert(id, (std::time::Instant::now(), options));
+    }
+
+    /// Take a pending select if it is still within `ttl_hours`; expired or
+    /// unknown entries return None (and expired ones are dropped).
+    pub(crate) async fn take_select(&self, id: &str, ttl_hours: f64) -> Option<Vec<String>> {
+        let mut map = self.pending_selects.lock().await;
+        let (created, _) = map.get(id)?;
+        if created.elapsed().as_secs_f64() > ttl_hours * 3600.0 {
+            map.remove(id);
+            return None;
+        }
+        map.remove(id).map(|(_, opts)| opts)
+    }
+
+    /// Register a pending modal form spec (#383).
+    pub(crate) async fn register_form(&self, id: String, spec: interactions::FormSpec) {
+        self.pending_forms
+            .lock()
+            .await
+            .insert(id, (std::time::Instant::now(), spec));
+    }
+
+    /// Fetch a pending form spec within TTL (kept until submitted so the
+    /// button can be pressed once per open; submission consumes it).
+    pub(crate) async fn get_form(
+        &self,
+        id: &str,
+        ttl_hours: f64,
+    ) -> Option<interactions::FormSpec> {
+        let mut map = self.pending_forms.lock().await;
+        let (created, _) = map.get(id)?;
+        if created.elapsed().as_secs_f64() > ttl_hours * 3600.0 {
+            map.remove(id);
+            return None;
+        }
+        map.get(id).map(|(_, spec)| spec.clone())
+    }
+
+    /// Consume a form spec on submission.
+    pub(crate) async fn take_form(&self, id: &str) -> Option<interactions::FormSpec> {
+        self.pending_forms.lock().await.remove(id).map(|(_, s)| s)
+    }
+
     /// Flip a group's expanded state; None when it aged out of retention.
     pub(crate) async fn toggle_tool_group(
         &self,
@@ -107,6 +162,8 @@ impl DiscordState {
             pending_approvals: Mutex::new(HashMap::new()),
             pending_questions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
+            pending_selects: Mutex::new(HashMap::new()),
+            pending_forms: Mutex::new(HashMap::new()),
             tool_groups: Mutex::new((Vec::new(), HashMap::new())),
         }
     }

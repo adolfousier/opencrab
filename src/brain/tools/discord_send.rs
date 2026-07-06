@@ -101,7 +101,7 @@ impl Tool for DiscordSendTool {
                         "send", "reply", "react", "unreact", "edit", "delete",
                         "pin", "unpin", "create_thread", "send_embed", "get_messages",
                         "list_channels", "add_role", "remove_role", "kick", "ban",
-                        "send_file"
+                        "send_file", "send_select", "send_form"
                     ],
                     "description": "The Discord action to perform"
                 },
@@ -148,6 +148,31 @@ impl Tool for DiscordSendTool {
                 "limit": {
                     "type": "integer",
                     "description": "Number of messages to fetch for get_messages (1-100, default 10)"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Choices for send_select (max 25). The user's pick is routed back to you as a new turn."
+                },
+                "placeholder": {
+                    "type": "string",
+                    "description": "Placeholder text for send_select's menu."
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Modal title for send_form."
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "multiline": {"type": "boolean"}
+                        },
+                        "required": ["label"]
+                    },
+                    "description": "Form fields for send_form (max 5). Submitted values are routed back to you as a new turn."
                 },
                 "file_path": {
                     "type": "string",
@@ -526,6 +551,125 @@ impl Tool for DiscordSendTool {
                 }
             }
 
+            // ── send_select (#382) ──────────────────────────────────────────
+            "send_select" => {
+                use serenity::builder::{
+                    CreateActionRow, CreateMessage, CreateSelectMenu, CreateSelectMenuKind,
+                    CreateSelectMenuOption,
+                };
+                let text = pget!(get_str(&input, "message")).to_string();
+                let channel_id = pget!(channel_or_err(channel_id_opt));
+                let options: Vec<String> = input
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .take(25)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if options.is_empty() {
+                    return Ok(ToolResult::error(
+                        "send_select requires a non-empty 'options' array.".to_string(),
+                    ));
+                }
+                let select_id = uuid::Uuid::new_v4().to_string();
+                let menu_options: Vec<CreateSelectMenuOption> = options
+                    .iter()
+                    .enumerate()
+                    .map(|(i, o)| {
+                        let label: String = o.chars().take(100).collect();
+                        CreateSelectMenuOption::new(label, i.to_string())
+                    })
+                    .collect();
+                let mut menu = CreateSelectMenu::new(
+                    format!("sel:{select_id}"),
+                    CreateSelectMenuKind::String {
+                        options: menu_options,
+                    },
+                );
+                if let Some(ph) = input.get("placeholder").and_then(|v| v.as_str()) {
+                    menu = menu.placeholder(ph);
+                }
+                let message = CreateMessage::new()
+                    .content(text)
+                    .components(vec![CreateActionRow::SelectMenu(menu)]);
+                match ChannelId::new(channel_id)
+                    .send_message(&http, message)
+                    .await
+                {
+                    Ok(_) => {
+                        self.discord_state.register_select(select_id, options).await;
+                        Ok(ToolResult::success(
+                            "Select menu posted; the pick will arrive as a new turn.".to_string(),
+                        ))
+                    }
+                    Err(e) => Ok(ToolResult::error(format!("Failed to send select: {e}"))),
+                }
+            }
+
+            // ── send_form (#383) ─────────────────────────────────────────────
+            "send_form" => {
+                use serenity::builder::{CreateActionRow, CreateButton, CreateMessage};
+                use serenity::model::application::ButtonStyle;
+                let text = pget!(get_str(&input, "message")).to_string();
+                let channel_id = pget!(channel_or_err(channel_id_opt));
+                let title = input
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Form")
+                    .to_string();
+                let fields: Vec<(String, bool)> = input
+                    .get("fields")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|f| {
+                                let label = f.get("label")?.as_str()?.to_string();
+                                let multiline = f
+                                    .get("multiline")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                Some((label, multiline))
+                            })
+                            .take(5)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if fields.is_empty() {
+                    return Ok(ToolResult::error(
+                        "send_form requires a non-empty 'fields' array (max 5).".to_string(),
+                    ));
+                }
+                let form_id = uuid::Uuid::new_v4().to_string();
+                let message =
+                    CreateMessage::new()
+                        .content(text)
+                        .components(vec![CreateActionRow::Buttons(vec![
+                            CreateButton::new(format!("form:{form_id}"))
+                                .label("📝 Open form")
+                                .style(ButtonStyle::Primary),
+                        ])]);
+                match ChannelId::new(channel_id)
+                    .send_message(&http, message)
+                    .await
+                {
+                    Ok(_) => {
+                        self.discord_state
+                            .register_form(
+                                form_id,
+                                crate::channels::discord::interactions::FormSpec { title, fields },
+                            )
+                            .await;
+                        Ok(ToolResult::success(
+                            "Form posted; submissions will arrive as a new turn.".to_string(),
+                        ))
+                    }
+                    Err(e) => Ok(ToolResult::error(format!("Failed to send form: {e}"))),
+                }
+            }
+
             "send_file" => {
                 use serenity::builder::{CreateAttachment, CreateMessage};
                 use serenity::model::id::ChannelId;
@@ -569,7 +713,7 @@ impl Tool for DiscordSendTool {
             }
 
             unknown => Ok(ToolResult::error(format!(
-                "Unknown action '{unknown}'. Valid: send, reply, react, unreact, edit, delete, \
+                "Unknown action '{unknown}'. Valid: send, reply, react, unreact, edit, delete, send_select, send_form, \
                  pin, unpin, create_thread, send_embed, get_messages, list_channels, \
                  add_role, remove_role, kick, ban, send_file"
             ))),

@@ -190,9 +190,206 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        // Modal submissions (#383): route the filled fields back as a turn.
+        if let Interaction::Modal(modal) = &interaction {
+            let custom_id = modal.data.custom_id.clone();
+            if let Some(form_id) = custom_id.strip_prefix("formsub:") {
+                let Some(spec) = self.discord_state.take_form(form_id).await else {
+                    let _ack = modal
+                        .create_response(
+                            &ctx.http,
+                            serenity::builder::CreateInteractionResponse::Acknowledge,
+                        )
+                        .await;
+                    return;
+                };
+                // Collect input values in field order.
+                use serenity::model::application::ActionRowComponent;
+                let mut values: Vec<String> = Vec::new();
+                for row in &modal.data.components {
+                    for comp in &row.components {
+                        if let ActionRowComponent::InputText(input) = comp {
+                            values.push(input.value.clone().unwrap_or_default());
+                        }
+                    }
+                }
+                let filled: Vec<String> = spec
+                    .fields
+                    .iter()
+                    .zip(values.iter())
+                    .map(|((label, _), v)| format!("{label}: {v}"))
+                    .collect();
+                let user = modal.user.id.get();
+                let user_name = modal
+                    .user
+                    .global_name
+                    .clone()
+                    .unwrap_or_else(|| modal.user.name.clone());
+                let is_dm = modal.guild_id.is_none();
+                let channel_id = modal.channel_id.get();
+                let _ack = modal
+                    .create_response(
+                        &ctx.http,
+                        serenity::builder::CreateInteractionResponse::Acknowledge,
+                    )
+                    .await;
+                let agent = self.agent.clone();
+                let session_svc = self.session_svc.clone();
+                let idle = self.config_rx.borrow().channels.discord.session_idle_hours;
+                let title = spec.title.clone();
+                let ctx2 = ctx.clone();
+                tokio::spawn(async move {
+                    super::interactions::route_interaction_turn(
+                        &ctx2,
+                        agent,
+                        session_svc,
+                        is_dm,
+                        user,
+                        channel_id,
+                        idle,
+                        format!(
+                            "[{user_name} submitted the \"{title}\" form]\n{}",
+                            filled.join("\n")
+                        ),
+                        format!("[System: {user_name} submitted the \"{title}\" form]"),
+                    )
+                    .await;
+                });
+                return;
+            }
+        }
+
         if let Some(comp) = interaction.message_component() {
             let custom_id = comp.data.custom_id.as_str();
             tracing::info!("Discord callback received: custom_id={}", custom_id);
+
+            // Select menu pick (#382), with lazy TTL (#386).
+            if let Some(sel_id) = custom_id.strip_prefix("sel:") {
+                let ttl = self.config_rx.borrow().channels.discord.component_ttl_hours;
+                let options = self.discord_state.take_select(sel_id, ttl).await;
+                use serenity::model::application::ComponentInteractionDataKind;
+                let picked: Option<String> = match (&comp.data.kind, options) {
+                    (ComponentInteractionDataKind::StringSelect { values }, Some(opts)) => values
+                        .first()
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .and_then(|i| opts.get(i).cloned()),
+                    (_, None) => None,
+                    _ => None,
+                };
+                let Some(choice) = picked else {
+                    // Expired or unknown: say so and strip the dead menu.
+                    use serenity::builder::{
+                        CreateInteractionResponse, CreateInteractionResponseMessage,
+                    };
+                    let _e = comp
+                        .create_response(
+                            &ctx.http,
+                            CreateInteractionResponse::UpdateMessage(
+                                CreateInteractionResponseMessage::new()
+                                    .content("⌛ This menu expired.")
+                                    .components(Vec::new()),
+                            ),
+                        )
+                        .await;
+                    return;
+                };
+                let user = comp.user.id.get();
+                let user_name = comp
+                    .user
+                    .global_name
+                    .clone()
+                    .unwrap_or_else(|| comp.user.name.clone());
+                let is_dm = comp.guild_id.is_none();
+                let channel_id = comp.channel_id.get();
+                // Ack by disabling the menu and showing the pick.
+                use serenity::builder::{
+                    CreateInteractionResponse, CreateInteractionResponseMessage,
+                };
+                let _e = comp
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::UpdateMessage(
+                            CreateInteractionResponseMessage::new()
+                                .content(format!("✅ {user_name} picked: {choice}"))
+                                .components(Vec::new()),
+                        ),
+                    )
+                    .await;
+                let agent = self.agent.clone();
+                let session_svc = self.session_svc.clone();
+                let idle = self.config_rx.borrow().channels.discord.session_idle_hours;
+                let ctx2 = ctx.clone();
+                tokio::spawn(async move {
+                    super::interactions::route_interaction_turn(
+                        &ctx2,
+                        agent,
+                        session_svc,
+                        is_dm,
+                        user,
+                        channel_id,
+                        idle,
+                        format!(
+                            "[{user_name} picked \"{choice}\" from your select menu — \
+                             continue accordingly]"
+                        ),
+                        format!("[System: {user_name} picked \"{choice}\"]"),
+                    )
+                    .await;
+                });
+                return;
+            }
+
+            // Form button (#383): open the modal, with lazy TTL (#386).
+            if let Some(form_id) = custom_id.strip_prefix("form:") {
+                let ttl = self.config_rx.borrow().channels.discord.component_ttl_hours;
+                let Some(spec) = self.discord_state.get_form(form_id, ttl).await else {
+                    use serenity::builder::{
+                        CreateInteractionResponse, CreateInteractionResponseMessage,
+                    };
+                    let _e = comp
+                        .create_response(
+                            &ctx.http,
+                            CreateInteractionResponse::UpdateMessage(
+                                CreateInteractionResponseMessage::new()
+                                    .content("⌛ This form expired.")
+                                    .components(Vec::new()),
+                            ),
+                        )
+                        .await;
+                    return;
+                };
+                use serenity::builder::{
+                    CreateActionRow, CreateInputText, CreateInteractionResponse, CreateModal,
+                };
+                use serenity::model::application::InputTextStyle;
+                let rows: Vec<CreateActionRow> = spec
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (label, multiline))| {
+                        let style = if *multiline {
+                            InputTextStyle::Paragraph
+                        } else {
+                            InputTextStyle::Short
+                        };
+                        let short_label: String = label.chars().take(45).collect();
+                        CreateActionRow::InputText(CreateInputText::new(
+                            style,
+                            short_label,
+                            format!("field:{i}"),
+                        ))
+                    })
+                    .collect();
+                let modal = CreateModal::new(format!("formsub:{form_id}"), spec.title.clone())
+                    .components(rows);
+                if let Err(e) = comp
+                    .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
+                    .await
+                {
+                    tracing::warn!("Discord: failed to open modal: {e}");
+                }
+                return;
+            }
 
             // Provider picker callback → show models for that provider
             if let Some(mid_str) = custom_id.strip_prefix("toolgroup:") {
