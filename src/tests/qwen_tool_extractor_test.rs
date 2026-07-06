@@ -1030,3 +1030,36 @@ fn element_style_attributed_load_brain_file() {
     );
     assert!(cleaned.trim().is_empty());
 }
+
+#[test]
+fn element_style_dsml_corrupted_closers() {
+    // Live deepseek-v4-flash sample (#398): DSML tokenizer corruption turns
+    // the closing tags into </｜｜DSML｜｜parameter> etc., with trailing
+    // </｜｜DSML｜｜invoke> and </｜｜DSML｜｜tool_calls> garbage. The value
+    // itself contains '>' (shell redirection), which must not confuse the
+    // scanner.
+    let text = "<function>\n<name>bash</name>\n<parameter name=\"command\" string=\"true\">opencrabs --version 2>/dev/null || echo \"binary not found at default path\"</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "calls: {calls:?}");
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(
+        calls[0].1.get("command").and_then(|v| v.as_str()),
+        Some("opencrabs --version 2>/dev/null || echo \"binary not found at default path\"")
+    );
+    assert!(
+        cleaned.trim().is_empty(),
+        "no DSML garbage may survive: {cleaned}"
+    );
+}
+
+#[test]
+fn element_style_single_bar_dsml_variant() {
+    let text = "<function>\n<name>read_file</name>\n<path>/tmp/a.md</\u{ff5c}DSML\u{ff5c}path>\n</\u{ff5c}DSML\u{ff5c}function>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "calls: {calls:?}");
+    assert_eq!(
+        calls[0].1.get("path").and_then(|v| v.as_str()),
+        Some("/tmp/a.md")
+    );
+    assert!(cleaned.trim().is_empty(), "cleaned: {cleaned}");
+}

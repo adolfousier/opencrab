@@ -62,6 +62,7 @@ TOOL CALL PROTOCOL — CRITICAL:
     <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE   ← Aider conflict-marker style
     ```diff with file headers                       ← unified-diff dumps
   To edit a file: call the `edit_file` tool (or `write_file` for new files) with the structured tool-call API. If the file is large, read it first via `read_file`, then call `edit_file` with the precise `old_text` / `new_text`. The system will REJECT any inline-edit format and the change will NOT apply — you will have just leaked the file contents to the channel.
+- NEVER write a tool call as XML or JSON text in your reply (no `<function>`, `<tool_call>`, `<invoke>`, or JSON envelopes typed into the message). Text-shaped calls are unreliable: at best they execute after a recovery parse, at worst they leak raw protocol into the chat and the request is dropped. ONLY the structured tool-call API executes tools.
 
 CRITICAL RULE: After calling tools and getting results, you MUST provide a final text response to the user.
 DO NOT keep calling tools in a loop. Call the necessary tools, get results, then respond with text.

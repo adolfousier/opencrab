@@ -457,6 +457,22 @@ pub(crate) fn classify_bare_tool_array(s: &str) -> BareToolArrayMatch {
 /// Returns `(tool_calls, cleaned_text)` where `cleaned_text` is the input
 /// with every matched block removed. If nothing matches, the text is
 /// returned unchanged — safe to call on any content.
+/// Find the closing tag `</name>` in `hay`, tolerating DeepSeek DSML
+/// tokenizer corruption where the closer arrives as `</｜｜DSML｜｜name>` or
+/// `</｜DSML｜name>` (#398, observed live with deepseek-v4-flash). Returns
+/// (offset, matched_len).
+fn find_closer_tolerant(hay: &str, name: &str) -> Option<(usize, usize)> {
+    let candidates = [
+        format!("</{name}>"),
+        format!("</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}{name}>"),
+        format!("</\u{ff5c}DSML\u{ff5c}{name}>"),
+    ];
+    candidates
+        .iter()
+        .filter_map(|c| hay.find(c.as_str()).map(|p| (p, c.len())))
+        .min_by_key(|(p, _)| *p)
+}
+
 pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::Value)>, String) {
     // Cheap pre-check so non-matching content pays nothing.
     let has_claude_style = KNOWN_TOOL_NAMES
@@ -589,9 +605,9 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
                 search = after;
                 continue;
             }
-            let body_end = text[cursor..]
-                .find("</function>")
-                .map(|r| cursor + r)
+            let body_close = find_closer_tolerant(&text[cursor..], "function");
+            let body_end = body_close
+                .map(|(r, _)| cursor + r)
                 .or_else(|| text[cursor..].find("<function>").map(|r| cursor + r))
                 .unwrap_or(text.len());
             let mut args = serde_json::Map::new();
@@ -638,7 +654,16 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
                     };
                 let key = key.as_str();
                 let val_start = tag_start + gt + 1;
-                let Some(vrel) = text[val_start..body_end].find(&close) else {
+                // `close` names the tag whose closer we expect ("parameter"
+                // for the attributed form, the key itself for bare keys);
+                // the finder tolerates DSML-corrupted closers.
+                let close_name = close
+                    .trim_start_matches("</")
+                    .trim_end_matches('>')
+                    .to_string();
+                let Some((vrel, vlen)) =
+                    find_closer_tolerant(&text[val_start..body_end], &close_name)
+                else {
                     cursor = val_start;
                     continue;
                 };
@@ -650,13 +675,29 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
                     .filter(|v| !v.is_string())
                     .unwrap_or_else(|| serde_json::Value::String(raw_val.to_string()));
                 args.insert(key.to_string(), value);
-                cursor = val_start + vrel + close.len();
+                cursor = val_start + vrel + vlen;
             }
-            let strip_end = if text[body_end..].starts_with("</function>") {
-                body_end + "</function>".len()
-            } else {
-                body_end
+            let mut strip_end = match body_close {
+                Some((r, len)) if cursor + r == body_end => body_end + len,
+                _ if text[body_end..].starts_with("</function>") => body_end + "</function>".len(),
+                _ => body_end,
             };
+            // Swallow trailing DSML protocol garbage: bare corrupted closers
+            // like </｜｜DSML｜｜invoke> / </｜｜DSML｜｜tool_calls> that follow
+            // the block are tokenizer noise, never user content.
+            loop {
+                let rest = &text[strip_end..];
+                let trimmed = rest.trim_start();
+                let ws = rest.len() - trimmed.len();
+                if (trimmed.starts_with("</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}")
+                    || trimmed.starts_with("</\u{ff5c}DSML\u{ff5c}"))
+                    && let Some(gtp) = trimmed.find('>')
+                {
+                    strip_end += ws + gtp + 1;
+                } else {
+                    break;
+                }
+            }
             tracing::info!(
                 "extract_text_tool_calls: element-style <function><name> leak parsed as '{}' \
                  with {} arg(s) (#398)",
