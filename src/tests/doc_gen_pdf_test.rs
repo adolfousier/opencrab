@@ -420,6 +420,13 @@ fn image_block_embeds_and_captions_in_pdf() {
     let text = pdf_extract::extract_text(&path).expect("pdf extracts");
     assert!(text.contains("Bracket diagram"), "caption rendered: {text}");
     assert!(text.contains("After the image."));
+    // The decode must actually succeed: printpdf's `images` feature is
+    // required (#426). Without it every embed fell into the visible
+    // placeholder branch, and this test's XObject check missed it.
+    assert!(
+        !text.contains("could not be embedded"),
+        "image decoded, not placeholder: {text}"
+    );
 }
 
 #[test]
