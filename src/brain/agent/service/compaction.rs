@@ -76,7 +76,7 @@ impl AgentService {
             100.0
         };
 
-        tracing::debug!(
+        tracing::trace!(
             "Context budget: {} tokens / {} max = {:.1}%",
             context.token_count,
             effective_max,

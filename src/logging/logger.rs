@@ -235,7 +235,13 @@ fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::err
         .add_directive("slack_morphism=warn".parse()?)
         // whatsapp-rust logs TODO stubs for unimplemented upstream handlers — suppress
         .add_directive("whatsapp_rust::client=error".parse()?)
-        .add_directive("whatsapp_rust=warn".parse()?);
+        .add_directive("whatsapp_rust=warn".parse()?)
+        // whatsapp-rust also emits under CUSTOM targets that the module
+        // directives above never match: "Client/Keepalive" pings every ~30s
+        // and "UnifiedSession" time-offset/append chatter (thousands of
+        // lines a day between them, #400).
+        .add_directive("Client=warn".parse()?)
+        .add_directive("UnifiedSession=warn".parse()?);
 
     // Initialize subscriber with file logging
     tracing_subscriber::registry()

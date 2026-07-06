@@ -1766,7 +1766,7 @@ impl App {
             }
             TuiEvent::ResponseChunk { session_id, text } => {
                 let is_current = self.is_current_session(session_id);
-                tracing::debug!(
+                tracing::trace!(
                     "[TUI] ResponseChunk: len={} is_current={} streaming_len={}",
                     text.len(),
                     is_current,

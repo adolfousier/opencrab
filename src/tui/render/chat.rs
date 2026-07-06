@@ -905,15 +905,6 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // Calculate scroll offset — lines are pre-wrapped so count is accurate
     let total_lines = lines.len();
 
-    // DEBUG: log scroll state before compensation
-    tracing::debug!(
-        "[SCROLL] render start: scroll_offset={}, prev_rendered={}, total_lines={}, auto_scroll={}",
-        app.scroll_offset,
-        app.prev_rendered_lines,
-        total_lines,
-        app.auto_scroll
-    );
-
     // Compensate for new content appended at the bottom while user is scrolled up.
     // Only add the delta (new lines since last render), not the total, to avoid
     // the accumulation bug that inflated scroll_offset by 1000+ in seconds.
@@ -954,12 +945,39 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
 
     let actual_scroll_offset = max_scroll.saturating_sub(app.scroll_offset);
 
-    tracing::debug!(
-        "[SCROLL] render end: actual_offset={}, max_scroll={}, visible_height={}",
-        actual_scroll_offset,
-        max_scroll,
-        visible_height
-    );
+    // Scroll state: ONE trace line, only when something actually changed.
+    // The old per-frame DEBUG pair (start+end, ~10 lines/second while the
+    // TUI is open) was over a million lines a day — 95% of the log file —
+    // while carrying values that were identical frame after frame (#400).
+    {
+        {
+            type ScrollSnapshot = (usize, usize, usize, bool, usize);
+            static LAST_SCROLL_LOG: std::sync::Mutex<Option<ScrollSnapshot>> =
+                std::sync::Mutex::new(None);
+            let snapshot = (
+                app.scroll_offset,
+                total_lines,
+                actual_scroll_offset,
+                app.auto_scroll,
+                max_scroll,
+            );
+            let mut last = LAST_SCROLL_LOG.lock().unwrap_or_else(|e| e.into_inner());
+            if last.map(|l| l != snapshot).unwrap_or(true) {
+                {
+                    tracing::trace!(
+                        "[SCROLL] offset={} total={} actual={} auto={} max={} height={}",
+                        app.scroll_offset,
+                        total_lines,
+                        actual_scroll_offset,
+                        app.auto_scroll,
+                        max_scroll,
+                        visible_height
+                    );
+                    *last = Some(snapshot);
+                }
+            }
+        }
+    }
 
     // Store render info for click-to-copy + drag-selection coordinate mapping
     app.chat_render_scroll = actual_scroll_offset;
