@@ -705,3 +705,44 @@ fn strip_html_entities() {
         .replace("&amp;", "&");
     assert_eq!(plain, "<tag> & more");
 }
+
+// ── #376: split_message multi-byte regression ──────────────────────────────
+
+#[test]
+fn split_message_multibyte_chars_not_split_by_bytes() {
+    // 2049 Cyrillic chars = 4098 bytes but only 2049 chars.
+    // Old byte-based code would split at byte 4096 (= char 2048),
+    // creating 2 chunks when Telegram accepts up to 4096 chars.
+    let text: String = "Д".repeat(2049);
+    assert!(text.len() > 4096); // 4098 bytes
+    assert_eq!(text.chars().count(), 2049); // 2049 chars
+    let result = crate::channels::telegram::handler::split_message(&text, 4096);
+    assert_eq!(
+        result.len(),
+        1,
+        "2049 chars should fit in one 4096-char chunk"
+    );
+    assert_eq!(result[0], text);
+}
+
+#[test]
+fn split_message_multibyte_exceeds_char_limit() {
+    // 5000 Cyrillic chars = 10000 bytes, 5000 chars.
+    // Should split into 2 chunks of ~2500 chars each.
+    let text: String = "Д".repeat(5000);
+    let result = crate::channels::telegram::handler::split_message(&text, 4096);
+    assert!(
+        result.len() >= 2,
+        "5000 chars should split into multiple chunks"
+    );
+    for chunk in &result {
+        assert!(
+            chunk.chars().count() <= 4096,
+            "each chunk should have <= 4096 chars, got {}",
+            chunk.chars().count()
+        );
+    }
+    // All content preserved
+    let rejoined: String = result.iter().copied().collect();
+    assert_eq!(rejoined.chars().count(), 5000);
+}

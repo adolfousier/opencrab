@@ -6278,29 +6278,42 @@ fn find_closing_marker(chars: &[char], marker: &[char]) -> Option<usize> {
 
 /// Split a message into chunks that fit Telegram's 4096 char limit
 pub(crate) fn split_message(text: &str, max_len: usize) -> Vec<&str> {
-    if text.len() <= max_len {
+    if text.chars().count() <= max_len {
         return vec![text];
     }
+
     let mut chunks = Vec::new();
-    let mut start = 0;
-    while start < text.len() {
-        let mut end = (start + max_len).min(text.len());
-        // Ensure end falls on a char boundary (back up if inside a multi-byte char)
-        while end < text.len() && !text.is_char_boundary(end) {
-            end -= 1;
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        if remaining.chars().count() <= max_len {
+            chunks.push(remaining);
+            break;
         }
-        let break_at = if end < text.len() {
-            text[start..end]
-                .rfind('\n')
-                .filter(|&pos| pos > end - start - 200)
-                .map(|pos| start + pos + 1)
-                .unwrap_or(end)
-        } else {
-            end
-        };
-        chunks.push(&text[start..break_at]);
-        start = break_at;
+
+        // Find the byte offset for max_len characters
+        let byte_offset = remaining
+            .char_indices()
+            .nth(max_len)
+            .map(|(i, _)| i)
+            .unwrap_or(remaining.len());
+
+        let chunk = &remaining[..byte_offset];
+
+        // Try to break at a newline within the last 200 chars
+        let break_at = chunk
+            .rfind('\n')
+            .filter(|&pos| {
+                let chars_after_newline = chunk[pos + 1..].chars().count();
+                chars_after_newline <= 200
+            })
+            .map(|pos| pos + 1)
+            .unwrap_or(byte_offset);
+
+        chunks.push(&remaining[..break_at]);
+        remaining = &remaining[break_at..];
     }
+
     chunks
 }
 
