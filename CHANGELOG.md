@@ -4,6 +4,64 @@ All notable changes to OpenCrabs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.3.63] - 2026-07-06
+
+35 commits since v0.3.62. 53 files changed, +3082 / -750 lines.
+
+### ✨ Features
+
+- `2336e4f2` **/usage breakdown by provider and model**: per-provider and per-model cost breakdowns with period filters (day/week/month/all)
+- `6c7a80d0` **image.vision.provider override**: bypasses the enabled gate for vision-only providers
+- `354e482c` **Telegram flow logs via rich API**: 32K-character processing-log blocks with HTML fallback for short messages
+- `b77fdc23` **doc_gen image blocks**: embed local PNG/JPEG inline in PDF and DOCX reports
+- `6cc83797` **Discord interactive components**: select menus, modal forms, component TTL, role access, forum threads
+- `d1faf9df` **Discord media gallery**: batch generated files into one multi-attachment message
+- `e086900d` **Discord collapsible grouped tool calls**: Expand/Collapse toggle on grouped blocks
+- `9bd7fda8` **Discord reaction turns and react-back**: emoji reactions trigger agent turns, Slack/Telegram parity
+- `dfd90ed4` **Concurrent auto-approved tool batches**: parallel execution of independent tool calls
+- `d4da1bbb` **PPTX style layer**: brand templates, accent titles
+- `1206761b` **DOCX style layer**: accent headings, page furniture, shaded tables
+- `b2b48645` **XLSX style layer**: header fill, zebra rows, freeze panes
+- `b3320c85` **default_provider and default_model config**: new [agent] config keys for session fallback
+
+### 🔧 Fixes
+
+- `0a0ddf3d` **Telegram mid-turn guard**: prevents double-processing on concurrent messages
+- `39dfe2e1` **Provider tool-call leak attribution**: fixes parameter name leaks in attributed providers
+- `6c1982cb` **Channel attachments before final answer**: send media attachments before the text response
+- `0b95b62b` **Telegram collapsed block previews**: correct preview rendering in collapsed state
+- `695b8141` **Telegram flow block freezes**: prevent freezing during long tool chains
+- `13415b9e` **Telegram leftover status bubble**: delete status after flow completes
+- `d3c77bf4` **Provider element-style tool-call leaks**: parse and recover malformed tool-call elements
+- `1f3fcb64` **Discord unread channel_id**: drop stale channel references
+- `400f5a3d` **Telegram stale quip pool**: delete leftover quips after session reset
+- `9c9432ed` **Telegram status-draft loop**: stop infinite edit loop on status messages
+- `c5a5d6c7` **Telegram strip_html_tags**: generic HTML stripping for all channel contexts
+- `0a1236e2` **Telegram RetryAfter handling**: respect Telegram rate-limit backoff
+- `ddfde517` **Telegram split_message char count**: correct character counting for message splits
+
+### 📖 Documentation
+
+- `42d279aa` clarify default_provider/default_model fallback-only behavior
+- `20b53933` document security deny-by-default access model
+- `e8ec8a05` document doc_gen image blocks inline in PDF and DOCX
+- `7e75f7f2` document telegram flow logs via rich API (32K)
+- `68f3ab38` document image.vision.provider config key
+- `03e43ead` document /usage breakdown by provider and model
+- `fa15ee84` document discord feature parity with Slack (interactive components, media gallery, grouped tools, reactions)
+- `dcab09ed` clarify atomic issues in contributing guide
+
+### 🧹 Miscellaneous
+
+- `f3ff299c` chore(logs): stop debug spam from flow-log channel
+
+### 📊 Stats
+
+- 35 commits since v0.3.62
+- 53 files changed, +3082 / -750 lines
+- 4680 tests (4680 passed, 0 failed, 29 ignored)
+
 ## [0.3.62] - 2026-07-06
 
 49 commits since v0.3.61. 64 files changed, +7500 / -404 lines.
@@ -6537,3 +6595,4 @@ fixes.
 [0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59[0.3.60]: https://github.com/adolfousier/opencrabs/compare/v0.3.59...v0.3.60
 [0.3.62]: https://github.com/adolfousier/opencrabs/compare/v0.3.61...v0.3.62
 [0.3.61]: https://github.com/adolfousier/opencrabs/compare/v0.3.60...v0.3.61
+[0.3.63]: https://github.com/adolfousier/opencrabs/compare/v0.3.62...v0.3.63
