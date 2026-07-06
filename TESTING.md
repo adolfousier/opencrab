@@ -388,7 +388,18 @@ cargo test --all-features
 | Tests — Usage Cache | 15 | `src/tests/usage_cache_test.rs` |
 | Tests — Config Auto-Repair | 7 | `src/tests/config_repair_test.rs` — closes unterminated arrays/inline tables in a broken `config.toml`, gated on the result re-parsing; leaves valid/nested/string cases and unfixable errors alone |
 | Tests — Config Last-Good Recovery | 3 | `src/tests/config_last_good_recovery_test.rs` — a broken config never poisons the last-good snapshot; fixable configs auto-repair in place; unfixable ones recover from last-good (preserves auto-always so yolo mode survives a typo) |
-| **Total** | **4,336** | Authoritative count from `cargo test --all-features` (lib test binary): 4,336 run by default + 28 `#[ignore]`d. The per-category rows above are a maintained snapshot. Re-run `cargo test` for the live number. |
+| Tests — Doc Gen DOCX | 5 | `src/tests/doc_gen_docx_test.rs` |
+| Tests — Doc Gen PDF | 12 | `src/tests/doc_gen_pdf_test.rs` |
+| Tests — Doc Gen PPTX | 5 | `src/tests/doc_gen_pptx_test.rs` |
+| Tests — Doc Gen XLSX | 6 | `src/tests/doc_gen_xlsx_test.rs` |
+| Tests — Parallel Tools | 3 | `src/tests/parallel_tools_test.rs` |
+| Tests — Slack Reactions | 2 | `src/tests/slack_reactions_test.rs` |
+| Tests — Slack Send Content Type | 2 | `src/tests/slack_send_content_type_test.rs` |
+| Tests — Slack Tool Group | 5 | `src/tests/slack_tool_group_test.rs` |
+| Tests — Telegram Raw Update Parse | 2 | `src/tests/telegram_raw_update_parse_test.rs` |
+| Tests — Telegram Reaction Map | 5 | `src/tests/telegram_reaction_map_test.rs` |
+| Tests — Telegram Rich Decode | 17 | `src/tests/telegram_rich_decode_test.rs` |
+| **Total** | **4,647** | Authoritative count from `cargo test --all-features` (lib test binary): 4,647 run by default + 29 `#[ignore]`d. The per-category rows above are a maintained snapshot. Re-run `cargo test` for the live number. |
 
 ---
 
