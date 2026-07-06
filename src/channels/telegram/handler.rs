@@ -6248,12 +6248,14 @@ fn convert_links(text: &str) -> String {
             let after_paren = &after_open[close + 2..];
             if let Some(end_paren) = after_paren.find(')') {
                 let url = &after_paren[..end_paren];
-                // Unescape HTML entities in URL (escape_html ran before format_inline)
+                // Unescape HTML entities first (escape_html ran before format_inline),
+                // then re-escape for safe insertion into <a href="..."> attribute.
                 let clean_url = url
                     .replace("&amp;", "&")
                     .replace("&lt;", "<")
                     .replace("&gt;", ">");
-                result.push_str(&format!("<a href=\"{}\">{}</a>", clean_url, link_text));
+                let safe_url = escape_html(&clean_url);
+                result.push_str(&format!("<a href=\"{}\">{}</a>", safe_url, link_text));
                 rest = &after_paren[end_paren + 1..];
                 continue;
             }
