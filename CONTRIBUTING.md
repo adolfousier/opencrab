@@ -45,6 +45,36 @@ PRs are welcome for:
 - Test coverage improvements
 - Documentation fixes
 
+## Issues Must Be Atomic
+
+**One issue = one atomic piece of work.** A feature can have dozens of issues — each tracking one bug, one sub-task, or one improvement. Don't bundle multiple pieces of work into a single issue.
+
+**Why:** Atomic issues are easier to track, prioritize, and close independently. A single "mega-issue" covering 5 bugs becomes a blocker when only 3 are fixed.
+
+**Good:**
+- `#376 — split_message byte boundary`
+- `#377 — Rich API retry`
+- `#378 — strip_html_tags incomplete`
+
+**Bad:**
+- `#375 — Fix all plain-text fallback bugs` (covers 3 separate issues)
+
+**PRs can reference multiple atomic issues:**
+
+```markdown
+## Summary
+Fixes message delivery cascade that caused plain-text fallback.
+
+Fixes #376 (byte/char boundary), #377 (rich API retry), #378 (HTML tag stripping).
+
+## Changes
+- `split_message()` now uses `chars().count()` instead of `.len()`
+- Added `RetryAfter` handling to rich path
+- Completed `strip_html_tags()` to handle all HTML elements
+```
+
+This lets you batch related fixes in one PR while keeping the issue tracker clean and atomic.
+
 ## Step-by-Step: Submitting a Bug Fix
 
 1. **Find or create the issue** — Check existing issues first. If none exists, create one.
