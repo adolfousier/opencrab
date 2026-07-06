@@ -178,6 +178,7 @@ vision_model = "mimo-v2-omni"  # any vision-capable model on this provider
 [image.vision]
 enabled = true
 model = "gemini-3.1-flash-image-preview"
+provider = "openrouter"  # Optional: force vision to use a specific provider (bypasses enabled gate)
 ```
 
 ```toml
@@ -187,6 +188,8 @@ api_key = "YOUR_GEMINI_KEY"
 ```
 
 > **Gotcha:** `[image.vision] api_key = "..."` in `config.toml` is silently ignored — the field carries `#[serde(skip)]` for security. Use `keys.toml` `[image]` section, or `[providers.image.gemini]` in config.toml + the key in keys.toml.
+
+> **Vision-only provider override:** Set `[image.vision] provider = "name"` to route vision requests through a specific provider regardless of its `enabled` flag. Useful when you have a vision-only provider (e.g., OpenRouter proxying Gemini) with `enabled = false` for chat but want it to serve `analyze_image` and `analyze_video`. An unresolvable name falls through to the normal provider scan.
 
 **Diagnostic:** when vision is unavailable for any reason, `is_vision_available` logs the exact cause at INFO level in `~/.opencrabs/logs/opencrabs.YYYY-MM-DD` — search for `target=vision`.
 
