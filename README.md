@@ -139,7 +139,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 | **Context Window & Auto-Compaction** | Per-provider `context_window` override (default 200k, works on every provider); transparent auto-compaction at 65% (soft, background) / 90% (hard) of the window gives effectively unlimited session memory with no manual clearing |
 | **Real-time Streaming** | Character-by-character response streaming with animated spinner showing model name and live text |
 | **Local LLM Support** | Run with LM Studio, Ollama, or any OpenAI-compatible endpoint — 100% private, zero-cost |
-| **Usage Dashboard** | Per-message token count and cost displayed in header; `/usage` opens an interactive dashboard with daily activity charts, cost breakdowns by project/model/activity, core tool usage stats, and period filtering (Today/Week/Month/All-Time). Sessions are auto-categorized on startup (Development, Bug Fixes, Features, Refactoring, Testing, Documentation, CI/Deploy, etc.). Estimated costs for historical sessions shown as `~$X.XX` |
+| **Usage Dashboard** | Per-message token count and cost displayed in header; `/usage` opens an interactive dashboard with daily activity charts, cost breakdowns by project/provider/model/activity, core tool usage stats, and period filtering (Today/Week/Month/All-Time). Sessions are auto-categorized on startup (Development, Bug Fixes, Features, Refactoring, Testing, Documentation, CI/Deploy, etc.). Estimated costs for historical sessions shown as `~$X.XX` |
 | **Context Awareness** | Live context usage indicator showing actual token counts (e.g. `ctx: 45K/200K (23%)`); auto-compaction at 70% with tool overhead budgeting; accurate tiktoken-based counting calibrated against API actuals |
 | **3-Tier Memory** | (1) **Brain MEMORY.md** — user-curated durable memory, loaded on demand in the main session (see [Brain Files](#brain-files--one-file-one-job)), (2) **Daily Logs** — auto-compaction summaries at `~/.opencrabs/memory/YYYY-MM-DD.md`, (3) **Hybrid Memory Search** — FTS5 keyword search + vector embeddings combined via Reciprocal Rank Fusion. Three modes: **Local** (embeddinggemma-300M, 768-dim, no API key, works offline), **API** (any OpenAI-compatible `/v1/embeddings` endpoint: OpenAI, Ollama, Jina, etc.), or **FTS5-only** (no embeddings, VPS-friendly, ~0 RAM overhead). Auto-detects VPS environments and disables local embeddings |
 | **Dynamic Brain System** | System brain assembled from workspace MD files (SOUL, USER, AGENTS, TOOLS, MEMORY) — all editable live between turns |
@@ -2360,7 +2360,7 @@ All API keys and secrets are stored in `keys.toml` — **not** in environment va
 OpenCrabs tracks real token costs per model using a centralized pricing table at `~/.opencrabs/usage_pricing.toml`. It's written automatically on first run with sensible defaults.
 
 **Why it matters:**
-- `/usage` dashboard shows real costs broken down by day, project, model, activity, and tool usage
+- `/usage` dashboard shows real costs broken down by day, project, provider, model, activity, and tool usage
 - Old sessions with stored tokens but zero cost get estimated costs (shown as `~$X.XX` in yellow)
 - Unknown models show `$0.00` instead of silently ignoring them
 
@@ -2669,7 +2669,7 @@ Any tool on your `$PATH` works. If it runs in your terminal, OpenCrabs can use i
 | `/help` | Open help dialog |
 | `/model` | Show current model |
 | `/models` | Switch model (fetches live from provider API) |
-| `/usage` | Usage dashboard — interactive overlay with daily activity, cost by project/model/activity, tool stats, and period filtering (T/W/M/A keys). Tab to navigate cards, Esc to close |
+| `/usage` | Usage dashboard — interactive overlay with daily activity, cost by project/provider/model/activity, tool stats, and period filtering (T/W/M/A keys). Tab to navigate cards, Esc to close |
 | `/onboard` | Run setup wizard (full flow) |
 | `/onboard:provider` | Jump to provider/API key setup |
 | `/onboard:workspace` | Jump to workspace settings |
