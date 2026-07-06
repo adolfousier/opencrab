@@ -63,7 +63,7 @@ fn blocks_are_separated_by_blank_lines() {
     );
     // Blank line after the header and between every block, so the collapsed
     // log reads as separated entries instead of a cramped wall.
-    assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n\n"));
+    assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n↳ <i>"));
     assert!(out.contains("<b>✅ bash</b> <code>cargo fmt</code>\n\nReformatted three files."));
     assert!(
         out.contains("Reformatted three files.\n\n<b>✅ read_file</b> <code>handler.rs</code>")
@@ -98,7 +98,8 @@ fn intermediate_text_renders_inline_markdown() {
     assert!(out.contains("<code>analyze_image</code>"));
     assert!(out.contains("<b>committing</b>"));
     assert!(out.contains("<i>fix</i>"));
-    // No raw markdown markers survive around the rendered spans.
+    // No raw markdown markers survive — the body renders them and the
+    // latest-activity preview strips them (#405).
     assert!(!out.contains("`analyze_image`"));
     assert!(!out.contains("**committing**"));
 }
@@ -330,7 +331,7 @@ fn rich_multiple_tools_render_markdown_header() {
         &[tline("✅ bash", "git status"), tline("✅ read", "file.rs")],
         None,
     );
-    assert!(out.starts_with("**2 tool calls**\n\n"));
+    assert!(out.starts_with("**2 tool calls**\n↳ _"));
     assert!(out.contains("**✅ bash** `git status`"));
     assert!(out.contains("**✅ read** `file.rs`"));
 }
@@ -341,11 +342,52 @@ fn rich_live_status_in_header() {
         &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
         Some("grep · 10s"),
     );
-    assert!(out.starts_with("**⚙️ 2 tool calls · grep · 10s**\n\n"));
+    assert!(out.starts_with("**⚙️ 2 tool calls · grep · 10s**\n↳ _"));
 }
 
 #[test]
 fn rich_single_tool_live_status_appends() {
     let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash · 5s"));
     assert_eq!(out, "**⚙️ bash** `git status` · bash · 5s");
+}
+
+// ── Latest-activity preview in the collapsed block (#405) ──
+
+#[test]
+fn collapsed_preview_shows_latest_entry_not_first() {
+    // Telegram's collapsed blockquote shows header + first content line, so
+    // the newest activity must ride directly under the header.
+    let out = render_flow_html(
+        &[
+            FlowLine::Text("Compris. Laisse-moi d'abord trouver le flow agent".to_string()),
+            tline("✅ bash", "grep flow"),
+            tline("⚙️ read_file", "src/agent.rs"),
+        ],
+        None,
+    );
+    let header_end = out.find('\n').expect("header line");
+    let preview_line = out[header_end + 1..].lines().next().expect("preview");
+    assert!(
+        preview_line.contains("read_file") && preview_line.contains("src/agent.rs"),
+        "preview must show the LATEST entry: {preview_line}"
+    );
+    assert!(
+        !preview_line.contains("Compris"),
+        "first entry must not be pinned: {preview_line}"
+    );
+    // Full chronological log still follows for the expanded view.
+    assert!(out.contains("Compris. Laisse-moi"));
+}
+
+#[test]
+fn preview_truncates_and_strips_markdown() {
+    let long = format!("**{}**", "x".repeat(200));
+    let out = render_flow_html(&[tline("✅ bash", "a"), FlowLine::Text(long)], None);
+    let header_end = out.find('\n').unwrap();
+    let preview_line = out[header_end + 1..].lines().next().unwrap();
+    assert!(preview_line.contains('…'), "truncated: {preview_line}");
+    assert!(
+        !preview_line.contains("**"),
+        "markers stripped: {preview_line}"
+    );
 }

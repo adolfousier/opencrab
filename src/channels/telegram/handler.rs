@@ -164,6 +164,40 @@ pub(crate) enum FlowLine {
 /// block so only the final response stays clean at the bottom (#300). Output is
 /// final HTML — send via `send_html_or_plain`, never through
 /// `markdown_to_telegram_html` (it would double-process the HTML).
+/// Plain-text preview of the LATEST flow entry (#405). Telegram's collapsed
+/// expandable blockquote shows the header plus the first content line, and
+/// entries render chronologically — so without this, a 16-minute turn pins
+/// its FIRST narration line on screen forever and only the header counters
+/// tick. Each renderer escapes/styles the returned text itself.
+pub(crate) fn latest_activity_preview(lines: &[FlowLine]) -> Option<String> {
+    let latest = lines.iter().rev().find_map(|l| match l {
+        FlowLine::Tool { label, context } => Some(if context.is_empty() {
+            label.clone()
+        } else {
+            format!("{label} {context}")
+        }),
+        FlowLine::Text(t) => {
+            // Plain snippet: strip inline markdown markers so the preview
+            // never shows raw ** / ` source.
+            let first: String = t
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .filter(|c| !matches!(c, '*' | '`' | '_'))
+                .collect();
+            (!first.is_empty()).then_some(first)
+        }
+    })?;
+    let mut compact: String = latest.chars().take(96).collect();
+    if latest.chars().count() > 96 {
+        compact.push('…');
+    }
+    Some(compact)
+}
+
 pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
@@ -218,9 +252,16 @@ pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) ->
     if let Some(st) = live_status {
         header = format!("⚙️ {} · {}", header, st);
     }
+    // Latest activity rides directly under the header so the COLLAPSED
+    // preview always shows what is happening now, not the first entry
+    // from many minutes ago (#405).
+    let latest = latest_activity_preview(lines)
+        .map(|l| format!("↳ <i>{}</i>\n\n", escape_html(&l)))
+        .unwrap_or_default();
     format!(
-        "<blockquote expandable><b>{}</b>\n\n{}</blockquote>",
+        "<blockquote expandable><b>{}</b>\n{}{}</blockquote>",
         header,
+        latest,
         out.join("\n\n")
     )
 }
@@ -270,7 +311,11 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
     if let Some(st) = live_status {
         header = format!("⚙️ {} · {}", header, st);
     }
-    format!("**{header}**\n\n{}", out.join("\n\n"))
+    // Same latest-activity preview as the HTML renderer (#405).
+    let latest = latest_activity_preview(lines)
+        .map(|l| format!("↳ _{l}_\n\n"))
+        .unwrap_or_default();
+    format!("**{header}**\n{latest}{}", out.join("\n\n"))
 }
 
 /// Compact elapsed time for the block header ("45s", "1m 20s"). Sub-minute
