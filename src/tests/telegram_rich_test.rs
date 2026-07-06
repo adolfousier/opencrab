@@ -8,7 +8,7 @@
 //! for the new `edit_rich_markdown` and `append_footer_to_last_intermediate`
 //! integration points.
 
-use crate::channels::telegram::rich::api::build_body;
+use crate::channels::telegram::rich::api::{build_body, build_body_html};
 use crate::channels::telegram::rich::{contains_task_list, has_rich_structure};
 use teloxide::types::{MessageId, ThreadId};
 
@@ -66,4 +66,27 @@ fn rich_request_body_without_thread_id() {
     assert_eq!(body["chat_id"], 100);
     assert!(body.get("message_thread_id").is_none());
     assert_eq!(body["rich_message"]["markdown"], "hello");
+}
+
+// ── HTML input mode (#420 path A) ────────────────────────────────────
+
+#[test]
+fn rich_html_body_uses_html_key() {
+    // The html input key is what lets <details><summary> become a native
+    // RichBlockDetails collapsible; the markdown key cannot express it.
+    let body = build_body_html(100, None, "<details><summary>x</summary>y</details>");
+    assert_eq!(body["chat_id"], 100);
+    assert!(body.get("message_thread_id").is_none());
+    assert!(body["rich_message"].get("markdown").is_none());
+    assert_eq!(
+        body["rich_message"]["html"],
+        "<details><summary>x</summary>y</details>"
+    );
+}
+
+#[test]
+fn rich_html_body_with_thread_id() {
+    let body = build_body_html(99, Some(ThreadId(MessageId(42))), "<b>hi</b>");
+    assert_eq!(body["message_thread_id"], 42);
+    assert_eq!(body["rich_message"]["html"], "<b>hi</b>");
 }

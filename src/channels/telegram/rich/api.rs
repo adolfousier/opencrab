@@ -23,6 +23,41 @@ pub(crate) async fn send_rich_markdown(
     post_and_check(&url, &build_body(chat_id, thread_id, markdown)).await
 }
 
+/// Send `html` as a native rich message and return the new message id
+/// (#420 path A). The HTML input mode is parsed server-side into rich
+/// blocks, so `<details><summary>` becomes a native RichBlockDetails
+/// collapsible, which the markdown input mode cannot express.
+pub(crate) async fn send_rich_html_id(
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    html: &str,
+) -> anyhow::Result<i32> {
+    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let result = post_rich(&url, &build_body_html(chat_id, thread_id, html)).await?;
+    result
+        .get("message_id")
+        .and_then(serde_json::Value::as_i64)
+        .map(|id| id as i32)
+        .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
+}
+
+/// Edit an existing rich message with HTML input (#420 path A).
+pub(crate) async fn edit_rich_html(
+    token: &str,
+    chat_id: i64,
+    message_id: i32,
+    html: &str,
+) -> anyhow::Result<()> {
+    let url = format!("https://api.telegram.org/bot{token}/editMessageText");
+    let body = serde_json::json!({
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "rich_message": { "html": html },
+    });
+    post_and_check(&url, &body).await
+}
+
 /// Send `markdown` as a native rich message and return the new message id.
 /// Used for intermediate streamed segments, which must be tracked for later
 /// footer-append / dedup. Returns `Err` so the caller can fall back to HTML.
@@ -126,6 +161,24 @@ pub(crate) fn build_body(
     });
     if let Some(t) = thread_id {
         // ThreadId wraps a MessageId(i32).
+        body["message_thread_id"] = serde_json::json!(t.0.0);
+    }
+    body
+}
+
+/// Build the `sendRichMessage` body with HTML input (#420 path A).
+/// `InputRichMessage` accepts `markdown` or `html`; HTML is the mode that
+/// can express RichBlockDetails via `<details><summary>`.
+pub(crate) fn build_body_html(
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    html: &str,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "chat_id": chat_id,
+        "rich_message": { "html": html },
+    });
+    if let Some(t) = thread_id {
         body["message_thread_id"] = serde_json::json!(t.0.0);
     }
     body

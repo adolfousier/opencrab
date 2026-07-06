@@ -84,10 +84,6 @@ pub(crate) struct StreamingState {
     /// when the first entry lands; stays open for the rest of the turn so the
     /// final response is the only clean message at the bottom.
     open_group_msg_id: Option<MessageId>,
-    /// True when `open_group_msg_id` was sent via the rich API
-    /// (`sendRichMessage`). Edits use `edit_rich_markdown` instead of the
-    /// HTML edit path. Reset when the block is frozen or replaced.
-    flow_sent_rich: bool,
     /// Ordered entries in the open processing-log message (tool calls +
     /// intermediate text, in chronological order). Rendered together into the
     /// `open_group_msg_id` message on every append/status change.
@@ -97,6 +93,9 @@ pub(crate) struct StreamingState {
     /// no standalone status ticker exists while a block is open. HTML-safe
     /// (escaped at build time). None once the final response lands.
     flow_status: Option<String>,
+    /// True when the open flow block lives on the rich API (#420 path A):
+    /// edits must ride edit_rich_html; false = classic HTML blockquote.
+    flow_rich: bool,
     /// Response text from streaming chunks — own message at bottom
     response: String,
     dirty: bool,
@@ -266,11 +265,76 @@ pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) ->
     )
 }
 
+/// Render resolved flow lines as a `<details><summary>` collapsible for the
+/// rich API's HTML input mode (#420 path A): the server parses it into a
+/// native RichBlockDetails (summary/blocks/is_open), giving collapse parity
+/// with the classic `<blockquote expandable>` PLUS the 32K rich limit, so
+/// long tool chains stop splitting into multiple blocks. The summary carries
+/// the live header (#360) and the latest-activity preview (#405); the
+/// chronological log is the collapsed body. A lone tool line stays a plain
+/// one-liner (mirrors #296, same as the HTML renderer).
+pub(crate) fn render_flow_details(lines: &[FlowLine], live_status: Option<&str>) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut tool_count = 0usize;
+    for line in lines {
+        match line {
+            FlowLine::Tool { label, context } => {
+                tool_count += 1;
+                if context.is_empty() {
+                    out.push(format!("<b>{}</b>", escape_html(label)));
+                } else {
+                    out.push(format!(
+                        "<b>{}</b> <code>{}</code>",
+                        escape_html(label),
+                        escape_html(context)
+                    ));
+                }
+            }
+            FlowLine::Text(text) => {
+                let text = text.trim();
+                if !text.is_empty() {
+                    out.push(format_inline(&escape_html(text)));
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        return String::new();
+    }
+    if out.len() == 1 && tool_count == 1 {
+        return match live_status {
+            Some(st) => format!("{} · {}", out.remove(0), st),
+            None => out.remove(0),
+        };
+    }
+    let mut header = if tool_count > 0 {
+        format!("{} tool calls", tool_count)
+    } else {
+        "Processing log".to_string()
+    };
+    if let Some(st) = live_status {
+        header = format!("⚙️ {} · {}", header, st);
+    }
+    let latest = latest_activity_preview(lines)
+        .map(|l| format!(" ↳ {}", escape_html(&l)))
+        .unwrap_or_default();
+    format!(
+        "<details><summary><b>{}</b>{}</summary>\n{}\n</details>",
+        header,
+        latest,
+        out.join("\n\n")
+    )
+}
+
 /// Render resolved flow lines into markdown for the rich API
 /// (`sendRichMessage`). The rich API supports 32K chars (vs 4096 for HTML),
 /// so long tool chains fit in a single message without splitting (#393).
 /// Output is markdown — send via `send_rich_markdown` / `edit_rich_markdown`.
 /// Falls back to `render_flow_html` on rich API failure.
+// Channel-unused since the #421 revert (the rich flow path shipped with no
+// collapse); kept because #420 reuses this renderer once RichBlockDetails
+// serialization lands, and its tests pin the markdown contract meanwhile.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
@@ -313,7 +377,7 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
     }
     // Same latest-activity preview as the HTML renderer (#405).
     let latest = latest_activity_preview(lines)
-        .map(|l| format!("↳ _{l}_\n\n"))
+        .map(|l| format!("↳ {l}\n\n"))
         .unwrap_or_default();
     format!("**{header}**\n{latest}{}", out.join("\n\n"))
 }
@@ -340,10 +404,9 @@ fn tool_status_icon(completed: Option<bool>) -> &'static str {
 }
 
 /// Resolve the open processing-log flow (tool calls + intermediate text, in
-/// order) into final Telegram HTML via `render_flow_html`.
-fn render_flow(s: &StreamingState) -> String {
-    let lines: Vec<FlowLine> = s
-        .flow_entries
+/// order) into renderable lines.
+fn flow_lines(s: &StreamingState) -> Vec<FlowLine> {
+    s.flow_entries
         .iter()
         .filter_map(|entry| match entry {
             FlowEntry::Tool(idx) => s.tool_msgs.get(*idx).map(|t| FlowLine::Tool {
@@ -352,92 +415,72 @@ fn render_flow(s: &StreamingState) -> String {
             }),
             FlowEntry::Text(text) => Some(FlowLine::Text(text.clone())),
         })
-        .collect();
-    render_flow_html(&lines, s.flow_status.as_deref())
+        .collect()
 }
 
-/// Resolve the open processing-log flow into markdown for the rich API (#393).
-fn render_flow_rich_md(s: &StreamingState) -> String {
-    let lines: Vec<FlowLine> = s
-        .flow_entries
-        .iter()
-        .filter_map(|entry| match entry {
-            FlowEntry::Tool(idx) => s.tool_msgs.get(*idx).map(|t| FlowLine::Tool {
-                label: format!("{} {}", tool_status_icon(t.completed), t.name),
-                context: t.context.clone(),
-            }),
-            FlowEntry::Text(text) => Some(FlowLine::Text(text.clone())),
-        })
-        .collect();
-    render_flow_rich(&lines, s.flow_status.as_deref())
+/// Resolve the flow into final Telegram HTML via `render_flow_html`.
+fn render_flow(s: &StreamingState) -> String {
+    render_flow_html(&flow_lines(s), s.flow_status.as_deref())
+}
+
+/// Resolve the flow into the rich-API details HTML (#420 path A).
+fn render_flow_details_state(s: &StreamingState) -> String {
+    render_flow_details(&flow_lines(s), s.flow_status.as_deref())
 }
 
 /// Re-render the open processing-log flow and edit its message in place. Used
 /// after appending an entry and after a tool status flip (⚙️ → ✅/❌). A no-op
 /// edit ("message is not modified") and transient errors are ignored: the
 /// message already shows the correct content and the next tick retries.
-/// When `flow_sent_rich` is true, edits via the rich API (32K limit) with
-/// HTML fallback (#393).
+/// Edits ride the surface the block was opened on: rich details (#420 path
+/// A) with classic-HTML fallback, or the classic HTML path directly.
 async fn refresh_flow(bot: &Bot, chat: ChatId, streaming: &Arc<std::sync::Mutex<StreamingState>>) {
-    let (mid, sent_rich) = {
+    let (mid, rich) = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         match s.open_group_msg_id {
-            Some(mid) => (mid, s.flow_sent_rich),
+            Some(mid) => (mid, s.flow_rich),
             None => return,
         }
     };
-
-    if sent_rich {
-        refresh_flow_rich(bot, chat, mid, streaming).await;
+    if rich {
+        refresh_flow_rich_details(bot, chat, mid, streaming).await;
     } else {
         refresh_flow_html(bot, chat, mid, streaming).await;
     }
 }
 
-/// Rich API edit path for the processing-log flow (#393). 32K char limit.
-async fn refresh_flow_rich(
+/// Rich-details edit path (#420 path A). 32K char limit, 30K freeze
+/// threshold. A not-modified response is a no-op; any other failure falls
+/// back to the classic HTML edit so the block never silently stops updating.
+async fn refresh_flow_rich_details(
     bot: &Bot,
     chat: ChatId,
     mid: MessageId,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
 ) {
-    let rich_md = {
+    let details = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        render_flow_rich_md(&s)
+        render_flow_details_state(&s)
     };
-    if rich_md.is_empty() {
+    if details.is_empty() {
         return;
     }
-    // Proactive freeze: rich API supports 32K chars, freeze at 30K to leave headroom
-    if rich_md.chars().count() > 30000 {
+    if details.chars().count() > 30000 {
         freeze_flow_block(streaming, mid, "rich size limit reached");
         return;
     }
-    match super::rich::api::edit_rich_markdown(bot.token(), chat.0, mid.0, &rich_md).await {
+    match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details).await {
         Ok(_) => {}
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("message is not modified") {
-                // Content already correct — nothing to do.
-            } else if msg.contains("message to edit not found") {
-                tracing::warn!(
-                    "Telegram: refresh_flow_rich target mid={:?} no longer exists — starting a new block",
-                    mid
-                );
-                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                if s.open_group_msg_id == Some(mid) {
-                    s.open_group_msg_id = None;
-                    s.flow_sent_rich = false;
-                    s.flow_entries.clear();
-                }
-            } else {
-                // Rich edit failed — fall back to HTML edit path
-                tracing::warn!(
-                    "Telegram: refresh_flow_rich failed for mid={:?}: {msg} — falling back to HTML",
-                    mid
-                );
-                refresh_flow_html(bot, chat, mid, streaming).await;
+                return;
             }
+            tracing::warn!(
+                "Telegram: rich details edit failed for mid={:?}: {msg} — falling back to HTML",
+                mid
+            );
+            refresh_flow_html(bot, chat, mid, streaming).await;
         }
     }
 }
@@ -512,7 +555,6 @@ async fn refresh_flow_html(
                 let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 if s.open_group_msg_id == Some(mid) {
                     s.open_group_msg_id = None;
-                    s.flow_sent_rich = false;
                     s.flow_entries.clear();
                 }
             } else {
@@ -565,7 +607,6 @@ fn freeze_flow_block(
     let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
     if s.open_group_msg_id == Some(mid) {
         s.open_group_msg_id = None;
-        s.flow_sent_rich = false;
         s.flow_entries.clear();
     }
 }
@@ -582,24 +623,25 @@ async fn open_flow(
     thread_id: Option<teloxide::types::ThreadId>,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
 ) {
-    // Try rich API first when enabled — 32K char limit vs 4096 for HTML (#393)
-    if crate::config::Config::current()
-        .channels
-        .telegram
-        .rich_messages
-    {
-        let rich_md = {
+    // Rich-first WITH collapse parity (#420 path A): the flow renders as a
+    // <details><summary> collapsible through the rich API's HTML input mode
+    // (native RichBlockDetails, 32K limit — no block splitting). Any rich
+    // failure falls back to the classic HTML <blockquote expandable> path,
+    // which stays the proven baseline (#421: the markdown-input rich path
+    // shipped flat, with no collapse at all, and was reverted).
+    if Config::current().channels.telegram.rich_messages {
+        let details = {
             let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            render_flow_rich_md(&s)
+            render_flow_details_state(&s)
         };
-        if !rich_md.is_empty() {
-            match super::rich::api::send_rich_markdown_id(bot.token(), chat.0, thread_id, &rich_md)
+        if !details.is_empty() {
+            match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details)
                 .await
             {
                 Ok(mid) => {
                     let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                     s.open_group_msg_id = Some(MessageId(mid));
-                    s.flow_sent_rich = true;
+                    s.flow_rich = true;
                     if s.msg_id.is_some() {
                         s.recreate = true;
                     }
@@ -607,14 +649,12 @@ async fn open_flow(
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "Telegram: rich API flow open failed: {e} — falling back to HTML"
+                        "Telegram: rich details flow open failed: {e} — falling back to HTML"
                     );
                 }
             }
         }
     }
-
-    // HTML fallback
     let html = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         render_flow(&s)
@@ -625,7 +665,7 @@ async fn open_flow(
     if let Ok(mid) = send_html_or_plain(bot, chat, thread_id, &html).await {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.open_group_msg_id = Some(mid);
-        s.flow_sent_rich = false;
+        s.flow_rich = false;
         if s.msg_id.is_some() {
             s.recreate = true;
         }
@@ -749,7 +789,6 @@ async fn take_folded_final(
     if now_empty {
         let mid = {
             let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            s.flow_sent_rich = false;
             s.open_group_msg_id.take()
         };
         if let Some(mid) = mid {
@@ -3514,9 +3553,9 @@ pub(crate) async fn handle_message(
         tool_msgs: Vec::new(),
         display_queue: Vec::new(),
         open_group_msg_id: None,
-        flow_sent_rich: false,
         flow_entries: Vec::new(),
         flow_status: None,
+        flow_rich: false,
         response: String::new(),
         dirty: false,
         recreate: false,
@@ -4862,9 +4901,9 @@ pub(crate) async fn resume_session(
         tool_msgs: Vec::new(),
         display_queue: Vec::new(),
         open_group_msg_id: None,
-        flow_sent_rich: false,
         flow_entries: Vec::new(),
         flow_status: None,
+        flow_rich: false,
         response: String::new(),
         dirty: false,
         recreate: false,

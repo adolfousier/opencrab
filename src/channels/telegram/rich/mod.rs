@@ -9,7 +9,8 @@
 //! the same AST drives both the rich and fallback renderers.
 //!
 //! Files are kept small and single-purpose: [`ast`] (types), [`inline`] /
-//! [`table`] / [`list`] / [`parse`] (front-end), [`render_html`] (fallback).
+//! [`table`] / [`list`] / [`parse`] (front-end), [`render_html`] (fallback),
+//! [`render_json`] (rich-first serializer, #420 path B).
 
 pub(crate) mod api;
 pub(crate) mod ast;
@@ -17,6 +18,7 @@ mod inline;
 mod list;
 mod parse;
 mod render_html;
+pub(crate) mod render_json;
 mod table;
 
 pub(crate) use parse::parse_markdown;

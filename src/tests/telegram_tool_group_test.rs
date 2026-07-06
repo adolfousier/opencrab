@@ -1,12 +1,16 @@
-//! Tests for `telegram::handler::render_tool_group`.
+//! Tests for the processing-log flow renderers.
 //!
-//! Grouped tool calls must render as native Telegram HTML using
+//! Classic path: grouped tool calls render as native Telegram HTML using
 //! `<blockquote expandable>` (Bot API 7.3+), never `<details>` — Telegram's
 //! regular HTML parse mode does not support `<details>`, so that tag leaks
-//! into the chat as literal text.
+//! into the chat as literal text. Rich path (#420 path A): the rich API's
+//! HTML INPUT mode is different — there `<details><summary>` is parsed
+//! server-side into a native RichBlockDetails collapsible, so
+//! `render_flow_details` emits exactly that wrapper.
 
 use crate::channels::telegram::handler::{
-    FlowLine, folded_duplicates_final, humanize_elapsed, render_flow_html, render_flow_rich,
+    FlowLine, folded_duplicates_final, humanize_elapsed, render_flow_details, render_flow_html,
+    render_flow_rich,
 };
 
 fn tline(label: &str, context: &str) -> FlowLine {
@@ -331,7 +335,9 @@ fn rich_multiple_tools_render_markdown_header() {
         &[tline("✅ bash", "git status"), tline("✅ read", "file.rs")],
         None,
     );
-    assert!(out.starts_with("**2 tool calls**\n↳ _"));
+    // Preview is plain text (no italics): tool contexts routinely carry
+    // underscores, which would shred the markdown italics markers.
+    assert!(out.starts_with("**2 tool calls**\n↳ "));
     assert!(out.contains("**✅ bash** `git status`"));
     assert!(out.contains("**✅ read** `file.rs`"));
 }
@@ -342,13 +348,62 @@ fn rich_live_status_in_header() {
         &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
         Some("grep · 10s"),
     );
-    assert!(out.starts_with("**⚙️ 2 tool calls · grep · 10s**\n↳ _"));
+    assert!(out.starts_with("**⚙️ 2 tool calls · grep · 10s**\n↳ "));
 }
 
 #[test]
 fn rich_single_tool_live_status_appends() {
     let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash · 5s"));
     assert_eq!(out, "**⚙️ bash** `git status` · bash · 5s");
+}
+
+// ── Rich-API details flow rendering (#420 path A) ──
+
+#[test]
+fn details_empty_group_renders_nothing() {
+    assert_eq!(render_flow_details(&[], None), "");
+}
+
+#[test]
+fn details_single_tool_renders_plain_line() {
+    // Lone tool line stays plain (mirrors #296), same as the HTML renderer.
+    let out = render_flow_details(&[tline("✅ bash", "git status")], None);
+    assert_eq!(out, "<b>✅ bash</b> <code>git status</code>");
+    assert!(!out.contains("<details"));
+}
+
+#[test]
+fn details_multiple_tools_wrap_in_collapsed_details() {
+    let out = render_flow_details(
+        &[tline("✅ bash", "git status"), tline("✅ read", "file.rs")],
+        None,
+    );
+    // Collapsed by default: plain <details>, never <details open>.
+    assert!(out.starts_with("<details><summary><b>2 tool calls</b> ↳ "));
+    assert!(out.ends_with("</details>"));
+    assert!(!out.contains("<details open"));
+    assert!(out.contains("<b>✅ bash</b> <code>git status</code>"));
+    assert!(out.contains("<b>✅ read</b> <code>file.rs</code>"));
+}
+
+#[test]
+fn details_summary_carries_live_status_and_latest_preview() {
+    let out = render_flow_details(
+        &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
+        Some("grep · 10s"),
+    );
+    let summary_end = out.find("</summary>").expect("summary");
+    let summary = &out[..summary_end];
+    assert!(summary.contains("⚙️ 2 tool calls · grep · 10s"));
+    // Latest-activity preview (#405) rides in the summary so the COLLAPSED
+    // block shows what is happening now.
+    assert!(summary.contains("↳ ⚙️ grep pattern"));
+}
+
+#[test]
+fn details_escapes_html_in_tool_context() {
+    let out = render_flow_details(&[tline("✅ bash", "a < b"), tline("✅ read", "x.rs")], None);
+    assert!(out.contains("<code>a &lt; b</code>"));
 }
 
 // ── Latest-activity preview in the collapsed block (#405) ──
