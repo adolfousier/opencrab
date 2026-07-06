@@ -18,15 +18,16 @@
 
 /// Decide whether `user_id` is a bot owner for a channel.
 ///
-/// * If `allowed` is empty, the channel is in **open mode** and everyone is an
-///   owner (returns `true`).
+/// * If both `allowed` and `bot_owner` are empty, the channel is unconfigured
+///   and denies access (returns `false`). Users must configure `allowed` or
+///   `bot_owner` to enable the bot.
 /// * Otherwise, if `bot_owner` is non-empty, ownership is exactly membership in
 ///   `bot_owner`.
 /// * Otherwise (no explicit owners configured), the owner is the **first** entry
 ///   in `allowed` — the positional fallback to the setup user.
 pub fn is_owner(allowed: &[String], bot_owner: &[String], user_id: &str) -> bool {
-    if allowed.is_empty() {
-        return true;
+    if allowed.is_empty() && bot_owner.is_empty() {
+        return false;
     }
     // Normalize the leading plus on BOTH sides: users naturally paste
     // international numbers as "+15551234567" into allowed_phones/bot_owner,

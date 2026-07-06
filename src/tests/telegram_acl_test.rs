@@ -71,11 +71,11 @@ fn owner_only_dm_when_no_admins() {
 }
 
 #[test]
-fn fully_unconfigured_is_open() {
-    // No admins and no owner => unconfigured, stays open (no hard lockout).
+fn fully_unconfigured_denies_access() {
+    // No admins and no owner => unconfigured, denies access (secure by default).
     let c = cfg(&[], &[], &[]);
-    assert!(c.user_allowed("anyone", "x", true));
-    assert!(c.user_allowed("anyone", "-100g", false));
+    assert!(!c.user_allowed("anyone", "x", true));
+    assert!(!c.user_allowed("anyone", "-100g", false));
 }
 
 #[test]

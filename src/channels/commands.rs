@@ -370,25 +370,85 @@ pub async fn handle_command(
     let normalized = strip_command_handle(text);
     let trimmed = normalized.as_str();
     let result = match trimmed {
-        "/compact" => ChannelCommand::Compact,
-        "/doctor" => ChannelCommand::Doctor,
-        "/evolve" => ChannelCommand::Evolve,
-        "/help" => ChannelCommand::Help(format_help()),
-        "/models" => ChannelCommand::Models(format_providers(agent)),
+        "/compact" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Compact
+            }
+        }
+        "/doctor" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Doctor
+            }
+        }
+        "/evolve" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Evolve
+            }
+        }
+        "/help" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Help(format_help())
+            }
+        }
+        "/models" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Models(format_providers(agent))
+            }
+        }
         "/new" => ChannelCommand::NewSession,
-        "/rtk" => ChannelCommand::Rtk(format_rtk().await),
+        "/rtk" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Rtk(format_rtk().await)
+            }
+        }
         "/sessions" => {
-            ChannelCommand::Sessions(format_sessions(session_id, session_svc, None).await)
+            if !is_owner {
+                ChannelCommand::UnknownCommand(
+                    "🔒 `/sessions` is restricted to the bot owner.".to_string(),
+                )
+            } else {
+                ChannelCommand::Sessions(format_sessions(session_id, session_svc, None).await)
+            }
         }
         cmd if cmd.starts_with("/sessions:") || cmd.starts_with("/sessions ") => {
-            let query = cmd
-                .strip_prefix("/sessions:")
-                .or_else(|| cmd.strip_prefix("/sessions "))
-                .filter(|q| !q.is_empty());
-            ChannelCommand::Sessions(format_sessions(session_id, session_svc, query).await)
+            if !is_owner {
+                ChannelCommand::UnknownCommand(
+                    "🔒 `/sessions` is restricted to the bot owner.".to_string(),
+                )
+            } else {
+                let query = cmd
+                    .strip_prefix("/sessions:")
+                    .or_else(|| cmd.strip_prefix("/sessions "))
+                    .filter(|q| !q.is_empty());
+                ChannelCommand::Sessions(format_sessions(session_id, session_svc, query).await)
+            }
         }
-        "/stop" => ChannelCommand::Stop,
-        "/usage" => ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await),
+        "/stop" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Stop
+            }
+        }
+        "/usage" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await)
+            }
+        }
         cmd if cmd == "/cd" || cmd.starts_with("/cd ") => {
             // Owner-only: /cd browses the host filesystem, so a non-owner on the
             // allowlist could otherwise navigate the owner's private files.
@@ -403,7 +463,13 @@ pub async fn handle_command(
                 )
             }
         }
-        "/profiles" => ChannelCommand::Profiles(format_profiles_browser().await),
+        "/profiles" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Profiles(format_profiles_browser().await)
+            }
+        }
         cmd if cmd == "/respond_to" || cmd.starts_with("/respond_to ") => {
             if !is_owner {
                 ChannelCommand::UnknownCommand(
@@ -423,30 +489,42 @@ pub async fn handle_command(
         // the conversation context untouched. Only a real `/goal <text>` is
         // forwarded as a directive that calls the slash_command tool.
         cmd if cmd == "/goal" || cmd.starts_with("/goal ") => {
-            let args = cmd.strip_prefix("/goal").unwrap_or("");
-            if crate::brain::goal::is_bare(args) {
-                ChannelCommand::UnknownCommand(crate::brain::goal::goal_usage_warning())
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
             } else {
-                ChannelCommand::UserPrompt(crate::brain::goal::goal_command_prompt(args))
+                let args = cmd.strip_prefix("/goal").unwrap_or("");
+                if crate::brain::goal::is_bare(args) {
+                    ChannelCommand::UnknownCommand(crate::brain::goal::goal_usage_warning())
+                } else {
+                    ChannelCommand::UserPrompt(crate::brain::goal::goal_command_prompt(args))
+                }
             }
         }
         // Telegram registers the hyphen-free `mission_control` (its command
         // names allow no hyphens), so a menu tap sends `/mission_control`;
         // accept both that and the canonical typed `/mission-control`.
         "/mission-control" | "/mission_control" => {
-            ChannelCommand::MissionControl(format_mission_control(agent).await)
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::MissionControl(format_mission_control(agent).await)
+            }
         }
         cmd if cmd.starts_with("/rename ") => {
-            let title = cmd.strip_prefix("/rename ").unwrap_or("").trim();
-            if title.is_empty() {
-                ChannelCommand::Rename("Usage: `/rename <new title>`".to_string())
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
             } else {
-                match session_svc
-                    .update_session_title(session_id, Some(title.to_string()))
-                    .await
-                {
-                    Ok(()) => ChannelCommand::Rename(format!("✅ Session renamed to: `{}`", title)),
-                    Err(e) => ChannelCommand::Rename(format!("⚠️ Failed to rename: {}", e)),
+                let title = cmd.strip_prefix("/rename ").unwrap_or("").trim();
+                if title.is_empty() {
+                    ChannelCommand::Rename("Usage: `/rename <new title>`".to_string())
+                } else {
+                    match session_svc
+                        .update_session_title(session_id, Some(title.to_string()))
+                        .await
+                    {
+                        Ok(()) => ChannelCommand::Rename(format!("✅ Session renamed to: `{}`", title)),
+                        Err(e) => ChannelCommand::Rename(format!("⚠️ Failed to rename: {}", e)),
+                    }
                 }
             }
         }

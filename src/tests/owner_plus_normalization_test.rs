@@ -36,6 +36,7 @@ fn non_owner_still_rejected() {
 }
 
 #[test]
-fn open_mode_unchanged() {
-    assert!(is_owner(&[], &[], "anyone"));
+fn empty_config_denies_access() {
+    // Empty allowed + empty bot_owner = unconfigured = deny all (secure by default).
+    assert!(!is_owner(&[], &[], "anyone"));
 }

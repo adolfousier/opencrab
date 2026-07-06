@@ -432,12 +432,12 @@ impl TelegramConfig {
     ///   group oversight" bypass.
     ///
     /// When neither `allowed_users` nor `bot_owner` is configured the bot is
-    /// fully unconfigured and stays open (legacy behaviour, avoids a hard
-    /// lockout); configuring either list activates the strict ACL.
+    /// unconfigured and denies access (secure by default); configuring either
+    /// list activates the strict ACL.
     pub fn user_allowed(&self, user_id: &str, chat_id: &str, is_dm: bool) -> bool {
         let uid = user_id.trim_start_matches('+');
         if self.allowed_users.is_empty() && self.bot_owner.is_empty() {
-            return true;
+            return false;
         }
         if self.is_admin_or_owner(uid) {
             return true;

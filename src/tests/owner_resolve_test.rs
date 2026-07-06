@@ -8,13 +8,14 @@ fn v(items: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn empty_allowed_is_open_mode_everyone_is_owner() {
+fn empty_config_denies_access_secure_by_default() {
     let allowed: Vec<String> = Vec::new();
     let bot_owner: Vec<String> = Vec::new();
-    assert!(is_owner(&allowed, &bot_owner, "anyone"));
-    assert!(is_owner(&allowed, &bot_owner, ""));
-    // Open mode wins even if an explicit owner list is present.
-    assert!(is_owner(&allowed, &v(&["explicit"]), "anyone"));
+    // Empty config = unconfigured = deny all (secure by default).
+    assert!(!is_owner(&allowed, &bot_owner, "anyone"));
+    assert!(!is_owner(&allowed, &bot_owner, ""));
+    // Even with an explicit owner list, empty allowed still denies.
+    assert!(!is_owner(&allowed, &v(&["explicit"]), "anyone"));
 }
 
 #[test]
