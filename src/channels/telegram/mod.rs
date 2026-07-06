@@ -11,7 +11,6 @@ pub(crate) mod raw_updates;
 pub(crate) mod reaction_prompt;
 pub(crate) mod rich;
 pub(crate) mod rich_decode;
-pub(crate) mod rolling_status_quips;
 pub(crate) mod send;
 pub(crate) mod session_resolve;
 

@@ -8,39 +8,6 @@
 
 use teloxide::types::ThreadId;
 
-/// Send an ephemeral rich-message draft (DM-only, auto-expires in ~30s).
-///
-/// Drafts are private to the chat and produce no persistent notification.
-/// Re-sending with the same `draft_id` causes Telegram to animate the
-/// transition instead of creating a new message. Call this every ~25s to
-/// keep the draft alive while the agent is working.
-///
-/// Only works in private chats — Telegram silently ignores drafts in groups.
-pub(crate) async fn send_rich_message_draft(
-    token: &str,
-    chat_id: i64,
-    draft_id: i32,
-    markdown: &str,
-) -> anyhow::Result<i32> {
-    let url = format!("https://api.telegram.org/bot{token}/sendRichMessageDraft");
-    let body = serde_json::json!({
-        "chat_id": chat_id,
-        "draft_id": draft_id,
-        "rich_message": { "markdown": markdown },
-    });
-    let result = post_rich(&url, &body).await?;
-    // Drafts are not messages: an ok response legitimately carries no
-    // message_id. Treating that as failure made every status tick re-log a
-    // phantom error and keep re-sending until the rich API 429'd, which
-    // rendered in clients as the bot endlessly "typing". ok = success; the
-    // caller keys future sends by its own draft_id.
-    Ok(result
-        .get("message_id")
-        .and_then(serde_json::Value::as_i64)
-        .map(|id| id as i32)
-        .unwrap_or(draft_id))
-}
-
 /// Send `markdown` as a native rich message via `sendRichMessage`.
 ///
 /// Returns `Err` on any transport failure or non-`ok` API response so the

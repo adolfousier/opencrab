@@ -99,18 +99,18 @@ pub(crate) struct StreamingState {
     /// When true, the edit loop deletes the response message and creates a fresh one
     /// at the bottom of the chat (so it appears below tool/approval messages).
     recreate: bool,
+    /// Pre-block dynamic status message (thinking excerpt / user preview),
+    /// standalone ONLY while no grouping block exists yet. Once the block
+    /// opens (or the final response lands) it is deleted; the id is cleared
+    /// ONLY after a successful delete so a failed delete retries next tick
+    /// instead of orphaning the bubble.
+    status_msg_id: Option<MessageId>,
+    /// Last text rendered into the status message (skip no-op edits).
+    status_last_text: Option<String>,
     /// Number of tool rounds completed (for display)
     tool_round_count: usize,
     /// When tool execution started (for elapsed time)
     tools_started_at: Option<std::time::Instant>,
-    /// Last time a status draft was (re)sent — throttles the 1.5s tick down
-    /// to one draft refresh per ~6s so a long turn cannot hammer the rich
-    /// API into 429s (which showed as the bot endlessly composing).
-    draft_last_attempt: Option<std::time::Instant>,
-    /// Client-chosen draft_id for `sendRichMessageDraft` (DMs with rich_messages).
-    /// `None` when using the standard message path. When set, status updates
-    /// re-send the draft with this id instead of editing a persistent message.
-    draft_id: Option<i32>,
     /// Intermediate texts already sent — used to dedup final response
     sent_intermediates: Vec<String>,
     /// Message IDs of every intermediate chunk delivered to Telegram, so a
@@ -3237,10 +3237,10 @@ pub(crate) async fn handle_message(
         response: String::new(),
         dirty: false,
         recreate: false,
+        status_msg_id: None,
+        status_last_text: None,
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
-        draft_id: None,
-        draft_last_attempt: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -3258,9 +3258,6 @@ pub(crate) async fn handle_message(
         let chat = msg.chat.id;
         let st = streaming.clone();
         let cancel = edit_cancel.clone();
-        let use_drafts = is_dm
-            && Config::current().channels.telegram.rich_messages
-            && Config::current().channels.telegram.draft_streaming;
         async move {
             loop {
                 tokio::select! {
@@ -3283,6 +3280,7 @@ pub(crate) async fn handle_message(
                             /// Dirty tools that already have messages (need editing, not new sends)
                             tool_edits: Vec<(usize, String, Option<bool>, MessageId)>,
                             has_active_tools: bool,
+                            status_msg_id: Option<MessageId>,
                             processing: bool,
                             /// Short excerpt of the latest reasoning chunk used as
                             /// a context-aware status line during the pre-tool
@@ -3294,8 +3292,6 @@ pub(crate) async fn handle_message(
                             /// rolling status line when no tool/reasoning
                             /// signal is yet available.
                             user_message_preview: Option<String>,
-                            /// Draft ID for DM rich message drafts
-                            draft_id: Option<i32>,
                         }
 
                         let mut settle_flow = false;
@@ -3350,10 +3346,10 @@ pub(crate) async fn handle_message(
                                 display_items,
                                 tool_edits,
                                 has_active_tools,
+                                status_msg_id: s.status_msg_id,
                                 processing,
                                 thinking_excerpt: thinking_status_excerpt(&s.thinking),
                                 user_message_preview: s.user_message_preview.clone(),
-                                draft_id: s.draft_id,
                             };
 
                             // Pre-clear state that will be handled
@@ -3491,61 +3487,86 @@ pub(crate) async fn handle_message(
                             refresh_flow(&bot, chat, &st).await;
                         }
 
-                        // ── Blockless progress: DM drafts only ──
-                        // The processing-log block (edited in place, status in
-                        // its header) is the ONLY real progress message. No
-                        // standalone status message is ever sent: its delete
-                        // could fail while state cleared, orphaning duplicate
-                        // "Working on" bubbles. Before the block opens, DMs
-                        // with rich_messages get an auto-expiring draft
-                        // preview; a failed draft send just logs (the old
-                        // real-message fallback was the orphan source).
-                        let draft_due = {
-                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                            let due = s
-                                .draft_last_attempt
-                                .is_none_or(|t| t.elapsed().as_secs() >= 6);
-                            if due {
-                                s.draft_last_attempt = Some(std::time::Instant::now());
-                            }
-                            due
-                        };
-                        if show_status && open_block.is_none() && use_drafts && draft_due {
-                            let elapsed_total = snap.tools_started_at
+                        // ── Pre-block dynamic status ──
+                        // Context-based only (model's own thinking excerpt,
+                        // or what the user asked) — NEVER canned text. Shown
+                        // standalone ONLY while no grouping block exists;
+                        // the block header owns the status afterwards.
+                        let turn_done = snap.dirty && !snap.response_text.is_empty();
+                        if show_status && open_block.is_none() && !turn_done {
+                            let elapsed = snap
+                                .tools_started_at
                                 .map(|t| t.elapsed().as_secs())
                                 .unwrap_or(0);
-                            let active_refs: Vec<(&str, &str)> = snap.active_tools.iter()
-                                .map(|(n, c)| (n.as_str(), c.as_str()))
-                                .collect();
-                            let last_ref = snap.last_completed_tool.as_ref()
-                                .map(|(n, c)| (n.as_str(), c.as_str()));
-                            if let Some(status) = build_status_message(
-                                &active_refs,
-                                last_ref,
-                                snap.tool_round_count,
-                                elapsed_total,
-                                snap.processing,
-                                snap.thinking_excerpt.as_deref(),
-                                snap.user_message_preview.as_deref(),
-                            ) {
-                                let did = snap.draft_id.unwrap_or(1);
-                                let token = bot.token();
-                                let cid = chat.0;
-                                match super::rich::api::send_rich_message_draft(
-                                    token, cid, did, &status,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
-                                        let mut s =
-                                            st.lock().unwrap_or_else(|e| e.into_inner());
-                                        s.draft_id = Some(did);
+                            let status = snap
+                                .thinking_excerpt
+                                .as_deref()
+                                .map(|t| format!("🧠 {t} ({})", humanize_elapsed(elapsed)))
+                                .or_else(|| {
+                                    snap.user_message_preview.as_deref().map(|p| {
+                                        format!(
+                                            "⚙️ Working on: {p} ({})",
+                                            humanize_elapsed(elapsed)
+                                        )
+                                    })
+                                });
+                            if let Some(status) = status {
+                                let (mid, changed) = {
+                                    let mut s =
+                                        st.lock().unwrap_or_else(|e| e.into_inner());
+                                    let changed =
+                                        s.status_last_text.as_deref() != Some(status.as_str());
+                                    if changed {
+                                        s.status_last_text = Some(status.clone());
                                     }
-                                    Err(e) => {
-                                        tracing::debug!(
-                                            "Telegram: status draft send failed (no fallback): {e}"
-                                        );
+                                    (s.status_msg_id, changed)
+                                };
+                                match mid {
+                                    Some(mid) if changed => {
+                                        if let Err(e) = bot
+                                            .edit_message_text(chat, mid, &status)
+                                            .parse_mode(ParseMode::Html)
+                                            .await
+                                        {
+                                            tracing::debug!(
+                                                "Telegram: status edit failed (kept): {e}"
+                                            );
+                                        }
                                     }
+                                    Some(_) => {}
+                                    None => {
+                                        if let Ok(m) = message_in_thread(
+                                            &bot, chat, thread_id, &status,
+                                        )
+                                        .parse_mode(ParseMode::Html)
+                                        .await
+                                        {
+                                            let mut s = st
+                                                .lock()
+                                                .unwrap_or_else(|e| e.into_inner());
+                                            s.status_msg_id = Some(m.id);
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(mid) = snap.status_msg_id {
+                            // Block opened or turn finished: the ticker's job
+                            // is done. Clear state ONLY on successful delete;
+                            // a failure keeps the id so next tick retries
+                            // (clearing on failure was the orphan bug).
+                            match bot.delete_message(chat, mid).await {
+                                Ok(_) => {
+                                    let mut s =
+                                        st.lock().unwrap_or_else(|e| e.into_inner());
+                                    if s.status_msg_id == Some(mid) {
+                                        s.status_msg_id = None;
+                                        s.status_last_text = None;
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Telegram: status delete failed (will retry): {e}"
+                                    );
                                 }
                             }
                         }
@@ -4558,10 +4579,10 @@ pub(crate) async fn resume_session(
         response: String::new(),
         dirty: false,
         recreate: false,
+        status_msg_id: None,
+        status_last_text: None,
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
-        draft_id: None,
-        draft_last_attempt: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -5560,152 +5581,6 @@ pub(crate) fn thinking_status_excerpt(thinking: &str) -> Option<String> {
     })
 }
 
-/// Build a context-aware status message for Telegram rolling updates.
-///
-/// All branches derive their text from real execution state — never
-/// hardcoded filler. Priority order:
-///   1. Tool(s) actively running → name the tool(s).
-///   2. Tools finished, next step pending → name the last completed.
-///   3. Pre-tool reasoning phase WITH a live reasoning excerpt →
-///      show the excerpt (latest sentence from the model).
-///   4. Pre-tool reasoning phase WITHOUT an excerpt, but the user
-///      message preview is available → roll a phrase derived from
-///      what the user actually asked (handled by `pre_tool_rolling`).
-///   5. Nothing real to say → `None` (caller skips this tick).
-///
-/// The rolling effect comes from two sources: (a) the elapsed-time
-/// counter advances each tick (~2s); (b) `pre_tool_rolling` rotates
-/// its leading verb across elapsed buckets so the line visibly
-/// changes shape even before tools or reasoning chunks arrive.
-fn build_status_message(
-    active_tools: &[(&str, &str)],
-    last_completed: Option<(&str, &str)>,
-    tool_round_count: usize,
-    elapsed_secs: u64,
-    processing: bool,
-    thinking_excerpt: Option<&str>,
-    user_message_preview: Option<&str>,
-) -> Option<String> {
-    let elapsed = if elapsed_secs >= 60 {
-        let mins = elapsed_secs / 60;
-        let secs = elapsed_secs % 60;
-        format!("{}m {}s", mins, secs)
-    } else {
-        format!("{}s", elapsed_secs)
-    };
-
-    // When the only active tool is follow_up_question, the user is
-    // looking at a keyboard / numbered list and picking an option.
-    // Rolling status messages ("Running follow_up_question (16s)")
-    // just clutter the thread while they decide. Stay silent until
-    // they tap or the tool times out (issue #148).
-    if active_tools.len() == 1 && active_tools[0].0 == "follow_up_question" {
-        return None;
-    }
-
-    let action = if !active_tools.is_empty() {
-        if active_tools.len() == 1 {
-            let (name, ctx) = active_tools[0];
-            if ctx.is_empty() {
-                format!("Running {}", name)
-            } else {
-                format!("Running {}{}", name, ctx)
-            }
-        } else {
-            let names: Vec<&str> = active_tools.iter().map(|(n, _)| *n).collect();
-            format!("Running {} tools: {}", active_tools.len(), names.join(", "))
-        }
-    } else if processing && tool_round_count == 0 {
-        // Pre-tool reasoning phase. Prefer a live reasoning excerpt
-        // (real-time signal from the model). When the model has not
-        // streamed any reasoning yet, fall back to a rolling phrase
-        // derived from the user's actual question — still context-
-        // aware, never hardcoded filler.
-        if let Some(excerpt) = thinking_excerpt.map(str::trim).filter(|e| !e.is_empty()) {
-            excerpt.to_string()
-        } else {
-            pre_tool_rolling(user_message_preview, elapsed_secs)?
-        }
-    } else if tool_round_count > 0 {
-        if let Some((name, _ctx)) = last_completed {
-            format!("{} done, moving to next step", name)
-        } else {
-            format!("{} tools done, preparing next step", tool_round_count)
-        }
-    } else {
-        // Neither processing nor any tool round seen — nothing
-        // meaningful to say. Stay silent.
-        return None;
-    };
-
-    Some(format!(
-        "⚙️ {}{}",
-        action,
-        if tool_round_count > 0 && elapsed_secs >= 5 {
-            format!(" (tool {}, {})", tool_round_count, elapsed)
-        } else if elapsed_secs >= 5 {
-            format!(" ({})", elapsed)
-        } else {
-            String::new()
-        }
-    ))
-}
-
-/// Pre-tool rolling phrase for the status line.
-///
-/// 5-59s: lead phrase escalates across three elapsed buckets, always
-///        anchored to the user's preview so they can tell which
-///        question is being chewed on:
-///
-///   5-14s : "Working on: ..."
-///   15-29s: "Still working on: ..."
-///   30-59s: "Long one — still on: ..."
-///
-/// 60s+: drops the preview and rotates through the project-author-
-///       original `TOOL_STATUS_QUIPS` pool every ~15s. Before this
-///       change the line froze at "Marathon mode — still on: <preview>"
-///       for the entire remaining wait (3+ minutes observed
-///       2026-06-03) because there was no fifth bucket and the static
-///       phrase carried no new information. The quip pool gives
-///       movement and personality without inventing anything new —
-///       it's the same list the bot has shipped under since
-///       `f5b5de1a`.
-///
-/// `preview` is required for the 5-59s buckets — if the caller has
-/// no preview those buckets stay silent. The marathon bucket fires
-/// regardless of preview availability.
-pub(crate) fn pre_tool_rolling(preview: Option<&str>, elapsed_secs: u64) -> Option<String> {
-    if elapsed_secs < 5 {
-        return None;
-    }
-    if elapsed_secs >= 60 {
-        return Some(super::rolling_status_quips::rotating_quip(elapsed_secs).to_string());
-    }
-    let preview = preview?.trim();
-    if preview.is_empty() {
-        return None;
-    }
-    let lead = if elapsed_secs >= 30 {
-        "Long one — still on"
-    } else if elapsed_secs >= 15 {
-        "Still working on"
-    } else {
-        "Working on"
-    };
-    Some(format!("{}: {}", lead, preview))
-}
-
-/// Build the short preview of the user's incoming message used by
-/// the rolling status line.
-///
-/// Strategy:
-///   * Take the first non-empty line (multi-line messages get cut at
-///     the first paragraph break so the status line stays compact).
-///   * Collapse internal whitespace.
-///   * Cap at 60 visible chars with an ellipsis when truncated.
-///   * Return `None` if there's nothing meaningful left (empty after
-///     trim, or only whitespace) — the caller treats `None` as
-///     "no rolling status, stay silent."
 pub(crate) fn build_user_message_preview(text: &str) -> Option<String> {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
     let collapsed: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
