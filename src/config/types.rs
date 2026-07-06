@@ -354,13 +354,14 @@ pub struct TelegramConfig {
     /// Idle session timeout in hours for non-owner sessions.
     #[serde(default)]
     pub session_idle_hours: Option<f64>,
-    /// Send structured replies as native Telegram rich messages (Bot API 10.1:
-    /// tables, headings, lists, math). Off by default — rich messages are
-    /// unreadable on Telegram Web and older clients (they show a "not supported"
-    /// placeholder with no fallback). Enable only when the audience is on
-    /// current mobile/desktop clients; otherwise the universal HTML rendering
-    /// (which works on every client) is used.
-    #[serde(default)]
+    /// Send structured replies and flow blocks as native Telegram rich
+    /// messages (Bot API 10.1: tables, headings, lists, math, collapsible
+    /// details). On by default (#425). Older clients and Telegram Web show
+    /// rich messages as a "not supported" placeholder, so users on outdated
+    /// clients can disable it in the onboard dialog or via
+    /// `/onboard:channels telegram richtext off`; the universal HTML
+    /// rendering (which works on every client) is used instead.
+    #[serde(default = "default_true")]
     pub rich_messages: bool,
     /// Silently ignore /start commands from non-allowed users in group chats.
     /// When true (default), the bot does NOT reply with user ID in groups.

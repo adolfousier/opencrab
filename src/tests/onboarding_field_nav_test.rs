@@ -212,12 +212,13 @@ fn telegram_richtext_space_toggles() {
     let mut w = clean_wizard();
     w.step = OnboardingStep::TelegramSetup;
     w.telegram_field = TelegramField::RichText;
-    assert!(!w.telegram_rich_text);
+    // On by default (#425): older clients opt out.
+    assert!(w.telegram_rich_text);
 
     w.handle_key(key(KeyCode::Char(' ')));
-    assert!(w.telegram_rich_text);
-    w.handle_key(key(KeyCode::Char(' ')));
     assert!(!w.telegram_rich_text);
+    w.handle_key(key(KeyCode::Char(' ')));
+    assert!(w.telegram_rich_text);
 }
 
 #[test]
@@ -228,7 +229,7 @@ fn telegram_richtext_enter_advances_to_respondto_without_toggling() {
 
     w.handle_key(key(KeyCode::Enter));
     assert_eq!(w.telegram_field, TelegramField::RespondTo);
-    assert!(!w.telegram_rich_text);
+    assert!(w.telegram_rich_text);
 }
 
 // ── Telegram: Ctrl+Backspace clears fields ─────────────────────
