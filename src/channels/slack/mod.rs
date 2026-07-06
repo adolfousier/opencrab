@@ -6,6 +6,7 @@
 mod agent;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
+pub(crate) mod reactions;
 
 pub use agent::SlackAgent;
 

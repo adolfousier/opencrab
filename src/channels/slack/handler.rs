@@ -436,6 +436,11 @@ pub async fn on_push_event(
                 handle_message(&msg, client, false).await;
             });
         }
+        SlackEventCallbackBody::ReactionAdded(ev) => {
+            tokio::spawn(async move {
+                super::reactions::handle_reaction_added(ev, client).await;
+            });
+        }
         SlackEventCallbackBody::AppMention(mention) => {
             let ts = mention.origin.ts.to_string();
             let channel = mention.channel.0.as_str();
@@ -527,6 +532,10 @@ pub fn on_error(
 }
 
 /// Handle an incoming Slack message event.
+pub(crate) fn handler_state() -> Option<Arc<HandlerState>> {
+    HANDLER_STATE.get().cloned()
+}
+
 async fn handle_message(
     msg: &SlackMessageEvent,
     client: Arc<SlackHyperClient>,
@@ -1687,6 +1696,19 @@ async fn handle_message(
             let (text_only, img_paths) = crate::utils::extract_img_markers(&response.content);
             let (text_only, _vid_paths) = crate::utils::extract_vid_markers(&text_only);
             let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
+            // React-back (#372): the marker used to leak into Slack text.
+            let (text_only, react_emoji) = crate::utils::extract_react_marker(&text_only);
+            if let Some(ref em) = react_emoji {
+                let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
+                super::reactions::add_reaction(
+                    &client,
+                    &token,
+                    SlackChannelId::new(channel_id.clone()),
+                    msg.origin.ts.clone(),
+                    super::reactions::slack_name_for_glyph(em),
+                )
+                .await;
+            }
             let text_only = redact_secrets(&text_only);
 
             let text_only = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_only);

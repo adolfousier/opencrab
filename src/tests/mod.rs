@@ -364,6 +364,7 @@ pub mod session_provider_wrap_test;
 pub mod skill_slash_dispatch_test;
 pub mod skills_dialog_test;
 pub mod skills_test;
+pub mod slack_reactions_test;
 pub mod slack_send_content_type_test;
 pub mod slash_autocomplete_dimensions_test;
 pub mod split_pane_test;
