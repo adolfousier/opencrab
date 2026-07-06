@@ -479,9 +479,11 @@ allowed_users = [123456789]             # Who the bot replies to (numeric user I
 # respond_to = "all"                    # "all" | "dm_only" | "mention" | "auto"
 # silence_group_start = true            # Silently ignore /start from non-allowed users in groups (default: true)
 # session_idle_hours = 24.0             # Archive inactive non-owner sessions after N hours (default: never)
-# rich_messages = true                  # Native rich messages (tables/headings/lists/math). Default false:
-                                        # rich is unreadable on Telegram Web and older clients (no fallback),
-                                        # so enable only when your audience is on current mobile/desktop apps.
+# rich_messages = true                  # Native rich messages — flow logs, collapsible tool calls,
+                                        # status bubble with task preview. Default: true since v0.3.64.
+                                        # Toggle available in the onboard dialog (/onboard:provider →
+                                        # Telegram channel step). Set to false if your audience uses
+                                        # Telegram Web or older clients (no HTML fallback).
 
 # Per-group access control (per-chat ACL). Tiers:
 #   - allowed_users (above) = admins: may DM the bot and act in any chat.
