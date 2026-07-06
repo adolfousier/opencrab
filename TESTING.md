@@ -359,7 +359,7 @@ cargo test --all-features
 | Tests — Non-stream Compatibility | 5 | `src/tests/nonstream_compat_test.rs` |
 | Tests — Runtime Info `$HOME` Anchor | 6 | `src/tests/runtime_info_home_anchor_test.rs` |
 | Tests — Handshake Timeout | 4 | `src/tests/handshake_timeout_test.rs` |
-| Tests — Usage Ledger | 4 | `src/tests/usage_ledger_test.rs` |
+| Tests — Usage Ledger | 5 | `src/tests/usage_ledger_test.rs` |
 | Tests — Browser E2E (opt-in, `#[ignore]`) | 4 | `src/tests/browser_e2e_test.rs` |
 | Tests — CLI Arg Length Cap | 2 | `src/tests/cli_arg_too_long_test.rs` |
 | Tests — Config Watcher (integration) | 3 | `src/tests/config_watcher_test.rs` |
@@ -399,7 +399,16 @@ cargo test --all-features
 | Tests — Telegram Raw Update Parse | 2 | `src/tests/telegram_raw_update_parse_test.rs` |
 | Tests — Telegram Reaction Map | 5 | `src/tests/telegram_reaction_map_test.rs` |
 | Tests — Telegram Rich Decode | 17 | `src/tests/telegram_rich_decode_test.rs` |
-| **Total** | **4,647** | Authoritative count from `cargo test --all-features` (lib test binary): 4,647 run by default + 29 `#[ignore]`d. The per-category rows above are a maintained snapshot. Re-run `cargo test` for the live number. |
+| Tests — Doc Gen XLSX | 6 | `src/tests/doc_gen_xlsx_test.rs` |
+| Tests — Doc Gen DOCX | 7 | `src/tests/doc_gen_docx_test.rs` |
+| Tests — Doc Gen PDF | 14 | `src/tests/doc_gen_pdf_test.rs` |
+| Tests — Doc Gen PPTX | 5 | `src/tests/doc_gen_pptx_test.rs` |
+| Tests — Slack Reactions | 2 | `src/tests/slack_reactions_test.rs` |
+| Tests — Slack Tool Group | 5 | `src/tests/slack_tool_group_test.rs` |
+| Tests — Slack Send Content Type | 2 | `src/tests/slack_send_content_type_test.rs` |
+| Tests — Discord Tool Group | 4 | `src/tests/discord_tool_group_test.rs` |
+| Tests — Parallel Tools | 3 | `src/tests/parallel_tools_test.rs` |
+| **Total** | **4,668** | Authoritative count from `cargo test --all-features` (lib test binary): 4,668 run by default + 25 `#[ignore]`d. The per-category rows above are a maintained snapshot. Re-run `cargo test` for the live number. |
 
 ---
 
