@@ -40,6 +40,29 @@ pub async fn on_interaction(
                 let action_id = action.action_id.0.as_str();
                 tracing::info!("Slack callback received: action_id={}", action_id);
 
+                // Tool-group Expand/Collapse toggle (#373): flip stored
+                // state, re-render the same message in place.
+                if let Some(ts) = action_id.strip_prefix("toolgroup:") {
+                    if let Some(group) = state.slack_state.toggle_tool_group(ts).await {
+                        let token =
+                            SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
+                        let session = client.open_session(&token);
+                        let slack_ts = SlackTs::new(ts.to_string());
+                        let content = super::tool_group::render(&group, &slack_ts);
+                        let upd = SlackApiChatUpdateRequest::new(
+                            group.channel.clone(),
+                            content,
+                            slack_ts,
+                        );
+                        if let Err(e) = session.chat_update(&upd).await {
+                            tracing::warn!("Slack: tool group toggle update failed: {e}");
+                        }
+                    } else {
+                        tracing::debug!("Slack: tool group {ts} aged out — toggle ignored");
+                    }
+                    continue;
+                }
+
                 // Provider picker callback → show models for that provider
                 if let Some(provider_name) = action_id.strip_prefix("provider:") {
                     let resp = crate::channels::commands::models_for_provider(provider_name).await;
@@ -1390,36 +1413,9 @@ async fn handle_message(
     let progress_cb: crate::brain::agent::ProgressCallback = {
         use crate::brain::agent::ProgressEvent;
 
-        struct ToolEntry {
-            name: String,
-            context: String,
-            /// None = running, Some(success) = finished.
-            status: Option<bool>,
-        }
+        use super::tool_group::{GroupEntry, GroupState};
 
-        /// Render the whole turn's tool list as ONE message body (#371):
-        /// grouped like Telegram's processing-log block, edited in place,
-        /// instead of one Slack message per tool call.
-        fn render_tool_group(entries: &[ToolEntry]) -> String {
-            let lines: Vec<String> = entries
-                .iter()
-                .map(|e| {
-                    let icon = match e.status {
-                        None => "⚙️",
-                        Some(true) => "✅",
-                        Some(false) => "❌",
-                    };
-                    format!("{icon} *{}*{}", e.name, e.context)
-                })
-                .collect();
-            if entries.len() > 1 {
-                format!("*{} tool calls*\n{}", entries.len(), lines.join("\n"))
-            } else {
-                lines.join("\n")
-            }
-        }
-
-        let tools: Arc<Mutex<Vec<ToolEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let tools: Arc<Mutex<Vec<GroupEntry>>> = Arc::new(Mutex::new(Vec::new()));
         // ts of the single grouped tool message for this turn, once posted.
         let tool_group_ts: Arc<Mutex<Option<SlackTs>>> = Arc::new(Mutex::new(None));
         let bot_token_cb = state.current_bot_token();
@@ -1429,9 +1425,12 @@ async fn handle_message(
         let thread_ts_cb = thread_ts.clone();
         let tool_group_ts_outer = tool_group_ts.clone();
 
+        let slack_state_outer = state.slack_state.clone();
+
         Arc::new(move |_session_id, event| {
             let tools = tools.clone();
             let tool_group_ts_cb = tool_group_ts_outer.clone();
+            let slack_state_grp = slack_state_outer.clone();
             let _ts_ref = sent_intermediate_ts.clone();
             let token = SlackApiToken::new(SlackApiTokenValue::from(bot_token_cb.clone()));
             let channel = channel_cb.clone();
@@ -1459,25 +1458,33 @@ async fn handle_message(
                                 );
                             }
                         }
-                        // Append to the turn's grouped tool message (#371):
-                        // one message, edited in place, Telegram-style.
-                        let text = {
+                        // Append to the turn's grouped tool message (#371),
+                        // collapsed by default with an Expand toggle (#373).
+                        let entries = {
                             let mut t = tools.lock().await;
-                            t.push(ToolEntry {
+                            t.push(GroupEntry {
                                 name: tool_name,
                                 context: ctx,
                                 status: None,
                             });
-                            render_tool_group(&t)
+                            t.clone()
                         };
                         let mut gts = group_ts.lock().await;
                         match gts.as_ref() {
                             Some(ts) => {
-                                let upd = SlackApiChatUpdateRequest::new(
-                                    channel,
-                                    SlackMessageContent::new().with_text(text),
-                                    ts.clone(),
-                                );
+                                let group = slack_state_grp
+                                    .upsert_tool_group(
+                                        ts.to_string(),
+                                        GroupState {
+                                            channel: channel.clone(),
+                                            entries,
+                                            expanded: false,
+                                        },
+                                    )
+                                    .await;
+                                let content = super::tool_group::render(&group, ts);
+                                let upd =
+                                    SlackApiChatUpdateRequest::new(channel, content, ts.clone());
                                 if let Err(e) = session.chat_update(&upd).await {
                                     tracing::warn!(
                                         "Slack: chat_update failed (tool group append): {e}"
@@ -1485,15 +1492,38 @@ async fn handle_message(
                                 }
                             }
                             None => {
-                                let mut req = SlackApiChatPostMessageRequest::new(
-                                    channel,
-                                    SlackMessageContent::new().with_text(text),
-                                );
+                                // First tool: post with a placeholder ts in the
+                                // button id, then re-render with the real ts.
+                                let group = GroupState {
+                                    channel: channel.clone(),
+                                    entries,
+                                    expanded: false,
+                                };
+                                let content =
+                                    super::tool_group::render(&group, &SlackTs::new("0".into()));
+                                let mut req =
+                                    SlackApiChatPostMessageRequest::new(channel.clone(), content);
                                 if let Some(ref ts) = thread_ts_inner {
                                     req = req.with_thread_ts(ts.clone());
                                 }
                                 match session.chat_post_message(&req).await {
-                                    Ok(resp) => *gts = Some(resp.ts),
+                                    Ok(resp) => {
+                                        let fixed = super::tool_group::render(&group, &resp.ts);
+                                        let upd = SlackApiChatUpdateRequest::new(
+                                            channel,
+                                            fixed,
+                                            resp.ts.clone(),
+                                        );
+                                        if let Err(e) = session.chat_update(&upd).await {
+                                            tracing::warn!(
+                                                "Slack: chat_update failed (tool group ts fixup): {e}"
+                                            );
+                                        }
+                                        slack_state_grp
+                                            .upsert_tool_group(resp.ts.to_string(), group)
+                                            .await;
+                                        *gts = Some(resp.ts);
+                                    }
                                     Err(e) => tracing::warn!(
                                         "Slack: failed to post tool group message: {e}"
                                     ),
@@ -1508,7 +1538,7 @@ async fn handle_message(
                     let group_ts = tool_group_ts_cb.clone();
                     tokio::spawn(async move {
                         let session = client.open_session(&token);
-                        let text = {
+                        let entries = {
                             let mut t = tools.lock().await;
                             if let Some(entry) = t
                                 .iter_mut()
@@ -1517,14 +1547,21 @@ async fn handle_message(
                             {
                                 entry.status = Some(success);
                             }
-                            render_tool_group(&t)
+                            t.clone()
                         };
                         if let Some(ts) = group_ts.lock().await.as_ref() {
-                            let upd = SlackApiChatUpdateRequest::new(
-                                channel,
-                                SlackMessageContent::new().with_text(text),
-                                ts.clone(),
-                            );
+                            let group = slack_state_grp
+                                .upsert_tool_group(
+                                    ts.to_string(),
+                                    GroupState {
+                                        channel: channel.clone(),
+                                        entries,
+                                        expanded: false,
+                                    },
+                                )
+                                .await;
+                            let content = super::tool_group::render(&group, ts);
+                            let upd = SlackApiChatUpdateRequest::new(channel, content, ts.clone());
                             if let Err(e) = session.chat_update(&upd).await {
                                 tracing::warn!(
                                     "Slack: chat_update failed (tool group status, ts={}): {}",

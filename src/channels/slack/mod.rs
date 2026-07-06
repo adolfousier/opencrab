@@ -7,6 +7,7 @@ mod agent;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod reactions;
+pub(crate) mod tool_group;
 
 pub use agent::SlackAgent;
 
@@ -40,6 +41,10 @@ pub struct SlackState {
     pending_questions: Mutex<HashMap<String, PendingSlackQuestion>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
+    /// Collapsible tool groups keyed by their message ts, so the Expand /
+    /// Collapse interaction can re-render long after the turn ended.
+    /// Insertion-ordered for pruning; bounded at [`Self::TOOL_GROUP_CAP`].
+    tool_groups: Mutex<(Vec<String>, HashMap<String, tool_group::GroupState>)>,
 }
 
 impl Default for SlackState {
@@ -58,7 +63,47 @@ impl SlackState {
             pending_approvals: Mutex::new(HashMap::new()),
             pending_questions: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
+            tool_groups: Mutex::new((Vec::new(), HashMap::new())),
         }
+    }
+
+    /// Retained tool groups; older ones stop being toggleable (their last
+    /// rendered state stays on screen, like Telegram's frozen blocks).
+    const TOOL_GROUP_CAP: usize = 20;
+
+    /// Insert or update the group for a message ts, PRESERVING the user's
+    /// expanded/collapsed choice on updates (a completing tool must not
+    /// snap an expanded group shut). Prunes the oldest beyond the cap.
+    /// Returns the stored state so callers render exactly what is kept.
+    pub(crate) async fn upsert_tool_group(
+        &self,
+        ts: String,
+        mut group: tool_group::GroupState,
+    ) -> tool_group::GroupState {
+        let mut guard = self.tool_groups.lock().await;
+        let (order, map) = &mut *guard;
+        match map.get(&ts) {
+            Some(existing) => group.expanded = existing.expanded,
+            None => {
+                order.push(ts.clone());
+                while order.len() > Self::TOOL_GROUP_CAP {
+                    let oldest = order.remove(0);
+                    map.remove(&oldest);
+                }
+            }
+        }
+        map.insert(ts, group.clone());
+        group
+    }
+
+    /// Flip a group's expanded state; returns the new state for re-render,
+    /// or None when the group aged out of retention.
+    pub(crate) async fn toggle_tool_group(&self, ts: &str) -> Option<tool_group::GroupState> {
+        let mut guard = self.tool_groups.lock().await;
+        let (_, map) = &mut *guard;
+        let group = map.get_mut(ts)?;
+        group.expanded = !group.expanded;
+        Some(group.clone())
     }
 
     /// Register a pending `follow_up_question`. The action-block click
