@@ -489,6 +489,25 @@ async fn refresh_flow_html(
 /// fresh block. Used when the block can no longer be edited (size limit).
 /// The entries rendered into the frozen message are dropped from state so
 /// the next block starts small instead of instantly overflowing again.
+/// A mid-turn user follow-up landed (queued-message injection): freeze the
+/// open processing-log block IN PLACE — its content stays visible above the
+/// follow-up — and mark the response placeholder for re-post, so the next
+/// tool round opens a fresh block BELOW the user's message and the chat
+/// keeps flowing bottom-down (#404).
+fn detach_flow_for_followup(streaming: &Arc<std::sync::Mutex<StreamingState>>) {
+    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+    if s.open_group_msg_id.take().is_some() {
+        s.flow_entries.clear();
+        s.flow_status = None;
+        tracing::info!(
+            "Telegram: mid-turn follow-up — froze open flow block; next round starts below"
+        );
+    }
+    if s.msg_id.is_some() {
+        s.recreate = true;
+    }
+}
+
 fn freeze_flow_block(
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
     mid: MessageId,
@@ -3876,6 +3895,11 @@ pub(crate) async fn handle_message(
                         // and the IntermediateText arm below).
                     }
                 }
+                ProgressEvent::QueuedUserMessage { .. } => {
+                    // The user's own message is already visible in the chat;
+                    // the block just has to stop growing above it (#404).
+                    detach_flow_for_followup(&st);
+                }
                 ProgressEvent::IntermediateText { text, reasoning: _ } => {
                     if let Ok(mut s) = st.lock() {
                         s.thinking.clear();
@@ -4998,6 +5022,9 @@ pub(crate) async fn resume_session(
                     // completions edit the group in place, nothing new lands
                     // below the placeholder.
                 }
+            }
+            ProgressEvent::QueuedUserMessage { .. } => {
+                detach_flow_for_followup(&st);
             }
             ProgressEvent::IntermediateText { text, reasoning: _ } => {
                 if let Ok(mut s) = st.lock() {
