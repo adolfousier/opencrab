@@ -1382,20 +1382,47 @@ async fn handle_message(
         use crate::brain::agent::ProgressEvent;
 
         struct ToolEntry {
-            msg_ts: Option<SlackTs>,
             name: String,
             context: String,
+            /// None = running, Some(success) = finished.
+            status: Option<bool>,
+        }
+
+        /// Render the whole turn's tool list as ONE message body (#371):
+        /// grouped like Telegram's processing-log block, edited in place,
+        /// instead of one Slack message per tool call.
+        fn render_tool_group(entries: &[ToolEntry]) -> String {
+            let lines: Vec<String> = entries
+                .iter()
+                .map(|e| {
+                    let icon = match e.status {
+                        None => "⚙️",
+                        Some(true) => "✅",
+                        Some(false) => "❌",
+                    };
+                    format!("{icon} *{}*{}", e.name, e.context)
+                })
+                .collect();
+            if entries.len() > 1 {
+                format!("*{} tool calls*\n{}", entries.len(), lines.join("\n"))
+            } else {
+                lines.join("\n")
+            }
         }
 
         let tools: Arc<Mutex<Vec<ToolEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        // ts of the single grouped tool message for this turn, once posted.
+        let tool_group_ts: Arc<Mutex<Option<SlackTs>>> = Arc::new(Mutex::new(None));
         let bot_token_cb = state.current_bot_token();
         let channel_cb = SlackChannelId::new(channel_id.clone());
         let client_cb = client.clone();
         let thinking_ts_cb = thinking_ts.clone();
         let thread_ts_cb = thread_ts.clone();
+        let tool_group_ts_outer = tool_group_ts.clone();
 
         Arc::new(move |_session_id, event| {
             let tools = tools.clone();
+            let tool_group_ts_cb = tool_group_ts_outer.clone();
             let _ts_ref = sent_intermediate_ts.clone();
             let token = SlackApiToken::new(SlackApiTokenValue::from(bot_token_cb.clone()));
             let channel = channel_cb.clone();
@@ -1408,6 +1435,7 @@ async fn handle_message(
                     tool_input,
                 } => {
                     let thinking_ts = thinking_ts_cb.clone();
+                    let group_ts = tool_group_ts_cb.clone();
                     let ctx = crate::utils::tool_context_hint(&tool_name, &tool_input);
                     tokio::spawn(async move {
                         let session = client.open_session(&token);
@@ -1422,38 +1450,20 @@ async fn handle_message(
                                 );
                             }
                         }
-                        let text = format!("⚙️ *{}*{}", tool_name, ctx);
-                        let mut req = SlackApiChatPostMessageRequest::new(
-                            channel,
-                            SlackMessageContent::new().with_text(text),
-                        );
-                        if let Some(ref ts) = thread_ts_inner {
-                            req = req.with_thread_ts(ts.clone());
-                        }
-                        if let Ok(resp) = session.chat_post_message(&req).await {
+                        // Append to the turn's grouped tool message (#371):
+                        // one message, edited in place, Telegram-style.
+                        let text = {
                             let mut t = tools.lock().await;
                             t.push(ToolEntry {
-                                msg_ts: Some(resp.ts),
                                 name: tool_name,
                                 context: ctx,
+                                status: None,
                             });
-                        }
-                    });
-                }
-                ProgressEvent::ToolCompleted {
-                    tool_name, success, ..
-                } => {
-                    tokio::spawn(async move {
-                        let session = client.open_session(&token);
-                        let mut t = tools.lock().await;
-                        if let Some(entry) = t
-                            .iter_mut()
-                            .rev()
-                            .find(|e| e.name == tool_name && e.msg_ts.is_some())
-                        {
-                            let icon = if success { "✅" } else { "❌" };
-                            let text = format!("{} *{}*{}", icon, entry.name, entry.context);
-                            if let Some(ts) = entry.msg_ts.take() {
+                            render_tool_group(&t)
+                        };
+                        let mut gts = group_ts.lock().await;
+                        match gts.as_ref() {
+                            Some(ts) => {
                                 let upd = SlackApiChatUpdateRequest::new(
                                     channel,
                                     SlackMessageContent::new().with_text(text),
@@ -1461,12 +1471,57 @@ async fn handle_message(
                                 );
                                 if let Err(e) = session.chat_update(&upd).await {
                                     tracing::warn!(
-                                        "Slack: chat_update failed (tool {} status, ts={}): {}",
-                                        entry.name,
-                                        ts,
-                                        e
+                                        "Slack: chat_update failed (tool group append): {e}"
                                     );
                                 }
+                            }
+                            None => {
+                                let mut req = SlackApiChatPostMessageRequest::new(
+                                    channel,
+                                    SlackMessageContent::new().with_text(text),
+                                );
+                                if let Some(ref ts) = thread_ts_inner {
+                                    req = req.with_thread_ts(ts.clone());
+                                }
+                                match session.chat_post_message(&req).await {
+                                    Ok(resp) => *gts = Some(resp.ts),
+                                    Err(e) => tracing::warn!(
+                                        "Slack: failed to post tool group message: {e}"
+                                    ),
+                                }
+                            }
+                        }
+                    });
+                }
+                ProgressEvent::ToolCompleted {
+                    tool_name, success, ..
+                } => {
+                    let group_ts = tool_group_ts_cb.clone();
+                    tokio::spawn(async move {
+                        let session = client.open_session(&token);
+                        let text = {
+                            let mut t = tools.lock().await;
+                            if let Some(entry) = t
+                                .iter_mut()
+                                .rev()
+                                .find(|e| e.name == tool_name && e.status.is_none())
+                            {
+                                entry.status = Some(success);
+                            }
+                            render_tool_group(&t)
+                        };
+                        if let Some(ts) = group_ts.lock().await.as_ref() {
+                            let upd = SlackApiChatUpdateRequest::new(
+                                channel,
+                                SlackMessageContent::new().with_text(text),
+                                ts.clone(),
+                            );
+                            if let Err(e) = session.chat_update(&upd).await {
+                                tracing::warn!(
+                                    "Slack: chat_update failed (tool group status, ts={}): {}",
+                                    ts,
+                                    e
+                                );
                             }
                         }
                     });
