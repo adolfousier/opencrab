@@ -4,6 +4,78 @@ All notable changes to OpenCrabs will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.3.62] - 2026-07-06
+
+49 commits since v0.3.61. 64 files changed, +7500 / -404 lines.
+
+### ✨ Features
+
+- `537f5c9f` **Collapsible Slack tool groups**: Expand/Collapse toggle on grouped tool-call blocks
+- `13c950ce` **Slack reaction turns and react-back**: emoji reactions trigger agent turns, Telegram parity (#372)
+- `d324f427` **Slack grouped tool-call messages**: tool calls collapse into one edited-in-place message (#371)
+- `dfd90ed4` **Concurrent auto-approved tool batches**: parallel execution of independent tool calls (#361)
+- `d2c8a749` **Document tools in lazy-tools discovery**: generate_document variants surfaced in tool_search (#368)
+- `d4da1bbb` **PPTX style layer**: brand templates, accent titles (#366)
+- `1206761b` **DOCX style layer**: accent headings, page furniture, shaded tables (#365)
+- `b2b48645` **XLSX style layer**: header fill, zebra rows, freeze panes, autofilter (#364)
+- `272d60dc` **DejaVu Sans bundled for PDF**: real Unicode text rendering (#363)
+- `a06a71a7` **PDF page-header logos**: brand logos rendered on every styled PDF page (#362)
+- `d937690c` **PDF style layer**: brand colors, page furniture, zebra rows (#362)
+- `8c5dee93` **PDF content-sized columns**: auto-width columns, header separator, row rules
+- `7ab3cb7c` **PPTX fallback backend**: generate_document PPTX via fallback when native backend unavailable (#357)
+- `7f4c64a9` **Native PDF backend**: generate_document PDF generation (#357)
+- `a96ee480` **Native DOCX backend**: generate_document Word document generation (#357)
+- `f57cd0b3` **generate_document tool**: new tool with native XLSX backend for spreadsheet generation (#357)
+- `d1ff6fdb` **Native Telegram rich content decoding**: raw JSON stays as safety net (#359)
+- `a42cef1c` **Raw-aware Telegram update intake**: forwards of undecodable content reach the agent (#354)
+- `b3320c85` **default_provider and default_model config**: new [agent] config keys (#314)
+- `5cdf4b61` **Self-extract media frames**: preamble guidance for vision-absent models (#308)
+
+### 🔧 Fixes
+
+- `0844954d` **Slack image and TTS external uploads**: migrated to the external upload flow (#370 follow-up)
+- `3b406f6c` **TUI inactive pane rendering**: live tool rounds now show on inactive panes (#369)
+- `1e845ed3` **Slack send_file external upload**: migrated to the external upload flow (#370)
+- `06ae1620` **Synthetic prompt compactness**: system tags persist instead of scaffolding
+- `e1a35543` **PDF mojibake and table overlap**: follow-up fix for document generation (#357)
+- `e8a02397` **Telegram mid-turn message queuing**: queue instead of cancelling in-flight tools
+- `7b1e11f0` **Telegram standalone status removal**: removed entirely (#360 follow-up)
+- `cb8deb41` **Telegram payload truncation limit**: increased to 4096
+- `beb77eab` **Telegram single progress surface**: status folds into block header (#360)
+- `ca10019e` **Telegram edit-failure resilience**: never delete the processing-log block (#356)
+- `6794b215` **Telegram forward preservation**: never drop forwarded messages, tag with provenance (#354)
+- `188b34c0` **Telegram reaction mapping**: map to allowed set, never go silent (#353)
+- `7b89fe4d` **Telegram folded-finals dedup**: exact-match at any length (#316)
+- `1c46ec7b` **Telegram status parse_mode**: add HTML to sends/edits (#312)
+- `5433f704` **Telegram initial status HTML**: parse HTML in initial status messages
+- `b826d97b` **Lazy tools CORE_TOOLS**: add analyze_image/analyze_video
+- `fc5f575b` **Telegram markdown-to-HTML**: apply conversion for formatted output (#315)
+- `e900903f` **Telegram bold status**: visual prominence (#312, #313)
+- `2758f7e0` **Telegram folded-block dedup**: match by prefix, not exact (#311)
+- `ac6397b0` **Reaction-triggered turns**: default to react-only, not text (#309)
+
+### 📖 Documentation
+
+- `3054db7e` update test counts to 4,647 across 424 modules (11 new test files)
+- `06e60222` document Slack grouped tool calls, reactions, external uploads
+- `1d3d8578` document [agent] max_concurrent now that it is enforced (#361)
+- `7598f419` document the generate_document tool and its styling surface (#367)
+- `a0c74bfa` tool description tells the agent to deliver files on channels
+- `1ebe8598` clarify rebuild is a cron-scheduled background job
+- `af362f40` document default_provider and default_model in [agent] section (#314)
+
+### 🧹 Miscellaneous
+
+- `b717c0d8` test(agent): cover parallel tool-batch eligibility, ordering, cancellation (#361)
+- `54a7d69f` test(doc_gen): prove every wrapped table line gets its own baseline
+
+### 📊 Stats
+
+- 49 commits since v0.3.61
+- 64 files changed, +7500 / -404 lines
+- 4648 tests (4648 passed, 0 failed, 29 ignored)
+
+
 
 ## [0.3.61] - 2026-07-04
 
@@ -6463,4 +6535,5 @@ fixes.
 [0.3.56]: https://github.com/adolfousier/opencrabs/compare/v0.3.55...v0.3.56
 [0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57[0.3.58]: https://github.com/adolfousier/opencrabs/compare/v0.3.57...v0.3.58
 [0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59[0.3.60]: https://github.com/adolfousier/opencrabs/compare/v0.3.59...v0.3.60
+[0.3.62]: https://github.com/adolfousier/opencrabs/compare/v0.3.61...v0.3.62
 [0.3.61]: https://github.com/adolfousier/opencrabs/compare/v0.3.60...v0.3.61
