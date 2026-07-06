@@ -37,7 +37,7 @@ struct ToolOutcome {
 }
 
 /// What the batch produced, in original order.
-pub(super) struct ParallelBatchOutcome {
+pub(crate) struct ParallelBatchOutcome {
     pub results: Vec<ContentBlock>,
     pub descriptions: Vec<String>,
     pub outputs: Vec<(bool, String)>,
@@ -52,7 +52,7 @@ impl super::AgentService {
     /// flags, so the whole batch can run concurrently. Any approval-gated
     /// tool keeps the batch on the sequential path (interactive prompts
     /// cannot be parallelized sensibly).
-    pub(super) fn batch_is_parallel_eligible(
+    pub(crate) fn batch_is_parallel_eligible(
         &self,
         tool_uses: &[(String, String, Value)],
         tool_context: &ToolExecutionContext,
@@ -79,7 +79,7 @@ impl super::AgentService {
     /// result order. Mirrors the sequential non-approval branch: same
     /// progress events, feedback recording, dashboard records, recent-path
     /// capture, and result/output shapes.
-    pub(super) async fn execute_tools_parallel(
+    pub(crate) async fn execute_tools_parallel(
         &self,
         session_id: Uuid,
         tool_uses: Vec<(String, String, Value)>,
