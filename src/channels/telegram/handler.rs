@@ -3547,10 +3547,12 @@ pub(crate) async fn handle_message(
     }
 
     // ── Streaming setup ───────────────────────────────────────────────────────
-    // Preview from the USER-VISIBLE text, never the wrapped agent input:
-    // attachment turns used to leak the internal "[User attached an image.
-    // Call analyze_image...]" preamble into the status bubble (#407).
-    let user_message_preview = build_user_message_preview(&display_text);
+    // Preview from the BARE user text: never the wrapped agent input
+    // (attachment turns used to leak the internal "[User attached an
+    // image...]" preamble, #407), and never display_text — its group-chat
+    // sender prefix let a long display name consume the whole 60-char
+    // budget and truncate away the task the bubble exists to show (#427).
+    let user_message_preview = build_user_message_preview(&text);
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         msg_id: None,
         thinking: String::new(),
