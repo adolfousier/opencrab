@@ -88,6 +88,9 @@ impl Tool for GenerateDocumentTool {
         On channels, deliver the generated file as a downloadable attachment in \
         the same turn: telegram_send `send_document` (document_url takes the \
         local path), whatsapp_send `send_document`, or discord_send `send_file`. \
+        ORDERING: send the file(s) BEFORE composing your final text answer, and \
+        always end the turn with a short closing text after the attachments — \
+        never leave files dangling as the last thing in the chat. \
         Do not just paste the file path unless the user asked where it is saved."
     }
 

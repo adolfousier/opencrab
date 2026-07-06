@@ -3433,7 +3433,9 @@ pub(crate) async fn handle_message(
     let agent_input = format!(
         "[Channel: Telegram — your text response is automatically sent to this chat. \
          Do NOT call telegram_send to deliver your answer. Only use telegram_send for: \
-         sending to a different chat_id, media, polls, buttons, reactions, or moderation.]\n\
+         sending to a different chat_id, media, polls, buttons, reactions, or moderation. \
+         ORDERING: send any files/documents/photos FIRST, then write your final text — \
+         the turn must never end on a bare attachment with no closing text after it.]\n\
          \n\
          [Reaction directive: You can react to the user's message using <<react:EMOJI>>.\n\
          This is for UTILITARIAN acknowledgment only, not decorative or companion behavior.\n\
