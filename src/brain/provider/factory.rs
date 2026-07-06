@@ -824,24 +824,12 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
         }
     }
 
-    // 1.5 Dedicated override (#401): `[image.vision] provider = "name"`
-    //     resolves vision from that provider regardless of its `enabled`
-    //     flag — a vision-only provider can stay disabled for chat. An
-    //     unresolvable name logs loudly and falls through to the scan.
-    if let Some(name) = config.image.vision.provider.as_deref() {
-        if let Some(result) = vision_by_name_any_state(config, name) {
-            return Some(result);
-        }
-        tracing::warn!(
-            "image.vision.provider = {name:?} has no vision_model configured — \
-             falling back to the provider scan"
-        );
-    }
-
     // 2. Scan all built-in providers in REGISTRATIONS priority order.
+    //    `enabled` is the CHAT gate, not a vision gate (#401): a provider
+    //    kept at enabled = false with a vision_model and a valid key is a
+    //    perfectly good vision backend. The gate here is vision_model.
     for reg in REGISTRATIONS.iter() {
         if let Some(cfg) = (reg.config_field)(config)
-            && cfg.enabled
             && let Some(vision_model) = &cfg.vision_model
         {
             return Some(vision_tuple(cfg, vision_model));
@@ -852,9 +840,7 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
     //    loop.
     if let Some(customs) = &config.providers.custom {
         for cfg in customs.values() {
-            if cfg.enabled
-                && let Some(vision_model) = &cfg.vision_model
-            {
+            if let Some(vision_model) = &cfg.vision_model {
                 return Some(vision_tuple(cfg, vision_model));
             }
         }
@@ -865,28 +851,9 @@ pub fn active_provider_vision(config: &Config) -> Option<(String, String, String
 
 /// Look up a single provider by `name` (REGISTRATIONS session_id / alias,
 /// or custom map key) and return its `(api_key, base_url, vision_model)`
-/// if it is enabled **and** has a `vision_model` configured.  Returns
-/// `None` when the provider doesn't exist, is disabled, or has no
-/// `vision_model`.
-/// Like [`vision_by_name`] but WITHOUT the `enabled` gate: used only by the
-/// dedicated `image.vision.provider` override, where naming the provider is
-/// explicit intent (#401). Only `vision_model` matters.
-fn vision_by_name_any_state(config: &Config, name: &str) -> Option<(String, String, String)> {
-    let lookup = name.strip_prefix("custom:").unwrap_or(name);
-    if let Some(cfg) = config.providers.custom.as_ref().and_then(|m| m.get(lookup)) {
-        let vm = cfg.vision_model.as_ref()?;
-        return Some(vision_tuple(cfg, vm));
-    }
-    for reg in REGISTRATIONS.iter() {
-        if reg.session_id == name || reg.aliases.contains(&name) {
-            let cfg = (reg.config_field)(config)?;
-            let vm = cfg.vision_model.as_ref()?;
-            return Some(vision_tuple(cfg, vm));
-        }
-    }
-    None
-}
-
+/// if it has a `vision_model` configured. `enabled` is deliberately NOT
+/// checked (#401): it gates chat usage only — vision needs a vision_model
+/// and a valid key, which is what `vision_tuple` extracts.
 fn vision_by_name(config: &Config, name: &str) -> Option<(String, String, String)> {
     // Custom entries take precedence (same convention as create_fallback).
     if !name.starts_with("custom:")
@@ -897,18 +864,14 @@ fn vision_by_name(config: &Config, name: &str) -> Option<(String, String, String
             .is_some_and(|m| m.contains_key(name))
     {
         let cfg = config.providers.custom.as_ref()?.get(name)?;
-        if cfg.enabled
-            && let Some(vm) = &cfg.vision_model
-        {
+        if let Some(vm) = &cfg.vision_model {
             return Some(vision_tuple(cfg, vm));
         }
         return None;
     }
     if let Some(custom_name) = name.strip_prefix("custom:") {
         let cfg = config.providers.custom.as_ref()?.get(custom_name)?;
-        if cfg.enabled
-            && let Some(vm) = &cfg.vision_model
-        {
+        if let Some(vm) = &cfg.vision_model {
             return Some(vision_tuple(cfg, vm));
         }
         return None;
@@ -917,9 +880,7 @@ fn vision_by_name(config: &Config, name: &str) -> Option<(String, String, String
     for reg in REGISTRATIONS.iter() {
         if reg.session_id == name || reg.aliases.contains(&name) {
             let cfg = (reg.config_field)(config)?;
-            if cfg.enabled
-                && let Some(vm) = &cfg.vision_model
-            {
+            if let Some(vm) = &cfg.vision_model {
                 return Some(vision_tuple(cfg, vm));
             }
             return None;

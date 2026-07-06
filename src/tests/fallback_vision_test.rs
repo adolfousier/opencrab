@@ -582,7 +582,10 @@ mod active_provider_vision {
     }
 
     #[test]
-    fn skips_disabled_provider() {
+    fn disabled_provider_with_vision_model_resolves() {
+        // #401: enabled gates CHAT only. A provider at enabled = false with
+        // a vision_model and key is a valid vision backend — requiring
+        // enabled = true here was the regression.
         let config = Config {
             providers: ProviderConfigs {
                 minimax: Some(ProviderConfig {
@@ -598,34 +601,8 @@ mod active_provider_vision {
             },
             ..Default::default()
         };
-        assert!(active_provider_vision(&config).is_none());
-    }
-
-    #[test]
-    fn dedicated_vision_provider_bypasses_enabled_gate() {
-        // #401: a vision-only provider sits at enabled=false for chat but is
-        // NAMED as the dedicated [image.vision] provider — explicit intent,
-        // so its vision backend must resolve. The implicit scan and the
-        // fallback.vision chain keep their enabled gates (pinned by
-        // skips_disabled_provider and chain_disabled_entry_skipped).
-        let mut config = Config {
-            providers: ProviderConfigs {
-                minimax: Some(ProviderConfig {
-                    enabled: false,
-                    api_key: Some("key".into()),
-                    base_url: Some("https://api.minimax.io/v1".into()),
-                    default_model: None,
-                    models: vec![],
-                    vision_model: Some("MiniMax-Text-01".into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        config.image.vision.provider = Some("minimax".into());
         let (_key, base_url, vision_model) =
-            active_provider_vision(&config).expect("dedicated provider resolves");
+            active_provider_vision(&config).expect("disabled + vision_model resolves");
         assert!(base_url.contains("minimax"));
         assert_eq!(vision_model, "MiniMax-Text-01");
     }
@@ -826,10 +803,11 @@ mod vision_fallback_chain {
 
     #[test]
     fn chain_second_match_wins_when_first_fails() {
-        // Chain has openai first (disabled), then minimax.
-        // openai is disabled so minimax should win.
+        // Chain has openai first (no vision_model), then minimax — the
+        // second entry wins. (Disabled no longer fails an entry: enabled
+        // gates chat, not vision, #401.)
         let mut config = two_providers_config();
-        config.providers.openai.as_mut().unwrap().enabled = false;
+        config.providers.openai.as_mut().unwrap().vision_model = None;
         config.providers.fallback = Some(FallbackProviderConfig {
             enabled: true,
             vision: vec!["openai".into(), "minimax".into()],
@@ -842,8 +820,10 @@ mod vision_fallback_chain {
     }
 
     #[test]
-    fn chain_disabled_entry_skipped() {
-        // Chain entry is disabled — should be skipped, fall through.
+    fn chain_disabled_entry_still_serves_vision() {
+        // A chain entry at enabled = false with a vision_model RESOLVES:
+        // enabled gates chat only (#401). Requiring enabled here was the
+        // regression that broke vision for keyed-but-disabled providers.
         let mut config = two_providers_config();
         config.providers.minimax.as_mut().unwrap().enabled = false;
         config.providers.fallback = Some(FallbackProviderConfig {
@@ -852,10 +832,9 @@ mod vision_fallback_chain {
             ..Default::default()
         });
 
-        // minimax is disabled in chain, falls through to scan-all
-        // where openai (earlier in REGISTRATIONS) wins.
-        let (_, _, vision_model) = active_provider_vision(&config).unwrap();
-        assert_eq!(vision_model, "gpt-5-nano");
+        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "minimax-key");
+        assert_eq!(vision_model, "MiniMax-Text-01");
     }
 
     #[test]
@@ -909,19 +888,19 @@ mod vision_fallback_chain {
 
     #[test]
     fn scan_all_wins_when_all_chain_entries_fail() {
-        // All chain entries fail (disabled, no vision_model, nonexistent).
-        // Falls through to scan-all.
+        // All chain entries fail (no vision_model, nonexistent) — falls
+        // through to scan-all, where nothing has a vision_model either.
+        // NOTE: disabled is NOT a failure mode (#401): the only vision
+        // gate, whole app lifetime, is a configured vision_model.
         let mut config = two_providers_config();
         config.providers.openai.as_mut().unwrap().vision_model = None;
-        config.providers.minimax.as_mut().unwrap().enabled = false;
+        config.providers.minimax.as_mut().unwrap().vision_model = None;
         config.providers.fallback = Some(FallbackProviderConfig {
             enabled: true,
             vision: vec!["nonexistent".into(), "openai".into(), "minimax".into()],
             ..Default::default()
         });
 
-        // nonexistent skipped, openai has no vision_model, minimax disabled.
-        // Both scan-all entries also fail (openai no vision, minimax disabled).
         assert!(active_provider_vision(&config).is_none());
     }
 

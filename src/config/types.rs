@@ -804,12 +804,6 @@ impl Default for ImageGenerationConfig {
 pub struct ImageVisionConfig {
     #[serde(default)]
     pub enabled: bool,
-    /// Dedicated vision provider (#401): resolve vision from THIS provider's
-    /// `vision_model` + API key even when the provider is `enabled = false`
-    /// for chat. Explicit configuration overrides the enabled gate; the
-    /// implicit provider scan and the fallback.vision chain keep theirs.
-    #[serde(default)]
-    pub provider: Option<String>,
     #[serde(default = "default_image_model")]
     pub model: String,
     /// Loaded from keys.toml at runtime, never serialized to config.toml
@@ -821,7 +815,6 @@ impl Default for ImageVisionConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider: None,
             model: default_image_model(),
             api_key: None,
         }
