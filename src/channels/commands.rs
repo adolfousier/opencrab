@@ -33,21 +33,12 @@ pub async fn sync_provider_for_session(
         }
     };
 
-    // Check if [agent] has default_provider/default_model set.
-    // When set, these override the session's stored provider/model on resume,
-    // ensuring config changes propagate to existing sessions (#314).
-    let (effective_provider, effective_model) = if config.agent.default_provider.is_some() {
-        tracing::debug!(
-            "sync_provider_for_session[{}]: [agent] defaults override session provider/model",
-            session_id,
-        );
-        (
-            config.agent.default_provider.as_deref(),
-            config.agent.default_model.as_deref(),
-        )
-    } else {
-        (session_provider, session_model)
-    };
+    // Try the session's stored provider/model first.
+    // [agent] default_provider/default_model is ONLY a fallback when the session's
+    // provider fails to load (e.g., missing API key, provider not available).
+    // This preserves session isolation: split panes, different channels, and
+    // testing different providers in parallel all keep their own provider/model.
+    let (effective_provider, effective_model) = (session_provider, session_model);
 
     // If the session has an explicit provider, restore it (ignoring global config)
     if let Some(sess_prov) = effective_provider {
@@ -110,15 +101,54 @@ pub async fn sync_provider_for_session(
             }
             Err(e) => {
                 // Session has a stored provider but we couldn't create it.
-                // NEVER fall back to global/TUI provider — sessions are isolated.
-                // Leave the agent on whatever provider it currently has.
-                // The self-healing fallback chain in tool_loop will handle auth errors.
+                // Try [agent] default_provider as a fallback before giving up.
                 tracing::warn!(
-                    "sync_provider_for_session[{}]: create_provider_by_name('{}') failed: {} — keeping current provider (session isolation)",
+                    "sync_provider_for_session[{}]: create_provider_by_name('{}') failed: {}",
                     session_id,
                     sess_prov,
                     e
                 );
+
+                if let (Some(fallback_provider), fallback_model) = (
+                    config.agent.default_provider.as_deref(),
+                    config.agent.default_model.as_deref(),
+                ) {
+                    tracing::info!(
+                        "sync_provider_for_session[{}]: trying [agent] fallback {}/{}",
+                        session_id,
+                        fallback_provider,
+                        fallback_model.unwrap_or("<default>"),
+                    );
+
+                    match crate::brain::provider::factory::create_provider_by_name(
+                        &config,
+                        fallback_provider,
+                    )
+                    .await
+                    {
+                        Ok(fallback_prov) => {
+                            let model = fallback_model
+                                .map(str::to_string)
+                                .unwrap_or_else(|| fallback_prov.default_model().to_string());
+                            tracing::info!(
+                                "sync_provider_for_session[{}]: fallback to {}/{} succeeded",
+                                session_id,
+                                fallback_provider,
+                                model,
+                            );
+                            agent.swap_provider_for_session(session_id, fallback_prov, model);
+                        }
+                        Err(fallback_err) => {
+                            tracing::warn!(
+                                "sync_provider_for_session[{}]: fallback {}/{} also failed: {} — keeping current provider",
+                                session_id,
+                                fallback_provider,
+                                fallback_model.unwrap_or("<default>"),
+                                fallback_err,
+                            );
+                        }
+                    }
+                }
             }
         }
     } else {
