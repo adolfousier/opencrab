@@ -1022,7 +1022,7 @@ default_model = "MiniMax-M2.7"
 vision_model = "MiniMax-Text-01"  # describes images for the chat model
 ```
 
-MiniMax auto-configures this on first run. Works with any provider — just set `vision_model` to a vision-capable model on the same API.
+MiniMax auto-configures this on first run. Works with any provider — just set `vision_model` to a vision-capable model on the same API. The provider does NOT need `enabled = true`: `vision_model` plus a valid key is the whole gate, so a provider you keep disabled for chat still serves vision, and resolution rolls through every provider that qualifies (explicit `[providers.fallback] vision` chain first when set, then the provider scan, then the Gemini `[image.vision]` backend when configured).
 
 ---
 
