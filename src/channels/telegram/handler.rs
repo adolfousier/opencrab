@@ -3466,8 +3466,48 @@ pub(crate) async fn handle_message(
          {agent_input}"
     );
 
+    // ── Mid-turn steering ──────────────────────────────────────────────────
+    // A turn is already running on this session: queue this message for
+    // injection between tool rounds (the #302 Stage 2 rail reactions use)
+    // instead of starting a new agent call. Starting a new call would make
+    // store_cancel_token hard-cancel the in-flight one MID-TOOL (vision,
+    // long bash), truncating the running tool call and forcing the
+    // recovery preamble. Leftovers that miss the last between-rounds drain
+    // are flushed by drain-on-exit below. An explicit /stop still cancels
+    // immediately via the fast-cancel path above.
+    //
+    // MUST run before the streaming/edit-loop setup below: this early
+    // return used to sit after the edit loop was already spawned, so every
+    // queued follow-up (each image of a consecutive drop) leaked a live
+    // loop that ticked its own "Working on:" bubble forever (#407).
+    if telegram_state.is_turn_active(session_id) {
+        tracing::info!(
+            "Telegram: message arrived mid-turn on session {} — queued for injection \
+             between tool rounds",
+            session_id
+        );
+        telegram_state.enqueue_reaction(
+            session_id,
+            crate::brain::agent::QueuedUserMessage {
+                context_text: format!(
+                    "[The user sent this follow-up while you were still working: factor it \
+                     into the CURRENT task now, do not restart from scratch]:\n{}",
+                    display_text
+                ),
+                // History shows what the user typed, not the steering preface.
+                display_text: display_text.clone(),
+            },
+        );
+        // Visible acknowledgment so the message never looks silently eaten.
+        fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
+        return Ok(());
+    }
+
     // ── Streaming setup ───────────────────────────────────────────────────────
-    let user_message_preview = build_user_message_preview(&text);
+    // Preview from the USER-VISIBLE text, never the wrapped agent input:
+    // attachment turns used to leak the internal "[User attached an image.
+    // Call analyze_image...]" preamble into the status bubble (#407).
+    let user_message_preview = build_user_message_preview(&display_text);
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         msg_id: None,
         thinking: String::new(),
@@ -4009,37 +4049,6 @@ pub(crate) async fn handle_message(
         telegram_state.clone(),
         streaming.clone(),
     );
-
-    // ── Mid-turn steering ──────────────────────────────────────────────────
-    // A turn is already running on this session: queue this message for
-    // injection between tool rounds (the #302 Stage 2 rail reactions use)
-    // instead of starting a new agent call. Starting a new call would make
-    // store_cancel_token hard-cancel the in-flight one MID-TOOL (vision,
-    // long bash), truncating the running tool call and forcing the
-    // recovery preamble. Leftovers that miss the last between-rounds drain
-    // are flushed by drain-on-exit below. An explicit /stop still cancels
-    // immediately via the fast-cancel path above.
-    if telegram_state.is_turn_active(session_id) {
-        tracing::info!(
-            "Telegram: message arrived mid-turn on session {} — queued for injection              between tool rounds",
-            session_id
-        );
-        telegram_state.enqueue_reaction(
-            session_id,
-            crate::brain::agent::QueuedUserMessage {
-                context_text: format!(
-                    "[The user sent this follow-up while you were still working: factor it \
-                     into the CURRENT task now, do not restart from scratch]:\n{}",
-                    display_text
-                ),
-                // History shows what the user typed, not the steering preface.
-                display_text: display_text.clone(),
-            },
-        );
-        // Visible acknowledgment so the message never looks silently eaten.
-        fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
-        return Ok(());
-    }
 
     // ── Agent call ────────────────────────────────────────────────────────────
     let cancel_token = tokio_util::sync::CancellationToken::new();
