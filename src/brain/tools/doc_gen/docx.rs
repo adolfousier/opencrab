@@ -7,8 +7,8 @@
 
 use docx_rs::{
     AbstractNumbering, Docx, Footer, Header, IndentLevel, Level, LevelJc, LevelText, NumberFormat,
-    Numbering, NumberingId, Paragraph, Run, Shading, Start, Style, StyleType, Table, TableCell,
-    TableRow,
+    Numbering, NumberingId, Paragraph, Pic, Run, Shading, Start, Style, StyleType, Table,
+    TableCell, TableRow,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -42,6 +42,48 @@ pub(crate) enum BlockSpec {
         #[serde(default = "default_true")]
         header_bold: bool,
     },
+    /// Inline image (PNG/JPEG from a local path), scaled to `width_mm`
+    /// (clamped to the body width; defaults to natural size, downscaled to
+    /// fit) with an optional caption beneath (#392).
+    Image {
+        path: String,
+        #[serde(default)]
+        width_mm: Option<f64>,
+        #[serde(default)]
+        caption: Option<String>,
+    },
+}
+
+/// Load an image for embedding: bytes plus pixel dimensions. Validates the
+/// file BEFORE handing it to renderers (docx-rs's Pic::new panics on bad
+/// input), so a missing or corrupt image fails with a clear error naming
+/// the path instead of a panic or a silently image-less document.
+pub(crate) fn load_image(
+    path: &str,
+) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error + Send + Sync>> {
+    let expanded = crate::brain::tools::error::expand_tilde(path);
+    let bytes =
+        std::fs::read(&expanded).map_err(|e| format!("image not readable at {path}: {e}"))?;
+    let (w, h) = image::image_dimensions(&expanded)
+        .map_err(|e| format!("not a decodable PNG/JPEG at {path}: {e}"))?;
+    if w == 0 || h == 0 {
+        return Err(format!("image at {path} has zero dimensions").into());
+    }
+    Ok((bytes, w, h))
+}
+
+/// Target render size in mm: requested width (or natural at 96dpi),
+/// clamped to `max_width_mm`, aspect preserved.
+pub(crate) fn scaled_mm(
+    px_w: u32,
+    px_h: u32,
+    width_mm: Option<f64>,
+    max_width_mm: f64,
+) -> (f64, f64) {
+    let natural_w_mm = px_w as f64 * 25.4 / 96.0;
+    let w = width_mm.unwrap_or(natural_w_mm).clamp(10.0, max_width_mm);
+    let h = w * px_h as f64 / px_w as f64;
+    (w, h)
 }
 
 /// Optional document styling (#365). Defaults keep the plain look.
@@ -160,7 +202,8 @@ pub(crate) fn write_document(
         )))
         .add_numbering(Numbering::new(ORDERED_NUM_ID, ORDERED_NUM_ID));
 
-    let (mut headings, mut paragraphs, mut lists, mut tables) = (0usize, 0usize, 0usize, 0usize);
+    let (mut headings, mut paragraphs, mut lists, mut tables, mut images) =
+        (0usize, 0usize, 0usize, 0usize, 0usize);
     for block in blocks {
         match block {
             BlockSpec::Heading { text, level } => {
@@ -194,6 +237,24 @@ pub(crate) fn write_document(
                     );
                 }
                 lists += 1;
+            }
+            BlockSpec::Image {
+                path,
+                width_mm,
+                caption,
+            } => {
+                let (bytes, px_w, px_h) = super::docx::load_image(path)?;
+                // Word page body is ~160mm wide with default margins.
+                let (w_mm, h_mm) = scaled_mm(px_w, px_h, *width_mm, 160.0);
+                let emu = |mm: f64| (mm * 36_000.0) as u32;
+                let pic = Pic::new(&bytes).size(emu(w_mm), emu(h_mm));
+                docx = docx.add_paragraph(Paragraph::new().add_run(Run::new().add_image(pic)));
+                if let Some(cap) = caption.as_deref() {
+                    docx = docx.add_paragraph(
+                        Paragraph::new().add_run(Run::new().add_text(cap).italic().size(18)),
+                    );
+                }
+                images += 1;
             }
             BlockSpec::Table { rows, header_bold } => {
                 let table_rows: Vec<TableRow> = rows
@@ -232,7 +293,7 @@ pub(crate) fn write_document(
     let file = std::fs::File::create(path)?;
     docx.build().pack(file)?;
     Ok(format!(
-        "{} heading(s), {} paragraph(s), {} list(s), {} table(s)",
-        headings, paragraphs, lists, tables
+        "{} heading(s), {} paragraph(s), {} list(s), {} table(s), {} image(s)",
+        headings, paragraphs, lists, tables, images
     ))
 }

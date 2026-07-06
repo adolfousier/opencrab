@@ -168,6 +168,12 @@ pub(crate) enum LayoutItem {
     },
     /// Plain vertical whitespace (mm).
     Gap(f32),
+    /// Inline image (#392): pre-validated bytes plus render size.
+    Image {
+        bytes: Vec<u8>,
+        width_mm: f32,
+        height_mm: f32,
+    },
 }
 
 /// Greedy word wrap by estimated glyph width. `width_mm` is the available
@@ -390,7 +396,11 @@ fn column_widths(rows: &[Vec<Value>], cols: usize, body_width: f32, header_bold:
 
 /// Flatten blocks into positioned layout items (pure layout, no PDF objects
 /// yet).
-pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec, ascii_only: bool) -> Vec<LayoutItem> {
+pub(crate) fn layout(
+    blocks: &[BlockSpec],
+    style: &StyleSpec,
+    ascii_only: bool,
+) -> Result<Vec<LayoutItem>, Box<dyn std::error::Error + Send + Sync>> {
     let accent_set = style.accent_color.as_deref().and_then(parse_hex).is_some();
     let body_width = PAGE_W_MM - 2.0 * MARGIN_MM;
     let mut items: Vec<LayoutItem> = Vec::new();
@@ -461,6 +471,36 @@ pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec, ascii_only: bool) 
                         }));
                     }
                 }
+            }
+            BlockSpec::Image {
+                path,
+                width_mm,
+                caption,
+            } => {
+                let (bytes, px_w, px_h) = super::docx::load_image(path)?;
+                let (w, h) = super::docx::scaled_mm(px_w, px_h, *width_mm, body_width as f64);
+                items.push(LayoutItem::Gap(2.0));
+                items.push(LayoutItem::Image {
+                    bytes,
+                    width_mm: w as f32,
+                    height_mm: h as f32,
+                });
+                if let Some(cap) = caption.as_deref() {
+                    for (i, l) in wrap(&text_safe(cap, ascii_only), 9.0, body_width)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        items.push(LayoutItem::Text(TextLine {
+                            text: l,
+                            bold: false,
+                            size: 9.0,
+                            indent_mm: 0.0,
+                            gap_before_mm: if i == 0 { 1.0 } else { 0.0 },
+                            accent: false,
+                        }));
+                    }
+                }
+                items.push(LayoutItem::Gap(2.0));
             }
             BlockSpec::Table { rows, header_bold } => {
                 let cols = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
@@ -540,7 +580,7 @@ pub(crate) fn layout(blocks: &[BlockSpec], style: &StyleSpec, ascii_only: bool) 
             }
         }
     }
-    items
+    Ok(items)
 }
 
 /// Ops drawing a horizontal rule at `y_mm`.
@@ -779,7 +819,7 @@ pub(crate) fn write_pdf(
         MARGIN_MM
     };
 
-    let items = layout(blocks, style, faces.ascii_only);
+    let items = layout(blocks, style, faces.ascii_only)?;
     let mut page_ops: Vec<Vec<Op>> = Vec::new();
     let mut ops: Vec<Op> = Vec::new();
     let mut y_mm = content_top;
@@ -789,6 +829,60 @@ pub(crate) fn write_pdf(
         match item {
             LayoutItem::Gap(mm) => {
                 y_mm -= mm;
+            }
+            LayoutItem::Image {
+                bytes,
+                width_mm,
+                height_mm,
+            } => {
+                let mut warnings = Vec::new();
+                let raw = match RawImage::decode_from_bytes(bytes, &mut warnings) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // Pre-validated at layout time, so this is rare
+                        // (format printpdf can't decode): render a visible
+                        // note rather than silently dropping the visual.
+                        tracing::warn!("generate_document: embedded image decode failed: {e}");
+                        text_lines += 1;
+                        y_mm -= 6.0;
+                        ops.extend([
+                            Op::StartTextSection,
+                            Op::SetTextCursor {
+                                pos: Point::new(Mm(MARGIN_MM), Mm(y_mm)),
+                            },
+                            Op::SetFont {
+                                font: faces.pick(false),
+                                size: Pt(9.0),
+                            },
+                            Op::SetFillColor {
+                                col: rgb((0.6, 0.2, 0.2)),
+                            },
+                            Op::ShowText {
+                                items: vec![TextItem::Text("[image could not be embedded]".into())],
+                            },
+                            Op::EndTextSection,
+                        ]);
+                        continue;
+                    }
+                };
+                // Page-break if the image doesn't fit the remaining space.
+                if y_mm - height_mm < content_bottom {
+                    page_ops.push(std::mem::take(&mut ops));
+                    y_mm = content_top;
+                }
+                y_mm -= height_mm;
+                let dpi = raw.height as f32 * 72.0 / (height_mm / PT_TO_MM);
+                let id = doc.add_image(&raw);
+                ops.push(Op::UseXobject {
+                    id,
+                    transform: XObjectTransform {
+                        translate_x: Some(Pt(MARGIN_MM / PT_TO_MM)),
+                        translate_y: Some(Pt(y_mm / PT_TO_MM)),
+                        dpi: Some(dpi),
+                        ..Default::default()
+                    },
+                });
+                let _rendered_w = width_mm; // width follows aspect via dpi
             }
             LayoutItem::Rule {
                 x0_mm,

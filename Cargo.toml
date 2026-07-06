@@ -111,7 +111,7 @@ waproto = { version = "0.6.0", git = "https://github.com/jlucaso1/whatsapp-rust.
 qrcode = { version = "0.14", optional = true }
 # Used to render the WhatsApp pairing QR to a scannable PNG for channels
 # (qrcode already pulls image in transitively; this just lets us name its types).
-image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rmp-serde = { version = "1", optional = true }
 
 # Discord
@@ -199,7 +199,7 @@ profiling = []
 rtk = []
 telegram = ["teloxide"]
 trello = []
-whatsapp = ["whatsapp-rust", "whatsapp-rust-tokio-transport", "whatsapp-rust-ureq-http-client", "wacore", "wacore-binary", "waproto", "dep:qrcode", "dep:image", "dep:rmp-serde"]
+whatsapp = ["whatsapp-rust", "whatsapp-rust-tokio-transport", "whatsapp-rust-ureq-http-client", "wacore", "wacore-binary", "waproto", "dep:qrcode", "dep:rmp-serde"]
 discord = ["serenity"]
 slack = ["slack-morphism", "tokio-tungstenite", "rustls"]
 local-stt = ["rwhisper", "rodio", "hound", "rubato", "symphonia", "symphonia-adapter-libopus"]

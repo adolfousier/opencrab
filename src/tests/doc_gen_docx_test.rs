@@ -173,3 +173,54 @@ fn styled_document_carries_colors_furniture_and_shading() {
         .expect("footer xml");
     assert!(footer.contains("confidential"));
 }
+
+#[test]
+fn image_block_embeds_media_in_docx() {
+    const PNG_1X1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8,
+        0xFF, 0xFF, 0x3F, 0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59, 0xE7, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let dir = tempfile::tempdir().expect("tempdir");
+    let img = dir.path().join("logo.png");
+    std::fs::write(&img, PNG_1X1).expect("png written");
+    let path = dir.path().join("visual.docx");
+    let summary = write_document(
+        &path,
+        &blocks(json!([
+            {"type": "image", "path": img.to_string_lossy(), "width_mm": 40.0,
+             "caption": "Company logo"}
+        ])),
+        &DocxStyle::default(),
+    )
+    .expect("docx with image written");
+    assert!(summary.contains("1 image(s)"));
+
+    let file = std::fs::File::open(&path).expect("docx opens");
+    let mut archive = zip::ZipArchive::new(file).expect("docx is a zip");
+    let has_media = (0..archive.len()).any(|i| {
+        archive
+            .by_index(i)
+            .map(|f| f.name().starts_with("word/media/"))
+            .unwrap_or(false)
+    });
+    assert!(has_media, "embedded media part present");
+    let xml = document_xml(&path);
+    assert!(xml.contains("<w:drawing>"), "drawing element present");
+    assert!(xml.contains("Company logo"), "caption present");
+}
+
+#[test]
+fn docx_missing_image_fails_with_clear_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("broken.docx");
+    let err = write_document(
+        &path,
+        &blocks(json!([{"type": "image", "path": "/nonexistent/logo.png"}])),
+        &DocxStyle::default(),
+    )
+    .expect_err("missing image must fail");
+    assert!(err.to_string().contains("/nonexistent/logo.png"));
+}

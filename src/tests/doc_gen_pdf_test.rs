@@ -172,7 +172,7 @@ fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
              "Yes - draft_streaming, ProviderStream", "WRONG - WE HAVE IT"]
         ]}
     ]));
-    let items = layout(&specs, &StyleSpec::default(), false);
+    let items = layout(&specs, &StyleSpec::default(), false).expect("layout");
 
     // Simulate the emitter: negative gap = same baseline, else advance.
     let mut y = 297.0f32 - 20.0;
@@ -180,7 +180,7 @@ fn audit_table_shape_every_wrapped_line_gets_its_own_baseline() {
     for item in &items {
         match item {
             LayoutItem::Gap(mm) => y -= mm,
-            LayoutItem::Rule { .. } | LayoutItem::RowBg { .. } => {}
+            LayoutItem::Rule { .. } | LayoutItem::RowBg { .. } | LayoutItem::Image { .. } => {}
             LayoutItem::Text(l) => {
                 let h = l.size * 0.352_778 * 1.35;
                 if l.gap_before_mm >= 0.0 {
@@ -221,7 +221,7 @@ fn table_columns_size_to_content() {
             ["17", "Slash commands", "WRONG: commands.toml"]
         ]}
     ]));
-    let items = layout(&specs, &StyleSpec::default(), false);
+    let items = layout(&specs, &StyleSpec::default(), false).expect("layout");
     // Collect the distinct x offsets used by table text: these are the
     // column starts. The second column's start is the first column's width.
     let mut xs: Vec<f32> = items
@@ -256,7 +256,7 @@ fn tables_emit_header_separator_and_row_rules() {
             ["3", "4"]
         ]}
     ]));
-    let items = layout(&specs, &StyleSpec::default(), false);
+    let items = layout(&specs, &StyleSpec::default(), false).expect("layout");
     let heavy = items
         .iter()
         .filter(|i| {
@@ -383,4 +383,59 @@ fn logo_embeds_when_readable_and_skips_when_missing() {
     .expect("missing logo never fails generation");
     let text = pdf_extract::extract_text(&path2).expect("pdf extracts");
     assert!(text.contains("content"));
+}
+
+const PNG_1X1_DOC: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+#[test]
+fn image_block_embeds_and_captions_in_pdf() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let img = dir.path().join("chart.png");
+    std::fs::write(&img, PNG_1X1_DOC).expect("png written");
+    let path = dir.path().join("visual.pdf");
+    write_pdf(
+        &path,
+        &blocks(json!([
+            {"type": "heading", "text": "Visual Report"},
+            {"type": "image", "path": img.to_string_lossy(), "width_mm": 60.0,
+             "caption": "Bracket diagram"},
+            {"type": "paragraph", "text": "After the image."}
+        ])),
+        "Visual",
+        &StyleSpec::default(),
+    )
+    .expect("pdf with image written");
+    let raw = std::fs::read(&path).expect("pdf readable");
+    let hay = String::from_utf8_lossy(&raw);
+    assert!(
+        hay.contains("/XObject") || hay.contains("/Image"),
+        "image embedded"
+    );
+    let text = pdf_extract::extract_text(&path).expect("pdf extracts");
+    assert!(text.contains("Bracket diagram"), "caption rendered: {text}");
+    assert!(text.contains("After the image."));
+}
+
+#[test]
+fn missing_image_path_fails_with_clear_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("broken.pdf");
+    let err = write_pdf(
+        &path,
+        &blocks(json!([{"type": "image", "path": "/nonexistent/chart.png"}])),
+        "Broken",
+        &StyleSpec::default(),
+    )
+    .expect_err("missing image must fail generation");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("/nonexistent/chart.png"),
+        "error names the path: {msg}"
+    );
 }

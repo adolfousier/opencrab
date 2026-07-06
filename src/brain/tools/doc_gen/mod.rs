@@ -74,7 +74,9 @@ impl Tool for GenerateDocumentTool {
         Optional per sheet: `header_bold` (default true), `column_widths`. \
         DOCX and PDF: pass `blocks` in order, each one of: {type:\"heading\", text, \
         level 1-3}, {type:\"paragraph\", text, bold?}, {type:\"list\", items:[...], \
-        ordered?}, {type:\"table\", rows:[[...]], header_bold?}. In Word output, \
+        ordered?}, {type:\"table\", rows:[[...]], header_bold?}, {type:\"image\", \
+        path (local PNG/JPEG), width_mm?, caption?} for embedded visuals \
+        (charts, diagrams, logos) inline in the document flow. In Word output, \
         headings become real styles and lists real numbering; PDF output is A4 \
         with automatic wrapping and page breaks (optional `title` sets the PDF \
         metadata title; optional `style` adds brand colors, a page header/footer \
@@ -151,6 +153,9 @@ impl Tool for GenerateDocumentTool {
                             "items": {"type": "array", "items": {"type": "string"}, "description": "List items."},
                             "ordered": {"type": "boolean", "description": "Numbered list instead of bullets (default false)."},
                             "rows": {"type": "array", "items": {"type": "array"}, "description": "Table rows of cells."},
+                            "path": {"type": "string", "description": "Local PNG/JPEG path for image blocks."},
+                            "width_mm": {"type": "number", "description": "Rendered image width in millimeters (aspect preserved; clamped to the page body). Default: natural size, downscaled to fit."},
+                            "caption": {"type": "string", "description": "Caption text under an image block."},
                             "header_bold": {"type": "boolean", "description": "Bold the first table row (default true)."}
                         },
                         "required": ["type"]
