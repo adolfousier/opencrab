@@ -20,7 +20,6 @@ pub(crate) struct GroupEntry {
 /// A turn's tool group: contents plus display state.
 #[derive(Debug, Clone)]
 pub(crate) struct GroupState {
-    pub channel_id: u64,
     pub entries: Vec<GroupEntry>,
     pub expanded: bool,
 }

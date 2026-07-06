@@ -686,7 +686,6 @@ pub(crate) async fn handle_message(
                                     .upsert_tool_group(
                                         mid.get(),
                                         GroupState {
-                                            channel_id: channel.get(),
                                             entries,
                                             expanded: false,
                                         },
@@ -704,7 +703,6 @@ pub(crate) async fn handle_message(
                             }
                             None => {
                                 let group = GroupState {
-                                    channel_id: channel.get(),
                                     entries,
                                     expanded: false,
                                 };
@@ -761,7 +759,6 @@ pub(crate) async fn handle_message(
                                 .upsert_tool_group(
                                     mid.get(),
                                     GroupState {
-                                        channel_id: channel.get(),
                                         entries,
                                         expanded: false,
                                     },

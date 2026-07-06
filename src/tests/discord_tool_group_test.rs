@@ -19,7 +19,6 @@ fn entries(n: usize, done: bool) -> Vec<GroupEntry> {
 
 fn group(n: usize, done: bool, expanded: bool) -> GroupState {
     GroupState {
-        channel_id: 42,
         entries: entries(n, done),
         expanded,
     }
