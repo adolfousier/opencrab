@@ -602,6 +602,35 @@ mod active_provider_vision {
     }
 
     #[test]
+    fn dedicated_vision_provider_bypasses_enabled_gate() {
+        // #401: a vision-only provider sits at enabled=false for chat but is
+        // NAMED as the dedicated [image.vision] provider — explicit intent,
+        // so its vision backend must resolve. The implicit scan and the
+        // fallback.vision chain keep their enabled gates (pinned by
+        // skips_disabled_provider and chain_disabled_entry_skipped).
+        let mut config = Config {
+            providers: ProviderConfigs {
+                minimax: Some(ProviderConfig {
+                    enabled: false,
+                    api_key: Some("key".into()),
+                    base_url: Some("https://api.minimax.io/v1".into()),
+                    default_model: None,
+                    models: vec![],
+                    vision_model: Some("MiniMax-Text-01".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        config.image.vision.provider = Some("minimax".into());
+        let (_key, base_url, vision_model) =
+            active_provider_vision(&config).expect("dedicated provider resolves");
+        assert!(base_url.contains("minimax"));
+        assert_eq!(vision_model, "MiniMax-Text-01");
+    }
+
+    #[test]
     fn registers_keyless_provider_with_vision_model() {
         // A keyless / local provider (Ollama, llama.cpp, LM Studio) has no API
         // key but still serves vision. Modelled as a custom provider, which is
