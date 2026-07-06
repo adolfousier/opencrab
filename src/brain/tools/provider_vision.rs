@@ -1,32 +1,30 @@
 //! Provider Vision Tool
 //!
-//! Analyzes images using the provider's own vision-capable model via
-//! OpenAI-compatible API. Registered as `analyze_image` when Gemini vision
-//! isn't configured but the active provider has a `vision_model` set.
+//! Analyzes images by rolling through every provider vision candidate
+//! (vision_model + usable key) via the OpenAI-compatible API, then the
+//! fallback chain entries, with Gemini `[image.vision]` strictly last
+//! (#430). Registered as `analyze_image` whenever any candidate exists.
 
 use super::analyze_image::{AnalyzeImageTool, base64_encode, detect_mime_type};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// Image vision/analysis tool using the provider's own vision model.
+/// Image vision/analysis tool rolling through provider vision candidates.
 pub struct ProviderVisionTool {
-    api_key: String,
-    base_url: String,
-    vision_model: String,
-    /// Gemini fallback, used when the provider's own vision endpoint fails
-    /// (e.g. the model/proxy doesn't actually accept image content). Keeps
-    /// vision working even when the primary path is misconfigured or
-    /// unsupported.
+    /// Ordered `(api_key, base_url, vision_model)` candidates from
+    /// `factory::vision_candidates` (#430). Walked in order at request
+    /// time: a candidate failure tries the next, next, next.
+    candidates: Vec<(String, String, String)>,
+    /// Gemini fallback, tried only after EVERY candidate fails. Gemini is
+    /// never primary while any provider can serve vision (owner contract).
     gemini_fallback: Option<AnalyzeImageTool>,
 }
 
 impl ProviderVisionTool {
-    pub fn new(api_key: String, base_url: String, vision_model: String) -> Self {
+    pub fn new(candidates: Vec<(String, String, String)>) -> Self {
         Self {
-            api_key,
-            base_url,
-            vision_model,
+            candidates,
             gemini_fallback: None,
         }
     }
@@ -128,81 +126,98 @@ impl Tool for ProviderVisionTool {
             format!("data:{};base64,{}", mime, b64)
         };
 
-        // Build OpenAI-compatible vision request
-        let body = serde_json::json!({
-            "model": self.vision_model,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": question
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": { "url": image_url }
-                    }
-                ]
-            }],
-            "max_tokens": 1024
-        });
-
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
 
-        let response = match client
-            .post(&self.base_url)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                let msg = format!("Vision request failed: {e}");
-                return self
-                    .fallback_or(&input, _context, ToolResult::error(msg.clone()), &msg)
-                    .await;
-            }
-        };
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let err_body = response.text().await.unwrap_or_default();
-            let msg = format!("Vision API error {status}: {err_body}");
-            return self
-                .fallback_or(&input, _context, ToolResult::error(msg.clone()), &msg)
-                .await;
-        }
-
-        let json: Value = response
-            .json()
-            .await
-            .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
-
-        // Extract text from OpenAI-compatible response
-        let result_text = json["choices"]
-            .as_array()
-            .and_then(|choices| choices.first())
-            .and_then(|choice| choice["message"]["content"].as_str())
-            .unwrap_or("")
-            .to_string();
-
-        if result_text.is_empty() {
-            self.fallback_or(
-                &input,
-                _context,
-                ToolResult::error("No text response from vision model".to_string()),
-                "empty response",
+        // Roll through candidates in order (#430): a failure logs and tries
+        // the next; Gemini runs only after every candidate failed.
+        let mut last_failure = "no vision candidates configured".to_string();
+        for (api_key, base_url, vision_model) in &self.candidates {
+            match try_vision_candidate(
+                &client,
+                api_key,
+                base_url,
+                vision_model,
+                &question,
+                &image_url,
             )
             .await
-        } else {
-            Ok(ToolResult::success(result_text))
+            {
+                Ok(text) => return Ok(ToolResult::success(text)),
+                Err(reason) => {
+                    tracing::warn!(
+                        "analyze_image: vision candidate model={vision_model} url={base_url} \
+                         failed: {reason} — trying next candidate"
+                    );
+                    last_failure = reason;
+                }
+            }
         }
+        self.fallback_or(
+            &input,
+            _context,
+            ToolResult::error(format!(
+                "All provider vision candidates failed: {last_failure}"
+            )),
+            &last_failure,
+        )
+        .await
     }
+}
+
+/// One OpenAI-compatible vision call. `Err` carries the reason so the
+/// caller can log it and roll to the next candidate.
+async fn try_vision_candidate(
+    client: &reqwest::Client,
+    api_key: &str,
+    base_url: &str,
+    vision_model: &str,
+    question: &str,
+    image_url: &str,
+) -> std::result::Result<String, String> {
+    let body = serde_json::json!({
+        "model": vision_model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": question },
+                { "type": "image_url", "image_url": { "url": image_url } }
+            ]
+        }],
+        "max_tokens": 1024
+    });
+
+    let response = client
+        .post(base_url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Vision request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let err_body = response.text().await.unwrap_or_default();
+        return Err(format!("Vision API error {status}: {err_body}"));
+    }
+
+    let json: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Vision response was not JSON: {e}"))?;
+    let result_text = json["choices"]
+        .as_array()
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice["message"]["content"].as_str())
+        .unwrap_or("")
+        .to_string();
+    if result_text.is_empty() {
+        return Err("No text response from vision model".to_string());
+    }
+    Ok(result_text)
 }
 
 /// Placeholder `analyze_image` registered when no vision backend is configured

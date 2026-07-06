@@ -60,11 +60,12 @@ pub(crate) fn register_config_dependent_tools(
         registry.unregister("generate_image");
     }
 
-    // Vision (analyze_image): provider `vision_model` wins, else Gemini image.vision.
-    if let Some((api_key, base_url, vision_model)) =
-        crate::brain::provider::factory::active_provider_vision(config)
-    {
-        let mut tool = ProviderVisionTool::new(api_key, base_url, vision_model);
+    // Vision (analyze_image): provider vision candidates roll through in
+    // order (#430); Gemini image.vision is strictly the final fallback and
+    // primary ONLY when no candidate exists.
+    let vision_cands = crate::brain::provider::factory::vision_candidates(config);
+    if !vision_cands.is_empty() {
+        let mut tool = ProviderVisionTool::new(vision_cands);
         // Resilience: if Gemini image.vision is also configured, attach it as a
         // fallback so analyze_image still works when the provider's own vision
         // endpoint fails (model/proxy doesn't actually accept images).

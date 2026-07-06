@@ -711,7 +711,7 @@ mod active_provider_vision {
 // --- Vision fallback chain ([providers.fallback].vision) ---
 
 mod vision_fallback_chain {
-    use crate::brain::provider::factory::active_provider_vision;
+    use crate::brain::provider::factory::{active_provider_vision, vision_candidates};
     use crate::config::{Config, FallbackProviderConfig, ProviderConfig, ProviderConfigs};
     use std::collections::BTreeMap;
 
@@ -770,9 +770,10 @@ mod vision_fallback_chain {
     }
 
     #[test]
-    fn chain_match_wins() {
-        // Chain says minimax first — minimax should win even though
-        // openai is earlier in REGISTRATIONS.
+    fn scan_outranks_chain_and_chain_dedups() {
+        // Owner contract (#430): providers with vision_model + key come
+        // FIRST (scan, REGISTRATIONS order), THEN the chain. Chain entries
+        // that the scan already collected dedup away.
         let mut config = two_providers_config();
         config.providers.fallback = Some(FallbackProviderConfig {
             enabled: true,
@@ -780,32 +781,29 @@ mod vision_fallback_chain {
             ..Default::default()
         });
 
-        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
-        assert_eq!(api_key, "minimax-key");
-        assert_eq!(vision_model, "MiniMax-Text-01");
+        let cands = vision_candidates(&config);
+        assert_eq!(cands.len(), 2, "openai + minimax, chain entry deduped");
+        assert_eq!(cands[0].0, "openai-key", "scan winner first");
+        assert_eq!(cands[1].0, "minimax-key");
+        // First candidate is what active_provider_vision reports.
+        let (api_key, _, _) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "openai-key");
     }
 
     #[test]
-    fn chain_first_match_wins() {
-        // Chain has both minimax and openai — minimax is first in the
-        // chain so it wins.
-        let mut config = two_providers_config();
-        config.providers.fallback = Some(FallbackProviderConfig {
-            enabled: true,
-            vision: vec!["minimax".into(), "openai".into()],
-            ..Default::default()
-        });
-
-        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
-        assert_eq!(api_key, "minimax-key");
-        assert_eq!(vision_model, "MiniMax-Text-01");
+    fn all_candidates_present_for_roll_through() {
+        // Every provider with vision_model + key is a candidate: the tool
+        // rolls through them at request time (next next next), so a dead
+        // first candidate no longer kills provider vision (#430).
+        let config = two_providers_config();
+        let cands = vision_candidates(&config);
+        let models: Vec<&str> = cands.iter().map(|c| c.2.as_str()).collect();
+        assert_eq!(models, vec!["gpt-5-nano", "MiniMax-Text-01"]);
     }
 
     #[test]
-    fn chain_second_match_wins_when_first_fails() {
-        // Chain has openai first (no vision_model), then minimax — the
-        // second entry wins. (Disabled no longer fails an entry: enabled
-        // gates chat, not vision, #401.)
+    fn provider_without_vision_model_never_a_candidate() {
+        // openai has no vision_model: not a candidate via scan OR chain.
         let mut config = two_providers_config();
         config.providers.openai.as_mut().unwrap().vision_model = None;
         config.providers.fallback = Some(FallbackProviderConfig {
@@ -814,6 +812,8 @@ mod vision_fallback_chain {
             ..Default::default()
         });
 
+        let cands = vision_candidates(&config);
+        assert_eq!(cands.len(), 1);
         let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
         assert_eq!(api_key, "minimax-key");
         assert_eq!(vision_model, "MiniMax-Text-01");
@@ -832,9 +832,13 @@ mod vision_fallback_chain {
             ..Default::default()
         });
 
-        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
-        assert_eq!(api_key, "minimax-key");
-        assert_eq!(vision_model, "MiniMax-Text-01");
+        let cands = vision_candidates(&config);
+        assert!(
+            cands
+                .iter()
+                .any(|c| c.0 == "minimax-key" && c.2 == "MiniMax-Text-01"),
+            "disabled provider with vision_model stays a candidate: {cands:?}"
+        );
     }
 
     #[test]
@@ -871,19 +875,67 @@ mod vision_fallback_chain {
     }
 
     #[test]
-    fn chain_beats_scan_all_priority() {
-        // minimax is later in REGISTRATIONS than openai, but the chain
-        // pins minimax first — chain should override scan-all order.
-        let mut config = two_providers_config();
-        config.providers.fallback = Some(FallbackProviderConfig {
-            enabled: true,
-            vision: vec!["minimax".into()],
+    fn xiaomi_token_plan_endpoint_derived_not_openai() {
+        // THE #430 regression: xiaomi with endpoint_type = "token-plan"
+        // and no base_url was resolved to api.openai.com, 401ing every
+        // vision call. The endpoint must derive like the chat factory.
+        let config = Config {
+            providers: ProviderConfigs {
+                xiaomi: Some(ProviderConfig {
+                    enabled: false,
+                    api_key: Some("tp-test-key".into()),
+                    base_url: None,
+                    endpoint_type: Some("token-plan".into()),
+                    vision_model: Some("mimo-v2.5".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
             ..Default::default()
-        });
+        };
 
-        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
-        assert_eq!(api_key, "minimax-key");
-        assert_eq!(vision_model, "MiniMax-Text-01");
+        let (api_key, base_url, vision_model) = active_provider_vision(&config).unwrap();
+        assert_eq!(api_key, "tp-test-key");
+        assert!(
+            base_url.contains("token-plan-ams.xiaomimimo.com"),
+            "token-plan endpoint, got {base_url}"
+        );
+        assert!(!base_url.contains("openai.com"), "never guess OpenAI");
+        assert_eq!(vision_model, "mimo-v2.5");
+    }
+
+    #[test]
+    fn keyless_remote_builtin_skipped() {
+        // A remote built-in with vision_model but NO key cannot serve
+        // vision (the gate is vision_model + usable key): skipped instead
+        // of shipping a doomed candidate.
+        let mut config = two_providers_config();
+        config.providers.openai.as_mut().unwrap().api_key = None;
+
+        let cands = vision_candidates(&config);
+        assert_eq!(cands.len(), 1, "only minimax remains: {cands:?}");
+        assert_eq!(cands[0].0, "minimax-key");
+    }
+
+    #[test]
+    fn builtin_without_base_url_or_known_default_skipped() {
+        // zhipu has vision_model + key but no base_url and no known
+        // OpenAI-compatible default in the vision resolver: skipped,
+        // NEVER pointed at api.openai.com (#430).
+        let config = Config {
+            providers: ProviderConfigs {
+                zhipu: Some(ProviderConfig {
+                    enabled: true,
+                    api_key: Some("zhipu-key".into()),
+                    base_url: None,
+                    vision_model: Some("glm-4.6v".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(vision_candidates(&config).is_empty());
     }
 
     #[test]
@@ -927,9 +979,11 @@ mod vision_fallback_chain {
             ..Default::default()
         });
 
-        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
-        assert_eq!(api_key, "");
-        assert_eq!(vision_model, "llava");
+        let cands = vision_candidates(&config);
+        assert!(
+            cands.iter().any(|c| c.0.is_empty() && c.2 == "llava"),
+            "keyless local custom is a candidate: {cands:?}"
+        );
     }
 
     #[test]
@@ -955,9 +1009,13 @@ mod vision_fallback_chain {
             ..Default::default()
         });
 
-        let (api_key, _, vision_model) = active_provider_vision(&config).unwrap();
-        assert_eq!(api_key, "custom-key");
-        assert_eq!(vision_model, "my-model");
+        let cands = vision_candidates(&config);
+        assert!(
+            cands
+                .iter()
+                .any(|c| c.0 == "custom-key" && c.2 == "my-model"),
+            "custom: prefixed chain entry resolves: {cands:?}"
+        );
     }
 
     #[test]

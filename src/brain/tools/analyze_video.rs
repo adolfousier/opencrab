@@ -364,11 +364,13 @@ impl AnalyzeVideoTool {
             // own vision model. ffmpeg extracted the frames locally, so any
             // provider with image vision can analyze them. This is what makes
             // video work provider-agnostically.
-            Box::new(super::provider_vision::ProviderVisionTool::new(
+            // Single-candidate list: video frames ride the first resolved
+            // vision candidate; frame-level roll-through can come later.
+            Box::new(super::provider_vision::ProviderVisionTool::new(vec![(
                 key.clone(),
                 base_url.clone(),
                 vision_model.clone(),
-            ))
+            )]))
         } else {
             return Ok(ToolResult::error(format!(
                 "Video analysis failed: no vision backend available ({native_err})."

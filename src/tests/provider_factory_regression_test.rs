@@ -428,6 +428,9 @@ fn vision_anthropic() {
     let (key, url, model) = result.unwrap();
     assert_eq!(key, "key");
     assert_eq!(model, "claude-3-opus");
+    // Anthropic's own OpenAI-compatible endpoint — an Anthropic key posted
+    // to api.openai.com can only 401 (#430).
+    assert!(url.contains("api.anthropic.com"), "got {url}");
     assert!(url.contains("chat/completions"));
 }
 

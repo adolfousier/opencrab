@@ -815,38 +815,140 @@ async fn create_fallback(config: &Config, fallback_type: &str) -> Result<Arc<dyn
 /// Used to register the provider-native `analyze_image` tool when Gemini
 /// vision isn't set up.  See issue #253.
 pub fn active_provider_vision(config: &Config) -> Option<(String, String, String)> {
-    // 1. User-configured vision fallback chain (priority override).
-    if let Some(fallback) = &config.providers.fallback {
-        for name in &fallback.vision {
-            if let Some(result) = vision_by_name(config, name) {
-                return Some(result);
+    vision_candidates(config).into_iter().next()
+}
+
+/// Ordered vision candidates `(api_key, base_url, vision_model)`, walked at
+/// REQUEST time by `ProviderVisionTool` (#430): if one candidate's call
+/// fails, the next is tried, and Gemini `[image.vision]` is the FINAL
+/// fallback only — never the primary when any provider can serve vision.
+///
+/// Order (owner contract, whole app lifetime):
+/// 1. Every provider with a `vision_model` AND a usable key, in
+///    REGISTRATIONS priority order, then customs. `enabled` is the CHAT
+///    gate and is never consulted (#401). "Usable key" = non-empty, or a
+///    local endpoint that needs none.
+/// 2. The `[providers.fallback] vision` chain, minus entries already
+///    collected by the scan.
+///
+/// Candidates whose endpoint cannot be derived (no explicit `base_url`, no
+/// known per-provider default) are SKIPPED: guessing OpenAI sent a Xiaomi
+/// token-plan key to api.openai.com and 401'd every call (#430).
+pub fn vision_candidates(config: &Config) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    let push = |cand: (String, String, String), out: &mut Vec<(String, String, String)>| {
+        if !out.contains(&cand) {
+            out.push(cand);
+        }
+    };
+
+    // 1. Scan: built-ins in REGISTRATIONS priority order, then customs
+    //    (the Custom registration's `config_field` returns `None`, so
+    //    custom entries never appear in the REGISTRATIONS loop).
+    for reg in REGISTRATIONS.iter() {
+        if let Some(cfg) = (reg.config_field)(config)
+            && let Some(vm) = &cfg.vision_model
+            && let Some(cand) = builtin_vision_candidate(reg.session_id, cfg, vm)
+        {
+            push(cand, &mut out);
+        }
+    }
+    if let Some(customs) = &config.providers.custom {
+        for cfg in customs.values() {
+            if let Some(vm) = &cfg.vision_model
+                && let Some(cand) = custom_vision_candidate(cfg, vm)
+            {
+                push(cand, &mut out);
             }
         }
     }
 
-    // 2. Scan all built-in providers in REGISTRATIONS priority order.
-    //    `enabled` is the CHAT gate, not a vision gate (#401): a provider
-    //    kept at enabled = false with a vision_model and a valid key is a
-    //    perfectly good vision backend. The gate here is vision_model.
-    for reg in REGISTRATIONS.iter() {
-        if let Some(cfg) = (reg.config_field)(config)
-            && let Some(vision_model) = &cfg.vision_model
-        {
-            return Some(vision_tuple(cfg, vision_model));
-        }
-    }
-    // 3. Check custom providers — the `config_field` for Custom returns
-    //    `None`, so custom entries are never found via the REGISTRATIONS
-    //    loop.
-    if let Some(customs) = &config.providers.custom {
-        for cfg in customs.values() {
-            if let Some(vision_model) = &cfg.vision_model {
-                return Some(vision_tuple(cfg, vision_model));
+    // 2. Chain: explicit entries land after the scan (they usually
+    //    duplicate scanned providers and dedup away; kept for entries the
+    //    scan cannot reach).
+    if let Some(fallback) = &config.providers.fallback {
+        for name in &fallback.vision {
+            if let Some(cand) = vision_by_name(config, name) {
+                push(cand, &mut out);
             }
         }
     }
-    // No provider-native vision — let cli/ui.rs fall back to Gemini if configured
-    None
+    out
+}
+
+/// Vision base URL for a built-in provider, derived the way the chat
+/// factory derives it (#430): endpoint_type variants and per-provider
+/// defaults, NEVER assuming an empty `base_url` means OpenAI. `None` =
+/// endpoint unknown, candidate is skipped.
+fn vision_base_url(session_id: &str, cfg: &ProviderConfig) -> Option<String> {
+    if session_id == "xiaomi" {
+        // endpoint_type takes precedence over base_url (mirrors
+        // try_create_xiaomi).
+        if cfg.endpoint_type.as_deref() == Some("token-plan") {
+            return Some(XIAOMI_TOKEN_PLAN_URL.to_string());
+        }
+        return Some(
+            cfg.base_url
+                .clone()
+                .unwrap_or_else(|| XIAOMI_DEFAULT_BASE_URL.to_string()),
+        );
+    }
+    if let Some(url) = cfg.base_url.clone() {
+        return Some(url);
+    }
+    match session_id {
+        "openai" => Some("https://api.openai.com/v1".to_string()),
+        // Anthropic's OpenAI-compatible layer serves /v1/chat/completions.
+        "anthropic" => Some("https://api.anthropic.com/v1".to_string()),
+        "openrouter" => Some("https://openrouter.ai/api/v1".to_string()),
+        "minimax" => Some("https://api.minimax.io/v1".to_string()),
+        "qwen" => Some(QWEN_DEFAULT_DASHSCOPE_URL.to_string()),
+        "ollama" => Some("http://localhost:11434/v1".to_string()),
+        // CLI wrappers, native protocols, and anything else without an
+        // explicit base_url: no OpenAI-compatible endpoint to call.
+        _ => None,
+    }
+}
+
+/// Candidate for a built-in provider: derived endpoint + usable key.
+fn builtin_vision_candidate(
+    session_id: &str,
+    cfg: &ProviderConfig,
+    vision_model: &str,
+) -> Option<(String, String, String)> {
+    let base_url = normalize_vision_url(vision_base_url(session_id, cfg)?);
+    let api_key = cfg.api_key.clone().filter(|k| !k.is_empty());
+    if api_key.is_none() && !is_local_base_url(&base_url) {
+        return None;
+    }
+    Some((
+        api_key.unwrap_or_default(),
+        base_url,
+        vision_model.to_string(),
+    ))
+}
+
+/// Candidate for a custom provider: customs carry their own `base_url`
+/// (skipped when missing — never guessed) and may be keyless local
+/// endpoints (Ollama, llama.cpp, LM Studio).
+fn custom_vision_candidate(
+    cfg: &ProviderConfig,
+    vision_model: &str,
+) -> Option<(String, String, String)> {
+    let base_url = normalize_vision_url(cfg.base_url.clone()?);
+    Some((
+        cfg.api_key.clone().unwrap_or_default(),
+        base_url,
+        vision_model.to_string(),
+    ))
+}
+
+fn normalize_vision_url(base_url: String) -> String {
+    if base_url.contains("/chat/completions") {
+        base_url
+    } else {
+        format!("{}/chat/completions", base_url.trim_end_matches('/'))
+    }
 }
 
 /// Look up a single provider by `name` (REGISTRATIONS session_id / alias,
@@ -865,55 +967,28 @@ fn vision_by_name(config: &Config, name: &str) -> Option<(String, String, String
     {
         let cfg = config.providers.custom.as_ref()?.get(name)?;
         if let Some(vm) = &cfg.vision_model {
-            return Some(vision_tuple(cfg, vm));
+            return custom_vision_candidate(cfg, vm);
         }
         return None;
     }
     if let Some(custom_name) = name.strip_prefix("custom:") {
         let cfg = config.providers.custom.as_ref()?.get(custom_name)?;
         if let Some(vm) = &cfg.vision_model {
-            return Some(vision_tuple(cfg, vm));
+            return custom_vision_candidate(cfg, vm);
         }
         return None;
     }
-    // Built-in registry.
+    // Built-in registry — endpoint derived per provider, never guessed.
     for reg in REGISTRATIONS.iter() {
         if reg.session_id == name || reg.aliases.contains(&name) {
             let cfg = (reg.config_field)(config)?;
             if let Some(vm) = &cfg.vision_model {
-                return Some(vision_tuple(cfg, vm));
+                return builtin_vision_candidate(reg.session_id, cfg, vm);
             }
             return None;
         }
     }
     None
-}
-
-/// Shared helper: extract `(api_key, base_url, vision_model)` from a provider config.
-///
-/// A configured `vision_model` is the gate — NOT the presence of an API
-/// key. Keyless and local providers (Ollama, llama.cpp, LM Studio, etc.)
-/// have no key but still serve vision, so requiring one wrongly hid
-/// `analyze_image` from those installs. A real user key wins; any
-/// keyless/local provider gets an empty Bearer. A provider that genuinely
-/// needs a key but has none simply fails at call time with a clear auth
-/// error, which is better than silently having no vision tool at all.
-fn vision_tuple(cfg: &ProviderConfig, vision_model: &str) -> (String, String, String) {
-    let api_key = cfg
-        .api_key
-        .clone()
-        .filter(|k| !k.is_empty())
-        .unwrap_or_default();
-    let base_url = cfg
-        .base_url
-        .clone()
-        .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
-    let base_url = if base_url.contains("/chat/completions") {
-        base_url
-    } else {
-        format!("{}/chat/completions", base_url.trim_end_matches('/'))
-    };
-    (api_key, base_url, vision_model.to_string())
 }
 
 /// Returns `(api_key, base_url, generation_model)` for the active provider
