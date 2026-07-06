@@ -6,7 +6,7 @@
 //! into the chat as literal text.
 
 use crate::channels::telegram::handler::{
-    FlowLine, folded_duplicates_final, humanize_elapsed, render_flow_html,
+    FlowLine, folded_duplicates_final, humanize_elapsed, render_flow_html, render_flow_rich,
 };
 
 fn tline(label: &str, context: &str) -> FlowLine {
@@ -307,4 +307,45 @@ fn humanize_elapsed_snaps_to_five_second_steps() {
     assert_eq!(humanize_elapsed(61), "1m 0s");
     assert_eq!(humanize_elapsed(93), "1m 30s");
     assert_eq!(humanize_elapsed(3601), "60m 0s");
+}
+
+// ── Rich API flow rendering tests (#393) ─────────────────────────────────────
+
+#[test]
+fn rich_empty_group_renders_nothing() {
+    assert_eq!(render_flow_rich(&[], None), "");
+}
+
+#[test]
+fn rich_single_tool_renders_plain_line() {
+    let out = render_flow_rich(&[tline("✅ bash", "git status")], None);
+    assert_eq!(out, "**✅ bash** `git status`");
+    // Single tool: no blockquote wrapping, just bold label + context
+    assert!(!out.contains(">"));
+}
+
+#[test]
+fn rich_multiple_tools_render_markdown_header() {
+    let out = render_flow_rich(
+        &[tline("✅ bash", "git status"), tline("✅ read", "file.rs")],
+        None,
+    );
+    assert!(out.starts_with("**2 tool calls**\n\n"));
+    assert!(out.contains("**✅ bash** `git status`"));
+    assert!(out.contains("**✅ read** `file.rs`"));
+}
+
+#[test]
+fn rich_live_status_in_header() {
+    let out = render_flow_rich(
+        &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
+        Some("grep · 10s"),
+    );
+    assert!(out.starts_with("**⚙️ 2 tool calls · grep · 10s**\n\n"));
+}
+
+#[test]
+fn rich_single_tool_live_status_appends() {
+    let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash · 5s"));
+    assert_eq!(out, "**⚙️ bash** `git status` · bash · 5s");
 }
