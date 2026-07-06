@@ -5,6 +5,37 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.64] - 2026-07-08
+
+11 commits since v0.3.63. 33 files changed, +1179 / -388 lines.
+
+### ✨ Features
+
+- `82064aca` **Rich messages on by default**: Telegram rich_messages defaults to true (#425)
+- `c225238f` **Onboard rich-text toggle**: checkbox in the Telegram channel dialog (#418)
+
+### 🔧 Fixes
+
+- `a132bed5` **Vision candidate roll-through**: per-provider endpoints, Gemini last (#430)
+- `12a2eebc` **DSML-corrupted closers**: tolerate mangled closing tags in element-style leaks (#419)
+- `cc01797e` **Vision gate relaxed**: vision_model alone is sufficient, enabled no longer required (#401)
+- `af337979` **Flow-block collapse restored**: rich HTML details path for native collapse (#421, #423)
+- `b1459add` **Rich details paragraph wrap**: flow entries wrapped in block-level elements (#424)
+- `7d9b4206` **PDF image decoders enabled**: printpdf images feature turned on (#426)
+- `77583eed` **Status bubble shows the task**: previews request text, not sender name (#427)
+
+### 📖 Documentation
+
+- `caf9a36d` rich_messages defaults to true since v0.3.64 (#428)
+- `ff05d88f` vision needs vision_model + key, never enabled (#401)
+
+### 📊 Stats
+
+- 11 commits since v0.3.63
+- 33 files changed, +1179 / -388 lines
+- 4694 tests (4694 passed, 0 failed, 29 ignored)
+
+
 ## [0.3.63] - 2026-07-06
 
 35 commits since v0.3.62. 53 files changed, +3082 / -750 lines.
@@ -6595,4 +6626,4 @@ fixes.
 [0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59[0.3.60]: https://github.com/adolfousier/opencrabs/compare/v0.3.59...v0.3.60
 [0.3.62]: https://github.com/adolfousier/opencrabs/compare/v0.3.61...v0.3.62
 [0.3.61]: https://github.com/adolfousier/opencrabs/compare/v0.3.60...v0.3.61
-[0.3.63]: https://github.com/adolfousier/opencrabs/compare/v0.3.62...v0.3.63
+[0.3.63]: https://github.com/adolfousier/opencrabs/compare/v0.3.62...v0.3.63[0.3.64]: https://github.com/adolfousier/opencrabs/compare/v0.3.63...v0.3.64
