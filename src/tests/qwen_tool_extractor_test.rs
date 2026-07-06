@@ -1001,3 +1001,32 @@ fn element_style_multiple_blocks_all_extract() {
     assert!(cleaned.contains("then"));
     assert!(!cleaned.contains("<function>"));
 }
+
+#[test]
+fn element_style_attributed_parameter_form() {
+    // Second observed deepseek-v4-flash shape: <parameter name="k"> with
+    // extra attributes, quoted content, and a </parameter> closer.
+    let text = "Ahh, got it.\n\n<function>\n<name>bash</name>\n<parameter name=\"command\" string=\"true\">grep -c \"DM content stays DM\" /root/.opencrabs/SOUL.md</parameter>\n</function>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "calls: {calls:?}");
+    assert_eq!(calls[0].0, "bash");
+    assert_eq!(
+        calls[0].1.get("command").and_then(|v| v.as_str()),
+        Some("grep -c \"DM content stays DM\" /root/.opencrabs/SOUL.md")
+    );
+    assert!(cleaned.contains("Ahh, got it."));
+    assert!(!cleaned.contains("<function>"), "cleaned: {cleaned}");
+}
+
+#[test]
+fn element_style_attributed_load_brain_file() {
+    let text = "<function>\n<name>load_brain_file</name>\n<parameter name=\"name\" string=\"true\">SOUL.md</parameter>\n</function>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "calls: {calls:?}");
+    assert_eq!(calls[0].0, "load_brain_file");
+    assert_eq!(
+        calls[0].1.get("name").and_then(|v| v.as_str()),
+        Some("SOUL.md")
+    );
+    assert!(cleaned.trim().is_empty());
+}

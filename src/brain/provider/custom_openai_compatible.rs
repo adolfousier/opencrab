@@ -603,16 +603,41 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
                 let Some(gt) = text[tag_start..body_end].find('>') else {
                     break;
                 };
-                let key = text[tag_start..tag_start + gt].trim();
-                if key.is_empty()
-                    || key.starts_with('/')
-                    || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                {
-                    cursor = tag_start + gt + 1;
-                    continue;
-                }
+                let raw_tag = text[tag_start..tag_start + gt].trim();
+                // Two element forms (#398):
+                //   <path>v</path>                        — bare child key
+                //   <parameter name="command" ...>v</parameter>
+                //     — attributed form (second deepseek-v4-flash shape);
+                //       the real key lives in the name="..." attribute and
+                //       the closing tag is </parameter>.
+                let (key, close): (String, String) =
+                    if let Some(rest) = raw_tag.strip_prefix("parameter ") {
+                        let Some(name) = rest
+                            .split("name=\"")
+                            .nth(1)
+                            .and_then(|r| r.split('"').next())
+                            .filter(|n| {
+                                !n.is_empty()
+                                    && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                            })
+                        else {
+                            cursor = tag_start + gt + 1;
+                            continue;
+                        };
+                        (name.to_string(), "</parameter>".to_string())
+                    } else if !raw_tag.is_empty()
+                        && !raw_tag.starts_with('/')
+                        && raw_tag
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    {
+                        (raw_tag.to_string(), format!("</{raw_tag}>"))
+                    } else {
+                        cursor = tag_start + gt + 1;
+                        continue;
+                    };
+                let key = key.as_str();
                 let val_start = tag_start + gt + 1;
-                let close = format!("</{key}>");
                 let Some(vrel) = text[val_start..body_end].find(&close) else {
                     cursor = val_start;
                     continue;
@@ -1302,6 +1327,45 @@ pub(crate) const KNOWN_TOOL_NAMES: &[&str] = &[
     "discord_send",
     "trello_send",
     "whatsapp_send",
+    // Registered builtins that were missing from this gate (#398 follow-up):
+    // a leaked call naming any of them was invisible to every text-leak
+    // pass that anchors on this list (observed live with load_brain_file).
+    "load_brain_file",
+    "write_opencrabs_file",
+    "hashline_edit",
+    "task",
+    "context",
+    "http_client",
+    "config_tool",
+    "slash_command",
+    "rename_session",
+    "follow_up_question",
+    "analyze_image",
+    "analyze_video",
+    "generate_image",
+    "generate_document",
+    "parse_document",
+    "pdf_to_images",
+    "code_exec",
+    "notebook_edit",
+    "exa_search",
+    "brave_search",
+    "channel_search",
+    "a2a_send",
+    "mission_control_report",
+    "feedback_record",
+    "feedback_analyze",
+    "self_improve",
+    "rebuild",
+    "evolve",
+    "tool_manage",
+    "spawn_agent",
+    "wait_agent",
+    "send_input",
+    "close_agent",
+    "resume_agent",
+    "cowork_connect",
+    "provider_vision",
 ];
 
 /// Extract `<TOOLNAME><PARAM>value</PARAM>…</TOOLNAME>` invocations. The
