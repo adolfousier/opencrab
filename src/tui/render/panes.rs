@@ -120,6 +120,33 @@ pub(super) fn render_inactive_pane(f: &mut Frame, app: &App, pane_id: PaneId, ar
                 ),
                 Style::default().fg(color),
             )));
+            // Live tool ROWS, not just the count (#369): the tail of the
+            // group renders under the badge so an unfocused pane shows
+            // which tools are running/finished in real time, mirroring
+            // the focused pane's group. Tail-limited to keep the pane
+            // preview compact during long turns.
+            const TAIL: usize = 4;
+            let start = n.saturating_sub(TAIL);
+            if start > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("    … {} earlier", start),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            for call in &group.calls[start..] {
+                let (c_icon, c_color) = if !call.completed {
+                    ("⚙", Color::Yellow)
+                } else if call.success {
+                    ("✓", Color::Green)
+                } else {
+                    ("✗", Color::Red)
+                };
+                let desc: String = call.description.chars().take(58).collect();
+                lines.push(Line::from(Span::styled(
+                    format!("    {c_icon} {desc}"),
+                    Style::default().fg(c_color),
+                )));
+            }
         }
         if bg.streaming_reasoning.is_some() {
             lines.push(Line::from(Span::styled(
