@@ -12,6 +12,32 @@ use serde_json::Value;
 use slack_morphism::prelude::*;
 use std::sync::Arc;
 
+/// MIME type from the file extension, for the external upload POST. Slack
+/// only uses it as a hint; unknown extensions fall back to octet-stream.
+pub(crate) fn content_type_for(filename: &str) -> &'static str {
+    match filename.rsplit('.').next().map(|e| e.to_ascii_lowercase()) {
+        Some(ext) => match ext.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "pdf" => "application/pdf",
+            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "csv" => "text/csv",
+            "txt" | "md" | "log" => "text/plain",
+            "json" => "application/json",
+            "zip" => "application/zip",
+            "mp4" => "video/mp4",
+            "mp3" => "audio/mpeg",
+            "ogg" | "oga" => "audio/ogg",
+            _ => "application/octet-stream",
+        },
+        None => "application/octet-stream",
+    }
+}
+
 /// Tool for comprehensive Slack bot control (16 actions).
 pub struct SlackSendTool {
     slack_state: Arc<SlackState>,
@@ -572,29 +598,56 @@ impl Tool for SlackSendTool {
                     .get("caption")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                match tokio::fs::read(&file_path).await {
+                let expanded = crate::brain::tools::error::expand_tilde(&file_path);
+                match tokio::fs::read(&expanded).await {
                     Ok(bytes) => {
-                        let fname = std::path::Path::new(&file_path)
+                        let fname = expanded
                             .file_name()
                             .and_then(|n| n.to_str())
-                            .unwrap_or("file.png")
+                            .unwrap_or("file.bin")
                             .to_string();
-                        #[allow(deprecated)]
-                        let req = SlackApiFilesUploadRequest {
-                            channels: Some(vec![SlackChannelId::new(channel_id)]),
-                            binary_content: Some(bytes),
-                            filename: Some(fname),
-                            initial_comment: caption,
-                            filetype: None,
-                            content: None,
-                            thread_ts: None,
-                            title: None,
-                            file_content_type: Some("image/png".to_string()),
+                        // Slack removed files.upload; the supported flow is
+                        // getUploadURLExternal -> POST bytes -> complete.
+                        let get_url = SlackApiFilesGetUploadUrlExternalRequest {
+                            filename: fname.clone(),
+                            length: bytes.len(),
+                            alt_txt: None,
+                            snippet_type: None,
                         };
-                        #[allow(deprecated)]
-                        match session.files_upload(&req).await {
-                            Ok(_) => Ok(ToolResult::success("File uploaded to Slack.".to_string())),
-                            Err(e) => Ok(ToolResult::error(format!("Failed to upload file: {e}"))),
+                        let ticket = match session.get_upload_url_external(&get_url).await {
+                            Ok(t) => t,
+                            Err(e) => {
+                                return Ok(ToolResult::error(format!(
+                                    "Failed to get Slack upload URL: {e}"
+                                )));
+                            }
+                        };
+                        let upload = SlackApiFilesUploadViaUrlRequest {
+                            upload_url: ticket.upload_url,
+                            content: bytes,
+                            content_type: content_type_for(&fname).to_string(),
+                        };
+                        if let Err(e) = session.files_upload_via_url(&upload).await {
+                            return Ok(ToolResult::error(format!(
+                                "Failed to upload file bytes to Slack: {e}"
+                            )));
+                        }
+                        let complete = SlackApiFilesCompleteUploadExternalRequest {
+                            files: vec![SlackApiFilesComplete {
+                                id: ticket.file_id,
+                                title: Some(fname.clone()),
+                            }],
+                            channel_id: Some(SlackChannelId::new(channel_id)),
+                            initial_comment: caption,
+                            thread_ts: None,
+                        };
+                        match session.files_complete_upload_external(&complete).await {
+                            Ok(_) => Ok(ToolResult::success(format!(
+                                "File {fname} uploaded to Slack."
+                            ))),
+                            Err(e) => Ok(ToolResult::error(format!(
+                                "Failed to finalize Slack upload: {e}"
+                            ))),
                         }
                     }
                     Err(e) => Ok(ToolResult::error(format!(
