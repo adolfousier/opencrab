@@ -4073,11 +4073,42 @@ pub(crate) async fn handle_message(
     // _typing_guard drop cancels typing loop
 
     // Grab streaming message id and drain queued display items
-    let (mut streaming_msg_id, remaining_display) = {
+    let (mut streaming_msg_id, remaining_display, leftover_status) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
-        (s.msg_id, display)
+        (s.msg_id, display, s.status_msg_id.take())
     };
+
+    // The turn is over: any pre-block status bubble still on screen is a
+    // straggler and must go. React-only turns end with EMPTY response text
+    // (the <<react:>> marker strips to nothing), so the edit loop's
+    // final-response delete trigger never fires for them and the bubble
+    // persisted forever (#403). Deleting here, with retries, covers every
+    // turn shape; failures after the retries are logged loudly.
+    if let Some(mid) = leftover_status {
+        let mut deleted = false;
+        for attempt in 1..=3u8 {
+            match bot.delete_message(msg.chat.id, mid).await {
+                Ok(_) => {
+                    deleted = true;
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Telegram: end-of-turn status delete attempt {attempt}/3 failed: {e}"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                }
+            }
+        }
+        if !deleted {
+            tracing::error!(
+                "Telegram: status bubble {mid:?} could not be deleted after turn end — \
+                 it will remain visible in chat {}",
+                msg.chat.id.0
+            );
+        }
+    }
 
     // Guard against stale delivery BEFORE sending remaining display items:
     // if a newer message cancelled this call, any queued tool/intermediate
