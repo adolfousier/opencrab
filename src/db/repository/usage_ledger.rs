@@ -79,15 +79,19 @@ impl UsageLedgerRepository {
         Self { pool }
     }
 
-    /// Record a usage event (append-only, never deleted)
+    /// Record a usage event (append-only, never deleted). `provider` is the
+    /// serving provider's name at record time (#402): the ledger outlives
+    /// sessions, so provider attribution must live on the row itself.
     pub async fn record(
         &self,
         session_id: &str,
+        provider: &str,
         model: &str,
         token_count: i32,
         cost: f64,
     ) -> Result<()> {
         let sid = session_id.to_string();
+        let prov = provider.to_string();
         let mdl = normalize_model_name(model);
         self.pool
             .get()
@@ -95,8 +99,8 @@ impl UsageLedgerRepository {
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.execute(
-                    "INSERT INTO usage_ledger (session_id, model, token_count, cost) VALUES (?1, ?2, ?3, ?4)",
-                    params![sid, mdl, token_count, cost],
+                    "INSERT INTO usage_ledger (session_id, provider, model, token_count, cost) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![sid, prov, mdl, token_count, cost],
                 )
             })
             .await
@@ -104,6 +108,74 @@ impl UsageLedgerRepository {
             .context("Failed to record usage")?;
 
         Ok(())
+    }
+
+    /// Per-provider totals (#402): `(provider, tokens, cost)` ordered by
+    /// cost. `since` filters by entry epoch; `filter` is a case-insensitive
+    /// provider-name prefix. Empty provider renders as "unknown" (rows that
+    /// predate the provider column whose session was already deleted).
+    pub async fn by_provider(
+        &self,
+        since: Option<i64>,
+        filter: Option<&str>,
+    ) -> Result<Vec<(String, i64, f64)>> {
+        let f = filter.map(|s| s.to_lowercase());
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let sql = "SELECT CASE WHEN provider = '' THEN 'unknown' ELSE provider END AS p, \
+                     COALESCE(SUM(token_count), 0), COALESCE(SUM(cost), 0.0) \
+                     FROM usage_ledger WHERE (?1 IS NULL OR created_at >= ?1) \
+                     AND (?2 IS NULL OR LOWER(provider) LIKE ?2 || '%') \
+                     GROUP BY p ORDER BY 3 DESC";
+                let mut stmt = conn.prepare(sql)?;
+                let rows = stmt
+                    .query_map(params![since, f], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok::<_, rusqlite::Error>(rows)
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to query provider breakdown")
+    }
+
+    /// Per-provider-per-model rows (#402): `(provider, model, tokens, cost)`
+    /// ordered by cost, optionally filtered by provider prefix or exact
+    /// model name.
+    pub async fn by_provider_model(
+        &self,
+        since: Option<i64>,
+        provider_filter: Option<&str>,
+        model_filter: Option<&str>,
+    ) -> Result<Vec<(String, String, i64, f64)>> {
+        let pf = provider_filter.map(|s| s.to_lowercase());
+        let mf = model_filter.map(normalize_model_name);
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let sql = "SELECT CASE WHEN provider = '' THEN 'unknown' ELSE provider END AS p, \
+                     model, COALESCE(SUM(token_count), 0), COALESCE(SUM(cost), 0.0) \
+                     FROM usage_ledger WHERE (?1 IS NULL OR created_at >= ?1) \
+                     AND (?2 IS NULL OR LOWER(provider) LIKE ?2 || '%') \
+                     AND (?3 IS NULL OR model = ?3) \
+                     GROUP BY p, model ORDER BY 4 DESC";
+                let mut stmt = conn.prepare(sql)?;
+                let rows = stmt
+                    .query_map(params![since, pf, mf], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok::<_, rusqlite::Error>(rows)
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to query provider/model breakdown")
     }
 
     /// Get all-time totals (tokens + cost)

@@ -442,9 +442,13 @@ pub async fn handle_command(
                 ChannelCommand::Stop
             }
         }
-        "/usage" => {
+        cmd if cmd == "/usage" || cmd.starts_with("/usage ") => {
             if !is_owner {
                 ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else if let Some(args) = trimmed.strip_prefix("/usage ").map(str::trim)
+                && !args.is_empty()
+            {
+                ChannelCommand::Usage(format_usage_breakdown(args, session_svc).await)
             } else {
                 ChannelCommand::Usage(format_usage(session_id, agent, session_svc).await)
             }
@@ -522,7 +526,9 @@ pub async fn handle_command(
                         .update_session_title(session_id, Some(title.to_string()))
                         .await
                     {
-                        Ok(()) => ChannelCommand::Rename(format!("✅ Session renamed to: `{}`", title)),
+                        Ok(()) => {
+                            ChannelCommand::Rename(format!("✅ Session renamed to: `{}`", title))
+                        }
                         Err(e) => ChannelCommand::Rename(format!("⚠️ Failed to rename: {}", e)),
                     }
                 }
@@ -730,7 +736,10 @@ pub(crate) fn format_help() -> String {
             "Show/switch auto-mention mode (`/respond_to <all|mention|auto>`)",
         ),
         ("/rtk", "Show RTK token savings statistics"),
-        ("/usage", "Session token & cost stats"),
+        (
+            "/usage",
+            "Token & cost stats (`provider [name]` / `model <name>` / `7d`)",
+        ),
     ];
     let rows: Vec<Vec<String>> = builtins
         .iter()
@@ -820,6 +829,110 @@ async fn format_mission_control(agent: &AgentService) -> String {
     let schedule = schedule_service::list(pool.clone()).await;
 
     render_markdown(&analytics, &activity, &inbox, &schedule)
+}
+
+/// `/usage <args>` breakdowns (#402): by provider, by model, with an
+/// optional trailing time filter.
+///
+///   /usage provider [name]     totals per provider (optionally prefix-filtered)
+///   /usage model <name>        which providers served this model
+///   /usage period 7d|30d|24h   provider totals within the window
+///   any form accepts a trailing period token, e.g. `/usage provider nvidia 7d`
+async fn format_usage_breakdown(args: &str, session_svc: &SessionService) -> String {
+    use crate::db::repository::UsageLedgerRepository;
+    use crate::usage::data::{fmt_cost, fmt_tokens};
+
+    fn parse_period(tok: &str) -> Option<i64> {
+        let now = chrono::Utc::now().timestamp();
+        let (num, unit) = tok.split_at(tok.len().saturating_sub(1));
+        let n: i64 = num.parse().ok()?;
+        match unit {
+            "d" => Some(now - n * 86_400),
+            "h" => Some(now - n * 3_600),
+            "w" => Some(now - n * 7 * 86_400),
+            _ => None,
+        }
+    }
+
+    let mut words: Vec<&str> = args.split_whitespace().collect();
+    // A trailing period token applies to any form.
+    let mut since: Option<i64> = None;
+    if let Some(last) = words.last()
+        && let Some(s) = parse_period(last)
+    {
+        since = Some(s);
+        words.pop();
+    }
+    let window = since.map_or("All-Time".to_string(), |_| {
+        format!("last {}", args.split_whitespace().last().unwrap_or(""))
+    });
+
+    let ledger = UsageLedgerRepository::new(session_svc.pool());
+    match words.as_slice() {
+        ["provider"] | ["providers"] | [] => match ledger.by_provider(since, None).await {
+            Ok(rows) if rows.is_empty() => format!("No usage recorded ({window})."),
+            Ok(rows) => {
+                let mut out = format!("# 📊 Usage by Provider ({window})\n\n");
+                out.push_str("| Provider | Tokens | Cost |\n|---|---|---|\n");
+                for (p, t, c) in rows {
+                    out.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        p,
+                        fmt_tokens(t),
+                        fmt_cost(c)
+                    ));
+                }
+                out
+            }
+            Err(e) => format!("⚠️ Failed to load provider breakdown: {e}"),
+        },
+        ["provider", name] | ["providers", name] => {
+            match ledger.by_provider_model(since, Some(name), None).await {
+                Ok(rows) if rows.is_empty() => {
+                    format!("No usage recorded for providers matching `{name}` ({window}).")
+                }
+                Ok(rows) => {
+                    let mut out = format!("# 📊 Usage for providers `{name}*` ({window})\n\n");
+                    out.push_str("| Provider | Model | Tokens | Cost |\n|---|---|---|---|\n");
+                    for (p, m, t, c) in rows {
+                        out.push_str(&format!(
+                            "| {} | {} | {} | {} |\n",
+                            p,
+                            m,
+                            fmt_tokens(t),
+                            fmt_cost(c)
+                        ));
+                    }
+                    out
+                }
+                Err(e) => format!("⚠️ Failed to load provider breakdown: {e}"),
+            }
+        }
+        ["model", name] => match ledger.by_provider_model(since, None, Some(name)).await {
+            Ok(rows) if rows.is_empty() => {
+                format!("No usage recorded for model `{name}` ({window}).")
+            }
+            Ok(rows) => {
+                let mut out = format!("# 📊 Providers serving `{name}` ({window})\n\n");
+                out.push_str("| Provider | Tokens | Cost |\n|---|---|---|\n");
+                for (p, _m, t, c) in rows {
+                    out.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        p,
+                        fmt_tokens(t),
+                        fmt_cost(c)
+                    ));
+                }
+                out
+            }
+            Err(e) => format!("⚠️ Failed to load model breakdown: {e}"),
+        },
+        ["period"] => "Usage: `/usage period 7d` (units: h, d, w).".to_string(),
+        _ => "Usage: `/usage provider [name]` · `/usage model <name>` · \
+              `/usage period 7d|30d` · trailing period works on any form, \
+              e.g. `/usage provider nvidia 7d`."
+            .to_string(),
+    }
 }
 
 async fn format_usage(

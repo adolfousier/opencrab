@@ -134,8 +134,9 @@ impl SessionService {
 
         // Append to cumulative usage ledger (never deleted)
         let ledger = UsageLedgerRepository::new(self.context.pool());
+        let provider = session.provider_name.clone().unwrap_or_default();
         if let Err(e) = ledger
-            .record(&id.to_string(), &model, token_count, cost)
+            .record(&id.to_string(), &provider, &model, token_count, cost)
             .await
         {
             tracing::warn!("Failed to record usage to ledger: {}", e);

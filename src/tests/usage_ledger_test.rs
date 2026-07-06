@@ -13,9 +13,15 @@ async fn test_record_and_totals() {
     db.run_migrations().await.expect("Failed to run migrations");
     let repo = UsageLedgerRepository::new(db.pool().clone());
 
-    repo.record("s1", "sonnet-4-5", 100, 0.05).await.unwrap();
-    repo.record("s1", "sonnet-4-5", 200, 0.10).await.unwrap();
-    repo.record("s2", "opus-4-6", 500, 0.50).await.unwrap();
+    repo.record("s1", "prov", "sonnet-4-5", 100, 0.05)
+        .await
+        .unwrap();
+    repo.record("s1", "prov", "sonnet-4-5", 200, 0.10)
+        .await
+        .unwrap();
+    repo.record("s2", "prov", "opus-4-6", 500, 0.50)
+        .await
+        .unwrap();
 
     let (tokens, cost) = repo.totals().await.unwrap();
     assert_eq!(tokens, 800);
@@ -30,9 +36,13 @@ async fn test_stats_by_model() {
     db.run_migrations().await.expect("Failed to run migrations");
     let repo = UsageLedgerRepository::new(db.pool().clone());
 
-    repo.record("s1", "sonnet", 100, 0.05).await.unwrap();
-    repo.record("s2", "opus", 500, 0.50).await.unwrap();
-    repo.record("s3", "sonnet", 200, 0.10).await.unwrap();
+    repo.record("s1", "prov", "sonnet", 100, 0.05)
+        .await
+        .unwrap();
+    repo.record("s2", "prov", "opus", 500, 0.50).await.unwrap();
+    repo.record("s3", "prov", "sonnet", 200, 0.10)
+        .await
+        .unwrap();
 
     let stats = repo.stats_by_model().await.unwrap();
     assert_eq!(stats.len(), 2);
@@ -51,11 +61,13 @@ async fn test_stats_by_model_merges_claude_prefix() {
     db.run_migrations().await.expect("Failed to run migrations");
     let repo = UsageLedgerRepository::new(db.pool().clone());
 
-    repo.record("s1", "claude-opus-4-6", 1000, 1.0)
+    repo.record("s1", "prov", "claude-opus-4-6", 1000, 1.0)
         .await
         .unwrap();
-    repo.record("s2", "opus-4-6", 500, 0.50).await.unwrap();
-    repo.record("s3", "claude-sonnet-4-6", 200, 0.10)
+    repo.record("s2", "prov", "opus-4-6", 500, 0.50)
+        .await
+        .unwrap();
+    repo.record("s3", "prov", "claude-sonnet-4-6", 200, 0.10)
         .await
         .unwrap();
 
@@ -125,4 +137,57 @@ fn test_normalize_model_name() {
     assert_eq!(normalize_model_name("kimi-k2.5"), "kimi-k2.5");
     // Everything lowercased
     assert_eq!(normalize_model_name("GPT-5-mini"), "gpt-5-mini");
+}
+
+#[tokio::test]
+async fn provider_breakdowns_group_filter_and_handle_unknown() {
+    let db = crate::db::Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let repo = crate::db::repository::UsageLedgerRepository::new(db.pool().clone());
+
+    repo.record("s1", "custom.opencode-go", "deepseek-v4-flash", 100, 1.0)
+        .await
+        .unwrap();
+    repo.record(
+        "s2",
+        "custom.nvidia-ds4flash",
+        "deepseek-v4-flash",
+        200,
+        2.0,
+    )
+    .await
+    .unwrap();
+    repo.record("s3", "custom.opencode-go", "mimo-v2.5", 50, 0.5)
+        .await
+        .unwrap();
+    repo.record("s4", "", "mystery-model", 10, 0.1)
+        .await
+        .unwrap();
+
+    // Per-provider totals, ordered by cost; empty provider -> "unknown".
+    let rows = repo.by_provider(None, None).await.unwrap();
+    assert_eq!(rows.len(), 3, "rows: {rows:?}");
+    assert_eq!(rows[0].0, "custom.nvidia-ds4flash");
+    assert_eq!(rows[0].1, 200);
+    assert!(rows.iter().any(|r| r.0 == "unknown" && r.1 == 10));
+
+    // Prefix filter is case-insensitive.
+    let nvidia = repo.by_provider(None, Some("CUSTOM.NVIDIA")).await.unwrap();
+    assert_eq!(nvidia.len(), 1);
+    assert_eq!(nvidia[0].2, 2.0);
+
+    // Same model across providers splits correctly.
+    let per = repo
+        .by_provider_model(None, None, Some("deepseek-v4-flash"))
+        .await
+        .unwrap();
+    assert_eq!(per.len(), 2, "per: {per:?}");
+    assert!(per.iter().all(|r| r.1 == "deepseek-v4-flash"));
+
+    // Period filter: nothing recorded before epoch 0 boundary in future.
+    let future = repo
+        .by_provider(Some(chrono::Utc::now().timestamp() + 3600), None)
+        .await
+        .unwrap();
+    assert!(future.is_empty());
 }

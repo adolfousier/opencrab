@@ -167,7 +167,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    pub const MIGRATION_COUNT: usize = 28;
+    pub const MIGRATION_COUNT: usize = 29;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
@@ -253,6 +253,9 @@ impl Database {
             )),
             M::up(include_str!(
                 "../migrations/20260626000001_add_goal_state.sql"
+            )),
+            M::up(include_str!(
+                "../migrations/20260706000001_add_usage_ledger_provider.sql"
             )),
         ]);
 
