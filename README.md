@@ -331,7 +331,9 @@ silence_group_start = true       # Silently ignore /start from non-allowed users
 
 Every channel has a `bot_owner` field (`[channels.telegram]`, `[channels.discord]`, `[channels.slack]`, `[channels.whatsapp]`, `[channels.trello]`). It names the user ID(s) (phone for WhatsApp) treated as the bot owner. On first-run setup the owner is seeded automatically from the first entry in your allow list (`allowed_users`, or `allowed_phones` for WhatsApp), and existing configs are migrated on load. Set `bot_owner` explicitly to pin the owner instead of relying on list order.
 
-The owner gets access that other allowlisted users do not. Commands that expose personal data or the host system are owner-only on channels. For example `/cd` browses the host filesystem, so a non-owner on the allowlist cannot run it or tap its inline buttons. Non-owners who try get a short "owner only" notice.
+The owner gets access that other allowlisted users do not. All channel commands except `/new` are owner-only: `/compact`, `/doctor`, `/evolve`, `/help`, `/models`, `/rtk`, `/sessions`, `/stop`, `/usage`, `/profiles`, `/goal`, `/mission-control`, `/rename`, `/cd`, `/respond_to`. `/new` stays open for session recovery (bugged/hallucinated sessions). Non-owners who try get a short "owner only" notice.
+
+**Deny-by-default access model:** if neither `allowed_users` nor `bot_owner` is configured, the bot refuses all interactions — unconfigured installs are locked down by default. Set at least one to unlock access. This prevents open-mode footguns on fresh deployments.
 
 ```toml
 [channels.telegram]
@@ -347,7 +349,7 @@ Telegram groups can have their own member list, so a user can be allowed in **on
 - `bot_owner` — the **owner**: always allowed everywhere.
 - `[channels.telegram.groups.<chat_id>].allowed_users` — allowed in **that group only**. These users are refused in DMs unless they are also an admin or the owner, which closes the "DM the bot privately to escape group oversight" bypass.
 
-DMs are gated to admins + owner. If neither `allowed_users` nor `bot_owner` is set, the bot is unconfigured and stays open (no hard lockout); set either one to lock it down. Each group can also override `respond_to` just for itself.
+DMs are gated to admins + owner. If neither `allowed_users` nor `bot_owner` is set, the bot refuses all interactions (deny-by-default). Set at least one to unlock access. Each group can also override `respond_to` just for itself.
 
 ```toml
 [channels.telegram]
