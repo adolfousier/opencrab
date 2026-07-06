@@ -138,6 +138,24 @@ struct Handler {
 
 #[async_trait]
 impl EventHandler for Handler {
+    async fn reaction_add(&self, ctx: Context, reaction: serenity::model::channel::Reaction) {
+        let agent = self.agent.clone();
+        let session_svc = self.session_svc.clone();
+        let discord_state = self.discord_state.clone();
+        let config_rx = self.config_rx.clone();
+        tokio::spawn(async move {
+            super::reactions::handle_reaction_add(
+                &ctx,
+                &reaction,
+                agent,
+                session_svc,
+                discord_state,
+                config_rx,
+            )
+            .await;
+        });
+    }
+
     async fn ready(&self, ctx: Context, ready: Ready) {
         tracing::info!(
             "Discord: connected as {} (id={})",

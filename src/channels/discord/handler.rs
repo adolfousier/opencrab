@@ -791,7 +791,21 @@ pub(crate) async fn handle_message(
     match result {
         Ok(response) => {
             // Extract <<IMG:path>> markers — send each as a Discord file attachment.
-            let (text_only, img_paths) = crate::utils::extract_img_markers(&response.content);
+            let (response_content, react_emoji) =
+                crate::utils::extract_react_marker(&response.content);
+            // React-back (#381): fire the reaction on the user's message
+            // instead of leaking the marker into Discord text.
+            if let Some(ref em) = react_emoji {
+                use serenity::model::channel::ReactionType;
+                let em = em.trim().to_string();
+                if let Err(e) = msg
+                    .react(&ctx.http, ReactionType::Unicode(em.clone()))
+                    .await
+                {
+                    tracing::warn!("Discord: react-back {em} failed: {e}");
+                }
+            }
+            let (text_only, img_paths) = crate::utils::extract_img_markers(&response_content);
             let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
             let text_only = redact_secrets(&text_only);
 
