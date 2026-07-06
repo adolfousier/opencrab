@@ -946,3 +946,58 @@ fn tool_input_alias_maps_to_arguments() {
     assert_eq!(calls[0].0, "bash");
     assert_eq!(calls[0].1["command"], "pwd");
 }
+
+// ── Element-style <function><name> leak (#398, deepseek-v4-flash) ──
+
+#[test]
+fn element_style_function_block_extracts_and_strips() {
+    let text = "Saving the payslip pipeline to MEMORY.md now.\n\n<function>\n<name>read_file</name>\n<path>/root/.opencrabs/MEMORY.md</path>\n</function>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1, "calls: {calls:?}");
+    assert_eq!(calls[0].0, "read_file");
+    assert_eq!(
+        calls[0].1.get("path").and_then(|v| v.as_str()),
+        Some("/root/.opencrabs/MEMORY.md")
+    );
+    assert!(cleaned.contains("Saving the payslip pipeline"));
+    assert!(!cleaned.contains("<function>"), "cleaned: {cleaned}");
+    assert!(!cleaned.contains("<name>"));
+}
+
+#[test]
+fn element_style_missing_closer_and_typed_args() {
+    // Closing </function> dropped; numeric arg keeps its JSON type.
+    let text =
+        "<function>\n<name>read_file</name>\n<path>/tmp/x.md</path>\n<max_chars>500</max_chars>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].1.get("max_chars").and_then(|v| v.as_i64()),
+        Some(500)
+    );
+    assert!(cleaned.trim().is_empty(), "cleaned: {cleaned}");
+}
+
+#[test]
+fn element_style_prose_about_function_tag_untouched() {
+    // Unknown tool name inside <name> means prose/docs, not a call.
+    let text = "Docs: a <function> tag wraps <name>whatever</name> in that format.";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert!(calls.is_empty());
+    assert_eq!(cleaned, text);
+}
+
+#[test]
+fn element_style_multiple_blocks_all_extract() {
+    let text = "<function><name>read_file</name><path>/a</path></function>\nthen\n<function><name>bash</name><command>ls</command></function>";
+    let (calls, cleaned) = extract_text_tool_calls(text);
+    assert_eq!(calls.len(), 2, "calls: {calls:?}");
+    assert_eq!(calls[0].0, "read_file");
+    assert_eq!(calls[1].0, "bash");
+    assert_eq!(
+        calls[1].1.get("command").and_then(|v| v.as_str()),
+        Some("ls")
+    );
+    assert!(cleaned.contains("then"));
+    assert!(!cleaned.contains("<function>"));
+}

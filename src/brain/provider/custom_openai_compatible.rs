@@ -493,6 +493,18 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
     // Anchoring on `<invoke name=` is strict enough to skip prose like
     // `the <invoke> tag` while catching every real shape.
     let has_invoke_signal = text.contains("<invoke name=") || text.contains("invoke name=\"");
+    // Element-style signal: 2026-07-06 deepseek-v4-flash (opencode-go)
+    // regression (#398). The model emits the whole call as sibling XML
+    // elements — a bare `<function>` wrapper, the tool in `<name>`, and
+    // every parameter as its own child element:
+    //   <function>
+    //   <name>read_file</name>
+    //   <path>/root/.opencrabs/MEMORY.md</path>
+    //   </function>
+    // None of the other shapes anchor on this (no `=name`, no JSON, no
+    // `<invoke`), so it leaked verbatim to Telegram and the call never
+    // dispatched.
+    let has_element_style = text.contains("<function>") && text.contains("<name>");
     // Bare `{"name": "<tool>", "arguments": {...}}` signal — 2026-06-02
     // qwen-3.7-max-thinking via dialagram. The model emits the same
     // tool call TWICE: once as a proper structured `tool_calls` delta
@@ -537,6 +549,7 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
         && !has_invoke_signal
         && !has_bare_name_args
         && !has_corrupted_tool_signal
+        && !has_element_style
     {
         return (Vec::new(), text.to_string());
     }
@@ -544,6 +557,92 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (Vec<(String, serde_json::V
     // Collect byte ranges of every matched block; strip them at the end.
     let mut tool_calls: Vec<(String, serde_json::Value)> = Vec::new();
     let mut strip_ranges: Vec<(usize, usize)> = Vec::new();
+
+    // Pass 0.5 — element-style `<function><name>X</name><param>v</param>`
+    // (#398, deepseek-v4-flash). Gated on KNOWN_TOOL_NAMES so prose that
+    // merely discusses a `<function>` tag is never swallowed. The closing
+    // `</function>` is optional (models drop closers constantly); the
+    // block then ends at the next `<function>` or end of text.
+    if has_element_style {
+        let mut search = 0usize;
+        while let Some(rel) = text[search..].find("<function>") {
+            let start = search + rel;
+            let after = start + "<function>".len();
+            // `<name>` must follow with only whitespace between.
+            let name = text[after..]
+                .find("<name>")
+                .filter(|&nrel| text[after..after + nrel].trim().is_empty())
+                .and_then(|nrel| {
+                    let nstart = after + nrel + "<name>".len();
+                    text[nstart..].find("</name>").map(|nend| {
+                        (
+                            text[nstart..nstart + nend].trim(),
+                            nstart + nend + "</name>".len(),
+                        )
+                    })
+                });
+            let Some((tool_name, mut cursor)) = name else {
+                search = after;
+                continue;
+            };
+            if !KNOWN_TOOL_NAMES.contains(&tool_name) {
+                search = after;
+                continue;
+            }
+            let body_end = text[cursor..]
+                .find("</function>")
+                .map(|r| cursor + r)
+                .or_else(|| text[cursor..].find("<function>").map(|r| cursor + r))
+                .unwrap_or(text.len());
+            let mut args = serde_json::Map::new();
+            while cursor < body_end {
+                let Some(lt) = text[cursor..body_end].find('<') else {
+                    break;
+                };
+                let tag_start = cursor + lt + 1;
+                let Some(gt) = text[tag_start..body_end].find('>') else {
+                    break;
+                };
+                let key = text[tag_start..tag_start + gt].trim();
+                if key.is_empty()
+                    || key.starts_with('/')
+                    || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    cursor = tag_start + gt + 1;
+                    continue;
+                }
+                let val_start = tag_start + gt + 1;
+                let close = format!("</{key}>");
+                let Some(vrel) = text[val_start..body_end].find(&close) else {
+                    cursor = val_start;
+                    continue;
+                };
+                let raw_val = text[val_start..val_start + vrel].trim();
+                // Numbers/bools/objects keep their JSON type so integer
+                // params validate; everything else stays a string.
+                let value = serde_json::from_str::<serde_json::Value>(raw_val)
+                    .ok()
+                    .filter(|v| !v.is_string())
+                    .unwrap_or_else(|| serde_json::Value::String(raw_val.to_string()));
+                args.insert(key.to_string(), value);
+                cursor = val_start + vrel + close.len();
+            }
+            let strip_end = if text[body_end..].starts_with("</function>") {
+                body_end + "</function>".len()
+            } else {
+                body_end
+            };
+            tracing::info!(
+                "extract_text_tool_calls: element-style <function><name> leak parsed as '{}' \
+                 with {} arg(s) (#398)",
+                tool_name,
+                args.len()
+            );
+            tool_calls.push((tool_name.to_string(), serde_json::Value::Object(args)));
+            strip_ranges.push((start, strip_end));
+            search = strip_end;
+        }
+    }
 
     // Pass 1 — Claude-style `<TOOLNAME><PARAM>val</PARAM></TOOLNAME>`.
     // Seen in logs 2026-04-17 14:27 where unsloth Qwen emitted a
