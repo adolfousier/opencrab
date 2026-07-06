@@ -894,26 +894,33 @@ pub(crate) async fn handle_message(
                 response.tokens_per_second,
             );
 
-            for img_path in img_paths {
-                match tokio::fs::read(&img_path).await {
+            // Media gallery (#385): batch all generated files into ONE
+            // multi-attachment message (Discord caps 10 per message; the
+            // remainder rolls into follow-up batches) instead of one
+            // message per file.
+            let mut attachments: Vec<CreateAttachment> = Vec::new();
+            for img_path in &img_paths {
+                match tokio::fs::read(img_path).await {
                     Ok(bytes) => {
-                        let fname = std::path::Path::new(&img_path)
+                        let fname = std::path::Path::new(img_path)
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("image.png")
                             .to_string();
-                        let file = CreateAttachment::bytes(bytes.as_slice(), fname);
-                        if let Err(e) = msg
-                            .channel_id
-                            .send_message(&ctx.http, CreateMessage::new().add_file(file))
-                            .await
-                        {
-                            tracing::error!("Discord: failed to send generated image: {}", e);
-                        }
+                        attachments.push(CreateAttachment::bytes(bytes, fname));
                     }
                     Err(e) => {
                         tracing::error!("Discord: failed to read image {}: {}", img_path, e);
                     }
+                }
+            }
+            for batch in attachments.chunks(10) {
+                let mut message = CreateMessage::new();
+                for file in batch {
+                    message = message.add_file(file.clone());
+                }
+                if let Err(e) = msg.channel_id.send_message(&ctx.http, message).await {
+                    tracing::error!("Discord: failed to send media gallery batch: {}", e);
                 }
             }
 
