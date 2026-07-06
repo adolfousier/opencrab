@@ -91,6 +91,7 @@ pub(crate) async fn edit_rich_markdown(
 
 /// POST `body` to `url`, treating anything other than `{"ok":true,...}` as an
 /// error (surfacing Telegram's `description`). Returns the `result` object.
+/// Handles 429 RetryAfter with a single retry.
 async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
     let resp = reqwest::Client::new().post(url).json(body).send().await?;
     let status = resp.status();
@@ -98,17 +99,43 @@ async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_
     let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
 
     if status.is_success() && parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        Ok(parsed
+        return Ok(parsed
             .get("result")
             .cloned()
-            .unwrap_or(serde_json::Value::Null))
-    } else {
-        let desc = parsed
-            .get("description")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(&text);
-        anyhow::bail!("Telegram rich API error ({status}): {desc}")
+            .unwrap_or(serde_json::Value::Null));
     }
+
+    // Handle 429 rate limit with RetryAfter
+    if status.as_u16() == 429 {
+        let retry_after = parsed
+            .get("parameters")
+            .and_then(|p| p.get("retry_after"))
+            .and_then(|r| r.as_u64())
+            .unwrap_or(5);
+        tracing::warn!("Rich API rate limited, retrying after {retry_after}s");
+        tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
+
+        // Single retry
+        let resp = reqwest::Client::new().post(url).json(body).send().await?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+
+        if status.is_success()
+            && parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+        {
+            return Ok(parsed
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null));
+        }
+    }
+
+    let desc = parsed
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(&text);
+    anyhow::bail!("Telegram rich API error ({status}): {desc}")
 }
 
 /// POST `body` and discard the result — for calls where only success matters.
