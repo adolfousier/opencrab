@@ -4182,7 +4182,7 @@ pub(crate) async fn handle_message(
             let display_html = if html.is_empty() {
                 String::new()
             } else {
-                format!("{}\n\n{}", html, footer)
+                format!("{}\n\n<i>{}</i>", html, footer)
             };
             tracing::info!(
                 "Telegram deliver: html.len={}, footer='{}', text_only ends_with={:?}",
@@ -4209,7 +4209,7 @@ pub(crate) async fn handle_message(
                     let rich_md = if footer.is_empty() {
                         text_only.clone()
                     } else {
-                        format!("{text_only}\n\n{footer}")
+                        format!("{text_only}\n\n<sub>{footer}</sub>")
                     };
                     // Send a FRESH rich message rather than editing the streamed
                     // placeholder into rich. Editing a normal message into a rich
@@ -5014,7 +5014,7 @@ pub(crate) async fn resume_session(
             let display_html = if html.is_empty() {
                 String::new()
             } else {
-                format!("{}\n\n{}", html, footer)
+                format!("{}\n\n<i>{}</i>", html, footer)
             };
             if !display_html.is_empty() {
                 // Rich-first: deliver a structured reply as a fresh native rich
@@ -5026,7 +5026,7 @@ pub(crate) async fn resume_session(
                     let rich_md = if footer.is_empty() {
                         text_only.clone()
                     } else {
-                        format!("{text_only}\n\n{footer}")
+                        format!("{text_only}\n\n<sub>{footer}</sub>")
                     };
                     // Delete the placeholder FIRST so the fresh rich send is the
                     // last message — deleting it after pulls content up and the
