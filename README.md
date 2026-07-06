@@ -288,6 +288,8 @@ This is **opt-in** via `channels.telegram.rich_messages = true`, and **off by de
 
 When enabled, native rich applies to the agent's reply (sent as a fresh rich message so it renders cleanly) and to proactive `telegram_send` messages. Plain-prose replies are left untouched, so incidental characters like a stray `*` or `#` are never reinterpreted. If the rich send fails for any reason, OpenCrabs falls back silently to HTML, so a message is never dropped.
 
+**Flow logs** (processing-log messages showing tool calls and intermediate text) also use the rich API when enabled, supporting 32K characters instead of HTML's 4K limit. Long tool chains fit in a single message without splitting. If the rich send fails, flow logs fall back to HTML rendering. The block auto-freezes at 30K characters to stay within limits.
+
 #### /cowork — Telegram-only workspace creation
 
 The `/cowork` command creates a team workspace directly from Telegram. It is **Telegram-only** because it relies on Telegram-specific primitives: group creation via `?startgroup` deep links, invite links, QR codes from `t.me` URLs, and `new_chat_members` service messages for auto-registration. None of these exist in Discord, Slack, or WhatsApp.
