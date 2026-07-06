@@ -6005,18 +6005,28 @@ pub(crate) async fn send_html_or_plain(
     }
 }
 
-fn strip_html_tags(html: &str) -> String {
-    html.replace("<b>", "")
-        .replace("</b>", "")
-        .replace("<i>", "")
-        .replace("</i>", "")
-        .replace("<code>", "")
-        .replace("</code>", "")
-        .replace("<pre>", "")
-        .replace("</pre>", "")
+pub(crate) fn strip_html_tags(html: &str) -> String {
+    // Strip all HTML tags generically: anything between < and > is removed.
+    // Handles <a href="...">, <u>, <s>, <blockquote>, and any other tag.
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+
+    for c in html.chars() {
+        if c == '<' {
+            in_tag = true;
+        } else if c == '>' && in_tag {
+            in_tag = false;
+        } else if !in_tag {
+            result.push(c);
+        }
+    }
+
+    // Unescape HTML entities
+    result
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&")
+        .replace("&quot;", "\"")
 }
 
 /// Convert markdown to Telegram-safe HTML.

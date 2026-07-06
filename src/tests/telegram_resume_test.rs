@@ -746,3 +746,33 @@ fn split_message_multibyte_exceeds_char_limit() {
     let rejoined: String = result.iter().copied().collect();
     assert_eq!(rejoined.chars().count(), 5000);
 }
+
+// ── #378: strip_html_tags completeness regression ──────────────────────────
+
+#[test]
+fn strip_html_tags_removes_all_supported_tags() {
+    let html = "<b>bold</b> <i>italic</i> <u>underline</u> <s>strike</s> <code>code</code>";
+    let plain = crate::channels::telegram::handler::strip_html_tags(html);
+    assert_eq!(plain, "bold italic underline strike code");
+}
+
+#[test]
+fn strip_html_tags_removes_anchor_tags() {
+    let html = "visit <a href=\"https://example.com?q=rust&source=web\">example</a> now";
+    let plain = crate::channels::telegram::handler::strip_html_tags(html);
+    assert_eq!(plain, "visit example now");
+}
+
+#[test]
+fn strip_html_tags_removes_blockquote() {
+    let html = "<blockquote>quoted text</blockquote> and normal";
+    let plain = crate::channels::telegram::handler::strip_html_tags(html);
+    assert_eq!(plain, "quoted text and normal");
+}
+
+#[test]
+fn strip_html_tags_unescapes_entities() {
+    let html = "&lt;tag&gt; &amp; &quot;quoted&quot;";
+    let plain = crate::channels::telegram::handler::strip_html_tags(html);
+    assert_eq!(plain, "<tag> & \"quoted\"");
+}
