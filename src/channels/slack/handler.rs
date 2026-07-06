@@ -1886,21 +1886,19 @@ async fn handle_message(
                             .and_then(|n| n.to_str())
                             .unwrap_or("image.png")
                             .to_string();
-                        #[allow(deprecated)]
-                        let req = SlackApiFilesUploadRequest {
-                            channels: Some(vec![SlackChannelId::new(channel_id.clone())]),
-                            binary_content: Some(bytes),
-                            filename: Some(fname),
-                            filetype: None,
-                            content: None,
-                            initial_comment: None,
-                            thread_ts: None,
-                            title: None,
-                            file_content_type: Some("image/png".to_string()),
-                        };
-                        #[allow(deprecated)]
-                        if let Err(e) = session.files_upload(&req).await {
-                            tracing::error!("Slack: failed to upload generated image: {}", e);
+                        let content_type =
+                            crate::brain::tools::slack_send::content_type_for(&fname);
+                        if let Err(e) = super::upload::upload_external(
+                            &session,
+                            SlackChannelId::new(channel_id.clone()),
+                            bytes,
+                            &fname,
+                            content_type,
+                            None,
+                        )
+                        .await
+                        {
+                            tracing::error!("Slack: failed to upload generated image: {e}");
                         }
                     }
                     Err(e) => {
@@ -2023,21 +2021,17 @@ async fn handle_message(
                             audio_bytes.len(),
                             channel_id
                         );
-                        #[allow(deprecated)]
-                        let req = SlackApiFilesUploadRequest {
-                            channels: Some(vec![SlackChannelId::new(channel_id.clone())]),
-                            binary_content: Some(audio_bytes),
-                            filename: Some("response.ogg".to_string()),
-                            filetype: Some(SlackFileType("ogg".to_string())),
-                            content: None,
-                            initial_comment: None,
-                            thread_ts: thread_ts.clone(),
-                            title: None,
-                            file_content_type: Some("audio/ogg".to_string()),
-                        };
-                        #[allow(deprecated)]
-                        if let Err(e) = session.files_upload(&req).await {
-                            tracing::error!("Slack: failed to upload TTS voice note: {}", e);
+                        if let Err(e) = super::upload::upload_external(
+                            &session,
+                            SlackChannelId::new(channel_id.clone()),
+                            audio_bytes,
+                            "response.ogg",
+                            "audio/ogg",
+                            thread_ts.clone(),
+                        )
+                        .await
+                        {
+                            tracing::error!("Slack: failed to upload TTS voice note: {e}");
                         }
                     }
                     Err(e) => {

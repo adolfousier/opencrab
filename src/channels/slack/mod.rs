@@ -8,6 +8,7 @@ pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod reactions;
 pub(crate) mod tool_group;
+pub(crate) mod upload;
 
 pub use agent::SlackAgent;
 
