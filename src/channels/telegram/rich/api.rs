@@ -29,13 +29,16 @@ pub(crate) async fn send_rich_message_draft(
         "rich_message": { "markdown": markdown },
     });
     let result = post_rich(&url, &body).await?;
-    result
+    // Drafts are not messages: an ok response legitimately carries no
+    // message_id. Treating that as failure made every status tick re-log a
+    // phantom error and keep re-sending until the rich API 429'd, which
+    // rendered in clients as the bot endlessly "typing". ok = success; the
+    // caller keys future sends by its own draft_id.
+    Ok(result
         .get("message_id")
         .and_then(serde_json::Value::as_i64)
         .map(|id| id as i32)
-        .ok_or_else(|| {
-            anyhow::anyhow!("sendRichMessageDraft ok but response carried no message_id")
-        })
+        .unwrap_or(draft_id))
 }
 
 /// Send `markdown` as a native rich message via `sendRichMessage`.

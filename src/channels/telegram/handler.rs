@@ -103,6 +103,10 @@ pub(crate) struct StreamingState {
     tool_round_count: usize,
     /// When tool execution started (for elapsed time)
     tools_started_at: Option<std::time::Instant>,
+    /// Last time a status draft was (re)sent — throttles the 1.5s tick down
+    /// to one draft refresh per ~6s so a long turn cannot hammer the rich
+    /// API into 429s (which showed as the bot endlessly composing).
+    draft_last_attempt: Option<std::time::Instant>,
     /// Client-chosen draft_id for `sendRichMessageDraft` (DMs with rich_messages).
     /// `None` when using the standard message path. When set, status updates
     /// re-send the draft with this id instead of editing a persistent message.
@@ -3236,6 +3240,7 @@ pub(crate) async fn handle_message(
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
         draft_id: None,
+        draft_last_attempt: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -3495,7 +3500,17 @@ pub(crate) async fn handle_message(
                         // with rich_messages get an auto-expiring draft
                         // preview; a failed draft send just logs (the old
                         // real-message fallback was the orphan source).
-                        if show_status && open_block.is_none() && use_drafts {
+                        let draft_due = {
+                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                            let due = s
+                                .draft_last_attempt
+                                .is_none_or(|t| t.elapsed().as_secs() >= 6);
+                            if due {
+                                s.draft_last_attempt = Some(std::time::Instant::now());
+                            }
+                            due
+                        };
+                        if show_status && open_block.is_none() && use_drafts && draft_due {
                             let elapsed_total = snap.tools_started_at
                                 .map(|t| t.elapsed().as_secs())
                                 .unwrap_or(0);
@@ -4546,6 +4561,7 @@ pub(crate) async fn resume_session(
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
         draft_id: None,
+        draft_last_attempt: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
