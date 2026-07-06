@@ -193,12 +193,25 @@ impl OnboardingWizard {
                             self.channel_input_cursor = self.telegram_token_input.len();
                         }
                         KeyCode::Tab | KeyCode::Down | KeyCode::Enter => {
-                            self.telegram_field = TelegramField::RespondTo;
+                            self.telegram_field = TelegramField::RichText;
                         }
                         _ => {}
                     }
                 }
             }
+            TelegramField::RichText => match event.code {
+                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
+                    self.telegram_rich_text = !self.telegram_rich_text;
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    self.telegram_field = TelegramField::UserID;
+                    self.channel_input_cursor = self.telegram_user_id_input.len();
+                }
+                KeyCode::Tab | KeyCode::Down | KeyCode::Enter => {
+                    self.telegram_field = TelegramField::RespondTo;
+                }
+                _ => {}
+            },
             TelegramField::RespondTo => match event.code {
                 KeyCode::Left | KeyCode::Char('h') => {
                     self.telegram_respond_to = self.telegram_respond_to.saturating_sub(1);
@@ -207,7 +220,7 @@ impl OnboardingWizard {
                     self.telegram_respond_to = (self.telegram_respond_to + 1).min(2);
                 }
                 KeyCode::BackTab | KeyCode::Up => {
-                    self.telegram_field = TelegramField::UserID;
+                    self.telegram_field = TelegramField::RichText;
                 }
                 KeyCode::Enter => {
                     let has_token = !self.telegram_token_input.is_empty();

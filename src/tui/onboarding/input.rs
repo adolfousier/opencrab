@@ -137,7 +137,8 @@ impl OnboardingWizard {
                             Some(|c: char| c.is_ascii_digit()),
                         );
                     }
-                    TelegramField::RespondTo => {} // selector, paste is no-op
+                    // Checkbox and selector: paste is a no-op.
+                    TelegramField::RichText | TelegramField::RespondTo => {}
                 }
             }
             OnboardingStep::DiscordSetup => {

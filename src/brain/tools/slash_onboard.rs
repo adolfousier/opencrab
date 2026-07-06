@@ -244,6 +244,7 @@ const TELEGRAM_NO_TOKEN_HELP: &str = "Telegram setup — create a bot on @BotFat
 
 const CHANNELS_MENU: &str = "Channel setup — connect a messenger:\n\
     • `/onboard:channels telegram <BOT_TOKEN> [YOUR_NUMERIC_ID]` — or just `/onboard:channels telegram` for setup steps\n\
+    • `/onboard:channels telegram richtext on|off`: rich text experience (needs the latest Telegram app)\n\
     • `/onboard:channels discord <BOT_TOKEN>`\n\
     • `/onboard:channels whatsapp` — starts pairing; I'll send you a QR to scan.\n\
     Ask the user which channel + token, then re-run with the argument.";
@@ -283,6 +284,36 @@ pub(crate) fn onboard_channels(args: &str) -> Result<ToolResult> {
             // `<token> [numeric_user_id]` — the token has no spaces, so the
             // optional second word is the owner's numeric ID.
             let parts: Vec<&str> = params.split_whitespace().collect();
+            // Rich text toggle (#418): `telegram richtext on|off` flips
+            // channels.telegram.rich_messages; hot-reload applies it live.
+            if matches!(
+                parts.first().map(|p| p.to_lowercase()).as_deref(),
+                Some("richtext" | "rich_text" | "rich")
+            ) {
+                let value = match parts.get(1).map(|v| v.to_lowercase()).as_deref() {
+                    Some("on" | "true" | "yes") => true,
+                    Some("off" | "false" | "no") => false,
+                    _ => {
+                        return Ok(ToolResult::error(
+                            "Usage: `/onboard:channels telegram richtext on|off`. Enable only \
+                             if you run the latest Telegram app version (older clients will \
+                             not render rich messages correctly)."
+                                .into(),
+                        ));
+                    }
+                };
+                set_flags(&[("channels.telegram", "rich_messages", &value.to_string())])?;
+                return Ok(ToolResult::success(if value {
+                    "Rich text experience enabled. It only renders on current Telegram \
+                     apps; run `/onboard:channels telegram richtext off` if messages \
+                     show as unsupported."
+                        .into()
+                } else {
+                    "Rich text experience disabled. Messages use the universal HTML \
+                     rendering that works on every client."
+                        .into()
+                }));
+            }
             let token = parts.first().copied().unwrap_or("");
             if token.is_empty() {
                 // No token provided — show BotFather setup instructions

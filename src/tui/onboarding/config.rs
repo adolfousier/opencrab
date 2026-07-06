@@ -555,6 +555,15 @@ impl OnboardingWizard {
                 &self.is_trello_enabled().to_string()
             );
 
+            // Rich text experience (#418): client-side capability, so the
+            // wizard checkbox is the source of truth; hot-reload applies it.
+            try_write!(
+                write_errors,
+                "channels.telegram",
+                "rich_messages",
+                &self.telegram_rich_text.to_string()
+            );
+
             // respond_to per channel
             let respond_to_values = ["all", "dm_only", "mention", "auto"];
             try_write!(

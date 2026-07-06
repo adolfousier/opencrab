@@ -176,13 +176,59 @@ fn telegram_backtab_userid_to_bottoken() {
 }
 
 #[test]
-fn telegram_backtab_respondto_to_userid() {
+fn telegram_backtab_respondto_to_richtext() {
     let mut w = clean_wizard();
     w.step = OnboardingStep::TelegramSetup;
     w.telegram_field = TelegramField::RespondTo;
 
     w.handle_key(key(KeyCode::BackTab));
+    assert_eq!(w.telegram_field, TelegramField::RichText);
+}
+
+#[test]
+fn telegram_backtab_richtext_to_userid() {
+    let mut w = clean_wizard();
+    w.step = OnboardingStep::TelegramSetup;
+    w.telegram_field = TelegramField::RichText;
+
+    w.handle_key(key(KeyCode::BackTab));
     assert_eq!(w.telegram_field, TelegramField::UserID);
+}
+
+// ── Telegram: rich text experience checkbox (#418) ─────────────
+
+#[test]
+fn telegram_userid_tab_advances_to_richtext() {
+    let mut w = clean_wizard();
+    w.step = OnboardingStep::TelegramSetup;
+    w.telegram_field = TelegramField::UserID;
+
+    w.handle_key(key(KeyCode::Tab));
+    assert_eq!(w.telegram_field, TelegramField::RichText);
+}
+
+#[test]
+fn telegram_richtext_space_toggles() {
+    let mut w = clean_wizard();
+    w.step = OnboardingStep::TelegramSetup;
+    w.telegram_field = TelegramField::RichText;
+    assert!(!w.telegram_rich_text);
+
+    w.handle_key(key(KeyCode::Char(' ')));
+    assert!(w.telegram_rich_text);
+    w.handle_key(key(KeyCode::Char(' ')));
+    assert!(!w.telegram_rich_text);
+}
+
+#[test]
+fn telegram_richtext_enter_advances_to_respondto_without_toggling() {
+    let mut w = clean_wizard();
+    w.step = OnboardingStep::TelegramSetup;
+    w.telegram_field = TelegramField::RichText;
+
+    w.handle_key(key(KeyCode::Enter));
+    assert_eq!(w.telegram_field, TelegramField::RespondTo);
+    assert!(!w.telegram_rich_text);
 }
 
 // ── Telegram: Ctrl+Backspace clears fields ─────────────────────

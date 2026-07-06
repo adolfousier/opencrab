@@ -216,6 +216,7 @@ impl OnboardingWizard {
     pub(super) fn detect_existing_respond_to(&mut self) {
         use crate::config::RespondTo;
         if let Ok(config) = crate::config::Config::load() {
+            self.telegram_rich_text = config.channels.telegram.rich_messages;
             self.telegram_respond_to = match config.channels.telegram.respond_to {
                 RespondTo::All => 0,
                 RespondTo::DmOnly => 1,

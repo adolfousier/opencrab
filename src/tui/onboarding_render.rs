@@ -1429,6 +1429,40 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     )));
 
     lines.push(Line::from(""));
+    let rich_focused = wizard.telegram_field == TelegramField::RichText;
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("  [{}] ", if wizard.telegram_rich_text { "x" } else { " " }),
+            Style::default().fg(if rich_focused {
+                BRAND_BLUE
+            } else {
+                Color::Gray
+            }),
+        ),
+        Span::styled(
+            "Rich text experience",
+            Style::default().fg(if rich_focused {
+                Color::White
+            } else {
+                Color::Gray
+            }),
+        ),
+        Span::styled("  (Space toggles)", Style::default().fg(Color::DarkGray)),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "      Enable only if you run the latest Telegram app version:",
+        Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "      older clients will not render rich messages correctly.",
+        Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    lines.push(Line::from(""));
     render_respond_to_selector(
         lines,
         wizard.telegram_respond_to,
@@ -1447,6 +1481,7 @@ fn render_telegram_setup(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWiza
     let offset = match wizard.telegram_field {
         TelegramField::BotToken => 4,
         TelegramField::UserID => 6,
+        TelegramField::RichText => lines.len().saturating_sub(base).saturating_sub(8),
         TelegramField::RespondTo => lines.len().saturating_sub(base).saturating_sub(4),
     };
     base + offset

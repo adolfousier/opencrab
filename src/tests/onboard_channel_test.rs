@@ -64,6 +64,19 @@ fn voice_menu_and_subcommand_validation() {
 }
 
 #[test]
+fn channels_telegram_richtext_requires_on_or_off() {
+    // Bad value: errors with usage help, never writes config.
+    let r = onboard_channels("telegram richtext maybe").unwrap();
+    assert!(!r.success);
+    assert!(r.error.unwrap().contains("richtext on|off"));
+
+    // Missing value: same usage error.
+    let r = onboard_channels("telegram richtext").unwrap();
+    assert!(!r.success);
+    assert!(r.error.unwrap().contains("richtext on|off"));
+}
+
+#[test]
 fn channels_menu_and_no_token_shows_instructions() {
     assert!(onboard_channels("").unwrap().success);
     // telegram without token now shows BotFather instructions instead of error

@@ -27,6 +27,8 @@ pub struct OnboardingWizard {
     pub discord_channel_id_input: String,
     pub discord_allowed_list_input: String,
 
+    /// Rich text experience toggle (`channels.telegram.rich_messages`, #418)
+    pub telegram_rich_text: bool,
     /// respond_to selection per channel (0=all, 1=dm_only, 2=mention)
     pub telegram_respond_to: usize,
     pub discord_respond_to: usize,
@@ -381,9 +383,10 @@ impl OnboardingWizard {
             discord_channel_id_input: String::new(),
             discord_allowed_list_input: String::new(),
 
-            telegram_respond_to: 0, // all
-            discord_respond_to: 2,  // mention
-            slack_respond_to: 2,    // mention
+            telegram_rich_text: false, // needs a current Telegram client
+            telegram_respond_to: 0,    // all
+            discord_respond_to: 2,     // mention
+            slack_respond_to: 2,       // mention
 
             whatsapp_field: WhatsAppField::Connection,
             whatsapp_qr_text: None,
@@ -637,6 +640,8 @@ impl OnboardingWizard {
         wizard.channel_toggles[2].1 = config.channels.whatsapp.enabled; // WhatsApp
         wizard.channel_toggles[3].1 = config.channels.slack.enabled; // Slack
         wizard.channel_toggles[4].1 = config.channels.trello.enabled; // Trello
+
+        wizard.telegram_rich_text = config.channels.telegram.rich_messages;
 
         // Load respond_to per channel
         use crate::config::RespondTo;

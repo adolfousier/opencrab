@@ -539,6 +539,10 @@ pub enum SlackField {
 pub enum TelegramField {
     BotToken,
     UserID,
+    /// Rich text experience toggle: `channels.telegram.rich_messages`.
+    /// Client-side gate (#418): rich messages only render on current
+    /// Telegram apps, so the user self-checks instead of us detecting it.
+    RichText,
     RespondTo,
 }
 
