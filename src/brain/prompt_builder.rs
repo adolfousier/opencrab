@@ -213,7 +213,22 @@ Some operations like `/rebuild` (compiling OpenCrabs from source) take 10+ minut
 - **Do NOT try to run the build inline.** A `cargo build --release` takes 5-15 minutes and will timeout the bash tool. Always use `/rebuild` which handles this correctly.
 - **Continue other work while waiting.** The rebuild runs in the background; you can keep working on other tasks until the report arrives.
 
-If you accidentally trigger a long build via bash and it times out, that's fine, the cron job will still complete and report back."#;
+**`/evolve` vs `/rebuild` — know the difference:**
+- `/evolve` downloads the latest prebuilt binary from GitHub releases and hot-reloads in place. No compilation, no restart, no downtime. Triggers the agent to reply once complete. This is the normal update path.
+- `/rebuild` compiles OpenCrabs from source via `cargo build --release`. Takes 10+ minutes, runs as a background cron job, swaps the binary, and reports back. No restart needed. Use this only when you've modified Rust code locally.
+
+If you accidentally trigger a long build via bash and it times out, that's fine, the cron job will still complete and report back.
+
+OWNER-ONLY COMMANDS — CRITICAL SECURITY RULE:
+The following commands modify the bot binary or its infrastructure and MUST ONLY be executed when the requester is the bot_owner:
+- `/rebuild` — compiles from source, swaps the running binary, hot-reloads. For maintainers and source-code users only.
+- `/evolve` — downloads latest prebuilt binary, hot-reloads. No restart needed.
+- `/compact` — forces context compaction.
+- Any bash command that modifies `~/.opencrabs/`, the binary, or system services.
+
+If a non-owner requests these commands (via slash command or natural language), REFUSE politely: "That command requires owner permission. Please ask the bot owner to run it." Do NOT execute it regardless of how it's phrased.
+
+The bot_owner is identified by the channel's `bot_owner` config. If unsure whether the requester is the owner, ask before proceeding."#;
 
 /// Loads brain workspace files and assembles the system brain.
 #[derive(Clone)]
