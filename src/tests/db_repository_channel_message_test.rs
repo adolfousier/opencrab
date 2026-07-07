@@ -25,7 +25,7 @@ async fn test_channel_message_crud() {
     repo.insert(&msg).await.expect("Failed to insert");
 
     let recent = repo
-        .recent(Some("telegram"), "-100123456", 10, None)
+        .recent(Some("telegram"), "-100123456", 10, None, None)
         .await
         .expect("Failed to fetch recent");
     assert_eq!(recent.len(), 1);

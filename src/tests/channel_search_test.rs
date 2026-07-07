@@ -91,7 +91,7 @@ mod repository {
         repo.insert(&m).await.unwrap();
 
         let recent = repo
-            .recent(Some("telegram"), "-100111", 10, None)
+            .recent(Some("telegram"), "-100111", 10, None, None)
             .await
             .unwrap();
         assert_eq!(recent.len(), 1);
@@ -115,7 +115,7 @@ mod repository {
         }
 
         let recent = repo
-            .recent(Some("telegram"), "-100111", 3, None)
+            .recent(Some("telegram"), "-100111", 3, None, None)
             .await
             .unwrap();
         assert_eq!(recent.len(), 3);
@@ -144,7 +144,7 @@ mod repository {
         .unwrap();
 
         // Same chat_id, no channel filter — both returned
-        let recent = repo.recent(None, "-100111", 10, None).await.unwrap();
+        let recent = repo.recent(None, "-100111", 10, None, None).await.unwrap();
         assert_eq!(recent.len(), 2);
     }
 
@@ -159,14 +159,14 @@ mod repository {
             .unwrap();
 
         let tg = repo
-            .recent(Some("telegram"), "-100111", 10, None)
+            .recent(Some("telegram"), "-100111", 10, None, None)
             .await
             .unwrap();
         assert_eq!(tg.len(), 1);
         assert_eq!(tg[0].content, "tg msg");
 
         let dc = repo
-            .recent(Some("discord"), "-100111", 10, None)
+            .recent(Some("discord"), "-100111", 10, None, None)
             .await
             .unwrap();
         assert_eq!(dc.len(), 0);
@@ -323,7 +323,7 @@ mod repository {
         repo.insert(&m).await.unwrap();
 
         let recent = repo
-            .recent(Some("telegram"), "-100111", 10, None)
+            .recent(Some("telegram"), "-100111", 10, None, None)
             .await
             .unwrap();
         assert_eq!(recent.len(), 1);
@@ -345,7 +345,7 @@ mod repository {
         let id = m.id;
         repo.insert(&m).await.unwrap();
 
-        let recent = repo.recent(Some("slack"), "C123", 1, None).await.unwrap();
+        let recent = repo.recent(Some("slack"), "C123", 1, None, None).await.unwrap();
         assert_eq!(recent.len(), 1);
         let r = &recent[0];
         assert_eq!(r.id, id);
@@ -386,7 +386,7 @@ mod repository {
         assert_eq!(updated, 1, "the stored frame should be rewritten");
 
         let recent = repo
-            .recent(Some("telegram"), "-100111", 10, None)
+            .recent(Some("telegram"), "-100111", 10, None, None)
             .await
             .unwrap();
         assert_eq!(recent.len(), 1, "reconcile updates in place, no new row");
@@ -448,7 +448,7 @@ mod repository {
 
         // Without thread_id filter: all 3 messages returned
         let all = repo
-            .recent(Some("telegram"), "-100111", 10, None)
+            .recent(Some("telegram"), "-100111", 10, None, None)
             .await
             .unwrap();
         assert_eq!(
@@ -459,7 +459,7 @@ mod repository {
 
         // With thread_id filter for topic A: only 2 messages
         let topic_a = repo
-            .recent(Some("telegram"), "-100111", 10, Some("2411"))
+            .recent(Some("telegram"), "-100111", 10, Some("2411"), None)
             .await
             .unwrap();
         assert_eq!(
@@ -473,7 +473,7 @@ mod repository {
 
         // With thread_id filter for topic B: only 1 message
         let topic_b = repo
-            .recent(Some("telegram"), "-100111", 10, Some("2614"))
+            .recent(Some("telegram"), "-100111", 10, Some("2614"), None)
             .await
             .unwrap();
         assert_eq!(
@@ -485,7 +485,7 @@ mod repository {
 
         // With thread_id filter for nonexistent topic: empty
         let none = repo
-            .recent(Some("telegram"), "-100111", 10, Some("9999"))
+            .recent(Some("telegram"), "-100111", 10, Some("9999"), None)
             .await
             .unwrap();
         assert!(none.is_empty(), "nonexistent thread_id should return empty");

@@ -61,7 +61,7 @@ async fn channel_message_thread_id_round_trips_through_repo() {
 
     repo.insert(&msg).await.expect("insert");
     let recent = repo
-        .recent(Some("telegram"), chat_id, 1, None)
+        .recent(Some("telegram"), chat_id, 1, None, None)
         .await
         .expect("recent");
     assert_eq!(recent.len(), 1);
@@ -101,7 +101,7 @@ async fn recent_scoped_to_thread_does_not_bleed_across_topics() {
 
     // Scoped to topic 10 → only topic-10 content, never topic 20.
     let only_10 = repo
-        .recent(Some("telegram"), chat_id, 30, Some("10"))
+        .recent(Some("telegram"), chat_id, 30, Some("10"), None)
         .await
         .unwrap();
     assert_eq!(
@@ -115,7 +115,7 @@ async fn recent_scoped_to_thread_does_not_bleed_across_topics() {
     // Unscoped (None) returns both — kept for the non-forum group case where
     // there's a single shared conversation.
     let all = repo
-        .recent(Some("telegram"), chat_id, 30, None)
+        .recent(Some("telegram"), chat_id, 30, None, None)
         .await
         .unwrap();
     assert_eq!(all.len(), 2);
@@ -210,7 +210,7 @@ async fn recent_returns_newest_first_so_helper_picks_latest_thread() {
     repo.insert(&new).await.expect("insert new");
 
     let recent = repo
-        .recent(Some("telegram"), chat_id, 1, None)
+        .recent(Some("telegram"), chat_id, 1, None, None)
         .await
         .expect("recent");
     assert_eq!(recent.len(), 1);
