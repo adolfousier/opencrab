@@ -698,7 +698,7 @@ pub(crate) async fn cmd_run(
     // maintenance warning in ~/.opencrabs/rsi/digest.md, not conversation input.
     let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info));
     if config.agent.lazy_tools {
-        system_brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
+        system_brain.push_str(&crate::brain::tools::catalog::tool_access_prompt());
     }
 
     // Headless-safe runtime tools (dynamic tools.toml tools, tool_manage, browser).
@@ -955,7 +955,7 @@ pub(crate) async fn cmd_agent_interactive(
     // maintenance warning in ~/.opencrabs/rsi/digest.md, not conversation input.
     let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info));
     if config.agent.lazy_tools {
-        system_brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
+        system_brain.push_str(&crate::brain::tools::catalog::tool_access_prompt());
     }
 
     // Headless-safe runtime tools (dynamic tools.toml tools, tool_manage, browser).

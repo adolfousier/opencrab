@@ -124,7 +124,7 @@ impl BrainRebuild {
             i.loader.build_system_brain(runtime_info.as_ref())
         };
         if i.lazy_tools {
-            brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
+            brain.push_str(&crate::brain::tools::catalog::tool_access_prompt());
         }
         let mut cache = i.cache.write().expect("brain cache lock poisoned");
         *cache = BrainCache {

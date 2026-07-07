@@ -371,7 +371,7 @@ async fn cmd_chat_inner(
     // capability is missing. Without this nudge the model can give up on a task
     // whose tool simply wasn't injected.
     if config.agent.lazy_tools {
-        system_brain.push_str(crate::brain::tools::catalog::LAZY_TOOLS_PROMPT);
+        system_brain.push_str(&crate::brain::tools::catalog::tool_access_prompt());
     }
 
     // Propagate persisted auto-always approval policy to the agent service so

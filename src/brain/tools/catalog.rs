@@ -79,6 +79,129 @@ pub fn is_core(name: &str) -> bool {
     CORE_TOOLS.contains(&name)
 }
 
+/// Built-in EXTENDED tools, grouped for the flat inventory injected into the
+/// system prompt (#448). These are real, registered tool names whose SCHEMAS
+/// are withheld until `tool_search` activates them — but the model never sees
+/// even the names otherwise, so it would claim a capability is missing instead
+/// of searching for it (#449). Listing names-only (no schemas) is a low-token
+/// nudge: the model can see the tool exists and which name to activate.
+///
+/// Built-ins only. Dynamic `tools.toml` tools and skills vary per install and
+/// are surfaced separately (the "Available Commands & Skills" index), so the
+/// rendered block points at those rather than hardcoding them here.
+///
+/// The names are ground truth (each tool's `name()`), kept adjacent to
+/// `CORE_TOOLS` and `is_protected_builtin` so the three move together. When you
+/// add a new built-in extended tool, add its name to the right group here so
+/// the model keeps seeing it. `tool_inventory_names_are_extended_not_core`
+/// (test) fails if any listed name is a core tool or a duplicate, catching the
+/// most common drift; a fully registry-backed coverage check would need the DB,
+/// so this stays a curated list guarded against the cheap mistakes.
+pub const EXTENDED_TOOL_INVENTORY: &[(&str, &[&str])] = &[
+    (
+        "channels",
+        &[
+            "telegram_send",
+            "telegram_connect",
+            "discord_send",
+            "discord_connect",
+            "slack_send",
+            "slack_connect",
+            "whatsapp_send",
+            "whatsapp_connect",
+            "trello_send",
+            "trello_connect",
+            "cowork_connect",
+        ],
+    ),
+    (
+        "browser",
+        &[
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_eval",
+            "browser_content",
+            "browser_screenshot",
+            "browser_wait",
+            "browser_find",
+            "browser_close",
+        ],
+    ),
+    (
+        "agents",
+        &[
+            "spawn_agent",
+            "wait_agent",
+            "send_input",
+            "close_agent",
+            "resume_agent",
+        ],
+    ),
+    ("media", &["generate_image", "provider_vision"]),
+    (
+        "documents",
+        &["generate_document", "parse_document", "pdf_to_images"],
+    ),
+    (
+        "system",
+        &[
+            "self_improve",
+            "rebuild",
+            "evolve",
+            "tool_manage",
+            "feedback_analyze",
+            "feedback_record",
+        ],
+    ),
+    (
+        "utility",
+        &[
+            "cron_manage",
+            "goal_manage",
+            "session_search",
+            "channel_search",
+            "mission_control_report",
+            "a2a_send",
+            "execute_code",
+            "notebook_edit",
+            "web_scrape",
+        ],
+    ),
+];
+
+/// Render the flat tool inventory block (#448): the built-in extended tool
+/// names grouped by area, names only. Appended after `LAZY_TOOLS_PROMPT` so the
+/// model has a concrete roster to `tool_search` against instead of guessing a
+/// tool is absent.
+pub fn tool_inventory_prompt() -> String {
+    let mut out = String::from(
+        "\nAVAILABLE EXTENDED TOOLS — you have these too, their schemas just aren't loaded yet. \
+         Pick the name and `tool_search` it to activate; NEVER claim one of these is missing \
+         without searching first:\n",
+    );
+    for (category, names) in EXTENDED_TOOL_INVENTORY {
+        out.push_str("  ");
+        out.push_str(category);
+        out.push_str(": ");
+        out.push_str(&names.join(", "));
+        out.push('\n');
+    }
+    out.push_str(
+        "Plus any project dynamic tools (tools.toml) and skills listed under \
+         \"Available Commands & Skills\". Names only here — `tool_search` returns the schema.\n",
+    );
+    out
+}
+
+/// The full tool-access system-prompt section: the `LAZY_TOOLS_PROMPT` guidance
+/// followed by the flat inventory (#448/#449). Single source for every prompt
+/// assembly site (TUI startup, CLI, and the live brain rebuild) so the guidance
+/// and the roster never drift apart.
+pub fn tool_access_prompt() -> String {
+    format!("{LAZY_TOOLS_PROMPT}{}", tool_inventory_prompt())
+}
+
 /// Built-in tools the RSI must never tell the agent to avoid/ban/stop using.
 ///
 /// Banning a built-in removes capability rather than fixing anything, and these
@@ -111,7 +234,7 @@ pub fn is_protected_builtin(name: &str) -> bool {
                 | "tool_manage"
                 | "execute_code"
                 | "notebook_edit"
-                | "doc_parser"
+                | "parse_document"
                 | "pdf_to_images"
                 | "browser_navigate"
                 | "browser_click"

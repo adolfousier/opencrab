@@ -15,6 +15,9 @@ fn protected_builtins_include_the_reported_tools() {
     assert!(is_protected_builtin("telegram_send"));
     assert!(is_protected_builtin("bash"));
     assert!(is_protected_builtin("browser_navigate"));
+    // The doc parser registers as "parse_document"; the guard listed the wrong
+    // name ("doc_parser") so it wasn't actually protected. Lock the real name.
+    assert!(is_protected_builtin("parse_document"));
 }
 
 #[test]

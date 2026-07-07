@@ -66,6 +66,59 @@ fn catalog_splits_core_from_extended() {
 }
 
 #[test]
+fn tool_inventory_names_are_extended_not_core() {
+    // The flat inventory (#448) advertises tools whose schemas are withheld
+    // until tool_search activates them. Listing a CORE tool there would be
+    // wrong (core schemas already ship), and a duplicate name is copy-paste
+    // drift. Both are cheap mistakes this guards against.
+    let mut seen = std::collections::HashSet::new();
+    for (category, names) in catalog::EXTENDED_TOOL_INVENTORY {
+        assert!(!names.is_empty(), "inventory group '{category}' is empty");
+        for name in *names {
+            assert!(
+                !catalog::is_core(name),
+                "inventory lists core tool '{name}' under '{category}' — core schemas already ship, it must not be advertised for tool_search"
+            );
+            assert!(
+                seen.insert(*name),
+                "'{name}' appears twice in the tool inventory"
+            );
+        }
+    }
+}
+
+#[test]
+fn tool_access_prompt_pairs_directive_with_roster() {
+    // #449: the behavioural nudge only works if the tool_search directive AND a
+    // concrete roster reach the model together. Pin that the assembled section
+    // carries both, so a formatter/wiring regression can't silently drop either.
+    let prompt = catalog::tool_access_prompt();
+    assert!(
+        prompt.contains("tool_search"),
+        "tool-access prompt must keep the tool_search directive"
+    );
+    assert!(
+        prompt.contains("AVAILABLE EXTENDED TOOLS"),
+        "tool-access prompt must include the flat inventory header"
+    );
+    // A representative name from several groups must render, proving the
+    // inventory formatter walked the whole const, not just the first group.
+    for name in [
+        "telegram_send",
+        "browser_navigate",
+        "spawn_agent",
+        "generate_document",
+        "cron_manage",
+        "self_improve",
+    ] {
+        assert!(
+            prompt.contains(name),
+            "tool-access prompt is missing '{name}' from the inventory"
+        );
+    }
+}
+
+#[test]
 fn filtered_definitions_include_core_and_active_only() {
     let reg = registry_with(&[
         ("bash", "run a shell command"),
