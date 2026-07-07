@@ -166,7 +166,7 @@ impl Tool for GenerateDocumentTool {
                 },
                 "style": {
                     "type": "object",
-                    "description": "Visual styling, interpreted per format. All fields optional. PDF: accent_color, text_color, page_header{text,logo_path}, page_footer{text,page_numbers}, zebra_rows. XLSX: header_fill, header_font_color, zebra_rows, freeze_header, autofilter, tab_color (hex colors); per-sheet column_formats on each sheet. DOCX: accent_color (heading color), page_header, page_footer, table_header_fill, zebra_rows. PPTX: template_path (existing .pptx whose master/branding the slides inherit; best branding lever), accent_color (title color), per-slide layout index. Use when the user wants polished or branded output.",
+                    "description": "Visual styling, interpreted per format. All fields optional. PDF: accent_color, text_color, page_header{text,logo_path}, page_footer{text,page_numbers}, zebra_rows, orientation (portrait/landscape, default portrait), page_size{width_mm,height_mm} (custom dimensions; takes precedence over orientation). XLSX: header_fill, header_font_color, zebra_rows, freeze_header, autofilter, tab_color (hex colors); per-sheet column_formats on each sheet. DOCX: accent_color (heading color), page_header, page_footer, table_header_fill, zebra_rows. PPTX: template_path (existing .pptx whose master/branding the slides inherit; best branding lever), accent_color (title color), per-slide layout index. Use when the user wants polished or branded output.",
                     "properties": {
                         "accent_color": {"type": "string", "description": "Hex color (\"#0A84FF\") for headings, H1 underline bar, and table header separator."},
                         "text_color": {"type": "string", "description": "Hex color for body text (default near-black)."},
@@ -184,7 +184,21 @@ impl Tool for GenerateDocumentTool {
                                 "page_numbers": {"type": "boolean", "description": "Render \"Page N of M\" bottom-right."}
                             }
                         },
-                        "zebra_rows": {"type": "boolean", "description": "Alternating light fills behind table rows."}
+                        "zebra_rows": {"type": "boolean", "description": "Alternating light fills behind table rows."},
+                        "orientation": {
+                            "type": "string",
+                            "enum": ["portrait", "landscape"],
+                            "description": "Page orientation for PDF output (default portrait). Ignored when page_size is set."
+                        },
+                        "page_size": {
+                            "type": "object",
+                            "description": "Custom page dimensions in mm for PDF output (takes precedence over orientation).",
+                            "properties": {
+                                "width_mm": {"type": "number", "minimum": 100, "description": "Page width in millimeters."},
+                                "height_mm": {"type": "number", "minimum": 100, "description": "Page height in millimeters."}
+                            },
+                            "required": ["width_mm", "height_mm"]
+                        }
                     }
                 },
                 "slides": {

@@ -43,6 +43,23 @@ const MAX_COL_SHARE: f32 = 0.45;
 /// collapses below a readable sliver.
 const MIN_COL_MM: f32 = 8.0;
 
+/// Page orientation for PDF output (#438). Defaults to portrait.
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Orientation {
+    Landscape,
+    #[default]
+    Portrait,
+}
+
+/// Custom page dimensions in millimeters (#438). When set, takes precedence
+/// over `orientation` (the dimensions already define the shape).
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct PageSizeSpec {
+    pub width_mm: f32,
+    pub height_mm: f32,
+}
+
 /// Optional visual styling for a generated PDF (#362). Everything defaults
 /// to the plain look, so documents without a style render exactly as before.
 #[derive(Debug, Default, Deserialize)]
@@ -59,6 +76,29 @@ pub(crate) struct StyleSpec {
     /// Alternating light fills behind table data rows.
     #[serde(default)]
     pub zebra_rows: bool,
+    /// Page orientation shortcut (#438). Ignored when `page_size` is set.
+    #[serde(default)]
+    pub orientation: Orientation,
+    /// Custom page dimensions (#438). Takes precedence over `orientation`.
+    pub page_size: Option<PageSizeSpec>,
+}
+
+/// Resolve the effective page dimensions (width, height) in mm. `page_size`
+/// wins over `orientation`; when neither is set the result is A4 portrait.
+/// Dimensions are floored to 100mm to reject unusably tiny pages.
+fn effective_dims(style: &StyleSpec) -> (f32, f32) {
+    if let Some(ref ps) = style.page_size {
+        let w = ps.width_mm.max(100.0);
+        let h = ps.height_mm.max(100.0);
+        if style.orientation == Orientation::Landscape {
+            tracing::debug!("generate_document: page_size set — ignoring orientation landscape");
+        }
+        return (w, h);
+    }
+    match style.orientation {
+        Orientation::Landscape => (PAGE_H_MM, PAGE_W_MM),
+        Orientation::Portrait => (PAGE_W_MM, PAGE_H_MM),
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -402,7 +442,8 @@ pub(crate) fn layout(
     ascii_only: bool,
 ) -> Result<Vec<LayoutItem>, Box<dyn std::error::Error + Send + Sync>> {
     let accent_set = style.accent_color.as_deref().and_then(parse_hex).is_some();
-    let body_width = PAGE_W_MM - 2.0 * MARGIN_MM;
+    let (page_w, _) = effective_dims(style);
+    let body_width = page_w - 2.0 * MARGIN_MM;
     let mut items: Vec<LayoutItem> = Vec::new();
     for block in blocks {
         match block {
@@ -691,12 +732,13 @@ fn furniture_ops(
     page_total: usize,
 ) -> Vec<Op> {
     let mut ops = Vec::new();
+    let (page_w, page_h) = effective_dims(style);
     let has_header_content = style
         .page_header
         .as_ref()
         .is_some_and(|h| h.text.is_some() || h.logo_path.is_some());
     if has_header_content {
-        let y = PAGE_H_MM - 12.0;
+        let y = page_h - 12.0;
         let mut text_x = MARGIN_MM;
         if let Some(logo) = logo {
             // Bottom-align the logo band with the header text baseline.
@@ -713,7 +755,7 @@ fn furniture_ops(
         }
         ops.extend(rule_ops(
             MARGIN_MM,
-            PAGE_W_MM - MARGIN_MM,
+            page_w - MARGIN_MM,
             y - 2.0,
             palette.accent,
             0.8,
@@ -742,7 +784,7 @@ fn furniture_ops(
         let y = 11.0;
         ops.extend(rule_ops(
             MARGIN_MM,
-            PAGE_W_MM - MARGIN_MM,
+            page_w - MARGIN_MM,
             y + 4.0,
             (0.75, 0.75, 0.75),
             0.4,
@@ -768,7 +810,7 @@ fn furniture_ops(
         }
         if footer.page_numbers {
             let label = format!("Page {page_no} of {page_total}");
-            let x = PAGE_W_MM - MARGIN_MM - est_width_mm(&label, 8.0, false);
+            let x = page_w - MARGIN_MM - est_width_mm(&label, 8.0, false);
             ops.extend([
                 Op::StartTextSection,
                 Op::SetTextCursor {
@@ -808,10 +850,11 @@ pub(crate) fn write_pdf(
         .as_ref()
         .is_some_and(|h| h.text.is_some() || h.logo_path.is_some());
     let has_footer = style.page_footer.is_some();
+    let (page_w, page_h) = effective_dims(style);
     let content_top = if has_header {
-        PAGE_H_MM - MARGIN_MM - 6.0
+        page_h - MARGIN_MM - 6.0
     } else {
-        PAGE_H_MM - MARGIN_MM
+        page_h - MARGIN_MM
     };
     let content_bottom = if has_footer {
         MARGIN_MM - 2.0 + 8.0
@@ -918,7 +961,7 @@ pub(crate) fn write_pdf(
                 if bottom > content_bottom {
                     ops.extend(fill_rect_ops(
                         MARGIN_MM - 1.0,
-                        PAGE_W_MM - MARGIN_MM + 1.0,
+                        page_w - MARGIN_MM + 1.0,
                         top,
                         bottom,
                     ));
@@ -967,7 +1010,7 @@ pub(crate) fn write_pdf(
         .map(|(i, mut content)| {
             let mut all = furniture_ops(style, &palette, &faces, logo.as_ref(), i + 1, page_total);
             all.append(&mut content);
-            PdfPage::new(Mm(PAGE_W_MM), Mm(PAGE_H_MM), all)
+            PdfPage::new(Mm(page_w), Mm(page_h), all)
         })
         .collect();
 
