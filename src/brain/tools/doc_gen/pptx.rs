@@ -32,6 +32,10 @@ pub(crate) struct PptxStyle {
     /// Hex color ("#0A84FF") applied to slide titles when no template
     /// carries brand styling.
     pub accent_color: Option<String>,
+    /// Slide dimensions (#441): a preset string ("16:9", "4:3", "square")
+    /// or an object {width_inches, height_inches}. Ignored when
+    /// template_path is set (template dims inherited).
+    pub slide_size: Option<serde_json::Value>,
 }
 
 /// Validate "#RRGGBB"; invalid colors are dropped (with a log) so a typo
@@ -57,6 +61,22 @@ from pptx.dml.color import RGBColor
 spec = json.load(sys.stdin)
 tpl = spec.get("template")
 prs = Presentation(tpl) if tpl else Presentation()
+slide_size = spec.get("slide_size")
+if slide_size and not tpl:
+    _PRESETS = {
+        "16:9": (12192000, 6858000),
+        "4:3": (9144000, 6858000),
+        "square": (9144000, 9144000),
+    }
+    if isinstance(slide_size, str):
+        w, h = _PRESETS.get(slide_size, (12192000, 6858000))
+    elif isinstance(slide_size, dict):
+        w = int(slide_size.get("width_inches", 13.33) * 914400)
+        h = int(slide_size.get("height_inches", 7.5) * 914400)
+    else:
+        w, h = 12192000, 6858000
+    prs.slide_width = w
+    prs.slide_height = h
 accent = spec.get("accent")
 
 def hex_rgb(h):
@@ -124,6 +144,7 @@ pub(crate) async fn write_deck(
         "slides": slides,
         "template": template,
         "accent": accent,
+        "slide_size": style.slide_size,
     })
     .to_string();
 
