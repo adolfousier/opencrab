@@ -4361,7 +4361,15 @@ pub(crate) async fn handle_message(
             // Reaction directive: if the LLM included <<react:emoji>>, send
             // a reaction on the user's message. For reaction-only responses
             // (empty text after stripping the directive), skip all text/TTS
-            // delivery and just react.
+            // delivery and just react — but ONLY when the turn did no tool
+            // work (#439): a turn that executed tools and ended with a bare
+            // reaction dropped its whole completion (issues were closed and
+            // commented, the user saw only 🔥). For a work turn, empty final
+            // text is a failure mode, never a deliberate ack.
+            let turn_ran_tools = {
+                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                !s.tool_msgs.is_empty()
+            };
             if let Some(ref emoji) = react_emoji {
                 let mapped = map_to_allowed_reaction(emoji);
                 let reaction = teloxide::types::ReactionType::Emoji {
@@ -4374,6 +4382,37 @@ pub(crate) async fn handle_message(
                     .await;
                 if let Err(ref e) = react_result {
                     tracing::warn!("Telegram: failed to set reaction ({mapped}): {}", e);
+                }
+                if text_only.trim().is_empty() && turn_ran_tools {
+                    // Work turn with no completion text (#439): the model
+                    // replaced its summary with a reaction. Deliver a
+                    // fallback completion so the work is reported — the
+                    // reaction already landed above.
+                    tracing::warn!(
+                        "Telegram: turn executed tools but produced no completion text — \
+                         delivering fallback summary instead of reaction-only skip (#439)"
+                    );
+                    let fallback = {
+                        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                        let done = s
+                            .tool_msgs
+                            .iter()
+                            .filter(|t| t.completed == Some(true))
+                            .count();
+                        format!(
+                            "Done — {done}/{} tool calls completed. (The model ended the turn \
+                             without a summary; see the log above for what ran.)",
+                            s.tool_msgs.len()
+                        )
+                    };
+                    if let Err(e) = message_in_thread(&bot, msg.chat.id, thread_id, &fallback).await
+                    {
+                        tracing::error!("Telegram: fallback completion send failed: {}", e);
+                    }
+                    if let Some(mid) = streaming_msg_id {
+                        let _ = bot.delete_message(msg.chat.id, mid).await;
+                    }
+                    return Ok(());
                 }
                 if text_only.trim().is_empty() {
                     // Never-silent guard (#353): a reaction-only turn whose

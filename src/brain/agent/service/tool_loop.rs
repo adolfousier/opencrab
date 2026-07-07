@@ -940,6 +940,10 @@ impl AgentService {
         // text-completion path takes over and a one-line "Done." is
         // the user-visible behaviour.
         let mut analysis_nudge_used: bool = false;
+        // One-shot nudge when a work turn closes with ONLY a <<react:emoji>>
+        // directive and no completion text (#439): the reaction is an ack
+        // for no-op turns, never a substitute for reporting executed work.
+        let mut reaction_only_nudge_used: bool = false;
         let mut total_input_tokens = 0u32;
         let mut total_output_tokens = 0u32;
         let mut total_cache_creation = 0u32;
@@ -4186,6 +4190,47 @@ impl AgentService {
                     // when a channel handler supplied one (the
                     // `[Channel: ...]` prefix would otherwise pin
                     // every match to the wrapper, not the body).
+                    // Reaction-replaced-completion nudge (#439): the final
+                    // text is ONLY a <<react:emoji>> directive while tool
+                    // calls ran this turn. The reaction survives; the model
+                    // is asked once to also write the completion it owes.
+                    // Unlike the analysis nudge below this is intent-blind:
+                    // ANY work turn must report what it did.
+                    if !reaction_only_nudge_used
+                        && tool_calls_completed_this_turn > 0
+                        && !iteration_text.trim().is_empty()
+                        && {
+                            let (rest, emoji) = crate::utils::extract_react_marker(&iteration_text);
+                            emoji.is_some() && rest.trim().is_empty()
+                        }
+                    {
+                        reaction_only_nudge_used = true;
+                        tracing::warn!(
+                            target: "reaction_only_close",
+                            tools_completed = tool_calls_completed_this_turn,
+                            iteration,
+                            "work turn closed with a bare react directive — nudging once \
+                             for the completion summary (#439)"
+                        );
+                        self.record_provider_feedback(
+                            session_id,
+                            "reaction_only_close",
+                            "self_heal",
+                            Some(&format!(
+                                "iteration={iteration}, tools_completed={tool_calls_completed_this_turn}"
+                            )),
+                        );
+                        context.add_message(Message::user(
+                            "[System: You executed tool calls this turn but your final reply \
+                             was ONLY a reaction directive. A reaction never replaces the \
+                             completion for work you performed. Keep the reaction, and now \
+                             write the short completion message reporting what you did \
+                             (what ran, what changed, results). Do NOT run more tool calls.]"
+                                .to_string(),
+                        ));
+                        continue;
+                    }
+
                     let user_text_for_intent =
                         display_text_override.as_deref().unwrap_or(&user_message);
                     if !analysis_nudge_used

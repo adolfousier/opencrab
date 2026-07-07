@@ -360,10 +360,23 @@ impl TelegramState {
     pub async fn store_cancel_token(&self, session_id: Uuid, token: CancellationToken) {
         let mut tokens = self.cancel_tokens.lock().await;
         if let Some(old) = tokens.remove(&session_id) {
-            tracing::warn!(
-                "Telegram: cancelling previous in-flight agent call for session {}",
-                session_id
-            );
+            // A completed turn's token stays in the map (remove_cancel_token
+            // keeps non-cancelled tokens), so most entries found here are
+            // stale leftovers of turns that finished normally. Only a turn
+            // that is still ACTIVE is a genuine mid-flight kill worth a
+            // warning (#439: the stale-token warn made a routine next
+            // message look like the running task had been cancelled).
+            if self.is_turn_active(session_id) {
+                tracing::warn!(
+                    "Telegram: cancelling previous in-flight agent call for session {}",
+                    session_id
+                );
+            } else {
+                tracing::debug!(
+                    "Telegram: clearing stale cancel token of a completed turn for session {}",
+                    session_id
+                );
+            }
             old.cancel();
         }
         tokens.insert(session_id, token);
