@@ -2011,13 +2011,24 @@ pub(crate) async fn handle_message(
                     bot_username,
                 );
 
-                if !mentioned_by_username && !replied_to_bot {
-                    tracing::info!(
-                        "Telegram: group msg not directed at bot — {} in \"{}\" said: {}",
-                        user.first_name,
-                        chat_title,
-                        truncate_str(text_content, 80),
-                    );
+                // A mention from ANOTHER bot must never trigger us in
+                // mention-only mode: it is not a human asking for the bot, and
+                // letting it through invites bot-to-bot loops (#447). Treat a
+                // bot sender exactly like an un-directed message — store, stop.
+                if user.is_bot || (!mentioned_by_username && !replied_to_bot) {
+                    if user.is_bot {
+                        tracing::info!(
+                            "Telegram: mention from bot @{} suppressed in mention-only mode (#447)",
+                            user.username.as_deref().unwrap_or("?"),
+                        );
+                    } else {
+                        tracing::info!(
+                            "Telegram: group msg not directed at bot — {} in \"{}\" said: {}",
+                            user.first_name,
+                            chat_title,
+                            truncate_str(text_content, 80),
+                        );
+                    }
                     let text = text_content.to_string();
                     let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
                     let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
@@ -2073,13 +2084,23 @@ pub(crate) async fn handle_message(
                         replied_to_bot,
                     );
 
-                    if !mentioned_by_username && !replied_to_bot {
-                        tracing::info!(
-                            "Telegram: auto mention-only — {} in \"{}\" said: {}",
-                            user.first_name,
-                            chat_title,
-                            truncate_str(text_content, 80),
-                        );
+                    // Same bot-sender suppression as mention-only mode (#447):
+                    // once the chat is in mention-required territory, a mention
+                    // from another bot must not trigger a response.
+                    if user.is_bot || (!mentioned_by_username && !replied_to_bot) {
+                        if user.is_bot {
+                            tracing::info!(
+                                "Telegram: auto mention-only — mention from bot @{} suppressed (#447)",
+                                user.username.as_deref().unwrap_or("?"),
+                            );
+                        } else {
+                            tracing::info!(
+                                "Telegram: auto mention-only — {} in \"{}\" said: {}",
+                                user.first_name,
+                                chat_title,
+                                truncate_str(text_content, 80),
+                            );
+                        }
                         let text = text_content.to_string();
                         let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
                         let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment
