@@ -379,7 +379,7 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
         None,
     );
     // Collapsed by default: plain <details>, never <details open>.
-    assert!(out.starts_with("<details><summary><b>2 tool calls</b> ↳ "));
+    assert!(out.starts_with("<details><summary><sub><b>2 tool calls</b></sub></summary>"));
     assert!(out.ends_with("</details>"));
     assert!(!out.contains("<details open"));
     // Each entry is its own <p>: the rich HTML parser ignores raw newlines,
@@ -389,7 +389,7 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
 }
 
 #[test]
-fn details_summary_carries_live_status_and_latest_preview() {
+fn details_summary_carries_live_status() {
     let out = render_flow_details(
         &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
         Some("grep · 10s"),
@@ -397,9 +397,11 @@ fn details_summary_carries_live_status_and_latest_preview() {
     let summary_end = out.find("</summary>").expect("summary");
     let summary = &out[..summary_end];
     assert!(summary.contains("⚙️ 2 tool calls · grep · 10s"));
-    // Latest-activity preview (#405) rides in the summary so the COLLAPSED
-    // block shows what is happening now.
-    assert!(summary.contains("↳ ⚙️ grep pattern"));
+    // Summary is wrapped in <sub> for visual de-emphasis (#436).
+    assert!(summary.contains("<sub><b>⚙️ 2 tool calls · grep · 10s</b></sub>"));
+    // Latest-activity preview removed from summary (#436) - body already shows
+    // every entry, so the preview only duplicated content visible immediately below.
+    assert!(!summary.contains("↳"));
 }
 
 #[test]

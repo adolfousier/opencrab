@@ -315,9 +315,6 @@ pub(crate) fn render_flow_details(lines: &[FlowLine], live_status: Option<&str>)
     if let Some(st) = live_status {
         header = format!("⚙️ {} · {}", header, st);
     }
-    let latest = latest_activity_preview(lines)
-        .map(|l| format!(" ↳ {}", escape_html(&l)))
-        .unwrap_or_default();
     // The rich HTML input mode is a real HTML parser: raw newlines are
     // ignored (unlike the classic Bot API HTML path), so each entry must be
     // its own block-level element or the whole log runs together as one
@@ -325,8 +322,8 @@ pub(crate) fn render_flow_details(lines: &[FlowLine], live_status: Option<&str>)
     // classic blockquote gets from blank lines.
     let body: String = out.iter().map(|e| format!("<p>{e}</p>")).collect();
     format!(
-        "<details><summary><b>{}</b>{}</summary>{}</details>",
-        header, latest, body
+        "<details><summary><sub><b>{}</b></sub></summary>{}</details>",
+        header, body
     )
 }
 
