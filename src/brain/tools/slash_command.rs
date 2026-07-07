@@ -136,7 +136,15 @@ impl SlashCommandTool {
         if health_state.providers.is_empty() {
             lines.push("  (no data yet)".to_string());
         } else {
+            // Only show providers that have successfully handled at least one
+            // request (last_success) or are currently configured with a key.
+            // Keyless config stubs never make API calls so they never get here,
+            // but this filter also hides stale entries from providers whose
+            // keys were later removed.
             for (name, h) in &health_state.providers {
+                if h.last_success.is_none() {
+                    continue;
+                }
                 let status = if h.consecutive_failures > 0 {
                     format!("FAILING ({}x)", h.consecutive_failures)
                 } else {

@@ -409,8 +409,8 @@ pub async fn create_provider_with_warning(
                 break;
             }
             Ok(None) => {
-                tracing::warn!(
-                    "{} enabled but could not be created (missing API key?)",
+                tracing::debug!(
+                    "{} enabled but has no API key — skipping (not actionable, expected on fresh installs with config stubs)",
                     reg.display_name
                 );
                 if failed_name.is_none() {
