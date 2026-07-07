@@ -152,6 +152,18 @@ async fn spawn_cron_scheduler_for_profile(profile_name: String) {
     let name = profile_name.clone();
     let result: anyhow::Result<()> =
         crate::config::profile::with_profile_home_async(Some(&profile_name), async move {
+            // One scheduler per profile machine-wide (#444). If another process
+            // (a `-p <name>` daemon, or the TUI running this profile) already
+            // owns this profile's scheduler, skip — polling the same cron_jobs
+            // table from two schedulers double-fires every due job. The guard is
+            // held across `run()` below (loops forever), released on exit/crash.
+            let Some(_scheduler_lock) = crate::config::profile::acquire_scheduler_lock(&name)
+            else {
+                tracing::info!(
+                    "Multi-profile daemon: scheduler for '{name}' already running elsewhere — skipping"
+                );
+                return Ok(());
+            };
             let config = crate::config::Config::load()?;
             let db = Database::connect(&config.database.path).await?;
             db.run_migrations().await?;
@@ -1313,8 +1325,17 @@ async fn cmd_chat_inner(
         app.resume_session_id = Some(uuid);
     }
 
-    // Spawn cron scheduler — polls every 60s, executes jobs in the user's active session
-    {
+    // Spawn cron scheduler — polls every 60s, executes jobs in the user's active session.
+    // One scheduler per profile machine-wide (#444): if another process (e.g. a
+    // multi-profile `daemon` that also covers this profile) already owns the
+    // scheduler, don't spawn a second or every due job double-fires. The guard
+    // is bound at function scope so it lives for the whole session; the OS
+    // releases it on process exit.
+    let active_profile = crate::config::profile::active_profile()
+        .unwrap_or("default")
+        .to_string();
+    let _scheduler_lock = crate::config::profile::acquire_scheduler_lock(&active_profile);
+    if _scheduler_lock.is_some() {
         let cron_repo = crate::db::CronJobRepository::new(db.pool().clone());
         let cron_run_repo = crate::db::CronJobRunRepository::new(db.pool().clone());
         // Rebuild outcomes must reach the session that asked (#304): a
@@ -1340,6 +1361,10 @@ async fn cmd_chat_inner(
         // Detached task; the JoinHandle isn't awaited or aborted anywhere.
         cron_scheduler.spawn();
         tracing::info!("Cron scheduler spawned");
+    } else {
+        tracing::info!(
+            "Cron scheduler for '{active_profile}' already running elsewhere — not spawning a second"
+        );
     }
 
     // Spawn A2A gateway if configured

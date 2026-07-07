@@ -727,6 +727,94 @@ pub fn hash_token(token: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// RAII guard proving this process owns cron scheduling for one profile (#444).
+///
+/// While the guard is alive, no other process can spawn a scheduler for the
+/// same profile — the multi-profile `daemon`, a `-p <profile>` daemon, and the
+/// TUI all contend on one lock file, so a profile's `cron_jobs` table is polled
+/// by exactly one scheduler machine-wide. Without it, two daemons that both
+/// cover the same profile double-fired every due job.
+///
+/// The lock is an advisory `flock` on an open file. The kernel releases it when
+/// the file descriptor closes — on an explicit drop OR on process death — so a
+/// crashed daemon never wedges a profile's scheduling.
+pub struct SchedulerLock {
+    // Holding the File keeps the flock; nothing reads this field, it exists to
+    // tie the lock's lifetime to the guard's.
+    _file: fs::File,
+}
+
+/// Try to take the cron scheduler lock for `profile`. `Some` means this process
+/// now owns scheduling for the profile; `None` means another live process holds
+/// it and the caller must NOT spawn a scheduler (it would double-fire jobs).
+///
+/// Lives in the GLOBAL locks dir under a profile-keyed name so the path is the
+/// same regardless of any task-local profile-home scope the caller runs inside.
+pub fn acquire_scheduler_lock(profile: &str) -> Option<SchedulerLock> {
+    acquire_scheduler_lock_in(
+        &base_opencrabs_dir().join("locks").join("scheduler"),
+        profile,
+    )
+}
+
+/// Dir-injectable core of [`acquire_scheduler_lock`] so tests can point at a
+/// TempDir instead of the real `~/.opencrabs/locks/` (running it against the
+/// real dir is fine here — no SIGTERM like preemption — but a TempDir keeps
+/// tests hermetic and parallel-safe).
+pub(crate) fn acquire_scheduler_lock_in(lock_dir: &Path, profile: &str) -> Option<SchedulerLock> {
+    if let Err(e) = fs::create_dir_all(lock_dir) {
+        tracing::warn!(
+            "scheduler lock: cannot create {}: {e} — not spawning scheduler",
+            lock_dir.display()
+        );
+        return None;
+    }
+    let path = lock_dir.join(format!("{profile}.lock"));
+    let file = match fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(
+                "scheduler lock: cannot open {}: {e} — not spawning scheduler",
+                path.display()
+            );
+            return None;
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        // Non-blocking exclusive lock. EWOULDBLOCK means another live process
+        // already owns this profile's scheduler; any other error we also treat
+        // as "held" and skip, since spawning on an uncertain lock risks the
+        // double-fire this guard exists to prevent.
+        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if ret != 0 {
+            return None;
+        }
+    }
+
+    // Stamp the owner PID for observability (`cat` the lock file to see who
+    // holds it). The flock, not this write, is the real guard, so a torn write
+    // is harmless.
+    {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = &file;
+        let _ = f.set_len(0);
+        let _ = f.seek(SeekFrom::Start(0));
+        if let Err(e) = write!(f, "{}", std::process::id()) {
+            tracing::debug!("scheduler lock: could not stamp PID into {path:?}: {e}");
+        }
+    }
+
+    Some(SchedulerLock { _file: file })
+}
+
 /// A live, OTHER instance of the active profile that was holding channel
 /// token locks when the interactive TUI started.
 #[derive(Debug, Clone, PartialEq, Eq)]

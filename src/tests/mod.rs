@@ -133,6 +133,7 @@ pub mod corrupted_tool_call_test;
 pub mod cowork_connect_test;
 pub mod cron_profile_isolation_test;
 pub mod cron_schedule_util_test;
+pub mod cron_scheduler_lock_test;
 pub mod cron_test;
 pub mod cron_tool_registry_test;
 pub mod cross_provider_model_leak_guard_test;
