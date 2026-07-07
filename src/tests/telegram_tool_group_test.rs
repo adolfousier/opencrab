@@ -9,8 +9,8 @@
 //! `render_flow_details` emits exactly that wrapper.
 
 use crate::channels::telegram::handler::{
-    FlowLine, folded_duplicates_final, humanize_elapsed, render_flow_details, render_flow_html,
-    render_flow_rich,
+    FlowLine, folded_duplicates_final, humanize_elapsed, humanize_elapsed_coarse,
+    render_flow_details, render_flow_html, render_flow_rich,
 };
 
 fn tline(label: &str, context: &str) -> FlowLine {
@@ -312,6 +312,19 @@ fn humanize_elapsed_snaps_to_five_second_steps() {
     assert_eq!(humanize_elapsed(61), "1m 0s");
     assert_eq!(humanize_elapsed(93), "1m 30s");
     assert_eq!(humanize_elapsed(3601), "60m 0s");
+}
+
+#[test]
+fn humanize_elapsed_coarse_changes_at_most_once_per_minute() {
+    // The open flow-block header uses coarse elapsed so a pure-timer edit
+    // collapses Desktop expansion at most once a minute, not every 5s (#452).
+    assert_eq!(humanize_elapsed_coarse(0), "<1m");
+    assert_eq!(humanize_elapsed_coarse(5), "<1m");
+    assert_eq!(humanize_elapsed_coarse(59), "<1m");
+    assert_eq!(humanize_elapsed_coarse(60), "1m");
+    assert_eq!(humanize_elapsed_coarse(119), "1m");
+    assert_eq!(humanize_elapsed_coarse(180), "3m");
+    assert_eq!(humanize_elapsed_coarse(3600), "60m");
 }
 
 // ── Rich API flow rendering tests (#393) ─────────────────────────────────────
