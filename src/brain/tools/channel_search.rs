@@ -40,8 +40,8 @@ impl Tool for ChannelSearchTool {
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["list_chats", "recent", "search"],
-                    "description": "'list_chats' to see known chats, 'recent' for last N messages, 'search' to find by content"
+                    "enum": ["list_chats", "recent", "search", "attachments"],
+                    "description": "'list_chats' to see known chats, 'recent' for last N messages, 'search' to find by content, 'attachments' to list stored files"
                 },
                 "channel": {
                     "type": "string",
@@ -50,7 +50,7 @@ impl Tool for ChannelSearchTool {
                 },
                 "chat_id": {
                     "type": "string",
-                    "description": "Chat/channel/group ID (required for 'recent', optional for 'search')"
+                    "description": "Chat/channel/group ID (required for 'recent' and 'attachments', optional for 'search')"
                 },
                 "query": {
                     "type": "string",
@@ -64,6 +64,11 @@ impl Tool for ChannelSearchTool {
                 "thread_id": {
                     "type": "string",
                     "description": "Filter by thread/topic ID (optional, for Telegram forum topics)"
+                },
+                "message_type": {
+                    "type": "string",
+                    "enum": ["text", "document", "photo", "video", "voice", "video_note", "animation"],
+                    "description": "Filter by message type (optional, for 'recent' and 'search')"
                 }
             },
             "required": ["operation"]
@@ -141,7 +146,7 @@ impl Tool for ChannelSearchTool {
 
                 let messages = self
                     .repo
-                    .recent(channel, chat_id, n, thread_id)
+                    .recent(channel, chat_id, n, thread_id, None)
                     .await
                     .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
 
@@ -233,8 +238,67 @@ impl Tool for ChannelSearchTool {
                 )))
             }
 
+            "attachments" => {
+                let chat_id = match input.get("chat_id").and_then(|v| v.as_str()) {
+                    Some(id) if !id.is_empty() => id,
+                    _ => {
+                        return Ok(ToolResult::error(
+                            "'chat_id' is required for 'attachments' operation.".to_string(),
+                        ));
+                    }
+                };
+
+                let thread_id = input.get("thread_id").and_then(|v| v.as_str());
+
+                let messages = self
+                    .repo
+                    .recent(channel, chat_id, n, thread_id, None)
+                    .await
+                    .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
+
+                // Filter to only attachment types
+                let attachments: Vec<_> = messages
+                    .iter()
+                    .filter(|m| {
+                        matches!(
+                            m.message_type.as_str(),
+                            "document" | "photo" | "video" | "voice" | "video_note" | "animation"
+                        )
+                    })
+                    .collect();
+
+                if attachments.is_empty() {
+                    return Ok(ToolResult::success(format!(
+                        "No attachments found in chat {chat_id}."
+                    )));
+                }
+
+                let lines: Vec<String> = attachments
+                    .iter()
+                    .map(|m| {
+                        let ts = m.created_at.format("%m-%d %H:%M");
+                        let topic = m
+                            .topic_name
+                            .as_deref()
+                            .map(|t| format!(" ({})", t))
+                            .unwrap_or_default();
+                        format!(
+                            "[{}] [{}]{} {}: {}",
+                            ts, m.message_type, topic, m.sender_name, m.content
+                        )
+                    })
+                    .collect();
+
+                Ok(ToolResult::success(format!(
+                    "Attachments in {} ({}):\n{}",
+                    chat_id,
+                    attachments.len(),
+                    lines.join("\n")
+                )))
+            }
+
             unknown => Ok(ToolResult::error(format!(
-                "Unknown operation '{unknown}'. Valid: list_chats, recent, search"
+                "Unknown operation '{unknown}'. Valid: list_chats, recent, search, attachments"
             ))),
         }
     }

@@ -37,7 +37,7 @@ pub async fn latest_thread_id_for_chat(chat_id: i64) -> Option<ThreadId> {
     let repo = crate::db::ChannelMessageRepository::new(pool.clone());
     let chat_id_str = chat_id.to_string();
     let rows = repo
-        .recent(Some("telegram"), &chat_id_str, 1, None)
+        .recent(Some("telegram"), &chat_id_str, 1, None, None)
         .await
         .ok()?;
     let row = rows.into_iter().next()?;

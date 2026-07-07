@@ -3611,7 +3611,7 @@ pub(crate) async fn handle_message(
         // (`t.0.to_string()`) so the filter matches what was persisted.
         let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
         match channel_msg_repo
-            .recent(Some("telegram"), &chat_id_str, 30, thread_id_str.as_deref())
+            .recent(Some("telegram"), &chat_id_str, 30, thread_id_str.as_deref(), None)
             .await
         {
             Ok(messages) if !messages.is_empty() => {

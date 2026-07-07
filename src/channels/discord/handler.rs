@@ -609,7 +609,7 @@ pub(crate) async fn handle_message(
     let agent_input = if msg.guild_id.is_some() {
         let chat_id_str = msg.channel_id.get().to_string();
         match channel_msg_repo
-            .recent(Some("discord"), &chat_id_str, 30, None)
+            .recent(Some("discord"), &chat_id_str, 30, None, None)
             .await
         {
             Ok(messages) if !messages.is_empty() => {
