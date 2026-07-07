@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
-    ChatAction, ChatKind, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId,
+    ChatAction, ChatKind, FileId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId,
     ParseMode, ReplyParameters,
 };
 
@@ -1693,8 +1693,10 @@ pub(crate) async fn handle_message(
         truncate_str(msg.text().or(msg.caption()).unwrap_or(""), 60),
     );
 
-    // Helper: passively capture a group message for channel history
-    let store_channel_msg = |text: String| {
+    // Helper: passively capture a group message for channel history.
+    // Accepts message_type (text/document/photo/video/voice) and optional file data.
+    // If file_data is Some, writes bytes to ~/.opencrabs/channel_attachments/ and stores the path.
+    let store_channel_msg = |text: String, message_type: String, file_data: Option<(Vec<u8>, String)>| {
         let repo = channel_msg_repo.clone();
         let channel_chat_id = msg.chat.id.0.to_string();
         let chat_name = chat_title.to_string();
@@ -1723,7 +1725,39 @@ pub(crate) async fn handle_message(
                     .map(|t| t.name.clone())
             });
         async move {
-            if text.is_empty() {
+            // If file data provided, write to disk and store path in content
+            let content = if let Some((bytes, filename)) = file_data {
+                let attachments_dir = dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join(".opencrabs")
+                    .join("channel_attachments");
+                if let Err(e) = std::fs::create_dir_all(&attachments_dir) {
+                    tracing::warn!("Failed to create attachments dir: {e}");
+                    text
+                } else {
+                    let file_id = uuid::Uuid::new_v4();
+                    let safe_filename = filename.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
+                    let file_path = attachments_dir.join(format!("{file_id}_{safe_filename}"));
+                    match std::fs::write(&file_path, bytes) {
+                        Ok(_) => {
+                            let path_str = file_path.to_string_lossy().to_string();
+                            if text.is_empty() {
+                                format!("[file: {path_str}]")
+                            } else {
+                                format!("{text}\n[file: {path_str}]")
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to write attachment: {e}");
+                            text
+                        }
+                    }
+                }
+            } else {
+                text
+            };
+
+            if content.is_empty() {
                 return;
             }
             let cm = DbChannelMessage::new(
@@ -1732,14 +1766,50 @@ pub(crate) async fn handle_message(
                 Some(chat_name),
                 sender_id,
                 sender_name,
-                text,
-                "text".into(),
+                content,
+                message_type,
                 Some(msg_id),
             )
             .with_thread(thread_id, topic_name);
             if let Err(e) = repo.insert(&cm).await {
                 tracing::warn!("Failed to store channel message: {e}");
             }
+        }
+    };
+
+    // Helper: download an attachment from a message for passive storage.
+    // Returns (message_type, bytes, filename) if the message has an attachment.
+    // This is used in early return paths to persist files even when the bot isn't mentioned.
+    // Extract file info before async block to avoid lifetime issues with message reference.
+    let download_attachment = |msg: &teloxide::types::Message, bot: &teloxide::Bot, token: Arc<String>| {
+        let bot = bot.clone();
+        
+        // Extract file info synchronously before async block
+        let file_info: Option<(FileId, String, String)> = if let Some(doc) = msg.document() {
+            let fname = doc.file_name.as_deref().unwrap_or("file").to_string();
+            Some((doc.file.id.clone(), "document".to_string(), fname))
+        } else if let Some(photo) = msg.photo().and_then(|p| p.last()) {
+            let fname = format!("photo_{}.jpg", photo.file.id);
+            Some((photo.file.id.clone(), "photo".to_string(), fname))
+        } else if let Some(video) = msg.video() {
+            let fname = video.file_name.as_deref().unwrap_or("video.mp4").to_string();
+            Some((video.file.id.clone(), "video".to_string(), fname))
+        } else if let Some(voice) = msg.voice() {
+            let fname = format!("voice_{}.ogg", voice.file.id);
+            Some((voice.file.id.clone(), "voice".to_string(), fname))
+        } else if let Some(video_note) = msg.video_note() {
+            let fname = format!("video_note_{}.mp4", video_note.file.id);
+            Some((video_note.file.id.clone(), "video_note".to_string(), fname))
+        } else {
+            None
+        };
+        
+        async move {
+            let (file_id, msg_type, fname) = file_info?;
+            let file = bot.get_file(file_id).await.ok()?;
+            let url = format!("https://api.telegram.org/file/bot{}/{}", token.as_str(), file.path);
+            let bytes = reqwest::get(&url).await.ok()?.bytes().await.ok()?.to_vec();
+            Some((msg_type, bytes, fname))
         }
     };
 
@@ -1752,7 +1822,14 @@ pub(crate) async fn handle_message(
                 "Telegram: dropping — chat {} not in allowed_channels",
                 chat_id_str
             );
-            store_channel_msg(msg.text().or(msg.caption()).unwrap_or("").to_string()).await;
+            let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
+            let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
+            let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
+                (mtype, Some((bytes, fname)))
+            } else {
+                ("text".to_string(), None)
+            };
+            store_channel_msg(text, msg_type, file_data).await;
             return Ok(());
         }
 
@@ -1769,7 +1846,14 @@ pub(crate) async fn handle_message(
                     chat_kind,
                     chat_title
                 );
-                store_channel_msg(msg.text().or(msg.caption()).unwrap_or("").to_string()).await;
+                let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
+                let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
+                let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
+                    (mtype, Some((bytes, fname)))
+                } else {
+                    ("text".to_string(), None)
+                };
+                store_channel_msg(text, msg_type, file_data).await;
                 return Ok(());
             }
             RespondTo::Mention => {
@@ -1803,7 +1887,14 @@ pub(crate) async fn handle_message(
                         chat_title,
                         truncate_str(text_content, 80),
                     );
-                    store_channel_msg(text_content.to_string()).await;
+                    let text = text_content.to_string();
+                    let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
+                    let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
+                        (mtype, Some((bytes, fname)))
+                    } else {
+                        ("text".to_string(), None)
+                    };
+                    store_channel_msg(text, msg_type, file_data).await;
                     return Ok(());
                 }
                 tracing::info!(
@@ -1858,7 +1949,14 @@ pub(crate) async fn handle_message(
                             chat_title,
                             truncate_str(text_content, 80),
                         );
-                        store_channel_msg(text_content.to_string()).await;
+                        let text = text_content.to_string();
+                        let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
+                        let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
+                            (mtype, Some((bytes, fname)))
+                        } else {
+                            ("text".to_string(), None)
+                        };
+                        store_channel_msg(text, msg_type, file_data).await;
                         return Ok(());
                     }
                 }
@@ -1868,7 +1966,7 @@ pub(crate) async fn handle_message(
 
     // Also store directed group messages for complete history
     if !is_dm {
-        store_channel_msg(msg.text().or(msg.caption()).unwrap_or("").to_string()).await;
+        store_channel_msg(msg.text().or(msg.caption()).unwrap_or("").to_string(), "text".into(), None).await;
     }
 
     // Pick up recent voice files from tmp (user sent audio then tagged bot)
@@ -2515,7 +2613,22 @@ pub(crate) async fn handle_message(
             String::new() // text was already logged above
         };
         if !log_content.is_empty() {
-            store_channel_msg(log_content).await;
+            let message_type = if log_content.starts_with("[voice]") {
+                "voice"
+            } else if log_content.starts_with("[photo]") {
+                "photo"
+            } else if log_content.starts_with("[video]") {
+                "video"
+            } else if log_content.starts_with("[animation]") {
+                "animation"
+            } else if log_content.starts_with("[video_note]") {
+                "video_note"
+            } else if log_content.starts_with("[document]") {
+                "document"
+            } else {
+                "text"
+            };
+            store_channel_msg(log_content, message_type.into(), None).await;
         }
     }
 
