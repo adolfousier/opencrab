@@ -79,11 +79,18 @@ pub async fn process_comment(
         // Non-owner sessions: persisted in DB by title — survives restarts.
         let session_title = format!("Trello: {}", commenter_name);
 
-        let existing = session_svc
-            .find_session_by_title(&session_title)
-            .await
-            .ok()
-            .flatten();
+        // A lookup ERROR is never no-session-found (#442): forking here
+        // orphans the commenter's history. Log and skip the event.
+        let existing = match session_svc.find_session_by_title(&session_title).await {
+            Ok(found) => found,
+            Err(e) => {
+                tracing::error!(
+                    "Trello: session lookup failed for '{session_title}': {e:#} — \
+                     skipping event, NOT creating a new session (#442)"
+                );
+                return;
+            }
+        };
 
         if let Some(session) = existing {
             if idle_timeout_hours.is_some_and(|h| {

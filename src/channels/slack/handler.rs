@@ -836,7 +836,19 @@ async fn handle_message(
         {
             Ok(id) => id,
             Err(e) => {
-                tracing::error!("Slack: failed to resolve session: {}", e);
+                tracing::error!("Slack: failed to resolve session: {e:#} (#442)");
+                let token =
+                    SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
+                let session = client.open_session(&token);
+                let request = SlackApiChatPostMessageRequest::new(
+                    SlackChannelId::new(channel_id.clone()),
+                    SlackMessageContent::new().with_text(format!(
+                        "⚠️ Could not load this chat's session ({e}). Your history is \
+                         intact and this message was NOT processed. Try again, or send \
+                         /new if you deliberately want a fresh session."
+                    )),
+                );
+                let _ = session.chat_post_message(&request).await;
                 return;
             }
         }
@@ -1087,12 +1099,22 @@ async fn handle_message(
                     .await
                 {
                     Ok(Some(s)) => Some(s),
-                    _ => state
+                    Ok(None) => state
                         .session_svc
                         .find_session_by_title(&legacy_title)
                         .await
-                        .ok()
-                        .flatten(),
+                        .unwrap_or_else(|e| {
+                            tracing::error!(
+                                "Slack: /new legacy prior-session lookup failed: {e:#}"
+                            );
+                            None
+                        }),
+                    Err(e) => {
+                        // /new means a fresh session IS the intent; the
+                        // failure is logged, never silent (#442).
+                        tracing::error!("Slack: /new prior-session lookup failed: {e:#}");
+                        None
+                    }
                 };
                 if !is_owner
                     && let Some(old) = prior_session.as_ref()

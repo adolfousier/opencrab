@@ -722,7 +722,16 @@ pub(crate) async fn handle_message(
         {
             Ok(id) => id,
             Err(e) => {
-                tracing::error!("WhatsApp: failed to resolve session: {}", e);
+                tracing::error!("WhatsApp: failed to resolve session: {e:#} (#442)");
+                let reply = waproto::whatsapp::Message {
+                    conversation: Some(format!(
+                        "⚠️ Could not load this chat's session ({e}). Your history is \
+                         intact and this message was NOT processed. Try again, or send \
+                         /new if you deliberately want a fresh session."
+                    )),
+                    ..Default::default()
+                };
+                let _ = client.send_message(reply_target.clone(), reply).await;
                 return;
             }
         }
@@ -792,8 +801,10 @@ pub(crate) async fn handle_message(
                 let prior_session = session_svc
                     .find_session_by_title(&session_title)
                     .await
-                    .ok()
-                    .flatten();
+                    .unwrap_or_else(|e| {
+                        tracing::error!("WhatsApp: /new prior-session lookup failed: {e:#}");
+                        None
+                    });
                 // Archive the previous session on /new, except for the owner —
                 // owner sessions stay non-archived so they remain visible in
                 // /sessions for history review. Guest sessions get archived

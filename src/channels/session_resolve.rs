@@ -60,14 +60,29 @@ pub async fn resolve_or_create_channel_session(
     idle_hours: Option<f64>,
     log_prefix: &str,
 ) -> Result<Uuid> {
+    // A lookup ERROR is never no-session-found (#442): treating it as None
+    // silently forks the chat onto a fresh session and orphans its history
+    // (an i32-unreadable row did exactly that). Propagate; the caller tells
+    // the user and skips the message.
     let mut existing = session_svc
         .find_session_by_title_suffix(suffix)
         .await
-        .ok()
-        .flatten();
+        .map_err(|e| e.context(format!("{log_prefix}: session lookup failed for {suffix}")))?;
 
+    let legacy_hit = if existing.is_none() {
+        session_svc
+            .find_session_by_title(legacy_title)
+            .await
+            .map_err(|e| {
+                e.context(format!(
+                    "{log_prefix}: legacy session lookup failed for '{legacy_title}'"
+                ))
+            })?
+    } else {
+        None
+    };
     if existing.is_none()
-        && let Ok(Some(legacy)) = session_svc.find_session_by_title(legacy_title).await
+        && let Some(legacy) = legacy_hit
     {
         tracing::info!(
             "{}: forward-migrating legacy session {} '{}' → '{}'",

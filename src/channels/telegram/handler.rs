@@ -2704,18 +2704,66 @@ pub(crate) async fn handle_message(
             // 2) Legacy fallback: pre-suffix sessions match the bare title.
             //    On hit we update the row to the new format so subsequent
             //    lookups go through the suffix path directly.
-            let mut existing = session_svc
+            // A lookup ERROR is never no-session-found (#442): swallowing it
+            // here forked a months-old group chat onto a brand-new session
+            // when a DB correction made the row unreadable to the running
+            // binary. Tell the user and skip the message — /new is theirs
+            // to send if they WANT a fresh session. No surprises.
+            let mut existing = match session_svc
                 .find_session_by_title_suffix(&chat_id_suffix)
                 .await
-                .ok()
-                .flatten();
+            {
+                Ok(found) => found,
+                Err(e) => {
+                    tracing::error!(
+                        "Telegram: session lookup failed for {chat_id_suffix}: {e:#} — \
+                         NOT creating a new session (#442)"
+                    );
+                    message_in_thread(
+                        &bot,
+                        msg.chat.id,
+                        thread_id,
+                        format!(
+                            "⚠️ Could not load this chat's session ({e}). Your history is \
+                             intact and this message was NOT processed. Try again, or send \
+                             /new if you deliberately want a fresh session."
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
 
             // Legacy fallback only for base (non-topic) chats: the pre-suffix
             // title format predates forum topics, so a topic message must never
             // adopt and rewrite the old shared row (#215).
+            let legacy_hit = if existing.is_none() && topic_id.is_none() {
+                match session_svc.find_session_by_title(&legacy_title).await {
+                    Ok(found) => found,
+                    Err(e) => {
+                        tracing::error!(
+                            "Telegram: legacy session lookup failed for '{legacy_title}': \
+                             {e:#} — NOT creating a new session (#442)"
+                        );
+                        message_in_thread(
+                            &bot,
+                            msg.chat.id,
+                            thread_id,
+                            format!(
+                                "⚠️ Could not load this chat's session ({e}). Your history \
+                                 is intact and this message was NOT processed. Try again, \
+                                 or send /new if you deliberately want a fresh session."
+                            ),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                None
+            };
             if existing.is_none()
-                && topic_id.is_none()
-                && let Ok(Some(legacy)) = session_svc.find_session_by_title(&legacy_title).await
+                && let Some(legacy) = legacy_hit
             {
                 tracing::info!(
                     "Telegram: forward-migrating legacy session {} '{}' → '{}'",
@@ -3005,8 +3053,15 @@ pub(crate) async fn handle_message(
                         chat_id, topic_id,
                     ))
                     .await
-                    .ok()
-                    .flatten();
+                    .unwrap_or_else(|e| {
+                        // /new means a fresh session IS the intent — creation
+                        // proceeds, but the lookup failure is never silent (#442).
+                        tracing::error!(
+                            "Telegram: /new prior-session lookup failed: {e:#} — \
+                             proceeding without wd inheritance"
+                        );
+                        None
+                    });
                 // Archive the previous session on /new, except for the owner —
                 // owner sessions stay non-archived so they remain visible in
                 // /sessions for history review. Guest sessions get archived
