@@ -19,6 +19,7 @@ use teloxide::types::{
     ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ReactionType,
     ReplyParameters, UserId,
 };
+use uuid::Uuid;
 
 /// Tool for comprehensive Telegram bot control (19 actions).
 pub struct TelegramSendTool {
@@ -98,16 +99,22 @@ pub(crate) async fn resolve_input_file(
 ///      agent route messages to a topic OTHER than the most recent
 ///      one (e.g. "post the release notes in #announcements even
 ///      though the last message came from #dev").
-///   2. Auto-lookup via `latest_thread_id_for_chat(chat_id)` — the
+///   2. Session origin topic via `session_topic(session_id)` — the
+///      forum topic this interaction started in, the same in-memory
+///      map `follow_up_question` routes through (#450). Makes replies
+///      land back in the originating topic with no explicit routing.
+///   3. Auto-lookup via `latest_thread_id_for_chat(chat_id)` — the
 ///      fallback that closed #130, picking up the most recently
 ///      stored topic so non-forum chats and routine replies still
 ///      land in the right place without the agent having to know.
 ///
-/// Returns `None` when neither path produces a value (non-forum
-/// chat, empty channel history, explicit value outside i32 range).
+/// Returns `None` when no path produces a value (non-forum chat, no
+/// session origin, empty channel history, explicit value outside i32 range).
 pub(crate) async fn resolve_thread_id(
     input: &Value,
     chat_id: i64,
+    session_id: Uuid,
+    state: &TelegramState,
 ) -> Option<teloxide::types::ThreadId> {
     if let Some(tid) = input.get("thread_id").and_then(|v| v.as_i64())
         && let Ok(tid_i32) = i32::try_from(tid)
@@ -115,6 +122,13 @@ pub(crate) async fn resolve_thread_id(
         return Some(teloxide::types::ThreadId(teloxide::types::MessageId(
             tid_i32,
         )));
+    }
+    // Session origin topic — the forum topic this interaction started in, the
+    // same in-memory map follow_up_question routes through (#450). This is why
+    // a reply sent from a topic lands back in that topic without the agent
+    // passing thread_id. Cold/cron sessions have no entry, so this is skipped.
+    if let Some(tid) = state.session_topic(session_id).await {
+        return Some(teloxide::types::ThreadId(teloxide::types::MessageId(tid)));
     }
     crate::channels::telegram::send::latest_thread_id_for_chat(chat_id).await
 }
@@ -164,8 +178,18 @@ async fn persist_outgoing(
     }
 }
 
-async fn chat_or_err(input: &Value, state: &TelegramState) -> std::result::Result<i64, ToolResult> {
+async fn chat_or_err(
+    input: &Value,
+    state: &TelegramState,
+    session_id: Uuid,
+) -> std::result::Result<i64, ToolResult> {
     if let Some(id) = input.get("chat_id").and_then(|v| v.as_i64()) {
+        return Ok(id);
+    }
+    // Session origin chat — where this interaction started, same map
+    // follow_up_question uses (#450). Falls through to owner_chat_id for
+    // cold/cron sessions that never bound a chat.
+    if let Some(id) = state.session_chat(session_id).await {
         return Ok(id);
     }
     match state.owner_chat_id().await {
@@ -302,7 +326,7 @@ impl Tool for TelegramSendTool {
         vec![ToolCapability::Network]
     }
 
-    async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
+    async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
         let action = match input.get("action").and_then(|v| v.as_str()) {
             Some(a) if !a.is_empty() => a.to_string(),
             _ => {
@@ -327,10 +351,13 @@ impl Tool for TelegramSendTool {
             // ── send ─────────────────────────────────────────────────────────
             "send" => {
                 let text = pget!(get_str(&input, "message")).to_string();
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 // Explicit `thread_id` wins; auto-lookup is the
                 // fallback for the common case (#130).
-                let thread_id = resolve_thread_id(&input, chat_id).await;
+                let thread_id =
+                    resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
+                        .await;
                 // Structured messages (tables, headings, lists, math) go through
                 // the native rich path as a whole — never chunked, since a split
                 // table would break. Plain prose, and any rich failure, fall back
@@ -392,9 +419,12 @@ impl Tool for TelegramSendTool {
             // ── reply ────────────────────────────────────────────────────────
             "reply" => {
                 let text = pget!(get_str(&input, "message")).to_string();
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
-                let thread_id = resolve_thread_id(&input, chat_id).await;
+                let thread_id =
+                    resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
+                        .await;
                 let reply_text = text.clone();
                 match crate::channels::telegram::send::message_in_thread(
                     &bot,
@@ -419,7 +449,8 @@ impl Tool for TelegramSendTool {
             // ── edit ─────────────────────────────────────────────────────────
             "edit" => {
                 let text = pget!(get_str(&input, "message")).to_string();
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
                 match bot
                     .edit_message_text(ChatId(chat_id), MessageId(message_id as i32), text)
@@ -432,7 +463,8 @@ impl Tool for TelegramSendTool {
 
             // ── delete ───────────────────────────────────────────────────────
             "delete" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
                 match bot
                     .delete_message(ChatId(chat_id), MessageId(message_id as i32))
@@ -447,7 +479,8 @@ impl Tool for TelegramSendTool {
 
             // ── pin ──────────────────────────────────────────────────────────
             "pin" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
                 match bot
                     .pin_chat_message(ChatId(chat_id), MessageId(message_id as i32))
@@ -460,7 +493,8 @@ impl Tool for TelegramSendTool {
 
             // ── unpin ────────────────────────────────────────────────────────
             "unpin" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 match bot.unpin_chat_message(ChatId(chat_id)).await {
                     Ok(_) => Ok(ToolResult::success(
                         "Latest pinned message unpinned.".to_string(),
@@ -471,7 +505,8 @@ impl Tool for TelegramSendTool {
 
             // ── forward ──────────────────────────────────────────────────────
             "forward" => {
-                let to_chat = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let to_chat =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let from_chat = pget!(get_id(&input, "from_chat_id"));
                 let message_id = pget!(get_id(&input, "message_id"));
                 match bot
@@ -491,7 +526,8 @@ impl Tool for TelegramSendTool {
 
             // ── send_photo ───────────────────────────────────────────────────
             "send_photo" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let reference = pget!(get_str(&input, "photo_url")).to_string();
                 let file = pget!(resolve_input_file(&reference, "photo_url").await);
                 let mut req = bot.send_photo(ChatId(chat_id), file);
@@ -511,7 +547,8 @@ impl Tool for TelegramSendTool {
 
             // ── send_document ────────────────────────────────────────────────
             "send_document" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let reference = pget!(get_str(&input, "document_url")).to_string();
                 let file = pget!(resolve_input_file(&reference, "document_url").await);
                 let mut req = bot.send_document(ChatId(chat_id), file);
@@ -531,7 +568,8 @@ impl Tool for TelegramSendTool {
 
             // ── send_location ────────────────────────────────────────────────
             "send_location" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let lat = match input.get("latitude").and_then(|v| v.as_f64()) {
                     Some(v) => v,
                     None => {
@@ -558,7 +596,8 @@ impl Tool for TelegramSendTool {
 
             // ── send_poll ────────────────────────────────────────────────────
             "send_poll" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let question = pget!(get_str(&input, "poll_question")).to_string();
                 let opts: Vec<String> = match input.get("poll_options").and_then(|v| v.as_array()) {
                     Some(arr) => arr
@@ -587,7 +626,8 @@ impl Tool for TelegramSendTool {
             // ── send_buttons ─────────────────────────────────────────────────
             "send_buttons" => {
                 let text = pget!(get_str(&input, "message")).to_string();
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let rows: Vec<Vec<InlineKeyboardButton>> =
                     match input.get("buttons").and_then(|v| v.as_array()) {
                         Some(outer) => outer
@@ -630,7 +670,8 @@ impl Tool for TelegramSendTool {
 
             // ── get_chat ─────────────────────────────────────────────────────
             "get_chat" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 match bot.get_chat(ChatId(chat_id)).await {
                     Ok(chat) => {
                         let info = format!(
@@ -647,7 +688,8 @@ impl Tool for TelegramSendTool {
 
             // ── get_chat_administrators ────────────────────────────────────
             "get_chat_administrators" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 match bot.get_chat_administrators(ChatId(chat_id)).await {
                     Ok(admins) => {
                         let lines: Vec<String> = admins
@@ -684,7 +726,8 @@ impl Tool for TelegramSendTool {
 
             // ── get_chat_member_count ─────────────────────────────────────────
             "get_chat_member_count" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 match bot.get_chat_member_count(ChatId(chat_id)).await {
                     Ok(count) => Ok(ToolResult::success(format!(
                         "Chat {chat_id} has {count} members."
@@ -697,7 +740,8 @@ impl Tool for TelegramSendTool {
 
             // ── get_chat_member ───────────────────────────────────────────────
             "get_chat_member" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let uid = pget!(get_id(&input, "user_id"));
                 match bot
                     .get_chat_member(ChatId(chat_id), UserId(uid as u64))
@@ -731,7 +775,8 @@ impl Tool for TelegramSendTool {
 
             // ── ban_user ─────────────────────────────────────────────────────
             "ban_user" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let user_id = pget!(get_id(&input, "user_id"));
                 match bot
                     .ban_chat_member(ChatId(chat_id), UserId(user_id as u64))
@@ -746,7 +791,8 @@ impl Tool for TelegramSendTool {
 
             // ── unban_user ───────────────────────────────────────────────────
             "unban_user" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let user_id = pget!(get_id(&input, "user_id"));
                 match bot
                     .unban_chat_member(ChatId(chat_id), UserId(user_id as u64))
@@ -761,7 +807,8 @@ impl Tool for TelegramSendTool {
 
             // ── set_reaction ─────────────────────────────────────────────────
             "set_reaction" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
                 let emoji = pget!(get_str(&input, "emoji")).to_string();
                 let reactions = vec![ReactionType::Emoji {
@@ -781,7 +828,8 @@ impl Tool for TelegramSendTool {
 
             // ── list_topics ──────────────────────────────────────────────────
             "list_topics" => {
-                let chat_id = pget!(chat_or_err(&input, &self.telegram_state).await);
+                let chat_id =
+                    pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let Some(pool) = crate::db::global_pool() else {
                     return Ok(ToolResult::error(
                         "Channel message store unavailable (DB not initialised).".to_string(),

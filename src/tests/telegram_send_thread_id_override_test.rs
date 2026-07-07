@@ -13,13 +13,22 @@
 //! https://github.com/adolfousier/opencrabs/issues/130#issuecomment-4582189795
 
 use crate::brain::tools::telegram_send::resolve_thread_id;
+use crate::channels::telegram::TelegramState;
 use serde_json::json;
 use teloxide::types::{MessageId, ThreadId};
+use uuid::Uuid;
+
+// A fresh state + nil session means no session-origin topic is bound, so the
+// resolver behaves exactly like the old two-arg version (explicit override,
+// else auto-lookup). Session-origin routing (#450) is covered separately.
+fn empty_state() -> TelegramState {
+    TelegramState::new()
+}
 
 #[tokio::test]
 async fn explicit_thread_id_is_returned_verbatim() {
     let input = json!({ "thread_id": 17 });
-    let result = resolve_thread_id(&input, 0).await;
+    let result = resolve_thread_id(&input, 0, Uuid::nil(), &empty_state()).await;
     assert_eq!(result, Some(ThreadId(MessageId(17))));
 }
 
@@ -29,7 +38,7 @@ async fn explicit_thread_id_works_for_negative_legacy_thread_ids() {
     // thread_id values within i32 range. The helper must pass them
     // through, not reject them.
     let input = json!({ "thread_id": -2147483 });
-    let result = resolve_thread_id(&input, 0).await;
+    let result = resolve_thread_id(&input, 0, Uuid::nil(), &empty_state()).await;
     assert_eq!(result, Some(ThreadId(MessageId(-2147483))));
 }
 
@@ -41,7 +50,7 @@ async fn explicit_thread_id_overflowing_i32_falls_back_to_lookup() {
     let input = json!({ "thread_id": 9_999_999_999_i64 });
     // No global pool initialised → auto-lookup returns None → final
     // result is None. We just confirm no panic + no garbage value.
-    let result = resolve_thread_id(&input, 12345).await;
+    let result = resolve_thread_id(&input, 12345, Uuid::nil(), &empty_state()).await;
     assert_eq!(result, None);
 }
 
@@ -51,7 +60,7 @@ async fn no_explicit_thread_id_falls_back_to_lookup() {
     // isn't initialised so the lookup returns None; the important
     // contract is "no override path, no garbage value, no panic".
     let input = json!({ "chat_id": 12345 });
-    let result = resolve_thread_id(&input, 12345).await;
+    let result = resolve_thread_id(&input, 12345, Uuid::nil(), &empty_state()).await;
     assert_eq!(result, None);
 }
 
@@ -61,7 +70,7 @@ async fn non_integer_thread_id_falls_back_to_lookup() {
     // an object/array. Don't accept those as overrides — fall back
     // to auto-lookup so a malformed override doesn't poison routing.
     let input = json!({ "thread_id": "17" });
-    let result = resolve_thread_id(&input, 12345).await;
+    let result = resolve_thread_id(&input, 12345, Uuid::nil(), &empty_state()).await;
     // Auto-lookup returns None in test (no global pool).
     assert_eq!(result, None);
 }
@@ -72,6 +81,49 @@ async fn explicit_thread_id_zero_is_returned() {
     // depending on API surface. The helper doesn't second-guess
     // i32-valid values.
     let input = json!({ "thread_id": 0 });
-    let result = resolve_thread_id(&input, 0).await;
+    let result = resolve_thread_id(&input, 0, Uuid::nil(), &empty_state()).await;
     assert_eq!(result, Some(ThreadId(MessageId(0))));
+}
+
+#[tokio::test]
+async fn session_origin_topic_is_used_when_no_explicit_thread_id() {
+    // #450: with no explicit thread_id, the resolver inherits the forum topic
+    // this session started in (the same session_topic map follow_up_question
+    // uses), so a reply routes back to the originating topic automatically.
+    let state = empty_state();
+    let session_id = Uuid::from_u128(0xABCD);
+    state
+        .register_session_chat(session_id, 12345, Some(42))
+        .await;
+
+    let input = json!({});
+    let result = resolve_thread_id(&input, 12345, session_id, &state).await;
+    assert_eq!(result, Some(ThreadId(MessageId(42))));
+}
+
+#[tokio::test]
+async fn explicit_thread_id_overrides_session_origin_topic() {
+    // Explicit routing still wins over the inherited session topic (#450).
+    let state = empty_state();
+    let session_id = Uuid::from_u128(0xABCD);
+    state
+        .register_session_chat(session_id, 12345, Some(42))
+        .await;
+
+    let input = json!({ "thread_id": 7 });
+    let result = resolve_thread_id(&input, 12345, session_id, &state).await;
+    assert_eq!(result, Some(ThreadId(MessageId(7))));
+}
+
+#[tokio::test]
+async fn non_forum_session_origin_falls_through_to_lookup() {
+    // A session bound to a non-forum chat has topic_id = None, so the resolver
+    // skips session-origin and falls through to the auto-lookup (None in test).
+    let state = empty_state();
+    let session_id = Uuid::from_u128(0xBEEF);
+    state.register_session_chat(session_id, 12345, None).await;
+
+    let input = json!({});
+    let result = resolve_thread_id(&input, 12345, session_id, &state).await;
+    assert_eq!(result, None);
 }
