@@ -345,7 +345,10 @@ mod repository {
         let id = m.id;
         repo.insert(&m).await.unwrap();
 
-        let recent = repo.recent(Some("slack"), "C123", 1, None, None).await.unwrap();
+        let recent = repo
+            .recent(Some("slack"), "C123", 1, None, None)
+            .await
+            .unwrap();
         assert_eq!(recent.len(), 1);
         let r = &recent[0];
         assert_eq!(r.id, id);

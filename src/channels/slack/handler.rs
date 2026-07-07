@@ -837,8 +837,7 @@ async fn handle_message(
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("Slack: failed to resolve session: {e:#} (#442)");
-                let token =
-                    SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
+                let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
                 let session = client.open_session(&token);
                 let request = SlackApiChatPostMessageRequest::new(
                     SlackChannelId::new(channel_id.clone()),
