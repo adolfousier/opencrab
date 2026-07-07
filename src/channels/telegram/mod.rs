@@ -121,6 +121,13 @@ pub struct TelegramState {
     /// Maintained via [`ActiveTurnGuard`] so a crashed turn can't leave a
     /// session looking permanently busy.
     active_turns: std::sync::Mutex<std::collections::HashSet<Uuid>>,
+    /// Highest incoming Telegram message id seen per chat (#451). Recorded for
+    /// EVERY message reaching the handler, mention or not, so the streaming
+    /// edit loop can tell when its open flow block has been buried by newer
+    /// chatter (block message id < newest incoming id) and re-stick the block
+    /// to the bottom. Telegram message ids are per-chat monotonic, so a plain
+    /// max is a valid "is the block buried" test.
+    chat_newest_msg_id: std::sync::Mutex<HashMap<i64, i32>>,
 }
 
 impl Default for TelegramState {
@@ -171,7 +178,33 @@ impl TelegramState {
             pending_file_saves: Mutex::new(HashMap::new()),
             pending_reactions: std::sync::Mutex::new(HashMap::new()),
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
+            chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Record an incoming message id for a chat, keeping the per-chat maximum
+    /// (#451). Called at the top of the handler for every message so burial
+    /// detection sees non-mention chatter too.
+    pub(crate) fn note_incoming_msg(&self, chat_id: i64, msg_id: i32) {
+        let mut map = self
+            .chat_newest_msg_id
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let entry = map.entry(chat_id).or_insert(msg_id);
+        if msg_id > *entry {
+            *entry = msg_id;
+        }
+    }
+
+    /// Newest incoming message id seen in a chat, if any (#451). The streaming
+    /// edit loop compares this against its open flow block's message id to
+    /// decide whether the block was buried and should re-stick to the bottom.
+    pub(crate) fn newest_incoming_msg_id(&self, chat_id: i64) -> Option<i32> {
+        self.chat_newest_msg_id
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&chat_id)
+            .copied()
     }
 
     /// Store the connected Bot instance.

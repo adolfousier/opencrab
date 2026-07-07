@@ -762,6 +762,103 @@ async fn append_intermediate_to_flow(
     }
 }
 
+/// Re-stick the open processing-log block to the bottom of the chat when newer
+/// chatter has buried it (#451). Called only on a new round (tools/intermediate
+/// appended this tick), never on plain status ticks, so an idle chat sees no
+/// churn. If a message with a higher id than the block landed, re-post the
+/// block's current full content as a fresh message at the bottom on the SAME
+/// surface (rich details or classic HTML), retag its tool entries to the new
+/// message, then delete the old copy. On any re-send failure the old block is
+/// kept untouched: relocation must never lose the block. `newest_incoming` is
+/// the highest incoming message id the handler has recorded for this chat.
+async fn restick_flow_if_buried(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    newest_incoming: Option<i32>,
+) {
+    let (old_mid, rich) = {
+        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        match s.open_group_msg_id {
+            Some(mid) => (mid, s.flow_rich),
+            None => return,
+        }
+    };
+    // Buried only if a chat message with a higher id than the block landed.
+    match newest_incoming {
+        Some(newest) if newest > old_mid.0 => {}
+        _ => return,
+    }
+
+    // Re-post the current full flow at the bottom on the same surface.
+    let new_mid: Option<MessageId> = if rich {
+        let details = {
+            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            render_flow_details_state(&s)
+        };
+        if details.is_empty() {
+            return;
+        }
+        match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details).await {
+            Ok(mid) => Some(MessageId(mid)),
+            Err(e) => {
+                tracing::warn!(
+                    "Telegram: restick rich re-post failed: {e} — keeping buried block in place"
+                );
+                None
+            }
+        }
+    } else {
+        let html = {
+            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            render_flow(&s)
+        };
+        if html.is_empty() {
+            return;
+        }
+        match send_html_or_plain(bot, chat, thread_id, &html).await {
+            Ok(mid) => Some(mid),
+            Err(e) => {
+                tracing::warn!(
+                    "Telegram: restick HTML re-post failed: {e} — keeping buried block in place"
+                );
+                None
+            }
+        }
+    };
+    let Some(new_mid) = new_mid else {
+        return;
+    };
+
+    // Swap the block id to the relocated message BEFORE deleting the old copy,
+    // so a concurrent refresh edits the new message. Decide under the lock and
+    // release it before any await (the guard is not Send). If something else
+    // moved or closed the block while we were sending, our just-sent copy is a
+    // stray duplicate: delete it instead of the old block.
+    let relocated = {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        if s.open_group_msg_id == Some(old_mid) {
+            s.open_group_msg_id = Some(new_mid);
+            for t in s.tool_msgs.iter_mut() {
+                if t.msg_id == Some(old_mid) {
+                    t.msg_id = Some(new_mid);
+                }
+            }
+            true
+        } else {
+            false
+        }
+    };
+    if relocated {
+        if let Err(e) = bot.delete_message(chat, old_mid).await {
+            tracing::warn!("Telegram: restick could not delete old block mid={old_mid:?}: {e}");
+        }
+    } else if let Err(e) = bot.delete_message(chat, new_mid).await {
+        tracing::warn!("Telegram: restick could not delete stray duplicate: {e}");
+    }
+}
+
 /// Pull the trailing folded intermediate out of the collapsed processing-log
 /// block so it can be delivered as its own message below.
 ///
@@ -1343,6 +1440,12 @@ pub(crate) async fn handle_message(
     // mentioned us in, not the group's General channel. None for DMs
     // and non-forum groups.
     let thread_id = msg.thread_id;
+
+    // Record this message id so the streaming edit loop can detect when its
+    // open flow block gets buried by newer chatter and re-stick it to the
+    // bottom (#451). Done for EVERY message, mention or not, before any early
+    // return, since the burying messages are usually not addressed to the bot.
+    telegram_state.note_incoming_msg(msg.chat.id.0, msg.id.0);
 
     // Forum-topic session isolation (#215). #130 fixed the reply ADDRESS
     // (replies land in the right topic); this scopes the CONVERSATION so each
@@ -3791,6 +3894,7 @@ pub(crate) async fn handle_message(
         let chat = msg.chat.id;
         let st = streaming.clone();
         let cancel = edit_cancel.clone();
+        let tg = telegram_state.clone();
         async move {
             loop {
                 tokio::select! {
@@ -3964,6 +4068,17 @@ pub(crate) async fn handle_message(
                         // No close here: the run may continue on the next tick, in
                         // which case those tools append to this same message.
                         append_tool_group(&bot, chat, thread_id, &st, &tool_buffer).await;
+
+                        // ── Re-stick the open block to the bottom if buried (#451) ──
+                        // A new round landed this tick (tools/intermediates were in
+                        // the display queue). If newer chatter has pushed the block
+                        // above the newest message, relocate it to the bottom. Gated
+                        // on real appends, never plain status ticks, so an idle chat
+                        // sees no churn.
+                        if !snap.display_items.is_empty() {
+                            let newest = tg.newest_incoming_msg_id(chat.0);
+                            restick_flow_if_buried(&bot, chat, thread_id, &st, newest).await;
+                        }
 
                         // ── Update tool-group messages for tools that changed status ──
                         // A completed tool shares its group's message with its
@@ -5181,6 +5296,7 @@ pub(crate) async fn resume_session(
         let bot = bot.clone();
         let st = streaming.clone();
         let cancel = edit_cancel.clone();
+        let tg = telegram_state.clone();
         async move {
             loop {
                 tokio::select! {
@@ -5211,6 +5327,11 @@ pub(crate) async fn resume_session(
                             s.recreate = false;
                             snap
                         };
+
+                        // A new round landed this tick iff there were display
+                        // items to fold in. Saved before the loop consumes them,
+                        // for the buried-block re-stick check below (#451).
+                        let had_round = !snap.display_items.is_empty();
 
                         // Process display items (tools + intermediates)
                         // Buffer consecutive tool calls to group them into collapsible blocks
@@ -5247,6 +5368,13 @@ pub(crate) async fn resume_session(
                         // Flush any remaining tools into the open group (kept open
                         // so the next tick's tools append to this same message).
                         append_tool_group(&bot, chat_id, thread_id, &st, &tool_buffer).await;
+
+                        // Re-stick the open block to the bottom if newer chatter
+                        // buried it (#451), only on a real round.
+                        if had_round {
+                            let newest = tg.newest_incoming_msg_id(chat_id.0);
+                            restick_flow_if_buried(&bot, chat_id, thread_id, &st, newest).await;
+                        }
 
                         // Response message (streaming)
                         if snap.dirty || snap.recreate {
