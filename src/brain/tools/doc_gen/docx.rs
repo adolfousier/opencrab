@@ -7,8 +7,8 @@
 
 use docx_rs::{
     AbstractNumbering, Docx, Footer, Header, IndentLevel, Level, LevelJc, LevelText, NumberFormat,
-    Numbering, NumberingId, Paragraph, Pic, Run, Shading, Start, Style, StyleType, Table,
-    TableCell, TableRow,
+    Numbering, NumberingId, PageOrientationType, Paragraph, Pic, Run, Shading, Start, Style,
+    StyleType, Table, TableCell, TableRow,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -86,6 +86,13 @@ pub(crate) fn scaled_mm(
     (w, h)
 }
 
+/// Custom page dimensions in millimeters for DOCX output (#440).
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct DocxPageSize {
+    pub width_mm: f32,
+    pub height_mm: f32,
+}
+
 /// Optional document styling (#365). Defaults keep the plain look.
 #[derive(Debug, Default, serde::Deserialize)]
 pub(crate) struct DocxStyle {
@@ -101,6 +108,28 @@ pub(crate) struct DocxStyle {
     /// Alternating light fills behind table data rows.
     #[serde(default)]
     pub zebra_rows: bool,
+    /// Page orientation: "portrait" or "landscape" (#440). Default portrait.
+    /// Ignored when `page_size` is set.
+    pub orientation: Option<String>,
+    /// Custom page dimensions (#440). Takes precedence over `orientation`.
+    pub page_size: Option<DocxPageSize>,
+}
+
+/// 1mm in twips (twentieths of a point). 1 inch = 1440 twips, 1 inch = 25.4mm.
+const MM_TO_TWIPS: f64 = 1440.0 / 25.4;
+/// Word default page margin (1 inch = 25.4mm).
+const WORD_MARGIN_MM: f64 = 25.4;
+
+/// Effective body width (mm) for image scaling, accounting for orientation
+/// and custom page size.
+fn effective_body_width_mm(style: &DocxStyle) -> f64 {
+    if let Some(ref ps) = style.page_size {
+        return (ps.width_mm as f64 - 2.0 * WORD_MARGIN_MM).max(50.0);
+    }
+    match style.orientation.as_deref() {
+        Some("landscape") => 297.0 - 2.0 * WORD_MARGIN_MM,
+        _ => 160.0,
+    }
 }
 
 /// Word color values are hex WITHOUT the leading '#'. Returns None for
@@ -154,6 +183,21 @@ pub(crate) fn write_document(
     style: &DocxStyle,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let mut docx = Docx::new();
+
+    // Page size and orientation (#440). page_size takes precedence; when
+    // only orientation is set, swap A4 defaults.
+    if let Some(ref ps) = style.page_size {
+        let w_twips = (ps.width_mm as f64 * MM_TO_TWIPS) as u32;
+        let h_twips = (ps.height_mm as f64 * MM_TO_TWIPS) as u32;
+        docx = docx.page_size(w_twips, h_twips);
+    } else if style.orientation.as_deref() == Some("landscape") {
+        let a4_w = (210.0_f64 * MM_TO_TWIPS) as u32;
+        let a4_h = (297.0_f64 * MM_TO_TWIPS) as u32;
+        docx = docx
+            .page_size(a4_h, a4_w)
+            .page_orient(PageOrientationType::Landscape);
+    }
+
     let accent = style.accent_color.as_deref().and_then(word_hex);
     let header_fill = style.table_header_fill.as_deref().and_then(word_hex);
 
@@ -245,7 +289,8 @@ pub(crate) fn write_document(
             } => {
                 let (bytes, px_w, px_h) = super::docx::load_image(path)?;
                 // Word page body is ~160mm wide with default margins.
-                let (w_mm, h_mm) = scaled_mm(px_w, px_h, *width_mm, 160.0);
+                let body_w = effective_body_width_mm(style);
+                let (w_mm, h_mm) = scaled_mm(px_w, px_h, *width_mm, body_w);
                 let emu = |mm: f64| (mm * 36_000.0) as u32;
                 let pic = Pic::new(&bytes).size(emu(w_mm), emu(h_mm));
                 docx = docx.add_paragraph(Paragraph::new().add_run(Run::new().add_image(pic)));
