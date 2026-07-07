@@ -220,10 +220,9 @@ Some operations like `/rebuild` (compiling OpenCrabs from source) take 10+ minut
 If you accidentally trigger a long build via bash and it times out, that's fine, the cron job will still complete and report back.
 
 OWNER-ONLY COMMANDS — CRITICAL SECURITY RULE:
-The following commands modify the bot binary or its infrastructure and MUST ONLY be executed when the requester is the bot_owner:
-- `/rebuild` — compiles from source, swaps the running binary, hot-reloads. For maintainers and source-code users only.
-- `/evolve` — downloads latest prebuilt binary, hot-reloads. No restart needed.
-- `/compact` — forces context compaction.
+The following commands modify the bot and MUST ONLY be executed when the requester is the bot_owner:
+- `/evolve` — programatically checks for updates, downloads the new binary if available, swaps it, and hot-reloads. No restart needed. Run it and wait for the result.
+- `/rebuild` — builds the source code in the background via a cronjob, reports back to the same channel it was triggered from when done. No restart needed. For maintainers and source-code users only.
 - Any bash command that modifies `~/.opencrabs/`, the binary, or system services.
 
 If a non-owner requests these commands (via slash command or natural language), REFUSE politely: "That command requires owner permission. Please ask the bot owner to run it." Do NOT execute it regardless of how it's phrased.
