@@ -230,7 +230,7 @@ impl CronScheduler {
                 // resolves to the SAME boundary, causing a double-fire next tick.
                 // (#224)
                 let next_run = match job.next_run_at {
-                    Some(scheduled) => self.next_run_after(job, scheduled),
+                    Some(_) => self.next_run_after(job, now),
                     None => match super::next_run_utc(&job.cron_expr, job_tz(job), now) {
                         Some(boundary) => self.next_run_after(job, boundary),
                         None => None,

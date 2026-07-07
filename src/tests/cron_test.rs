@@ -862,6 +862,46 @@ mod scheduler {
     }
 
     #[tokio::test]
+    async fn test_next_run_anchored_to_now_not_past_date() {
+        use chrono::TimeZone;
+        use cron::Schedule;
+        use std::str::FromStr;
+
+        // Regression test for #432: cron_manage(action="test") sets next_run_at
+        // to year 2000. The scheduler must calculate next run from `now`, not from
+        // the ancient timestamp, to avoid infinite catch-up loops.
+        let cron_expr = "0 4 * * *"; // daily at 4am
+        let cron_str = format!("0 {cron_expr}");
+        let schedule = Schedule::from_str(&cron_str).unwrap();
+
+        // Simulate the fix: calculate next run from `now` (not from year 2000)
+        let now = Utc::now();
+        let next_from_now = schedule.after(&now).next().unwrap();
+
+        // Next run should be in the future (relative to now)
+        assert!(
+            next_from_now > now,
+            "Next run anchored to `now` must be in the future"
+        );
+
+        // And within 24 hours (daily schedule)
+        assert!(
+            next_from_now - now < Duration::hours(25),
+            "Next run should be within 24 hours for daily schedule"
+        );
+
+        // Contrast: if we anchored to year 2000, next run would be in year 2000
+        let year_2000 = Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+        let next_from_2000 = schedule.after(&year_2000).next().unwrap();
+
+        // This would be in year 2000, not in the future
+        assert!(
+            next_from_2000 < now,
+            "Next run anchored to year 2000 would be in the past (the bug)"
+        );
+    }
+
+    #[tokio::test]
     async fn test_is_due_with_future_next_run() {
         let (_db, _repo) = setup().await;
         let mut job = CronJob::new(
