@@ -99,28 +99,28 @@ pub(crate) fn char_boundary_at_width(s: &str, target_width: usize) -> usize {
 }
 
 /// Format token count with a custom label (e.g. "1.2M total", "150K total")
-pub(super) fn format_token_count_with_label(tokens: i32, label: &str) -> String {
+pub(super) fn format_token_count_with_label(tokens: i64, label: &str) -> String {
     let tokens = tokens.max(0) as f64;
     if tokens >= 1_000_000.0 {
         format!("{:.1}M {}", tokens / 1_000_000.0, label)
     } else if tokens >= 1_000.0 {
         format!("{:.1}K {}", tokens / 1_000.0, label)
     } else if tokens > 0.0 {
-        format!("{} {}", tokens as i32, label)
+        format!("{} {}", tokens as i64, label)
     } else {
         "new".to_string()
     }
 }
 
 /// Format token count as raw number without label (e.g. "150K", "1.2M")
-pub(super) fn format_token_count_raw(tokens: i32) -> String {
+pub(super) fn format_token_count_raw(tokens: i64) -> String {
     let tokens = tokens.max(0) as f64;
     if tokens >= 1_000_000.0 {
         format!("{:.1}M", tokens / 1_000_000.0)
     } else if tokens >= 1_000.0 {
         format!("{:.0}K", tokens / 1_000.0)
     } else if tokens > 0.0 {
-        format!("{}", tokens as i32)
+        format!("{}", tokens as i64)
     } else {
         "0".to_string()
     }

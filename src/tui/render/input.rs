@@ -416,8 +416,8 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
         } else {
             Color::Cyan
         };
-        let ctx_label = format_token_count_raw(input_tok as i32);
-        let max_label = format_token_count_raw(app.context_max_tokens as i32);
+        let ctx_label = format_token_count_raw(input_tok as i64);
+        let max_label = format_token_count_raw(app.context_max_tokens as i64);
         let context_label = format!(" ctx: {}/{} ({:.0}%) ", ctx_label, max_label, pct);
         Line::from(Span::styled(
             context_label,

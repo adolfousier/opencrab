@@ -77,18 +77,18 @@ impl AgentService {
         message_service
             .update_message_usage(
                 assistant_db_msg.id,
-                total_tokens as i32,
+                total_tokens as i64,
                 cost,
-                Some(billable_input as i32),
-                Some(response.usage.cache_creation_tokens as i32),
-                Some(response.usage.cache_read_tokens as i32),
+                Some(billable_input as i64),
+                Some(response.usage.cache_creation_tokens as i64),
+                Some(response.usage.cache_read_tokens as i64),
             )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 
         // Update session token usage
         session_service
-            .update_session_usage(session_id, total_tokens as i32, cost)
+            .update_session_usage(session_id, total_tokens as i64, cost)
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 

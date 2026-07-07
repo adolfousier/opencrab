@@ -305,7 +305,7 @@ fn render_project_detail(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Format token count with K/M suffix
-fn format_token_count(count: i32) -> String {
+fn format_token_count(count: i64) -> String {
     if count >= 1_000_000 {
         format!("{:.1}M", count as f64 / 1_000_000.0)
     } else if count >= 1_000 {

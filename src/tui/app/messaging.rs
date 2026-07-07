@@ -2445,7 +2445,7 @@ impl App {
                 if !response.content.is_empty() {
                     last_assistant.content = response.content.clone();
                 }
-                last_assistant.token_count = Some(response.usage.output_tokens as i32);
+                last_assistant.token_count = Some(response.usage.output_tokens as i64);
                 last_assistant.cost = Some(response.cost);
                 if reasoning_details.is_some() {
                     last_assistant.details = reasoning_details.clone();
@@ -2462,7 +2462,7 @@ impl App {
                     role: "assistant".to_string(),
                     content: response.content,
                     timestamp: chrono::Utc::now(),
-                    token_count: Some(response.usage.output_tokens as i32),
+                    token_count: Some(response.usage.output_tokens as i64),
                     cost: Some(response.cost),
                     approval: None,
                     approve_menu: None,
@@ -2478,7 +2478,7 @@ impl App {
                 role: "assistant".to_string(),
                 content: response.content,
                 timestamp: chrono::Utc::now(),
-                token_count: Some(response.usage.output_tokens as i32),
+                token_count: Some(response.usage.output_tokens as i64),
                 cost: Some(response.cost),
                 approval: None,
                 approve_menu: None,

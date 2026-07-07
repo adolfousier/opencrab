@@ -216,8 +216,8 @@ pub(super) fn render_sessions(f: &mut Frame, app: &App, area: Rect) {
         let context_info = if is_current {
             if let Some(input_tok) = app.last_input_tokens {
                 let pct = app.context_usage_percent();
-                let ctx_label = format_token_count_raw(input_tok as i32);
-                let max_label = format_token_count_raw(app.context_max_tokens as i32);
+                let ctx_label = format_token_count_raw(input_tok as i64);
+                let max_label = format_token_count_raw(app.context_max_tokens as i64);
                 format!(" [ctx: {}/{} {:.0}%]", ctx_label, max_label, pct)
             } else {
                 " [ctx: –]".to_string()

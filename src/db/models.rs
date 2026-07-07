@@ -139,7 +139,7 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub archived_at: Option<DateTime<Utc>>,
-    pub token_count: i32,
+    pub token_count: i64,
     pub total_cost: f64,
     pub working_directory: Option<String>,
     pub auto_title_attempted: bool,
@@ -210,20 +210,20 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
     /// Output tokens (completion) reported by the provider. For assistant
     /// messages this is `usage.completion_tokens` / `output_tokens`.
-    pub token_count: Option<i32>,
+    pub token_count: Option<i64>,
     pub cost: Option<f64>,
     /// Server-reported prompt token count for the request that produced
     /// this assistant message (`usage.prompt_tokens` / `input_tokens`).
     /// Populated only on assistant rows; always `None` for user rows.
     /// Used as the authoritative "last known context size" on session load
     /// — no more tokenizing raw message content to estimate.
-    pub input_tokens: Option<i32>,
+    pub input_tokens: Option<i64>,
     /// Tokens written to the provider's prompt cache (cache creation).
     /// Populated only on assistant rows; always `None` for user rows.
-    pub cache_creation_tokens: Option<i32>,
+    pub cache_creation_tokens: Option<i64>,
     /// Tokens served from the provider's prompt cache (cache hits).
     /// Populated only on assistant rows; always `None` for user rows.
-    pub cache_read_tokens: Option<i32>,
+    pub cache_read_tokens: Option<i64>,
     /// Reasoning/thinking content for non-CLI providers (dialagram, custom
     /// OpenAI-compatible). Persisted separately from `content` so it
     /// survives restart and can be reconstructed as Ctrl+O expandable

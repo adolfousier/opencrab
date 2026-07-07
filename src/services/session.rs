@@ -119,7 +119,7 @@ impl SessionService {
 
     /// Update session usage statistics and record to the cumulative usage ledger.
     /// The ledger persists even when sessions are deleted.
-    pub async fn update_session_usage(&self, id: Uuid, token_count: i32, cost: f64) -> Result<()> {
+    pub async fn update_session_usage(&self, id: Uuid, token_count: i64, cost: f64) -> Result<()> {
         let mut session = self.get_session_required(id).await?;
         session.token_count += token_count;
         session.total_cost += cost;

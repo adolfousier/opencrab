@@ -87,7 +87,7 @@ impl UsageLedgerRepository {
         session_id: &str,
         provider: &str,
         model: &str,
-        token_count: i32,
+        token_count: i64,
         cost: f64,
     ) -> Result<()> {
         let sid = session_id.to_string();

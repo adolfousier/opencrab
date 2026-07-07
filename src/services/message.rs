@@ -99,11 +99,11 @@ impl MessageService {
     pub async fn update_message_usage(
         &self,
         id: Uuid,
-        token_count: i32,
+        token_count: i64,
         cost: f64,
-        input_tokens: Option<i32>,
-        cache_creation_tokens: Option<i32>,
-        cache_read_tokens: Option<i32>,
+        input_tokens: Option<i64>,
+        cache_creation_tokens: Option<i64>,
+        cache_read_tokens: Option<i64>,
     ) -> Result<()> {
         let mut message = self.get_message_required(id).await?;
         message.token_count = Some(token_count);
@@ -225,7 +225,7 @@ impl MessageService {
     }
 
     /// Calculate total tokens for a session
-    pub async fn calculate_total_tokens(&self, session_id: Uuid) -> Result<i32> {
+    pub async fn calculate_total_tokens(&self, session_id: Uuid) -> Result<i64> {
         let messages = self.list_messages_for_session(session_id).await?;
         let total = messages.iter().filter_map(|m| m.token_count).sum();
         Ok(total)

@@ -962,7 +962,7 @@ async fn format_usage(
             let cost = if session.total_cost > 0.0 {
                 session.total_cost
             } else if tokens > 0 {
-                estimate_cost(model, tokens as i64).unwrap_or(0.0)
+                estimate_cost(model, tokens).unwrap_or(0.0)
             } else {
                 0.0
             };
@@ -970,7 +970,7 @@ async fn format_usage(
                 "**Current:** {} — `{}` · {} tok · ${:.4}",
                 name,
                 model,
-                format_number(tokens as i64),
+                format_number(tokens),
                 cost
             ));
         }

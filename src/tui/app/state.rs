@@ -348,7 +348,7 @@ pub struct DisplayMessage {
     pub role: String,
     pub content: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub token_count: Option<i32>,
+    pub token_count: Option<i64>,
     pub cost: Option<f64>,
     pub approval: Option<ApprovalData>,
     pub approve_menu: Option<ApproveMenu>,
@@ -3408,7 +3408,7 @@ impl App {
     /// Get total token count for current session (from DB, not in-memory messages).
     /// In-memory messages only cover the current context window — the DB has the
     /// cumulative total across all compactions.
-    pub fn total_tokens(&self) -> i32 {
+    pub fn total_tokens(&self) -> i64 {
         self.current_session
             .as_ref()
             .map(|s| s.token_count)

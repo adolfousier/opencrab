@@ -5314,27 +5314,27 @@ impl AgentService {
         // displayed as ~150K (2026-04-17 05:55 logs). Cost calculation
         // still uses the cumulative billing fields above; only the
         // displayed ctx number uses the last-iter value here.
-        let stored_input_tokens: i32 = if last_iter_input_tokens > 0 {
-            last_iter_input_tokens as i32
+        let stored_input_tokens: i64 = if last_iter_input_tokens > 0 {
+            last_iter_input_tokens as i64
         } else {
             let overhead = self.base_context_tokens();
-            (context.token_count.saturating_add(overhead as usize)) as i32
+            (context.token_count.saturating_add(overhead as usize)) as i64
         };
         message_service
             .update_message_usage(
                 assistant_db_msg.id,
-                total_tokens as i32,
+                total_tokens as i64,
                 cost,
                 Some(stored_input_tokens),
-                Some(total_cache_creation as i32),
-                Some(total_cache_read as i32),
+                Some(total_cache_creation as i64),
+                Some(total_cache_read as i64),
             )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 
         // Update session token usage
         session_service
-            .update_session_usage(session_id, total_tokens as i32, cost)
+            .update_session_usage(session_id, total_tokens as i64, cost)
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 
