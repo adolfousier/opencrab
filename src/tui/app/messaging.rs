@@ -166,12 +166,24 @@ impl App {
 
         // Restore session's working directory if persisted. Source of truth is
         // the session DB — config.toml does NOT carry per-session state.
+        //
+        // The agent sync is UNCONDITIONAL (#460): the agent's wd is a shared
+        // runtime value that tool-driven cd mutates without updating the
+        // TUI-tracked path, so the old `path != self.working_directory`
+        // shortcut skipped the sync exactly when the agent sat on ANOTHER
+        // session's directory that happened to differ from the TUI's — the
+        // footer said one repo while the prompt and tools ran in another.
         if let Some(ref dir_str) = session.working_directory {
             let path = std::path::PathBuf::from(dir_str);
-            if path.is_dir() && path != self.working_directory {
+            if path.is_dir() {
                 self.working_directory = path.clone();
-                self.agent_service.set_working_directory(path.clone());
+                self.agent_service.set_working_directory(path);
             }
+        } else {
+            // No persisted wd: pin the agent to the TUI-tracked directory so
+            // the previous session's wd can never leak into this one (#460).
+            self.agent_service
+                .set_working_directory(self.working_directory.clone());
         }
 
         self.current_session = Some(session.clone());
@@ -2330,6 +2342,18 @@ impl App {
         }
         self.is_processing = false;
         self.processing_started_at = None;
+        // A tool-driven cd during the turn changes the agent's shared wd
+        // without touching the TUI-tracked path; resync here so the footer
+        // shows where the agent actually is (#460).
+        let agent_wd = self.agent_service.get_working_directory();
+        if agent_wd != self.working_directory {
+            tracing::info!(
+                "TUI: working directory changed during turn: {} → {}",
+                self.working_directory.display(),
+                agent_wd.display()
+            );
+            self.working_directory = agent_wd;
+        }
         tracing::debug!(
             "[TUI] complete_response: clearing streaming_response (was {} chars), intermediate_text_received={}",
             self.streaming_response
