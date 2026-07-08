@@ -1,0 +1,35 @@
+# Indonesian (Bahasa, incl. colloquial Jakarta register) phantom-detection
+# configuration. Added after a live hallucination narrated in Indonesian
+# escaped every detector (#463): character-set language detection cannot
+# distinguish Indonesian (pure ASCII Latin) from English, but the intent
+# scan checks every loaded language's phrases at once, so these fire
+# regardless of detection. Phrases are multi-word to keep cross-language
+# collision risk low. All lower-case; matched against lowercased text.
+
+intent_phrases = [
+    "sekarang gue ",
+    "sekarang aku ",
+    "sekarang saya ",
+    "biar gue ",
+    "biar aku ",
+    "gue akan ",
+    "aku akan ",
+    "saya akan ",
+    "akan gue ",
+    "gue load ",
+    "gue jalankan ",
+    "gue jalanin ",
+    "gue push ",
+    "gue commit ",
+    "mari kita jalankan",
+    "coba gue ",
+]
+
+action_verbs = [
+    "dimuat",
+    "dijalankan",
+    "diperbarui",
+    "diperbaiki",
+    "dibuat",
+    "dihapus",
+]

@@ -16,6 +16,7 @@
 //! Language detection is automatic via character-set heuristics.
 
 use regex::Regex;
+use std::sync::LazyLock;
 
 use super::phantom_lang;
 
@@ -33,7 +34,11 @@ use super::phantom_lang;
 /// itself). A legitimate answer rendered as a table is NEVER a phantom,
 /// even if its content happens to quote a phrase we watch for.
 pub fn has_phantom_tool_intent_no_tools(text: &str) -> bool {
-    let trimmed = text.trim();
+    // <<react:🔥>> and sibling inline directives prefix the narration and
+    // broke every ^-anchored pattern (#464: "<<react:🔥>> Pushing the 3
+    // commits now." sailed through). Strip them before any matching.
+    let cleaned = strip_inline_directives(text);
+    let trimmed = cleaned.trim();
     let lead = prose_lead_in(trimmed);
     if lead.is_empty() {
         return false;
@@ -70,12 +75,25 @@ fn has_past_tense_action_claim(lower: &str, action_verbs: &[String]) -> bool {
         if s.is_empty() || s.len() > 80 {
             continue;
         }
+        let words: Vec<&str> = s
+            .split_whitespace()
+            .take(4)
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+            .collect();
         for verb in action_verbs {
-            if s.split_whitespace().take(4).any(|w| {
-                let w = w.trim_matches(|c: char| !c.is_alphanumeric());
-                w == verb
-            }) {
-                return true;
+            if let Some(pos) = words.iter().position(|w| w == verb) {
+                // Passive/copular description ("the config is loaded from
+                // disk") is prose about state, not a completion claim —
+                // only an ACTIVE claim ("Loaded.", "Both loaded properly")
+                // counts. Guard on the auxiliary right before the verb.
+                const AUX: &[&str] = &[
+                    "is", "are", "was", "were", "been", "be", "being", "gets", "get", "got",
+                    "está", "están", "foi", "é", "est", "sont",
+                ];
+                let passive = pos > 0 && AUX.contains(&words[pos - 1]);
+                if !passive {
+                    return true;
+                }
             }
         }
     }
@@ -118,7 +136,8 @@ pub fn has_investigative_intent(text: &str) -> bool {
 /// tables from re-triggering the original false positive that
 /// `e843f405` fixed.
 pub fn has_forward_intent_post_success(text: &str) -> bool {
-    let trimmed = text.trim();
+    let cleaned = strip_inline_directives(text);
+    let trimmed = cleaned.trim();
     if trimmed.len() < 20 {
         return false;
     }
@@ -127,7 +146,55 @@ pub fn has_forward_intent_post_success(text: &str) -> bool {
         return false;
     }
     let lower = lead.to_lowercase();
-    lang_intent_match_any(&lower)
+    // A present-continuous work announcement ("Pushing the 3 commits
+    // now.") is inherently FORWARD-looking — it can never be a completion
+    // ack, no matter how many tools already ran this turn. The gate used
+    // to check intent phrases only, so announcements after a successful
+    // tool call closed turns as fake completions (#464).
+    lang_intent_match_any(&lower) || matches_work_announcement(lead)
+}
+
+/// Remove inline channel directives (`<<react:🔥>>`, `<<IMG:path>>`, …)
+/// so anchored phantom patterns see the narration, not the marker (#464).
+fn strip_inline_directives(text: &str) -> String {
+    static DIRECTIVE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"<<[^<>\n]{1,120}>>").expect("directive regex"));
+    DIRECTIVE_RE.replace_all(text, "").into_owned()
+}
+
+/// Language-agnostic phantom tell (#463): the text names a REAL registered
+/// tool while the turn executed zero tool calls. Models hallucinate tool
+/// usage by naming the tool ("loaded via load_brain_file"), in ANY language,
+/// so this catches narration the phrase lists cannot. Only multi-word
+/// (underscore) tool names count: bare names like "bash" or "plan" are
+/// ordinary prose words and would false-positive constantly.
+pub fn mentions_registered_tool(text: &str, tool_names: &[String]) -> bool {
+    let lower = text.to_lowercase();
+    for name in tool_names {
+        if !name.contains('_') {
+            continue;
+        }
+        let mut from = 0;
+        while let Some(rel) = lower[from..].find(name.as_str()) {
+            let start = from + rel;
+            let end = start + name.len();
+            let before_ok = start == 0
+                || !lower[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let after_ok = end == lower.len()
+                || !lower[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            if before_ok && after_ok {
+                return true;
+            }
+            from = end;
+        }
+    }
+    false
 }
 
 /// Count line-start intent phrases — `Let me <verb>`, `I'll <verb>`,
@@ -307,12 +374,52 @@ fn lang_intent_match_any(lower: &str) -> bool {
 /// straightforward.") or uses "now" as an adverb ("Running it now takes a
 /// minute.") does not.
 pub(crate) fn matches_work_announcement(lead: &str) -> bool {
+    let lead = strip_inline_directives(lead);
+    let lead = lead.trim();
     phantom_lang::all_langs().iter().any(|lang| {
         !lang.work_announcement_re.is_empty()
             && Regex::new(&lang.work_announcement_re)
-                .map(|re| re.is_match(lead))
+                .map(|re| announcement_matches_anywhere(&re, lead))
                 .unwrap_or(false)
     })
+}
+
+/// Run an anchored announcement regex against every sentence start in the
+/// lead, tolerating a short lead clause before the gerund. The live escapes
+/// (#464) were all anchor evasions: "Internet's back, pushing now." (clause
+/// prefix), "Apologies Adolfo, you're right. Pushing now." (sentence
+/// prefix). Suffix slices keep the terminal imminence markers intact.
+fn announcement_matches_anywhere(re: &Regex, lead: &str) -> bool {
+    let mut starts: Vec<usize> = vec![0];
+    let mut after_ender = false;
+    for (idx, ch) in lead.char_indices() {
+        if after_ender && !ch.is_whitespace() {
+            starts.push(idx);
+            after_ender = false;
+        }
+        if matches!(ch, '.' | '!' | '?' | '\n' | '…') {
+            after_ender = true;
+        }
+    }
+    for &start in &starts {
+        let suffix = &lead[start..];
+        if re.is_match(suffix) {
+            return true;
+        }
+        // Short lead clause before the announcement ("internet's back, ").
+        let window_end = suffix
+            .char_indices()
+            .take_while(|(i, _)| *i <= 48)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        if let Some(comma) = suffix[..window_end].find(", ")
+            && re.is_match(&suffix[comma + 2..])
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Check if `lower` contains any completion claim.

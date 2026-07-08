@@ -121,3 +121,74 @@ fn now_followed_by_colon_is_phantom() {
         "Building the project now: clippy is clean."
     ));
 }
+
+// ── #464: anchor evasions observed live (MiniMax M3, three within an hour) ──
+
+#[test]
+fn announcement_after_lead_clause_is_phantom() {
+    // "Internet's back, " defeated the ^-anchored regex; the clause-tolerant
+    // matcher must still see the announcement.
+    assert!(has_phantom_tool_intent_no_tools(
+        "Internet's back, pushing now."
+    ));
+    assert!(matches_work_announcement("Internet's back, pushing now."));
+}
+
+#[test]
+fn announcement_after_lead_sentence_is_phantom() {
+    // A whole sentence before the announcement: per-sentence matching.
+    assert!(has_phantom_tool_intent_no_tools(
+        "Apologies Adolfo, you're right. Pushing now."
+    ));
+}
+
+#[test]
+fn announcement_behind_react_directive_is_phantom() {
+    // The <<react:>> directive prefixed the narration and broke the anchor.
+    assert!(has_phantom_tool_intent_no_tools(
+        "<<react:🔥>> Pushing the 3 commits now."
+    ));
+    assert!(has_phantom_tool_intent_no_tools(
+        "Pushing the 3 commits now."
+    ));
+}
+
+#[test]
+fn announcement_is_forward_intent_even_post_success() {
+    // The post-success gate must treat a work announcement as forward
+    // intent: it is a promise of work, never a completion ack (#464).
+    use crate::brain::agent::service::phantom::has_forward_intent_post_success;
+    assert!(has_forward_intent_post_success(
+        "Pushing the 3 commits now."
+    ));
+    assert!(has_forward_intent_post_success(
+        "Internet's back, pushing now."
+    ));
+    // Past-tense completion acks stay exempt.
+    assert!(!has_forward_intent_post_success(
+        "Pushed all three commits to origin/main."
+    ));
+}
+
+#[test]
+fn loading_announcement_is_phantom() {
+    // "load" family was missing from every verb list (#463).
+    assert!(has_phantom_tool_intent_no_tools(
+        "Loading the brain files now."
+    ));
+    assert!(has_phantom_tool_intent_no_tools(
+        "Let me load both properly now."
+    ));
+}
+
+#[test]
+fn ordinary_sentences_with_commas_stay_clean() {
+    // The clause tolerance must not flag prose that merely contains a
+    // comma and a gerund with no imminence marker.
+    assert!(!matches_work_announcement(
+        "Thanks, reading your report was helpful and no action is needed."
+    ));
+    assert!(!matches_work_announcement(
+        "For the record, pushing to main requires a review."
+    ));
+}

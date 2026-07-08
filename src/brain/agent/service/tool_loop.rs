@@ -964,6 +964,8 @@ impl AgentService {
         // turn whose final prompt was 22K (2026-04-17 05:55 logs).
         let mut last_iter_input_tokens = 0u32;
         let mut final_response: Option<LLMResponse> = None;
+        // Registered tool names for the language-agnostic phantom tell (#463).
+        let phantom_tool_names: Vec<String> = self.tool_registry.list_tools();
         let mut accumulated_text = String::new(); // Collect text from all iterations (not just final)
         // Iteration content withheld from the DB by the phantom persist-skip.
         // Flushed at turn close if that very iteration ends the turn (#458):
@@ -3744,7 +3746,15 @@ impl AgentService {
                 }
                 if phantom_retries_used < MAX_PHANTOM_RETRIES
                     && phantom_eligible
-                    && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
+                    && (super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
+                        // Language-agnostic tell (#463): a zero-tool turn
+                        // whose text NAMES a registered tool is narrating
+                        // usage it never executed, in any language.
+                        || (tool_calls_completed_this_turn == 0
+                            && super::phantom::mentions_registered_tool(
+                                &iteration_text,
+                                &phantom_tool_names,
+                            )))
                 {
                     phantom_retries_used += 1;
                     tracing::warn!(

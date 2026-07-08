@@ -2,6 +2,10 @@
 # Phrases are lower-case. Matched against lowercased response text.
 
 intent_phrases = [
+    "je vais charger",
+    "laisse-moi charger",
+    "chargement du ",
+    "chargement de ",
     "laissez-moi vérifier",
     "laissez-moi examiner",
     "laissez-moi inspecter",

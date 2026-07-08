@@ -53,6 +53,7 @@ const RU_TOML: &str = include_str!("ru.toml");
 const ES_TOML: &str = include_str!("es.toml");
 const PT_TOML: &str = include_str!("pt.toml");
 const FR_TOML: &str = include_str!("fr.toml");
+const ID_TOML: &str = include_str!("id.toml");
 
 pub(crate) static LANG_EN: LazyLock<LangConfig> =
     LazyLock::new(|| toml::from_str(EN_TOML).expect("BUG: en.toml failed to parse at runtime"));
@@ -64,6 +65,8 @@ pub(crate) static LANG_PT: LazyLock<LangConfig> =
     LazyLock::new(|| toml::from_str(PT_TOML).expect("BUG: pt.toml failed to parse at runtime"));
 pub(crate) static LANG_FR: LazyLock<LangConfig> =
     LazyLock::new(|| toml::from_str(FR_TOML).expect("BUG: fr.toml failed to parse at runtime"));
+pub(crate) static LANG_ID: LazyLock<LangConfig> =
+    LazyLock::new(|| toml::from_str(ID_TOML).expect("BUG: id.toml failed to parse at runtime"));
 
 /// Detect language from text content using character-set heuristics.
 /// Returns a static reference to the appropriate language config.
@@ -145,6 +148,6 @@ pub fn detect_language(text: &str) -> &'static LangConfig {
 /// language-distinctive tokens, so cross-language scanning is
 /// collision-free — unlike the short single-word `action_verbs`, which
 /// stay gated to the detected language. 2026-06-12.
-pub fn all_langs() -> [&'static LangConfig; 5] {
-    [&LANG_EN, &LANG_RU, &LANG_ES, &LANG_PT, &LANG_FR]
+pub fn all_langs() -> [&'static LangConfig; 6] {
+    [&LANG_EN, &LANG_RU, &LANG_ES, &LANG_PT, &LANG_FR, &LANG_ID]
 }

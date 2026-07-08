@@ -2,6 +2,9 @@
 # Phrases are lower-case. Matched against lowercased response text.
 
 intent_phrases = [
+    "сейчас загружу",
+    "загружаю ",
+    "давай загружу",
     "давайте проверю",
     "давайте посмотрим",
     "давайте исправим",
