@@ -559,41 +559,43 @@ pub(crate) fn handler_state() -> Option<Arc<HandlerState>> {
     HANDLER_STATE.get().cloned()
 }
 
-/// Post the ctx budget footer as its own message: a small grey context
-/// block (#457) so it reads as metadata, not conversation, falling back to
-/// plain text if the blocks post is rejected. Used when the visible answer
-/// is a kept intermediate, which skips the final post that normally
-/// carries the footer (#456).
-async fn post_ctx_footer<'a>(
+/// Append the ctx budget footer to an already-posted completion message via
+/// chat.update (#459): the footer belongs ON the completion, display-only,
+/// exactly like Telegram — never as its own message below it. The message is
+/// rebuilt as Block Kit sections plus the small grey context-block footer
+/// (#455/#457), retroactively enriching the kept intermediate. If the blocks
+/// update is rejected, a plain-text update with the footer appended retries;
+/// if that fails too, the footer is dropped with a warn — a standalone
+/// footer post is never an option.
+async fn append_footer_via_update<'a>(
     session: &SlackClientSession<'a, slack_morphism::hyper_tokio::SlackClientHyperHttpsConnector>,
     channel_id: &str,
-    thread_ts: Option<&SlackTs>,
+    ts: &SlackTs,
+    text: &str,
     footer: &str,
 ) {
     if footer.is_empty() {
         return;
     }
-    let blocks_content = SlackMessageContent::new()
-        .with_text(footer.to_string())
-        .with_blocks(vec![super::blocks::context_footer(footer)]);
-    let mut request = SlackApiChatPostMessageRequest::new(
+    let plain_text = format!("{text}\n\n{footer}");
+    let mut blocks = super::blocks::blocks_from_mrkdwn(text);
+    blocks.push(super::blocks::context_footer(footer));
+    let upd = SlackApiChatUpdateRequest::new(
         SlackChannelId::new(channel_id.to_string()),
-        blocks_content,
+        SlackMessageContent::new()
+            .with_text(plain_text.clone())
+            .with_blocks(blocks),
+        ts.clone(),
     );
-    if let Some(ts) = thread_ts {
-        request = request.with_thread_ts(ts.clone());
-    }
-    if let Err(e) = session.chat_post_message(&request).await {
-        tracing::warn!("Slack: footer context block post failed ({e}) — retrying as plain text");
-        let mut plain = SlackApiChatPostMessageRequest::new(
+    if let Err(e) = session.chat_update(&upd).await {
+        tracing::warn!("Slack: footer blocks update failed ({e}) — retrying as plain text");
+        let plain = SlackApiChatUpdateRequest::new(
             SlackChannelId::new(channel_id.to_string()),
-            SlackMessageContent::new().with_text(footer.to_string()),
+            SlackMessageContent::new().with_text(plain_text),
+            ts.clone(),
         );
-        if let Some(ts) = thread_ts {
-            plain = plain.with_thread_ts(ts.clone());
-        }
-        if let Err(e) = session.chat_post_message(&plain).await {
-            tracing::warn!("Slack: ctx footer post failed: {e}");
+        if let Err(e) = session.chat_update(&plain).await {
+            tracing::warn!("Slack: ctx footer update failed, footer dropped: {e}");
         }
     }
 }
@@ -1450,7 +1452,10 @@ async fn handle_message(
     // doesn't matter when the hash gets re-inserted on every turn that
     // happens to produce the same answer; the only correct scope is one
     // turn.
-    let sent_intermediate_ts: Arc<Mutex<Vec<(SlackTs, u64)>>> = Arc::new(Mutex::new(Vec::new()));
+    // (ts, content hash, posted mrkdwn text). The text rides along so the
+    // footer paths can rebuild the message for a chat.update (#459).
+    let sent_intermediate_ts: Arc<Mutex<Vec<(SlackTs, u64, String)>>> =
+        Arc::new(Mutex::new(Vec::new()));
     let sent_intermediate_ts_final = sent_intermediate_ts.clone();
 
     // Track every IntermediateText `tokio::spawn` handle so the
@@ -1691,7 +1696,7 @@ async fn handle_message(
                                 let mut hasher = DefaultHasher::new();
                                 text_fmt.hash(&mut hasher);
                                 let content_hash = hasher.finish();
-                                ts_ref.lock().await.push((resp.ts, content_hash));
+                                ts_ref.lock().await.push((resp.ts, content_hash, text_fmt));
                             }
                             Err(e) => {
                                 tracing::debug!("Slack: failed to send intermediate text: {}", e);
@@ -1888,16 +1893,19 @@ async fn handle_message(
                         "Slack: final response is empty — keeping {} intermediate(s) as the visible answer",
                         intermediates.len(),
                     );
-                    // The kept intermediates ARE the completion, so the ctx
-                    // footer lands as its own small post below them (#456).
-                    post_ctx_footer(&session, &channel_id, thread_ts.as_ref(), &footer).await;
+                    // The kept intermediates ARE the completion: the footer
+                    // edits into the LAST one, display-only, exactly like
+                    // Telegram — never a standalone post below (#459).
+                    if let Some((ts, _hash, text)) = intermediates.last() {
+                        append_footer_via_update(&session, &channel_id, ts, text, &footer).await;
+                    }
                 }
                 return;
             }
 
             let mut matching_keep: Vec<SlackTs> = Vec::new();
             let mut to_delete: Vec<SlackTs> = Vec::new();
-            for (ts, hash) in &intermediates {
+            for (ts, hash, _text) in &intermediates {
                 if *hash == final_hash {
                     matching_keep.push(ts.clone());
                 } else {
@@ -1952,8 +1960,12 @@ async fn handle_message(
                 }
                 // The kept intermediate carries the answer but not the ctx
                 // footer (the final post that normally appends it is being
-                // skipped) — post the footer standalone (#456).
-                post_ctx_footer(&session, &channel_id, thread_ts.as_ref(), &footer).await;
+                // skipped) — edit the footer into it, display-only (#459).
+                // Its posted body hash-matched the final, so text_only IS
+                // its content.
+                if let Some(ts) = matching_keep.first() {
+                    append_footer_via_update(&session, &channel_id, ts, &text_only, &footer).await;
+                }
                 return;
             }
 
@@ -2061,7 +2073,7 @@ async fn handle_message(
                 .chain(to_delete.iter())
                 .map(|t| t.to_string())
                 .collect();
-            for (ts, hash) in &final_intermediates {
+            for (ts, hash, _text) in &final_intermediates {
                 if *hash == final_hash && !already_seen.contains(&ts.to_string()) {
                     tracing::info!(
                         "Slack: post-completion sweep — deleting late intermediate ts={} (hash matches final)",
