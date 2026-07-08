@@ -4647,35 +4647,16 @@ pub(crate) async fn handle_message(
     }
 
     // Send any remaining display items that weren't flushed by the edit loop
-    // Buffer consecutive tool calls to group them into collapsible blocks
-    let mut tool_buffer: Vec<usize> = Vec::new();
-
-    for item in remaining_display {
-        match item {
-            DisplayItem::NewTool(idx) => {
-                tool_buffer.push(idx);
-            }
-            DisplayItem::Intermediate(text) => {
-                // Fold the intermediate into the open processing-log flow
-                // instead of sending it as its own message (#300). Sanitize as
-                // before folding; fire any <<react:>> now (#261).
-                append_tool_group(&bot, msg.chat.id, thread_id, &streaming, &tool_buffer).await;
-                tool_buffer.clear();
-                let text = crate::utils::sanitize::strip_llm_artifacts(&text);
-                let text = redact_secrets(&text);
-                let (text, _img_paths) = crate::utils::extract_img_markers(&text);
-                let (text, react_emoji) = crate::utils::extract_react_marker(&text);
-                if let Some(ref emoji) = react_emoji {
-                    fire_reaction(&bot, msg.chat.id, msg.id, emoji).await;
-                }
-                append_intermediate_to_flow(&bot, msg.chat.id, thread_id, &streaming, &text).await;
-            }
-        }
-    }
-
-    // Flush any remaining tools into the open group (merges the final batch
-    // into the running collapsible block instead of opening a new message).
-    append_tool_group(&bot, msg.chat.id, thread_id, &streaming, &tool_buffer).await;
+    // through the ONE shared drain (#470).
+    drain_remaining_display(
+        &bot,
+        msg.chat.id,
+        thread_id,
+        &streaming,
+        remaining_display,
+        Some(msg.id),
+    )
+    .await;
 
     tracing::info!(
         "Telegram: agent call completed for session {} — delivering final response",
@@ -5654,33 +5635,17 @@ pub(crate) async fn resume_session(
         return Ok(());
     }
 
-    // Send remaining display items
-    // Buffer consecutive tool calls to group them into collapsible blocks
-    let mut tool_buffer: Vec<usize> = Vec::new();
-
-    for item in remaining_display {
-        match item {
-            DisplayItem::NewTool(idx) => {
-                tool_buffer.push(idx);
-            }
-            DisplayItem::Intermediate(text) => {
-                // Fold the intermediate into the open processing-log flow
-                // (#300). Resumed sessions have no inbound user message, so a
-                // <<react:>> directive is stripped but no reaction fires (#261).
-                append_tool_group(&bot, chat_id, thread_id, &streaming, &tool_buffer).await;
-                tool_buffer.clear();
-                let text = crate::utils::sanitize::strip_llm_artifacts(&text);
-                let text = redact_secrets(&text);
-                let (text, _img_paths) = crate::utils::extract_img_markers(&text);
-                let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
-                append_intermediate_to_flow(&bot, chat_id, thread_id, &streaming, &text).await;
-            }
-        }
-    }
-
-    // Flush any remaining tools into the open group (merges the final batch
-    // into the running collapsible block instead of opening a new message).
-    append_tool_group(&bot, chat_id, thread_id, &streaming, &tool_buffer).await;
+    // Send remaining display items through the ONE shared drain (#470).
+    // Resume has no inbound message to react to.
+    drain_remaining_display(
+        &bot,
+        chat_id,
+        thread_id,
+        &streaming,
+        remaining_display,
+        None,
+    )
+    .await;
 
     match result {
         Ok(response) => {
@@ -6416,6 +6381,49 @@ async fn fetch_file_or_notify(
 /// above the buttons instead of below (race reported in issue #142).
 ///
 /// Applies the same sanitize/redact/dedup/split/send chain as the edit loop.
+/// Drain the display items left queued after the edit loop stopped,
+/// folding them into the processing-log flow. ONE shared implementation for
+/// handle_message and resume_session (#470 / #462 item 1: the drains were
+/// copy-pasted and could drift apart — parity is now structural).
+/// `react_target` is the inbound message a folded `<<react:>>` directive
+/// acknowledges; resume has none (the original message id is lost across
+/// restarts), so the directive strips without firing (#261).
+async fn drain_remaining_display(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    remaining: Vec<DisplayItem>,
+    react_target: Option<MessageId>,
+) {
+    let mut tool_buffer: Vec<usize> = Vec::new();
+    for item in remaining {
+        match item {
+            DisplayItem::NewTool(idx) => {
+                tool_buffer.push(idx);
+            }
+            DisplayItem::Intermediate(text) => {
+                // Fold into the open processing-log flow instead of sending
+                // a standalone message (#300); sanitize exactly like the
+                // live edit-loop path.
+                append_tool_group(bot, chat, thread_id, streaming, &tool_buffer).await;
+                tool_buffer.clear();
+                let text = crate::utils::sanitize::strip_llm_artifacts(&text);
+                let text = redact_secrets(&text);
+                let (text, _img_paths) = crate::utils::extract_img_markers(&text);
+                let (text, react_emoji) = crate::utils::extract_react_marker(&text);
+                if let (Some(target), Some(emoji)) = (react_target, react_emoji.as_deref()) {
+                    fire_reaction(bot, chat, target, emoji).await;
+                }
+                append_intermediate_to_flow(bot, chat, thread_id, streaming, &text).await;
+            }
+        }
+    }
+    // Flush any remaining tools into the open group (merges the final batch
+    // into the running collapsible block instead of opening a new message).
+    append_tool_group(bot, chat, thread_id, streaming, &tool_buffer).await;
+}
+
 pub(crate) async fn flush_intermediates(
     bot: &Bot,
     chat: ChatId,
