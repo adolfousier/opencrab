@@ -9,6 +9,7 @@ pub(crate) mod flow;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod intermediates;
+pub(crate) mod keyboards;
 pub(crate) mod markdown;
 pub(crate) mod media;
 pub(crate) mod raw_updates;
