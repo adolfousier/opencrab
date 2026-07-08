@@ -965,6 +965,10 @@ impl AgentService {
         let mut last_iter_input_tokens = 0u32;
         let mut final_response: Option<LLMResponse> = None;
         let mut accumulated_text = String::new(); // Collect text from all iterations (not just final)
+        // Iteration content withheld from the DB by the phantom persist-skip.
+        // Flushed at turn close if that very iteration ends the turn (#458):
+        // the reloadable history must always contain what the user saw.
+        let mut pending_phantom_content: Option<String> = None;
         let mut recent_tool_calls: Vec<String> = Vec::new(); // Track tool calls to detect loops
         let mut stream_retry_count = 0u32; // Track consecutive stream drop retries
         const MAX_STREAM_RETRIES: u32 = 3; // Retry up to 3 times on dropped streams
@@ -3457,10 +3461,27 @@ impl AgentService {
                 // nudge or after a sticky-fallback swap) gets persisted
                 // normally because by then the phantom signature has
                 // been replaced.
+                // The skip must agree with the turn-end phantom verdict
+                // (#458): after successful tool calls, a text with no
+                // forward-looking intent phrase is a completion ack, not a
+                // phantom — the detector exonerates it, so the persist must
+                // too, or the final completion streams to the screen and
+                // vanishes from the DB on reload.
                 let iteration_is_phantom = !iteration_text.is_empty()
                     && tool_uses.is_empty()
-                    && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text);
+                    && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
+                    && (tool_calls_completed_this_turn == 0
+                        || super::phantom::has_forward_intent_post_success(&iteration_text));
 
+                let mut iter_content = String::new();
+                if let Some(ref reasoning) = reasoning_text
+                    && !reasoning.trim().is_empty()
+                {
+                    iter_content.push_str(&format!(
+                        "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
+                        reasoning
+                    ));
+                }
                 if iteration_is_phantom {
                     tracing::debug!(
                         "[phantom] Skipping DB persist for phantom iteration \
@@ -3471,16 +3492,19 @@ impl AgentService {
                             .map(|r| !r.trim().is_empty())
                             .unwrap_or(false),
                     );
-                } else {
-                    let mut iter_content = String::new();
-                    if let Some(ref reasoning) = reasoning_text
-                        && !reasoning.trim().is_empty()
-                    {
-                        iter_content.push_str(&format!(
-                            "<!-- reasoning -->\n{}\n<!-- /reasoning -->\n\n",
-                            reasoning
-                        ));
+                    // Stash instead of drop: if the turn CLOSES on this
+                    // iteration, the text is the visible completion and the
+                    // turn-close flush persists it (#458).
+                    if !iteration_text.is_empty() {
+                        iter_content.push_str(&format!("{}\n\n", iteration_text));
                     }
+                    pending_phantom_content = if iter_content.is_empty() {
+                        None
+                    } else {
+                        Some(iter_content)
+                    };
+                } else {
+                    pending_phantom_content = None;
                     if !iteration_text.is_empty() {
                         if !accumulated_text.is_empty() {
                             accumulated_text.push_str("\n\n");
@@ -3488,10 +3512,12 @@ impl AgentService {
                         accumulated_text.push_str(&iteration_text);
                         iter_content.push_str(&format!("{}\n\n", iteration_text));
                     }
-                    if !iter_content.is_empty() {
-                        let _ = message_service
+                    if !iter_content.is_empty()
+                        && let Err(e) = message_service
                             .append_content(assistant_db_msg.id, &iter_content)
-                            .await;
+                            .await
+                    {
+                        tracing::warn!("failed to append iteration content to DB: {e}");
                     }
                 }
             }
@@ -4296,6 +4322,23 @@ impl AgentService {
                     }
                 } else {
                     tracing::info!("Agent responded with text only (no tool calls)");
+                }
+                // Turn-close flush (#458): the closing iteration's persist
+                // was withheld by the phantom skip, but the turn ended on it
+                // — that text IS the completion the user saw. Write it so a
+                // session reload shows the same history as the live view.
+                if let Some(content) = pending_phantom_content.take() {
+                    tracing::info!(
+                        "[phantom] persisting withheld closing-iteration content ({} chars) \
+                         at turn close (#458)",
+                        content.len()
+                    );
+                    if let Err(e) = message_service
+                        .append_content(assistant_db_msg.id, &content)
+                        .await
+                    {
+                        tracing::warn!("failed to persist withheld completion: {e}");
+                    }
                 }
                 final_response = Some(response);
 
