@@ -5,6 +5,52 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.65] - 2026-07-08
+
+27 commits since v0.3.64. 51 files changed, +2013 / -279 lines.
+
+### ✨ Features
+
+- `833eae42` **Slack Block Kit delivery**: rich completion formatting via Block Kit (#455)
+- `934fb06b` **Slack ctx footer as grey context block**: small grey block showing context (#457)
+- `f9ac0cda` **Telegram flow block re-sticks**: open flow block re-sticks to chat bottom when buried (#451)
+- `2e7516d6` **Telegram channel_search message_type filter**: add message_type filter and attachments operation (#445)
+- `4f44533a` **Telegram group attachments persist**: persist all group attachments to disk and channel_messages (#445)
+- `5e56be0d` **PDF landscape/page-size**: add landscape and custom page-size support to PDF backend (#438)
+- `c89b8e59` **DOCX orientation/page-size**: add orientation and page-size support to DOCX backend (#440)
+- `a594b3fe` **PPTX slide size**: add slide size/aspect ratio support to PPTX backend (#441)
+- `6ab11945` **Flat tool inventory in prompt**: system prompt lists all tools so models stop claiming they're absent (#448, #449)
+
+### 🔧 Fixes
+
+- `51e9dd8a` **TUI session switch syncs working directory**: agent working directory always synced on session switch (#460)
+- `0aa07577` **Slack ctx footer edits in-place**: ctx footer edits into the completion message, never posts below (#459)
+- `f17fb83e` **Agent persists closing iteration**: persist the closing iteration even when the phantom skip fired (#458)
+- `c69a4451` **Slack ctx footer on intermediate turns**: ctx footer lands on intermediate-as-answer turns too (#456)
+- `3aab35f4` **Health check noise reduction**: demote keyless provider warnings to debug, filter /status display
+- `a1c69e35` **Cron one scheduler per profile**: one scheduler per profile via lock, stop duplicate job execution (#453)
+- `cb14d8ae` **Telegram_send inherits session origin**: telegram_send inherits session origin for chat_id and thread_id (#450)
+- `fd20443c` **Telegram mention-only mode**: other bots can't trigger us by tagging in mention-only mode (#447)
+- `daf7c9ce` **Telegram flow-header timer**: coarse flow-header timer so Desktop expansion survives (#452)
+- `6406ccf0` **Tests .recent() call sites**: update all .recent() call sites for new message_type parameter
+- `02f7db86` **Session load error**: session load error never forks a new session (#442)
+- `9cdf2249` **Telegram reaction completion**: never let a reaction swallow the completion of a work turn (#439)
+- `e2ae4b12` **DB token_count overflow**: token_count i32 overflow causes negative display for high-usage sessions (#437)
+- `780da835` **Telegram flow log dedup**: dedup sub-header in rich HTML details flow log (#436)
+- `636d2626` **Cron next_run_after anchor**: use now as anchor for next_run_after to prevent test-trigger catch-up loop (#432)
+- `e3cde0d2` **Preamble owner-only gate**: owner-only gate for /evolve and /rebuild with accurate descriptions (#431)
+- `a873767a` **Preamble owner-only gate**: add owner-only gate for /rebuild, /evolve, /compact and clarify what each does (#431)
+
+### 🧹 Miscellaneous
+
+- `f3fe105c` style: rustfmt reflow leftovers in slack handler and channel search test
+
+### 📊 Stats
+
+- 27 commits since v0.3.64
+- 51 files changed, +2013 / -279 lines
+- 4716 tests (4716 passed, 0 failed, 29 ignored)
+
 ## [0.3.64] - 2026-07-08
 
 11 commits since v0.3.63. 33 files changed, +1179 / -388 lines.
@@ -6627,3 +6673,4 @@ fixes.
 [0.3.62]: https://github.com/adolfousier/opencrabs/compare/v0.3.61...v0.3.62
 [0.3.61]: https://github.com/adolfousier/opencrabs/compare/v0.3.60...v0.3.61
 [0.3.63]: https://github.com/adolfousier/opencrabs/compare/v0.3.62...v0.3.63[0.3.64]: https://github.com/adolfousier/opencrabs/compare/v0.3.63...v0.3.64
+[0.3.65]: https://github.com/adolfousier/opencrabs/compare/v0.3.64...v0.3.65
