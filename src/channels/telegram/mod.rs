@@ -14,6 +14,7 @@ pub(crate) mod markdown;
 pub(crate) mod media;
 pub(crate) mod raw_updates;
 pub(crate) mod reaction_prompt;
+pub(crate) mod resume;
 pub(crate) mod rich;
 pub(crate) mod rich_decode;
 pub(crate) mod send;
