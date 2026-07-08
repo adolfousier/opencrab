@@ -384,6 +384,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | **Inline Tool Approval** | Claude Code-style `❯ Yes / Always / No` selector with arrow key navigation |
 | **Inline Plan Approval** | Interactive plan review selector (Approve / Reject / Request Changes / View Plan) |
 | **Session Management** | Create, rename, delete sessions with persistent SQLite storage; each session remembers its provider + model — switching sessions auto-restores the provider (no manual `/models` needed); token counts and context % per session. New sessions auto-generate a meaningful title from the first user message (no more "New Chat") |
+| **Direct Model Switch** | `/models <provider/model>` switches the current session instantly — no picker — on the TUI and every channel; add `all` (`/models minimax/MiniMax-M3 all`) to apply to every non-archived session (Telegram also offers an inline "Apply to all sessions" button). `opencrabs session set-model` does the same from the terminal, and `[providers.<name>] force_default = true` pushes the section's default pair to all sessions on config reload |
 | **Split Panes** | Horizontal (`\|` in sessions) and vertical (`_` in sessions) pane splitting — tmux-style. Each pane runs its own session with independent provider, model, and context. Run 10 sessions side by side, all processing in parallel. `Tab` to cycle focus, `Ctrl+X` to close pane |
 | **Parallel Sessions** | Multiple sessions can have in-flight requests to different providers simultaneously. Send a message in one session, switch to another, send another — both process in parallel. Background sessions auto-approve tool calls; you'll see results when you switch back |
 | **Scroll While Streaming** | Scroll up during streaming without being yanked back to bottom; auto-scroll re-enables when you scroll back down or send a message |
@@ -440,6 +441,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | `opencrabs memory stats` | Memory statistics: file count, total size, entry count |
 | `opencrabs session list` | List all sessions with provider, model, token count (`--all` includes archived) |
 | `opencrabs session get <id>` | Show session details and recent messages |
+| `opencrabs session set-model <provider/model> [target]` | Non-interactive model switch: target by id prefix, `--name "<title match>"`, or `--all` (non-archived sessions). The pair splits on the first slash, so `openrouter/tencent/hy3:free` works. A running instance applies it on each session's next message |
 | `opencrabs db init` | Initialize database |
 | `opencrabs db stats` | Show database statistics |
 | `opencrabs db clear` | Clear all sessions and messages (`--force` to skip confirmation) |
