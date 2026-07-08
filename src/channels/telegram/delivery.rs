@@ -1,0 +1,642 @@
+//! Final-response delivery: the ONE path every Telegram turn ends on
+//! (#471 phases 2-4). Live turns (handle_message) and crash-recovery
+//! resumes both call deliver_final_response; the post-loop display drain
+//! lives here with it.
+
+use super::TelegramState;
+use super::flow::{
+    DisplayItem, FlowEntry, StreamingState, append_intermediate_to_flow, append_tool_group,
+    folded_duplicates_final, take_folded_final,
+};
+use super::handler::{fire_reaction, map_to_allowed_reaction};
+use super::intermediates::{append_footer_to_last_intermediate, send_html_or_plain};
+use super::markdown::{markdown_to_telegram_html, split_message};
+use super::send::{message_in_thread, photo_in_thread};
+use crate::brain::agent::AgentService;
+use crate::db::ChannelMessageRepository;
+use crate::db::models::ChannelMessage as DbChannelMessage;
+use crate::utils::sanitize::redact_secrets;
+use std::sync::Arc;
+use teloxide::prelude::*;
+use teloxide::types::{InputFile, MessageId, ParseMode};
+use uuid::Uuid;
+
+/// Drain all pending intermediate texts from the streaming state's display
+/// queue and send them immediately. Called by the follow-up-question callback
+/// BEFORE posting the question message, so the user sees contextual text
+/// above the buttons instead of below (race reported in issue #142).
+///
+/// Applies the same sanitize/redact/dedup/split/send chain as the edit loop.
+/// Deliver the final agent response for a live inbound turn: marker
+/// extraction, sanitize, react directive, dedup, reaction-only handling,
+/// folded-final reclaim, footer, rich-first send with HTML fallback,
+/// chunked sends, history recording, TTS. Extracted VERBATIM from
+/// handle_message (#471 phase 2) — the only edit is early
+/// `return Ok(())` becoming `return Ok(false)` so the caller can
+/// preserve handle_message's original control flow exactly.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn deliver_final_response(
+    bot: &Bot,
+    chat_id: ChatId,
+    // The inbound message this turn answers: reaction target and reply
+    // anchor. None on the crash-recovery resume path, where the original
+    // message id is lost across restarts — reactions strip without firing.
+    inbound: Option<&Message>,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    session_id: Uuid,
+    agent: &Arc<AgentService>,
+    telegram_state: &Arc<TelegramState>,
+    channel_msg_repo: &ChannelMessageRepository,
+    voice_config: &crate::config::VoiceConfig,
+    is_voice: bool,
+    is_dm: bool,
+    chat_title: &str,
+    mut streaming_msg_id: Option<MessageId>,
+    result: Result<crate::brain::agent::AgentResponse, crate::brain::agent::AgentError>,
+) -> ResponseResult<bool> {
+    match result {
+        Ok(response) => {
+            // Extract <<IMG:path>> markers — send each as a Telegram photo.
+            let (text_only, img_paths) = crate::utils::extract_img_markers(&response.content);
+            // Strip LLM-hallucinated artifacts (<!-- tools-v2 -->, XML tool blocks)
+            let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
+            let text_only = redact_secrets(&text_only);
+
+            // Extract <<react:emoji>> directive — the LLM outputs this to
+            // signal a reaction-only response (no text bubble). If the
+            // response is ONLY a reaction, the emoji is sent as a Telegram
+            // reaction on the user's message and text delivery is skipped.
+            let (text_only, react_emoji) = crate::utils::extract_react_marker(&text_only);
+
+            // Dedup: strip text that was already sent as intermediate messages
+            // to avoid duplicating content on Telegram. An intermediate chunk
+            // that already carries the final answer (e.g. "Done. Uploaded to
+            // Drive: https://…") will otherwise be repeated when the
+            // streaming placeholder is edited with the final response.
+            // Intermediates stay visible as-is; only the streaming
+            // placeholder's final text is pruned.
+            let sent = {
+                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                s.sent_intermediates.clone()
+            };
+            tracing::info!(
+                "Telegram dedup: response.content len={}, sent_intermediates count={}",
+                text_only.len(),
+                sent.len(),
+            );
+            let pre_dedup_text = text_only.clone();
+            // Normalize whitespace for comparison — collapse runs of
+            // whitespace (including newlines) to single spaces so that
+            // minor formatting differences between the streamed
+            // intermediate and the final response don't bypass dedup.
+            let norm = |s: &str| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
+            let text_only = if !sent.is_empty() {
+                let norm_final = norm(&text_only);
+                if sent.iter().any(|i| norm(i) == norm_final) {
+                    tracing::info!(
+                        "Telegram dedup: match found among {} intermediates (normalized) — suppressing final response",
+                        sent.len()
+                    );
+                    String::new()
+                } else {
+                    text_only
+                }
+            } else {
+                text_only
+            };
+
+            // Reaction directive: if the LLM included <<react:emoji>>, send
+            // a reaction on the user's message. For reaction-only responses
+            // (empty text after stripping the directive), skip all text/TTS
+            // delivery and just react — but ONLY when the turn did no tool
+            // work (#439): a turn that executed tools and ended with a bare
+            // reaction dropped its whole completion (issues were closed and
+            // commented, the user saw only 🔥). For a work turn, empty final
+            // text is a failure mode, never a deliberate ack.
+            let turn_ran_tools = {
+                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                !s.tool_msgs.is_empty()
+            };
+            if let Some(ref emoji) = react_emoji {
+                let mapped = map_to_allowed_reaction(emoji);
+                let reaction = teloxide::types::ReactionType::Emoji {
+                    emoji: mapped.clone(),
+                };
+                let react_result = match inbound {
+                    Some(m) => bot
+                        .set_message_reaction(chat_id, m.id)
+                        .reaction(vec![reaction])
+                        .is_big(false)
+                        .await
+                        .map(|_| ()),
+                    // Resume path: the original message is gone, nothing to
+                    // react to — treat as delivered so no fallback fires.
+                    None => Ok(()),
+                };
+                if let Err(ref e) = react_result {
+                    tracing::warn!("Telegram: failed to set reaction ({mapped}): {}", e);
+                }
+                if text_only.trim().is_empty() && turn_ran_tools {
+                    // Work turn with no completion text (#439): the model
+                    // replaced its summary with a reaction. Deliver a
+                    // fallback completion so the work is reported — the
+                    // reaction already landed above.
+                    tracing::warn!(
+                        "Telegram: turn executed tools but produced no completion text — \
+                         delivering fallback summary instead of reaction-only skip (#439)"
+                    );
+                    let fallback = {
+                        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                        let done = s
+                            .tool_msgs
+                            .iter()
+                            .filter(|t| t.completed == Some(true))
+                            .count();
+                        format!(
+                            "Done — {done}/{} tool calls completed. (The model ended the turn \
+                             without a summary; see the log above for what ran.)",
+                            s.tool_msgs.len()
+                        )
+                    };
+                    if let Err(e) = message_in_thread(bot, chat_id, thread_id, &fallback).await {
+                        tracing::error!("Telegram: fallback completion send failed: {}", e);
+                    }
+                    if let Some(mid) = streaming_msg_id {
+                        let _ = bot.delete_message(chat_id, mid).await;
+                    }
+                    return Ok(false);
+                }
+                if text_only.trim().is_empty() {
+                    // Never-silent guard (#353): a reaction-only turn whose
+                    // reaction FAILED must degrade to text, not to nothing.
+                    if react_result.is_err() {
+                        tracing::warn!(
+                            "Telegram: reaction-only turn with failed reaction — \
+                             delivering the emoji as text instead"
+                        );
+                        if let Err(e) =
+                            message_in_thread(bot, chat_id, thread_id, emoji.as_str()).await
+                        {
+                            tracing::error!("Telegram: emoji text fallback also failed: {}", e);
+                        }
+                    } else {
+                        tracing::info!(
+                            "Telegram: reaction-only response ({}), skipping text delivery",
+                            mapped
+                        );
+                    }
+                    if let Some(mid) = streaming_msg_id {
+                        let _ = bot.delete_message(chat_id, mid).await;
+                    }
+                    return Ok(false);
+                }
+            }
+
+            // Context budget footer is appended to the response text for
+            // display only. It must NOT be stored in the session/messages
+            // table or used for TTS synthesis — it's metadata for the user.
+            let ctx_max = agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(
+                response.context_tokens,
+                ctx_max,
+                response.tokens_per_second,
+            );
+
+            for img_path in img_paths {
+                match tokio::fs::read(&img_path).await {
+                    Ok(bytes) => {
+                        if let Err(e) =
+                            photo_in_thread(bot, chat_id, thread_id, InputFile::memory(bytes)).await
+                        {
+                            tracing::error!("Telegram: failed to send generated image: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Telegram: failed to read image {}: {}", img_path, e);
+                    }
+                }
+            }
+
+            // Rich fallback: when all content was sent as HTML intermediates
+            // during streaming, the dedup step strips text_only to empty. If
+            // the original response had rich structure (tables, headings,
+            // lists), replace the HTML intermediates with a single native rich
+            // message so Telegram renders proper tables and blocks.
+            let text_only = if text_only.is_empty()
+                && !sent.is_empty()
+                && super::rich::should_send_native_rich(&pre_dedup_text)
+            {
+                let rich_md = if footer.is_empty() {
+                    pre_dedup_text.clone()
+                } else {
+                    format!("{pre_dedup_text}\n\n{footer}")
+                };
+                match super::rich::api::send_rich_markdown_id(
+                    bot.token(),
+                    chat_id.0,
+                    thread_id,
+                    &rich_md,
+                )
+                .await
+                {
+                    Ok(rich_msg_id) => {
+                        // Delete the HTML intermediates now that rich message succeeded
+                        let intermediate_ids = {
+                            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                            s.intermediate_msg_ids.clone()
+                        };
+                        for mid in &intermediate_ids {
+                            let _ = bot.delete_message(chat_id, *mid).await;
+                        }
+                        tracing::info!(
+                            "Telegram: rich fallback delivered ({} chars), deleted {} HTML intermediates",
+                            rich_md.len(),
+                            intermediate_ids.len()
+                        );
+                        // Store bot reply in channel_messages even though
+                        // text_only is empty (dedup stripped it). The rich
+                        // fallback already sent pre_dedup_text, so the next
+                        // turn's recent() query sees the bot's side of the
+                        // conversation. Without this, the agent "talks to
+                        // itself in the dark" after every rich fallback.
+                        if !is_dm {
+                            let bot_display_name = telegram_state
+                                .bot_username()
+                                .await
+                                .map(|u| format!("@{}", u))
+                                .unwrap_or_else(|| "OpenCrabs".to_string());
+                            let thread_id_str = thread_id.map(|t| t.0.to_string());
+                            let cm = DbChannelMessage::new(
+                                "telegram".to_string(),
+                                chat_id.0.to_string(),
+                                Some(chat_title.to_string()),
+                                "bot:opencrabs".to_string(),
+                                bot_display_name,
+                                pre_dedup_text.clone(),
+                                "text".to_string(),
+                                Some(rich_msg_id.to_string()),
+                            )
+                            .with_thread(thread_id_str, None);
+                            if let Err(e) = channel_msg_repo.insert(&cm).await {
+                                tracing::warn!(
+                                    "Telegram: rich fallback: failed to record bot reply: {}",
+                                    e
+                                );
+                            }
+                        }
+                        text_only
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Telegram: rich fallback failed, keeping HTML intermediates: {e}"
+                        );
+                        text_only
+                    }
+                }
+            } else {
+                text_only
+            };
+
+            // #300 follow-up: ALWAYS check if the trailing folded text matches the
+            // final answer and remove it to prevent duplication. For CLI providers,
+            // the final answer arrives as a trailing IntermediateText folded into
+            // the collapsed block while response.content comes back empty, so we
+            // reclaim it. For other providers (or CLI turns where the answer stayed
+            // in content), if the same text ended up both folded and in the final
+            // response, remove the folded copy to avoid showing it twice.
+            let text_only = if text_only.trim().is_empty() {
+                // CLI provider case: no separate answer, reclaim the folded final
+                take_folded_final(bot, chat_id, streaming)
+                    .await
+                    .unwrap_or(text_only)
+            } else {
+                // Non-CLI case: check if the trailing folded text matches the final
+                // answer and remove it to prevent duplication
+                let trailing_matches = {
+                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    match s.flow_entries.last() {
+                        Some(FlowEntry::Text(folded)) => {
+                            folded_duplicates_final(folded, &text_only)
+                        }
+                        _ => false,
+                    }
+                };
+                if trailing_matches {
+                    // Remove the duplicate from the block
+                    take_folded_final(bot, chat_id, streaming).await;
+                }
+                text_only
+            };
+
+            // Deliver final response — prefer editing the streaming message in-place
+            // to avoid the delete+send race that causes duplicates.
+            let html = markdown_to_telegram_html(&text_only);
+            // Append ctx footer to display only — never stored in DB or used for TTS.
+            // When text is empty after dedup (all content was already delivered as
+            // intermediate messages), DON'T send a footer-only message. The streaming
+            // placeholder will be deleted instead.
+            let display_html = if html.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n\n<i>{}</i>", html, footer)
+            };
+            tracing::info!(
+                "Telegram deliver: html.len={}, footer='{}', text_only ends_with={:?}",
+                html.len(),
+                footer,
+                text_only.lines().last()
+            );
+            // Telegram message_id of the FINAL reply bubble. Captured across the
+            // delivery paths (rich send, in-place edit, chunked send) so we can
+            // persist it and later recover the EXACT message a user replies to,
+            // instead of guessing "the most recent bot message" (#234 follow-up).
+            let mut sent_reply_id: Option<i32> = None;
+            if !display_html.is_empty() {
+                // Rich-first delivery: a structured reply (tables / headings /
+                // lists / math) is delivered as a native Telegram rich message
+                // regardless of length — Telegram renders the raw markdown into
+                // real tables and blocks. Edit the streamed placeholder in place
+                // if we have one, otherwise send a fresh message. The ctx footer
+                // is plain text, appended as-is. On ANY failure we fall through
+                // to the HTML chunking path below, so the streaming path is
+                // never regressed. Plain prose skips rich entirely so Telegram's
+                // parser never reinterprets incidental characters.
+                let delivered_rich = super::rich::should_send_native_rich(&text_only) && {
+                    let rich_md = if footer.is_empty() {
+                        text_only.clone()
+                    } else {
+                        format!("{text_only}\n\n<sub>{footer}</sub>")
+                    };
+                    // Send a FRESH rich message rather than editing the streamed
+                    // placeholder into rich. Editing a normal message into a rich
+                    // one glitches the client render — overlap during the
+                    // transition, and a stale pre-edit (HTML) version after a
+                    // refresh / chat switch. A fresh sendRichMessage renders clean.
+                    //
+                    // Delete the placeholder FIRST so the fresh rich message is
+                    // the LAST thing added to the chat — deleting it AFTER the
+                    // send pulls the content up and leaves the view mid-chat
+                    // instead of scrolling to the bottom on completion. `.take()`
+                    // clears the id so the HTML fallback below sends a fresh
+                    // message (not an edit of a deleted one) if the rich send fails.
+                    if let Some(mid) = streaming_msg_id.take() {
+                        let _ = bot.delete_message(chat_id, mid).await;
+                    }
+                    match super::rich::api::send_rich_markdown_id(
+                        bot.token(),
+                        chat_id.0,
+                        thread_id,
+                        &rich_md,
+                    )
+                    .await
+                    {
+                        Ok(id) => {
+                            sent_reply_id = Some(id);
+                            true
+                        }
+                        Err(e) => {
+                            tracing::warn!("Telegram: rich delivery failed, using HTML: {e}");
+                            false
+                        }
+                    }
+                };
+
+                if !delivered_rich {
+                    let chunks: Vec<String> = split_message(&display_html, 4096)
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect();
+
+                    // If single chunk and we have a streaming message, edit it in-place
+                    if chunks.len() == 1
+                        && let Some(mid) = streaming_msg_id
+                    {
+                        match bot
+                            .edit_message_text(chat_id, mid, &chunks[0])
+                            .parse_mode(ParseMode::Html)
+                            .await
+                        {
+                            Ok(_) => {
+                                // Edited in place — the reply bubble keeps `mid`.
+                                sent_reply_id = Some(mid.0);
+                            }
+                            Err(teloxide::RequestError::RetryAfter(secs)) => {
+                                tracing::warn!(
+                                    "Telegram: edit rate-limited, waiting {}s",
+                                    secs.seconds()
+                                );
+                                tokio::time::sleep(secs.duration()).await;
+                                if let Err(e) = bot
+                                    .edit_message_text(chat_id, mid, &chunks[0])
+                                    .parse_mode(ParseMode::Html)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Telegram: edit retry failed ({e}), falling back to delete+send"
+                                    );
+                                    let _ = bot.delete_message(chat_id, mid).await;
+                                    let _ = send_html_or_plain(bot, chat_id, thread_id, &chunks[0])
+                                        .await;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Telegram: edit final failed ({e}), falling back to delete+send"
+                                );
+                                let _ = bot.delete_message(chat_id, mid).await;
+                                let _ =
+                                    send_html_or_plain(bot, chat_id, thread_id, &chunks[0]).await;
+                            }
+                        }
+                    } else {
+                        // Multi-chunk or no streaming message — delete old, send new
+                        if let Some(mid) = streaming_msg_id {
+                            let _ = bot.delete_message(chat_id, mid).await;
+                        }
+                        for chunk in &chunks {
+                            // Last chunk wins — that's the bubble a user replies to.
+                            if let Ok(sent) =
+                                send_html_or_plain(bot, chat_id, thread_id, chunk).await
+                            {
+                                sent_reply_id = Some(sent.0);
+                            }
+                        }
+                    }
+                }
+            } else if let Some(mid) = streaming_msg_id {
+                // Empty final text — all content was already delivered as
+                // intermediate messages. Append the ctx/tok-s footer to the
+                // last intermediate so the user still sees the budget (it was
+                // being dropped on every tool-using turn — 2026-06-06), then
+                // remove the now-empty streaming placeholder. Never a
+                // standalone footer bubble (7a0ca1c9).
+                let last_inter = {
+                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    s.intermediate_msg_ids
+                        .last()
+                        .copied()
+                        .zip(s.sent_intermediates.last().cloned())
+                };
+                if let Some((inter_id, inter_text)) = last_inter {
+                    append_footer_to_last_intermediate(
+                        bot,
+                        chat_id,
+                        inter_id,
+                        &inter_text,
+                        &footer,
+                    )
+                    .await;
+                }
+                let _ = bot.delete_message(chat_id, mid).await;
+            }
+
+            // Record the bot's text reply into channel_messages.
+            //
+            // Groups: needed so the recent() query that builds conversation
+            // context on the NEXT turn sees both sides — without it the bot
+            // loads a one-sided transcript and talks to itself in the dark.
+            //
+            // Both group AND DM persist the Telegram message_id (when captured)
+            // so a later reply to THIS bubble can be recovered EXACTLY by id —
+            // Telegram delivers rich bot messages with empty text, so the reply
+            // handler can't read the quoted content from the update and must
+            // look it up by id (#234 follow-up). DMs are stored only when we
+            // have an id (lookup-only; DM conversation context still comes from
+            // the session messages table, not channel_messages).
+            let pmid = sent_reply_id.map(|i| i.to_string());
+            if !text_only.trim().is_empty() && (!is_dm || pmid.is_some()) {
+                let bot_display_name = telegram_state
+                    .bot_username()
+                    .await
+                    .map(|u| format!("@{}", u))
+                    .unwrap_or_else(|| "OpenCrabs".to_string());
+                let thread_id = thread_id.map(|t| t.0.to_string());
+                let cm = DbChannelMessage::new(
+                    "telegram".to_string(),
+                    chat_id.0.to_string(),
+                    Some(chat_title.to_string()),
+                    "bot:opencrabs".to_string(),
+                    bot_display_name,
+                    text_only.clone(),
+                    "text".to_string(),
+                    pmid.clone(),
+                )
+                .with_thread(thread_id, None);
+                if let Err(e) = channel_msg_repo.insert(&cm).await {
+                    tracing::warn!(
+                        "Telegram: failed to record bot reply in channel_messages: {}",
+                        e
+                    );
+                }
+            }
+
+            // If input was voice AND TTS is enabled, also send voice note after text
+            if is_voice && voice_config.tts_enabled {
+                tracing::info!(
+                    "Telegram: TTS requested — synthesizing response text (len={})",
+                    response.content.len()
+                );
+                match crate::channels::voice::synthesize(&response.content, voice_config).await {
+                    Ok(audio_bytes) => {
+                        tracing::info!(
+                            "Telegram: TTS succeeded — {} bytes of audio, sending to chat {}",
+                            audio_bytes.len(),
+                            chat_id
+                        );
+                        match bot
+                            .send_voice(chat_id, InputFile::memory(audio_bytes))
+                            .await
+                        {
+                            Ok(m) => {
+                                tracing::info!(
+                                    "Telegram: voice message delivered (msg_id={})",
+                                    m.id
+                                );
+                                // Record the delivered voice message ID in
+                                // the isolated voice_msg_ids list. Cleanup
+                                // paths do not touch this list. See the
+                                // field doc on StreamingState.
+                                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                                s.voice_msg_ids.push(m.id);
+                            }
+                            Err(e) => {
+                                tracing::error!("Telegram: send_voice failed — {}: {:?}", e, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Telegram: TTS synthesis failed: {:#}", e);
+                    }
+                }
+            }
+        }
+        Err(ref e) if matches!(e, crate::brain::agent::AgentError::Cancelled) => {
+            tracing::info!("Telegram: agent call cancelled for session {}", session_id);
+            // Silently clean up — user already received "Operation cancelled." from /stop
+            if let Some(mid) = streaming_msg_id {
+                let _ = bot.delete_message(chat_id, mid).await;
+            }
+        }
+        Err(e) => {
+            tracing::error!("Telegram: agent error: {}", e);
+            // Translate via the shared helper so the message tells the
+            // user WHAT self-heal already tried + what to do next,
+            // instead of leaking the raw `API error (502)` shape that
+            // confused users into thinking the agent silently dropped
+            // their request. See `brain::agent::format_user_error` for
+            // the pattern matchers (5xx exhausted / 429 / context too
+            // large / stream broken / repetition loop / etc.).
+            let user_msg = format!("❌ Error\n\n{}", crate::brain::agent::format_user_error(&e));
+            if let Some(mid) = streaming_msg_id {
+                let _ = bot.edit_message_text(chat_id, mid, user_msg).await;
+            } else {
+                message_in_thread(bot, chat_id, thread_id, user_msg).await?;
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Drain the display items left queued after the edit loop stopped,
+/// folding them into the processing-log flow. ONE shared implementation for
+/// handle_message and resume_session (#470 / #462 item 1: the drains were
+/// copy-pasted and could drift apart — parity is now structural).
+/// `react_target` is the inbound message a folded `<<react:>>` directive
+/// acknowledges; resume has none (the original message id is lost across
+/// restarts), so the directive strips without firing (#261).
+pub(crate) async fn drain_remaining_display(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    remaining: Vec<DisplayItem>,
+    react_target: Option<MessageId>,
+) {
+    let mut tool_buffer: Vec<usize> = Vec::new();
+    for item in remaining {
+        match item {
+            DisplayItem::NewTool(idx) => {
+                tool_buffer.push(idx);
+            }
+            DisplayItem::Intermediate(text) => {
+                // Fold into the open processing-log flow instead of sending
+                // a standalone message (#300); sanitize exactly like the
+                // live edit-loop path.
+                append_tool_group(bot, chat, thread_id, streaming, &tool_buffer).await;
+                tool_buffer.clear();
+                let text = crate::utils::sanitize::strip_llm_artifacts(&text);
+                let text = redact_secrets(&text);
+                let (text, _img_paths) = crate::utils::extract_img_markers(&text);
+                let (text, react_emoji) = crate::utils::extract_react_marker(&text);
+                if let (Some(target), Some(emoji)) = (react_target, react_emoji.as_deref()) {
+                    fire_reaction(bot, chat, target, emoji).await;
+                }
+                append_intermediate_to_flow(bot, chat, thread_id, streaming, &text).await;
+            }
+        }
+    }
+    // Flush any remaining tools into the open group (merges the final batch
+    // into the running collapsible block instead of opening a new message).
+    append_tool_group(bot, chat, thread_id, streaming, &tool_buffer).await;
+}
