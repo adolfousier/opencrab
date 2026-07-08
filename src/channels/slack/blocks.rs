@@ -48,6 +48,16 @@ pub(crate) fn blocks_from_mrkdwn(text: &str) -> Vec<SlackBlock> {
     blocks
 }
 
+/// The ctx budget footer as a context block (#457): Slack renders context
+/// elements in small grey type, visually separated from the body — the
+/// native equivalent of Telegram's italic footer. Italic mrkdwn inside for
+/// full parity.
+pub(crate) fn context_footer(footer: &str) -> SlackBlock {
+    SlackBlock::Context(SlackContextBlock::new(vec![
+        SlackContextBlockElement::MarkDown(SlackBlockMarkDownText::new(format!("_{footer}_"))),
+    ]))
+}
+
 /// A markdown horizontal rule the mrkdwn converter leaves as-is.
 fn is_rule(line: &str) -> bool {
     let t = line.trim();

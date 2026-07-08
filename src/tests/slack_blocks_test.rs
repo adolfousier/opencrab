@@ -76,3 +76,18 @@ fn single_oversized_paragraph_hard_splits() {
         assert!(section_text(b).expect("section").chars().count() <= 3000);
     }
 }
+
+// ── ctx footer context block (#457) ─────────────────────────────────
+
+#[test]
+fn context_footer_is_small_grey_context_block_with_italics() {
+    let block = crate::channels::slack::blocks::context_footer("ctx: 48K/200K 24% | 52 tok/s");
+    let SlackBlock::Context(ctx) = block else {
+        panic!("footer must be a context block");
+    };
+    assert_eq!(ctx.elements.len(), 1);
+    let SlackContextBlockElement::MarkDown(md) = &ctx.elements[0] else {
+        panic!("footer element must be mrkdwn");
+    };
+    assert_eq!(md.text, "_ctx: 48K/200K 24% | 52 tok/s_");
+}

@@ -559,6 +559,45 @@ pub(crate) fn handler_state() -> Option<Arc<HandlerState>> {
     HANDLER_STATE.get().cloned()
 }
 
+/// Post the ctx budget footer as its own message: a small grey context
+/// block (#457) so it reads as metadata, not conversation, falling back to
+/// plain text if the blocks post is rejected. Used when the visible answer
+/// is a kept intermediate, which skips the final post that normally
+/// carries the footer (#456).
+async fn post_ctx_footer<'a>(
+    session: &SlackClientSession<'a, slack_morphism::hyper_tokio::SlackClientHyperHttpsConnector>,
+    channel_id: &str,
+    thread_ts: Option<&SlackTs>,
+    footer: &str,
+) {
+    if footer.is_empty() {
+        return;
+    }
+    let blocks_content = SlackMessageContent::new()
+        .with_text(footer.to_string())
+        .with_blocks(vec![super::blocks::context_footer(footer)]);
+    let mut request = SlackApiChatPostMessageRequest::new(
+        SlackChannelId::new(channel_id.to_string()),
+        blocks_content,
+    );
+    if let Some(ts) = thread_ts {
+        request = request.with_thread_ts(ts.clone());
+    }
+    if let Err(e) = session.chat_post_message(&request).await {
+        tracing::warn!("Slack: footer context block post failed ({e}) — retrying as plain text");
+        let mut plain = SlackApiChatPostMessageRequest::new(
+            SlackChannelId::new(channel_id.to_string()),
+            SlackMessageContent::new().with_text(footer.to_string()),
+        );
+        if let Some(ts) = thread_ts {
+            plain = plain.with_thread_ts(ts.clone());
+        }
+        if let Err(e) = session.chat_post_message(&plain).await {
+            tracing::warn!("Slack: ctx footer post failed: {e}");
+        }
+    }
+}
+
 async fn handle_message(
     msg: &SlackMessageEvent,
     client: Arc<SlackHyperClient>,
@@ -1851,18 +1890,7 @@ async fn handle_message(
                     );
                     // The kept intermediates ARE the completion, so the ctx
                     // footer lands as its own small post below them (#456).
-                    if !footer.is_empty() {
-                        let mut request = SlackApiChatPostMessageRequest::new(
-                            SlackChannelId::new(channel_id.clone()),
-                            SlackMessageContent::new().with_text(footer.clone()),
-                        );
-                        if let Some(ref ts) = thread_ts {
-                            request = request.with_thread_ts(ts.clone());
-                        }
-                        if let Err(e) = session.chat_post_message(&request).await {
-                            tracing::warn!("Slack: ctx footer post failed: {e}");
-                        }
-                    }
+                    post_ctx_footer(&session, &channel_id, thread_ts.as_ref(), &footer).await;
                 }
                 return;
             }
@@ -1925,18 +1953,7 @@ async fn handle_message(
                 // The kept intermediate carries the answer but not the ctx
                 // footer (the final post that normally appends it is being
                 // skipped) — post the footer standalone (#456).
-                if !footer.is_empty() {
-                    let mut request = SlackApiChatPostMessageRequest::new(
-                        SlackChannelId::new(channel_id.clone()),
-                        SlackMessageContent::new().with_text(footer.clone()),
-                    );
-                    if let Some(ref ts) = thread_ts {
-                        request = request.with_thread_ts(ts.clone());
-                    }
-                    if let Err(e) = session.chat_post_message(&request).await {
-                        tracing::warn!("Slack: ctx footer post failed: {e}");
-                    }
-                }
+                post_ctx_footer(&session, &channel_id, thread_ts.as_ref(), &footer).await;
                 return;
             }
 
@@ -1969,31 +1986,38 @@ async fn handle_message(
                 }
             }
 
-            let mut chunks: Vec<String> = split_message(&text_only, 3000)
+            let chunks: Vec<String> = split_message(&text_only, 3000)
                 .into_iter()
                 .map(|s| s.to_string())
                 .collect();
-            if let Some(last) = chunks.last_mut() {
-                last.push_str("\n\n");
-                last.push_str(&footer);
-            } else if !footer.is_empty() {
-                chunks.push(footer.clone());
-            }
-            for chunk in &chunks {
+            for (i, chunk) in chunks.iter().enumerate() {
                 if chunk.is_empty() {
                     continue;
                 }
+                let is_last = i + 1 == chunks.len();
                 // Rich delivery (#455): the chunk goes out as Block Kit
                 // sections/dividers, with the plain text kept as the
                 // notification fallback. A rejected blocks post retries
                 // text-only so delivery never regresses on a Block Kit
                 // error (invalid block, limit change, ...).
-                let blocks = super::blocks::blocks_from_mrkdwn(chunk);
+                let mut blocks = super::blocks::blocks_from_mrkdwn(chunk);
+                // The ctx footer rides the LAST message as a context block:
+                // small grey type that reads as metadata, not conversation
+                // (#457). The plain-text fallback keeps it appended so it is
+                // never lost when blocks are rejected.
+                let fallback_text = if is_last && !footer.is_empty() {
+                    if !blocks.is_empty() {
+                        blocks.push(super::blocks::context_footer(&footer));
+                    }
+                    format!("{chunk}\n\n{footer}")
+                } else {
+                    chunk.clone()
+                };
                 let content = if blocks.is_empty() {
-                    SlackMessageContent::new().with_text(chunk.clone())
+                    SlackMessageContent::new().with_text(fallback_text.clone())
                 } else {
                     SlackMessageContent::new()
-                        .with_text(chunk.clone())
+                        .with_text(fallback_text.clone())
                         .with_blocks(blocks)
                 };
                 let mut request = SlackApiChatPostMessageRequest::new(
@@ -2007,7 +2031,7 @@ async fn handle_message(
                     tracing::warn!("Slack: blocks post failed ({e}) — retrying as plain text");
                     let mut plain = SlackApiChatPostMessageRequest::new(
                         SlackChannelId::new(channel_id.clone()),
-                        SlackMessageContent::new().with_text(chunk.clone()),
+                        SlackMessageContent::new().with_text(fallback_text.clone()),
                     );
                     if let Some(ref ts) = thread_ts {
                         plain = plain.with_thread_ts(ts.clone());
