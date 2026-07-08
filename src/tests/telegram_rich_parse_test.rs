@@ -283,7 +283,6 @@ fn has_rich_structure_gates_native_rich_path() {
     assert!(has_rich_structure("intro\n\n- one\n- two"));
     assert!(has_rich_structure("1. first\n2. second"));
     assert!(has_rich_structure("- [ ] task"));
-    assert!(has_rich_structure("```\ncode\n```"));
     assert!(has_rich_structure("$$\nx^2\n$$"));
     // Plain prose — even with inline emphasis — stays on the existing path.
     assert!(!has_rich_structure("Just a normal reply."));
@@ -292,6 +291,27 @@ fn has_rich_structure_gates_native_rich_path() {
     ));
     assert!(!has_rich_structure("Compute 5 * 3 = 15 and move on."));
     assert!(!has_rich_structure("A #hashtag is not a heading."));
+}
+
+#[test]
+fn fenced_code_disqualifies_native_rich() {
+    // #476: Telegram's rich markdown input handles inline formatting only
+    // and mangles ``` fences into literal code-tag artifacts. Any message
+    // carrying a fence rides the HTML pipeline, whatever else it contains.
+    assert!(!has_rich_structure("```\ncode\n```"));
+    // The live incident shape: prose + backtick spans + a fenced log block.
+    assert!(!has_rich_structure(
+        "Pushed `1a8a497` with debug logging and deployed. The logs will \
+         trace what happens on refresh:\n\n```\n[MainShell] restore started\n\
+         [MainShell] restored X keys\n```\n\nIf it still fails, these logs \
+         will show where."
+    ));
+    // Even mixed with otherwise-rich structure, the fence wins.
+    assert!(!has_rich_structure(
+        "# Report\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n```\nlog\n```"
+    ));
+    // Indented fence lines count too.
+    assert!(!has_rich_structure("steps:\n  ```\n  x\n  ```"));
 }
 
 // ── sendRichMessage request body ────────────────────────────────────

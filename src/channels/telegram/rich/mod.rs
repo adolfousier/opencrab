@@ -53,17 +53,29 @@ pub(crate) fn should_send_native_rich(text: &str) -> bool {
 
 /// Whether `text` contains block-level markdown structure that native rich
 /// rendering handles meaningfully better than plain/HTML — a table, ATX
-/// heading, list item, fenced code block, or block math. Plain prose (even
-/// with inline emphasis) returns false, so it stays on the existing path and
-/// is never reinterpreted by Telegram's markdown parser. Gates the native
+/// heading, list item, or block math. Plain prose (even with inline
+/// emphasis) returns false, so it stays on the existing path and is never
+/// reinterpreted by Telegram's markdown parser. Gates the native
 /// `sendRichMessage` path (together with the config flag).
+///
+/// A fenced code block DISQUALIFIES native rich (#476): Telegram's
+/// server-side rich markdown parser handles inline formatting only and
+/// mangles ``` fences into literal code-tag artifacts, while the HTML
+/// path renders them perfectly as <pre> blocks. Any message carrying a
+/// fence therefore rides the HTML pipeline, whatever other structure it
+/// has.
 pub(crate) fn has_rich_structure(text: &str) -> bool {
+    let has_fence = text
+        .lines()
+        .any(|line| line.trim_start().starts_with("```"));
+    if has_fence {
+        return false;
+    }
     contains_table(text)
         || text.lines().any(|line| {
             let t = line.trim_start();
             is_atx_heading(t)
                 || list::is_item(t)
-                || t.starts_with("```")
                 || t == "$$"
                 || t == "<details>"
                 || t == "<details open>"
