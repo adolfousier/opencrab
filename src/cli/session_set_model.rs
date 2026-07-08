@@ -5,20 +5,8 @@
 use crate::db::models::Session;
 use uuid::Uuid;
 
-/// Split a `provider/model` pair on the FIRST slash, so model names that
-/// contain slashes survive intact (`openrouter/tencent/hy3:free` →
-/// `openrouter` + `tencent/hy3:free`).
-pub(crate) fn parse_pair(pair: &str) -> Result<(String, String), String> {
-    match pair.split_once('/') {
-        Some((provider, model)) if !provider.trim().is_empty() && !model.trim().is_empty() => {
-            Ok((provider.trim().to_string(), model.trim().to_string()))
-        }
-        _ => Err(format!(
-            "'{pair}' is not a provider/model pair — expected e.g. \
-             openrouter/tencent/hy3:free (the first slash splits)"
-        )),
-    }
-}
+/// Shared pair parser (#467 uses it on channels and the TUI too).
+pub(crate) use crate::utils::provider_pair::parse_pair;
 
 /// Resolve which sessions a set-model invocation targets.
 ///

@@ -141,6 +141,7 @@ fn variant_name(cmd: &ChannelCommand) -> &'static str {
         ChannelCommand::Usage(_) => "Usage",
         ChannelCommand::MissionControl(_) => "MissionControl",
         ChannelCommand::Models(_) => "Models",
+        ChannelCommand::ModelSwitched(_) => "ModelSwitched",
         ChannelCommand::NewSession => "NewSession",
         ChannelCommand::Sessions(_) => "Sessions",
         ChannelCommand::Stop => "Stop",

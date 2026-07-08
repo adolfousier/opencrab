@@ -644,6 +644,30 @@ impl App {
                 let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
                 true
             }
+            // `/models <provider/model>` — direct switch for the current
+            // session, no picker (#467). Same switch path as the keyboard
+            // flow (per-session swap + manual pin + DB persist).
+            s if s.starts_with("/models ") || s.starts_with("/model ") => {
+                let arg = input.split_once(' ').map(|x| x.1.trim()).unwrap_or("");
+                let Some(sid) = self.current_session.as_ref().map(|cs| cs.id) else {
+                    self.push_system_message("No active session to switch.".to_string());
+                    return true;
+                };
+                let reply =
+                    crate::channels::commands::direct_model_switch(&self.agent_service, sid, arg)
+                        .await;
+                // Reflect the switch in the in-memory session so the footer
+                // updates immediately instead of on the next session load.
+                if !reply.starts_with('⚠')
+                    && let Ok((provider, model)) = crate::utils::provider_pair::parse_pair(arg)
+                    && let Some(cs) = self.current_session.as_mut()
+                {
+                    cs.provider_name = Some(provider);
+                    cs.model = Some(model);
+                }
+                self.push_system_message(reply);
+                true
+            }
             // `/models` IS `/onboard:provider` without progress dots — the exact
             // same shared provider/model picker. One implementation, so a change
             // to the picker affects both; no separate ModelSelector dialog.

@@ -229,6 +229,8 @@ pub enum ChannelCommand {
     UserPrompt(String),
     /// User-defined command with action "system" — display text directly
     UserSystem(String),
+    /// `/models <provider/model>` — direct switch applied, reply text (#467)
+    ModelSwitched(String),
     /// Unknown slash command — warn the user, don't forward to agent
     UnknownCommand(String),
     /// `/rename <title>` — rename the current session
@@ -403,6 +405,16 @@ pub async fn handle_command(
                 ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
             } else {
                 ChannelCommand::Models(format_providers(agent))
+            }
+        }
+        // `/models <provider/model>` — direct switch for the CURRENT session,
+        // no inline keyboard round trip (#467). Bare /models keeps the picker.
+        t if t.starts_with("/models ") || t.starts_with("/model ") => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                let arg = t.split_once(' ').map(|x| x.1.trim()).unwrap_or("");
+                ChannelCommand::ModelSwitched(direct_model_switch(agent, session_id, arg).await)
             }
         }
         "/new" => ChannelCommand::NewSession,
@@ -580,6 +592,7 @@ pub async fn handle_command(
         ChannelCommand::Doctor => Some("Running health check...".to_string()),
         ChannelCommand::Evolve => Some("Checking for updates...".to_string()),
         ChannelCommand::Rtk(body) => Some(body.clone()),
+        ChannelCommand::ModelSwitched(body) => Some(body.clone()),
         ChannelCommand::ChangeDir(resp) => Some(resp.text.clone()),
         ChannelCommand::Profiles(resp) => Some(resp.text.clone()),
         ChannelCommand::Compact
@@ -1759,6 +1772,35 @@ pub fn provider_display_name(name: &str) -> &str {
 /// Saves a `[Model changed to ...]` message to the session history so the agent
 /// is aware of the switch.
 /// Returns an error message on failure so channels can report it to the user.
+/// Direct-argument model switch (#467): `/models <provider/model>` applies
+/// the pair to the CURRENT session immediately on every channel and the
+/// TUI, reusing the exact keyboard-flow switch path (per-session swap +
+/// manual pin + DB persist). Returns the user-facing reply text.
+pub async fn direct_model_switch(
+    agent: &AgentService,
+    session_id: uuid::Uuid,
+    arg: &str,
+) -> String {
+    let (provider, model) = match crate::utils::provider_pair::parse_pair(arg) {
+        Ok(pair) => pair,
+        Err(e) => return format!("⚠️ {e}"),
+    };
+    let config = match crate::config::Config::load() {
+        Ok(c) => c,
+        Err(e) => return format!("⚠️ Failed to load config: {e}"),
+    };
+    if !crate::brain::provider::factory::is_known_provider_name(&config, &provider) {
+        return format!(
+            "⚠️ Unknown provider '{provider}' — it must be a configured provider section. \
+             Send /models for the picker."
+        );
+    }
+    match switch_model(agent, &model, Some(session_id), Some(&provider)).await {
+        Ok(msg) => msg,
+        Err(e) => format!("⚠️ {e}"),
+    }
+}
+
 pub async fn switch_model(
     agent: &AgentService,
     model_name: &str,
@@ -1917,6 +1959,7 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
         ChannelCommand::Doctor => Some(run_doctor()),
         ChannelCommand::Evolve => Some(run_evolve().await),
         ChannelCommand::UnknownCommand(msg) => Some(msg.to_string()),
+        ChannelCommand::ModelSwitched(msg) => Some(msg.to_string()),
         ChannelCommand::RespondTo(body) => Some(body.clone()),
         _ => None,
     }
