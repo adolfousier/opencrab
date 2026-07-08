@@ -119,6 +119,14 @@ fn summary_lines(a: &McAnalytics) -> Vec<Line<'static>> {
         ),
         summary_row("RSI", format!("{} applied", a.rsi_applied_total)),
         summary_row(
+            "RSI live",
+            crate::brain::mission_control::staleness::rsi_staleness_line(
+                chrono::Utc::now().timestamp(),
+                a.rsi_last_call_ts,
+                a.tool_events_since_rsi,
+            ),
+        ),
+        summary_row(
             "Brain",
             format!("{:.1} KB / {} files", a.brain_total_kb, a.brain_files.len()),
         ),

@@ -28,6 +28,7 @@ fn round1(v: f64) -> f64 {
 /// panel degrades gracefully instead of taking Mission Control down.
 pub async fn summary(pool: Pool) -> McAnalytics {
     let tools = tool_stats(pool.clone()).await;
+    let (rsi_last_call_ts, tool_events_since_rsi) = rsi_staleness(pool.clone()).await;
     let (rsi_applied_total, rsi_top_dimensions) = rsi_stats(pool).await;
     let brain_files = collect_brain_sizes();
     let brain_total_kb = round1(brain_files.iter().map(|b| b.kb).sum::<f64>());
@@ -53,6 +54,8 @@ pub async fn summary(pool: Pool) -> McAnalytics {
         top_tools,
         flakiest_tools,
         rsi_applied_total,
+        rsi_last_call_ts,
+        tool_events_since_rsi,
         rsi_top_dimensions,
         brain_files,
         brain_total_kb,
@@ -81,6 +84,15 @@ async fn tool_stats(pool: Pool) -> Vec<McToolStat> {
             }
         })
         .collect()
+}
+
+/// Last RSI activity and tool events recorded after it (#469).
+async fn rsi_staleness(pool: Pool) -> (Option<i64>, i64) {
+    let repo = ToolExecutionRepository::new(pool);
+    repo.rsi_staleness().await.unwrap_or_else(|e| {
+        tracing::warn!("analytics_service: rsi staleness query failed: {e:#}");
+        (None, 0)
+    })
 }
 
 /// Total `improvement_applied` RSI events and their top dimensions.

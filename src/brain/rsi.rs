@@ -489,8 +489,24 @@ async fn run_rsi_agent_cycle(
         .as_deref()
         .unwrap_or(&active_provider);
 
+    // #469 part A: a dead self_improvement_provider (missing key, typo,
+    // removed section) must not kill the cycle — fall back to the user's
+    // active provider before the chain wrap below. Errors are loud, never
+    // swallowed.
     let provider =
-        crate::brain::provider::factory::create_provider_by_name(config, provider_name).await?;
+        match crate::brain::provider::factory::create_provider_by_name(config, provider_name).await
+        {
+            Ok(p) => p,
+            Err(e) if provider_name != active_provider => {
+                tracing::warn!(
+                    "RSI: self_improvement_provider '{provider_name}' failed to create ({e:#}) — \
+                 falling back to active provider '{active_provider}' (#469)"
+                );
+                crate::brain::provider::factory::create_provider_by_name(config, &active_provider)
+                    .await?
+            }
+            Err(e) => return Err(e),
+        };
 
     // Apply the [providers.fallback] chain (if any) to the RSI provider
     // — same wrapping the main session path gets via

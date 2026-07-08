@@ -173,6 +173,11 @@ pub struct McAnalytics {
     /// Highest failure rate first (only tools with enough calls to matter).
     pub flakiest_tools: Vec<McToolStat>,
     pub rsi_applied_total: i64,
+    /// Unix ts of the last RSI activity (self_improve / feedback_analyze /
+    /// rsi_propose execution); None = never ran (#469).
+    pub rsi_last_call_ts: Option<i64>,
+    /// Tool events recorded AFTER the last RSI activity (#469).
+    pub tool_events_since_rsi: i64,
     /// RSI `improvement_applied` counts per dimension, largest first.
     pub rsi_top_dimensions: Vec<(String, i64)>,
     /// Brain files, largest first.

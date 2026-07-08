@@ -26,6 +26,7 @@ pub mod activity_service;
 pub mod analytics_service;
 pub mod inbox_service;
 pub mod schedule_service;
+pub mod staleness;
 pub mod types;
 
 pub use types::{

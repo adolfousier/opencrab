@@ -181,6 +181,7 @@ pub mod profile_preempt_test;
 pub mod profiles_dialog_test;
 pub mod rsi_notification_redaction_test;
 pub mod rsi_pruned_test;
+pub mod rsi_staleness_test;
 pub mod rsi_sync_cap_bail_test;
 #[cfg(target_os = "linux")]
 pub mod service_scope_test;

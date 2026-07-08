@@ -132,6 +132,40 @@ impl ToolExecutionRepository {
     /// Per-tool totals and failure counts (`status = 'error'`), optionally
     /// since an epoch. Powers the Mission Control analytics panel's fail-rate
     /// view. Ordered by total calls descending.
+    /// Last RSI activity (self_improve / feedback_analyze / rsi_propose
+    /// executions) and how many tool events recorded AFTER it (#469): a
+    /// stale RSI with a busy ledger is the signal Mission Control surfaces.
+    /// `None` last-ts means RSI never ran; events_since then counts all
+    /// recorded tool events.
+    pub async fn rsi_staleness(&self) -> Result<(Option<i64>, i64)> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| -> rusqlite::Result<(Option<i64>, i64)> {
+                let last: Option<i64> = conn.query_row(
+                    "SELECT MAX(created_at) FROM tool_executions \
+                     WHERE tool_name IN ('self_improve','feedback_analyze','rsi_propose')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let since: i64 = match last {
+                    Some(ts) => conn.query_row(
+                        "SELECT COUNT(*) FROM tool_executions WHERE created_at > ?1",
+                        rusqlite::params![ts],
+                        |r| r.get(0),
+                    )?,
+                    None => {
+                        conn.query_row("SELECT COUNT(*) FROM tool_executions", [], |r| r.get(0))?
+                    }
+                };
+                Ok((last, since))
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to query RSI staleness")
+    }
+
     pub async fn stats_with_failures(
         &self,
         since_epoch: Option<i64>,

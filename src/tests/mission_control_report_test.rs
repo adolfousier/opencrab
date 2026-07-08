@@ -11,6 +11,8 @@ use chrono::Utc;
 
 fn sample_analytics() -> McAnalytics {
     McAnalytics {
+        rsi_last_call_ts: None,
+        tool_events_since_rsi: 0,
         tool_total_calls: 100,
         tool_total_fails: 7,
         top_tools: vec![McToolStat {

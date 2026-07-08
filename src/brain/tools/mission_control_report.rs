@@ -133,6 +133,14 @@ pub(crate) fn render_markdown(
                 ],
                 vec!["RSI applied".to_string(), a.rsi_applied_total.to_string()],
                 vec![
+                    "RSI liveness".to_string(),
+                    crate::brain::mission_control::staleness::rsi_staleness_line(
+                        chrono::Utc::now().timestamp(),
+                        a.rsi_last_call_ts,
+                        a.tool_events_since_rsi,
+                    ),
+                ],
+                vec![
                     "Brain".to_string(),
                     format!(
                         "{:.1} KB across {} files",
