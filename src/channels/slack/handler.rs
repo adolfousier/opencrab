@@ -1820,6 +1820,18 @@ async fn handle_message(
 
             let intermediates = sent_intermediate_ts_final.lock().await.clone();
 
+            // Context budget footer (display-only: never stored in the DB,
+            // never fed to TTS). Computed BEFORE the delivery-shape branches
+            // because every completed turn must show it (#456): the final
+            // post appends it, and the intermediate-as-answer paths, which
+            // skip the final post entirely, post it standalone.
+            let ctx_max = state.agent.context_limit_for_session(session_id);
+            let footer = crate::utils::format_ctx_footer(
+                response.context_tokens,
+                ctx_max,
+                response.tokens_per_second,
+            );
+
             // Empty-final guard: when `text_only` is empty/whitespace (model
             // emitted its real answer mid-stream as IntermediateText and the
             // final response.content was just a wrap-up with no content), the
@@ -1837,6 +1849,20 @@ async fn handle_message(
                         "Slack: final response is empty — keeping {} intermediate(s) as the visible answer",
                         intermediates.len(),
                     );
+                    // The kept intermediates ARE the completion, so the ctx
+                    // footer lands as its own small post below them (#456).
+                    if !footer.is_empty() {
+                        let mut request = SlackApiChatPostMessageRequest::new(
+                            SlackChannelId::new(channel_id.clone()),
+                            SlackMessageContent::new().with_text(footer.clone()),
+                        );
+                        if let Some(ref ts) = thread_ts {
+                            request = request.with_thread_ts(ts.clone());
+                        }
+                        if let Err(e) = session.chat_post_message(&request).await {
+                            tracing::warn!("Slack: ctx footer post failed: {e}");
+                        }
+                    }
                 }
                 return;
             }
@@ -1896,6 +1922,21 @@ async fn handle_message(
                         );
                     }
                 }
+                // The kept intermediate carries the answer but not the ctx
+                // footer (the final post that normally appends it is being
+                // skipped) — post the footer standalone (#456).
+                if !footer.is_empty() {
+                    let mut request = SlackApiChatPostMessageRequest::new(
+                        SlackChannelId::new(channel_id.clone()),
+                        SlackMessageContent::new().with_text(footer.clone()),
+                    );
+                    if let Some(ref ts) = thread_ts {
+                        request = request.with_thread_ts(ts.clone());
+                    }
+                    if let Err(e) = session.chat_post_message(&request).await {
+                        tracing::warn!("Slack: ctx footer post failed: {e}");
+                    }
+                }
                 return;
             }
 
@@ -1927,14 +1968,6 @@ async fn handle_message(
                     }
                 }
             }
-
-            // Context budget footer appended to last display chunk, never stored in DB
-            let ctx_max = state.agent.context_limit_for_session(session_id);
-            let footer = crate::utils::format_ctx_footer(
-                response.context_tokens,
-                ctx_max,
-                response.tokens_per_second,
-            );
 
             let mut chunks: Vec<String> = split_message(&text_only, 3000)
                 .into_iter()
