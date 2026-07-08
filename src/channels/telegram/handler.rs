@@ -3247,6 +3247,38 @@ pub(crate) async fn handle_message(
         // disabled, the reply has no rich structure, or the native send fails.
         // (The old single `.parse_mode(Html).await?` had no chunking either, so
         // the >4096-char mission-control report silently failed to send at all.)
+        // Direct model switch (#467): on success, Telegram offers an inline
+        // "Apply to all sessions" button (#468) unless the user already
+        // scoped with the textual `all`. Pipe separator in the callback
+        // (like model:) so custom: prefixes and :free suffixes survive;
+        // skipped when the payload would exceed Telegram's 64-byte limit.
+        if let commands::ChannelCommand::ModelSwitched(reply) = &cmd {
+            let mut keyboard: Option<InlineKeyboardMarkup> = None;
+            if !reply.starts_with('⚠')
+                && !text.trim().ends_with(" all")
+                && let Some(arg) = text.trim().split_once(' ').map(|x| x.1.trim())
+                && let Ok((prov, model)) = crate::utils::provider_pair::parse_pair(arg)
+            {
+                let data = format!("allm:{prov}|{model}");
+                if data.len() <= 64 {
+                    keyboard = Some(InlineKeyboardMarkup::new(vec![vec![
+                        InlineKeyboardButton::callback("Apply to all sessions", data),
+                    ]]));
+                }
+            }
+            let mut req = bot.send_message(msg.chat.id, reply.clone());
+            if let Some(kb) = keyboard {
+                req = req.reply_markup(kb);
+            }
+            if let Some(t) = thread_id {
+                req = req.message_thread_id(t);
+            }
+            if let Err(e) = req.await {
+                tracing::warn!("Telegram: model-switch reply failed: {e}");
+                send_html_or_plain(&bot, msg.chat.id, thread_id, reply).await?;
+            }
+            return Ok(());
+        }
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
             let sent_rich = super::rich::should_send_native_rich(&reply)
                 && super::rich::api::send_rich_markdown(

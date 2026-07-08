@@ -1781,7 +1781,14 @@ pub async fn direct_model_switch(
     session_id: uuid::Uuid,
     arg: &str,
 ) -> String {
-    let (provider, model) = match crate::utils::provider_pair::parse_pair(arg) {
+    // Scope selector (#468): a trailing `all` token applies the pair to
+    // every non-archived session after switching the current one. Default
+    // stays current-session-only; all is always an explicit act.
+    let (pair_arg, scope_all) = match arg.trim().strip_suffix(" all") {
+        Some(rest) if !rest.trim().is_empty() => (rest.trim(), true),
+        _ => (arg.trim(), false),
+    };
+    let (provider, model) = match crate::utils::provider_pair::parse_pair(pair_arg) {
         Ok(pair) => pair,
         Err(e) => return format!("⚠️ {e}"),
     };
@@ -1796,7 +1803,23 @@ pub async fn direct_model_switch(
         );
     }
     match switch_model(agent, &model, Some(session_id), Some(&provider)).await {
-        Ok(msg) => msg,
+        Ok(msg) => {
+            if scope_all {
+                let session_svc = crate::services::SessionService::new(agent.context().clone());
+                match session_svc
+                    .set_provider_model_all_sessions(&provider, &model)
+                    .await
+                {
+                    Ok(n) => format!(
+                        "{msg}\nApplied to {n} other session(s); each picks it up on its \
+                         next message."
+                    ),
+                    Err(e) => format!("{msg}\n⚠️ Scope-all write failed: {e}"),
+                }
+            } else {
+                msg
+            }
+        }
         Err(e) => format!("⚠️ {e}"),
     }
 }

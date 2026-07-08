@@ -262,6 +262,38 @@ impl SessionService {
         Ok(())
     }
 
+    /// Write `provider/model` to every non-archived session (#468 scope-all,
+    /// shared semantics with the CLI --all path): rows already on the pair
+    /// are skipped, archived rows are never touched. Returns how many rows
+    /// changed. Live sessions apply the pair on their next message via the
+    /// existing sync path.
+    pub async fn set_provider_model_all_sessions(
+        &self,
+        provider: &str,
+        model: &str,
+    ) -> Result<usize> {
+        use crate::db::repository::SessionListOptions;
+        let sessions = self
+            .list_sessions(SessionListOptions {
+                include_archived: false,
+                ..Default::default()
+            })
+            .await?;
+        let mut updated = 0usize;
+        for mut session in sessions {
+            if session.provider_name.as_deref() == Some(provider)
+                && session.model.as_deref() == Some(model)
+            {
+                continue;
+            }
+            session.provider_name = Some(provider.to_string());
+            session.model = Some(model.to_string());
+            self.update_session(&session).await?;
+            updated += 1;
+        }
+        Ok(updated)
+    }
+
     /// Find most recent non-archived session by exact title (used for persistent channel sessions).
     pub async fn find_session_by_title(&self, title: &str) -> Result<Option<Session>> {
         let repo = SessionRepository::new(self.context.pool());

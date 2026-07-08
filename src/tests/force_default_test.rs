@@ -87,3 +87,54 @@ async fn push_rewrites_live_rows_and_skips_archived() {
         .unwrap();
     assert_eq!(n, 0);
 }
+
+// ── shared all-sessions writer (#468) ────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scope_all_writer_skips_archived_and_already_on_pair() {
+    let db = Database::connect_in_memory().await.unwrap();
+    db.run_migrations().await.unwrap();
+    let svc = SessionService::new(ServiceContext::new(db.pool().clone()));
+
+    let a = svc
+        .create_session_with_provider(
+            Some("a".into()),
+            Some("openrouter".into()),
+            Some("old".into()),
+            None,
+        )
+        .await
+        .unwrap();
+    let already = svc
+        .create_session_with_provider(
+            Some("b".into()),
+            Some("minimax".into()),
+            Some("MiniMax-M3".into()),
+            None,
+        )
+        .await
+        .unwrap();
+    let archived = svc
+        .create_session_with_provider(
+            Some("c".into()),
+            Some("openrouter".into()),
+            Some("old".into()),
+            None,
+        )
+        .await
+        .unwrap();
+    svc.archive_session(archived.id).await.unwrap();
+
+    let n = svc
+        .set_provider_model_all_sessions("minimax", "MiniMax-M3")
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "only the stale live row changes");
+
+    let a_after = svc.get_session(a.id).await.unwrap().unwrap();
+    assert_eq!(a_after.provider_name.as_deref(), Some("minimax"));
+    let already_after = svc.get_session(already.id).await.unwrap().unwrap();
+    assert_eq!(already_after.model.as_deref(), Some("MiniMax-M3"));
+    let archived_after = svc.get_session(archived.id).await.unwrap().unwrap();
+    assert_eq!(archived_after.provider_name.as_deref(), Some("openrouter"));
+}

@@ -412,6 +412,35 @@ impl TelegramAgent {
                             // custom-provider name (`custom:dialagram`) and an
                             // OpenRouter-style model suffix (`:free`, `:thinking`)
                             // don't fold into each other on parse.
+                            // Apply-to-all-sessions (#468): bulk-write the pair
+                            // the user just switched to. The current session is
+                            // already switched; this covers the rest, which pick
+                            // it up on their next message.
+                            if let Some(rest) = data.strip_prefix("allm:") {
+                                let reply = if let Some((prov, model)) = rest.split_once('|') {
+                                    let session_svc = crate::services::SessionService::new(
+                                        agent.context().clone(),
+                                    );
+                                    match session_svc
+                                        .set_provider_model_all_sessions(prov, model)
+                                        .await
+                                    {
+                                        Ok(n) => format!(
+                                            "✅ {prov}/{model} applied to {n} other session(s); \
+                                             each picks it up on its next message."
+                                        ),
+                                        Err(e) => format!("⚠️ Scope-all write failed: {e}"),
+                                    }
+                                } else {
+                                    "⚠️ Malformed apply-all payload.".to_string()
+                                };
+                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                if let Some(msg) = &query.message {
+                                    use teloxide::prelude::Requester;
+                                    let _ = bot.send_message(msg.chat().id, reply).await;
+                                }
+                                return ResponseResult::Ok(());
+                            }
                             if let Some(rest) = data.strip_prefix("model:") {
                                 let (provider_name, model_token) = if let Some((p, m)) = rest.split_once('|') {
                                     (Some(p), m)
