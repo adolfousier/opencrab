@@ -5,6 +5,7 @@
 
 pub(crate) mod context;
 pub mod file;
+pub mod force_default;
 pub mod message;
 pub mod plan;
 pub mod project;

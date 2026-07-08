@@ -207,6 +207,17 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
 /// or alias, or a `[providers.custom.<name>]` key (with or without the
 /// `custom:` prefix). Used by non-interactive switch surfaces (#461 family)
 /// to reject typos before touching session rows.
+pub fn provider_config_by_name<'a>(config: &'a Config, name: &str) -> Option<&'a ProviderConfig> {
+    let lookup = name.strip_prefix("custom:").unwrap_or(name);
+    if let Some(cfg) = config.providers.custom.as_ref().and_then(|m| m.get(lookup)) {
+        return Some(cfg);
+    }
+    REGISTRATIONS
+        .iter()
+        .find(|reg| reg.session_id == name || reg.aliases.contains(&name))
+        .and_then(|reg| (reg.config_field)(config))
+}
+
 pub fn is_known_provider_name(config: &Config, name: &str) -> bool {
     let lookup = name.strip_prefix("custom:").unwrap_or(name);
     if config

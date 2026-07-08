@@ -234,6 +234,7 @@ pub mod fallback_streak_test;
 pub mod fallback_vision_test;
 pub mod feedback_policy_test;
 pub mod file_extract_test;
+pub mod force_default_test;
 pub mod handshake_timeout_test;
 pub mod hashline_test;
 pub mod image_util_test;

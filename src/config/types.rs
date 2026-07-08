@@ -1783,6 +1783,12 @@ pub struct ProviderConfig {
     /// Available models for this provider (can be updated at runtime)
     #[serde(default)]
     pub models: Vec<String>,
+    /// When true on the ACTIVE default provider's section, a config reload
+    /// pushes this section's default pair to every non-archived session,
+    /// overriding their stored pairs (#466). Absent or false keeps the
+    /// post-#379 isolation: defaults apply to new sessions only.
+    #[serde(default)]
+    pub force_default: bool,
 
     /// Vision-capable model to use when the default model doesn't support images.
     /// When set and images are present, the provider swaps to this model for that

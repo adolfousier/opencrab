@@ -1293,6 +1293,26 @@ async fn cmd_chat_inner(
             }));
         }
 
+        // force_default push (#466): when the active default provider's
+        // section opts in, a reload broadcasts its pair to every
+        // non-archived session. Live sessions apply it on their next
+        // message through the existing sync path.
+        {
+            let svc_ctx = crate::services::ServiceContext::new(db.pool().clone());
+            callbacks.push(Arc::new(move |cfg: crate::config::Config| {
+                let session_svc = crate::services::SessionService::new(svc_ctx.clone());
+                tokio::spawn(async move {
+                    match crate::services::force_default::apply_force_default(&cfg, &session_svc)
+                        .await
+                    {
+                        Ok(0) => {}
+                        Ok(n) => tracing::info!("force_default: {n} session(s) switched"),
+                        Err(e) => tracing::error!("force_default push failed: {e:#}"),
+                    }
+                });
+            }));
+        }
+
         // Telegram command refresh — re-register bot commands when commands.toml changes
         #[cfg(feature = "telegram")]
         {
