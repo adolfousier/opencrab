@@ -320,6 +320,20 @@ pub enum SessionCommands {
         /// Session ID
         id: String,
     },
+    /// Set provider/model for sessions, non-interactively (#465)
+    SetModel {
+        /// The pair as provider/model — the FIRST slash splits, so model
+        /// names with slashes work: openrouter/tencent/hy3:free
+        pair: String,
+        /// Target session: full ID or unambiguous prefix
+        id: Option<String>,
+        /// Match sessions by title substring (case-insensitive)
+        #[arg(long)]
+        name: Option<String>,
+        /// Apply to ALL non-archived sessions
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

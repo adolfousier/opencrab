@@ -1386,6 +1386,56 @@ pub(crate) async fn cmd_session(
             println!();
             Ok(())
         }
+        SessionCommands::SetModel {
+            pair,
+            id,
+            name,
+            all,
+        } => {
+            use crate::cli::session_set_model::{parse_pair, resolve_targets};
+            use crate::db::repository::SessionListOptions;
+
+            let (provider, model) = parse_pair(&pair).map_err(anyhow::Error::msg)?;
+            if !crate::brain::provider::factory::is_known_provider_name(config, &provider) {
+                anyhow::bail!(
+                    "unknown provider '{provider}' — it must be a configured provider \
+                     section (e.g. openrouter, minimax, or a [providers.custom.<name>] key)"
+                );
+            }
+
+            let sessions = session_svc
+                .list_sessions(SessionListOptions {
+                    include_archived: true,
+                    ..Default::default()
+                })
+                .await?;
+            let targets = resolve_targets(&sessions, id.as_deref(), name.as_deref(), all)
+                .map_err(anyhow::Error::msg)?;
+
+            let mut updated = 0usize;
+            for sid in &targets {
+                let Some(mut session) = session_svc.get_session(*sid).await? else {
+                    println!("  ⚠ session {sid} disappeared mid-run — skipped");
+                    continue;
+                };
+                session.provider_name = Some(provider.clone());
+                session.model = Some(model.clone());
+                session_svc.update_session(&session).await?;
+                updated += 1;
+                println!(
+                    "  ✓ {} {:<30} → {}/{}",
+                    &sid.to_string()[..8],
+                    session.title.as_deref().unwrap_or("untitled"),
+                    provider,
+                    model,
+                );
+            }
+            println!(
+                "\n🦀 {updated} session(s) set to {provider}/{model}. A running instance \
+                 applies it on each session's next message."
+            );
+            Ok(())
+        }
         SessionCommands::Get { id } => {
             let uuid = uuid::Uuid::parse_str(&id).context("Invalid session ID")?;
             match session_svc.get_session(uuid).await? {

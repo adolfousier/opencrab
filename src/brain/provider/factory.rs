@@ -203,6 +203,25 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
 });
 
 /// Provider names in priority order, derived from REGISTRATIONS.
+/// Whether `name` names a configured provider: a REGISTRATIONS session_id
+/// or alias, or a `[providers.custom.<name>]` key (with or without the
+/// `custom:` prefix). Used by non-interactive switch surfaces (#461 family)
+/// to reject typos before touching session rows.
+pub fn is_known_provider_name(config: &Config, name: &str) -> bool {
+    let lookup = name.strip_prefix("custom:").unwrap_or(name);
+    if config
+        .providers
+        .custom
+        .as_ref()
+        .is_some_and(|m| m.contains_key(lookup))
+    {
+        return true;
+    }
+    REGISTRATIONS
+        .iter()
+        .any(|reg| reg.session_id == name || reg.aliases.contains(&name))
+}
+
 pub const PROVIDER_NAMES: &[&str] = &[
     "Xiaomi",
     "Claude CLI",
