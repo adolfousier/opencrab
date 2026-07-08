@@ -5,6 +5,7 @@
 
 mod agent;
 pub(crate) mod cowork;
+pub(crate) mod flow;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod raw_updates;
