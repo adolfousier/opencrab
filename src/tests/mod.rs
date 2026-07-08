@@ -320,6 +320,7 @@ mod xiaomi_keyed_provider_regression_test;
 mod xiaomi_onboarding_test;
 //pub mod plan_mode_integration_test;
 pub mod session_working_dir_test;
+pub mod slack_blocks_test;
 pub mod slack_fmt_test;
 pub mod stream_loop_test;
 pub mod streaming_active_secs_test;

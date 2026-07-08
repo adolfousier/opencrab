@@ -1983,15 +1983,38 @@ async fn handle_message(
                 if chunk.is_empty() {
                     continue;
                 }
+                // Rich delivery (#455): the chunk goes out as Block Kit
+                // sections/dividers, with the plain text kept as the
+                // notification fallback. A rejected blocks post retries
+                // text-only so delivery never regresses on a Block Kit
+                // error (invalid block, limit change, ...).
+                let blocks = super::blocks::blocks_from_mrkdwn(chunk);
+                let content = if blocks.is_empty() {
+                    SlackMessageContent::new().with_text(chunk.clone())
+                } else {
+                    SlackMessageContent::new()
+                        .with_text(chunk.clone())
+                        .with_blocks(blocks)
+                };
                 let mut request = SlackApiChatPostMessageRequest::new(
                     SlackChannelId::new(channel_id.clone()),
-                    SlackMessageContent::new().with_text(chunk.clone()),
+                    content,
                 );
                 if let Some(ref ts) = thread_ts {
                     request = request.with_thread_ts(ts.clone());
                 }
                 if let Err(e) = session.chat_post_message(&request).await {
-                    tracing::error!("Slack: failed to send reply: {}", e);
+                    tracing::warn!("Slack: blocks post failed ({e}) — retrying as plain text");
+                    let mut plain = SlackApiChatPostMessageRequest::new(
+                        SlackChannelId::new(channel_id.clone()),
+                        SlackMessageContent::new().with_text(chunk.clone()),
+                    );
+                    if let Some(ref ts) = thread_ts {
+                        plain = plain.with_thread_ts(ts.clone());
+                    }
+                    if let Err(e) = session.chat_post_message(&plain).await {
+                        tracing::error!("Slack: failed to send reply: {}", e);
+                    }
                 }
             }
 

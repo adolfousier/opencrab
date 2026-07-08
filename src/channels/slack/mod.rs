@@ -4,6 +4,7 @@
 //! allowlisted users to the AgentService and replying with responses.
 
 mod agent;
+pub(crate) mod blocks;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod reactions;
