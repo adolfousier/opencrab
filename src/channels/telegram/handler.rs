@@ -3514,7 +3514,8 @@ pub(crate) async fn handle_message(
     // flow — the leftover-reaction flush below must NOT run for them.
     if !deliver_final_response(
         &bot,
-        &msg,
+        msg.chat.id,
+        Some(&msg),
         thread_id,
         &streaming,
         session_id,
@@ -3980,9 +3981,13 @@ pub(crate) fn tool_context(name: &str, input: &serde_json::Value) -> String {
 /// `return Ok(())` becoming `return Ok(false)` so the caller can
 /// preserve handle_message's original control flow exactly.
 #[allow(clippy::too_many_arguments)]
-async fn deliver_final_response(
+pub(crate) async fn deliver_final_response(
     bot: &Bot,
-    msg: &Message,
+    chat_id: ChatId,
+    // The inbound message this turn answers: reaction target and reply
+    // anchor. None on the crash-recovery resume path, where the original
+    // message id is lost across restarts — reactions strip without firing.
+    inbound: Option<&Message>,
     thread_id: Option<teloxide::types::ThreadId>,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
     session_id: Uuid,
@@ -4064,11 +4069,17 @@ async fn deliver_final_response(
                 let reaction = teloxide::types::ReactionType::Emoji {
                     emoji: mapped.clone(),
                 };
-                let react_result = bot
-                    .set_message_reaction(msg.chat.id, msg.id)
-                    .reaction(vec![reaction])
-                    .is_big(false)
-                    .await;
+                let react_result = match inbound {
+                    Some(m) => bot
+                        .set_message_reaction(chat_id, m.id)
+                        .reaction(vec![reaction])
+                        .is_big(false)
+                        .await
+                        .map(|_| ()),
+                    // Resume path: the original message is gone, nothing to
+                    // react to — treat as delivered so no fallback fires.
+                    None => Ok(()),
+                };
                 if let Err(ref e) = react_result {
                     tracing::warn!("Telegram: failed to set reaction ({mapped}): {}", e);
                 }
@@ -4094,12 +4105,11 @@ async fn deliver_final_response(
                             s.tool_msgs.len()
                         )
                     };
-                    if let Err(e) = message_in_thread(bot, msg.chat.id, thread_id, &fallback).await
-                    {
+                    if let Err(e) = message_in_thread(bot, chat_id, thread_id, &fallback).await {
                         tracing::error!("Telegram: fallback completion send failed: {}", e);
                     }
                     if let Some(mid) = streaming_msg_id {
-                        let _ = bot.delete_message(msg.chat.id, mid).await;
+                        let _ = bot.delete_message(chat_id, mid).await;
                     }
                     return Ok(false);
                 }
@@ -4112,7 +4122,7 @@ async fn deliver_final_response(
                              delivering the emoji as text instead"
                         );
                         if let Err(e) =
-                            message_in_thread(bot, msg.chat.id, thread_id, emoji.as_str()).await
+                            message_in_thread(bot, chat_id, thread_id, emoji.as_str()).await
                         {
                             tracing::error!("Telegram: emoji text fallback also failed: {}", e);
                         }
@@ -4123,7 +4133,7 @@ async fn deliver_final_response(
                         );
                     }
                     if let Some(mid) = streaming_msg_id {
-                        let _ = bot.delete_message(msg.chat.id, mid).await;
+                        let _ = bot.delete_message(chat_id, mid).await;
                     }
                     return Ok(false);
                 }
@@ -4143,8 +4153,7 @@ async fn deliver_final_response(
                 match tokio::fs::read(&img_path).await {
                     Ok(bytes) => {
                         if let Err(e) =
-                            photo_in_thread(bot, msg.chat.id, thread_id, InputFile::memory(bytes))
-                                .await
+                            photo_in_thread(bot, chat_id, thread_id, InputFile::memory(bytes)).await
                         {
                             tracing::error!("Telegram: failed to send generated image: {}", e);
                         }
@@ -4171,7 +4180,7 @@ async fn deliver_final_response(
                 };
                 match super::rich::api::send_rich_markdown_id(
                     bot.token(),
-                    msg.chat.id.0,
+                    chat_id.0,
                     thread_id,
                     &rich_md,
                 )
@@ -4184,7 +4193,7 @@ async fn deliver_final_response(
                             s.intermediate_msg_ids.clone()
                         };
                         for mid in &intermediate_ids {
-                            let _ = bot.delete_message(msg.chat.id, *mid).await;
+                            let _ = bot.delete_message(chat_id, *mid).await;
                         }
                         tracing::info!(
                             "Telegram: rich fallback delivered ({} chars), deleted {} HTML intermediates",
@@ -4203,10 +4212,10 @@ async fn deliver_final_response(
                                 .await
                                 .map(|u| format!("@{}", u))
                                 .unwrap_or_else(|| "OpenCrabs".to_string());
-                            let thread_id_str = msg.thread_id.map(|t| t.0.to_string());
+                            let thread_id_str = thread_id.map(|t| t.0.to_string());
                             let cm = DbChannelMessage::new(
                                 "telegram".to_string(),
-                                msg.chat.id.0.to_string(),
+                                chat_id.0.to_string(),
                                 Some(chat_title.to_string()),
                                 "bot:opencrabs".to_string(),
                                 bot_display_name,
@@ -4244,7 +4253,7 @@ async fn deliver_final_response(
             // response, remove the folded copy to avoid showing it twice.
             let text_only = if text_only.trim().is_empty() {
                 // CLI provider case: no separate answer, reclaim the folded final
-                take_folded_final(bot, msg.chat.id, streaming)
+                take_folded_final(bot, chat_id, streaming)
                     .await
                     .unwrap_or(text_only)
             } else {
@@ -4261,7 +4270,7 @@ async fn deliver_final_response(
                 };
                 if trailing_matches {
                     // Remove the duplicate from the block
-                    take_folded_final(bot, msg.chat.id, streaming).await;
+                    take_folded_final(bot, chat_id, streaming).await;
                 }
                 text_only
             };
@@ -4318,11 +4327,11 @@ async fn deliver_final_response(
                     // clears the id so the HTML fallback below sends a fresh
                     // message (not an edit of a deleted one) if the rich send fails.
                     if let Some(mid) = streaming_msg_id.take() {
-                        let _ = bot.delete_message(msg.chat.id, mid).await;
+                        let _ = bot.delete_message(chat_id, mid).await;
                     }
                     match super::rich::api::send_rich_markdown_id(
                         bot.token(),
-                        msg.chat.id.0,
+                        chat_id.0,
                         thread_id,
                         &rich_md,
                     )
@@ -4350,7 +4359,7 @@ async fn deliver_final_response(
                         && let Some(mid) = streaming_msg_id
                     {
                         match bot
-                            .edit_message_text(msg.chat.id, mid, &chunks[0])
+                            .edit_message_text(chat_id, mid, &chunks[0])
                             .parse_mode(ParseMode::Html)
                             .await
                         {
@@ -4365,37 +4374,36 @@ async fn deliver_final_response(
                                 );
                                 tokio::time::sleep(secs.duration()).await;
                                 if let Err(e) = bot
-                                    .edit_message_text(msg.chat.id, mid, &chunks[0])
+                                    .edit_message_text(chat_id, mid, &chunks[0])
                                     .parse_mode(ParseMode::Html)
                                     .await
                                 {
                                     tracing::warn!(
                                         "Telegram: edit retry failed ({e}), falling back to delete+send"
                                     );
-                                    let _ = bot.delete_message(msg.chat.id, mid).await;
-                                    let _ =
-                                        send_html_or_plain(bot, msg.chat.id, thread_id, &chunks[0])
-                                            .await;
+                                    let _ = bot.delete_message(chat_id, mid).await;
+                                    let _ = send_html_or_plain(bot, chat_id, thread_id, &chunks[0])
+                                        .await;
                                 }
                             }
                             Err(e) => {
                                 tracing::warn!(
                                     "Telegram: edit final failed ({e}), falling back to delete+send"
                                 );
-                                let _ = bot.delete_message(msg.chat.id, mid).await;
-                                let _ = send_html_or_plain(bot, msg.chat.id, thread_id, &chunks[0])
-                                    .await;
+                                let _ = bot.delete_message(chat_id, mid).await;
+                                let _ =
+                                    send_html_or_plain(bot, chat_id, thread_id, &chunks[0]).await;
                             }
                         }
                     } else {
                         // Multi-chunk or no streaming message — delete old, send new
                         if let Some(mid) = streaming_msg_id {
-                            let _ = bot.delete_message(msg.chat.id, mid).await;
+                            let _ = bot.delete_message(chat_id, mid).await;
                         }
                         for chunk in &chunks {
                             // Last chunk wins — that's the bubble a user replies to.
                             if let Ok(sent) =
-                                send_html_or_plain(bot, msg.chat.id, thread_id, chunk).await
+                                send_html_or_plain(bot, chat_id, thread_id, chunk).await
                             {
                                 sent_reply_id = Some(sent.0);
                             }
@@ -4419,14 +4427,14 @@ async fn deliver_final_response(
                 if let Some((inter_id, inter_text)) = last_inter {
                     append_footer_to_last_intermediate(
                         bot,
-                        msg.chat.id,
+                        chat_id,
                         inter_id,
                         &inter_text,
                         &footer,
                     )
                     .await;
                 }
-                let _ = bot.delete_message(msg.chat.id, mid).await;
+                let _ = bot.delete_message(chat_id, mid).await;
             }
 
             // Record the bot's text reply into channel_messages.
@@ -4449,10 +4457,10 @@ async fn deliver_final_response(
                     .await
                     .map(|u| format!("@{}", u))
                     .unwrap_or_else(|| "OpenCrabs".to_string());
-                let thread_id = msg.thread_id.map(|t| t.0.to_string());
+                let thread_id = thread_id.map(|t| t.0.to_string());
                 let cm = DbChannelMessage::new(
                     "telegram".to_string(),
-                    msg.chat.id.0.to_string(),
+                    chat_id.0.to_string(),
                     Some(chat_title.to_string()),
                     "bot:opencrabs".to_string(),
                     bot_display_name,
@@ -4480,10 +4488,10 @@ async fn deliver_final_response(
                         tracing::info!(
                             "Telegram: TTS succeeded — {} bytes of audio, sending to chat {}",
                             audio_bytes.len(),
-                            msg.chat.id
+                            chat_id
                         );
                         match bot
-                            .send_voice(msg.chat.id, InputFile::memory(audio_bytes))
+                            .send_voice(chat_id, InputFile::memory(audio_bytes))
                             .await
                         {
                             Ok(m) => {
@@ -4513,7 +4521,7 @@ async fn deliver_final_response(
             tracing::info!("Telegram: agent call cancelled for session {}", session_id);
             // Silently clean up — user already received "Operation cancelled." from /stop
             if let Some(mid) = streaming_msg_id {
-                let _ = bot.delete_message(msg.chat.id, mid).await;
+                let _ = bot.delete_message(chat_id, mid).await;
             }
         }
         Err(e) => {
@@ -4527,9 +4535,9 @@ async fn deliver_final_response(
             // large / stream broken / repetition loop / etc.).
             let user_msg = format!("❌ Error\n\n{}", crate::brain::agent::format_user_error(&e));
             if let Some(mid) = streaming_msg_id {
-                let _ = bot.edit_message_text(msg.chat.id, mid, user_msg).await;
+                let _ = bot.edit_message_text(chat_id, mid, user_msg).await;
             } else {
-                message_in_thread(bot, msg.chat.id, thread_id, user_msg).await?;
+                message_in_thread(bot, chat_id, thread_id, user_msg).await?;
             }
         }
     }
