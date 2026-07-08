@@ -584,12 +584,18 @@ pub(crate) async fn refresh_flow_html(
 /// tool round opens a fresh block BELOW the user's message and the chat
 /// keeps flowing bottom-down (#404).
 pub(crate) fn detach_flow_for_followup(streaming: &Arc<std::sync::Mutex<StreamingState>>) {
+    // The block is NOT closed here (#475). The original #404 freeze existed
+    // to make the next round appear below the user's follow-up, but in a
+    // busy group every incoming message froze the block and shredded one
+    // turn into a dozen fragments. #451's restick achieves the ordering the
+    // freeze was for — the SAME block relocates below the newest message on
+    // the next round — so grouping survives: one block per turn, always at
+    // the bottom. Only the response placeholder re-posts.
     let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-    if s.open_group_msg_id.take().is_some() {
-        s.flow_entries.clear();
-        s.flow_status = None;
+    if s.open_group_msg_id.is_some() {
         tracing::info!(
-            "Telegram: mid-turn follow-up — froze open flow block; next round starts below"
+            "Telegram: mid-turn follow-up — flow block stays open; restick moves it \
+             below on the next round (#475)"
         );
     }
     if s.msg_id.is_some() {
