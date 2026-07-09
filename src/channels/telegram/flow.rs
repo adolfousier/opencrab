@@ -254,6 +254,26 @@ fn human_readable_preview(text: &str) -> Option<String> {
     (!cleaned.is_empty()).then(|| cleaned.to_string())
 }
 
+/// Longest folded narration entry kept in the collapsed flow block (#489).
+/// The block is a PROGRESS view, not the full transcript: capping each
+/// folded `Text` entry keeps the block compact so far more tool rounds fit
+/// before the 30K rich size freeze. Matters most for Claude CLI, whose
+/// answer streams as intermediate text folded into the block (API keeps it
+/// in response.content). Display-only: the renderers read `flow_entries`
+/// without mutating them, so `take_folded_final` still reclaims the FULL
+/// final answer.
+const FOLDED_NARRATION_CAP: usize = 300;
+
+/// Truncate a folded narration entry to [`FOLDED_NARRATION_CAP`] chars on a
+/// char boundary, appending an ellipsis when cut. Short entries pass through.
+fn cap_narration(text: &str) -> String {
+    if text.chars().count() <= FOLDED_NARRATION_CAP {
+        return text.to_string();
+    }
+    let capped: String = text.chars().take(FOLDED_NARRATION_CAP).collect();
+    format!("{capped}…")
+}
+
 pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) -> String {
     render_flow_html_with(lines, &FlowHeader::Live(live_status))
 }
@@ -285,7 +305,9 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
                     // the expanded block is formatted, not raw markdown source
                     // (#306). format_inline emits only inline tags, which are
                     // valid inside <blockquote>; no block-level <pre> to break it.
-                    out.push(format_inline(&escape_html(text)));
+                    // Capped (#489) so verbose folded narration doesn't blow the
+                    // block size budget; display-only, reclaim reads flow_entries.
+                    out.push(format_inline(&escape_html(&cap_narration(text))));
                 }
             }
         }
@@ -351,7 +373,9 @@ fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) -> String {
             FlowLine::Text(text) => {
                 let text = text.trim();
                 if !text.is_empty() {
-                    out.push(format_inline(&escape_html(text)));
+                    // Capped (#489): keeps the block compact so more rounds
+                    // fit before the 30K freeze. Display-only.
+                    out.push(format_inline(&escape_html(&cap_narration(text))));
                 }
             }
         }

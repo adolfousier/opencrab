@@ -697,3 +697,26 @@ fn tool_last_flow_reclaims_nothing() {
     assert!(pop_trailing_folded_texts(&mut entries).is_none());
     assert_eq!(entries.len(), 2, "nothing consumed");
 }
+
+// ── folded narration cap keeps the block compact (#489) ─────────────
+
+#[test]
+fn long_folded_narration_is_capped_in_the_block() {
+    // A verbose CLI narration entry (over the 300-char cap) renders
+    // truncated with an ellipsis, so the collapsed block stays small and
+    // more tool rounds fit before the 30K rich size freeze.
+    let long = "x".repeat(1200);
+    let out = render_flow_html(
+        &[
+            tline("✅ bash", "cargo test"),
+            FlowLine::Text(long.clone()),
+            FlowLine::Text("all done here now".into()),
+            tline("✅ read", "flow.rs"),
+        ],
+        None,
+    );
+    assert!(out.contains('…'), "capped body entry ends with an ellipsis");
+    // A LATER human text is the latest-activity preview (#487, shown whole),
+    // so the long entry is body-only and its full run must NOT appear.
+    assert!(!out.contains(&long), "body narration must be truncated");
+}
