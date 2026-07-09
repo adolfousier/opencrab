@@ -581,8 +581,13 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
         &[tline("✅ bash", "git status"), tline("✅ read", "file.rs")],
         None,
     );
-    // Collapsed by default: plain <details>, never <details open>.
-    assert!(out.starts_with("<details><summary><sub><b>2 tool calls</b></sub></summary>"));
+    // Collapsed by default: plain <details>, never <details open>. The summary
+    // carries the latest-activity preview so the collapsed block shows progress
+    // even with the body hidden (#405); with no narration it falls back to the
+    // most recent tool line.
+    assert!(out.starts_with(
+        "<details><summary><sub><b>2 tool calls</b> ↳ <i>✅ read file.rs</i></sub></summary>"
+    ));
     assert!(out.ends_with("</details>"));
     assert!(!out.contains("<details open"));
     // Each entry is its own <p>: the rich HTML parser ignores raw newlines,
@@ -601,10 +606,30 @@ fn details_summary_carries_live_status() {
     let summary = &out[..summary_end];
     assert!(summary.contains("⚙️ 2 tool calls · grep · 10s"));
     // Summary is wrapped in <sub> for visual de-emphasis (#436).
-    assert!(summary.contains("<sub><b>⚙️ 2 tool calls · grep · 10s</b></sub>"));
-    // Latest-activity preview removed from summary (#436) - body already shows
-    // every entry, so the preview only duplicated content visible immediately below.
-    assert!(!summary.contains("↳"));
+    assert!(summary.contains("<sub><b>⚙️ 2 tool calls · grep · 10s</b>"));
+    // Latest-activity preview rides in the summary (#405): the rich <details>
+    // collapses to the summary ALONE, hiding the body, so without the preview
+    // the collapsed block shows no progress at all. The #436 removal assumed
+    // the body covers it, but the body is collapsed by default.
+    assert!(summary.contains("↳ <i>"));
+}
+
+#[test]
+fn details_collapsed_summary_shows_intermediate_narration() {
+    // Regression (#405): the COLLAPSED rich block must surface the latest
+    // narration in its summary — the body is hidden by default, so the summary
+    // is the only place a user sees mid-turn progress. Narration wins over the
+    // trailing tool line as the preview source (#481).
+    let out = render_flow_details(
+        &[
+            FlowLine::Text("Running the test suite".to_string()),
+            tline("⚙️ bash", "cargo test"),
+        ],
+        Some("45s"),
+    );
+    let summary_end = out.find("</summary>").expect("summary");
+    let summary = &out[..summary_end];
+    assert!(summary.contains("↳ <i>Running the test suite</i>"));
 }
 
 #[test]

@@ -398,9 +398,20 @@ fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) -> String {
     // inline wall. One <p> per entry gives the same visual separation the
     // classic blockquote gets from blank lines.
     let body: String = out.iter().map(|e| format!("<p>{e}</p>")).collect();
+    // Latest activity rides in the summary so the COLLAPSED rich block shows
+    // what is happening now (#405). The classic HTML path (render_flow_html_with)
+    // puts the `↳` preview under the header inside the expandable blockquote,
+    // which stays visible collapsed; the rich `<details>` collapses to the
+    // summary ALONE, so without this the rich surface loses the live progress
+    // preview entirely and shows only "N tool calls · 45s". Rich HTML input
+    // ignores raw newlines, so it rides inline after the header.
+    let latest = latest_activity_preview(lines)
+        .map(|l| format!(" ↳ <i>{}</i>", escape_html(&l)))
+        .unwrap_or_default();
     format!(
-        "<details><summary><sub><b>{}</b></sub></summary>{}</details>",
+        "<details><summary><sub><b>{}</b>{}</sub></summary>{}</details>",
         flow_header_text(tool_count, header),
+        latest,
         body
     )
 }
