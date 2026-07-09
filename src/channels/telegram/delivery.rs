@@ -406,21 +406,55 @@ pub(crate) async fn deliver_final_response(
                     if let Some(mid) = streaming_msg_id.take() {
                         let _ = bot.delete_message(chat_id, mid).await;
                     }
-                    match super::rich::api::send_rich_markdown_id(
+                    // Native BLOCKS first (#476 path B): the block value is
+                    // sent as-is, so code fences and tables both render
+                    // natively with no server-side markdown parser to mangle
+                    // fences into <code> artifacts. On ANY rejection fall back
+                    // to the markdown rich send (tables good, fences mangle),
+                    // then to HTML below — so worst case is exactly today's
+                    // behavior, never a regression. The footer rides as an
+                    // italic paragraph so it is part of the same message.
+                    let block_src = if footer.is_empty() {
+                        text_only.clone()
+                    } else {
+                        format!("{text_only}\n\n_{footer}_")
+                    };
+                    let blocks = super::rich::markdown_to_rich_blocks(&block_src);
+                    let via_blocks = super::rich::api::send_rich_blocks_id(
                         bot.token(),
                         chat_id.0,
                         thread_id,
-                        &rich_md,
+                        &blocks,
                     )
-                    .await
-                    {
+                    .await;
+                    match via_blocks {
                         Ok(id) => {
                             sent_reply_id = Some(id);
                             true
                         }
-                        Err(e) => {
-                            tracing::warn!("Telegram: rich delivery failed, using HTML: {e}");
-                            false
+                        Err(be) => {
+                            tracing::warn!(
+                                "Telegram: rich blocks delivery failed ({be}), trying markdown"
+                            );
+                            match super::rich::api::send_rich_markdown_id(
+                                bot.token(),
+                                chat_id.0,
+                                thread_id,
+                                &rich_md,
+                            )
+                            .await
+                            {
+                                Ok(id) => {
+                                    sent_reply_id = Some(id);
+                                    true
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Telegram: rich delivery failed, using HTML: {e}"
+                                    );
+                                    false
+                                }
+                            }
                         }
                     }
                 };

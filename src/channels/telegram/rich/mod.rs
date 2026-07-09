@@ -96,6 +96,16 @@ pub(crate) fn contains_task_list(text: &str) -> bool {
     })
 }
 
+/// Parse `text` into the native `InputRichMessage` block value (#476 path
+/// B): `{"blocks": [...]}`, sent via `api::send_rich_blocks_id`. No
+/// server-side markdown re-parsing, so tables AND code fences render
+/// natively with no parser to mangle them (the fence-artifact bug the
+/// markdown input mode cannot avoid). Falls back to the markdown/HTML send
+/// paths on any API rejection.
+pub(crate) fn markdown_to_rich_blocks(text: &str) -> serde_json::Value {
+    render_json::input_rich_message(&parse_markdown(text))
+}
+
 /// Parse `text` and render it as Telegram HTML in one call (the fallback path).
 pub(crate) fn markdown_to_html(text: &str) -> String {
     render_html::render_html(&parse_markdown(text))

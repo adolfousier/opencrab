@@ -58,6 +58,28 @@ pub(crate) async fn edit_rich_html(
     post_and_check(&url, &body).await
 }
 
+/// Send native rich BLOCKS (`rich_message.blocks`) and return the new
+/// message id (#476 path B). `rich_message` is the serialized
+/// `InputRichMessage` value `{"blocks": [...]}` from
+/// [`super::render_json::input_rich_message`]. Unlike the markdown input
+/// mode, the server does NOT re-parse anything, so code fences and tables
+/// both render natively with no parser to mangle them. Returns `Err` so the
+/// caller falls back to the markdown/HTML paths.
+pub(crate) async fn send_rich_blocks_id(
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    rich_message: &serde_json::Value,
+) -> anyhow::Result<i32> {
+    let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
+    let result = post_rich(&url, &build_body_blocks(chat_id, thread_id, rich_message)).await?;
+    result
+        .get("message_id")
+        .and_then(serde_json::Value::as_i64)
+        .map(|id| id as i32)
+        .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
+}
+
 /// Send `markdown` as a native rich message and return the new message id.
 /// Used for intermediate streamed segments, which must be tracked for later
 /// footer-append / dedup. Returns `Err` so the caller can fall back to HTML.
@@ -161,6 +183,24 @@ pub(crate) fn build_body(
     });
     if let Some(t) = thread_id {
         // ThreadId wraps a MessageId(i32).
+        body["message_thread_id"] = serde_json::json!(t.0.0);
+    }
+    body
+}
+
+/// Build the `sendRichMessage` body with native BLOCK input (#476 path B).
+/// `rich_message` is the `{"blocks": [...]}` value; no server-side parsing,
+/// so tables and code fences both render natively.
+pub(crate) fn build_body_blocks(
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    rich_message: &serde_json::Value,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "chat_id": chat_id,
+        "rich_message": rich_message,
+    });
+    if let Some(t) = thread_id {
         body["message_thread_id"] = serde_json::json!(t.0.0);
     }
     body
