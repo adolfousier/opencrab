@@ -21,6 +21,21 @@ fn tline(label: &str, context: &str) -> FlowLine {
     FlowLine::Tool {
         label: label.to_string(),
         context: context.to_string(),
+        raw_context: String::new(),
+    }
+}
+
+/// Build a bash flow line the way production does (#488): `context` is the
+/// decorated, middle-truncated display hint and `raw_context` is the untruncated
+/// command. Status extraction must read `raw_context`, so tests that assert
+/// `#`-comment status go through this, not `tline` (which passed the raw command
+/// as `context` and so tested input the pipeline never produces).
+fn bash_line(raw_command: &str) -> FlowLine {
+    let input = serde_json::json!({ "command": raw_command });
+    FlowLine::Tool {
+        label: "⚙️ bash".to_string(),
+        context: crate::utils::tool_context_hint("bash", &input),
+        raw_context: crate::utils::tool_status_source("bash", &input),
     }
 }
 
@@ -241,16 +256,40 @@ fn bash_comment_none_when_no_comments() {
 #[test]
 fn preview_uses_bash_comments_when_no_narration() {
     // No human-readable text → priority 2 pulls the bash command's comments.
-    let out =
-        latest_activity_preview(&[tline("⚙️ bash", "# --- Installing deps ---\nnpm install")]);
+    // bash_line (not tline) so the pipeline is realistic: context is decorated,
+    // raw_context holds the raw command that extraction must read (#488).
+    let out = latest_activity_preview(&[bash_line("# --- Installing deps ---\nnpm install")]);
     assert_eq!(out.as_deref(), Some("Installing deps"));
+}
+
+#[test]
+fn preview_bash_comment_on_first_line_survives_decoration() {
+    // The #488 regression: the display hint wraps the command as `` (`…`) ``, so
+    // a comment on the command's FIRST line no longer starts with `#` after
+    // decoration and was dropped. Reading raw_context restores it.
+    let out = latest_activity_preview(&[bash_line("# --- Setup environment ---\nexport FOO=bar")]);
+    assert_eq!(out.as_deref(), Some("Setup environment"));
+}
+
+#[test]
+fn preview_bash_comment_survives_long_command_no_truncation() {
+    // The display hint middle-truncates to 80 bytes, which elided comments in a
+    // long command (#488). raw_context is untruncated, so a trailing comment
+    // past the 80-byte budget still surfaces.
+    let long = format!(
+        "# Build step\n{}\n# Deploy step\nmake deploy",
+        "echo padding-".repeat(12)
+    );
+    assert!(long.len() > 80);
+    let out = latest_activity_preview(&[bash_line(&long)]);
+    assert_eq!(out.as_deref(), Some("Build step\nDeploy step"));
 }
 
 #[test]
 fn preview_narration_beats_bash_comments() {
     // Priority 1 (narration) wins over priority 2 (bash comments).
     let out = latest_activity_preview(&[
-        tline("⚙️ bash", "# --- Installing deps ---\nnpm install"),
+        bash_line("# --- Installing deps ---\nnpm install"),
         FlowLine::Text("Wiring up the new module.".to_string()),
     ]);
     assert_eq!(out.as_deref(), Some("Wiring up the new module."));

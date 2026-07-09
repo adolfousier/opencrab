@@ -262,11 +262,13 @@ pub(crate) async fn resume_session(
                         s.tools_started_at = Some(std::time::Instant::now());
                     }
                     let ctx = tool_context(&tool_name, &tool_input);
+                    let raw_ctx = crate::utils::tool_status_source(&tool_name, &tool_input);
                     let idx = s.tool_msgs.len();
                     s.tool_msgs.push(ToolMsg {
                         msg_id: None,
                         name: tool_name,
                         context: ctx,
+                        raw_context: raw_ctx,
                         completed: None,
                         dirty: true,
                     });

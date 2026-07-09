@@ -20,6 +20,12 @@ pub(crate) struct ToolMsg {
     pub(crate) msg_id: Option<MessageId>,
     pub(crate) name: String,
     pub(crate) context: String,
+    /// Raw, untruncated status source (the redacted bash command) for the
+    /// flow's `#`-comment status extractor (#488). `context` is the decorated,
+    /// middle-truncated display hint — wrong input for extraction because the
+    /// wrapper hides a first-line `#` and truncation drops comments. Empty for
+    /// non-bash tools.
+    pub(crate) raw_context: String,
     /// None = running, Some(true) = success, Some(false) = failed
     pub(crate) completed: Option<bool>,
     pub(crate) dirty: bool,
@@ -142,7 +148,14 @@ pub(crate) struct StreamingState {
 /// carry the status label (icon + name) and context; text lines carry the
 /// sanitized intermediate text. Both are HTML-escaped at render time.
 pub(crate) enum FlowLine {
-    Tool { label: String, context: String },
+    Tool {
+        label: String,
+        /// Decorated display hint (`` (`cmd`) ``, middle-truncated).
+        context: String,
+        /// Raw command for `#`-comment status extraction (#488); empty for
+        /// non-bash tools.
+        raw_context: String,
+    },
     Text(String),
 }
 
@@ -176,17 +189,19 @@ pub(crate) fn latest_activity_preview(lines: &[FlowLine]) -> Option<String> {
     }
     // Priority 2: line-start `#` comments from the most recent bash command
     // (the agent narrates its steps in the command itself, no separate text).
+    // Reads raw_context, NOT the decorated/truncated display context (#488):
+    // the wrapper prefix hides a first-line `#` and truncation drops comments.
     if let Some(comments) = lines.iter().rev().find_map(|l| match l {
-        FlowLine::Tool { label, context } if is_bash_tool(label) => {
-            extract_status_from_text(context)
-        }
+        FlowLine::Tool {
+            label, raw_context, ..
+        } if is_bash_tool(label) => extract_status_from_text(raw_context),
         _ => None,
     }) {
         return Some(comments);
     }
     // Fallback: the most recent tool label + context.
     lines.iter().rev().find_map(|l| match l {
-        FlowLine::Tool { label, context } => Some(if context.is_empty() {
+        FlowLine::Tool { label, context, .. } => Some(if context.is_empty() {
             label.clone()
         } else {
             format!("{label} {context}")
@@ -283,7 +298,7 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
     let mut tool_count = 0usize;
     for line in lines {
         match line {
-            FlowLine::Tool { label, context } => {
+            FlowLine::Tool { label, context, .. } => {
                 tool_count += 1;
                 if context.is_empty() {
                     out.push(format!("<b>{}</b>", escape_html(label)));
@@ -358,7 +373,7 @@ fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) -> String {
     let mut tool_count = 0usize;
     for line in lines {
         match line {
-            FlowLine::Tool { label, context } => {
+            FlowLine::Tool { label, context, .. } => {
                 tool_count += 1;
                 if context.is_empty() {
                     out.push(format!("<b>{}</b>", escape_html(label)));
@@ -430,7 +445,7 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
     let mut tool_count = 0usize;
     for line in lines {
         match line {
-            FlowLine::Tool { label, context } => {
+            FlowLine::Tool { label, context, .. } => {
                 tool_count += 1;
                 if context.is_empty() {
                     out.push(format!("**{label}**"));
@@ -577,6 +592,7 @@ pub(crate) fn flow_lines(s: &StreamingState) -> Vec<FlowLine> {
             FlowEntry::Tool(idx) => s.tool_msgs.get(*idx).map(|t| FlowLine::Tool {
                 label: format!("{} {}", tool_status_icon(t.completed), t.name),
                 context: t.context.clone(),
+                raw_context: t.raw_context.clone(),
             }),
             FlowEntry::Text(text) => Some(FlowLine::Text(text.clone())),
         })

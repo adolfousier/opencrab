@@ -141,3 +141,22 @@ pub fn tool_context_hint(name: &str, input: &serde_json::Value) -> String {
         _ => String::new(),
     }
 }
+
+/// Raw, untruncated status source for a tool call: the redacted bash `command`,
+/// verbatim. This is the input the flow's `#`-comment status extractor reads
+/// (#482/#488) — it must NOT be decorated or truncated like `tool_context_hint`.
+/// The display hint wraps the command as `` (`…`) `` and middle-truncates to 80
+/// bytes, which drops a first-line `#` comment (the wrapper prefix hides the
+/// leading `#`) and can elide comments mid-command; feeding that to the
+/// extractor was the #488 bug. Empty for non-bash tools (the extractor only
+/// runs on bash lines).
+pub fn tool_status_source(name: &str, input: &serde_json::Value) -> String {
+    if name != "bash" {
+        return String::new();
+    }
+    redact_tool_input(input)
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_default()
+}
