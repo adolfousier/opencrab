@@ -1915,7 +1915,8 @@ Full annotated example — the onboarding wizard writes this for you, but you ca
 [agent]
 approval_policy = "auto-always"  # auto-always (default) | auto-session | ask
 max_concurrent = 4               # tools per turn that may run in parallel (auto-approved batches only; 1 = fully sequential)
-working_directory = "~/projects" # default working dir for Bash/file tools
+# The working directory is per-session, not a config key: each session keeps its own
+# (set with /cd, or inherited from the launch cwd) so isolated sessions never collide.
 redact_sensitive_data = true     # redact IPs, tokens, passwords from tool output (set false for sysadmin work)
 default_provider = "xiaomi"      # main chat default provider (new sessions inherit, existing pick up on resume)
 default_model = "mimo-v2.5-pro"  # main chat default model
