@@ -9,6 +9,7 @@ pub mod owner;
 pub mod profile;
 pub mod repair;
 pub mod secrets;
+pub mod startup_checks;
 pub(crate) mod types;
 pub mod update;
 

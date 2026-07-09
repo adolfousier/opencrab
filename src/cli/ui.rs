@@ -229,6 +229,15 @@ async fn cmd_chat_inner(
     force_onboard: bool,
     headless: bool,
 ) -> Result<()> {
+    // Startup config diagnostics (#477): once per process, never on hot
+    // reload. Non-fatal — each line is a hint for silent-config-drift
+    // mistakes (ignored keys, defaults that only affect new sessions).
+    {
+        let raw = std::fs::read_to_string(crate::config::opencrabs_home().join("config.toml")).ok();
+        for w in crate::config::startup_checks::startup_warnings(config, raw.as_deref()) {
+            tracing::warn!("{w}");
+        }
+    }
     use crate::{
         brain::{
             agent::AgentService,

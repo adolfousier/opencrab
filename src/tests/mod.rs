@@ -325,6 +325,7 @@ mod xiaomi_onboarding_test;
 pub mod session_working_dir_test;
 pub mod slack_blocks_test;
 pub mod slack_fmt_test;
+pub mod startup_checks_test;
 pub mod stream_loop_test;
 pub mod streaming_active_secs_test;
 pub mod streaming_tok_per_sec_guard_test;
