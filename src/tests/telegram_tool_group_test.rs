@@ -9,7 +9,7 @@
 //! `render_flow_details` emits exactly that wrapper.
 
 use crate::channels::telegram::flow::{
-    FlowEntry, latest_activity_preview, pop_trailing_folded_texts,
+    FlowEntry, extract_status_from_text, latest_activity_preview, pop_trailing_folded_texts,
 };
 use crate::channels::telegram::handler::{
     FlowLine, folded_duplicates_final, humanize_elapsed, humanize_elapsed_coarse,
@@ -204,6 +204,55 @@ fn preview_falls_back_to_tool_when_no_human_readable_text() {
 #[test]
 fn preview_is_none_when_empty() {
     assert_eq!(latest_activity_preview(&[]), None);
+}
+
+// ── extract_status_from_text: bash line-start # comments (#482) ──
+
+#[test]
+fn bash_comment_single_strips_decoration() {
+    assert_eq!(
+        extract_status_from_text("# --- Setup environment ---\nexport FOO=bar").as_deref(),
+        Some("Setup environment")
+    );
+}
+
+#[test]
+fn bash_comment_multiple_join_with_newlines() {
+    let cmd = "# Step one\napt-get update\n# Step two\napt-get install foo";
+    assert_eq!(
+        extract_status_from_text(cmd).as_deref(),
+        Some("Step one\nStep two")
+    );
+}
+
+#[test]
+fn bash_comment_ignores_inline_hash_and_shebang() {
+    // A shebang and an inline (not line-start) `#` are not status comments.
+    let cmd = "#!/bin/bash\ncurl https://x.com/a#frag\necho ok";
+    assert_eq!(extract_status_from_text(cmd), None);
+}
+
+#[test]
+fn bash_comment_none_when_no_comments() {
+    assert_eq!(extract_status_from_text("cargo build --release"), None);
+}
+
+#[test]
+fn preview_uses_bash_comments_when_no_narration() {
+    // No human-readable text → priority 2 pulls the bash command's comments.
+    let out =
+        latest_activity_preview(&[tline("⚙️ bash", "# --- Installing deps ---\nnpm install")]);
+    assert_eq!(out.as_deref(), Some("Installing deps"));
+}
+
+#[test]
+fn preview_narration_beats_bash_comments() {
+    // Priority 1 (narration) wins over priority 2 (bash comments).
+    let out = latest_activity_preview(&[
+        tline("⚙️ bash", "# --- Installing deps ---\nnpm install"),
+        FlowLine::Text("Wiring up the new module.".to_string()),
+    ]);
+    assert_eq!(out.as_deref(), Some("Wiring up the new module."));
 }
 
 // ── Mixed processing-log flow (tool calls + intermediate text) — #300 ──

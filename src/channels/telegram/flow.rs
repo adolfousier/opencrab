@@ -151,10 +151,12 @@ pub(crate) enum FlowLine {
 /// long turn pins its FIRST narration line on screen forever while only the
 /// header counters tick.
 ///
-/// Priority (#481, amended): the most recent HUMAN-READABLE intermediary text,
-/// returned WHOLE — all paragraphs, newlines preserved, NOT truncated — after
-/// skipping entries that are JSON, code blocks, or raw output; then the most
-/// recent tool label + context. Each renderer escapes/styles the returned text.
+/// Priority chain: (1, #481 amended) the most recent HUMAN-READABLE
+/// intermediary text, returned WHOLE — all paragraphs, newlines preserved, NOT
+/// truncated — after skipping entries that are JSON, code blocks, or raw
+/// output; (2, #482) line-start `#` comments from the most recent bash command
+/// when there is no narration; (3) the most recent tool label + context. Each
+/// renderer escapes/styles the returned text.
 pub(crate) fn latest_activity_preview(lines: &[FlowLine]) -> Option<String> {
     // Priority 1: the whole most-recent human-readable intermediary text.
     if let Some(text) = lines.iter().rev().find_map(|l| match l {
@@ -162,6 +164,16 @@ pub(crate) fn latest_activity_preview(lines: &[FlowLine]) -> Option<String> {
         FlowLine::Tool { .. } => None,
     }) {
         return Some(text);
+    }
+    // Priority 2: line-start `#` comments from the most recent bash command
+    // (the agent narrates its steps in the command itself, no separate text).
+    if let Some(comments) = lines.iter().rev().find_map(|l| match l {
+        FlowLine::Tool { label, context } if is_bash_tool(label) => {
+            extract_status_from_text(context)
+        }
+        _ => None,
+    }) {
+        return Some(comments);
     }
     // Fallback: the most recent tool label + context.
     lines.iter().rev().find_map(|l| match l {
@@ -172,6 +184,34 @@ pub(crate) fn latest_activity_preview(lines: &[FlowLine]) -> Option<String> {
         }),
         FlowLine::Text(_) => None,
     })
+}
+
+/// A flow tool line is a bash call when its name (the last word of the
+/// `{icon} {name}` label) is `bash`.
+fn is_bash_tool(label: &str) -> bool {
+    label.split_whitespace().last() == Some("bash")
+}
+
+/// Extract line-start `#` comments from a bash command as status text (#482).
+/// A comment is a line whose first non-whitespace char is `#` — no shell-aware
+/// parsing of inline `#` (amendment). The `#` and any `---`/`===` decoration
+/// are stripped, so `# --- Setup environment ---` yields `Setup environment`.
+/// Multiple comments join by newlines, untruncated (amendment). Shebang lines
+/// (`#!`) are ignored. `None` when the command has no line-start comments.
+pub(crate) fn extract_status_from_text(command: &str) -> Option<String> {
+    let comments: Vec<String> = command
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('#') && !l.starts_with("#!"))
+        .map(|l| {
+            l.trim_start_matches('#')
+                .trim()
+                .trim_matches(|c: char| c == '-' || c == '=' || c.is_whitespace())
+                .to_string()
+        })
+        .filter(|l| !l.is_empty())
+        .collect();
+    (!comments.is_empty()).then(|| comments.join("\n"))
 }
 
 /// Return an intermediary text entry as a preview when it is human-readable
