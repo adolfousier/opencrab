@@ -145,38 +145,64 @@ pub(crate) enum FlowLine {
 /// block so only the final response stays clean at the bottom (#300). Output is
 /// final HTML — send via `send_html_or_plain`, never through
 /// `markdown_to_telegram_html` (it would double-process the HTML).
-/// Plain-text preview of the LATEST flow entry (#405). Telegram's collapsed
-/// expandable blockquote shows the header plus the first content line, and
-/// entries render chronologically — so without this, a 16-minute turn pins
-/// its FIRST narration line on screen forever and only the header counters
-/// tick. Each renderer escapes/styles the returned text itself.
+/// Plain-text preview of the latest activity for the collapsed block header
+/// (#405). Telegram's collapsed expandable blockquote shows the header plus the
+/// first content line, and entries render chronologically — so without this a
+/// long turn pins its FIRST narration line on screen forever while only the
+/// header counters tick.
+///
+/// Priority (#481, amended): the most recent HUMAN-READABLE intermediary text,
+/// returned WHOLE — all paragraphs, newlines preserved, NOT truncated — after
+/// skipping entries that are JSON, code blocks, or raw output; then the most
+/// recent tool label + context. Each renderer escapes/styles the returned text.
 pub(crate) fn latest_activity_preview(lines: &[FlowLine]) -> Option<String> {
-    let latest = lines.iter().rev().find_map(|l| match l {
+    // Priority 1: the whole most-recent human-readable intermediary text.
+    if let Some(text) = lines.iter().rev().find_map(|l| match l {
+        FlowLine::Text(t) => human_readable_preview(t),
+        FlowLine::Tool { .. } => None,
+    }) {
+        return Some(text);
+    }
+    // Fallback: the most recent tool label + context.
+    lines.iter().rev().find_map(|l| match l {
         FlowLine::Tool { label, context } => Some(if context.is_empty() {
             label.clone()
         } else {
             format!("{label} {context}")
         }),
-        FlowLine::Text(t) => {
-            // Plain snippet: strip inline markdown markers so the preview
-            // never shows raw ** / ` source.
-            let first: String = t
-                .trim()
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .chars()
-                .filter(|c| !matches!(c, '*' | '`' | '_'))
-                .collect();
-            (!first.is_empty()).then_some(first)
-        }
-    })?;
-    let mut compact: String = latest.chars().take(96).collect();
-    if latest.chars().count() > 96 {
-        compact.push('…');
+        FlowLine::Text(_) => None,
+    })
+}
+
+/// Return an intermediary text entry as a preview when it is human-readable
+/// narration, else `None` so the caller skips backward to an earlier entry
+/// (#481). Skips JSON (starts with `{`/`[`), code blocks (starts with a triple
+/// backtick), and raw output (a single token with no internal whitespace — a
+/// bare number or path). Human-readable text is returned WHOLE: trimmed, inline
+/// markdown markers (`*`/`` ` ``/`_`) stripped so the preview never shows raw
+/// source, newlines preserved, no truncation (amendment: whole intermediary
+/// text as the status source).
+fn human_readable_preview(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    // Raw output: one bare token, no internal whitespace, that reads as a path
+    // or number (has a `/` or no letters at all) — e.g. `src/foo.rs` or `12345`.
+    // A one-word sentence like `Done.` keeps its letters and is NOT raw.
+    let looks_raw = !trimmed.chars().any(char::is_whitespace)
+        && (trimmed.contains('/') || !trimmed.chars().any(char::is_alphabetic));
+    if trimmed.is_empty()
+        || trimmed.starts_with('{')
+        || trimmed.starts_with('[')
+        || trimmed.starts_with("```")
+        || looks_raw
+    {
+        return None;
     }
-    Some(compact)
+    let cleaned: String = trimmed
+        .chars()
+        .filter(|c| !matches!(c, '*' | '`' | '_'))
+        .collect();
+    let cleaned = cleaned.trim();
+    (!cleaned.is_empty()).then(|| cleaned.to_string())
 }
 
 pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) -> String {

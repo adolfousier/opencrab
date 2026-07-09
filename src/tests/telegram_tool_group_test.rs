@@ -8,7 +8,9 @@
 //! server-side into a native RichBlockDetails collapsible, so
 //! `render_flow_details` emits exactly that wrapper.
 
-use crate::channels::telegram::flow::{FlowEntry, pop_trailing_folded_texts};
+use crate::channels::telegram::flow::{
+    FlowEntry, latest_activity_preview, pop_trailing_folded_texts,
+};
 use crate::channels::telegram::handler::{
     FlowLine, folded_duplicates_final, humanize_elapsed, humanize_elapsed_coarse,
     render_flow_details, render_flow_html, render_flow_rich,
@@ -129,6 +131,79 @@ fn escapes_html_in_labels_and_context() {
     assert!(out.contains("a &lt; b &gt; c"));
     // No raw angle brackets from content survive outside our own tags
     assert!(!out.contains("'<details>'"));
+}
+
+// ── latest_activity_preview: whole human-readable text, JSON/code skip (#481) ──
+
+#[test]
+fn preview_uses_whole_human_readable_text_untruncated() {
+    // Amendment: the whole intermediary text is the status source — every
+    // paragraph, newlines preserved, no 96-char cap.
+    let long = "First paragraph of the plan.\nSecond line with more detail.\nThird line that pushes well past the old ninety-six character truncation limit so the whole thing survives.";
+    let out = latest_activity_preview(&[
+        tline("✅ bash", "cargo test"),
+        FlowLine::Text(long.to_string()),
+    ]);
+    assert_eq!(out.as_deref(), Some(long));
+}
+
+#[test]
+fn preview_skips_json_last_entry_back_to_narration() {
+    // A raw-JSON last entry is not human-readable; the preview walks back to the
+    // prior narration instead of showing `{"model": ...}`.
+    let out = latest_activity_preview(&[
+        FlowLine::Text("Checking the model roster.".to_string()),
+        FlowLine::Text("{\"model\": \"deepseek-v4-flash\", \"ok\": true}".to_string()),
+    ]);
+    assert_eq!(out.as_deref(), Some("Checking the model roster."));
+}
+
+#[test]
+fn preview_skips_code_block_last_entry() {
+    let out = latest_activity_preview(&[
+        FlowLine::Text("Here is the fix.".to_string()),
+        FlowLine::Text("```rust\nfn main() {}\n```".to_string()),
+    ]);
+    assert_eq!(out.as_deref(), Some("Here is the fix."));
+}
+
+#[test]
+fn preview_strips_inline_markdown_markers() {
+    let out = latest_activity_preview(&[FlowLine::Text(
+        "Calling `grep` then **committing** the *fix*.".to_string(),
+    )]);
+    assert_eq!(
+        out.as_deref(),
+        Some("Calling grep then committing the fix.")
+    );
+}
+
+#[test]
+fn preview_keeps_one_word_sentence_but_skips_bare_path() {
+    // "Done." is narration (keeps letters); a bare path is raw output, skipped.
+    assert_eq!(
+        latest_activity_preview(&[FlowLine::Text("Done.".to_string())]).as_deref(),
+        Some("Done.")
+    );
+    let out = latest_activity_preview(&[
+        tline("✅ read_file", "handler.rs"),
+        FlowLine::Text("src/channels/telegram/flow.rs".to_string()),
+    ]);
+    assert_eq!(out.as_deref(), Some("✅ read_file handler.rs"));
+}
+
+#[test]
+fn preview_falls_back_to_tool_when_no_human_readable_text() {
+    let out = latest_activity_preview(&[
+        tline("✅ read_file", "handler.rs"),
+        FlowLine::Text("[1,2,3]".to_string()),
+    ]);
+    assert_eq!(out.as_deref(), Some("✅ read_file handler.rs"));
+}
+
+#[test]
+fn preview_is_none_when_empty() {
+    assert_eq!(latest_activity_preview(&[]), None);
 }
 
 // ── Mixed processing-log flow (tool calls + intermediate text) — #300 ──
@@ -427,12 +502,14 @@ fn details_escapes_html_in_tool_context() {
 // ── Latest-activity preview in the collapsed block (#405) ──
 
 #[test]
-fn collapsed_preview_shows_latest_entry_not_first() {
-    // Telegram's collapsed blockquote shows header + first content line, so
-    // the newest activity must ride directly under the header.
+fn collapsed_preview_prefers_narration_over_tool_line() {
+    // #481: the status source is the most recent human-readable narration — the
+    // latest thing the agent SAID — even when a tool line follows it (that
+    // narration usually describes the tool now running), which reads better
+    // than a bare "⚙️ read_file src/agent.rs".
     let out = render_flow_html(
         &[
-            FlowLine::Text("Compris. Laisse-moi d'abord trouver le flow agent".to_string()),
+            FlowLine::Text("Checking how the scheduler resolves the next run".to_string()),
             tline("✅ bash", "grep flow"),
             tline("⚙️ read_file", "src/agent.rs"),
         ],
@@ -441,24 +518,26 @@ fn collapsed_preview_shows_latest_entry_not_first() {
     let header_end = out.find('\n').expect("header line");
     let preview_line = out[header_end + 1..].lines().next().expect("preview");
     assert!(
-        preview_line.contains("read_file") && preview_line.contains("src/agent.rs"),
-        "preview must show the LATEST entry: {preview_line}"
-    );
-    assert!(
-        !preview_line.contains("Compris"),
-        "first entry must not be pinned: {preview_line}"
+        preview_line.contains("Checking how the scheduler resolves the next run"),
+        "preview must show the narration: {preview_line}"
     );
     // Full chronological log still follows for the expanded view.
-    assert!(out.contains("Compris. Laisse-moi"));
+    assert!(out.contains("<b>⚙️ read_file</b> <code>src/agent.rs</code>"));
 }
 
 #[test]
-fn preview_truncates_and_strips_markdown() {
+fn preview_keeps_long_text_whole_and_strips_markdown() {
+    // #481 amendment: no truncation. Inline markers still stripped so the
+    // preview never shows raw ** source.
     let long = format!("**{}**", "x".repeat(200));
     let out = render_flow_html(&[tline("✅ bash", "a"), FlowLine::Text(long)], None);
     let header_end = out.find('\n').unwrap();
     let preview_line = out[header_end + 1..].lines().next().unwrap();
-    assert!(preview_line.contains('…'), "truncated: {preview_line}");
+    assert!(!preview_line.contains('…'), "not truncated: {preview_line}");
+    assert!(
+        preview_line.contains(&"x".repeat(200)),
+        "whole text kept: {preview_line}"
+    );
     assert!(
         !preview_line.contains("**"),
         "markers stripped: {preview_line}"
