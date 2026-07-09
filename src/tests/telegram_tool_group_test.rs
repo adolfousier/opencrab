@@ -8,6 +8,7 @@
 //! server-side into a native RichBlockDetails collapsible, so
 //! `render_flow_details` emits exactly that wrapper.
 
+use crate::channels::telegram::flow::{FlowEntry, pop_trailing_folded_texts};
 use crate::channels::telegram::handler::{
     FlowLine, folded_duplicates_final, humanize_elapsed, humanize_elapsed_coarse,
     render_flow_details, render_flow_html, render_flow_rich,
@@ -462,4 +463,44 @@ fn preview_truncates_and_strips_markdown() {
         !preview_line.contains("**"),
         "markers stripped: {preview_line}"
     );
+}
+
+// ── trailing folded-answer reclaim (#478) ───────────────────────────
+
+#[test]
+fn trailing_text_run_pops_joined_in_order() {
+    // The incident shape: tool rounds, then TWO trailing answer texts
+    // (the second folded after a queued follow-up). Both must come out,
+    // in order, so neither stays imprisoned in the block.
+    let mut entries = vec![
+        FlowEntry::Tool(0),
+        FlowEntry::Text("first part of the answer".into()),
+        FlowEntry::Text("Already factored in. Standing by.".into()),
+    ];
+    let reclaimed = pop_trailing_folded_texts(&mut entries).expect("reclaims");
+    assert_eq!(
+        reclaimed,
+        "first part of the answer\n\nAlready factored in. Standing by."
+    );
+    assert_eq!(entries.len(), 1, "tool entry stays");
+    assert!(matches!(entries[0], FlowEntry::Tool(0)));
+}
+
+#[test]
+fn text_only_flow_pops_everything() {
+    let mut entries = vec![
+        FlowEntry::Text("the whole answer".into()),
+        FlowEntry::Text("plus a follow-up".into()),
+    ];
+    let reclaimed = pop_trailing_folded_texts(&mut entries).expect("reclaims");
+    assert!(reclaimed.starts_with("the whole answer"));
+    assert!(entries.is_empty());
+}
+
+#[test]
+fn tool_last_flow_reclaims_nothing() {
+    // Trailing tool call = the answer is in response.content, not folded.
+    let mut entries = vec![FlowEntry::Text("narration".into()), FlowEntry::Tool(0)];
+    assert!(pop_trailing_folded_texts(&mut entries).is_none());
+    assert_eq!(entries.len(), 2, "nothing consumed");
 }

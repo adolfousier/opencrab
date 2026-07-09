@@ -106,6 +106,29 @@ pub(crate) async fn deliver_final_response(
                 text_only
             };
 
+            // Reclaim a folded answer BEFORE the reaction decision (#478):
+            // the completion can stream mid-turn as IntermediateText and
+            // fold into the flow block. When the final text is empty, the
+            // trailing folded run IS the answer — pulling it out here means
+            // a closing react directive becomes a reaction ON TOP of the
+            // delivered completion, instead of the reaction-only skip
+            // imprisoning the answer inside the Processing log block.
+            let text_only = if text_only.trim().is_empty() {
+                match take_folded_final(bot, chat_id, streaming).await {
+                    Some(reclaimed) => {
+                        tracing::info!(
+                            "Telegram: reclaimed folded final ({} chars) before react \
+                             decision (#478)",
+                            reclaimed.len()
+                        );
+                        reclaimed
+                    }
+                    None => text_only,
+                }
+            } else {
+                text_only
+            };
+
             // Reaction directive: if the LLM included <<react:emoji>>, send
             // a reaction on the user's message. For reaction-only responses
             // (empty text after stripping the directive), skip all text/TTS

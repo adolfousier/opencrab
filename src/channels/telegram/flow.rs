@@ -870,19 +870,7 @@ pub(crate) async fn take_folded_final(
 ) -> Option<String> {
     let text = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        if matches!(s.flow_entries.last(), Some(FlowEntry::Text(_))) {
-            match s.flow_entries.pop() {
-                Some(FlowEntry::Text(t)) => Some(t),
-                other => {
-                    if let Some(e) = other {
-                        s.flow_entries.push(e);
-                    }
-                    None
-                }
-            }
-        } else {
-            None
-        }
+        pop_trailing_folded_texts(&mut s.flow_entries)
     };
     text.as_ref()?;
     // Re-render the block without the promoted answer, or remove it entirely if
@@ -903,6 +891,32 @@ pub(crate) async fn take_folded_final(
         refresh_flow(bot, chat, streaming).await;
     }
     text
+}
+
+/// Pop the whole trailing run of folded `Text` entries and join them
+/// (#478). Mid-turn narration is always followed by more tool calls, so
+/// the trailing text run after the last tool IS the final answer — and
+/// since #475 keeps ONE block across queued follow-ups, that answer can
+/// be multi-part. Popping only the last entry left earlier parts
+/// imprisoned in the block.
+pub(crate) fn pop_trailing_folded_texts(entries: &mut Vec<FlowEntry>) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    while matches!(entries.last(), Some(FlowEntry::Text(_))) {
+        match entries.pop() {
+            Some(FlowEntry::Text(t)) => parts.push(t),
+            other => {
+                if let Some(e) = other {
+                    entries.push(e);
+                }
+                break;
+            }
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    parts.reverse();
+    Some(parts.join("\n\n"))
 }
 
 /// Whether a folded intermediate is a duplicate of the final answer.
