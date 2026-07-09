@@ -9,11 +9,12 @@
 //! `render_flow_details` emits exactly that wrapper.
 
 use crate::channels::telegram::flow::{
-    FlowEntry, extract_status_from_text, latest_activity_preview, pop_trailing_folded_texts,
+    FlowEntry, FlowHeader, FlowOutcome, extract_status_from_text, flow_header_text,
+    humanize_duration, latest_activity_preview, pop_trailing_folded_texts, render_flow_html_with,
 };
 use crate::channels::telegram::handler::{
-    FlowLine, folded_duplicates_final, humanize_elapsed, humanize_elapsed_coarse,
-    render_flow_details, render_flow_html, render_flow_rich,
+    FlowLine, folded_duplicates_final, humanize_elapsed, render_flow_details, render_flow_html,
+    render_flow_rich,
 };
 
 fn tline(label: &str, context: &str) -> FlowLine {
@@ -439,17 +440,81 @@ fn humanize_elapsed_snaps_to_five_second_steps() {
     assert_eq!(humanize_elapsed(3601), "60m 0s");
 }
 
+// ── Header wall-clock duration + settled outcome states (#480) ──
+
 #[test]
-fn humanize_elapsed_coarse_changes_at_most_once_per_minute() {
-    // The open flow-block header uses coarse elapsed so a pure-timer edit
-    // collapses Desktop expansion at most once a minute, not every 5s (#452).
-    assert_eq!(humanize_elapsed_coarse(0), "<1m");
-    assert_eq!(humanize_elapsed_coarse(5), "<1m");
-    assert_eq!(humanize_elapsed_coarse(59), "<1m");
-    assert_eq!(humanize_elapsed_coarse(60), "1m");
-    assert_eq!(humanize_elapsed_coarse(119), "1m");
-    assert_eq!(humanize_elapsed_coarse(180), "3m");
-    assert_eq!(humanize_elapsed_coarse(3600), "60m");
+fn humanize_duration_precise_then_minutes() {
+    // Precise wall-clock seconds under a minute, then "X min Ys" (#480).
+    assert_eq!(humanize_duration(0), "0s");
+    assert_eq!(humanize_duration(45), "45s");
+    assert_eq!(humanize_duration(59), "59s");
+    assert_eq!(humanize_duration(60), "1 min 0s");
+    assert_eq!(humanize_duration(90), "1 min 30s");
+    assert_eq!(humanize_duration(300), "5 min 0s");
+    assert_eq!(humanize_duration(3661), "61 min 1s");
+}
+
+#[test]
+fn flow_header_live_and_settled_formats() {
+    // Live: gear + count + status suffix; None → plain count / Processing log.
+    assert_eq!(
+        flow_header_text(3, &FlowHeader::Live(Some("45s"))),
+        "⚙️ 3 tool calls · 45s"
+    );
+    assert_eq!(flow_header_text(3, &FlowHeader::Live(None)), "3 tool calls");
+    assert_eq!(
+        flow_header_text(0, &FlowHeader::Live(None)),
+        "Processing log"
+    );
+    // Settled: outcome verb, count-in-parens, duration; count clause dropped
+    // when no tools ran.
+    assert_eq!(
+        flow_header_text(
+            12,
+            &FlowHeader::Settled {
+                icon: "✅",
+                verb: "Finished",
+                duration: "45s"
+            }
+        ),
+        "✅ Finished (12 tool calls, 45s)"
+    );
+    assert_eq!(
+        flow_header_text(
+            0,
+            &FlowHeader::Settled {
+                icon: "✅",
+                verb: "Finished",
+                duration: "45s"
+            }
+        ),
+        "✅ Finished (45s)"
+    );
+}
+
+#[test]
+fn flow_outcome_icons_and_verbs() {
+    assert_eq!(FlowOutcome::Finished.icon_verb(), ("✅", "Finished"));
+    assert_eq!(FlowOutcome::Failed.icon_verb(), ("❌", "Failed"));
+    assert_eq!(FlowOutcome::TimedOut.icon_verb(), ("⏱", "Timed out"));
+}
+
+#[test]
+fn settled_outcome_renders_block_header_over_lone_tool() {
+    // A settled outcome always renders the block header (not the live lone-tool
+    // one-liner) so the ❌/✅/⏱ badge, count, and duration show (#480).
+    let out = render_flow_html_with(
+        &[tline("✅ bash", "cargo test")],
+        &FlowHeader::Settled {
+            icon: "❌",
+            verb: "Failed",
+            duration: "12s",
+        },
+    );
+    assert!(
+        out.starts_with("<blockquote expandable><b>❌ Failed (1 tool calls, 12s)</b>"),
+        "settled header: {out}"
+    );
 }
 
 // ── Rich API flow rendering tests (#393) ─────────────────────────────────────

@@ -70,6 +70,8 @@ pub(crate) async fn resume_session(
         status_last_text: None,
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
+        turn_started_at: std::time::Instant::now(),
+        flow_outcome: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),

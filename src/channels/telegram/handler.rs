@@ -2776,6 +2776,8 @@ pub(crate) async fn handle_message(
         status_last_text: None,
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
+        turn_started_at: std::time::Instant::now(),
+        flow_outcome: None,
         sent_intermediates: Vec::new(),
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
@@ -2807,10 +2809,8 @@ pub(crate) async fn handle_message(
                             msg_id: Option<MessageId>,
                             tool_round_count: usize,
                             tools_started_at: Option<std::time::Instant>,
-                            /// Currently running tools: (name, context) pairs
-                            active_tools: Vec<(String, String)>,
-                            /// Last successfully completed tool: (name, context)
-                            last_completed_tool: Option<(String, String)>,
+                            /// Turn-start anchor for the header wall clock (#480).
+                            turn_started_at: std::time::Instant,
                             /// Ordered display items (tools + intermediates in chronological order)
                             display_items: Vec<DisplayItem>,
                             /// Dirty tools that already have messages (need editing, not new sends)
@@ -2872,13 +2872,7 @@ pub(crate) async fn handle_message(
                                 msg_id: s.msg_id,
                                 tool_round_count: s.tool_round_count,
                                 tools_started_at: s.tools_started_at,
-                                active_tools: s.tool_msgs.iter()
-                                    .filter(|t| t.completed.is_none())
-                                    .map(|t| (t.name.clone(), t.context.clone()))
-                                    .collect(),
-                                last_completed_tool: s.tool_msgs.iter().rev()
-                                    .find(|t| t.completed == Some(true))
-                                    .map(|t| (t.name.clone(), t.context.clone())),
+                                turn_started_at: s.turn_started_at,
                                 display_items,
                                 tool_edits,
                                 has_active_tools,
@@ -3004,24 +2998,12 @@ pub(crate) async fn handle_message(
                         };
                         let mut flow_needs_refresh = !snap.tool_edits.is_empty() || settle_flow;
                         if show_status && open_block.is_some() {
-                            let elapsed_total = snap
-                                .tools_started_at
-                                .map(|t| t.elapsed().as_secs())
-                                .unwrap_or(0);
-                            let label = snap
-                                .active_tools
-                                .first()
-                                .or(snap.last_completed_tool.as_ref())
-                                .map(|(n, _)| n.as_str());
-                            let status = match (label, elapsed_total) {
-                                (Some(name), t) => Some(format!(
-                                    "{} · {}",
-                                    escape_html(name),
-                                    humanize_elapsed_coarse(t)
-                                )),
-                                (None, t) if t > 0 => Some(humanize_elapsed_coarse(t)),
-                                _ => None,
-                            };
+                            // Live header is the wall clock from turn start, in
+                            // precise seconds (#480). The tool name left the
+                            // header; the `↳` preview now carries the activity
+                            // (#481/#482). Header reads "⚙️ N tool calls · 45s".
+                            let elapsed_total = snap.turn_started_at.elapsed().as_secs();
+                            let status = (elapsed_total > 0).then(|| humanize_duration(elapsed_total));
                             if let Some(status) = status {
                                 let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                                 if s.flow_status.as_deref() != Some(status.as_str()) {
@@ -3514,6 +3496,22 @@ pub(crate) async fn handle_message(
     // that used to `return Ok(())` straight out of handle_message fired
     // (reaction-only ack, cleanup-only shapes): preserve that exact control
     // flow — the leftover-reaction flush below must NOT run for them.
+    // Settled header outcome for the flow block (#480): success, or classify
+    // the error as a timeout vs a generic failure. Computed before `result` is
+    // moved into deliver_final_response; applied after, so it renders on the
+    // block's final shape (post take_folded_final).
+    let flow_outcome = match &result {
+        Ok(_) => FlowOutcome::Finished,
+        Err(e) => {
+            let es = e.to_string().to_lowercase();
+            if es.contains("timed out") || es.contains("timeout") || es.contains("deadline") {
+                FlowOutcome::TimedOut
+            } else {
+                FlowOutcome::Failed
+            }
+        }
+    };
+
     if !deliver_final_response(
         &bot,
         msg.chat.id,
@@ -3535,6 +3533,16 @@ pub(crate) async fn handle_message(
     {
         return Ok(());
     }
+
+    // Stamp the settled outcome on the block and re-render its header once, now
+    // that delivery and folded-answer promotion have left the block in its
+    // final shape (#480). A no-op when no block was opened this turn (no tools
+    // or intermediates), so plain tool-less turns stay a single clean response.
+    {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.flow_outcome = Some(flow_outcome);
+    }
+    refresh_flow(&bot, msg.chat.id, &streaming).await;
 
     // Drop the active-turn guard before flushing so any reaction arriving during
     // the flush is treated as fresh, not re-queued against a finished turn.

@@ -96,6 +96,15 @@ pub(crate) struct StreamingState {
     pub(crate) tool_round_count: usize,
     /// When tool execution started (for elapsed time)
     pub(crate) tools_started_at: Option<std::time::Instant>,
+    /// Instant the turn started (first user message), set once at construction
+    /// and never reset — the wall-clock anchor for the header duration (#480),
+    /// both live and settled. Distinct from `tools_started_at`, which is
+    /// cleared on settle and re-armed per tool phase.
+    pub(crate) turn_started_at: std::time::Instant,
+    /// Terminal outcome once the turn ends, driving the settled block header
+    /// (`✅ Finished (N tool calls, 45s)` / `❌ Failed` / `⏱ Timed out`, #480).
+    /// `None` while the turn is live.
+    pub(crate) flow_outcome: Option<FlowOutcome>,
     /// Intermediate texts already sent — used to dedup final response
     pub(crate) sent_intermediates: Vec<String>,
     /// Message IDs of every intermediate chunk delivered to Telegram, so a
@@ -246,6 +255,10 @@ fn human_readable_preview(text: &str) -> Option<String> {
 }
 
 pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) -> String {
+    render_flow_html_with(lines, &FlowHeader::Live(live_status))
+}
+
+pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -280,24 +293,17 @@ pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) ->
     if out.is_empty() {
         return String::new();
     }
-    if out.len() == 1 && tool_count == 1 {
-        // Lone tool line stays plain (#296); the live status rides on it so
-        // the single surface still shows progress from the first call (#360).
-        return match live_status {
+    // Lone tool line stays plain (#296) while the turn is live; the live status
+    // rides on it (#360). A settled outcome always renders the block header so
+    // the ✅/❌/⏱ badge and duration show (#480).
+    if out.len() == 1
+        && tool_count == 1
+        && let FlowHeader::Live(status) = header
+    {
+        return match status {
             Some(st) => format!("{} · {}", out.remove(0), st),
             None => out.remove(0),
         };
-    }
-    let mut header = if tool_count > 0 {
-        format!("{} tool calls", tool_count)
-    } else {
-        "Processing log".to_string()
-    };
-    // Live turn: the header IS the progress line (#360) — "N tool calls ·
-    // read_file · 45s", edited in place. Settles to the plain header when
-    // the final response lands (live_status cleared).
-    if let Some(st) = live_status {
-        header = format!("⚙️ {} · {}", header, st);
     }
     // Latest activity rides directly under the header so the COLLAPSED
     // preview always shows what is happening now, not the first entry
@@ -307,7 +313,7 @@ pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) ->
         .unwrap_or_default();
     format!(
         "<blockquote expandable><b>{}</b>\n{}{}</blockquote>",
-        header,
+        flow_header_text(tool_count, header),
         latest,
         out.join("\n\n")
     )
@@ -322,6 +328,10 @@ pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) ->
 /// chronological log is the collapsed body. A lone tool line stays a plain
 /// one-liner (mirrors #296, same as the HTML renderer).
 pub(crate) fn render_flow_details(lines: &[FlowLine], live_status: Option<&str>) -> String {
+    render_flow_details_with(lines, &FlowHeader::Live(live_status))
+}
+
+fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -349,19 +359,14 @@ pub(crate) fn render_flow_details(lines: &[FlowLine], live_status: Option<&str>)
     if out.is_empty() {
         return String::new();
     }
-    if out.len() == 1 && tool_count == 1 {
-        return match live_status {
+    if out.len() == 1
+        && tool_count == 1
+        && let FlowHeader::Live(status) = header
+    {
+        return match status {
             Some(st) => format!("{} · {}", out.remove(0), st),
             None => out.remove(0),
         };
-    }
-    let mut header = if tool_count > 0 {
-        format!("{} tool calls", tool_count)
-    } else {
-        "Processing log".to_string()
-    };
-    if let Some(st) = live_status {
-        header = format!("⚙️ {} · {}", header, st);
     }
     // The rich HTML input mode is a real HTML parser: raw newlines are
     // ignored (unlike the classic Bot API HTML path), so each entry must be
@@ -371,7 +376,8 @@ pub(crate) fn render_flow_details(lines: &[FlowLine], live_status: Option<&str>)
     let body: String = out.iter().map(|e| format!("<p>{e}</p>")).collect();
     format!(
         "<details><summary><sub><b>{}</b></sub></summary>{}</details>",
-        header, body
+        flow_header_text(tool_count, header),
+        body
     )
 }
 
@@ -443,18 +449,78 @@ pub(crate) fn humanize_elapsed(secs: u64) -> String {
     }
 }
 
-/// Coarse elapsed for the open flow-block header (#452). Under a minute reads
-/// `<1m`, then whole minutes (`3m`). The header's timer therefore changes the
-/// status string at most once per minute, so a pure-timer edit collapses an
-/// expanded block roughly once a minute on Telegram Desktop instead of every
-/// 5s. Real progress (tool append, status flip) still edits immediately.
-/// The pre-block status bubble keeps `humanize_elapsed`'s 5s granularity: it
-/// is its own message with no client-side expansion state to reset.
-pub(crate) fn humanize_elapsed_coarse(secs: u64) -> String {
+/// Wall-clock duration for the flow-block header (#480): precise seconds under
+/// a minute (`45s`), then `X min Ys` (`1 min 30s`, `5 min 0s`). Used for both
+/// the live header and the settled outcome header, anchored at turn start.
+/// Replaces `humanize_elapsed_coarse`: the block is the design, so a manually
+/// expanded block collapsing on a header edit is a client-side (Desktop)
+/// behavior we can't detect, and precise progress time is worth more.
+pub(crate) fn humanize_duration(secs: u64) -> String {
     if secs < 60 {
-        "<1m".to_string()
+        format!("{secs}s")
     } else {
-        format!("{}m", secs / 60)
+        format!("{} min {}s", secs / 60, secs % 60)
+    }
+}
+
+/// Terminal state of a turn, shown in the settled flow-block header (#480).
+#[derive(Clone, Copy)]
+pub(crate) enum FlowOutcome {
+    Finished,
+    Failed,
+    TimedOut,
+}
+
+impl FlowOutcome {
+    /// Icon and verb for the settled header, e.g. `("✅", "Finished")`.
+    pub(crate) fn icon_verb(self) -> (&'static str, &'static str) {
+        match self {
+            FlowOutcome::Finished => ("✅", "Finished"),
+            FlowOutcome::Failed => ("❌", "Failed"),
+            FlowOutcome::TimedOut => ("⏱", "Timed out"),
+        }
+    }
+}
+
+/// How the block header renders: live during a turn, or settled to a terminal
+/// outcome at the end (#480). The shared [`flow_header_text`] turns this plus
+/// the tool count into the header string every renderer wraps.
+pub(crate) enum FlowHeader<'a> {
+    /// Turn in progress. `Some(status)` → `⚙️ N tool calls · {status}`; `None`
+    /// → the plain `N tool calls` / `Processing log`.
+    Live(Option<&'a str>),
+    /// Turn settled: `{icon} {verb} (N tool calls, {duration})`, dropping the
+    /// `N tool calls` clause when no tools ran.
+    Settled {
+        icon: &'a str,
+        verb: &'a str,
+        duration: &'a str,
+    },
+}
+
+/// Build the header text (no styling wrapper) shared by all three renderers so
+/// the classic HTML, rich-details, and rich-markdown headers can never drift
+/// (#480).
+pub(crate) fn flow_header_text(tool_count: usize, header: &FlowHeader) -> String {
+    let base = if tool_count > 0 {
+        format!("{tool_count} tool calls")
+    } else {
+        "Processing log".to_string()
+    };
+    match header {
+        FlowHeader::Live(None) => base,
+        FlowHeader::Live(Some(status)) => format!("⚙️ {base} · {status}"),
+        FlowHeader::Settled {
+            icon,
+            verb,
+            duration,
+        } => {
+            if tool_count > 0 {
+                format!("{icon} {verb} ({tool_count} tool calls, {duration})")
+            } else {
+                format!("{icon} {verb} ({duration})")
+            }
+        }
     }
 }
 
@@ -482,14 +548,45 @@ pub(crate) fn flow_lines(s: &StreamingState) -> Vec<FlowLine> {
         .collect()
 }
 
-/// Resolve the flow into final Telegram HTML via `render_flow_html`.
+/// Resolve the flow into final Telegram HTML. Live turn → the plain live
+/// header; a settled turn → the terminal outcome header with wall-clock
+/// duration from turn start (#480).
 pub(crate) fn render_flow(s: &StreamingState) -> String {
-    render_flow_html(&flow_lines(s), s.flow_status.as_deref())
+    match s.flow_outcome {
+        Some(outcome) => {
+            let (icon, verb) = outcome.icon_verb();
+            let duration = humanize_duration(s.turn_started_at.elapsed().as_secs());
+            render_flow_html_with(
+                &flow_lines(s),
+                &FlowHeader::Settled {
+                    icon,
+                    verb,
+                    duration: &duration,
+                },
+            )
+        }
+        None => render_flow_html(&flow_lines(s), s.flow_status.as_deref()),
+    }
 }
 
-/// Resolve the flow into the rich-API details HTML (#420 path A).
+/// Resolve the flow into the rich-API details HTML (#420 path A), with the same
+/// live/settled header split as [`render_flow`].
 pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
-    render_flow_details(&flow_lines(s), s.flow_status.as_deref())
+    match s.flow_outcome {
+        Some(outcome) => {
+            let (icon, verb) = outcome.icon_verb();
+            let duration = humanize_duration(s.turn_started_at.elapsed().as_secs());
+            render_flow_details_with(
+                &flow_lines(s),
+                &FlowHeader::Settled {
+                    icon,
+                    verb,
+                    duration: &duration,
+                },
+            )
+        }
+        None => render_flow_details(&flow_lines(s), s.flow_status.as_deref()),
+    }
 }
 
 /// Re-render the open processing-log flow and edit its message in place. Used
