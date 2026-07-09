@@ -3101,44 +3101,55 @@ pub(crate) async fn handle_message(
                         }
 
                         // ── Response message (thinking + response, always at bottom) ──
-                        if snap.dirty || snap.recreate {
-                            if snap.recreate
-                                && let Some(old_mid) = snap.msg_id
+                        // Stale-placeholder cleanup runs unconditionally: a bubble
+                        // opened before the first tool call must still be removed
+                        // once a block opens.
+                        if snap.recreate
+                            && let Some(old_mid) = snap.msg_id
+                        {
+                            let _ = bot.delete_message(chat, old_mid).await;
+                            let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                            s.msg_id = None;
+                        }
+                        // While a processing-log block is open, mid-round narration
+                        // folds into that block (append_intermediate_to_flow) and the
+                        // final answer is delivered by deliver_final_response at turn
+                        // end. Opening a standalone streaming bubble here leaks the
+                        // intermediate text as its own message beneath the folded
+                        // block (#490), so only stream the placeholder when NO
+                        // processing-log block is open.
+                        if (snap.dirty || snap.recreate)
+                            && open_block.is_none()
+                            && !snap.response_text.is_empty()
+                        {
+                            let current_msg_id = {
+                                let s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                s.msg_id
+                            };
+                            if current_msg_id.is_none()
+                                && let Ok(m) = message_in_thread(&bot, chat, thread_id,  "\u{258b}").await
                             {
-                                let _ = bot.delete_message(chat, old_mid).await;
                                 let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                s.msg_id = None;
+                                s.msg_id = Some(m.id);
                             }
-                            if !snap.response_text.is_empty() {
-                                let current_msg_id = {
-                                    let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                    s.msg_id
-                                };
-                                if current_msg_id.is_none()
-                                    && let Ok(m) = message_in_thread(&bot, chat, thread_id,  "\u{258b}").await
-                                {
-                                    let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                    s.msg_id = Some(m.id);
-                                }
-                                let msg_id = {
-                                    let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                    s.msg_id
-                                };
-                                if let Some(mid) = msg_id {
-                                    // Strip any complete <<react:emoji>>
-                                    // directive from the streaming snapshot so
-                                    // the raw marker never flashes in the
-                                    // placeholder (#261). The reaction itself
-                                    // fires from the intermediate/final paths.
-                                    let (clean, _) =
-                                        crate::utils::extract_react_marker(&snap.response_text);
-                                    let html = markdown_to_telegram_html(&clean);
-                                    let display = format!("{}\u{258b}", html); // ▋ cursor
-                                    let _ = bot
-                                        .edit_message_text(chat, mid, display)
-                                        .parse_mode(ParseMode::Html)
-                                        .await;
-                                }
+                            let msg_id = {
+                                let s = st.lock().unwrap_or_else(|e| e.into_inner());
+                                s.msg_id
+                            };
+                            if let Some(mid) = msg_id {
+                                // Strip any complete <<react:emoji>>
+                                // directive from the streaming snapshot so
+                                // the raw marker never flashes in the
+                                // placeholder (#261). The reaction itself
+                                // fires from the intermediate/final paths.
+                                let (clean, _) =
+                                    crate::utils::extract_react_marker(&snap.response_text);
+                                let html = markdown_to_telegram_html(&clean);
+                                let display = format!("{}\u{258b}", html); // ▋ cursor
+                                let _ = bot
+                                    .edit_message_text(chat, mid, display)
+                                    .parse_mode(ParseMode::Html)
+                                    .await;
                             }
                         }
 
