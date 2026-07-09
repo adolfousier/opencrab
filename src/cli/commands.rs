@@ -709,7 +709,11 @@ pub(crate) async fn cmd_run(
     let agent_service = AgentService::new(provider.clone(), service_context.clone(), config)
         .await
         .with_tool_registry(tool_registry.clone())
-        .with_system_brain(system_brain);
+        .with_system_brain(system_brain)
+        // --auto-approve executes tools without an approval prompt. Single-shot
+        // `run` has no TTY to prompt on, so without the flag only non-approval
+        // tools run and approval-gated ones are denied by the loop.
+        .with_auto_approve_tools(auto_approve);
 
     // Create or get session
     let session_service = SessionService::new(service_context);
@@ -718,9 +722,23 @@ pub(crate) async fn cmd_run(
         .create_session(Some("CLI Run".to_string()))
         .await?;
 
-    // Send message
+    // Send through the full tool loop so headless runs actually execute tools
+    // (#492). Plain send_message() is a single completion with no tool
+    // execution — run/agent must invoke tools like every other surface.
     println!("🤔 Processing...\n");
-    let response = agent_service.send_message(session.id, prompt, None).await?;
+    let response = agent_service
+        .send_message_with_tools_and_callback(
+            session.id,
+            prompt,
+            None,
+            None,
+            None, // no stdin prompt for single-shot run; auto_approve_tools gates it
+            Some(crate::cli::headless_callbacks::cli_progress_callback()),
+            None,
+            "cli",
+            None,
+        )
+        .await?;
 
     // Format and display output
     match format {
@@ -755,10 +773,6 @@ pub(crate) async fn cmd_run(
             );
             println!("**Cost:** ${:.6}", response.cost);
         }
-    }
-
-    if auto_approve {
-        println!("\n⚠️  Auto-approve mode was enabled");
     }
 
     Ok(())
@@ -929,8 +943,6 @@ pub(crate) async fn cmd_agent_interactive(
     };
     use std::io::{self, BufRead, Write};
 
-    let _ = auto_approve; // TODO: wire into approval callback
-
     let db = Database::connect(&config.database.path).await?;
     db.run_migrations().await?;
 
@@ -965,7 +977,10 @@ pub(crate) async fn cmd_agent_interactive(
     let agent_service = AgentService::new(provider.clone(), service_context.clone(), config)
         .await
         .with_tool_registry(tool_registry.clone())
-        .with_system_brain(system_brain);
+        .with_system_brain(system_brain)
+        // --auto-approve runs tools without prompting; otherwise each
+        // approval-gated tool prompts on stdin via stdin_approval_callback.
+        .with_auto_approve_tools(auto_approve);
 
     let session_service = SessionService::new(service_context);
     let session = session_service
@@ -1000,8 +1015,25 @@ pub(crate) async fn cmd_agent_interactive(
             break;
         }
 
+        // Run the tool loop so the REPL actually executes tools (#492).
+        // Without --auto-approve, each approval-gated tool prompts on stdin.
+        let approval = if auto_approve {
+            None
+        } else {
+            Some(crate::cli::headless_callbacks::stdin_approval_callback())
+        };
         match agent_service
-            .send_message(session.id, input.to_string(), None)
+            .send_message_with_tools_and_callback(
+                session.id,
+                input.to_string(),
+                None,
+                None,
+                approval,
+                Some(crate::cli::headless_callbacks::cli_progress_callback()),
+                None,
+                "cli",
+                None,
+            )
             .await
         {
             Ok(response) => {
