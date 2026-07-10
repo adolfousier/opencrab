@@ -356,8 +356,8 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
         FlowHeader::Settled { .. } => String::new(),
     };
     format!(
-        "<blockquote expandable><b>{}</b>\n{}{}</blockquote>",
-        flow_header_text(tool_count, header),
+        "<blockquote expandable>{}\n{}{}</blockquote>",
+        flow_header_text(tool_count, header, HeaderMarkup::Html),
         latest,
         out.join("\n\n")
     )
@@ -438,8 +438,8 @@ pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) 
         FlowHeader::Settled { .. } => String::new(),
     };
     format!(
-        "<details><summary><sub><b>{}</b>{}</sub></summary>{}</details>",
-        flow_header_text(tool_count, header),
+        "<details><summary><sub>{}{}</sub></summary>{}</details>",
+        flow_header_text(tool_count, header, HeaderMarkup::Html),
         latest,
         body
     )
@@ -486,20 +486,17 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
             None => out.remove(0),
         };
     }
-    let mut header = if tool_count > 0 {
-        format!("{} tool calls", tool_count)
-    } else {
-        "Processing log".to_string()
-    };
-    if let Some(st) = live_status {
-        header = format!("⚙️ {} • {}", header, st);
-    }
+    let header = flow_header_text(
+        tool_count,
+        &FlowHeader::Live(live_status),
+        HeaderMarkup::Markdown,
+    );
     // Same latest-activity preview as the HTML renderer (#405). Marker `•`,
     // matching the visible renderers (#498); this markdown path is always live.
     let latest = latest_activity_preview(lines)
         .map(|l| format!("• {l}\n\n"))
         .unwrap_or_default();
-    format!("**{header}**\n{latest}{}", out.join("\n\n"))
+    format!("{header}\n{latest}{}", out.join("\n\n"))
 }
 
 /// Compact elapsed time for the block header ("45s", "1m 20s"). Sub-minute
@@ -563,28 +560,63 @@ pub(crate) enum FlowHeader<'a> {
     },
 }
 
-/// Build the header text (no styling wrapper) shared by all three renderers so
-/// the classic HTML, rich-details, and rich-markdown headers can never drift
-/// (#480).
-pub(crate) fn flow_header_text(tool_count: usize, header: &FlowHeader) -> String {
+/// Inline-markup dialect for the header: the classic/rich-details HTML paths
+/// want `<b>`/`<i>`, the rich-markdown path wants `**`/`_`. Kept here so the
+/// bold/italic emphasis is applied inside the shared builder and the three
+/// renderers can never disagree on where the emphasis falls.
+#[derive(Clone, Copy)]
+pub(crate) enum HeaderMarkup {
+    Html,
+    Markdown,
+}
+
+impl HeaderMarkup {
+    fn bold(self, s: &str) -> String {
+        match self {
+            HeaderMarkup::Html => format!("<b>{s}</b>"),
+            HeaderMarkup::Markdown => format!("**{s}**"),
+        }
+    }
+
+    fn italic(self, s: &str) -> String {
+        match self {
+            HeaderMarkup::Html => format!("<i>{s}</i>"),
+            HeaderMarkup::Markdown => format!("_{s}_"),
+        }
+    }
+}
+
+/// Build the fully-styled header shared by all three renderers so the classic
+/// HTML, rich-details, and rich-markdown headers can never drift (#480). The
+/// live status header leads with the status message (bold), then the tool-call
+/// count (italic), separated by the `•` bullet; the plain-count and settled
+/// headers stay fully bold.
+pub(crate) fn flow_header_text(
+    tool_count: usize,
+    header: &FlowHeader,
+    markup: HeaderMarkup,
+) -> String {
     let base = if tool_count > 0 {
         format!("{tool_count} tool calls")
     } else {
         "Processing log".to_string()
     };
     match header {
-        FlowHeader::Live(None) => base,
-        FlowHeader::Live(Some(status)) => format!("⚙️ {base} • {status}"),
+        FlowHeader::Live(None) => markup.bold(&base),
+        FlowHeader::Live(Some(status)) => {
+            format!("⚙️ {} • {}", markup.bold(status), markup.italic(&base))
+        }
         FlowHeader::Settled {
             icon,
             verb,
             duration,
         } => {
-            if tool_count > 0 {
+            let text = if tool_count > 0 {
                 format!("{icon} {verb} ({tool_count} tool calls, {duration})")
             } else {
                 format!("{icon} {verb} ({duration})")
-            }
+            };
+            markup.bold(&text)
         }
     }
 }

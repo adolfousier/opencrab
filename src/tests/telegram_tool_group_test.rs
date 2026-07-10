@@ -9,7 +9,7 @@
 //! `render_flow_details` emits exactly that wrapper.
 
 use crate::channels::telegram::flow::{
-    FlowEntry, FlowHeader, FlowOutcome, extract_status_from_text, flow_header_text,
+    FlowEntry, FlowHeader, FlowOutcome, HeaderMarkup, extract_status_from_text, flow_header_text,
     humanize_duration, latest_activity_preview, pop_trailing_folded_texts,
     render_flow_details_with, render_flow_html_with,
 };
@@ -433,7 +433,9 @@ fn live_status_rides_in_blockquote_header() {
         ],
         Some("read_file • 45s"),
     );
-    assert!(out.starts_with("<blockquote expandable><b>⚙️ 2 tool calls • read_file • 45s</b>\n"));
+    assert!(
+        out.starts_with("<blockquote expandable>⚙️ <b>read_file • 45s</b> • <i>2 tool calls</i>\n")
+    );
     assert!(out.ends_with("</blockquote>"));
 }
 
@@ -456,7 +458,7 @@ fn live_status_on_text_only_flow_uses_processing_log_header() {
         &[FlowLine::Text("Looking into it.".to_string())],
         Some("15s"),
     );
-    assert!(out.starts_with("<blockquote expandable><b>⚙️ Processing log • 15s</b>\n"));
+    assert!(out.starts_with("<blockquote expandable>⚙️ <b>15s</b> • <i>Processing log</i>\n"));
 }
 
 #[test]
@@ -496,18 +498,27 @@ fn humanize_duration_precise_then_minutes() {
 
 #[test]
 fn flow_header_live_and_settled_formats() {
-    // Live: gear + count + status suffix; None → plain count / Processing log.
+    // Live: gear + bold status message FIRST, then the italic tool-call count,
+    // `•`-separated; None → plain bold count / Processing log.
     assert_eq!(
-        flow_header_text(3, &FlowHeader::Live(Some("45s"))),
-        "⚙️ 3 tool calls • 45s"
+        flow_header_text(3, &FlowHeader::Live(Some("45s")), HeaderMarkup::Html),
+        "⚙️ <b>45s</b> • <i>3 tool calls</i>"
     );
-    assert_eq!(flow_header_text(3, &FlowHeader::Live(None)), "3 tool calls");
     assert_eq!(
-        flow_header_text(0, &FlowHeader::Live(None)),
-        "Processing log"
+        flow_header_text(3, &FlowHeader::Live(None), HeaderMarkup::Html),
+        "<b>3 tool calls</b>"
     );
-    // Settled: outcome verb, count-in-parens, duration; count clause dropped
-    // when no tools ran.
+    assert_eq!(
+        flow_header_text(0, &FlowHeader::Live(None), HeaderMarkup::Html),
+        "<b>Processing log</b>"
+    );
+    // Markdown dialect swaps the tags: `**`/`_` where HTML uses `<b>`/`<i>`.
+    assert_eq!(
+        flow_header_text(3, &FlowHeader::Live(Some("45s")), HeaderMarkup::Markdown),
+        "⚙️ **45s** • _3 tool calls_"
+    );
+    // Settled: outcome verb, count-in-parens, duration, fully bold; count clause
+    // dropped when no tools ran.
     assert_eq!(
         flow_header_text(
             12,
@@ -515,9 +526,10 @@ fn flow_header_live_and_settled_formats() {
                 icon: "✅",
                 verb: "Finished",
                 duration: "45s"
-            }
+            },
+            HeaderMarkup::Html
         ),
-        "✅ Finished (12 tool calls, 45s)"
+        "<b>✅ Finished (12 tool calls, 45s)</b>"
     );
     assert_eq!(
         flow_header_text(
@@ -526,9 +538,10 @@ fn flow_header_live_and_settled_formats() {
                 icon: "✅",
                 verb: "Finished",
                 duration: "45s"
-            }
+            },
+            HeaderMarkup::Html
         ),
-        "✅ Finished (45s)"
+        "<b>✅ Finished (45s)</b>"
     );
 }
 
@@ -639,7 +652,7 @@ fn rich_live_status_in_header() {
         &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
         Some("grep • 10s"),
     );
-    assert!(out.starts_with("**⚙️ 2 tool calls • grep • 10s**\n• "));
+    assert!(out.starts_with("⚙️ **grep • 10s** • _2 tool calls_\n• "));
 }
 
 #[test]
@@ -692,9 +705,9 @@ fn details_summary_carries_live_status() {
     );
     let summary_end = out.find("</summary>").expect("summary");
     let summary = &out[..summary_end];
-    assert!(summary.contains("⚙️ 2 tool calls • grep • 10s"));
+    assert!(summary.contains("⚙️ <b>grep • 10s</b> • <i>2 tool calls</i>"));
     // Summary is wrapped in <sub> for visual de-emphasis (#436).
-    assert!(summary.contains("<sub><b>⚙️ 2 tool calls • grep • 10s</b>"));
+    assert!(summary.contains("<sub>⚙️ <b>grep • 10s</b> • <i>2 tool calls</i>"));
     // Latest-activity preview rides in the summary (#405): the rich <details>
     // collapses to the summary ALONE, hiding the body, so without the preview
     // the collapsed block shows no progress at all. The #436 removal assumed
