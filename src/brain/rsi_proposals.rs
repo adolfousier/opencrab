@@ -30,6 +30,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -271,6 +272,57 @@ impl ProposalsStore {
         Ok(())
     }
 
+    /// Names already decided in a prior cycle (#502): every proposal name
+    /// in the `applied/` and `rejected/` archives for `kind`
+    /// ("tools" / "commands" / "skills"). RSI observes the same usage gap
+    /// every cycle and would re-file an identical proposal forever, so the
+    /// user re-approved the SAME skill/command dozens of times. A name here
+    /// is skipped by `add_*_proposal`: an applied one already exists, a
+    /// rejected one the user said no to.
+    fn handled_names(&self, kind: &str) -> HashSet<String> {
+        let mut names = HashSet::new();
+        let suffix = format!("-{kind}.toml");
+        for dir in [APPLIED_DIR, REJECTED_DIR] {
+            let Ok(entries) = fs::read_dir(self.rsi_dir.join(dir)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let is_kind = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with(&suffix));
+                if !is_kind {
+                    continue;
+                }
+                let Ok(text) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                // Archived entries carry an extra `reason` field; the typed
+                // structs ignore unknown fields, so this parses cleanly.
+                match kind {
+                    "tools" => {
+                        if let Ok(f) = toml::from_str::<ToolProposalsFile>(&text) {
+                            names.extend(f.proposals.into_iter().map(|p| p.def.name));
+                        }
+                    }
+                    "commands" => {
+                        if let Ok(f) = toml::from_str::<CommandProposalsFile>(&text) {
+                            names.extend(f.proposals.into_iter().map(|p| p.command.name));
+                        }
+                    }
+                    "skills" => {
+                        if let Ok(f) = toml::from_str::<SkillProposalsFile>(&text) {
+                            names.extend(f.proposals.into_iter().map(|p| p.skill.name));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        names
+    }
+
     /// Append a tool proposal. Generates the id, dedups against existing
     /// entries with the same `def.name` (latest wins), and persists.
     pub fn add_tool_proposal(
@@ -279,8 +331,17 @@ impl ProposalsStore {
         rationale: impl Into<String>,
         def: DynamicToolDef,
     ) -> Result<String> {
-        let mut file = self.read_tools();
         let id = generate_id("tool", &def.name);
+        // Already applied or rejected in a prior cycle (#502): skip, do not
+        // re-file. Empty id signals the caller to report "already handled".
+        if self.handled_names("tools").contains(&def.name) {
+            tracing::info!(
+                "RSI: tool '{}' already applied/rejected — not re-proposing (#502)",
+                def.name
+            );
+            return Ok(String::new());
+        }
+        let mut file = self.read_tools();
 
         // Dedup: a fresh proposal for the same tool name supersedes the
         // older one — keeps the inbox from filling with retries when RSI
@@ -304,8 +365,15 @@ impl ProposalsStore {
         rationale: impl Into<String>,
         command: UserCommand,
     ) -> Result<String> {
-        let mut file = self.read_commands();
         let id = generate_id("cmd", &command.name);
+        if self.handled_names("commands").contains(&command.name) {
+            tracing::info!(
+                "RSI: command '{}' already applied/rejected — not re-proposing (#502)",
+                command.name
+            );
+            return Ok(String::new());
+        }
+        let mut file = self.read_commands();
         file.proposals.retain(|p| p.command.name != command.name);
         file.proposals.push(CommandProposal {
             id: id.clone(),
@@ -327,8 +395,15 @@ impl ProposalsStore {
         rationale: impl Into<String>,
         skill: ProposedSkill,
     ) -> Result<String> {
-        let mut file = self.read_skills();
         let id = generate_id("skill", &skill.name);
+        if self.handled_names("skills").contains(&skill.name) {
+            tracing::info!(
+                "RSI: skill '{}' already applied/rejected — not re-proposing (#502)",
+                skill.name
+            );
+            return Ok(String::new());
+        }
+        let mut file = self.read_skills();
         file.proposals.retain(|p| p.skill.name != skill.name);
         file.proposals.push(SkillProposal {
             id: id.clone(),
@@ -366,16 +441,35 @@ impl ProposalsStore {
         Ok(id)
     }
 
+    /// Pending tool proposals, minus any whose name is already applied or
+    /// rejected (#502): stale duplicates filed before the add-time dedup
+    /// landed never surface in the inbox, so an already-decided proposal is
+    /// never shown for re-approval.
     pub fn list_tool_proposals(&self) -> Vec<ToolProposal> {
-        self.read_tools().proposals
+        let handled = self.handled_names("tools");
+        self.read_tools()
+            .proposals
+            .into_iter()
+            .filter(|p| !handled.contains(&p.def.name))
+            .collect()
     }
 
     pub fn list_command_proposals(&self) -> Vec<CommandProposal> {
-        self.read_commands().proposals
+        let handled = self.handled_names("commands");
+        self.read_commands()
+            .proposals
+            .into_iter()
+            .filter(|p| !handled.contains(&p.command.name))
+            .collect()
     }
 
     pub fn list_skill_proposals(&self) -> Vec<SkillProposal> {
-        self.read_skills().proposals
+        let handled = self.handled_names("skills");
+        self.read_skills()
+            .proposals
+            .into_iter()
+            .filter(|p| !handled.contains(&p.skill.name))
+            .collect()
     }
 
     pub fn list_brain_dedup_proposals(&self) -> Vec<BrainDedupProposal> {

@@ -275,6 +275,9 @@ impl Tool for RsiProposeTool {
                 }
 
                 match store.add_tool_proposal(proposer, &rationale, def) {
+                    Ok(id) if id.is_empty() => Ok(ToolResult::success(format!(
+                        "Tool '{name}' was already applied or rejected in a prior cycle — not re-proposed (#502)."
+                    ))),
                     Ok(id) => Ok(ToolResult::success(format!(
                         "Tool proposal filed: {id} (name={name}). User will see a banner on next session start, or can list with rsi_proposals."
                     ))),
@@ -316,6 +319,9 @@ impl Tool for RsiProposeTool {
                 };
 
                 match store.add_command_proposal(proposer, &rationale, cmd) {
+                    Ok(id) if id.is_empty() => Ok(ToolResult::success(format!(
+                        "Command '{normalised_name}' was already applied or rejected in a prior cycle — not re-proposed (#502)."
+                    ))),
                     Ok(id) => Ok(ToolResult::success(format!(
                         "Command proposal filed: {id} (name={normalised_name})."
                     ))),
@@ -358,6 +364,9 @@ impl Tool for RsiProposeTool {
                 };
 
                 match store.add_skill_proposal(proposer, &rationale, skill) {
+                    Ok(id) if id.is_empty() => Ok(ToolResult::success(format!(
+                        "Skill '{normalised_name}' was already applied or rejected in a prior cycle — not re-proposed (#502)."
+                    ))),
                     Ok(id) => Ok(ToolResult::success(format!(
                         "Skill proposal filed: {id} (name={normalised_name}). On apply it lands at skills/{normalised_name}/SKILL.md in your OpenCrabs home."
                     ))),

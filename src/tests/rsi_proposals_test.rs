@@ -160,9 +160,13 @@ fn storage_archive_applied_and_rejected() {
     let body = std::fs::read_to_string(&applied_path).unwrap();
     assert!(body.contains("gh_issue_list"));
 
-    // Reject path (with reason)
+    // Reject path (with reason). A DISTINCT name: the first def is already
+    // in the applied archive, so re-proposing that same name is now skipped
+    // (#502). Use a different tool so it files normally.
+    let mut def2 = sample_tool_def();
+    def2.name = "gh_pr_view".to_string();
     let id2 = store
-        .add_tool_proposal("rsi-autonomous", "ev2", sample_tool_def())
+        .add_tool_proposal("rsi-autonomous", "ev2", def2)
         .unwrap();
     let proposal2 = store.take_tool_proposal(&id2).unwrap().unwrap();
     store
@@ -523,4 +527,55 @@ async fn rsi_propose_command_not_subject_to_efficiency_gate() {
         "commands should not require efficiency gate: {:?}",
         result.error
     );
+}
+
+// ── applied/rejected dedup: no re-proposing an already-decided name (#502) ──
+
+#[test]
+fn applied_command_is_not_reproposed() {
+    let dir = TempDir::new().unwrap();
+    let store = ProposalsStore::with_dir(dir.path().to_path_buf());
+
+    // File and apply a command (archives to applied/).
+    let id = store
+        .add_command_proposal("rsi", "user types it a lot", sample_command())
+        .unwrap();
+    assert!(!id.is_empty());
+    store
+        .archive_applied_command(&store.list_command_proposals()[0].clone())
+        .unwrap();
+
+    // Next cycle: RSI observes the same gap and re-files the identical
+    // command. It must be skipped (empty id) instead of re-appearing in the
+    // inbox for the user to approve yet again.
+    let reproposed = store
+        .add_command_proposal("rsi", "same gap next cycle", sample_command())
+        .unwrap();
+    assert!(
+        reproposed.is_empty(),
+        "already-applied command must not re-propose"
+    );
+}
+
+#[test]
+fn rejected_skill_is_not_reproposed() {
+    let dir = TempDir::new().unwrap();
+    let store = ProposalsStore::with_dir(dir.path().to_path_buf());
+
+    let skill = crate::brain::rsi_proposals::ProposedSkill {
+        name: "github_workflow".to_string(),
+        description: "GH release flow".to_string(),
+        body: "steps".to_string(),
+    };
+    store
+        .add_skill_proposal("rsi", "seen it", skill.clone())
+        .unwrap();
+    let filed = store.list_skill_proposals()[0].clone();
+    store
+        .archive_rejected_skill(&filed, Some("not wanted"))
+        .unwrap();
+
+    // A rejected name must not be nagged again.
+    let reproposed = store.add_skill_proposal("rsi", "again", skill).unwrap();
+    assert!(reproposed.is_empty(), "rejected skill must not re-propose");
 }
