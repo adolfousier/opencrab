@@ -420,7 +420,7 @@ fn folded_dup_empty_sides_never_match() {
 
 // ── Live status in the block header — single progress surface (#360) ──
 // While the turn runs, the open block's header carries the rolling status
-// ("N tool calls · read_file · 45s") so no standalone ticker message exists
+// ("N tool calls • read_file • 45s") so no standalone ticker message exists
 // alongside the block. When the final response lands the status is cleared
 // and the header settles back to the plain count.
 
@@ -431,9 +431,9 @@ fn live_status_rides_in_blockquote_header() {
             tline("✅ bash", "cargo fmt"),
             tline("⚙️ read_file", "handler.rs"),
         ],
-        Some("read_file · 45s"),
+        Some("read_file • 45s"),
     );
-    assert!(out.starts_with("<blockquote expandable><b>⚙️ 2 tool calls · read_file · 45s</b>\n"));
+    assert!(out.starts_with("<blockquote expandable><b>⚙️ 2 tool calls • read_file • 45s</b>\n"));
     assert!(out.ends_with("</blockquote>"));
 }
 
@@ -456,15 +456,15 @@ fn live_status_on_text_only_flow_uses_processing_log_header() {
         &[FlowLine::Text("Looking into it.".to_string())],
         Some("15s"),
     );
-    assert!(out.starts_with("<blockquote expandable><b>⚙️ Processing log · 15s</b>\n"));
+    assert!(out.starts_with("<blockquote expandable><b>⚙️ Processing log • 15s</b>\n"));
 }
 
 #[test]
 fn live_status_appends_to_single_tool_line() {
     // A lone tool call renders as a plain line (no blockquote); the status
     // still rides on it so the single surface shows progress from call one.
-    let out = render_flow_html(&[tline("⚙️ bash", "git status")], Some("bash · 5s"));
-    assert_eq!(out, "<b>⚙️ bash</b> <code>git status</code> · bash · 5s");
+    let out = render_flow_html(&[tline("⚙️ bash", "git status")], Some("bash • 5s"));
+    assert_eq!(out, "<b>⚙️ bash</b> <code>git status</code> • bash • 5s");
     assert!(!out.contains("<blockquote"));
 }
 
@@ -499,7 +499,7 @@ fn flow_header_live_and_settled_formats() {
     // Live: gear + count + status suffix; None → plain count / Processing log.
     assert_eq!(
         flow_header_text(3, &FlowHeader::Live(Some("45s"))),
-        "⚙️ 3 tool calls · 45s"
+        "⚙️ 3 tool calls • 45s"
     );
     assert_eq!(flow_header_text(3, &FlowHeader::Live(None)), "3 tool calls");
     assert_eq!(
@@ -637,15 +637,15 @@ fn rich_multiple_tools_render_markdown_header() {
 fn rich_live_status_in_header() {
     let out = render_flow_rich(
         &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
-        Some("grep · 10s"),
+        Some("grep • 10s"),
     );
-    assert!(out.starts_with("**⚙️ 2 tool calls · grep · 10s**\n• "));
+    assert!(out.starts_with("**⚙️ 2 tool calls • grep • 10s**\n• "));
 }
 
 #[test]
 fn rich_single_tool_live_status_appends() {
-    let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash · 5s"));
-    assert_eq!(out, "**⚙️ bash** `git status` · bash · 5s");
+    let out = render_flow_rich(&[tline("⚙️ bash", "git status")], Some("bash • 5s"));
+    assert_eq!(out, "**⚙️ bash** `git status` • bash • 5s");
 }
 
 // ── Rich-API details flow rendering (#420 path A) ──
@@ -688,13 +688,13 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
 fn details_summary_carries_live_status() {
     let out = render_flow_details(
         &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
-        Some("grep · 10s"),
+        Some("grep • 10s"),
     );
     let summary_end = out.find("</summary>").expect("summary");
     let summary = &out[..summary_end];
-    assert!(summary.contains("⚙️ 2 tool calls · grep · 10s"));
+    assert!(summary.contains("⚙️ 2 tool calls • grep • 10s"));
     // Summary is wrapped in <sub> for visual de-emphasis (#436).
-    assert!(summary.contains("<sub><b>⚙️ 2 tool calls · grep · 10s</b>"));
+    assert!(summary.contains("<sub><b>⚙️ 2 tool calls • grep • 10s</b>"));
     // Latest-activity preview rides in the summary (#405): the rich <details>
     // collapses to the summary ALONE, hiding the body, so without the preview
     // the collapsed block shows no progress at all. The #436 removal assumed

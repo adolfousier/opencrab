@@ -2989,7 +2989,7 @@ pub(crate) async fn handle_message(
 
                         // ── Single progress surface (#360) ──
                         // While a processing-log block is open, the live status
-                        // rides in ITS header ("N tool calls · read_file · 45s")
+                        // rides in ITS header ("N tool calls • read_file • 45s")
                         // and no standalone ticker exists. Re-read the block id:
                         // the display loop above may have just opened one.
                         let open_block = {
@@ -3001,7 +3001,7 @@ pub(crate) async fn handle_message(
                             // Live header is the wall clock from turn start, in
                             // precise seconds (#480). The tool name left the
                             // header; the `↳` preview now carries the activity
-                            // (#481/#482). Header reads "⚙️ N tool calls · 45s".
+                            // (#481/#482). Header reads "⚙️ N tool calls • 45s".
                             let elapsed_total = snap.turn_started_at.elapsed().as_secs();
                             let status = (elapsed_total > 0).then(|| humanize_duration(elapsed_total));
                             if let Some(status) = status {

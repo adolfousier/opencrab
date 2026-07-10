@@ -77,7 +77,7 @@ pub(crate) struct StreamingState {
     /// `open_group_msg_id` message on every append/status change.
     pub(crate) flow_entries: Vec<FlowEntry>,
     /// Live status shown in the open block's header while the turn runs
-    /// ("read_file · 45s"). The block is the SINGLE progress surface (#360):
+    /// ("read_file • 45s"). The block is the SINGLE progress surface (#360):
     /// no standalone status ticker exists while a block is open. HTML-safe
     /// (escaped at build time). None once the final response lands.
     pub(crate) flow_status: Option<String>,
@@ -338,7 +338,7 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
         && let FlowHeader::Live(status) = header
     {
         return match status {
-            Some(st) => format!("{} · {}", out.remove(0), st),
+            Some(st) => format!("{} • {}", out.remove(0), st),
             None => out.remove(0),
         };
     }
@@ -410,7 +410,7 @@ pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) 
         && let FlowHeader::Live(status) = header
     {
         return match status {
-            Some(st) => format!("{} · {}", out.remove(0), st),
+            Some(st) => format!("{} • {}", out.remove(0), st),
             None => out.remove(0),
         };
     }
@@ -425,7 +425,7 @@ pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) 
     // puts the preview under the header inside the expandable blockquote,
     // which stays visible collapsed; the rich `<details>` collapses to the
     // summary ALONE, so without this the rich surface loses the live progress
-    // preview entirely and shows only "N tool calls · 45s". Rich HTML input
+    // preview entirely and shows only "N tool calls • 45s". Rich HTML input
     // ignores raw newlines, so it rides inline after the header. Live turns
     // only (#498): a settled Finished/Failed/Timed out header stands alone
     // with no stale narration stuck to it. Marker is `•`, not the `↳` return
@@ -482,7 +482,7 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
         // Lone tool line stays plain (#296); the live status rides on it so
         // the single surface still shows progress from the first call (#360).
         return match live_status {
-            Some(st) => format!("{} · {}", out.remove(0), st),
+            Some(st) => format!("{} • {}", out.remove(0), st),
             None => out.remove(0),
         };
     }
@@ -492,7 +492,7 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
         "Processing log".to_string()
     };
     if let Some(st) = live_status {
-        header = format!("⚙️ {} · {}", header, st);
+        header = format!("⚙️ {} • {}", header, st);
     }
     // Same latest-activity preview as the HTML renderer (#405). Marker `•`,
     // matching the visible renderers (#498); this markdown path is always live.
@@ -551,7 +551,7 @@ impl FlowOutcome {
 /// outcome at the end (#480). The shared [`flow_header_text`] turns this plus
 /// the tool count into the header string every renderer wraps.
 pub(crate) enum FlowHeader<'a> {
-    /// Turn in progress. `Some(status)` → `⚙️ N tool calls · {status}`; `None`
+    /// Turn in progress. `Some(status)` → `⚙️ N tool calls • {status}`; `None`
     /// → the plain `N tool calls` / `Processing log`.
     Live(Option<&'a str>),
     /// Turn settled: `{icon} {verb} (N tool calls, {duration})`, dropping the
@@ -574,7 +574,7 @@ pub(crate) fn flow_header_text(tool_count: usize, header: &FlowHeader) -> String
     };
     match header {
         FlowHeader::Live(None) => base,
-        FlowHeader::Live(Some(status)) => format!("⚙️ {base} · {status}"),
+        FlowHeader::Live(Some(status)) => format!("⚙️ {base} • {status}"),
         FlowHeader::Settled {
             icon,
             verb,
