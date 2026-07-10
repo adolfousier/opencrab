@@ -76,10 +76,11 @@ pub(crate) struct StreamingState {
     /// intermediate text, in chronological order). Rendered together into the
     /// `open_group_msg_id` message on every append/status change.
     pub(crate) flow_entries: Vec<FlowEntry>,
-    /// Live status shown in the open block's header while the turn runs
-    /// ("read_file • 45s"). The block is the SINGLE progress surface (#360):
-    /// no standalone status ticker exists while a block is open. HTML-safe
-    /// (escaped at build time). None once the final response lands.
+    /// Live duration shown in the open block's header while the turn runs
+    /// ("45s"), rendered as the trailing duration segment after the status
+    /// message and count (#509). The block is the SINGLE progress surface
+    /// (#360): no standalone status ticker exists while a block is open.
+    /// HTML-safe (escaped at build time). None once the final response lands.
     pub(crate) flow_status: Option<String>,
     /// True when the open flow block lives on the rich API (#420 path A):
     /// edits must ride edit_rich_html; false = classic HTML blockquote.
@@ -342,23 +343,24 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
             None => out.remove(0),
         };
     }
-    // Latest activity rides directly under the header so the COLLAPSED
-    // preview always shows what is happening now, not the first entry
-    // from many minutes ago (#405). Live turns only (#498): once the block
-    // settles to a Finished/Failed/Timed out header the narration is stale,
-    // so the settled rollup stands alone with no trailing preview stuck to it.
-    // Marker is `•`, not the `↳` return glyph, which promised a line break the
-    // inline-only collapsed summary can't deliver.
-    let latest = match header {
-        FlowHeader::Live(_) => latest_activity_preview(lines)
-            .map(|l| format!("• <i>{}</i>\n\n", escape_html(&l)))
-            .unwrap_or_default(),
-        FlowHeader::Settled { .. } => String::new(),
+    // Latest activity now LEADS the header so the COLLAPSED preview shows what
+    // is happening now, not the first entry from many minutes ago (#405), in the
+    // planned status-first order (#509). Live turns only (#498): once the block
+    // settles to a Finished/Failed/Timed out header the narration is stale, so
+    // the settled rollup stands alone. Escaped here for the HTML dialect before
+    // the shared builder styles it.
+    let status_msg = match header {
+        FlowHeader::Live(_) => latest_activity_preview(lines).map(|l| escape_html(&l)),
+        FlowHeader::Settled { .. } => None,
     };
     format!(
-        "<blockquote expandable>{}\n{}{}</blockquote>",
-        flow_header_text(tool_count, header, HeaderMarkup::Html),
-        latest,
+        "<blockquote expandable>{}\n\n{}</blockquote>",
+        flow_header_text(
+            tool_count,
+            header,
+            status_msg.as_deref(),
+            HeaderMarkup::Html
+        ),
         out.join("\n\n")
     )
 }
@@ -420,27 +422,25 @@ pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) 
     // inline wall. One <p> per entry gives the same visual separation the
     // classic blockquote gets from blank lines.
     let body: String = out.iter().map(|e| format!("<p>{e}</p>")).collect();
-    // Latest activity rides in the summary so the COLLAPSED rich block shows
-    // what is happening now (#405). The classic HTML path (render_flow_html_with)
-    // puts the preview under the header inside the expandable blockquote,
-    // which stays visible collapsed; the rich `<details>` collapses to the
-    // summary ALONE, so without this the rich surface loses the live progress
-    // preview entirely and shows only "N tool calls • 45s". Rich HTML input
-    // ignores raw newlines, so it rides inline after the header. Live turns
-    // only (#498): a settled Finished/Failed/Timed out header stands alone
-    // with no stale narration stuck to it. Marker is `•`, not the `↳` return
-    // glyph: the summary is inline-only (raw newlines ignored, the rich AST has
-    // no line-break node), so a bullet separates it honestly where `↳` misled.
-    let latest = match header {
-        FlowHeader::Live(_) => latest_activity_preview(lines)
-            .map(|l| format!(" • <i>{}</i>", escape_html(&l)))
-            .unwrap_or_default(),
-        FlowHeader::Settled { .. } => String::new(),
+    // Latest activity now LEADS the summary so the COLLAPSED rich block shows
+    // what is happening now (#405), status-first (#509). The rich `<details>`
+    // collapses to the summary ALONE, so without the activity here the rich
+    // surface would show only "N tool calls • 45s". Live turns only (#498): a
+    // settled Finished/Failed/Timed out header stands alone with no stale
+    // narration. Escaped here for the HTML dialect before the shared builder
+    // styles it.
+    let status_msg = match header {
+        FlowHeader::Live(_) => latest_activity_preview(lines).map(|l| escape_html(&l)),
+        FlowHeader::Settled { .. } => None,
     };
     format!(
-        "<details><summary><sub>{}{}</sub></summary>{}</details>",
-        flow_header_text(tool_count, header, HeaderMarkup::Html),
-        latest,
+        "<details><summary><sub>{}</sub></summary>{}</details>",
+        flow_header_text(
+            tool_count,
+            header,
+            status_msg.as_deref(),
+            HeaderMarkup::Html
+        ),
         body
     )
 }
@@ -486,17 +486,17 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
             None => out.remove(0),
         };
     }
+    // Same latest-activity preview as the HTML renderer (#405), leading the
+    // header status-first (#509); this markdown path is always live. Raw text,
+    // no escaping — the markdown dialect keeps narration verbatim.
+    let status_msg = latest_activity_preview(lines);
     let header = flow_header_text(
         tool_count,
         &FlowHeader::Live(live_status),
+        status_msg.as_deref(),
         HeaderMarkup::Markdown,
     );
-    // Same latest-activity preview as the HTML renderer (#405). Marker `•`,
-    // matching the visible renderers (#498); this markdown path is always live.
-    let latest = latest_activity_preview(lines)
-        .map(|l| format!("• {l}\n\n"))
-        .unwrap_or_default();
-    format!("{header}\n{latest}{}", out.join("\n\n"))
+    format!("{header}\n\n{}", out.join("\n\n"))
 }
 
 /// Compact elapsed time for the block header ("45s", "1m 20s"). Sub-minute
@@ -548,8 +548,10 @@ impl FlowOutcome {
 /// outcome at the end (#480). The shared [`flow_header_text`] turns this plus
 /// the tool count into the header string every renderer wraps.
 pub(crate) enum FlowHeader<'a> {
-    /// Turn in progress. `Some(status)` → `⚙️ N tool calls • {status}`; `None`
-    /// → the plain `N tool calls` / `Processing log`.
+    /// Turn in progress; the payload is the elapsed duration. With a status
+    /// message the header reads `⚙️ {status} • N tool calls • {duration}` (#509);
+    /// with neither status nor duration it is the plain `N tool calls` /
+    /// `Processing log`.
     Live(Option<&'a str>),
     /// Turn settled: `{icon} {verb} (N tool calls, {duration})`, dropping the
     /// `N tool calls` clause when no tools ran.
@@ -587,13 +589,16 @@ impl HeaderMarkup {
 }
 
 /// Build the fully-styled header shared by all three renderers so the classic
-/// HTML, rich-details, and rich-markdown headers can never drift (#480). The
-/// live status header leads with the status message (bold), then the tool-call
-/// count (italic), separated by the `•` bullet; the plain-count and settled
-/// headers stay fully bold.
+/// HTML, rich-details, and rich-markdown headers can never drift (#480, #509).
+/// The live header leads with the status message (bold), then the tool-call
+/// count, then the duration (both italic), `•`-separated: `⚙️ status • count •
+/// duration`. `status_msg` is the activity preview the renderer already escapes
+/// for its own dialect; the `Live` payload carries the duration. The
+/// plain-count (nothing running yet) and settled headers stay fully bold.
 pub(crate) fn flow_header_text(
     tool_count: usize,
     header: &FlowHeader,
+    status_msg: Option<&str>,
     markup: HeaderMarkup,
 ) -> String {
     let base = if tool_count > 0 {
@@ -602,9 +607,23 @@ pub(crate) fn flow_header_text(
         "Processing log".to_string()
     };
     match header {
-        FlowHeader::Live(None) => markup.bold(&base),
-        FlowHeader::Live(Some(status)) => {
-            format!("⚙️ {} • {}", markup.bold(status), markup.italic(&base))
+        FlowHeader::Live(duration) => {
+            // No status message and no elapsed duration → the just-started case:
+            // the plain bold count / "Processing log", no gear (#509).
+            if status_msg.is_none() && duration.is_none() {
+                return markup.bold(&base);
+            }
+            // Ordered live header: status message FIRST (bold), then the count,
+            // then the duration (both italic), all `•`-separated (#509).
+            let mut segs: Vec<String> = Vec::new();
+            if let Some(status) = status_msg {
+                segs.push(markup.bold(status));
+            }
+            segs.push(markup.italic(&base));
+            if let Some(dur) = duration {
+                segs.push(markup.italic(dur));
+            }
+            format!("⚙️ {}", segs.join(" • "))
         }
         FlowHeader::Settled {
             icon,

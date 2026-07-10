@@ -68,7 +68,13 @@ fn multiple_tools_render_expandable_blockquote() {
         ],
         None,
     );
-    assert!(out.starts_with("<blockquote expandable><b>3 tool calls</b>\n"));
+    // No narration, so the activity fallback is the most recent tool line; it
+    // leads the header, then the count (#509).
+    assert!(
+        out.starts_with(
+            "<blockquote expandable>⚙️ <b>❌ grep pattern</b> • <i>3 tool calls</i>\n\n"
+        )
+    );
     assert!(out.ends_with("</blockquote>"));
     assert!(out.contains("<b>✅ bash</b> <code>cargo fmt</code>"));
     assert!(out.contains("<b>✅ read_file</b> <code>handler.rs</code>"));
@@ -85,9 +91,11 @@ fn blocks_are_separated_by_blank_lines() {
         ],
         None,
     );
-    // Blank line after the header and between every block, so the collapsed
-    // log reads as separated entries instead of a cramped wall.
-    assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n• <i>"));
+    // The latest narration leads the header (#509); a blank line after it and
+    // between every block keeps the log as separated entries, not a wall.
+    assert!(out.starts_with(
+        "<blockquote expandable>⚙️ <b>Reformatted three files.</b> • <i>2 tool calls</i>\n\n"
+    ));
     assert!(out.contains("<b>✅ bash</b> <code>cargo fmt</code>\n\nReformatted three files."));
     assert!(
         out.contains("Reformatted three files.\n\n<b>✅ read_file</b> <code>handler.rs</code>")
@@ -308,7 +316,9 @@ fn tool_plus_text_folds_into_one_blockquote() {
         ],
         None,
     );
-    assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n"));
+    assert!(out.starts_with(
+        "<blockquote expandable>⚙️ <b>Checked the tree, all clean.</b> • <i>2 tool calls</i>\n\n"
+    ));
     assert!(out.ends_with("</blockquote>"));
     assert!(out.contains("<b>✅ bash</b> <code>git status</code>"));
     assert!(out.contains("Checked the tree, all clean."));
@@ -319,7 +329,10 @@ fn tool_plus_text_folds_into_one_blockquote() {
 #[test]
 fn text_only_flow_uses_processing_log_header() {
     let out = render_flow_html(&[FlowLine::Text("Switching provider…".to_string())], None);
-    assert!(out.starts_with("<blockquote expandable><b>Processing log</b>\n"));
+    // Text-only: the narration leads, the count slot reads "Processing log" (#509).
+    assert!(out.starts_with(
+        "<blockquote expandable>⚙️ <b>Switching provider…</b> • <i>Processing log</i>\n\n"
+    ));
     assert!(out.contains("Switching provider…"));
     assert!(!out.contains("tool calls"));
 }
@@ -426,21 +439,27 @@ fn folded_dup_empty_sides_never_match() {
 
 #[test]
 fn live_status_rides_in_blockquote_header() {
+    // Live header order (#509): latest activity (bold) leads, then the count,
+    // then the duration (italic), `•`-separated.
     let out = render_flow_html(
         &[
             tline("✅ bash", "cargo fmt"),
+            FlowLine::Text("Reading the handler.".to_string()),
             tline("⚙️ read_file", "handler.rs"),
         ],
-        Some("read_file • 45s"),
+        Some("45s"),
     );
-    assert!(
-        out.starts_with("<blockquote expandable>⚙️ <b>read_file • 45s</b> • <i>2 tool calls</i>\n")
-    );
+    assert!(out.starts_with(
+        "<blockquote expandable>⚙️ <b>Reading the handler.</b> • <i>2 tool calls</i> • <i>45s</i>\n"
+    ));
     assert!(out.ends_with("</blockquote>"));
 }
 
 #[test]
-fn no_status_renders_plain_settled_header() {
+fn no_duration_still_leads_with_activity() {
+    // No elapsed duration yet: the header still leads with the latest activity
+    // (here the most-recent tool line fallback) and the count, with no trailing
+    // duration segment (#509).
     let out = render_flow_html(
         &[
             tline("✅ bash", "cargo fmt"),
@@ -448,8 +467,10 @@ fn no_status_renders_plain_settled_header() {
         ],
         None,
     );
-    assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n"));
-    assert!(!out.contains("⚙️ 2 tool calls"));
+    assert!(out.starts_with(
+        "<blockquote expandable>⚙️ <b>✅ read_file handler.rs</b> • <i>2 tool calls</i>\n"
+    ));
+    assert!(!out.contains("45s"));
 }
 
 #[test]
@@ -458,7 +479,9 @@ fn live_status_on_text_only_flow_uses_processing_log_header() {
         &[FlowLine::Text("Looking into it.".to_string())],
         Some("15s"),
     );
-    assert!(out.starts_with("<blockquote expandable>⚙️ <b>15s</b> • <i>Processing log</i>\n"));
+    assert!(out.starts_with(
+        "<blockquote expandable>⚙️ <b>Looking into it.</b> • <i>Processing log</i> • <i>15s</i>\n"
+    ));
 }
 
 #[test]
@@ -498,27 +521,43 @@ fn humanize_duration_precise_then_minutes() {
 
 #[test]
 fn flow_header_live_and_settled_formats() {
-    // Live: gear + bold status message FIRST, then the italic tool-call count,
-    // `•`-separated; None → plain bold count / Processing log.
+    // Live order (#509): gear + bold status message FIRST, then the italic
+    // tool-call count, then the italic duration, `•`-separated.
     assert_eq!(
-        flow_header_text(3, &FlowHeader::Live(Some("45s")), HeaderMarkup::Html),
-        "⚙️ <b>45s</b> • <i>3 tool calls</i>"
+        flow_header_text(
+            3,
+            &FlowHeader::Live(Some("45s")),
+            Some("Reading logs"),
+            HeaderMarkup::Html
+        ),
+        "⚙️ <b>Reading logs</b> • <i>3 tool calls</i> • <i>45s</i>"
     );
+    // No status message, duration present → count + duration (italic), no lead.
     assert_eq!(
-        flow_header_text(3, &FlowHeader::Live(None), HeaderMarkup::Html),
+        flow_header_text(3, &FlowHeader::Live(Some("45s")), None, HeaderMarkup::Html),
+        "⚙️ <i>3 tool calls</i> • <i>45s</i>"
+    );
+    // Neither status nor duration (just started) → plain bold count / log.
+    assert_eq!(
+        flow_header_text(3, &FlowHeader::Live(None), None, HeaderMarkup::Html),
         "<b>3 tool calls</b>"
     );
     assert_eq!(
-        flow_header_text(0, &FlowHeader::Live(None), HeaderMarkup::Html),
+        flow_header_text(0, &FlowHeader::Live(None), None, HeaderMarkup::Html),
         "<b>Processing log</b>"
     );
     // Markdown dialect swaps the tags: `**`/`_` where HTML uses `<b>`/`<i>`.
     assert_eq!(
-        flow_header_text(3, &FlowHeader::Live(Some("45s")), HeaderMarkup::Markdown),
-        "⚙️ **45s** • _3 tool calls_"
+        flow_header_text(
+            3,
+            &FlowHeader::Live(Some("45s")),
+            Some("Reading logs"),
+            HeaderMarkup::Markdown
+        ),
+        "⚙️ **Reading logs** • _3 tool calls_ • _45s_"
     );
     // Settled: outcome verb, count-in-parens, duration, fully bold; count clause
-    // dropped when no tools ran.
+    // dropped when no tools ran. The status-message arg is ignored when settled.
     assert_eq!(
         flow_header_text(
             12,
@@ -527,6 +566,7 @@ fn flow_header_live_and_settled_formats() {
                 verb: "Finished",
                 duration: "45s"
             },
+            None,
             HeaderMarkup::Html
         ),
         "<b>✅ Finished (12 tool calls, 45s)</b>"
@@ -539,6 +579,7 @@ fn flow_header_live_and_settled_formats() {
                 verb: "Finished",
                 duration: "45s"
             },
+            None,
             HeaderMarkup::Html
         ),
         "<b>✅ Finished (45s)</b>"
@@ -639,20 +680,26 @@ fn rich_multiple_tools_render_markdown_header() {
         &[tline("✅ bash", "git status"), tline("✅ read", "file.rs")],
         None,
     );
-    // Preview is plain text (no italics): tool contexts routinely carry
-    // underscores, which would shred the markdown italics markers.
-    assert!(out.starts_with("**2 tool calls**\n• "));
+    // No narration: the activity fallback (most recent tool line) leads the
+    // header, bold, then the italic count (#509).
+    assert!(out.starts_with("⚙️ **✅ read file.rs** • _2 tool calls_\n\n"));
     assert!(out.contains("**✅ bash** `git status`"));
     assert!(out.contains("**✅ read** `file.rs`"));
 }
 
 #[test]
 fn rich_live_status_in_header() {
+    // Status-first order (#509): narration (bold) leads, then the count and the
+    // duration (italic).
     let out = render_flow_rich(
-        &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
-        Some("grep • 10s"),
+        &[
+            tline("✅ bash", "x"),
+            FlowLine::Text("Searching.".to_string()),
+            tline("⚙️ grep", "pattern"),
+        ],
+        Some("10s"),
     );
-    assert!(out.starts_with("⚙️ **grep • 10s** • _2 tool calls_\n• "));
+    assert!(out.starts_with("⚙️ **Searching.** • _2 tool calls_ • _10s_\n\n"));
 }
 
 #[test]
@@ -687,7 +734,7 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
     // even with the body hidden (#405); with no narration it falls back to the
     // most recent tool line.
     assert!(out.starts_with(
-        "<details><summary><sub><b>2 tool calls</b> • <i>✅ read file.rs</i></sub></summary>"
+        "<details><summary><sub>⚙️ <b>✅ read file.rs</b> • <i>2 tool calls</i></sub></summary>"
     ));
     assert!(out.ends_with("</details>"));
     assert!(!out.contains("<details open"));
@@ -700,18 +747,22 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
 #[test]
 fn details_summary_carries_live_status() {
     let out = render_flow_details(
-        &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
-        Some("grep • 10s"),
+        &[
+            tline("✅ bash", "x"),
+            FlowLine::Text("Grepping.".to_string()),
+            tline("⚙️ grep", "pattern"),
+        ],
+        Some("10s"),
     );
     let summary_end = out.find("</summary>").expect("summary");
     let summary = &out[..summary_end];
-    assert!(summary.contains("⚙️ <b>grep • 10s</b> • <i>2 tool calls</i>"));
+    // Status-first order (#509): narration (bold) leads, then count, then duration.
+    assert!(summary.contains("⚙️ <b>Grepping.</b> • <i>2 tool calls</i> • <i>10s</i>"));
     // Summary is wrapped in <sub> for visual de-emphasis (#436).
-    assert!(summary.contains("<sub>⚙️ <b>grep • 10s</b> • <i>2 tool calls</i>"));
+    assert!(summary.contains("<sub>⚙️ <b>Grepping.</b>"));
     // Latest-activity preview rides in the summary (#405): the rich <details>
     // collapses to the summary ALONE, hiding the body, so without the preview
-    // the collapsed block shows no progress at all. The #436 removal assumed
-    // the body covers it, but the body is collapsed by default.
+    // the collapsed block shows no progress at all.
     assert!(summary.contains("• <i>"));
 }
 
@@ -730,7 +781,8 @@ fn details_collapsed_summary_shows_intermediate_narration() {
     );
     let summary_end = out.find("</summary>").expect("summary");
     let summary = &out[..summary_end];
-    assert!(summary.contains("• <i>Running the test suite</i>"));
+    // Narration leads the summary, bold (#509).
+    assert!(summary.contains("⚙️ <b>Running the test suite</b>"));
 }
 
 #[test]
@@ -755,11 +807,11 @@ fn collapsed_preview_prefers_narration_over_tool_line() {
         ],
         None,
     );
-    let header_end = out.find('\n').expect("header line");
-    let preview_line = out[header_end + 1..].lines().next().expect("preview");
+    // Narration now LEADS the header, bold (#509), instead of a line below it.
+    let header_line = out.lines().next().expect("header line");
     assert!(
-        preview_line.contains("Checking how the scheduler resolves the next run"),
-        "preview must show the narration: {preview_line}"
+        header_line.contains("<b>Checking how the scheduler resolves the next run</b>"),
+        "header must lead with the narration: {header_line}"
     );
     // Full chronological log still follows for the expanded view.
     assert!(out.contains("<b>⚙️ read_file</b> <code>src/agent.rs</code>"));
@@ -771,16 +823,17 @@ fn preview_keeps_long_text_whole_and_strips_markdown() {
     // preview never shows raw ** source.
     let long = format!("**{}**", "x".repeat(200));
     let out = render_flow_html(&[tline("✅ bash", "a"), FlowLine::Text(long)], None);
-    let header_end = out.find('\n').unwrap();
-    let preview_line = out[header_end + 1..].lines().next().unwrap();
-    assert!(!preview_line.contains('…'), "not truncated: {preview_line}");
+    // The narration leads the header (#509); it stays whole and markdown markers
+    // are stripped before the header bolds it with `<b>`.
+    let header_line = out.lines().next().unwrap();
+    assert!(!header_line.contains('…'), "not truncated: {header_line}");
     assert!(
-        preview_line.contains(&"x".repeat(200)),
-        "whole text kept: {preview_line}"
+        header_line.contains(&"x".repeat(200)),
+        "whole text kept: {header_line}"
     );
     assert!(
-        !preview_line.contains("**"),
-        "markers stripped: {preview_line}"
+        !header_line.contains("**"),
+        "markers stripped: {header_line}"
     );
 }
 
