@@ -10,7 +10,8 @@
 
 use crate::channels::telegram::flow::{
     FlowEntry, FlowHeader, FlowOutcome, extract_status_from_text, flow_header_text,
-    humanize_duration, latest_activity_preview, pop_trailing_folded_texts, render_flow_html_with,
+    humanize_duration, latest_activity_preview, pop_trailing_folded_texts,
+    render_flow_details_with, render_flow_html_with,
 };
 use crate::channels::telegram::handler::{
     FlowLine, folded_duplicates_final, humanize_elapsed, render_flow_details, render_flow_html,
@@ -86,7 +87,7 @@ fn blocks_are_separated_by_blank_lines() {
     );
     // Blank line after the header and between every block, so the collapsed
     // log reads as separated entries instead of a cramped wall.
-    assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n↳ <i>"));
+    assert!(out.starts_with("<blockquote expandable><b>2 tool calls</b>\n• <i>"));
     assert!(out.contains("<b>✅ bash</b> <code>cargo fmt</code>\n\nReformatted three files."));
     assert!(
         out.contains("Reformatted three files.\n\n<b>✅ read_file</b> <code>handler.rs</code>")
@@ -556,6 +557,54 @@ fn settled_outcome_renders_block_header_over_lone_tool() {
     );
 }
 
+#[test]
+fn settled_block_carries_no_activity_preview_classic() {
+    // #498: the latest-activity preview is live-only. Once the block settles,
+    // the stale narration must NOT stick under the Finished header — the rollup
+    // stands alone. The narration still lives in the collapsed body log; only
+    // the header-attached `•` preview is suppressed.
+    let out = render_flow_html_with(
+        &[
+            tline("✅ bash", "cargo test"),
+            FlowLine::Text("Running the test suite".to_string()),
+        ],
+        &FlowHeader::Settled {
+            icon: "✅",
+            verb: "Finished",
+            duration: "3 min 15s",
+        },
+    );
+    assert!(out.starts_with("<blockquote expandable><b>✅ Finished (1 tool calls, 3 min 15s)</b>"));
+    assert!(
+        !out.contains("• <i>"),
+        "settled block must not carry a preview: {out}"
+    );
+}
+
+#[test]
+fn settled_block_carries_no_activity_preview_rich() {
+    // #498, rich <details> surface (the one Adolfo runs): settled summary is
+    // the outcome header alone, no trailing `•` preview stuck to it.
+    let out = render_flow_details_with(
+        &[
+            tline("✅ bash", "cargo test"),
+            FlowLine::Text("Running the test suite".to_string()),
+        ],
+        &FlowHeader::Settled {
+            icon: "✅",
+            verb: "Finished",
+            duration: "3 min 15s",
+        },
+    );
+    let summary_end = out.find("</summary>").expect("summary");
+    let summary = &out[..summary_end];
+    assert!(summary.contains("✅ Finished (1 tool calls, 3 min 15s)"));
+    assert!(
+        !summary.contains("•"),
+        "settled summary must not carry a preview: {summary}"
+    );
+}
+
 // ── Rich API flow rendering tests (#393) ─────────────────────────────────────
 
 #[test]
@@ -579,7 +628,7 @@ fn rich_multiple_tools_render_markdown_header() {
     );
     // Preview is plain text (no italics): tool contexts routinely carry
     // underscores, which would shred the markdown italics markers.
-    assert!(out.starts_with("**2 tool calls**\n↳ "));
+    assert!(out.starts_with("**2 tool calls**\n• "));
     assert!(out.contains("**✅ bash** `git status`"));
     assert!(out.contains("**✅ read** `file.rs`"));
 }
@@ -590,7 +639,7 @@ fn rich_live_status_in_header() {
         &[tline("✅ bash", "x"), tline("⚙️ grep", "pattern")],
         Some("grep · 10s"),
     );
-    assert!(out.starts_with("**⚙️ 2 tool calls · grep · 10s**\n↳ "));
+    assert!(out.starts_with("**⚙️ 2 tool calls · grep · 10s**\n• "));
 }
 
 #[test]
@@ -625,7 +674,7 @@ fn details_multiple_tools_wrap_in_collapsed_details() {
     // even with the body hidden (#405); with no narration it falls back to the
     // most recent tool line.
     assert!(out.starts_with(
-        "<details><summary><sub><b>2 tool calls</b> ↳ <i>✅ read file.rs</i></sub></summary>"
+        "<details><summary><sub><b>2 tool calls</b> • <i>✅ read file.rs</i></sub></summary>"
     ));
     assert!(out.ends_with("</details>"));
     assert!(!out.contains("<details open"));
@@ -650,7 +699,7 @@ fn details_summary_carries_live_status() {
     // collapses to the summary ALONE, hiding the body, so without the preview
     // the collapsed block shows no progress at all. The #436 removal assumed
     // the body covers it, but the body is collapsed by default.
-    assert!(summary.contains("↳ <i>"));
+    assert!(summary.contains("• <i>"));
 }
 
 #[test]
@@ -668,7 +717,7 @@ fn details_collapsed_summary_shows_intermediate_narration() {
     );
     let summary_end = out.find("</summary>").expect("summary");
     let summary = &out[..summary_end];
-    assert!(summary.contains("↳ <i>Running the test suite</i>"));
+    assert!(summary.contains("• <i>Running the test suite</i>"));
 }
 
 #[test]

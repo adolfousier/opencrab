@@ -344,10 +344,17 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
     }
     // Latest activity rides directly under the header so the COLLAPSED
     // preview always shows what is happening now, not the first entry
-    // from many minutes ago (#405).
-    let latest = latest_activity_preview(lines)
-        .map(|l| format!("↳ <i>{}</i>\n\n", escape_html(&l)))
-        .unwrap_or_default();
+    // from many minutes ago (#405). Live turns only (#498): once the block
+    // settles to a Finished/Failed/Timed out header the narration is stale,
+    // so the settled rollup stands alone with no trailing preview stuck to it.
+    // Marker is `•`, not the `↳` return glyph, which promised a line break the
+    // inline-only collapsed summary can't deliver.
+    let latest = match header {
+        FlowHeader::Live(_) => latest_activity_preview(lines)
+            .map(|l| format!("• <i>{}</i>\n\n", escape_html(&l)))
+            .unwrap_or_default(),
+        FlowHeader::Settled { .. } => String::new(),
+    };
     format!(
         "<blockquote expandable><b>{}</b>\n{}{}</blockquote>",
         flow_header_text(tool_count, header),
@@ -368,7 +375,7 @@ pub(crate) fn render_flow_details(lines: &[FlowLine], live_status: Option<&str>)
     render_flow_details_with(lines, &FlowHeader::Live(live_status))
 }
 
-fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) -> String {
+pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -415,14 +422,21 @@ fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) -> String {
     let body: String = out.iter().map(|e| format!("<p>{e}</p>")).collect();
     // Latest activity rides in the summary so the COLLAPSED rich block shows
     // what is happening now (#405). The classic HTML path (render_flow_html_with)
-    // puts the `↳` preview under the header inside the expandable blockquote,
+    // puts the preview under the header inside the expandable blockquote,
     // which stays visible collapsed; the rich `<details>` collapses to the
     // summary ALONE, so without this the rich surface loses the live progress
     // preview entirely and shows only "N tool calls · 45s". Rich HTML input
-    // ignores raw newlines, so it rides inline after the header.
-    let latest = latest_activity_preview(lines)
-        .map(|l| format!(" ↳ <i>{}</i>", escape_html(&l)))
-        .unwrap_or_default();
+    // ignores raw newlines, so it rides inline after the header. Live turns
+    // only (#498): a settled Finished/Failed/Timed out header stands alone
+    // with no stale narration stuck to it. Marker is `•`, not the `↳` return
+    // glyph: the summary is inline-only (raw newlines ignored, the rich AST has
+    // no line-break node), so a bullet separates it honestly where `↳` misled.
+    let latest = match header {
+        FlowHeader::Live(_) => latest_activity_preview(lines)
+            .map(|l| format!(" • <i>{}</i>", escape_html(&l)))
+            .unwrap_or_default(),
+        FlowHeader::Settled { .. } => String::new(),
+    };
     format!(
         "<details><summary><sub><b>{}</b>{}</sub></summary>{}</details>",
         flow_header_text(tool_count, header),
@@ -480,9 +494,10 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
     if let Some(st) = live_status {
         header = format!("⚙️ {} · {}", header, st);
     }
-    // Same latest-activity preview as the HTML renderer (#405).
+    // Same latest-activity preview as the HTML renderer (#405). Marker `•`,
+    // matching the visible renderers (#498); this markdown path is always live.
     let latest = latest_activity_preview(lines)
-        .map(|l| format!("↳ {l}\n\n"))
+        .map(|l| format!("• {l}\n\n"))
         .unwrap_or_default();
     format!("**{header}**\n{latest}{}", out.join("\n\n"))
 }
