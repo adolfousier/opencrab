@@ -961,6 +961,35 @@ pub fn spawn_rsi_engine(
                 }
             }
 
+            // Recurring tool SEQUENCES — skill candidates (#504). Where the
+            // command pass codifies what the user types, this codifies what
+            // the agent DOES: an ordered tool run recurring across many
+            // sessions is a workflow worth a skill. Cross-session recurrence
+            // is the signal, so a within-session loop cannot inflate it.
+            {
+                let te_repo =
+                    crate::db::repository::ToolExecutionRepository::new(repo.pool().clone());
+                if let Ok(rows) = te_repo.recent_session_tool_sequences(5000).await {
+                    let sessions = crate::brain::rsi_skill_sequences::group_sessions(&rows);
+                    let candidates = crate::brain::rsi_skill_sequences::skill_sequence_candidates(
+                        &sessions,
+                        crate::brain::rsi_skill_sequences::SEQUENCE_LEN,
+                        crate::brain::rsi_skill_sequences::SEQUENCE_MIN_SESSIONS,
+                    );
+                    for c in candidates.into_iter().take(5) {
+                        let desc = format!(
+                            "Tool sequence '{}' ran in {} distinct sessions — candidate for a \
+                             skill (rsi_propose kind=skill). File a SKILL.md codifying the \
+                             workflow so it runs as one step instead of the manual sequence.",
+                            c.sequence.join(" -> "),
+                            c.sessions,
+                        );
+                        tracing::info!("RSI opportunity: {}", desc);
+                        opportunities.push(desc);
+                    }
+                }
+            }
+
             // 3. Dedup: hash the assembled opportunity descriptions and
             // compare against the previous cycle's hash. When identical,
             // the autonomous agent would have nothing new to act on — its

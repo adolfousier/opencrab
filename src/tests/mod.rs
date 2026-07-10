@@ -358,6 +358,7 @@ pub mod rsi_prompt_triage_test;
 pub mod rsi_proposals_test;
 pub mod rsi_self_improve_dedup_test;
 pub mod rsi_skill_proposals_test;
+pub mod rsi_skill_sequences_test;
 pub mod rsi_subsystem_test;
 pub mod rsi_sync_test;
 pub mod rsi_test;

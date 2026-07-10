@@ -137,6 +137,31 @@ impl ToolExecutionRepository {
     /// stale RSI with a busy ledger is the signal Mission Control surfaces.
     /// `None` last-ts means RSI never ran; events_since then counts all
     /// recorded tool events.
+    /// Recent (session_id, tool_name) rows ordered so consecutive rows in a
+    /// session are adjacent and in execution order (#504). The caller groups
+    /// them into per-session tool sequences for the skill-pattern detector.
+    /// Empty tool names are skipped (see `record`).
+    pub async fn recent_session_tool_sequences(&self, limit: i64) -> Result<Vec<(String, String)>> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT session_id, tool_name FROM tool_executions \
+                     WHERE tool_name <> '' AND session_id <> '' \
+                     ORDER BY session_id, created_at, id LIMIT ?1",
+                )?;
+                let rows = stmt.query_map(params![limit], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to fetch session tool sequences")
+    }
+
     pub async fn rsi_staleness(&self) -> Result<(Option<i64>, i64)> {
         self.pool
             .get()
