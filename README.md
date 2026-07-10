@@ -32,12 +32,40 @@
 
 **Official docs:** [docs.opencrabs.com](https://docs.opencrabs.com) — comprehensive guides, architecture deep-dives, and reference material.
 
-**In this repo:**
-- [Brain file templates](src/docs/reference/templates/) — SOUL.md, AGENTS.md, TOOLS.md, MEMORY.md, CODE.md, SECURITY.md, BOOT.md templates and customization guides
-- [Reference docs](src/docs/reference/) — architecture, brain constitution, provider configuration, adding new providers
-- [Skills](src/docs/reference/templates/skills/) — built-in skill definitions (security-audit, cost-estimate, servers, gdrive, and more)
-- [Cron templates](src/docs/reference/templates/cron/) — scheduled job templates and scripts
-- [Plan templates](src/docs/reference/plans/) — structured plan JSON specs and coding workflow templates
+### Getting Started
+- [Installation & Quick Start](src/docs/start/GETTING_STARTED.md)
+- [Onboarding Wizard](src/docs/start/ONBOARDING.md)
+- [OpenCrabs Overview](src/docs/start/OPENCRABS.md)
+
+### Reference
+- [Architecture](src/docs/reference/ARCHITECTURE_2026_04_14.md)
+- [Brain Constitution](src/docs/reference/BRAIN_CONSTITUTION.md)
+- [Adding New Providers](src/docs/reference/ADDING_NEW_PROVIDERS.md)
+- [Plan JSON Specification](src/docs/reference/plans/plan-json-spec.md)
+
+### Brain File Templates
+- [SOUL.md](src/docs/reference/templates/SOUL.md) — personality and voice
+- [AGENTS.md](src/docs/reference/templates/AGENTS.md) — workspace governance and hard rules
+- [TOOLS.md](src/docs/reference/templates/TOOLS.md) — tool usage and skills
+- [MEMORY.md](src/docs/reference/templates/MEMORY.md) — long-term memory
+- [CODE.md](src/docs/reference/templates/CODE.md) — coding standards
+- [SECURITY.md](src/docs/reference/templates/SECURITY.md) — security policies
+- [BOOT.md](src/docs/reference/templates/BOOT.md) — startup and service config
+- [USER.md](src/docs/reference/templates/USER.md) — user profile template
+- [HEARTBEAT.md](src/docs/reference/templates/HEARTBEAT.md) — heartbeat configuration
+
+### Skills
+- [Security Audit](src/docs/reference/templates/skills/security-audit/SKILL.md)
+- [Cost Estimate](src/docs/reference/templates/skills/cost-estimate/SKILL.md)
+- [Repo Audit](src/docs/reference/templates/skills/repo-audit/SKILL.md)
+- [Multi-Agent](src/docs/reference/templates/skills/multi-agent/SKILL.md)
+- [Browser CDP](src/docs/reference/templates/skills/browser-cdp/SKILL.md)
+- [A2A Gateway](src/docs/reference/templates/skills/a2a-gateway/SKILL.md)
+- [Dynamic Tools](src/docs/reference/templates/skills/dynamic-tools/SKILL.md)
+- [OpenCLI](src/docs/reference/templates/skills/opencli/SKILL.md)
+
+### Cron Templates
+- [Cron Jobs Guide](src/docs/reference/templates/cron/README.md)
 
 ---
 
