@@ -22,8 +22,8 @@
 //! `src/tests/`) keeps the test surface flat.
 
 use crate::brain::agent::service::tool_loop::{
-    build_tool_result_content, extract_path_for_recent_buffer, is_implausible_token_report,
-    is_user_correction, strip_ansi_output,
+    RepeatLoopAction, build_tool_result_content, extract_path_for_recent_buffer,
+    is_implausible_token_report, is_user_correction, repeat_loop_action, strip_ansi_output,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -426,4 +426,68 @@ fn tiny_requests_are_never_rejected() {
     // Below the 1000-token floor the ratio is noise — never reject (a fresh
     // session's first tiny turn shouldn't trip the guard).
     assert!(!is_implausible_token_report(200, 0, 5000));
+}
+
+// ── repeat_loop_action: identical-call loop nudge/break (#507) ───────
+
+fn seq(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn repeat_below_threshold_continues() {
+    // Only 4 of the current signature in the window (need 5 to nudge).
+    let recent = seq(&[
+        "grep:aa", "read:bb", "grep:aa", "read:bb", "grep:aa", "grep:aa",
+    ]);
+    assert_eq!(
+        repeat_loop_action(&recent, "grep:aa", 8, 5, 7, false),
+        RepeatLoopAction::Continue,
+    );
+}
+
+#[test]
+fn dominant_repeat_nudges_even_when_interleaved() {
+    // 5 identical greps interleaved with other calls in the last 8 → nudge.
+    // The strictly-consecutive check would miss this entirely.
+    let recent = seq(&[
+        "grep:aa", "read:bb", "grep:aa", "ls:cc", "grep:aa", "read:bb", "grep:aa", "grep:aa",
+    ]);
+    assert_eq!(
+        repeat_loop_action(&recent, "grep:aa", 8, 5, 7, false),
+        RepeatLoopAction::Nudge,
+    );
+}
+
+#[test]
+fn nudge_fires_only_once_then_breaks_if_ignored() {
+    // Already nudged and still dominating at/above break threshold → break.
+    let recent = seq(&[
+        "grep:aa", "grep:aa", "grep:aa", "grep:aa", "grep:aa", "grep:aa", "grep:aa",
+    ]);
+    assert_eq!(
+        repeat_loop_action(&recent, "grep:aa", 8, 5, 7, true),
+        RepeatLoopAction::Break,
+    );
+    // Already nudged but repeats dropped below break threshold → let it run.
+    let recovered = seq(&[
+        "grep:aa", "read:bb", "ls:cc", "edit:dd", "grep:aa", "read:bb",
+    ]);
+    assert_eq!(
+        repeat_loop_action(&recovered, "grep:aa", 8, 5, 7, true),
+        RepeatLoopAction::Continue,
+    );
+}
+
+#[test]
+fn window_bounds_the_count() {
+    // Old identical calls outside the window must not count. The window is 3,
+    // so only the last 3 signatures are considered — one match, no nudge.
+    let recent = seq(&[
+        "grep:aa", "grep:aa", "grep:aa", "read:bb", "ls:cc", "grep:aa",
+    ]);
+    assert_eq!(
+        repeat_loop_action(&recent, "grep:aa", 3, 2, 3, false),
+        RepeatLoopAction::Continue,
+    );
 }

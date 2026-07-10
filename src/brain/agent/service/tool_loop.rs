@@ -144,6 +144,53 @@ pub(crate) fn strip_ansi_output(raw: &str) -> String {
     strip_ansi::strip_ansi(raw)
 }
 
+/// What to do about a non-modification tool call that keeps recurring (#507).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepeatLoopAction {
+    /// Not repeating enough to act on.
+    Continue,
+    /// Dominant repeat detected and we have not nudged yet: warn the model
+    /// once and give it a chance to change course.
+    Nudge,
+    /// Repeat persisted after the nudge: break the turn.
+    Break,
+}
+
+/// Decide how to handle a possibly-looping non-modification tool call.
+///
+/// Counts how many of the recent call signatures (a bounded window ending at
+/// the current call) equal `current` — so an identical call (same name+args)
+/// that DOMINATES the window is caught even when interleaved with a few other
+/// calls, which the strictly-consecutive check misses. Nudge once at
+/// `nudge_at`, then break at `break_at` if the model ignored the nudge and the
+/// signature still dominates. Pure so the thresholds are unit tested without
+/// the surrounding stream/DB machinery.
+pub(crate) fn repeat_loop_action(
+    recent: &[String],
+    current: &str,
+    window: usize,
+    nudge_at: usize,
+    break_at: usize,
+    already_nudged: bool,
+) -> RepeatLoopAction {
+    let start = recent.len().saturating_sub(window);
+    let repeat_in_window = recent[start..]
+        .iter()
+        .filter(|c| c.as_str() == current)
+        .count();
+    if already_nudged {
+        if repeat_in_window >= break_at {
+            RepeatLoopAction::Break
+        } else {
+            RepeatLoopAction::Continue
+        }
+    } else if repeat_in_window >= nudge_at {
+        RepeatLoopAction::Nudge
+    } else {
+        RepeatLoopAction::Continue
+    }
+}
+
 /// Pull the file path the agent just touched out of a successful tool
 /// call, ready for the persistent recent-paths store. Returns `None`
 /// for tools that don't address a single file (`bash`, `glob`, …),
@@ -1006,6 +1053,10 @@ impl AgentService {
         // by the semantic-loop check below the per-iteration tool dispatch.
         // Reset per turn; fires at most once.
         let mut browser_screenshot_loop_nudged: bool = false;
+        // Fires at most once per turn: the first time a non-modification call
+        // (identical name+args) dominates the recent window, nudge the model to
+        // stop instead of cutting the turn silently (#507).
+        let mut identical_call_loop_nudged: bool = false;
         // Tracks whether the CURRENT iteration is a same-provider continuation
         // requested after a truncated-mid-sentence detection. Reset at the top
         // of every iteration; set true just before `continue;` from the
@@ -4460,36 +4511,100 @@ impl AgentService {
                 || current_call_signature.starts_with("edit:")
                 || current_call_signature.starts_with("bash:");
 
-            // Modification tools get a lower threshold (dangerous if looping).
-            // Everything else gets a generous threshold since signatures
-            // already distinguish different arguments.
-            let loop_threshold = if is_modification_tool {
-                4 // Same exact write/edit/bash command 4 times = stuck
-            } else {
-                8 // Same exact call with same exact args 8 times = stuck
-            };
-
-            // Check if we have enough calls to detect a loop
-            if recent_tool_calls.len() >= loop_threshold {
-                let last_n = &recent_tool_calls[recent_tool_calls.len() - loop_threshold..];
+            // Modification tools are dangerous to loop (a bad write/edit/bash
+            // must not repeat), so they keep the strict strictly-consecutive
+            // hard-break with no nudge: 4 identical calls in a row and we stop.
+            const MOD_CONSECUTIVE_BREAK: usize = 4;
+            if is_modification_tool && recent_tool_calls.len() >= MOD_CONSECUTIVE_BREAK {
+                let last_n = &recent_tool_calls[recent_tool_calls.len() - MOD_CONSECUTIVE_BREAK..];
                 if last_n.iter().all(|call| call == &current_call_signature) {
                     tracing::warn!(
-                        "⚠️ Detected tool loop: '{}' called {} times in a row. Breaking loop.",
+                        "⚠️ Modification tool loop: '{}' repeated {} times with identical \
+                         arguments — breaking loop.",
                         current_call_signature,
-                        loop_threshold
+                        MOD_CONSECUTIVE_BREAK,
                     );
-
-                    if is_modification_tool {
-                        tracing::warn!(
-                            "⚠️ Modification tool loop detected. \
-                             Same command repeated {} times with identical arguments.",
-                            loop_threshold
-                        );
-                    }
-
-                    // Force a final response by breaking the loop
                     final_response = Some(response);
                     break;
+                }
+            }
+
+            // Non-modification tools: an identical call (same name+args) that
+            // DOMINATES the recent window is a stuck loop even when interleaved
+            // with a few other calls — the strictly-consecutive check above
+            // missed that (e.g. a model that re-issues the same grep every
+            // other round). Nudge once (consistent with the browser-loop
+            // nudge, so a stuck read/grep/list loop is never cut silently),
+            // then break if the model ignores the nudge and keeps repeating.
+            if !is_modification_tool {
+                const REPEAT_WINDOW: usize = 8;
+                const REPEAT_NUDGE_AT: usize = 5;
+                const REPEAT_BREAK_AT: usize = 7;
+                // Label the loop by the first tool name in the signature
+                // ("grep:ab,read:cd" → "grep") for the user-facing message.
+                let tool_label = current_call_signature
+                    .split(':')
+                    .next()
+                    .unwrap_or("tool")
+                    .to_string();
+                let repeat_in_window = {
+                    let start = recent_tool_calls.len().saturating_sub(REPEAT_WINDOW);
+                    recent_tool_calls[start..]
+                        .iter()
+                        .filter(|c| *c == &current_call_signature)
+                        .count()
+                };
+
+                match repeat_loop_action(
+                    &recent_tool_calls,
+                    &current_call_signature,
+                    REPEAT_WINDOW,
+                    REPEAT_NUDGE_AT,
+                    REPEAT_BREAK_AT,
+                    identical_call_loop_nudged,
+                ) {
+                    RepeatLoopAction::Break => {
+                        tracing::warn!(
+                            "⚠️ Identical-call loop persisted after nudge: '{}' x{} in last {} \
+                             iterations — breaking loop.",
+                            current_call_signature,
+                            repeat_in_window,
+                            REPEAT_WINDOW,
+                        );
+                        final_response = Some(response);
+                        break;
+                    }
+                    RepeatLoopAction::Nudge => {
+                        tracing::warn!(
+                            "Identical-call loop: '{}' x{} in last {} iterations — nudging agent.",
+                            current_call_signature,
+                            repeat_in_window,
+                            REPEAT_WINDOW,
+                        );
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "Stuck repeating `{}` ({}x) — nudging the agent to use \
+                                         the results it already has",
+                                        tool_label, repeat_in_window,
+                                    ),
+                                },
+                            );
+                        }
+                        context.add_message(Message::user(format!(
+                            "[System: You have called `{}` with identical arguments {} times in \
+                             the last {} steps and it keeps returning the same result. Repeating \
+                             the same call will not produce anything new. Use the results you \
+                             already have to answer the user, or take a DIFFERENT action. Do not \
+                             issue this identical call again.]",
+                            tool_label, repeat_in_window, REPEAT_WINDOW,
+                        )));
+                        identical_call_loop_nudged = true;
+                        continue;
+                    }
+                    RepeatLoopAction::Continue => {}
                 }
             }
 
