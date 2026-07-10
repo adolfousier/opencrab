@@ -2065,6 +2065,14 @@ pub(crate) async fn handle_message(
 
     // ── Channel commands (/help, /usage, /models) ──────────────────────────
     let mut text = text;
+    // When a slash command resolves to a prompt (a skill or user command),
+    // remember the raw invocation (e.g. "/drop_release"). A slash command is a
+    // deliberate NEW directive, so if it lands mid-turn it must be injected as
+    // its own instruction — not with the "factor into the CURRENT task, do not
+    // restart" wrapper a plain follow-up gets, which would neutralize it (#503
+    // follow-up: /drop_release arrived mid-turn, got queued, but the wrapper
+    // told the model to fold it into unrelated work so the release never ran).
+    let mut command_invocation: Option<String> = None;
     if !is_voice {
         use crate::channels::commands::{self, ChannelCommand};
         let cmd = commands::handle_command(
@@ -2354,6 +2362,11 @@ pub(crate) async fn handle_message(
                 // fall through to agent
             }
             ChannelCommand::UserPrompt(prompt) => {
+                // Capture the raw invocation ("/drop_release") BEFORE `text` is
+                // overwritten with the resolved skill/command body, so a
+                // mid-turn injection can name the command and frame it as a
+                // distinct directive rather than a follow-up to absorb.
+                command_invocation = Some(text.clone());
                 text = prompt;
                 // fall through to agent with the prompt as the message
             }
@@ -2764,18 +2777,15 @@ pub(crate) async fn handle_message(
                  between tool rounds",
                 session_id
             );
-            telegram_state.enqueue_reaction(
-                session_id,
-                crate::brain::agent::QueuedUserMessage {
-                    context_text: format!(
-                        "[The user sent this follow-up while you were still working: factor \
-                         it into the CURRENT task now, do not restart from scratch]:\n{}",
-                        display_text
-                    ),
-                    // History shows what the user typed, not the steering preface.
-                    display_text: display_text.clone(),
-                },
-            );
+            // A slash command that resolved to a prompt is a deliberate NEW
+            // directive: inject it as its own instruction to run at the next
+            // safe stopping point, NOT with the "fold into the current task,
+            // do not restart" wrapper a plain follow-up gets (which neutralizes
+            // it). `text` holds the resolved skill/command body; `command_
+            // invocation` names the raw command for the framing and history.
+            let queued =
+                build_midturn_queued_message(command_invocation.as_deref(), &text, &display_text);
+            telegram_state.enqueue_reaction(session_id, queued);
             // Visible acknowledgment so the message never looks silently eaten.
             fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
             return Ok(());
@@ -4021,6 +4031,45 @@ pub(crate) fn build_user_message_preview(text: &str) -> Option<String> {
     } else {
         let capped: String = collapsed.chars().take(60).collect();
         Some(format!("{}…", capped))
+    }
+}
+
+/// Build the `QueuedUserMessage` for a message that landed mid-turn.
+///
+/// A plain follow-up is framed as something to fold into the CURRENT task
+/// without restarting. A slash command (`command_invocation = Some("/x")`) is a
+/// deliberate NEW directive, so it is framed to run on its own terms at the
+/// next safe stopping point and its history entry shows the command, not the
+/// resolved body — otherwise the follow-up wrapper's "do not restart" framing
+/// neutralizes the command and it never runs (the `/drop_release` report).
+///
+/// `resolved_body` is the agent-facing text (a skill/command body for a slash
+/// command, or the user's message otherwise); `display_text` is the
+/// history/preview text used for a plain follow-up.
+pub(crate) fn build_midturn_queued_message(
+    command_invocation: Option<&str>,
+    resolved_body: &str,
+    display_text: &str,
+) -> crate::brain::agent::QueuedUserMessage {
+    match command_invocation {
+        Some(invocation) => crate::brain::agent::QueuedUserMessage {
+            context_text: format!(
+                "[The user invoked the {} command while you were still working. This is an \
+                 explicit NEW directive, not a refinement of your current task — when you reach \
+                 a safe stopping point, carry out the following instructions on their own \
+                 terms:]\n{}",
+                invocation, resolved_body
+            ),
+            display_text: invocation.to_string(),
+        },
+        None => crate::brain::agent::QueuedUserMessage {
+            context_text: format!(
+                "[The user sent this follow-up while you were still working: factor it into the \
+                 CURRENT task now, do not restart from scratch]:\n{}",
+                display_text
+            ),
+            display_text: display_text.to_string(),
+        },
     }
 }
 
