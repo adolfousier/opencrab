@@ -28,6 +28,19 @@
 
 ---
 
+## 📚 Documentation
+
+**Official docs:** [docs.opencrabs.com](https://docs.opencrabs.com) — comprehensive guides, architecture deep-dives, and reference material.
+
+**In this repo:**
+- [Brain file templates](src/docs/reference/templates/) — SOUL.md, AGENTS.md, TOOLS.md, MEMORY.md, CODE.md, SECURITY.md, BOOT.md templates and customization guides
+- [Reference docs](src/docs/reference/) — architecture, brain constitution, provider configuration, adding new providers
+- [Skills](src/docs/reference/templates/skills/) — built-in skill definitions (security-audit, cost-estimate, servers, gdrive, and more)
+- [Cron templates](src/docs/reference/templates/cron/) — scheduled job templates and scripts
+- [Plan templates](src/docs/reference/plans/) — structured plan JSON specs and coding workflow templates
+
+---
+
 ## Why OpenCrabs?
 
 OpenCrabs runs as a **single binary on your terminal** — no server, no gateway, no infrastructure. It makes direct HTTPS calls to LLM providers from your machine. Nothing else leaves your computer.

@@ -1,0 +1,16 @@
+{
+  "name": "OpenCrabs",
+  "description": "Autonomous, self-improving AI agent. Single Rust binary. Every channel.",
+  "includeFiles": [
+    "README.md",
+    "TESTING.md",
+    "CONTRIBUTING.md"
+  ],
+  "includeFolders": [
+    "src/docs"
+  ],
+  "excludeFiles": [
+    "CHANGELOG.md",
+    "LICENSE.md"
+  ]
+}
