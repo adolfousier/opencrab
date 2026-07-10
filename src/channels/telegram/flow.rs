@@ -588,6 +588,14 @@ impl HeaderMarkup {
     }
 }
 
+/// Strip a leading running-gear (`⚙️`, base `⚙` plus its optional variation
+/// selector) and any following whitespace from a status message, so the live
+/// header's own gear is never doubled when the status is the bare-tool fallback
+/// (#509 follow-up). Text that does not start with a gear is returned unchanged.
+fn strip_leading_gear(s: &str) -> &str {
+    s.trim_start_matches(['⚙', '\u{fe0f}']).trim_start()
+}
+
 /// Build the fully-styled header shared by all three renderers so the classic
 /// HTML, rich-details, and rich-markdown headers can never drift (#480, #509).
 /// The live header leads with the status message (bold), then the tool-call
@@ -617,7 +625,12 @@ pub(crate) fn flow_header_text(
             // then the duration (both italic), all `•`-separated (#509).
             let mut segs: Vec<String> = Vec::new();
             if let Some(status) = status_msg {
-                segs.push(markup.bold(status));
+                // The header already prints one live gear; strip a leading
+                // running-gear from the status message so the bare-tool fallback
+                // ("⚙️ bash …") does not render a double gear (#509 follow-up).
+                // Settled ✅/❌ tool icons are left alone: they read as the tool's
+                // own outcome, not a duplicate of the header gear.
+                segs.push(markup.bold(strip_leading_gear(status)));
             }
             segs.push(markup.italic(&base));
             if let Some(dur) = duration {

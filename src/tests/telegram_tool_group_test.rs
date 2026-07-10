@@ -474,6 +474,27 @@ fn no_duration_still_leads_with_activity() {
 }
 
 #[test]
+fn running_tool_fallback_does_not_double_the_gear() {
+    // The bare-tool fallback leads with a still-running tool whose label already
+    // carries the running gear (`⚙️ bash`). The header prints its own gear, so
+    // without the strip this would render a double gear (#509 follow-up).
+    let out = render_flow_html(
+        &[
+            tline("⚙️ bash", "gh repo view"),
+            tline("⚙️ bash", "gh pr list"),
+        ],
+        Some("10s"),
+    );
+    assert!(
+        !out.contains("⚙️ <b>⚙️"),
+        "the running-tool fallback must not double the header gear: {out}"
+    );
+    assert!(out.starts_with(
+        "<blockquote expandable>⚙️ <b>bash gh pr list</b> • <i>2 tool calls</i> • <i>10s</i>\n"
+    ));
+}
+
+#[test]
 fn live_status_on_text_only_flow_uses_processing_log_header() {
     let out = render_flow_html(
         &[FlowLine::Text("Looking into it.".to_string())],
