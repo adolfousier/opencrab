@@ -64,3 +64,39 @@ async fn queue_callback_drains_the_same_state() {
     // Drained — nothing left.
     assert!(cb(sid).await.is_none());
 }
+
+// ── atomic turn claim (#501) ─────────────────────────────────────────
+
+#[test]
+fn try_begin_turn_is_atomic_check_and_set() {
+    let state = Arc::new(TelegramState::new());
+    let s = Uuid::new_v4();
+
+    // Idle session: first claim succeeds and marks active.
+    let guard = state.try_begin_turn(s).expect("first claim succeeds");
+    assert!(state.is_turn_active(s));
+
+    // Second claim while the first turn is in flight returns None (the
+    // caller enqueues instead of forking a parallel turn) — the race the
+    // old check-then-mark window allowed.
+    assert!(
+        state.try_begin_turn(s).is_none(),
+        "concurrent claim must be refused while a turn is active"
+    );
+
+    // Dropping the guard clears the flag; the session can be claimed again.
+    drop(guard);
+    assert!(!state.is_turn_active(s));
+    assert!(state.try_begin_turn(s).is_some(), "reclaim after turn ends");
+}
+
+#[test]
+fn try_begin_turn_is_per_session() {
+    let state = Arc::new(TelegramState::new());
+    let a = Uuid::new_v4();
+    let b = Uuid::new_v4();
+    let _ga = state.try_begin_turn(a).expect("a claims");
+    // A being active must not block a different session B.
+    assert!(state.try_begin_turn(b).is_some(), "b is independent of a");
+    assert!(state.try_begin_turn(a).is_none(), "a still blocked");
+}

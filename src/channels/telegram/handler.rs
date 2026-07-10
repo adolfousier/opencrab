@@ -2730,44 +2730,57 @@ pub(crate) async fn handle_message(
     // return used to sit after the edit loop was already spawned, so every
     // queued follow-up (each image of a consecutive drop) leaked a live
     // loop that ticked its own "Working on:" bubble forever (#407).
-    if telegram_state.is_turn_active(session_id) {
-        // If this session is blocked on a `follow_up_question`, the user's text
-        // IS the answer (#500). Fire the oneshot with it so the tool unblocks
-        // and returns the text, instead of queueing: the tool is suspended
-        // inside `rx.await`, so no tool round ever ends to drain the queue, and
-        // a queued answer would sit until a button click or the 10-min timeout.
-        if telegram_state
-            .resolve_pending_question_with_text(session_id, text.clone())
-            .await
-        {
+    // Atomically claim the turn (#501): try_begin_turn marks the session
+    // active and returns a guard, or returns None when a turn is ALREADY
+    // running. This is the single source of truth for "is a turn in flight",
+    // set here BEFORE the ~600 lines of streaming setup and the agent call.
+    // The old code checked is_turn_active here but only marked active far
+    // below, so a follow-up landing in that window forked a second
+    // concurrent turn instead of enqueuing. The guard (RAII) clears the flag
+    // on every exit path, including early returns and panic.
+    let turn_guard = match telegram_state.try_begin_turn(session_id) {
+        Some(guard) => guard,
+        None => {
+            // A turn is already in flight for this session.
+            // If it is blocked on a `follow_up_question`, the user's text IS
+            // the answer (#500). Fire the oneshot so the tool unblocks and
+            // returns the text, instead of queueing: the tool is suspended
+            // inside `rx.await`, so no tool round ever ends to drain the
+            // queue, and a queued answer would sit until a button click or
+            // the 10-min timeout.
+            if telegram_state
+                .resolve_pending_question_with_text(session_id, text.clone())
+                .await
+            {
+                tracing::info!(
+                    "Telegram: text answered a pending follow_up_question on session {}",
+                    session_id
+                );
+                fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
+                return Ok(());
+            }
             tracing::info!(
-                "Telegram: text answered a pending follow_up_question on session {}",
+                "Telegram: message arrived mid-turn on session {} — queued for injection \
+                 between tool rounds",
                 session_id
             );
+            telegram_state.enqueue_reaction(
+                session_id,
+                crate::brain::agent::QueuedUserMessage {
+                    context_text: format!(
+                        "[The user sent this follow-up while you were still working: factor \
+                         it into the CURRENT task now, do not restart from scratch]:\n{}",
+                        display_text
+                    ),
+                    // History shows what the user typed, not the steering preface.
+                    display_text: display_text.clone(),
+                },
+            );
+            // Visible acknowledgment so the message never looks silently eaten.
             fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
             return Ok(());
         }
-        tracing::info!(
-            "Telegram: message arrived mid-turn on session {} — queued for injection \
-             between tool rounds",
-            session_id
-        );
-        telegram_state.enqueue_reaction(
-            session_id,
-            crate::brain::agent::QueuedUserMessage {
-                context_text: format!(
-                    "[The user sent this follow-up while you were still working: factor it \
-                     into the CURRENT task now, do not restart from scratch]:\n{}",
-                    display_text
-                ),
-                // History shows what the user typed, not the steering preface.
-                display_text: display_text.clone(),
-            },
-        );
-        // Visible acknowledgment so the message never looks silently eaten.
-        fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
-        return Ok(());
-    }
+    };
 
     // ── Streaming setup ───────────────────────────────────────────────────────
     // Preview from the BARE user text: never the wrapped agent input
@@ -3332,10 +3345,9 @@ pub(crate) async fn handle_message(
         .store_cancel_token(session_id, cancel_token.clone())
         .await;
 
-    // Mark this session as having a turn in flight so a reaction that lands
-    // mid-turn is injected into this loop instead of firing a second turn
-    // (#302 Stage 2). The guard clears the flag on drop, including on panic.
-    let turn_guard = telegram_state.mark_turn_active(session_id);
+    // The turn was already claimed atomically above (#501), so the session
+    // is flagged active for the whole span from the mid-turn decision through
+    // this agent call. `turn_guard` is held until the drop below.
 
     let chat_id_str = msg.chat.id.0.to_string();
     let result = agent

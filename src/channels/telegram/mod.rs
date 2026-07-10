@@ -532,6 +532,28 @@ impl TelegramState {
         }
     }
 
+    /// Atomically begin a turn for `session_id` (#501). Under ONE lock:
+    /// returns `Some(guard)` and marks the session active when no turn is
+    /// running, or `None` when a turn already is (the caller then treats the
+    /// message as a mid-turn follow-up). This closes the check-then-act race
+    /// where `is_turn_active` was checked ~600 lines before `mark_turn_active`
+    /// ran, so a follow-up arriving in that window read the session as idle
+    /// and forked a second concurrent turn instead of enqueuing.
+    pub(crate) fn try_begin_turn(
+        self: &std::sync::Arc<Self>,
+        session_id: Uuid,
+    ) -> Option<ActiveTurnGuard> {
+        let mut set = self.active_turns.lock().ok()?;
+        if !set.insert(session_id) {
+            // Already present: a turn is in flight for this session.
+            return None;
+        }
+        Some(ActiveTurnGuard {
+            state: self.clone(),
+            session_id,
+        })
+    }
+
     /// True while a turn is in flight for `session_id`.
     pub(crate) fn is_turn_active(&self, session_id: Uuid) -> bool {
         self.active_turns
