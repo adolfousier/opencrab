@@ -2731,6 +2731,22 @@ pub(crate) async fn handle_message(
     // queued follow-up (each image of a consecutive drop) leaked a live
     // loop that ticked its own "Working on:" bubble forever (#407).
     if telegram_state.is_turn_active(session_id) {
+        // If this session is blocked on a `follow_up_question`, the user's text
+        // IS the answer (#500). Fire the oneshot with it so the tool unblocks
+        // and returns the text, instead of queueing: the tool is suspended
+        // inside `rx.await`, so no tool round ever ends to drain the queue, and
+        // a queued answer would sit until a button click or the 10-min timeout.
+        if telegram_state
+            .resolve_pending_question_with_text(session_id, text.clone())
+            .await
+        {
+            tracing::info!(
+                "Telegram: text answered a pending follow_up_question on session {}",
+                session_id
+            );
+            fire_reaction(&bot, msg.chat.id, msg.id, "👀").await;
+            return Ok(());
+        }
         tracing::info!(
             "Telegram: message arrived mid-turn on session {} — queued for injection \
              between tool rounds",

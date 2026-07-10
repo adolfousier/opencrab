@@ -88,7 +88,12 @@ pub(crate) fn make_question_callback(
 
             let (tx, rx) = oneshot::channel::<String>();
             state
-                .register_pending_question(question_id.clone(), tx, info.options.clone())
+                .register_pending_question(
+                    question_id.clone(),
+                    info.session_id,
+                    tx,
+                    info.options.clone(),
+                )
                 .await;
             tracing::info!(
                 "Telegram follow_up_question: registered id={} options={}",
@@ -129,14 +134,26 @@ pub(crate) fn make_question_callback(
                     );
                     Ok(answer)
                 }
-                Ok(Err(_)) => Err(AgentError::Internal(
-                    "follow_up_question oneshot channel closed".into(),
-                )),
+                Ok(Err(_)) => {
+                    // Sender dropped without firing: clear both maps so no dead
+                    // reverse entry lingers to swallow the next text (#500).
+                    state
+                        .clear_pending_question(&question_id, info.session_id)
+                        .await;
+                    Err(AgentError::Internal(
+                        "follow_up_question oneshot channel closed".into(),
+                    ))
+                }
                 Err(_) => {
                     tracing::warn!(
                         "Telegram follow_up_question: 10-minute timeout id={}",
                         question_id
                     );
+                    // Same cleanup on timeout: the question is gone, drop its
+                    // reverse mapping (#500).
+                    state
+                        .clear_pending_question(&question_id, info.session_id)
+                        .await;
                     Err(AgentError::Internal("follow_up_question timed out".into()))
                 }
             }
