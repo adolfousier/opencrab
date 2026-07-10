@@ -1312,6 +1312,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
     use teloxide::types::BotCommand;
 
     let mut commands: Vec<BotCommand> = vec![
+        BotCommand::new("start", "Get your user ID to start using the bot"),
         BotCommand::new("new", "Start a new session"),
         BotCommand::new("cd", "Change working directory"),
         BotCommand::new("sessions", "List and switch sessions"),
