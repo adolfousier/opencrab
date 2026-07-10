@@ -11,7 +11,9 @@
 use crate::brain::provider::custom_openai_compatible::{
     OpenAIErrorResponse, needs_reasoning_content_for, unwrap_proxy_error,
 };
-use crate::brain::provider::error::{ProviderError, is_html_error_body, is_transient_proxy_400};
+use crate::brain::provider::error::{
+    ProviderError, is_html_error_body, is_temporary_unavailable_signal, is_transient_proxy_400,
+};
 
 // ─── unwrap_proxy_error ─────────────────────────────────────────────
 
@@ -185,6 +187,109 @@ fn is_transient_proxy_400_rejects_actionable_messages() {
         Some("model_not_found")
     ));
     assert!(!is_transient_proxy_400("some random reason", None));
+}
+
+// ─── temporary unavailability (overload/capacity) on 4xx JSON (#505) ─
+// Some providers report an overloaded/at-capacity model as a 4xx JSON API
+// error instead of 429/5xx. Those must be retried in place and (through
+// is_retryable) fall to the next provider, WITHOUT reclassifying permanent
+// model/auth errors.
+
+#[test]
+fn overload_400_with_real_error_type_is_retryable() {
+    // A 400 that carries a real error_type would fail is_transient_proxy_400
+    // (non-empty type), but the overload wording makes it temporary.
+    let err = ProviderError::ApiError {
+        status: 400,
+        message: "The model is currently overloaded, please try again later".to_string(),
+        error_type: Some("invalid_request_error".to_string()),
+    };
+    assert!(err.is_temporarily_unavailable());
+    assert!(
+        err.is_retryable(),
+        "an overloaded 400 must get the retry budget, not surface"
+    );
+}
+
+#[test]
+fn capacity_409_is_temporary_and_retryable() {
+    // A non-400 4xx overload (409) is invisible to is_transient_proxy_400
+    // and to should_try_next's 400 arm; the classifier catches it.
+    let err = ProviderError::ApiError {
+        status: 409,
+        message: "Model at capacity".to_string(),
+        error_type: Some("capacity".to_string()),
+    };
+    assert!(err.is_temporarily_unavailable());
+    assert!(err.is_retryable());
+}
+
+#[test]
+fn temporarily_unavailable_503_style_type_on_4xx() {
+    let err = ProviderError::ApiError {
+        status: 400,
+        message: "backend temporarily unavailable".to_string(),
+        error_type: Some("server_error".to_string()),
+    };
+    assert!(err.is_retryable());
+}
+
+#[test]
+fn permanent_model_not_found_is_not_temporary() {
+    // Must NOT be reclassified: routes to the model-mismatch path, not retry.
+    let err = ProviderError::ApiError {
+        status: 404,
+        message: "The model `foo` does not exist or you do not have access".to_string(),
+        error_type: Some("model_not_found".to_string()),
+    };
+    assert!(
+        !err.is_temporarily_unavailable(),
+        "a permanent model error must never read as temporary"
+    );
+}
+
+#[test]
+fn auth_error_is_not_temporary_even_with_retry_wording() {
+    // Belt-and-suspenders: an auth body must stay permanent even if it says
+    // "try again".
+    let err = ProviderError::ApiError {
+        status: 401,
+        message: "Invalid API key, please try again with a valid key".to_string(),
+        error_type: Some("authentication_error".to_string()),
+    };
+    assert!(!err.is_temporarily_unavailable());
+    // 401 still falls back (dead credential), but via the auth arm, not as a
+    // retryable transient error.
+    assert!(!err.is_retryable());
+}
+
+#[test]
+fn is_temporary_unavailable_signal_positive_and_negative() {
+    // Overload/capacity/try-again vocabulary → transient.
+    assert!(is_temporary_unavailable_signal("Model overloaded", None));
+    assert!(is_temporary_unavailable_signal(
+        "service unavailable",
+        Some("")
+    ));
+    assert!(is_temporary_unavailable_signal(
+        "we are experiencing high demand",
+        None
+    ));
+    assert!(is_temporary_unavailable_signal("please try again", None));
+    assert!(is_temporary_unavailable_signal(
+        "busy",
+        Some("overloaded_error")
+    ));
+    // Permanent / actionable → not transient.
+    assert!(!is_temporary_unavailable_signal(
+        "model not found",
+        Some("model_not_found")
+    ));
+    assert!(!is_temporary_unavailable_signal(
+        "invalid api key",
+        Some("authentication_error")
+    ));
+    assert!(!is_temporary_unavailable_signal("some unrelated 400", None));
 }
 
 // ─── needs_reasoning_content_for ────────────────────────────────────

@@ -113,7 +113,20 @@ impl ProviderError {
                 status: 400,
                 message,
                 error_type,
-            } => is_transient_proxy_400(message, error_type.as_deref()),
+            } if is_transient_proxy_400(message, error_type.as_deref()) => true,
+            // A 4xx JSON body that describes a TEMPORARY server-side
+            // unavailability — the model/provider is overloaded, at capacity,
+            // or asking to try again. Some providers return this instead of
+            // 429/5xx, so without classifying it the transient error surfaces
+            // (or bounces to fallback with zero retries) instead of getting
+            // the retry budget. `is_temporarily_unavailable` excludes
+            // permanent model-unsupported and auth errors, so this never masks
+            // an actionable configuration problem.
+            ProviderError::ApiError { status, .. }
+                if (400..500).contains(status) && self.is_temporarily_unavailable() =>
+            {
+                true
+            }
             _ => false,
         }
     }
@@ -159,6 +172,95 @@ impl ProviderError {
             _ => false,
         }
     }
+
+    /// True when the error describes a TEMPORARY server-side unavailability —
+    /// the model or provider is overloaded, at capacity, or explicitly asking
+    /// to try again — rather than a permanent client error (bad model, auth,
+    /// validation). Some OpenAI-compatible providers return this as a 4xx JSON
+    /// body instead of 429/5xx, so `is_retryable` and (through it) the fallback
+    /// chain consult this to give the request its retry budget and, failing
+    /// that, roll to the next provider. Deliberately excludes permanent
+    /// model-unsupported and auth/validation errors so it never masks an
+    /// actionable configuration problem.
+    pub fn is_temporarily_unavailable(&self) -> bool {
+        match self {
+            // 429 and 5xx already route through RateLimitExceeded / the 5xx
+            // arm of is_retryable; classify only the ambiguous 4xx JSON case.
+            ProviderError::ApiError {
+                status,
+                message,
+                error_type,
+            } if (400..500).contains(status) && *status != 429 => {
+                // A permanent "model not found / not supported" must stay
+                // permanent (routes to the model-mismatch UX, not a retry).
+                if self.is_model_unsupported() {
+                    return false;
+                }
+                is_temporary_unavailable_signal(message, error_type.as_deref())
+            }
+            _ => false,
+        }
+    }
+}
+
+/// True when a provider error body describes a transient overload/capacity
+/// condition. Matches on overload-ish error types and on a bounded vocabulary
+/// of "temporarily unavailable / at capacity / try again" phrases, while
+/// rejecting permanent auth/model phrases outright so an auth or
+/// model-not-found body is never mistaken for a transient blip.
+pub(crate) fn is_temporary_unavailable_signal(message: &str, error_type: Option<&str>) -> bool {
+    let ty = error_type.unwrap_or("").trim().to_ascii_lowercase();
+    // Error types some providers set explicitly for an overloaded backend.
+    const TRANSIENT_TYPES: &[&str] = &[
+        "overloaded_error",
+        "overloaded",
+        "server_error",
+        "service_unavailable",
+        "capacity_error",
+        "capacity",
+    ];
+    if TRANSIENT_TYPES.iter().any(|t| ty == *t) {
+        return true;
+    }
+    let m = message.to_ascii_lowercase();
+    // Guard: permanent auth/config/model errors must never read as transient,
+    // even if some other word in the body happens to look transient.
+    const PERMANENT_HINTS: &[&str] = &[
+        "invalid api key",
+        "unauthorized",
+        "authentication",
+        "permission denied",
+        "not found",
+        "not supported",
+        "unsupported",
+        "does not exist",
+        "invalid model",
+        "no such model",
+    ];
+    if PERMANENT_HINTS.iter().any(|h| m.contains(h)) {
+        return false;
+    }
+    // Positive vocabulary for a temporary server-side unavailability. Kept
+    // specific to overload/capacity/try-again so unrelated 4xx bodies do not
+    // match. Add new strings here when a provider invents a different phrase.
+    const TRANSIENT_HINTS: &[&str] = &[
+        "overloaded",
+        "over capacity",
+        "at capacity",
+        "no capacity",
+        "temporarily unavailable",
+        "temporarily overloaded",
+        "currently unavailable",
+        "currently overloaded",
+        "service unavailable",
+        "server is busy",
+        "servers are busy",
+        "too busy",
+        "high demand",
+        "try again",
+        "please retry",
+    ];
+    TRANSIENT_HINTS.iter().any(|h| m.contains(h))
 }
 
 /// True when an error body is an HTML page rather than a JSON API error.
