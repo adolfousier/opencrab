@@ -787,16 +787,12 @@ pub(crate) async fn refresh_flow_html(
     }
 }
 
-/// Freeze the current processing-log block: keep the rendered message on
-/// screen exactly as it is, close it, and let subsequent entries start a
-/// fresh block. Used when the block can no longer be edited (size limit).
-/// The entries rendered into the frozen message are dropped from state so
-/// the next block starts small instead of instantly overflowing again.
-/// A mid-turn user follow-up landed (queued-message injection): freeze the
-/// open processing-log block IN PLACE — its content stays visible above the
-/// follow-up — and mark the response placeholder for re-post, so the next
-/// tool round opens a fresh block BELOW the user's message and the chat
-/// keeps flowing bottom-down (#404).
+/// A mid-turn user follow-up landed (queued-message injection). Since #475 the
+/// open processing-log block is NOT closed or frozen and its entries are NOT
+/// dropped: the block stays open with its content visible above the follow-up,
+/// and only the response placeholder is marked for re-post. #451's restick then
+/// relocates the SAME block below the newest message on the next tool round, so
+/// the chat keeps flowing bottom-down with one block per turn (#404, #475).
 pub(crate) fn detach_flow_for_followup(streaming: &Arc<std::sync::Mutex<StreamingState>>) {
     // The block is NOT closed here (#475). The original #404 freeze existed
     // to make the next round appear below the user's follow-up, but in a
