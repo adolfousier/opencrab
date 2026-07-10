@@ -14,6 +14,7 @@ fn cfg(allowed: &[&str], owner: &[&str], groups: &[(&str, &[&str])]) -> Telegram
             TelegramGroupConfig {
                 allowed_users: users.iter().map(|s| s.to_string()).collect(),
                 respond_to: None,
+                ..Default::default()
             },
         );
     }
@@ -52,6 +53,56 @@ fn group_user_allowed_only_in_that_group_never_dm() {
     );
 }
 
+/// Build a config with one group marked `open = true`.
+fn cfg_open_group(allowed: &[&str], owner: &[&str], open_group: &str) -> TelegramConfig {
+    let mut g = HashMap::new();
+    g.insert(
+        open_group.to_string(),
+        TelegramGroupConfig {
+            open: true,
+            ..Default::default()
+        },
+    );
+    TelegramConfig {
+        allowed_users: allowed.iter().map(|s| s.to_string()).collect(),
+        bot_owner: owner.iter().map(|s| s.to_string()).collect(),
+        groups: g,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn open_group_serves_any_member_only_in_that_group() {
+    // Opt-in per-group open mode (#495): any member of the open group passes
+    // without being individually listed, but ONLY in that group.
+    let c = cfg_open_group(&["111"], &["111"], "-100open");
+    assert!(
+        c.user_allowed("777", "-100open", false),
+        "unlisted member allowed in the open group"
+    );
+    assert!(
+        !c.user_allowed("777", "777", true),
+        "open-group member still refused in DM"
+    );
+    assert!(
+        !c.user_allowed("777", "-100other", false),
+        "open mode does not leak to other groups"
+    );
+}
+
+#[test]
+fn open_group_still_requires_configured_bot() {
+    // Open mode only applies once the bot is configured (admins/owner set); a
+    // fully unconfigured bot still denies everyone, secure by default.
+    let mut c = cfg_open_group(&[], &[], "-100open");
+    c.allowed_users.clear();
+    c.bot_owner.clear();
+    assert!(
+        !c.user_allowed("777", "-100open", false),
+        "unconfigured bot denies even in an open group"
+    );
+}
+
 #[test]
 fn unknown_user_refused_everywhere() {
     let c = cfg(&["111"], &["111"], &[("-100g", &["222"])]);
@@ -87,6 +138,7 @@ fn respond_to_group_override_wins_else_global() {
         TelegramGroupConfig {
             allowed_users: vec![],
             respond_to: Some(RespondTo::All),
+            ..Default::default()
         },
     );
     assert_eq!(
@@ -116,6 +168,7 @@ fn respond_to_group_with_mention_override() {
         TelegramGroupConfig {
             allowed_users: vec![],
             respond_to: Some(RespondTo::Mention),
+            ..Default::default()
         },
     );
     assert_eq!(
@@ -139,6 +192,7 @@ fn respond_to_group_with_auto_override() {
         TelegramGroupConfig {
             allowed_users: vec![],
             respond_to: Some(RespondTo::Auto),
+            ..Default::default()
         },
     );
     assert_eq!(

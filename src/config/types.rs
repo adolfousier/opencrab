@@ -384,6 +384,9 @@ pub struct TelegramConfig {
     /// `[channels.telegram.groups.<chat_id>]`. A user listed under a group's
     /// `allowed_users` may interact in THAT group only and is still refused in
     /// DMs unless they are also a global admin (`allowed_users`) or the owner.
+    /// Set a group's `open = true` to let ANY member of that group interact
+    /// there without being individually listed (DMs and other groups stay
+    /// locked).
     #[serde(default)]
     pub groups: std::collections::HashMap<String, TelegramGroupConfig>,
 }
@@ -401,6 +404,14 @@ pub struct TelegramGroupConfig {
     /// this group when set; `None` falls back to the global value.
     #[serde(default)]
     pub respond_to: Option<RespondTo>,
+    /// Opt-in open mode for THIS group: when true, any member of this group
+    /// passes the ACL without being listed in `allowed_users`. DMs and every
+    /// other group stay locked (a member here is still refused in DMs and in
+    /// other groups unless separately allowed). Lets a trusted group serve all
+    /// its members while keeping secure-by-default everywhere else. Default:
+    /// false.
+    #[serde(default)]
+    pub open: bool,
 }
 
 impl TelegramConfig {
@@ -428,6 +439,8 @@ impl TelegramConfig {
     ///
     /// Tiers:
     /// - `bot_owner` + `allowed_users` (admins): allowed anywhere, DMs included.
+    /// - `groups.<chat_id>.open = true`: any member of THAT group is allowed in
+    ///   THAT group only; refused in DMs.
     /// - `groups.<chat_id>.allowed_users`: allowed in THAT group only; refused
     ///   in DMs. This closes the "move the bot into a private chat to escape
     ///   group oversight" bypass.
@@ -448,7 +461,7 @@ impl TelegramConfig {
         }
         self.groups
             .get(chat_id)
-            .is_some_and(|g| Self::id_in(&g.allowed_users, uid))
+            .is_some_and(|g| g.open || Self::id_in(&g.allowed_users, uid))
     }
 
     /// Respond mode for a chat: the group's override if set, else the global.
