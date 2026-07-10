@@ -931,6 +931,36 @@ pub fn spawn_rsi_engine(
                 }
             }
 
+            // Repeated USER REQUESTS — slash-command candidates (#504).
+            // The bash pass above codifies what the AGENT runs; this codifies
+            // what the USER keeps typing (the /standup case). Group recent
+            // user-message texts by normalized signature; a signature seen
+            // COMMAND_PATTERN_THRESHOLD+ times is a promotion candidate the
+            // agent files via rsi_propose kind=command. Already-applied /
+            // rejected names never re-surface (#502), so this is safe to
+            // suggest freely.
+            {
+                let cm_repo = crate::db::ChannelMessageRepository::new(repo.pool().clone());
+                if let Ok(requests) = cm_repo.recent_user_requests(1000).await {
+                    let candidates = crate::brain::rsi_command_patterns::command_candidates(
+                        &requests,
+                        crate::brain::rsi_command_patterns::COMMAND_PATTERN_THRESHOLD,
+                    );
+                    for c in candidates {
+                        let desc = format!(
+                            "User request pattern '{}' typed {} times — candidate for a slash \
+                             command (rsi_propose kind=command). File a concise /<name> whose \
+                             prompt captures the recurring intent. Sample phrasings:\n  - {}",
+                            c.signature,
+                            c.count,
+                            c.samples.join("\n  - "),
+                        );
+                        tracing::info!("RSI opportunity: {}", desc);
+                        opportunities.push(desc);
+                    }
+                }
+            }
+
             // 3. Dedup: hash the assembled opportunity descriptions and
             // compare against the previous cycle's hash. When identical,
             // the autonomous agent would have nothing new to act on — its

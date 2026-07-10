@@ -304,6 +304,30 @@ impl ChannelMessageRepository {
             .context("Failed to fetch latest topic name")
     }
 
+    /// Recent user-sent request texts across ALL chats, newest first (#504).
+    /// Excludes the bot's own messages (sender_id = 'bot:opencrabs') and
+    /// non-text kinds. Feeds the RSI command-pattern detector, which groups
+    /// repeated asks into slash-command promotion candidates.
+    pub async fn recent_user_requests(&self, limit: i64) -> Result<Vec<String>> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT content FROM channel_messages \
+                     WHERE sender_id <> 'bot:opencrabs' AND message_type = 'text' \
+                     AND content <> '' \
+                     ORDER BY created_at DESC LIMIT ?1",
+                )?;
+                let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to fetch recent user requests")
+    }
+
     /// Search messages by content (LIKE-based) with optional thread_id filter
     pub async fn search(
         &self,

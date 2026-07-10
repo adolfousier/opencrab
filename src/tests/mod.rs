@@ -351,6 +351,7 @@ pub mod model_fetch_test;
 pub mod parallel_tools_test;
 pub mod profile_test;
 pub mod rsi_brain_dedup_test;
+pub mod rsi_command_patterns_test;
 pub mod rsi_fallback_wrap_test;
 pub mod rsi_git_history_test;
 pub mod rsi_prompt_triage_test;
