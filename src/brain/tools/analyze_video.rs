@@ -664,7 +664,7 @@ impl AnalyzeVideoTool {
             super::error::ToolError::Execution(format!(
                 "Failed to parse Gemini JSON response: {}. Body[..500]: {}",
                 e,
-                &body_text.chars().take(500).collect::<String>()
+                body_text.chars().take(500).collect::<String>()
             ))
         })?;
 

@@ -71,9 +71,6 @@ fn find_head(cwd: &Path) -> Option<PathBuf> {
                 return Some(head);
             }
         }
-        match dir.parent() {
-            Some(p) => dir = p,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }

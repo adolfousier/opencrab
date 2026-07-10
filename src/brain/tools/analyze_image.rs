@@ -203,7 +203,7 @@ impl Tool for AnalyzeImageTool {
             super::error::ToolError::Execution(format!(
                 "Failed to parse Gemini JSON response: {}. Body (first 500 chars): {}",
                 e,
-                &body_text.chars().take(500).collect::<String>()
+                body_text.chars().take(500).collect::<String>()
             ))
         })?;
 

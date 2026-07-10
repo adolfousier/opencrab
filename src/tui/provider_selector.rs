@@ -624,10 +624,9 @@ fn prettify_claude_cli_model(model: &str) -> Option<&'static str> {
         ("Opus", r)
     } else if let Some(r) = model.strip_prefix("sonnet-") {
         ("Sonnet", r)
-    } else if let Some(r) = model.strip_prefix("haiku-") {
-        ("Haiku", r)
     } else {
-        return None;
+        let r = model.strip_prefix("haiku-")?;
+        ("Haiku", r)
     };
     let (major, minor) = rest.split_once('-')?;
     if major.is_empty()
