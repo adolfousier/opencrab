@@ -5,6 +5,80 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.66] - 2026-07-10
+
+53 commits since v0.3.65. 84 files changed, +7943 / -3582 lines.
+
+### ✨ Features
+
+- `824d955c` **Direct model switching everywhere**: `/models <provider/model>` switches directly on every channel (#467)
+- `8c9daf66` **Apply-to-scope selector**: choose session or global scope for direct model switches (#468)
+- `549e1f6c` **Headless model switching**: `opencrabs session set-model` for non-interactive use (#465)
+- `91c0fce0` **force_default on reload**: pushes the default provider/model pair to all sessions (#466)
+- `f9ed6748` **Config drift warnings**: startup warnings when a config value silently drifts (#477)
+- `c9d315e6` **Native rich blocks on Telegram**: final responses render as native rich blocks, fixing fence mangling (#476)
+- `03a37312` **Flow header wall-clock duration**: finished/failed/timeout states carry the total turn time (#486)
+- `cb080298` **Bash comments as flow status**: line-start comments in a bash command surface as live flow status (#488)
+- `e8d5e701` **Full status preview**: the status preview uses the whole last human-readable line, no truncation (#487)
+- `0c419e31` **Per-group open mode**: opt-in `open = true` so a trusted group serves all members (#495)
+- `c32a24b9` **Skill candidates from tool sequences**: RSI detects recurring tool sequences as skill candidates (#504)
+- `333e540f` **Slash commands from repeated asks**: RSI proposes slash commands from repeated user requests (#504)
+- `816da9a4` **RSI staleness indicator**: mission-control staleness indicator plus a provider-creation fallback (#469)
+
+### 🔧 Fixes
+
+- `f830b50c` **Mid-turn slash command runs**: a slash command landing mid-turn injects as its own directive, not a foldable follow-up
+- `addc9d40` **Status-first live header**: the live flow header leads with the status message, bold, count and duration italic (#509)
+- `0449c27a` **Atomic reaction turn claim**: the reaction handler claims the turn via `try_begin_turn` (#508)
+- `8520724b` **Atomic turn claim**: follow-ups can no longer fork a parallel turn (#501)
+- `8447e8cf` **Text answers a pending question**: a mid-turn text message resolves a blocked `follow_up_question` (#500)
+- `4753f659` **Smarter loop-break**: nudge before breaking identical tool-call loops, catch interleaved repeats (#507)
+- `1d52cfcc` **Retry transient model errors**: temporary model-unavailability 4xx now classified as retryable (#505)
+- `97b4a266` **No re-proposing settled skills**: RSI stops re-proposing already applied or rejected skills and commands (#502)
+- `aa06a08d` **Unified separator**: single `•` bullet everywhere, the `·` middle-dot dropped (#499)
+- `14cedfd4` **Live-only preview**: the activity preview no longer sticks to the settled Finished header (#498)
+- `00bb3eb3` **/start in the menu**: onboarding is discoverable from the Telegram command menu (#497)
+- `5c37fee1` **Headless tools execute**: `run`/`agent --auto-approve` route through the real tool loop (#492)
+- `223761cf` **Mid-turn narration folds**: narration joins the flow block instead of a standalone bubble (#490)
+- `22f2a780` **Resume narration folds**: the resume streaming placeholder is gated on an open flow block (#490)
+- `d266f72b` **Folded narration capped**: a length cap keeps the flow block compact (#489)
+- `de8bd62e` **Status from raw command**: bash status comments read from the raw command, not the decorated hint (#488)
+- `86434a5b` **Follow-ups keep the block**: mid-turn follow-ups no longer shred the flow block (#475)
+- `1e343780` **Reaction sees the answer**: the folded answer is reclaimed before the reaction decision (#478)
+- `4ed8ea28` **Fences disqualify rich**: code fences disqualify the native rich markdown path (#476)
+- `6655e161` **Fence disqualification reverted**: tables render rich again (#476 revert)
+- `f66806ed` **Collapsed summary shows progress**: latest-activity preview in the collapsed rich flow summary
+- `0d0d90b1` **Phantom completion hardening**: closed anchor evasions and verb gaps behind live fake completions (#463, #464)
+- `4b35f880` **Rust 1.97 clippy clean**: cleared the new stable clippy lints
+
+### 📖 Documentation
+
+- `d016c06b` fix the stale `detach_flow_for_followup` comment to match #475 behavior (#496)
+- `f483b268` drop the stale `working_directory` config key, note per-session cwd (#479)
+- `dfde946f` document the #461 model-switching family in the README
+- `7c842b45` add direct file links to the README documentation section
+- `0db045d2` add Context7 config and documentation references
+- `858f5761` add the morning-recap cron template script
+
+### 🧹 Miscellaneous
+
+- `1498a6d6` refactor(telegram): move the unified delivery path to delivery.rs (#471 phase 4)
+- `0552e728` refactor(telegram): resume rides the shared deliver_final_response (#471 phase 3)
+- `4a511c4e` refactor(telegram): extract deliver_final_response from handle_message (#471 phase 2)
+- `b5e619d8` refactor(telegram): move crash-recovery resume to resume.rs (#471 phase 1)
+- `3f1ef23d` refactor(telegram): move keyboard builders to keyboards.rs (#471 phase 1)
+- `392c5ada` refactor(telegram): move send helpers to intermediates.rs (#471 phase 1)
+- `6c68ac86` refactor(telegram): move incoming-media helpers to media.rs (#471 phase 1)
+- `2e030adf` refactor(telegram): move markdown/HTML transforms to markdown.rs (#471 phase 1)
+- `fa6ffd24` refactor(telegram): move flow-block machinery to flow.rs (#471 phase 1)
+- `3d5c7378` refactor(telegram): one shared post-loop display drain for both handlers (#470)
+
+### 📊 Stats
+
+- 53 commits since v0.3.65
+- 84 files changed, +7943 / -3582 lines
+- Tests/clippy not run this pass (skipped per request)
+
 ## [0.3.65] - 2026-07-08
 
 27 commits since v0.3.64. 51 files changed, +2013 / -279 lines.
@@ -6674,3 +6748,4 @@ fixes.
 [0.3.61]: https://github.com/adolfousier/opencrabs/compare/v0.3.60...v0.3.61
 [0.3.63]: https://github.com/adolfousier/opencrabs/compare/v0.3.62...v0.3.63[0.3.64]: https://github.com/adolfousier/opencrabs/compare/v0.3.63...v0.3.64
 [0.3.65]: https://github.com/adolfousier/opencrabs/compare/v0.3.64...v0.3.65
+[0.3.66]: https://github.com/adolfousier/opencrabs/compare/v0.3.65...v0.3.66
