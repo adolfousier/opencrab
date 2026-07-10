@@ -100,3 +100,41 @@ fn try_begin_turn_is_per_session() {
     assert!(state.try_begin_turn(b).is_some(), "b is independent of a");
     assert!(state.try_begin_turn(a).is_none(), "a still blocked");
 }
+
+// ── reaction handler claims the turn atomically (#508) ───────────────
+// The reaction handler used to check is_turn_active and, on the
+// fresh-turn path, never mark the session active — leaving a reaction
+// turn invisible to a concurrent message/reaction (which could fork a
+// second turn) and carrying the same TOCTOU window #501 fixed. It now
+// claims via try_begin_turn and holds the guard across the turn.
+
+#[test]
+fn reaction_claim_blocks_concurrent_reaction_and_enqueues() {
+    let state = Arc::new(TelegramState::new());
+    let sid = Uuid::new_v4();
+
+    // A reaction with no turn running claims the turn and holds the guard
+    // across its (fresh) agent call.
+    let reaction_turn_guard = state
+        .try_begin_turn(sid)
+        .expect("idle session: reaction claims the turn");
+    assert!(state.is_turn_active(sid), "reaction turn is now visible");
+
+    // A second reaction landing during that turn is refused the claim, so
+    // the handler enqueues it for mid-turn injection instead of forking a
+    // second concurrent turn on the same session.
+    assert!(
+        state.try_begin_turn(sid).is_none(),
+        "concurrent reaction must not fork a second turn"
+    );
+    state.enqueue_reaction(sid, QueuedUserMessage::plain("mid-turn react".to_string()));
+
+    // When the reaction turn ends, the guard drops and the enqueued
+    // follow-up remains for the running loop / drain-on-exit to pick up.
+    drop(reaction_turn_guard);
+    assert!(!state.is_turn_active(sid));
+    assert_eq!(
+        state.drain_reaction(sid).map(|m| m.context_text).as_deref(),
+        Some("mid-turn react"),
+    );
+}

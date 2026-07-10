@@ -3754,28 +3754,38 @@ pub(crate) async fn handle_reaction(
     // negative = pause and ask) and addresses the user by first name (#302).
     let preview: String = content.chars().take(500).collect();
 
-    // If a turn is already running on this session, inject the reaction into
-    // that live loop between rounds rather than firing a second concurrent turn
-    // on the same session (which would double-charge the provider and interleave
-    // history). The running loop drains it via reaction_queue_callback; a final
-    // round leftover is flushed by handle_message's drain-on-exit (#302 Stage 2).
-    if telegram_state.is_turn_active(session_id) {
-        let midturn = super::reaction_prompt::build_midturn_reaction_message(&user_name, &emoji);
-        telegram_state.enqueue_reaction(
-            session_id,
-            crate::brain::agent::QueuedUserMessage {
-                context_text: midturn,
-                display_text: format!("[System: {user_name} reacted with {emoji} mid-turn]"),
-            },
-        );
-        tracing::info!(
-            "Telegram reaction: {} reacted with {} mid-turn on session {} — queued for injection",
-            user_name,
-            emoji,
-            session_id
-        );
-        return Ok(());
-    }
+    // Atomically claim the turn (#508, the same fix #501 applied to
+    // handle_message). try_begin_turn marks the session active under one lock,
+    // so there is no window between the check and the mark. On None a turn is
+    // already running: inject the reaction into that live loop between rounds
+    // rather than firing a second concurrent turn on the same session (which
+    // would double-charge the provider and interleave history). The running
+    // loop drains it via reaction_queue_callback; a final-round leftover is
+    // flushed by handle_message's drain-on-exit (#302 Stage 2). On Some we hold
+    // the guard across the fresh reaction turn below so the turn is registered
+    // active — the old code never marked it, leaving a reaction turn invisible
+    // to a concurrent message or reaction and able to fork a second turn.
+    let _turn_guard = match telegram_state.try_begin_turn(session_id) {
+        Some(guard) => guard,
+        None => {
+            let midturn =
+                super::reaction_prompt::build_midturn_reaction_message(&user_name, &emoji);
+            telegram_state.enqueue_reaction(
+                session_id,
+                crate::brain::agent::QueuedUserMessage {
+                    context_text: midturn,
+                    display_text: format!("[System: {user_name} reacted with {emoji} mid-turn]"),
+                },
+            );
+            tracing::info!(
+                "Telegram reaction: {} reacted with {} mid-turn on session {} — queued for injection",
+                user_name,
+                emoji,
+                session_id
+            );
+            return Ok(());
+        }
+    };
 
     let prompt =
         super::reaction_prompt::build_reaction_prompt(&user_name, &emoji, &preview, !is_dm);
