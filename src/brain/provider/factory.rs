@@ -1794,6 +1794,14 @@ fn try_create_anthropic(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
         tracing::info!("Anthropic context window override: {} tokens", cw);
         provider = provider.with_context_window(cw);
     }
+    if let Some(base_url) = &anthropic_config.base_url {
+        tracing::info!("Anthropic base URL override: {}", base_url);
+        provider = provider.with_base_url(base_url.clone());
+    }
+    if let Some(extra) = &anthropic_config.extra_headers {
+        tracing::info!("Anthropic extra headers: {} header(s)", extra.len());
+        provider = provider.with_extra_headers(extra.clone());
+    }
 
     tracing::info!("Using Anthropic provider");
 

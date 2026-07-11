@@ -44,6 +44,12 @@ pub struct AnthropicProvider {
     /// User override from `providers.anthropic.context_window` in config.toml.
     /// When set, becomes the compaction budget (overrides agent.context_limit).
     configured_context_window: Option<u32>,
+    /// Custom base URL override (e.g. for AgentRouter gateways).
+    /// When set, replaces `ANTHROPIC_API_URL` and `ANTHROPIC_MODELS_URL`.
+    base_url: Option<String>,
+    /// Extra HTTP headers injected into every request.
+    /// Useful for API gateways that validate client identity (e.g. User-Agent).
+    extra_headers: Vec<(String, String)>,
 }
 
 impl AnthropicProvider {
@@ -63,6 +69,8 @@ impl AnthropicProvider {
             client,
             custom_default_model: None,
             configured_context_window: None,
+            base_url: None,
+            extra_headers: vec![],
         }
     }
 
@@ -73,6 +81,8 @@ impl AnthropicProvider {
             client,
             custom_default_model: None,
             configured_context_window: None,
+            base_url: None,
+            extra_headers: vec![],
         }
     }
 
@@ -86,6 +96,42 @@ impl AnthropicProvider {
     pub fn with_context_window(mut self, context_window: u32) -> Self {
         self.configured_context_window = Some(context_window);
         self
+    }
+
+    /// Set custom base URL (e.g. for API gateways like AgentRouter).
+    /// When set, replaces both the messages endpoint and models endpoint.
+    pub fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = Some(base_url);
+        self
+    }
+
+    /// Inject extra HTTP headers into every request to this provider.
+    /// Useful for API gateways that validate client identity via User-Agent
+    /// or other custom headers.
+    pub fn with_extra_headers(
+        mut self,
+        headers: std::collections::BTreeMap<String, String>,
+    ) -> Self {
+        self.extra_headers = headers.into_iter().collect();
+        self
+    }
+
+    /// Messages API URL, respecting base_url override.
+    /// Defaults to `ANTHROPIC_API_URL` when base_url is not set.
+    fn messages_url(&self) -> String {
+        match &self.base_url {
+            Some(base) => format!("{}/v1/messages", base.trim_end_matches('/')),
+            None => ANTHROPIC_API_URL.to_string(),
+        }
+    }
+
+    /// Models list URL, respecting base_url override.
+    /// Defaults to `ANTHROPIC_MODELS_URL` when base_url is not set.
+    fn models_url(&self) -> String {
+        match &self.base_url {
+            Some(base) => format!("{}/v1/models", base.trim_end_matches('/')),
+            None => ANTHROPIC_MODELS_URL.to_string(),
+        }
     }
 
     /// Build request headers with prompt-caching beta header.
@@ -110,6 +156,17 @@ impl AnthropicProvider {
             reqwest::header::CONTENT_TYPE,
             "application/json".parse().expect("valid content-type"),
         );
+
+        // Inject extra headers (e.g. User-Agent override for API gateways)
+        for (key, value) in &self.extra_headers {
+            if let (Ok(k), Ok(v)) = (
+                key.parse::<reqwest::header::HeaderName>(),
+                value.parse::<reqwest::header::HeaderValue>(),
+            ) {
+                headers.insert(k, v);
+            }
+        }
+
         headers
     }
 
@@ -274,7 +331,7 @@ impl Provider for AnthropicProvider {
                 tracing::debug!("Sending request to Anthropic API");
                 let response = self
                     .client
-                    .post(ANTHROPIC_API_URL)
+                    .post(self.messages_url())
                     .headers(req_headers.clone())
                     .json(&anthropic_request)
                     .send()
@@ -331,7 +388,7 @@ impl Provider for AnthropicProvider {
             || async {
                 let response = self
                     .client
-                    .post(ANTHROPIC_API_URL)
+                    .post(self.messages_url())
                     .headers(req_headers.clone())
                     .json(&anthropic_request)
                     .send()
@@ -458,7 +515,7 @@ impl Provider for AnthropicProvider {
 
         let req = self
             .client
-            .get(ANTHROPIC_MODELS_URL)
+            .get(self.models_url())
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("x-api-key", &self.api_key)
             .header("anthropic-beta", "prompt-caching-2024-07-31");
