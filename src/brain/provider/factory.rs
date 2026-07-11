@@ -1560,6 +1560,15 @@ fn configure_openai_compatible(
         provider = provider.with_cache_ttl(ttl);
         tracing::info!("OpenRouter cache TTL: {}s", ttl);
     }
+    // Extra headers from config (e.g. User-Agent for API gateway auth)
+    if let Some(ref extra) = config.extra_headers {
+        let headers: Vec<(String, String)> = extra
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        tracing::info!("Applying {} extra header(s) from config", headers.len());
+        provider = provider.with_extra_headers(headers);
+    }
     provider
 }
 
