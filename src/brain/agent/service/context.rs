@@ -10,16 +10,12 @@ use uuid::Uuid;
 
 impl AgentService {
     /// A compact reminder of the session's actively-executing plan, to pin at
-    /// the end of the prompt each turn. `None` when there's no plan, the plan
-    /// isn't executing (Draft / PendingApproval / Rejected / Cancelled), or it's
-    /// already finished. Read straight from the plan file the plan tool writes.
+    /// the end of the prompt each turn. `None` when there's no plan or the
+    /// plan isn't Active — an Editing plan (pre-init or design prose) must
+    /// never be nudged toward checklist execution. Loaded through the shared
+    /// plan store so legacy statuses map (and terminal ones resolve) first.
     fn active_plan_reminder(session_id: Uuid) -> Option<String> {
-        let path = crate::config::opencrabs_home()
-            .join("agents")
-            .join("session")
-            .join(format!(".opencrabs_plan_{session_id}.json"));
-        let content = std::fs::read_to_string(&path).ok()?;
-        let plan: crate::tui::plan::PlanDocument = serde_json::from_str(&content).ok()?;
+        let plan = crate::utils::plan_files::load_plan(session_id)?;
         format_plan_reminder(&plan)
     }
 
@@ -699,13 +695,14 @@ impl AgentService {
     }
 }
 
-/// Build the pinned plan reminder from a plan document. `None` unless the plan
-/// is actively executing (Approved/InProgress) and has unresolved tasks. Pure
-/// (no IO) so it's unit-testable; `active_plan_reminder` does the file load.
+/// Build the pinned plan reminder from a plan document. `None` unless the
+/// checklist is live (Active) with unresolved tasks — Editing (pre-init flag
+/// or design prose) gets no execution nagging. Pure (no IO) so it's
+/// unit-testable; `active_plan_reminder` does the file load.
 pub(crate) fn format_plan_reminder(plan: &crate::tui::plan::PlanDocument) -> Option<String> {
     use crate::tui::plan::{PlanStatus, TaskStatus};
 
-    if !matches!(plan.status, PlanStatus::Approved | PlanStatus::InProgress) {
+    if plan.status != PlanStatus::Active || plan.pre_init_editing {
         return None;
     }
     let total = plan.tasks.len();

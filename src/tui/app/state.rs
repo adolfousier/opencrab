@@ -1032,45 +1032,18 @@ impl App {
         self.reload_plan();
     }
 
-    /// Reload the plan document from disk.
+    /// Reload the plan document from disk through the shared plan store.
     ///
-    /// Stale plans (terminal status, or InProgress but not actively processing)
-    /// are discarded automatically so they don't linger across restarts.
+    /// The loader resolves legacy terminal statuses (Completed archives,
+    /// Cancelled deletes) and maps legacy live statuses onto Editing/Active.
+    /// Live plans are NEVER discarded here: an idle Active plan (including
+    /// a seed-failed empty-task one awaiting retry) and an Editing design
+    /// doc both survive reloads and restarts by design.
     pub(crate) fn reload_plan(&mut self) {
-        self.plan_document = self.plan_file_path.as_ref().and_then(|path| {
-            let content = std::fs::read_to_string(path).ok()?;
-            serde_json::from_str::<crate::tui::plan::PlanDocument>(&content).ok()
-        });
-
-        // Clean up stale plans that shouldn't be displayed.
-        //
-        // IMPORTANT: Completed plans are intentionally KEPT. They serve as
-        // execution history the agent can reference, and the plan file is
-        // session-scoped (auto-cleaned with the session).  Only rejected or
-        // cancelled plans are discarded, and InProgress plans from stale runs.
-        if let Some(ref plan) = self.plan_document {
-            use crate::tui::plan::PlanStatus;
-            let should_discard = match plan.status {
-                PlanStatus::Rejected | PlanStatus::Cancelled => true,
-                PlanStatus::InProgress => {
-                    // If the agent isn't actively processing, this plan is stale
-                    // (left over from a previous run or a failed tool call)
-                    !self.is_processing
-                }
-                _ => false,
-            };
-            if should_discard {
-                self.discard_plan_file();
-                self.plan_document = None;
-            }
-        }
-    }
-
-    /// Clear the in-memory plan and delete the backing file.
-    pub(crate) fn discard_plan_file(&mut self) {
-        if let Some(path) = &self.plan_file_path {
-            let _ = std::fs::remove_file(path);
-        }
+        self.plan_document = self
+            .plan_file_path
+            .as_ref()
+            .and_then(|path| crate::utils::plan_files::load_plan_from_path(path));
     }
 
     /// Get the shared session ID handle (for channels like Telegram/WhatsApp)

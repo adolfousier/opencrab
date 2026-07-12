@@ -8,6 +8,7 @@ pub mod git_branch;
 pub mod image;
 pub mod install;
 pub mod pdf_vision;
+pub mod plan_files;
 pub mod prompt_analyzer;
 pub mod provider_pair;
 pub mod providers;

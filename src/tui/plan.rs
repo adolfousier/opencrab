@@ -187,10 +187,14 @@ pub struct PlanDocument {
     #[serde(default = "default_uuid")]
     pub session_id: Uuid,
 
-    /// Plan title/goal
+    /// Plan title/goal. Defaults empty so the minimal pre-init Editing
+    /// sidecar (flag + empty tasks, no approvable content) parses too.
+    #[serde(default)]
     pub title: String,
 
-    /// Detailed description
+    /// Detailed description. While post-init Editing, mirrors the full
+    /// session `.md` body.
+    #[serde(default)]
     pub description: String,
 
     /// List of tasks to complete
@@ -224,9 +228,18 @@ pub struct PlanDocument {
     #[serde(default = "default_now")]
     pub updated_at: DateTime<Utc>,
 
-    /// When the plan was approved (if applicable)
+    /// When the plan was approved (if applicable). Set on user Approve
+    /// (or first `/execute`) on the design track — never auto-set by the
+    /// plan tool.
     #[serde(default)]
     pub approved_at: Option<DateTime<Utc>>,
+
+    /// Durable pre-init Editing flag: the user entered Plan-mode intent
+    /// (`/plan` / soft-nudge) but `plan init` has not succeeded yet. Lives
+    /// on the JSON sidecar (never on `AgentContext`, which is rebuilt every
+    /// turn) so it survives restart.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pre_init_editing: bool,
 }
 
 impl PlanDocument {
@@ -242,10 +255,11 @@ impl PlanDocument {
             risks: Vec::new(),
             test_strategy: String::new(),
             technical_stack: Vec::new(),
-            status: PlanStatus::Draft,
+            status: PlanStatus::Editing,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             approved_at: None,
+            pre_init_editing: false,
         }
     }
 
@@ -396,28 +410,19 @@ impl PlanDocument {
                 .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
     }
 
-    /// Approve the plan
+    /// Approve the plan: Editing → Active, stamping `approved_at`. Called
+    /// on user Approve (or first `/execute`) on the design track — the
+    /// plan tool never calls this on `start`.
     pub fn approve(&mut self) {
-        self.status = PlanStatus::Approved;
+        self.status = PlanStatus::Active;
         self.approved_at = Some(Utc::now());
         self.updated_at = Utc::now();
     }
 
-    /// Reject the plan
-    pub fn reject(&mut self) {
-        self.status = PlanStatus::Rejected;
-        self.updated_at = Utc::now();
-    }
-
-    /// Mark plan as in progress
+    /// Mark the checklist live (without stamping `approved_at` — that is
+    /// user Approve's job on the design track).
     pub fn start_execution(&mut self) {
-        self.status = PlanStatus::InProgress;
-        self.updated_at = Utc::now();
-    }
-
-    /// Mark plan as completed
-    pub fn complete(&mut self) {
-        self.status = PlanStatus::Completed;
+        self.status = PlanStatus::Active;
         self.updated_at = Utc::now();
     }
 
@@ -633,36 +638,52 @@ pub struct ExecutionSummary {
     pub total_retries: usize,
 }
 
-/// Status of a plan
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+/// Status of a plan.
+///
+/// The live session model is NoPlan / Editing / Active; NoPlan means no
+/// plan file exists, so the enum only carries the two live states. On
+/// deserialization the seven legacy status strings map onto these two
+/// (Draft / PendingApproval / Rejected → Editing; Approved / InProgress →
+/// Active). Terminal legacy statuses (Completed archives, Cancelled
+/// deletes) are resolved at the file level by
+/// `crate::utils::plan_files::load_plan` before this map matters; the
+/// serde fallbacks here keep direct parses lossless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlanStatus {
-    /// Plan is being drafted
+    /// Design prose only — no checklist execution. Sub-states (pre-init
+    /// vs post-init) are derived from the files on disk, not stored here.
     #[default]
-    Draft,
-    /// Plan is ready for review
-    PendingApproval,
-    /// Plan was approved by user
-    Approved,
-    /// Plan was rejected, needs revision
-    Rejected,
-    /// Plan is being executed
-    InProgress,
-    /// All tasks completed
-    Completed,
-    /// Plan was cancelled
-    Cancelled,
+    Editing,
+    /// The checklist is live; a design `.md`, if present, is frozen.
+    Active,
+}
+
+impl Serialize for PlanStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            PlanStatus::Editing => "Editing",
+            PlanStatus::Active => "Active",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for PlanStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "Active" | "Approved" | "InProgress" | "Completed" => PlanStatus::Active,
+            // "Editing", "Draft", "PendingApproval", "Rejected", "Cancelled",
+            // and anything unrecognized default to the non-executing state.
+            _ => PlanStatus::Editing,
+        })
+    }
 }
 
 impl std::fmt::Display for PlanStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlanStatus::Draft => write!(f, "Draft"),
-            PlanStatus::PendingApproval => write!(f, "Pending Approval"),
-            PlanStatus::Approved => write!(f, "Approved"),
-            PlanStatus::Rejected => write!(f, "Rejected"),
-            PlanStatus::InProgress => write!(f, "In Progress"),
-            PlanStatus::Completed => write!(f, "Completed"),
-            PlanStatus::Cancelled => write!(f, "Cancelled"),
+            PlanStatus::Editing => write!(f, "Editing"),
+            PlanStatus::Active => write!(f, "Active"),
         }
     }
 }

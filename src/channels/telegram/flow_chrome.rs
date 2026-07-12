@@ -12,7 +12,7 @@ use super::flow::{HeaderMarkup, StreamingState, humanize_duration, open_flow, re
 use super::handler::escape_html;
 use crate::brain::agent::AgentService;
 use crate::brain::goal::GoalManager;
-use crate::tui::plan::{PlanDocument, PlanStatus, TaskStatus};
+use crate::tui::plan::TaskStatus;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use uuid::Uuid;
@@ -62,32 +62,13 @@ impl FlowSections {
 }
 
 /// Read plan title + checklist progress from the live session plan JSON
-/// (`.opencrabs_plan_{session}.json`), as-is: no status-enum migration, and
-/// legacy shapes deserialize through the same serde defaults the plan tool
-/// uses. Terminal plans (completed / cancelled / rejected) yield nothing so
-/// stale chrome never outlives the plan.
+/// through the shared plan store, which maps legacy statuses onto
+/// Editing/Active and resolves terminal ones (Completed archives,
+/// Cancelled deletes) — so stale chrome never outlives the plan.
 pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Option<String>) {
-    let path = crate::config::opencrabs_home()
-        .join("agents")
-        .join("session")
-        .join(format!(".opencrabs_plan_{session_id}.json"));
-    let content = match tokio::fs::read_to_string(&path).await {
-        Ok(c) => c,
-        Err(_) => return (None, None), // no plan file for this session
-    };
-    let plan: PlanDocument = match serde_json::from_str(&content) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::debug!("Telegram flow chrome: unreadable plan JSON at {path:?}: {e}");
-            return (None, None);
-        }
-    };
-    if matches!(
-        plan.status,
-        PlanStatus::Completed | PlanStatus::Cancelled | PlanStatus::Rejected
-    ) {
+    let Some(plan) = crate::utils::plan_files::load_plan(session_id) else {
         return (None, None);
-    }
+    };
     let title = {
         let t = plan.title.trim();
         (!t.is_empty()).then(|| crate::utils::truncate_str(t, SECTION_TEXT_CAP).to_string())

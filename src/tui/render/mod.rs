@@ -106,9 +106,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         (rows.max(1) as u16 + 2).min(10)
     };
 
-    // Show the plan checklist only while tasks are actively executing.
-    // Any other status means the plan is not running (user moved on,
-    // cancelled, etc.).
+    // Show the plan checklist only while the checklist is live (Active
+    // with tasks). Editing plans are design prose with no checklist to
+    // render; a seed-failed Active plan has no tasks yet, so no panel.
     //
     // Sizing:
     //   - chrome (header + border) takes 2 lines.
@@ -121,7 +121,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let plan_height = app
         .plan_document
         .as_ref()
-        .filter(|p| p.status == crate::tui::plan::PlanStatus::InProgress)
+        .filter(|p| p.status == crate::tui::plan::PlanStatus::Active && !p.tasks.is_empty())
         .map(|p| (p.tasks.len() + 2).min(12) as u16)
         .unwrap_or(0);
 

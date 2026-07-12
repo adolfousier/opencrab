@@ -60,7 +60,18 @@ pub enum CompactionKind {
 /// `auto_approve`: when false, we tail the prompt with the standard
 /// tool-approval reminder so the model does not batch tool calls
 /// after a fresh context.
-pub fn build_continuation(kind: CompactionKind, silent: bool, auto_approve: bool) -> String {
+///
+/// `plan_editing`: when the session's plan is in Editing (durable pre-init
+/// flag or design prose), the Active-only `plan start` recovery hint is
+/// swapped for an Editing-aware one — telling an Editing session to start
+/// the checklist would corrupt the design track. Minimal stub until the
+/// full Editing/Active recovery rewrite lands with the plan-mode UX.
+pub fn build_continuation(
+    kind: CompactionKind,
+    silent: bool,
+    auto_approve: bool,
+    plan_editing: bool,
+) -> String {
     let mut text = if silent {
         silent_body(kind).to_string()
     } else {
@@ -69,14 +80,25 @@ pub fn build_continuation(kind: CompactionKind, silent: bool, auto_approve: bool
     // Session-recovery hint: applies to ALL variants (fun + silent).
     // After compaction the agent should check for a live plan and,
     // if the session is code-focused, load coding standards.
-    text.push_str(
-        "\n\nSESSION RECOVERY: Call `plan` with operation=\"start\" (no args) to \
-         re-surface the in-progress task and update the TUI plan widget. If \
-         this session has an active plan, this will show exactly where you \
-         left off (task details, progress count). Continue executing from \
-         there. If the task involves coding, load CODE.md for coding standards \
-         before editing files.",
-    );
+    if plan_editing {
+        text.push_str(
+            "\n\nSESSION RECOVERY: This session's plan is in Editing (design \
+             prose, no live checklist). Do NOT call `plan` with \
+             operation=\"start\"; checklist operations stay blocked until the \
+             user approves the design. Continue refining the plan document. \
+             If the task involves coding, load CODE.md for coding standards \
+             before editing files.",
+        );
+    } else {
+        text.push_str(
+            "\n\nSESSION RECOVERY: Call `plan` with operation=\"start\" (no args) to \
+             re-surface the in-progress task and update the TUI plan widget. If \
+             this session has an active plan, this will show exactly where you \
+             left off (task details, progress count). Continue executing from \
+             there. If the task involves coding, load CODE.md for coding standards \
+             before editing files.",
+        );
+    }
     if !auto_approve {
         text.push_str(
             "\n\nCRITICAL: Tool approval is REQUIRED. You MUST wait for user \

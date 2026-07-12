@@ -829,6 +829,7 @@ impl AgentService {
                         super::compaction_prompts::CompactionKind::Manual,
                         self.silent_compaction,
                         self.auto_approve_tools,
+                        crate::utils::plan_files::plan_mode_state(session_id).is_editing(),
                     );
                     message_service
                         .create_message(session_id, "user".to_string(), cont_text.clone())
@@ -943,6 +944,7 @@ impl AgentService {
                 super::compaction_prompts::CompactionKind::Regular,
                 self.silent_compaction,
                 self.auto_approve_tools,
+                crate::utils::plan_files::plan_mode_state(session_id).is_editing(),
             );
             context.add_message(Message::user(cont_text));
         }
@@ -1294,6 +1296,7 @@ impl AgentService {
                     super::compaction_prompts::CompactionKind::MidLoop,
                     self.silent_compaction,
                     self.auto_approve_tools,
+                    crate::utils::plan_files::plan_mode_state(session_id).is_editing(),
                 );
                 context.add_message(Message::user(cont_text));
             }
@@ -1423,6 +1426,7 @@ impl AgentService {
                                 super::compaction_prompts::CompactionKind::Emergency,
                                 self.silent_compaction,
                                 self.auto_approve_tools,
+                                crate::utils::plan_files::plan_mode_state(session_id).is_editing(),
                             );
                             context.add_message(Message::user(cont_text));
 
@@ -5399,6 +5403,7 @@ impl AgentService {
                     super::compaction_prompts::CompactionKind::PostTool,
                     self.silent_compaction,
                     self.auto_approve_tools,
+                    crate::utils::plan_files::plan_mode_state(session_id).is_editing(),
                 );
                 context.add_message(Message::user(cont_text));
             }

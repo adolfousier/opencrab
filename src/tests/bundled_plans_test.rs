@@ -148,7 +148,7 @@ fn test_minimal_format_with_no_optional_fields() {
 
 #[test]
 fn test_plan_status_default() {
-    assert_eq!(PlanStatus::default(), PlanStatus::Draft);
+    assert_eq!(PlanStatus::default(), PlanStatus::Editing);
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn test_plan_document_default_values() {
         !plan.session_id.is_nil(),
         "session_id should be auto-generated"
     );
-    assert_eq!(plan.status, PlanStatus::Draft);
+    assert_eq!(plan.status, PlanStatus::Editing);
     assert_eq!(plan.context, "");
     assert!(plan.risks.is_empty());
     assert!(plan.technical_stack.is_empty());

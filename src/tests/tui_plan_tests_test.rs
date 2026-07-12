@@ -29,7 +29,7 @@ fn test_plan_document_new() {
     assert_eq!(plan.session_id, session_id);
     assert_eq!(plan.title, "Test Plan");
     assert_eq!(plan.description, "A test plan for unit testing");
-    assert_eq!(plan.status, PlanStatus::Draft);
+    assert_eq!(plan.status, PlanStatus::Editing);
     assert!(plan.tasks.is_empty());
     assert!(plan.risks.is_empty());
     assert_eq!(plan.context, "");
@@ -175,29 +175,23 @@ fn test_is_complete() {
 fn test_plan_state_transitions() {
     let mut plan = create_test_plan(Uuid::new_v4());
 
-    // Draft -> PendingApproval
-    assert_eq!(plan.status, PlanStatus::Draft);
+    // New plans start Editing (design prose, no live checklist).
+    assert_eq!(plan.status, PlanStatus::Editing);
+    assert!(plan.approved_at.is_none());
 
-    // Approve
+    // User Approve: Editing -> Active, stamping approved_at.
     plan.approve();
-    assert_eq!(plan.status, PlanStatus::Approved);
+    assert_eq!(plan.status, PlanStatus::Active);
     assert!(plan.approved_at.is_some());
-
-    // Start execution
-    plan.start_execution();
-    assert_eq!(plan.status, PlanStatus::InProgress);
-
-    // Complete
-    plan.complete();
-    assert_eq!(plan.status, PlanStatus::Completed);
 }
 
 #[test]
-fn test_plan_rejection() {
+fn test_start_execution_does_not_stamp_approved_at() {
+    // start_execution marks the checklist live without approving: the
+    // approved_at stamp belongs to user Approve on the design track only.
     let mut plan = create_test_plan(Uuid::new_v4());
-
-    plan.reject();
-    assert_eq!(plan.status, PlanStatus::Rejected);
+    plan.start_execution();
+    assert_eq!(plan.status, PlanStatus::Active);
     assert!(plan.approved_at.is_none());
 }
 
@@ -497,16 +491,9 @@ fn test_task_status_icons() {
 
 #[test]
 fn test_plan_status_display() {
-    assert_eq!(format!("{}", PlanStatus::Draft), "Draft");
-    assert_eq!(
-        format!("{}", PlanStatus::PendingApproval),
-        "Pending Approval"
-    );
-    assert_eq!(format!("{}", PlanStatus::Approved), "Approved");
-    assert_eq!(format!("{}", PlanStatus::Rejected), "Rejected");
-    assert_eq!(format!("{}", PlanStatus::InProgress), "In Progress");
-    assert_eq!(format!("{}", PlanStatus::Completed), "Completed");
-    assert_eq!(format!("{}", PlanStatus::Cancelled), "Cancelled");
+    // UI and reminders speak Editing / Active, not legacy status names.
+    assert_eq!(format!("{}", PlanStatus::Editing), "Editing");
+    assert_eq!(format!("{}", PlanStatus::Active), "Active");
 }
 
 #[test]

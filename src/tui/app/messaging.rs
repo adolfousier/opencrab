@@ -2099,28 +2099,15 @@ impl App {
             content.len()
         );
 
-        // On every new user message, decide what to do with any in-memory plan:
-        //
-        // Plan file lifecycle on user message:
-        // • Terminal (Completed/Rejected/Cancelled): delete file + clear memory.
-        // • InProgress: plan is actively executing — keep file and widget.
-        // • Everything else (Draft/PendingApproval/Approved): user moved on.
-        //   Clear widget from memory but keep file on disk so the agent tool can
-        //   still read/write it if the exchange continues.
-        if let Some(ref plan) = self.plan_document {
-            use crate::tui::plan::PlanStatus;
-            match plan.status {
-                PlanStatus::Completed | PlanStatus::Rejected | PlanStatus::Cancelled => {
-                    self.discard_plan_file();
-                    self.plan_document = None;
-                }
-                PlanStatus::InProgress => {
-                    // Actively executing — leave widget showing
-                }
-                _ => {
-                    self.plan_document = None;
-                }
-            }
+        // On every new user message, refresh the in-memory plan from disk.
+        // Editing and Active plans both persist across user messages (an
+        // Editing design doc must survive follow-up chat; an idle Active
+        // checklist, including a seed-failed empty one, is still live).
+        // Terminal plans no longer linger on disk — completing archives and
+        // discarding deletes — so a vanished file is the only "moved on"
+        // signal, and the shared loader resolves legacy terminal statuses.
+        if self.plan_document.is_some() {
+            self.reload_plan();
         }
 
         // Deny stale pending approvals so they don't block streaming
@@ -2583,7 +2570,6 @@ impl App {
         let response_model = response.model.clone();
         let response_provider = response.provider_name.clone();
         let plan_path = self.plan_file_path.clone();
-        let is_processing = self.is_processing;
 
         tokio::spawn(async move {
             // Persist the {provider, model} pair from the response onto the
@@ -2623,20 +2609,16 @@ impl App {
             // We can't call self.reload_user_commands() from a spawned task,
             // so we skip it here. The next send_message will pick up new commands.
 
-            // Reload plan from disk and clear if done
+            // Resolve any legacy terminal plan statuses on disk (Completed
+            // archives, Cancelled deletes) via the shared loader. Live plans
+            // are never deleted here: an idle Active plan (including a
+            // seed-failed empty-task one) stays intact for retry, and
+            // Editing survives across turns by design.
             if let Some(ref path) = plan_path
-                && let Ok(content) = std::fs::read_to_string(path)
-                && let Ok(plan) = serde_json::from_str::<crate::tui::plan::PlanDocument>(&content)
+                && path.exists()
+                && crate::utils::plan_files::load_plan_from_path(path).is_none()
             {
-                use crate::tui::plan::PlanStatus;
-                let should_discard = match plan.status {
-                    PlanStatus::Completed | PlanStatus::Rejected | PlanStatus::Cancelled => true,
-                    PlanStatus::InProgress => !is_processing,
-                    _ => false,
-                };
-                if should_discard {
-                    let _ = std::fs::remove_file(path);
-                }
+                tracing::debug!("Plan at {} resolved to NoPlan on reload", path.display());
             }
         });
 

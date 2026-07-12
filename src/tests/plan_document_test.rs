@@ -7,10 +7,10 @@ use crate::tui::plan::*;
 // ── PlanDocument creation ───────────────────────────────────────
 
 #[test]
-fn new_plan_has_draft_status() {
+fn new_plan_starts_editing() {
     let session_id = Uuid::new_v4();
     let plan = PlanDocument::new(session_id, "Test Plan".to_string(), "Desc".to_string());
-    assert_eq!(plan.status, PlanStatus::Draft);
+    assert_eq!(plan.status, PlanStatus::Editing);
     assert_eq!(plan.title, "Test Plan");
     assert_eq!(plan.description, "Desc");
     assert_eq!(plan.session_id, session_id);
@@ -93,11 +93,10 @@ fn task_has_unique_id() {
 
 #[test]
 fn plan_status_eq() {
-    assert_eq!(PlanStatus::Draft, PlanStatus::Draft);
-    assert_eq!(PlanStatus::InProgress, PlanStatus::InProgress);
-    assert_eq!(PlanStatus::Completed, PlanStatus::Completed);
-    assert_eq!(PlanStatus::Cancelled, PlanStatus::Cancelled);
-    assert_ne!(PlanStatus::Draft, PlanStatus::InProgress);
+    assert_eq!(PlanStatus::Editing, PlanStatus::Editing);
+    assert_eq!(PlanStatus::Active, PlanStatus::Active);
+    assert_ne!(PlanStatus::Editing, PlanStatus::Active);
+    assert_eq!(PlanStatus::default(), PlanStatus::Editing);
 }
 
 // ── TaskStatus ──────────────────────────────────────────────────
@@ -149,7 +148,7 @@ fn plan_document_serializes_to_json() {
     let plan = PlanDocument::new(Uuid::new_v4(), "Test".to_string(), "Desc".to_string());
     let json = serde_json::to_string(&plan).unwrap();
     assert!(json.contains("Test"));
-    assert!(json.contains("Draft"));
+    assert!(json.contains("Editing"));
 }
 
 #[test]
@@ -170,9 +169,30 @@ fn plan_document_round_trip() {
 
 #[test]
 fn plan_status_serializes() {
-    let json = serde_json::to_string(&PlanStatus::InProgress).unwrap();
-    let deser: PlanStatus = serde_json::from_str(&json).unwrap();
-    assert_eq!(deser, PlanStatus::InProgress);
+    // Canonical strings round-trip.
+    assert_eq!(
+        serde_json::to_string(&PlanStatus::Editing).unwrap(),
+        "\"Editing\""
+    );
+    assert_eq!(
+        serde_json::to_string(&PlanStatus::Active).unwrap(),
+        "\"Active\""
+    );
+    let deser: PlanStatus = serde_json::from_str("\"Active\"").unwrap();
+    assert_eq!(deser, PlanStatus::Active);
+
+    // Legacy seven-status strings map on load: Draft / PendingApproval /
+    // Rejected land in Editing; Approved / InProgress land in Active.
+    for (legacy, expected) in [
+        ("Draft", PlanStatus::Editing),
+        ("PendingApproval", PlanStatus::Editing),
+        ("Rejected", PlanStatus::Editing),
+        ("Approved", PlanStatus::Active),
+        ("InProgress", PlanStatus::Active),
+    ] {
+        let got: PlanStatus = serde_json::from_str(&format!("\"{legacy}\"")).unwrap();
+        assert_eq!(got, expected, "legacy {legacy} mapped wrong");
+    }
 }
 
 #[test]

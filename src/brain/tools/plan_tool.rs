@@ -529,7 +529,9 @@ impl Tool for PlanTool {
 
                     imported.id = uuid::Uuid::new_v4();
                     imported.session_id = context.session_id;
-                    imported.status = PlanStatus::Draft;
+                    // Import is checklist-track: tasks are already structured,
+                    // so the plan goes straight to Active (no Approve step).
+                    imported.status = PlanStatus::Active;
                     imported.created_at = Utc::now();
                     imported.updated_at = Utc::now();
                     imported.approved_at = None;
@@ -615,7 +617,13 @@ impl Tool for PlanTool {
                     new_plan.risks = risks;
                     new_plan.test_strategy = test_strategy;
                     new_plan.technical_stack = technical_stack;
-                    new_plan.status = PlanStatus::Draft;
+                    // Inline tasks make this a checklist init (Active now);
+                    // an empty init is design-track Editing.
+                    new_plan.status = if tasks.is_empty() {
+                        PlanStatus::Editing
+                    } else {
+                        PlanStatus::Active
+                    };
 
                     for it in tasks {
                         add_task_to_plan(
@@ -716,9 +724,9 @@ impl Tool for PlanTool {
                         if current_plan.tasks.iter().all(|t| {
                             matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped)
                         }) {
-                            current_plan.complete();
                             format!(
-                                "✅ Plan complete. All {} tasks done.",
+                                "✅ Plan complete. All {} tasks done. The plan is archived; \
+                                 the session has no live plan.",
                                 current_plan.tasks.len()
                             )
                         } else {
@@ -768,13 +776,10 @@ impl Tool for PlanTool {
                         let already_done =
                             matches!(status, TaskStatus::Completed | TaskStatus::Skipped);
                         if !already_done {
-                            // start() sets InProgress (also resets a Failed task for retry).
+                            // start() sets the task InProgress (also resets a
+                            // Failed task for retry).
                             current_plan.get_task_by_order_mut(order).unwrap().start();
-                            current_plan.status = PlanStatus::InProgress;
-                            // Auto-approve on first start (transition from Draft)
-                            if current_plan.approved_at.is_none() {
-                                current_plan.approved_at = Some(Utc::now());
-                            }
+                            current_plan.status = PlanStatus::Active;
                         }
 
                         let done = current_plan
@@ -860,7 +865,7 @@ impl Tool for PlanTool {
                 let next_order = current_plan.next_executable_task().map(|t| t.order);
                 if let Some(no) = next_order {
                     current_plan.get_task_by_order_mut(no).unwrap().start();
-                    current_plan.status = PlanStatus::InProgress;
+                    current_plan.status = PlanStatus::Active;
                     let next = current_plan.get_task_by_order(no).unwrap();
                     let details = render_task_details(current_plan, next);
                     msg.push_str(&format!(
@@ -872,9 +877,9 @@ impl Tool for PlanTool {
                     .iter()
                     .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
                 {
-                    current_plan.complete();
                     msg.push_str(&format!(
-                        "\n\n✅ Plan complete. All {} tasks done.",
+                        "\n\n✅ Plan complete. All {} tasks done. The plan is archived; \
+                         the session has no live plan.",
                         current_plan.tasks.len()
                     ));
                 } else {
@@ -940,6 +945,15 @@ impl Tool for PlanTool {
                 }
             } else {
                 tracing::error!("❌ Plan file does not exist after save!");
+            }
+
+            // Archive on last complete: the finished plan (just saved with
+            // every task resolved) moves under `archive/` with a timestamp
+            // and the session returns to NoPlan. No lingering Done status.
+            if current_plan.is_complete()
+                && let Err(e) = crate::utils::plan_files::archive_plan(context.session_id)
+            {
+                tracing::warn!("Failed to archive completed plan: {e}");
             }
         }
 
