@@ -132,9 +132,63 @@ fn react_no_directive() {
 
 #[test]
 fn react_malformed_no_closing() {
-    // Missing >> — left untouched
+    // No terminator at all (`>>`, `</react>`, or `>`) — left untouched.
     let (text, emoji) = extract_react_marker("<<react:👍");
     assert_eq!(text, "<<react:👍");
+    assert!(emoji.is_none());
+}
+
+// ── tolerant terminator (models that hallucinate the close) ──────────────
+
+#[test]
+fn react_xml_close_tag_terminator() {
+    // Cursor/Cline muscle memory: the model closes the directive with an
+    // XML-style `</react>` instead of `>>`. It must still fire, and the
+    // mangled marker must never leak into the chat as raw text.
+    let (text, emoji) = extract_react_marker("<<react:👍</react>");
+    assert_eq!(text, "");
+    assert_eq!(emoji.as_deref(), Some("👍"));
+}
+
+#[test]
+fn react_xml_close_tag_with_text() {
+    let (text, emoji) = extract_react_marker("All set <<react:✅</react>");
+    assert_eq!(text, "All set");
+    assert_eq!(emoji.as_deref(), Some("✅"));
+}
+
+#[test]
+fn react_bare_single_bracket_terminator() {
+    // A single closing `>` (dropped the second bracket) still closes the
+    // directive rather than leaking the marker.
+    let (text, emoji) = extract_react_marker("<<react:🔥>");
+    assert_eq!(text, "");
+    assert_eq!(emoji.as_deref(), Some("🔥"));
+}
+
+#[test]
+fn react_double_bracket_preferred_over_single() {
+    // `>>` and a bare `>` both start at the same offset; the longer `>>`
+    // must win so no stray bracket is left in the output.
+    let (text, emoji) = extract_react_marker("<<react:👍>> done");
+    assert_eq!(text, "done");
+    assert_eq!(emoji.as_deref(), Some("👍"));
+}
+
+#[test]
+fn react_xml_close_word_payload_stays() {
+    // The emoji guard still applies to the tolerant terminator: a word
+    // payload closed with `</react>` is prose, not a directive.
+    let (text, emoji) = extract_react_marker("<<react:emoji</react>");
+    assert_eq!(text, "<<react:emoji</react>");
+    assert!(emoji.is_none());
+}
+
+#[test]
+fn react_bare_terminator_in_code_span_untouched() {
+    // Code-span protection still applies to the tolerant terminator.
+    let (text, emoji) = extract_react_marker("use `<<react:👍>` to react");
+    assert_eq!(text, "use `<<react:👍>` to react");
     assert!(emoji.is_none());
 }
 

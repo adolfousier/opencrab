@@ -24,9 +24,13 @@ pub fn extract_vid_markers(text: &str) -> (String, Vec<String>) {
 /// (or a reaction alongside text). Channel handlers use the returned
 /// emoji to call `set_message_reaction` on the user's message.
 ///
-/// The opening prefix is matched tolerantly: some models escape the angle
-/// brackets and emit `<\react:` or `<\\react:` instead of `<<react:`. All of
-/// these normalize to the same extraction, so the reaction still fires and the
+/// Both ends of the marker are matched tolerantly. The opening prefix: some
+/// models escape the angle brackets and emit `<\react:` or `<\\react:` instead
+/// of `<<react:`. The closing terminator: `>>`, an XML-style `</react>`, or a
+/// bare `>` all close the directive (see `find_react_close`) — models trained
+/// on Cursor/Cline-style harnesses close directives with `</tag>`, and that
+/// leaked mangled markers as raw text when only `>>` was accepted. All of these
+/// normalize to the same extraction, so the reaction still fires and the
 /// mangled marker never leaks into the chat as raw text.
 ///
 /// Unlike the `<<IMG:path>>` extractor this is deliberately strict, because
@@ -55,14 +59,14 @@ pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
         }
         if !in_code
             && let Some(open_len) = match_react_open(&text[i..])
-            && let Some(rel_end) = text[i + open_len..].find(">>")
+            && let Some((rel_end, term_len)) = find_react_close(&text[i + open_len..])
         {
             let payload = text[i + open_len..i + open_len + rel_end].trim();
             if is_reaction_emoji(payload) {
                 if emoji.is_none() {
                     emoji = Some(payload.to_string());
                 }
-                i += open_len + rel_end + 2; // past ">>"
+                i += open_len + rel_end + term_len; // past the terminator
                 continue;
             }
         }
@@ -97,6 +101,33 @@ fn match_react_open(s: &str) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// Find the earliest reaction-marker terminator in `s`, tolerating the strict
+/// `>>` close as well as the `</react>` (XML-style close tag) and bare `>`
+/// variants that models emit when they mangle the directive. Returns
+/// `(offset, term_len)` — the byte offset where the terminator starts and its
+/// byte length — or `None` when none is present.
+///
+/// When more than one candidate starts at the SAME offset the longest wins, so
+/// a canonical `>>` is never mis-read as a bare `>` (which would strand the
+/// trailing bracket in the output). All terminators are ASCII, so both the
+/// offset and `offset + term_len` land on char boundaries.
+fn find_react_close(s: &str) -> Option<(usize, usize)> {
+    const TERMS: [&str; 3] = [">>", "</react>", ">"];
+    let mut best: Option<(usize, usize)> = None;
+    for term in TERMS {
+        if let Some(pos) = s.find(term) {
+            let better = match best {
+                Some((bpos, blen)) => pos < bpos || (pos == bpos && term.len() > blen),
+                None => true,
+            };
+            if better {
+                best = Some((pos, term.len()));
+            }
+        }
+    }
+    best
 }
 
 /// A plausible reaction emoji: non-empty, short (compound emoji with skin
