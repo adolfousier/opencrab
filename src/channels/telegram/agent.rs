@@ -110,6 +110,10 @@ impl TelegramAgent {
 
                     // Register slash commands so they appear in Telegram's / menu
                     register_bot_commands(&bot).await;
+
+                    // One-time: organize any pre-subdir flat attachments under
+                    // channel_attachments/telegram/ (#513). Idempotent.
+                    super::media::migrate_flat_channel_attachments();
                 }
                 Err(e) => {
                     tracing::warn!("Telegram: token validation failed: {}. Bot not started.", e);

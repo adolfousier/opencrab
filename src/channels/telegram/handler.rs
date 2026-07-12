@@ -668,6 +668,11 @@ pub(crate) async fn handle_message(
             let sender_id = user.id.0.to_string();
             let sender_name = user.first_name.clone();
             let msg_id = msg.id.0.to_string();
+            // Numeric forms for the attachment filename suffix: chat id keeps
+            // origin detection, message id is unique per chat so two files in
+            // the same second cannot clobber each other in the durable store.
+            let chat_id_num = msg.chat.id.0;
+            let msg_id_num = msg.id.0 as i64;
             let thread_id = msg.thread_id.map(|t| t.0.to_string());
             // Capture the topic name from one of two sources:
             //   1. `forum_topic_created` service message — the topic
@@ -692,20 +697,25 @@ pub(crate) async fn handle_message(
             async move {
                 // If file data provided, write to disk and store path in content
                 let content = if let Some((bytes, filename)) = file_data {
+                    // Per-platform subdir so the durable store isn't one flat
+                    // dump; name-leading so the file is findable (#513).
                     let attachments_dir = dirs::home_dir()
                         .unwrap_or_else(|| std::path::PathBuf::from("."))
                         .join(".opencrabs")
-                        .join("channel_attachments");
+                        .join("channel_attachments")
+                        .join("telegram");
                     if let Err(e) = std::fs::create_dir_all(&attachments_dir) {
                         tracing::warn!("Failed to create attachments dir: {e}");
                         text
                     } else {
-                        let file_id = uuid::Uuid::new_v4();
-                        let safe_filename = filename.replace(
-                            |c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_',
-                            "_",
+                        let safe_filename = attachment_tmp_name(
+                            Some(&filename),
+                            "file",
+                            chat_id_num,
+                            msg_id_num,
+                            "bin",
                         );
-                        let file_path = attachments_dir.join(format!("{file_id}_{safe_filename}"));
+                        let file_path = attachments_dir.join(safe_filename);
                         match std::fs::write(&file_path, bytes) {
                             Ok(_) => {
                                 let path_str = file_path.to_string_lossy().to_string();
@@ -963,14 +973,22 @@ pub(crate) async fn handle_message(
         }
     }
 
-    // Also store directed group messages for complete history
+    // Also store directed group messages for complete history — including any
+    // attachment. The passive (non-mention) branches above already download and
+    // persist the file, but a message that @mentions the bot falls through to
+    // here; without downloading it, a directed file was stored as text only and
+    // lived solely as the ephemeral tmp copy, never reaching channel_attachments
+    // (#513). Download it and pass the bytes so any attachment from anyone,
+    // mention or not, lands in the durable store.
     if !is_dm {
-        store_channel_msg(
-            msg.text().or(msg.caption()).unwrap_or("").to_string(),
-            "text".into(),
-            None,
-        )
-        .await;
+        let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
+        let attachment = download_attachment(&msg, &bot, bot_token.clone()).await;
+        let (msg_type, file_data) = if let Some((mtype, bytes, fname)) = attachment {
+            (mtype, Some((bytes, fname)))
+        } else {
+            ("text".to_string(), None)
+        };
+        store_channel_msg(text, msg_type, file_data).await;
     }
 
     // Pick up recent voice files from tmp (user sent audio then tagged bot)

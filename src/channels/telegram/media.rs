@@ -56,6 +56,113 @@ pub(crate) async fn archive_image_markers(
     out
 }
 
+/// Sanitize one filename component: keep alphanumerics plus `.`/`-`/`_`,
+/// collapse everything else to `_`, and never yield an empty string. Mirrors
+/// the guard the `channel_attachments` writer uses so both stores agree (#513).
+pub(crate) fn sanitize_filename_component(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('_');
+    if trimmed.is_empty() {
+        "file".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Build the tmp filename for a named attachment (document / audio) so it LEADS
+/// with the sender's original filename stem, then appends `-{chat_id}-{ts}.{ext}`
+/// (#513). Leading with the real name makes the file human-findable; the
+/// chat_id/ts suffix keeps the origin chat detectable and makes re-posts
+/// collision-safe, the same reason voice/photo keep it. Falls back to
+/// `{fallback_stem}-{chat_id}-{ts}.{fallback_ext}` when no filename is present.
+/// Documents/audio are never scanned by `find_recent_tmp_file` (photo/voice
+/// only), so leading with the name breaks no pickup path.
+pub(crate) fn attachment_tmp_name(
+    original: Option<&str>,
+    fallback_stem: &str,
+    chat_id: i64,
+    ts: i64,
+    fallback_ext: &str,
+) -> String {
+    let (stem, ext) = match original {
+        Some(name) => {
+            // rsplit yields the whole string when there is no `.`; the filter
+            // rejects that so a dotless name falls back to the default ext.
+            let ext = name
+                .rsplit('.')
+                .next()
+                .filter(|e| *e != name)
+                .unwrap_or(fallback_ext);
+            let stem = name.strip_suffix(&format!(".{ext}")).unwrap_or(name);
+            (sanitize_filename_component(stem), ext.to_string())
+        }
+        None => (fallback_stem.to_string(), fallback_ext.to_string()),
+    };
+    let ext = sanitize_filename_component(&ext);
+    format!("{stem}-{chat_id}-{ts}.{ext}")
+}
+
+/// One-time cleanup: sweep files sitting flat in `channel_attachments/` into
+/// the per-platform `channel_attachments/telegram/` subdir. Everything stored
+/// before per-platform subdirs existed came from Telegram, so a loose file is
+/// a pre-subdir Telegram attachment (#513). Uses the same non-profile-aware
+/// base as the store (`~/.opencrabs/channel_attachments`), so it targets the
+/// exact dir new files are written to.
+pub(crate) fn migrate_flat_channel_attachments() {
+    let base = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".opencrabs")
+        .join("channel_attachments");
+    let moved = migrate_flat_attachments_in(&base, "telegram");
+    if moved > 0 {
+        tracing::info!("channel_attachments: migrated {moved} flat file(s) → telegram/");
+    }
+}
+
+/// Core of [`migrate_flat_channel_attachments`], parameterised on the base dir
+/// and target platform subdir so it is unit-testable against a tempdir. Moves
+/// only regular files (never the platform subdirs), skips a move when the dest
+/// name already exists, and is idempotent. Returns the number of files moved.
+pub(crate) fn migrate_flat_attachments_in(base: &std::path::Path, platform: &str) -> u32 {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return 0;
+    };
+    let target = base.join(platform);
+    let mut moved = 0u32;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // Skip the platform subdirs themselves; only loose files migrate.
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        if let Err(e) = std::fs::create_dir_all(&target) {
+            tracing::warn!("channel_attachments migration: mkdir failed: {e}");
+            return moved;
+        }
+        let dest = target.join(name);
+        if dest.exists() {
+            continue; // name clash — leave the original in place
+        }
+        match std::fs::rename(&path, &dest) {
+            Ok(()) => moved += 1,
+            Err(e) => tracing::warn!("channel_attachments migration: rename failed: {e}"),
+        }
+    }
+    moved
+}
+
 pub(crate) async fn save_incoming_files_to_tmp(bot: &Bot, msg: &Message, bot_token: &str) {
     use std::path::PathBuf;
 
@@ -94,37 +201,16 @@ pub(crate) async fn save_incoming_files_to_tmp(bot: &Bot, msg: &Message, bot_tok
         )
         .await;
     }
-    // Documents (preserve original extension)
+    // Documents: lead with the original filename, keep the chat_id/ts suffix
+    // for origin detection and collision-safety (#513).
     if let Some(doc) = msg.document() {
-        let ext = doc
-            .file_name
-            .as_deref()
-            .and_then(|n| n.rsplit('.').next())
-            .unwrap_or("bin");
-        save_telegram_file(
-            bot,
-            bot_token,
-            doc.file.id.clone(),
-            &tmp_dir,
-            &format!("doc-{chat_id}-{ts}.{ext}"),
-        )
-        .await;
+        let name = attachment_tmp_name(doc.file_name.as_deref(), "doc", chat_id, ts, "bin");
+        save_telegram_file(bot, bot_token, doc.file.id.clone(), &tmp_dir, &name).await;
     }
-    // Audio files (.mp3/.ogg/.wav etc)
+    // Audio files (.mp3/.ogg/.wav etc): same original-name-leading scheme (#513).
     if let Some(audio) = msg.audio() {
-        let ext = audio
-            .file_name
-            .as_deref()
-            .and_then(|n| n.rsplit('.').next())
-            .unwrap_or("ogg");
-        save_telegram_file(
-            bot,
-            bot_token,
-            audio.file.id.clone(),
-            &tmp_dir,
-            &format!("audio-{chat_id}-{ts}.{ext}"),
-        )
-        .await;
+        let name = attachment_tmp_name(audio.file_name.as_deref(), "audio", chat_id, ts, "ogg");
+        save_telegram_file(bot, bot_token, audio.file.id.clone(), &tmp_dir, &name).await;
     }
     // Photos (largest size) — so an image shared without @mentioning the bot
     // can still be picked up when the user tags it in a follow-up message.
