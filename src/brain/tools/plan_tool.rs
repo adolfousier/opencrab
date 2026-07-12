@@ -17,8 +17,9 @@ pub struct PlanTool;
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 enum PlanOperation {
-    /// Create a new plan (from a title, optionally with inline tasks) OR
-    /// import one from a JSON file. Replaces any existing plan in the session.
+    /// Create a new plan (design or checklist track) OR import one from a
+    /// JSON file. Allowed from NoPlan or pre-init Editing only; a live
+    /// post-init or Active plan must be discarded first.
     Init {
         /// Plan title (create mode). One of `title` / `file_path` is required.
         #[serde(default)]
@@ -34,14 +35,23 @@ enum PlanOperation {
         #[serde(default)]
         technical_stack: Vec<String>,
         /// Import mode: absolute path to a plan JSON file on disk. Takes
-        /// precedence over `title` when both are present.
+        /// precedence over `title` and `mode` when present.
         #[serde(default)]
         file_path: Option<String>,
-        /// Optional inline task definitions (create mode) — plan + tasks in one call.
+        /// Track selector: "design" (session .md + user Approve) or
+        /// "checklist" (inline tasks, Active immediately). When omitted:
+        /// tasks present imply checklist, no tasks imply design.
+        #[serde(default)]
+        mode: Option<String>,
+        /// Inline task definitions (checklist mode): plan + tasks in one call.
         #[serde(default)]
         tasks: Vec<InlineTask>,
     },
-    /// Add a task to the current plan (appended at the end).
+    /// Append one or more tasks in a single call (primary append op).
+    /// Active only: checklist operations are blocked while Editing.
+    AddTasks { tasks: Vec<InlineTask> },
+    /// Append a single task. Backward-compatible alias that behaves like
+    /// `add_tasks` with one task.
     AddTask {
         title: String,
         #[serde(default)]
@@ -55,10 +65,10 @@ enum PlanOperation {
         #[serde(default)]
         acceptance_criteria: Vec<String>,
     },
-    /// Find and start the next task — or a specific one via `task_order`.
-    /// Returns full task details. Idempotent on an in-progress task (re-surfaces
-    /// its details after a compaction); resets a failed task for retry. The
-    /// first start auto-approves the plan for execution.
+    /// Find and start the next task, or a specific one via `task_order`.
+    /// Active only. Returns full task details. Idempotent on an in-progress
+    /// task (re-surfaces its details after a compaction); resets a failed
+    /// task for retry.
     Start {
         #[serde(default)]
         task_order: Option<usize>,
@@ -155,6 +165,67 @@ fn add_task_to_plan(
     }
     plan.tasks.push(task);
     Ok(order)
+}
+
+/// Deterministic refusal for checklist operations (`add_tasks`, `add_task`,
+/// `start`, `complete`) attempted while the plan is not Active. `None`
+/// means the operation may proceed (NoPlan falls through to the usual
+/// "No active plan" error).
+fn checklist_blocked_reason(state: crate::utils::plan_files::PlanModeState) -> Option<String> {
+    use crate::utils::plan_files::PlanModeState;
+    match state {
+        PlanModeState::NoPlan | PlanModeState::Active => None,
+        PlanModeState::PreInitEditing => Some(
+            "No plan yet: the session is in Plan mode (pre-init Editing). Call 'init' \
+             first: mode=\"checklist\" with inline tasks to execute now, or \
+             mode=\"design\" to draft the plan for user Approve."
+                .to_string(),
+        ),
+        PlanModeState::PostInitEditing => Some(
+            "Checklist operations are blocked while the plan is being designed \
+             (Editing). Refine the session plan .md and wait for the user to approve \
+             the plan; the checklist goes live on Approve."
+                .to_string(),
+        ),
+    }
+}
+
+/// Push a started task's acceptance criteria into the session goal so the
+/// live chrome (TUI widget, Telegram flow sections) shows what "done"
+/// means. Tasks without criteria get no goal. Failures are logged, never
+/// fatal: goal chrome is auxiliary to plan execution.
+async fn set_task_goal(context: &ToolExecutionContext, session_id: uuid::Uuid, task: &PlanTask) {
+    if task.acceptance_criteria.is_empty() {
+        return;
+    }
+    let Some(svc) = context.service_context.as_ref() else {
+        return;
+    };
+    let goal = format!(
+        "Task {}: {}. Done when: {}",
+        task.order,
+        task.title,
+        task.acceptance_criteria.join("; ")
+    );
+    if let Err(e) = crate::brain::goal::GoalManager::new(svc.clone())
+        .set_goal(session_id, goal, None, None)
+        .await
+    {
+        tracing::warn!("Failed to set plan-task goal: {e}");
+    }
+}
+
+/// Clear the session goal a plan task set (on complete or skip).
+async fn clear_task_goal(context: &ToolExecutionContext, session_id: uuid::Uuid) {
+    let Some(svc) = context.service_context.as_ref() else {
+        return;
+    };
+    if let Err(e) = crate::brain::goal::GoalManager::new(svc.clone())
+        .clear_goal(session_id)
+        .await
+    {
+        tracing::warn!("Failed to clear plan-task goal: {e}");
+    }
 }
 
 /// One-line-per-task list (order, title, type) for the `init` confirmation.
@@ -289,14 +360,22 @@ impl Tool for PlanTool {
     }
 
     fn description(&self) -> &str {
-        "Manage a structured task plan for multi-step work. FOUR operations: \
-         `init` (create a plan from a title — optionally with inline `tasks` — or import one from a \
-         JSON `file_path`), `add_task` (append a task), `start` (begin the next task, or a specific \
-         one via `task_order`), and `complete` (finish a task and auto-start the next). \
-         \n\nFLOW: init → add_task… → start → (do the work) → complete → (auto-starts next) → complete → … \
-         `start` and `complete` return the FULL task details (description, acceptance criteria, \
-         dependencies), so the plan doubles as durable memory across context compactions — call \
-         `start` with no args to re-surface the in-progress task's details after a compaction. \
+        "Manage a structured task plan for multi-step work. TWO TRACKS on `init`: \
+         checklist (`mode`=\"checklist\", or inline `tasks` present) goes Active immediately \
+         so you can `start` at once; design (`mode`=\"design\", or no tasks) creates a session \
+         plan .md to refine and WAITS for the user to Approve it. While a design plan is \
+         Editing, checklist operations are refused and only the session .md is writable. \
+         There is NO auto-approve: a design plan goes Active only on user Approve. \
+         \n\nOPERATIONS: `init` (create a plan, or import from a JSON `file_path`; allowed only \
+         when no plan is live), `add_tasks` (append one or more tasks in a single call — the \
+         primary append op), `add_task` (alias appending a single task), `start` (begin the \
+         next task, or a specific one via `task_order`), `complete` (finish a task and \
+         auto-start the next). `add_tasks`/`add_task`/`start`/`complete` are Active-only. \
+         \n\nFLOW (checklist): init with `tasks` → start → (do the work) → complete → \
+         (auto-starts next) → complete → … `start` and `complete` return the FULL task details \
+         (description, acceptance criteria, dependencies), so the plan doubles as durable \
+         memory across context compactions — call `start` with no args to re-surface the \
+         in-progress task's details after a compaction. \
          \n\nWHEN TO USE: call `plan` BEFORE starting any task with 3+ distinct steps, dependencies \
          between steps, that touches multiple files, or that spans multiple commits; when the user \
          asks for a plan/roadmap; when a request describes >2 deliverables; or when the user will \
@@ -305,15 +384,17 @@ impl Tool for PlanTool {
          written, tests/clippy pass), immediately call `complete` for it before moving on. The TUI \
          progress widget counts only completed tasks, so a stale 0/N while work is done means a \
          `complete` was skipped, not that progress is tracked some other way. \
-         \n\nDETAILS: `start` is idempotent on an in-progress task and resets a failed task for retry; \
-         the first `start` auto-approves the plan. `complete` takes action=\"success\" (default), \
-         \"fail\", or \"skip\". Day-of-week of dependencies is by task order number (1-based). \
-         \n\nBUNDLED REFERENCE PLANS for import: source at `src/docs/reference/plans/` (embedded), \
-         runtime at `~/.opencrabs/profiles/<profile>/plans/`. See `coding-plans/rust-fast.json` etc. \
-         and `plan-json-spec.md`. \
-         \n\nRE-TESTING AFTER BUG FIX: plans are forward-only — a completed task stays completed. If a \
-         later task introduces a bug an earlier test would catch, `add_task` a new test task rather \
-         than re-opening the completed one."
+         \n\nDETAILS: `start` is idempotent on an in-progress task and resets a failed task for \
+         retry. `complete` takes action=\"success\" (default), \"fail\", or \"skip\". Ordering of \
+         dependencies is by task order number (1-based). A started task's acceptance criteria \
+         become the session goal until it completes. Completing the last task archives the plan. \
+         \n\nIMPORT: `init` with an absolute `file_path` (non-empty tasks required) goes Active. \
+         BUNDLED REFERENCE PLANS: source at `src/docs/reference/plans/` (embedded), runtime at \
+         `~/.opencrabs/profiles/<profile>/plans/`. See `coding-plans/rust-fast.json` etc. and \
+         `plan-json-spec.md`. \
+         \n\nRE-TESTING AFTER BUG FIX: plans are forward-only — a completed task stays completed. \
+         If a later task introduces a bug an earlier test would catch, `add_tasks` a new test task \
+         rather than re-opening the completed one."
     }
 
     fn input_schema(&self) -> Value {
@@ -322,8 +403,13 @@ impl Tool for PlanTool {
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["init", "add_task", "start", "complete"],
-                    "description": "init (create/import a plan), add_task (append a task), start (begin next/specific task), complete (finish a task, auto-start next)"
+                    "enum": ["init", "add_tasks", "add_task", "start", "complete"],
+                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task, auto-start next)"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["design", "checklist"],
+                    "description": "init track: design (session .md, wait for user Approve; requires empty tasks) or checklist (inline tasks, Active immediately). Omitted: tasks present imply checklist, none imply design."
                 },
                 "title": {
                     "type": "string",
@@ -358,7 +444,7 @@ impl Tool for PlanTool {
                 "tasks": {
                     "type": "array",
                     "items": { "type": "object" },
-                    "description": "Optional inline task definitions for init create mode — each: {title, description?, task_type?, complexity?, dependencies?, acceptance_criteria?}. Lets you create the plan and all tasks in one call."
+                    "description": "Task definitions for init checklist mode or add_tasks — each: {title, description?, task_type?, complexity?, dependencies?, acceptance_criteria?}. init with tasks creates the plan and all tasks in one call; add_tasks appends (at least one)."
                 },
                 "task_type": {
                     "type": "string",
@@ -441,31 +527,15 @@ impl Tool for PlanTool {
         // Security: Validate plan file path
         validate_plan_file_path(&plan_file, &session_dir)?;
 
-        // Load existing plan with security checks
-        let mut plan: Option<PlanDocument> = if plan_file.exists() {
-            // Security: Check file size before reading
-            let metadata = tokio::fs::metadata(&plan_file)
-                .await
-                .map_err(ToolError::Io)?;
-
-            if metadata.len() > MAX_PLAN_FILE_SIZE {
-                return Err(ToolError::InvalidInput(format!(
-                    "Plan file too large: {} bytes (max: {} bytes)",
-                    metadata.len(),
-                    MAX_PLAN_FILE_SIZE
-                )));
-            }
-
-            let content = tokio::fs::read_to_string(&plan_file)
-                .await
-                .map_err(ToolError::Io)?;
-
-            Some(serde_json::from_str(&content).map_err(|e| {
-                ToolError::InvalidInput(format!("Failed to parse plan file: {}", e))
-            })?)
-        } else {
-            None
-        };
+        // Load through the shared plan store: legacy statuses map onto
+        // Editing/Active, terminal legacy files resolve (Completed archives,
+        // Cancelled deletes), old draft checklists normalize to Active, and
+        // the size guard applies. The engine's lifecycle state (NoPlan /
+        // pre-init / post-init Editing / Active) is derived from the same
+        // files.
+        let mut plan: Option<PlanDocument> =
+            crate::utils::plan_files::load_plan(context.session_id);
+        let state = crate::utils::plan_files::plan_mode_state(context.session_id);
 
         let result = match operation {
             PlanOperation::Init {
@@ -476,10 +546,36 @@ impl Tool for PlanTool {
                 test_strategy,
                 technical_stack,
                 file_path,
+                mode,
                 tasks,
             } => {
+                use crate::utils::plan_files::PlanModeState;
+                // A live plan blocks re-init. Pre-init is NOT live for this
+                // rule: the first successful init upgrades or replaces the
+                // minimal sidecar, so users who typed /plan and changed
+                // their mind are never trapped.
+                match state {
+                    PlanModeState::PostInitEditing => {
+                        return Ok(ToolResult::error(
+                            "A design plan is already live for this session (Editing). \
+                             Refine the session plan .md and wait for user Approve, or \
+                             ask the user to /discard it before creating a new plan."
+                                .to_string(),
+                        ));
+                    }
+                    PlanModeState::Active => {
+                        return Ok(ToolResult::error(
+                            "A checklist is already Active for this session. Complete \
+                             its remaining tasks, or ask the user to /discard it before \
+                             creating a new plan."
+                                .to_string(),
+                        ));
+                    }
+                    PlanModeState::NoPlan | PlanModeState::PreInitEditing => {}
+                }
+
                 if let Some(path) = file_path {
-                    // ===== import mode =====
+                    // ===== import mode (mode param ignored) =====
                     let import_path = std::path::Path::new(&path);
                     if !import_path.is_absolute() {
                         return Err(ToolError::InvalidInput(
@@ -576,6 +672,15 @@ impl Tool for PlanTool {
                         ))
                     })?;
 
+                    if imported.tasks.is_empty() {
+                        return Ok(ToolResult::error(
+                            "Empty import is refused: the plan file has no tasks. Import \
+                             needs a structured checklist; to design a plan from scratch, \
+                             call init with mode=\"design\" instead."
+                                .to_string(),
+                        ));
+                    }
+
                     let count = imported.tasks.len();
                     let plan_title = imported.title.clone();
                     let list = render_task_list(&imported);
@@ -602,11 +707,56 @@ impl Tool for PlanTool {
                         validate_string(&ctx, MAX_CONTEXT_LENGTH, "Plan context")?;
                     }
 
+                    // Track disambiguation: explicit mode wins; otherwise
+                    // tasks present imply checklist and no tasks imply design.
+                    let design = match mode.as_deref() {
+                        Some("design") => {
+                            if !tasks.is_empty() {
+                                return Ok(ToolResult::error(
+                                    "mode=\"design\" with inline tasks is refused: a design \
+                                     plan starts as prose in the session .md and gets its \
+                                     checklist after user Approve. Either drop the tasks, or \
+                                     use mode=\"checklist\" to go Active with them now."
+                                        .to_string(),
+                                ));
+                            }
+                            true
+                        }
+                        Some("checklist") => {
+                            if tasks.is_empty() {
+                                return Ok(ToolResult::error(
+                                    "mode=\"checklist\" with no tasks is refused: a checklist \
+                                     init needs at least one inline task. Provide `tasks`, or \
+                                     use mode=\"design\" to draft the plan as prose first."
+                                        .to_string(),
+                                ));
+                            }
+                            false
+                        }
+                        Some(other) => {
+                            return Ok(ToolResult::error(format!(
+                                "Unknown mode '{other}'. Use \"design\" (session .md, user \
+                                 Approve) or \"checklist\" (inline tasks, Active now)."
+                            )));
+                        }
+                        None => tasks.is_empty(),
+                    };
+
+                    // Yolo, cron, run, and a2a never enter Editing: with
+                    // auto-approve there is no user Approve step to wait for.
+                    if design && context.auto_approve {
+                        return Ok(ToolResult::error(
+                            "The design track is unavailable while tool auto-approve is on: \
+                             there is no user Approve step. Use mode=\"checklist\" with \
+                             inline tasks instead."
+                                .to_string(),
+                        ));
+                    }
+
                     if let Some(existing_plan) = plan.as_ref() {
                         tracing::info!(
-                            "Replacing existing plan '{}' ({} tasks) with new plan '{}'",
+                            "Replacing pre-init sidecar '{}' with new plan '{}'",
                             existing_plan.title,
-                            existing_plan.tasks.len(),
                             title
                         );
                     }
@@ -617,9 +767,7 @@ impl Tool for PlanTool {
                     new_plan.risks = risks;
                     new_plan.test_strategy = test_strategy;
                     new_plan.technical_stack = technical_stack;
-                    // Inline tasks make this a checklist init (Active now);
-                    // an empty init is design-track Editing.
-                    new_plan.status = if tasks.is_empty() {
+                    new_plan.status = if design {
                         PlanStatus::Editing
                     } else {
                         PlanStatus::Active
@@ -641,18 +789,62 @@ impl Tool for PlanTool {
                     let list = render_task_list(&new_plan);
                     plan = Some(new_plan);
 
-                    if count == 0 {
+                    if design {
+                        let md_path =
+                            crate::utils::plan_files::create_design_md(context.session_id, &title)
+                                .map_err(ToolError::Io)?;
                         format!(
-                            "📋 Created plan: {title} (no tasks yet)\n\n\
-                             Add tasks with 'add_task', then 'start' to begin."
+                            "📋 Created design plan: {title} (Editing)\n\n\
+                             Plan document: {}\n\n\
+                             Write the design there (fill ## Context and the numbered \
+                             ## Implementation steps), then WAIT for the user to approve \
+                             the plan. Do NOT call 'start': checklist operations stay \
+                             blocked until the plan is Active.",
+                            md_path.display()
                         )
                     } else {
                         format!(
-                            "📋 Created plan: {title} ({count} tasks)\n\n{list}\n\n\
-                             Call 'start' to begin — it returns the first task's full details."
+                            "📋 Created plan: {title} ({count} tasks, Active)\n\n{list}\n\n\
+                             Call 'start' now — it returns the first task's full details."
                         )
                     }
                 }
+            }
+
+            PlanOperation::AddTasks { tasks } => {
+                if let Some(reason) = checklist_blocked_reason(state) {
+                    return Ok(ToolResult::error(reason));
+                }
+                let current_plan = plan.as_mut().ok_or_else(|| {
+                    ToolError::InvalidInput(
+                        "No active plan. Create one with 'init' first.".to_string(),
+                    )
+                })?;
+                if tasks.is_empty() {
+                    return Ok(ToolResult::error(
+                        "add_tasks needs at least one task in `tasks`.".to_string(),
+                    ));
+                }
+                let mut added: Vec<String> = Vec::new();
+                for it in tasks {
+                    let task_title = it.title.clone();
+                    let order = add_task_to_plan(
+                        current_plan,
+                        it.title,
+                        it.description,
+                        &it.task_type,
+                        &it.dependencies,
+                        it.complexity,
+                        it.acceptance_criteria,
+                    )?;
+                    added.push(format!("  {order}. {task_title}"));
+                }
+                let total = current_plan.tasks.len();
+                format!(
+                    "✓ Added {} task(s):\n{}\n  Plan now has {total} tasks.",
+                    added.len(),
+                    added.join("\n")
+                )
             }
 
             PlanOperation::AddTask {
@@ -663,6 +855,9 @@ impl Tool for PlanTool {
                 complexity,
                 acceptance_criteria,
             } => {
+                if let Some(reason) = checklist_blocked_reason(state) {
+                    return Ok(ToolResult::error(reason));
+                }
                 let current_plan = plan.as_mut().ok_or_else(|| {
                     ToolError::InvalidInput(
                         "No active plan. Create one with 'init' first.".to_string(),
@@ -690,6 +885,9 @@ impl Tool for PlanTool {
             }
 
             PlanOperation::Start { task_order } => {
+                if let Some(reason) = checklist_blocked_reason(state) {
+                    return Ok(ToolResult::error(reason));
+                }
                 let current_plan = plan.as_mut().ok_or_else(|| {
                     ToolError::InvalidInput(
                         "No active plan. Create one with 'init' first.".to_string(),
@@ -697,7 +895,7 @@ impl Tool for PlanTool {
                 })?;
                 if current_plan.tasks.is_empty() {
                     return Ok(ToolResult::error(
-                        "Plan has no tasks yet. Add tasks with 'add_task' first.".to_string(),
+                        "Plan has no tasks yet. Add tasks with 'add_tasks' first.".to_string(),
                     ));
                 }
 
@@ -780,6 +978,9 @@ impl Tool for PlanTool {
                             // Failed task for retry).
                             current_plan.get_task_by_order_mut(order).unwrap().start();
                             current_plan.status = PlanStatus::Active;
+                            // Criteria become the session goal while it runs.
+                            let started = current_plan.get_task_by_order(order).unwrap();
+                            set_task_goal(context, context.session_id, started).await;
                         }
 
                         let done = current_plan
@@ -813,6 +1014,9 @@ impl Tool for PlanTool {
                 action,
                 output,
             } => {
+                if let Some(reason) = checklist_blocked_reason(state) {
+                    return Ok(ToolResult::error(reason));
+                }
                 let current_plan = plan
                     .as_mut()
                     .ok_or_else(|| ToolError::InvalidInput("No active plan.".to_string()))?;
@@ -851,6 +1055,13 @@ impl Tool for PlanTool {
                     }
                 };
 
+                // A resolved task's criteria-goal ends with it (fail keeps
+                // the goal: the retry via `start` re-surfaces it).
+                let resolved = current_plan.get_task_by_order(task_order).unwrap();
+                if verb != "failed" && !resolved.acceptance_criteria.is_empty() {
+                    clear_task_goal(context, context.session_id).await;
+                }
+
                 let title = current_plan
                     .get_task_by_order(task_order)
                     .unwrap()
@@ -867,6 +1078,7 @@ impl Tool for PlanTool {
                     current_plan.get_task_by_order_mut(no).unwrap().start();
                     current_plan.status = PlanStatus::Active;
                     let next = current_plan.get_task_by_order(no).unwrap();
+                    set_task_goal(context, context.session_id, next).await;
                     let details = render_task_details(current_plan, next);
                     msg.push_str(&format!(
                         "\n\n▶️ Started Task #{no}: {}\n{details}",
@@ -892,60 +1104,16 @@ impl Tool for PlanTool {
             }
         };
 
-        // Save plan to file with atomic write
+        // Save through the shared store (atomic write, canonical
+        // "Editing" / "Active" status strings).
         if let Some(ref current_plan) = plan {
-            let json = serde_json::to_string_pretty(current_plan)
-                .map_err(|e| ToolError::InvalidInput(format!("Failed to serialize plan: {}", e)))?;
-
-            // Atomic write: write to temp file, then rename
-            let temp_file = plan_file.with_extension("tmp");
-
-            // Write to temp file
-            tokio::fs::write(&temp_file, &json)
-                .await
-                .map_err(ToolError::Io)?;
-
-            // Atomic rename (ensures consistency even if interrupted)
-            tokio::fs::rename(&temp_file, &plan_file)
-                .await
-                .map_err(ToolError::Io)?;
-
+            crate::utils::plan_files::save_plan(current_plan)
+                .map_err(|e| ToolError::InvalidInput(format!("Failed to save plan: {e}")))?;
             tracing::info!(
                 "💾 Plan saved to file: {} (status: {:?})",
                 plan_file.display(),
                 current_plan.status
             );
-
-            // Verify file was written correctly
-            if plan_file.exists() {
-                match tokio::fs::read_to_string(&plan_file).await {
-                    Ok(content) => match serde_json::from_str::<PlanDocument>(&content) {
-                        Ok(saved_plan) => {
-                            tracing::debug!(
-                                "✅ Verified saved plan: status={:?}, tasks={}",
-                                saved_plan.status,
-                                saved_plan.tasks.len()
-                            );
-
-                            if saved_plan.status != current_plan.status {
-                                tracing::error!(
-                                    "❌ Status mismatch! Expected {:?}, got {:?}",
-                                    current_plan.status,
-                                    saved_plan.status
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("❌ Failed to parse saved plan: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("❌ Failed to read saved plan: {}", e);
-                    }
-                }
-            } else {
-                tracing::error!("❌ Plan file does not exist after save!");
-            }
 
             // Archive on last complete: the finished plan (just saved with
             // every task resolved) moves under `archive/` with a timestamp

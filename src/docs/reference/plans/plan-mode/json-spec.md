@@ -169,11 +169,14 @@ JSON is the single live store; SQLite is not dual-written. Legacy JSON files tha
 
 Legacy strings on disk are mapped on load (Draft/PendingApproval/Rejected → Editing; Approved/InProgress → Active; Completed → silent archive).
 
-### Tool contract during migration
+### Tool contract (implemented, Cluster C Phase C3)
 
-- **`add_tasks`** is the primary way to append checklist items (array, at least one element).
-- **`add_task`** remains as an alias that appends a single task. Keep it in the schema until prompts are updated — a hard rename would break models mid-session.
-- Remove auto-approve on first `start`. Approval belongs to the user Approve action on the design track.
+- **`init`** takes `mode` (`design` | `checklist`). Omitted mode: tasks present imply checklist, none imply design. `mode=design` with tasks, `mode=checklist` without tasks, design under tool auto-approve (yolo), and empty imports are all refused with the allowed alternative. `init` is permitted from NoPlan or pre-init only (the first successful `init` upgrades or replaces the pre-init sidecar); a live post-init or Active plan refuses with "discard first".
+- **`add_tasks`** is the primary way to append checklist items (array, at least one element). Active only.
+- **`add_task`** remains as an alias that appends a single task. Keep it in the schema until prompts are updated (Cluster D Phase D2) — a hard rename would break models mid-session.
+- **`start` / `complete`** are Active only; Editing (pre-init or post-init) gets a deterministic refusal. Auto-approve on first `start` is removed: `approved_at` is stamped only by user Approve on the design track.
+- A started task's non-empty `acceptance_criteria` become the session goal (`GoalManager`); the goal clears on complete or skip (a failed task keeps it for the retry).
+- Completing the last task archives `.json` + `.md` under `agents/session/archive/` and returns the session to NoPlan.
 
 ### User language → mode
 

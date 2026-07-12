@@ -102,8 +102,21 @@ pub fn load_plan(session_id: Uuid) -> Option<PlanDocument> {
     load_plan_from_path(&plan_json_path(session_id))
 }
 
+/// Maximum plan file size (10MB): guards every consumer of the loader.
+pub const MAX_PLAN_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
 /// [`load_plan`] for callers that already hold the JSON path (TUI).
 pub fn load_plan_from_path(path: &Path) -> Option<PlanDocument> {
+    if let Ok(meta) = std::fs::metadata(path)
+        && meta.len() > MAX_PLAN_FILE_SIZE
+    {
+        tracing::warn!(
+            "Plan file too large ({} bytes) at {}; refusing to load",
+            meta.len(),
+            path.display()
+        );
+        return None;
+    }
     let content = std::fs::read_to_string(path).ok()?;
     let raw: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
