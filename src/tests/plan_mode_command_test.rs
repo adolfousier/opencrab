@@ -252,3 +252,53 @@ async fn seed_window_closes_when_a_task_starts() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn editing_reminder_and_plan_state_block_follow_state() {
+    use crate::brain::agent::service::{format_editing_reminder, plan_state_block};
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        // NoPlan: no summary block.
+        assert!(plan_state_block(sid).is_none());
+
+        // Pre-init: reminder and block teach init mode='design', never start.
+        set_pre_init_editing(sid).unwrap();
+        let block = plan_state_block(sid).unwrap();
+        assert!(block.contains("pre-init") && block.contains("mode='design'"));
+        let reminder = format_editing_reminder(None);
+        assert!(reminder.contains("plan init") && !reminder.contains("operation=\"start\""));
+        plan_files::discard_plan(sid);
+
+        // Post-init: both carry the absolute .md path and forbid start.
+        make_post_init(sid, GOLDEN_MD);
+        let md = plan_md_path(sid).display().to_string();
+        let block = plan_state_block(sid).unwrap();
+        assert!(block.contains(&md) && block.contains("Do NOT call plan start"));
+        let reminder = format_editing_reminder(Some(plan_md_path(sid)));
+        assert!(reminder.contains(&md));
+        assert!(reminder.contains("Do NOT paste the plan in chat"));
+
+        // Active: block names the checklist and says plan start.
+        assert!(matches!(try_approve(sid), ApproveOutcome::SeedTurn { .. }));
+        let block = plan_state_block(sid).unwrap();
+        assert!(block.contains("Active checklist") && block.contains("plan start"));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn plan_recovery_derives_from_state() {
+    use crate::brain::agent::service::compaction_prompts::PlanRecovery;
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        assert_eq!(PlanRecovery::for_session(sid), PlanRecovery::NoPlan);
+        set_pre_init_editing(sid).unwrap();
+        assert_eq!(PlanRecovery::for_session(sid), PlanRecovery::Editing);
+        plan_files::discard_plan(sid);
+        make_post_init(sid, GOLDEN_MD);
+        assert_eq!(PlanRecovery::for_session(sid), PlanRecovery::Editing);
+        assert!(matches!(try_approve(sid), ApproveOutcome::SeedTurn { .. }));
+        assert_eq!(PlanRecovery::for_session(sid), PlanRecovery::Active);
+    })
+    .await;
+}

@@ -55,7 +55,6 @@ pub const CORE_TOOLS: &[&str] = &[
     "exa_search",
     "memory_search",
     // Workflow / orchestration
-    "task",
     "context",
     "plan",
     "http_client",

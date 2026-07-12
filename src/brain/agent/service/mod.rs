@@ -8,7 +8,7 @@ mod compaction;
 pub(crate) mod compaction_prompts;
 pub(crate) mod context;
 #[allow(unused_imports)] // only used in test code
-pub(crate) use context::format_plan_reminder;
+pub(crate) use context::{format_editing_reminder, format_plan_reminder, plan_state_block};
 pub(crate) mod feedback;
 mod gaslighting;
 pub(crate) mod helpers;

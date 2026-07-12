@@ -9,14 +9,25 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 impl AgentService {
-    /// A compact reminder of the session's actively-executing plan, to pin at
-    /// the end of the prompt each turn. `None` when there's no plan or the
-    /// plan isn't Active — an Editing plan (pre-init or design prose) must
-    /// never be nudged toward checklist execution. Loaded through the shared
-    /// plan store so legacy statuses map (and terminal ones resolve) first.
+    /// The per-turn plan reminder pinned at the end of the prompt, keyed to
+    /// the session's plan-mode state: an Active checklist gets the task
+    /// nudge (`format_plan_reminder`), an Editing session (pre-init or
+    /// design prose) gets the Editing rules (`format_editing_reminder`),
+    /// and NoPlan gets nothing. Loaded through the shared plan store so
+    /// legacy statuses map (and terminal ones resolve) first.
     fn active_plan_reminder(session_id: Uuid) -> Option<String> {
-        let plan = crate::utils::plan_files::load_plan(session_id)?;
-        format_plan_reminder(&plan)
+        use crate::utils::plan_files::{self, PlanModeState};
+        match plan_files::plan_mode_state(session_id) {
+            PlanModeState::NoPlan => None,
+            PlanModeState::PreInitEditing => Some(format_editing_reminder(None)),
+            PlanModeState::PostInitEditing => Some(format_editing_reminder(Some(
+                plan_files::plan_md_path(session_id),
+            ))),
+            PlanModeState::Active => {
+                let plan = plan_files::load_plan(session_id)?;
+                format_plan_reminder(&plan)
+            }
+        }
     }
 
     /// Helper to prepare message context for LLM requests
@@ -308,6 +319,16 @@ impl AgentService {
             cancel,
         )
         .await?;
+
+        // Whenever session plan artifacts exist, the summary that survives
+        // compaction must carry the plan state itself: the recovery prompt
+        // alone is a separate message and can scroll away, while this block
+        // rides inside the persisted marker. Harness-written, so it is
+        // present even when the model's summary forgot the plan.
+        let summary = match plan_state_block(session_id) {
+            Some(block) => format!("{summary}\n\n{block}"),
+            None => summary,
+        };
 
         Self::apply_compaction_summary(context, &summary);
         Ok(summary)
@@ -692,6 +713,88 @@ impl AgentService {
 
         tracing::info!("Saved compaction summary to {}", memory_path.display());
         Ok(())
+    }
+}
+
+/// Harness-written plan-state block appended to every compaction summary
+/// while session plan artifacts exist: state (Editing / Active), the
+/// absolute `.md` path when present, and one line on what to do next.
+/// `None` when the session is NoPlan (no plan chatter in the summary).
+pub(crate) fn plan_state_block(session_id: Uuid) -> Option<String> {
+    use crate::utils::plan_files::{self, PlanModeState};
+    let md = plan_files::plan_md_path(session_id);
+    match plan_files::plan_mode_state(session_id) {
+        PlanModeState::NoPlan => None,
+        PlanModeState::PreInitEditing => Some(
+            "## PLAN STATE (harness)\n\
+             State: Editing (pre-init). Plan mode is on but `plan init` has not run.\n\
+             Next: explore, then call plan init mode='design' and write the SESSION \
+             PLAN .md. Do not edit project files."
+                .to_string(),
+        ),
+        PlanModeState::PostInitEditing => Some(format!(
+            "## PLAN STATE (harness)\n\
+             State: Editing (design prose).\n\
+             Plan document: {}\n\
+             Next: re-read and refine that .md; wait for the user to approve with \
+             /execute. Do NOT call plan start and do NOT edit project files.",
+            md.display()
+        )),
+        PlanModeState::Active => {
+            let (title, done, total) = plan_files::load_plan(session_id)
+                .map(|p| {
+                    let done = p
+                        .tasks
+                        .iter()
+                        .filter(|t| {
+                            matches!(
+                                t.status,
+                                crate::tui::plan::TaskStatus::Completed
+                                    | crate::tui::plan::TaskStatus::Skipped
+                            )
+                        })
+                        .count();
+                    (p.title, done, p.tasks.len())
+                })
+                .unwrap_or_default();
+            let md_line = if md.exists() {
+                format!("\nPlan document (frozen): {}", md.display())
+            } else {
+                String::new()
+            };
+            Some(format!(
+                "## PLAN STATE (harness)\n\
+                 State: Active checklist \"{title}\" ({done}/{total} done).{md_line}\n\
+                 Next: call plan start (no args) to resurface the in-progress task, \
+                 then continue executing the checklist."
+            ))
+        }
+    }
+}
+
+/// Build the pinned Editing reminder: the session is in Plan mode, so the
+/// turn refines the SESSION PLAN instead of executing. `md_path` is the
+/// design document once `plan init` created it (post-init); `None` means
+/// pre-init (no document yet). Pure (no IO) so it's unit-testable.
+pub(crate) fn format_editing_reminder(md_path: Option<std::path::PathBuf>) -> String {
+    match md_path {
+        Some(md) => format!(
+            "[PLAN MODE REMINDER — injected by the harness, not from the user]\n\
+             📋 This session's plan is Editing (design track). The SESSION PLAN lives at \
+             {}, the ONLY writable file. Refine it there using the template: ## Context \
+             with **Problem:** / **Target state:** / **Intent:** filled, then numbered \
+             ## Implementation steps. Do NOT paste the plan in chat, do NOT call plan \
+             start/complete, no bash, no project writes. When the document is ready, \
+             tell the user to approve it with /execute (Approve seeds the checklist \
+             automatically).",
+            md.display()
+        ),
+        None => "[PLAN MODE REMINDER — injected by the harness, not from the user]\n\
+                 📋 This session is in Plan mode (pre-init). Explore with reads, search, \
+                 and bash as needed, then call plan init mode='design' to create the \
+                 SESSION PLAN .md and write the design into it. Project writes stay \
+                 blocked until the user approves the plan. Do NOT paste a plan in chat."
+            .to_string(),
     }
 }
 

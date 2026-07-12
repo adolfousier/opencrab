@@ -66,7 +66,7 @@ impl Tool for SpawnAgentTool {
                 "agent_type": {
                     "type": "string",
                     "description": "Agent specialization: 'general' (full tools), 'explore' (read-only), 'plan' (read+bash), 'code' (full write), 'research' (web+read). Default: general",
-                    "enum": ["general", "explore", "plan", "code", "research"]
+                    "enum": ["general", "explore", "architect", "plan", "code", "research"]
                 },
                 "provider": {
                     "type": "string",

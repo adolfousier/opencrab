@@ -19,14 +19,16 @@
 //! - The auto-approve tail is appended in both modes when
 //!   auto_approve=false.
 
-use crate::brain::agent::service::compaction_prompts::{CompactionKind, build_continuation};
+use crate::brain::agent::service::compaction_prompts::{
+    CompactionKind, PlanRecovery, build_continuation,
+};
 
 const APPROVAL_TAIL: &str = "Tool approval is REQUIRED";
 const SESSION_RECOVERY: &str = "SESSION RECOVERY";
 
 #[test]
 fn fun_regular_keeps_post_compaction_protocol_header() {
-    let body = build_continuation(CompactionKind::Regular, false, true, false);
+    let body = build_continuation(CompactionKind::Regular, false, true, PlanRecovery::Active);
     assert!(
         body.contains("POST-COMPACTION PROTOCOL"),
         "fun regular must include the numbered protocol header so the \
@@ -40,7 +42,7 @@ fn fun_regular_keeps_post_compaction_protocol_header() {
 
 #[test]
 fn silent_regular_uses_silent_directive() {
-    let body = build_continuation(CompactionKind::Regular, true, true, false);
+    let body = build_continuation(CompactionKind::Regular, true, true, PlanRecovery::Active);
     assert!(
         body.contains("Silently continue"),
         "silent regular must explicitly tell the model to continue silently: {body}"
@@ -57,7 +59,7 @@ fn fun_emergency_invites_fun_cheeky_remark() {
     // from. The fun variant MUST carry an explicit invitation, not
     // just allow it implicitly — otherwise the model defaults to
     // silent recovery and the personality moment never fires.
-    let body = build_continuation(CompactionKind::Emergency, false, true, false);
+    let body = build_continuation(CompactionKind::Emergency, false, true, PlanRecovery::Active);
     assert!(
         body.contains("fun/cheeky remark"),
         "fun emergency must explicitly invite a fun/cheeky remark: {body}"
@@ -66,7 +68,7 @@ fn fun_emergency_invites_fun_cheeky_remark() {
 
 #[test]
 fn silent_emergency_suppresses_acknowledgement() {
-    let body = build_continuation(CompactionKind::Emergency, true, true, false);
+    let body = build_continuation(CompactionKind::Emergency, true, true, PlanRecovery::Active);
     assert!(
         body.contains("Silently resume"),
         "silent emergency must direct silent resumption: {body}"
@@ -83,7 +85,7 @@ fn fun_post_tool_keeps_cursing_allowed_explicit() {
     // an explicit license. That's the line that produces the kind
     // of in-character output users have called out. If we ever
     // trim it we break the documented feature.
-    let body = build_continuation(CompactionKind::PostTool, false, true, false);
+    let body = build_continuation(CompactionKind::PostTool, false, true, PlanRecovery::Active);
     assert!(
         body.contains("cursing allowed"),
         "fun post-tool must keep the explicit cursing-allowed license: {body}"
@@ -93,15 +95,15 @@ fn fun_post_tool_keeps_cursing_allowed_explicit() {
 
 #[test]
 fn silent_post_tool_drops_cursing_invitation() {
-    let body = build_continuation(CompactionKind::PostTool, true, true, false);
+    let body = build_continuation(CompactionKind::PostTool, true, true, PlanRecovery::Active);
     assert!(!body.contains("cursing allowed"));
     assert!(body.contains("Silently continue"));
 }
 
 #[test]
 fn mid_loop_variants_diverge_on_silent_flag() {
-    let fun = build_continuation(CompactionKind::MidLoop, false, true, false);
-    let silent = build_continuation(CompactionKind::MidLoop, true, true, false);
+    let fun = build_continuation(CompactionKind::MidLoop, false, true, PlanRecovery::Active);
+    let silent = build_continuation(CompactionKind::MidLoop, true, true, PlanRecovery::Active);
     assert_ne!(fun, silent, "the two modes must produce different prompts");
     assert!(fun.contains("POST-COMPACTION PROTOCOL"));
     assert!(silent.contains("Silently continue"));
@@ -115,8 +117,8 @@ fn approval_tail_appended_when_auto_approve_disabled_in_both_modes() {
         CompactionKind::Emergency,
         CompactionKind::PostTool,
     ] {
-        let fun = build_continuation(kind, false, false, false);
-        let silent = build_continuation(kind, true, false, false);
+        let fun = build_continuation(kind, false, false, PlanRecovery::Active);
+        let silent = build_continuation(kind, true, false, PlanRecovery::Active);
         assert!(
             fun.contains(APPROVAL_TAIL),
             "fun {kind:?} must append the approval reminder when auto_approve=false: {fun}"
@@ -136,8 +138,8 @@ fn approval_tail_omitted_when_auto_approve_enabled() {
         CompactionKind::Emergency,
         CompactionKind::PostTool,
     ] {
-        let fun = build_continuation(kind, false, true, false);
-        let silent = build_continuation(kind, true, true, false);
+        let fun = build_continuation(kind, false, true, PlanRecovery::Active);
+        let silent = build_continuation(kind, true, true, PlanRecovery::Active);
         assert!(
             !fun.contains(APPROVAL_TAIL),
             "fun {kind:?} must NOT carry the approval tail when auto_approve=true: {fun}"
@@ -175,7 +177,7 @@ fn session_recovery_hint_present_in_all_variants() {
         CompactionKind::Manual,
     ] {
         for silent in [false, true] {
-            let body = build_continuation(kind, silent, true, false);
+            let body = build_continuation(kind, silent, true, PlanRecovery::Active);
             assert!(
                 body.contains(SESSION_RECOVERY),
                 "{kind:?} silent={silent} must include the SESSION RECOVERY hint: {body}"
@@ -197,7 +199,7 @@ fn manual_compaction_is_brief() {
     // Manual /compact uses a short sentence, not the full POST-COMPACTION
     // PROTOCOL with numbered steps. The user explicitly triggered it.
     for silent in [false, true] {
-        let body = build_continuation(CompactionKind::Manual, silent, true, false);
+        let body = build_continuation(CompactionKind::Manual, silent, true, PlanRecovery::Active);
         assert!(
             !body.contains("POST-COMPACTION PROTOCOL"),
             "Manual compaction must NOT use the full protocol: {body}"

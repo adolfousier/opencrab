@@ -73,7 +73,7 @@ impl Tool for TeamCreateTool {
                             },
                             "agent_type": {
                                 "type": "string",
-                                "enum": ["general", "explore", "plan", "code", "research"]
+                                "enum": ["general", "explore", "architect", "plan", "code", "research"]
                             },
                             "provider": {
                                 "type": "string",
