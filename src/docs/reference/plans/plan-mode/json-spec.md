@@ -173,7 +173,7 @@ Legacy strings on disk are mapped on load (Draft/PendingApproval/Rejected → Ed
 
 - **`init`** takes `mode` (`design` | `checklist`). Omitted mode: tasks present imply checklist, none imply design. `mode=design` with tasks, `mode=checklist` without tasks, design under tool auto-approve (yolo), and empty imports are all refused with the allowed alternative. `init` is permitted from NoPlan or pre-init only (the first successful `init` upgrades or replaces the pre-init sidecar); a live post-init or Active plan refuses with "discard first".
 - **`add_tasks`** is the primary way to append checklist items (array, at least one element). Active only.
-- **`add_task`** remains as an alias that appends a single task. Keep it in the schema until prompts are updated (Cluster D Phase D2) — a hard rename would break models mid-session.
+- **`add_task`** remains as an alias that appends a single task. Prompts now prefer `add_tasks` (Cluster D Phase D2 shipped); the alias is deprecated in docs but stays in the schema so mid-session models keep working.
 - **`start` / `complete`** are Active only; Editing (pre-init or post-init) gets a deterministic refusal. Auto-approve on first `start` is removed: `approved_at` is stamped only by user Approve on the design track.
 - A started task's non-empty `acceptance_criteria` become the session goal (`GoalManager`); the goal clears on complete or skip (a failed task keeps it for the retry).
 - Completing the last task archives `.json` + `.md` under `agents/session/archive/` and returns the session to NoPlan.
@@ -195,9 +195,11 @@ When the user says **plan**, infer **design track** (Editing, session `.md`, wai
 
 ### Telegram UI vs the OC Dev shared doc
 
-Plan mode on Telegram extends the existing per-turn **flow message** in `flow.rs` (tools, clock, intermediates, plus plan sections). It does **not** add a separate Bot API pinned message.
+Plan mode on Telegram extends the existing per-turn **flow message** in `flow.rs` (tools, clock, intermediates, plus plan sections). It does **not** add a separate Bot API pinned message. Approve/Discard ride the latest flow message as inline buttons (`plan:ok` / `plan:no`, a prefix deliberately distinct from tool-approval `approve:{id}`), owner-only in groups; used buttons clear their markup, and the flow tick re-attaches the keyboard while the state still calls for one.
 
-The `opencrabs-plan-mode.md` file shared in OC Dev predates this flow-message design and still describes pin-based chrome. Treat the Cursor plan as source of truth for implementation.
+**Entry asymmetry (intentional):** hint injection is shared (the PromptAnalyzer design-track nudge sets durable `pre_init_editing` on plan keywords on BOTH surfaces), but Telegram keeps `/plan` and flow chrome as the primary entry while the TUI leans more on silent keywords plus the `/show-plan` overlay.
+
+The `opencrabs-plan-mode.md` file shared in OC Dev predates this flow-message design, still describes pin-based chrome, and is **not** source of truth — the umbrella plan and the cluster ADRs are.
 
 ### Pre-init Editing and `/plan`
 

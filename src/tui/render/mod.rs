@@ -10,6 +10,7 @@ mod input;
 pub(crate) mod mission_control;
 pub(crate) mod palette;
 mod panes;
+mod plan_overlay;
 mod plan_widget;
 pub(crate) mod plan_window;
 pub(crate) mod profiles_dialog;
@@ -121,8 +122,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let plan_height = app
         .plan_document
         .as_ref()
-        .filter(|p| p.status == crate::tui::plan::PlanStatus::Active && !p.tasks.is_empty())
-        .map(|p| (p.tasks.len() + 2).min(12) as u16)
+        .filter(|p| p.status == crate::tui::plan::PlanStatus::Active)
+        .map(|p| {
+            if p.tasks.is_empty() {
+                // Seed window (approved design, checklist not built yet):
+                // a 3-line strip carries Building checklist… / seed-error.
+                3
+            } else {
+                (p.tasks.len() + 2).min(12) as u16
+            }
+        })
         .unwrap_or(0);
 
     let chunks = Layout::default()
@@ -187,6 +196,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let (title_area, content_area) = split_title_area(full_content_area);
             render_app_title(f, title_area);
             render_help(f, app, content_area);
+        }
+        AppMode::PlanOverlay => {
+            f.render_widget(Clear, full_content_area);
+            let (title_area, content_area) = split_title_area(full_content_area);
+            render_app_title(f, title_area);
+            plan_overlay::render_plan_overlay(f, app, content_area);
         }
         AppMode::MissionControl => {
             // Full-screen overlay (like /sessions and /help). Clears the

@@ -131,6 +131,10 @@ pub(crate) struct StreamingState {
     /// cheap text render — so losing it to a sweep that "looked reasonable
     /// at the time" is a regression we've deliberately made hard to introduce.
     pub(crate) voice_msg_ids: Vec<MessageId>,
+    /// Last plan keyboard actually applied to the open flow message via
+    /// editMessageReplyMarkup (rich path only; the HTML edit path re-sends
+    /// the markup inline on every edit).
+    pub(crate) applied_plan_kb: super::flow_chrome::PlanKb,
     /// True from start until first response text arrives — enables rolling messages for CLI providers
     /// where tools complete instantly (ToolStarted+ToolCompleted back-to-back)
     pub(crate) processing: bool,
@@ -846,7 +850,30 @@ pub(crate) async fn refresh_flow_rich_details(
         return;
     }
     match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details).await {
-        Ok(_) => {}
+        Ok(_) => {
+            // The rich edit API cannot carry reply_markup, so the plan
+            // Approve/Discard keyboard is applied through a separate
+            // editMessageReplyMarkup call, only when it changed.
+            let (want, have) = {
+                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                (s.sections.plan_kb, s.applied_plan_kb)
+            };
+            if want != have {
+                let mut req = bot.edit_message_reply_markup(chat, mid);
+                if let Some(kb) = want.keyboard() {
+                    req = req.reply_markup(kb);
+                }
+                match req.await {
+                    Ok(_) => {
+                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                        s.applied_plan_kb = want;
+                    }
+                    Err(e) => {
+                        tracing::debug!("Telegram: plan keyboard update failed: {e}");
+                    }
+                }
+            }
+        }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("message is not modified") {
@@ -868,9 +895,9 @@ pub(crate) async fn refresh_flow_html(
     mid: MessageId,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
 ) {
-    let html = {
+    let (html, plan_kb) = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        render_flow(&s)
+        (render_flow(&s), s.sections.plan_kb)
     };
     if html.is_empty() {
         return;
@@ -881,11 +908,16 @@ pub(crate) async fn refresh_flow_html(
         freeze_flow_block(streaming, mid, "size limit reached");
         return;
     }
-    match bot
+    // Plan Approve/Discard keyboard rides the latest flow message. Telegram
+    // clears reply_markup on any edit that omits it, so it is re-attached
+    // on every refresh while the plan state calls for one.
+    let mut req = bot
         .edit_message_text(chat, mid, html)
-        .parse_mode(ParseMode::Html)
-        .await
-    {
+        .parse_mode(ParseMode::Html);
+    if let Some(kb) = plan_kb.keyboard() {
+        req = req.reply_markup(kb);
+    }
+    match req.await {
         Ok(_) => {}
         // Transient rate limit: wait it out and retry once with fresh
         // content. Deleting here used to wipe a fully rendered report off

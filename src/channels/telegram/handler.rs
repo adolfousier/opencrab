@@ -2902,6 +2902,7 @@ pub(crate) async fn handle_message(
         recreate: false,
         header_preview: None,
         sections: Default::default(),
+        applied_plan_kb: Default::default(),
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
         turn_started_at: std::time::Instant::now(),

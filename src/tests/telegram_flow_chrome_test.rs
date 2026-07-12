@@ -9,6 +9,8 @@ use crate::channels::telegram::flow_chrome::FlowSections;
 
 fn sections(title: Option<&str>, checklist: Option<&str>, goal: Option<&str>) -> FlowSections {
     FlowSections {
+        plan_state: None,
+        plan_kb: Default::default(),
         plan_title: title.map(str::to_string),
         checklist: checklist.map(str::to_string),
         goal: goal.map(str::to_string),

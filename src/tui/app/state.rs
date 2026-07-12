@@ -471,6 +471,8 @@ pub struct App {
 
     /// Help/Settings scroll offset
     pub help_scroll_offset: usize,
+    /// Scroll offset for the Plan overlay (Editing design .md viewer).
+    pub plan_overlay_scroll: usize,
 
     /// Model name for display (from provider default)
     pub default_model_name: String,
@@ -796,6 +798,7 @@ impl App {
             escape_pending_at: None,
             ctrl_c_pending_at: None,
             help_scroll_offset: 0,
+            plan_overlay_scroll: 0,
             approval_auto_session,
             approval_auto_always,
             file_picker_files: Vec::new(),
@@ -3289,6 +3292,32 @@ impl App {
                     self.help_scroll_offset = self.help_scroll_offset.saturating_sub(10);
                 } else if keys::is_page_down(&event) {
                     self.help_scroll_offset = self.help_scroll_offset.saturating_add(10);
+                }
+            }
+            AppMode::PlanOverlay => {
+                use crossterm::event::KeyCode;
+                if keys::is_cancel(&event) {
+                    self.plan_overlay_scroll = 0;
+                    self.switch_mode(AppMode::Chat).await?;
+                } else if keys::is_up(&event) {
+                    self.plan_overlay_scroll = self.plan_overlay_scroll.saturating_sub(1);
+                } else if keys::is_down(&event) {
+                    self.plan_overlay_scroll = self.plan_overlay_scroll.saturating_add(1);
+                } else if keys::is_page_up(&event) {
+                    self.plan_overlay_scroll = self.plan_overlay_scroll.saturating_sub(10);
+                } else if keys::is_page_down(&event) {
+                    self.plan_overlay_scroll = self.plan_overlay_scroll.saturating_add(10);
+                } else if event.code == KeyCode::Char('a') {
+                    // Approve: the same idle path as /execute, deliberately
+                    // NOT the tool-policy approve flow. Close the overlay
+                    // first so the seed turn's activity is visible in chat.
+                    self.plan_overlay_scroll = 0;
+                    self.switch_mode(AppMode::Chat).await?;
+                    let _ = self.handle_slash_command("/execute").await;
+                } else if event.code == KeyCode::Char('d') {
+                    self.plan_overlay_scroll = 0;
+                    self.switch_mode(AppMode::Chat).await?;
+                    let _ = self.handle_slash_command("/discard").await;
                 }
             }
             AppMode::MissionControl => {

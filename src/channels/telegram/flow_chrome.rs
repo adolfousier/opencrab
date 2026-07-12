@@ -20,11 +20,49 @@ use uuid::Uuid;
 /// Longest plan-title / goal text shown in flow chrome before truncation.
 const SECTION_TEXT_CAP: usize = 60;
 
+/// Which plan keyboard the latest flow message owns. Keyboards attach only
+/// after `plan init` succeeds: Approve + Discard while the design plan is
+/// Editing, Discard only while a checklist is Active, none otherwise.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanKb {
+    #[default]
+    None,
+    /// Editing design plan: ✅ Approve + 🗑 Discard.
+    ApproveDiscard,
+    /// Active checklist: 🗑 Discard only.
+    DiscardOnly,
+}
+
+impl PlanKb {
+    /// Inline keyboard for this state, `None` when no buttons apply.
+    /// Callback data uses the `plan:` prefix, deliberately distinct from
+    /// tool-approval `approve:{id}` so the two can never collide.
+    pub(crate) fn keyboard(self) -> Option<teloxide::types::InlineKeyboardMarkup> {
+        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+        match self {
+            PlanKb::None => None,
+            PlanKb::ApproveDiscard => Some(InlineKeyboardMarkup::new(vec![vec![
+                InlineKeyboardButton::callback("✅ Approve plan", "plan:ok"),
+                InlineKeyboardButton::callback("🗑 Discard", "plan:no"),
+            ]])),
+            PlanKb::DiscardOnly => Some(InlineKeyboardMarkup::new(vec![vec![
+                InlineKeyboardButton::callback("🗑 Discard plan", "plan:no"),
+            ]])),
+        }
+    }
+}
+
 /// Always-visible flow sections. Built from live data by [`refresh_sections`];
 /// rendered into one compact `•`-separated chrome line so the three flow
 /// renderers can never drift on section formatting.
 #[derive(Default, Clone, PartialEq)]
 pub(crate) struct FlowSections {
+    /// Plan-mode state line: Editing prose summary, Building checklist…,
+    /// or seed-error chrome. Leads the chrome line when present.
+    pub(crate) plan_state: Option<String>,
+    /// Plan keyboard the flow message should carry (attached on every
+    /// open/edit; Telegram clears reply_markup on edits that omit it).
+    pub(crate) plan_kb: PlanKb,
     /// Plan title from the live session plan JSON, when set.
     pub(crate) plan_title: Option<String>,
     /// Checklist progress from the plan JSON `tasks[]`, e.g. `2/7 tasks`.
@@ -45,6 +83,9 @@ impl FlowSections {
             HeaderMarkup::Markdown => s.to_string(),
         };
         let mut segs: Vec<String> = Vec::new();
+        if let Some(ref p) = self.plan_state {
+            segs.push(markup.italic(&esc(p)));
+        }
         if let Some(ref t) = self.plan_title {
             segs.push(format!("📋 {}", markup.bold(&esc(t))));
         }
@@ -101,6 +142,44 @@ pub(crate) async fn load_goal_section(agent: &AgentService, session_id: Uuid) ->
     }
 }
 
+/// Plan-mode state line + keyboard ownership for the flow message
+/// (Building checklist… machine, locked): while Active with a seed turn
+/// in flight and empty tasks show Building checklist…; when the seed
+/// ended without tasks show the error chrome and the retry hint; while
+/// Editing show the prose summary with the approve hint. Keyboards
+/// attach only after `init` succeeds (pre-init has none).
+pub(crate) fn load_plan_state_section(
+    session_id: Uuid,
+    turn_active: bool,
+) -> (Option<String>, PlanKb) {
+    use crate::utils::plan_files::{PlanModeState, plan_mode_state};
+    match plan_mode_state(session_id) {
+        PlanModeState::NoPlan => (None, PlanKb::None),
+        PlanModeState::PreInitEditing => (Some("📝 Plan mode: drafting".to_string()), PlanKb::None),
+        PlanModeState::PostInitEditing => (
+            Some("✍️ Editing plan • approve: /execute".to_string()),
+            PlanKb::ApproveDiscard,
+        ),
+        PlanModeState::Active => {
+            if crate::utils::plan_mode::in_seed_window(session_id) {
+                if turn_active {
+                    (
+                        Some("⏳ Building checklist…".to_string()),
+                        PlanKb::DiscardOnly,
+                    )
+                } else {
+                    (
+                        Some("⚠️ Checklist seed incomplete • retry: /execute".to_string()),
+                        PlanKb::DiscardOnly,
+                    )
+                }
+            } else {
+                (None, PlanKb::DiscardOnly)
+            }
+        }
+    }
+}
+
 /// Reload the plan/goal sections from live data and store them on the
 /// streaming state. Returns true when they changed (the flow needs a
 /// re-render). The ctx section is owned by final delivery and preserved.
@@ -111,8 +190,17 @@ pub(crate) async fn refresh_sections(
 ) -> bool {
     let (plan_title, checklist) = load_plan_sections(session_id).await;
     let goal = load_goal_section(agent, session_id).await;
+    // Plan-state derivation reads plan files; keep that IO outside the
+    // streaming lock (short double-lock beats file reads under the mutex).
+    let turn_active = {
+        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.flow_outcome.is_none()
+    };
+    let (plan_state, plan_kb) = load_plan_state_section(session_id, turn_active);
     let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
     let next = FlowSections {
+        plan_state,
+        plan_kb,
         plan_title,
         checklist,
         goal,

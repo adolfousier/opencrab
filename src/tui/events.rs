@@ -369,6 +369,8 @@ pub enum AppMode {
     Sessions,
     /// Help screen
     Help,
+    /// Plan overlay: scrollable design .md with Approve/Discard footer
+    PlanOverlay,
     /// Settings
     Settings,
     /// File picker dialog (triggered by @)

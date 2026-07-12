@@ -2496,8 +2496,7 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 #### Agent & System
 | Tool | Description |
 |------|-------------|
-| `task_manager` | Manage agent tasks |
-| `plan` | Create structured execution plans |
+| `plan` | Dual-track Plan mode: design a SESSION PLAN for approval, or run a checklist immediately |
 | `config_manager` | Read/write config.toml and commands.toml at runtime (change settings, add/remove commands, reload config) |
 | `session_context` | Access session information |
 | `rename_session` | Rename the current session so `/sessions` shows a meaningful title instead of the channel default. Metadata-only, no approval required |
@@ -2511,18 +2510,23 @@ OpenCrabs includes 40+ built-in tools. The AI can use these during conversation:
 | `evolve` | Download latest release binary from GitHub and hot-restart (no Rust toolchain needed). Also runs automatically on startup and every 24h when `[agent] auto_update = true` (default), and via the `/evolve` slash command — both paths invoke the tool directly without the LLM, so they can't be dropped or refused by a provider |
 | `rebuild` | Build from source (`cargo build --release`) and hot-restart |
 
-#### Plan Tool: Structured Task Execution
+#### Plan Mode: Design, Approve, Execute
 
-The `plan` tool manages multi-step workflows with dependency tracking, execution history, and automatic retry logic. Use it before any task with 3+ steps, dependencies between steps, or multi-file changes.
+Plan mode runs on two tracks:
+
+- **Design track** — say "plan", "design", or hit `/plan`. The agent explores your codebase (reads, search, bash stay available), then `plan init mode="design"` creates a SESSION PLAN markdown document: `## Context` (Problem / Target state / Intent) plus numbered `## Implementation steps`. While the plan is **Editing**, that document is the only writable file: no bash, no project writes, no checklist. Review it (`/show-plan` opens the TUI overlay; Telegram shows it on the flow message with **Approve / Discard** buttons) and approve with `/execute` or the Approve button. A validator checks the template first; on pass, the checklist is seeded from the document automatically and task 1 starts in the same visible turn. Discard anytime with `/discard`.
+- **Checklist track** — execute-shaped multi-step work goes straight to an **Active** checklist: `plan init` with inline `tasks` (or an imported JSON plan) and `start` immediately. `complete` marks each task done and auto-starts the next; finishing the last task archives the plan.
+
+The lifecycle is `NoPlan → Editing → Active → archived`, durable across restarts (including the pre-init `/plan` flag). If the checklist seed fails, the plan stays Active with **Building checklist…** / seed-error chrome and `/execute` retries it. Commands: `/plan`, `/show-plan`, `/execute`, `/discard` on TUI and Telegram (Telegram buttons are owner-only in groups). Entry differs by surface on purpose: Telegram leans on `/plan` and flow chrome, the TUI also reacts to plan keywords silently.
 
 **Bundled reference plans** are embedded in the binary and available at runtime:
 - `~/.opencrabs/profiles/<profile>/plans/coding-plans/` — Rust, Python plans (fast/medium/full variants)
 - `~/.opencrabs/profiles/<profile>/plans/plan-json-spec.md` — JSON schema documentation
 
-**Import a plan** from a bundled or local JSON file:
+**Import a plan** from a bundled or local JSON file (goes Active immediately, no seed turn):
 ```json
 {
-  "operation": "import",
+  "operation": "init",
   "file_path": "~/.opencrabs/profiles/default/plans/coding-plans/rust-fast.json"
 }
 ```
@@ -2539,7 +2543,7 @@ The `plan` tool manages multi-step workflows with dependency tracking, execution
 }
 ```
 
-**Forward-only re-test pattern:** Plans are forward-only. A completed task stays completed. If a later task introduces a bug caught by an earlier test, add a new task (e.g., "Re-run tests after fix") rather than re-opening the completed one. Use `add_task` with `task_type: "test"` and reference the fixed task.
+**Forward-only re-test pattern:** Plans are forward-only. A completed task stays completed. If a later task introduces a bug caught by an earlier test, add a new task (e.g., "Re-run tests after fix") rather than re-opening the completed one. Use `add_tasks` with `task_type: "test"` and reference the fixed task.
 
 #### Recursive Self-Improvement (RSI) ⚠️ *Experimental*
 

@@ -24,6 +24,29 @@ pub(super) fn render_plan_checklist(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // Seed window (Building checklist… machine, locked): an Active plan
+    // with no tasks yet is an approved design whose checklist is still
+    // being seeded. Show Building checklist… while the agent is working;
+    // once idle, the seed failed and the strip carries the retry hint.
+    if plan.tasks.is_empty() {
+        let (text, style) = if app.is_processing {
+            (
+                "⏳ Building checklist…".to_string(),
+                Style::default().fg(Color::Yellow),
+            )
+        } else {
+            (
+                "⚠️ Checklist seed incomplete. Retry with /execute, or /discard.".to_string(),
+                Style::default().fg(Color::Red),
+            )
+        };
+        let title = format!(" 📋 {} · Active ", plan.title);
+        let para = Paragraph::new(Line::from(Span::styled(text, style)))
+            .block(Block::default().borders(Borders::ALL).title(title));
+        f.render_widget(para, area);
+        return;
+    }
+
     let total = plan.tasks.len();
     let completed = plan
         .tasks

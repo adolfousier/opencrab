@@ -1023,6 +1023,183 @@ impl TelegramAgent {
                                 return ResponseResult::Ok(());
                             }
 
+                            // Plan Approve/Discard buttons (`plan:` prefix,
+                            // deliberately distinct from tool-approval
+                            // `approve:{id}`). Owner-only, same spirit as
+                            // sensitive tool approval: the keyboard sits in
+                            // the chat where any allowlisted member could tap
+                            // it, so the tapper is re-checked here. Approve is
+                            // FORBIDDEN while a turn runs (refuse, never
+                            // queue); Discard cancels the turn first.
+                            if data == "plan:ok" || data == "plan:no" {
+                                let caller_is_owner = config_rx
+                                    .borrow()
+                                    .channels
+                                    .telegram
+                                    .is_owner(&query.from.id.0.to_string());
+                                if !caller_is_owner {
+                                    let _ = bot
+                                        .answer_callback_query(query.id.clone())
+                                        .text("🔒 Owner only")
+                                        .show_alert(true)
+                                        .await;
+                                    return ResponseResult::Ok(());
+                                }
+                                let Some(session_id) =
+                                    resolve_callback_session(&query, &state, &shared_session).await
+                                else {
+                                    let _ = bot
+                                        .answer_callback_query(query.id.clone())
+                                        .text("No session for this chat.")
+                                        .await;
+                                    return ResponseResult::Ok(());
+                                };
+                                let (chat_id, thread_id) = match query.message.as_ref() {
+                                    Some(m) => (
+                                        m.chat().id,
+                                        m.regular_message().and_then(|r| r.thread_id),
+                                    ),
+                                    None => {
+                                        let _ = bot.answer_callback_query(query.id.clone()).await;
+                                        return ResponseResult::Ok(());
+                                    }
+                                };
+                                // Used buttons disappear: clear the markup on
+                                // the message that carried them (the flow tick
+                                // re-attaches when the state still wants one).
+                                let kb_msg_id = query.message.as_ref().map(|m| m.id());
+
+                                if data == "plan:no" {
+                                    let cancelled = state.cancel_session(session_id).await;
+                                    let mut reply =
+                                        crate::utils::plan_mode::discard(session_id);
+                                    if cancelled {
+                                        reply =
+                                            format!("⏹️ Cancelled the running turn. {reply}");
+                                    }
+                                    let _ = bot
+                                        .answer_callback_query(query.id.clone())
+                                        .text("Plan discarded")
+                                        .await;
+                                    if let Some(mid) = kb_msg_id {
+                                        let _ = bot
+                                            .edit_message_reply_markup(chat_id, mid)
+                                            .await;
+                                    }
+                                    let _ = crate::channels::telegram::send::message_in_thread(
+                                        &bot, chat_id, thread_id, reply,
+                                    )
+                                    .await;
+                                    return ResponseResult::Ok(());
+                                }
+
+                                // plan:ok — Approve / seed retry.
+                                if state.is_turn_active(session_id) {
+                                    let _ = bot
+                                        .answer_callback_query(query.id.clone())
+                                        .text(
+                                            "⛔ A turn is running. Approve is refused while \
+                                             busy; try again when it finishes.",
+                                        )
+                                        .show_alert(true)
+                                        .await;
+                                    return ResponseResult::Ok(());
+                                }
+                                match crate::utils::plan_mode::try_approve(session_id) {
+                                    crate::utils::plan_mode::ApproveOutcome::Refused(msg) => {
+                                        let _ =
+                                            bot.answer_callback_query(query.id.clone()).await;
+                                        let _ =
+                                            crate::channels::telegram::send::message_in_thread(
+                                                &bot, chat_id, thread_id, msg,
+                                            )
+                                            .await;
+                                    }
+                                    crate::utils::plan_mode::ApproveOutcome::SeedTurn {
+                                        prompt,
+                                    } => {
+                                        let _ = bot
+                                            .answer_callback_query(query.id.clone())
+                                            .text("✅ Plan approved")
+                                            .await;
+                                        if let Some(mid) = kb_msg_id {
+                                            let _ = bot
+                                                .edit_message_reply_markup(chat_id, mid)
+                                                .await;
+                                        }
+                                        let _ =
+                                            crate::channels::telegram::send::message_in_thread(
+                                                &bot,
+                                                chat_id,
+                                                thread_id,
+                                                "✅ Plan approved. Building the checklist…"
+                                                    .to_string(),
+                                            )
+                                            .await;
+                                        // Visible seed turn, spawned so the
+                                        // callback answers fast. The turn
+                                        // guard keeps concurrent messages from
+                                        // forking a second turn. (The /execute
+                                        // COMMAND path gets full flow chrome;
+                                        // the button path delivers the final
+                                        // text: same engine, lighter surface.)
+                                        let bot2 = bot.clone();
+                                        let agent2 = agent.clone();
+                                        let state2 = state.clone();
+                                        tokio::spawn(async move {
+                                            let _guard =
+                                                match state2.try_begin_turn(session_id) {
+                                                    Some(g) => g,
+                                                    None => return,
+                                                };
+                                            let display =
+                                                "[System: Plan approved — seeding checklist]"
+                                                    .to_string();
+                                            match agent2
+                                                .send_message_with_display(
+                                                    session_id,
+                                                    prompt,
+                                                    Some(display),
+                                                    None,
+                                                )
+                                                .await
+                                            {
+                                                Ok(resp) => {
+                                                    let text =
+                                                        crate::utils::sanitize::strip_llm_artifacts(
+                                                            &resp.content,
+                                                        );
+                                                    let text = crate::utils::redact_secrets(&text);
+                                                    if !text.trim().is_empty() {
+                                                        let html = crate::channels::telegram::handler::md_to_html(&text);
+                                                        let _ = crate::channels::telegram::handler::send_html_or_plain(
+                                                            &bot2, chat_id, thread_id, &html,
+                                                        )
+                                                        .await;
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "Plan seed turn failed for session {session_id}: {e}"
+                                                    );
+                                                    let _ = crate::channels::telegram::send::message_in_thread(
+                                                        &bot2,
+                                                        chat_id,
+                                                        thread_id,
+                                                        format!(
+                                                            "⚠️ Checklist seed failed: {e}. \
+                                                             Retry with /execute when idle."
+                                                        ),
+                                                    )
+                                                    .await;
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                                return ResponseResult::Ok(());
+                            }
+
                             let (approved, always, yolo, id) =
                                 if let Some(id) = data.strip_prefix("approve:") {
                                     (true, false, false, id.to_string())

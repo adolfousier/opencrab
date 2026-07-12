@@ -802,8 +802,24 @@ impl App {
             "/show-plan" | "/showplan" | "/show_plan" => {
                 if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
                     self.reload_plan();
-                    let reply = crate::utils::plan_mode::show_plan(sid);
-                    self.push_system_message(reply);
+                    use crate::utils::plan_files::{PlanModeState, plan_mode_state};
+                    match plan_mode_state(sid) {
+                        // A live plan opens the overlay (scrollable design
+                        // .md with the Approve/Discard footer, or the Active
+                        // checklist view).
+                        PlanModeState::PostInitEditing
+                        | PlanModeState::Active
+                        | PlanModeState::PreInitEditing => {
+                            self.plan_overlay_scroll = 0;
+                            if let Err(e) = self.switch_mode(AppMode::PlanOverlay).await {
+                                tracing::warn!("Failed to open plan overlay: {e}");
+                            }
+                        }
+                        PlanModeState::NoPlan => {
+                            let reply = crate::utils::plan_mode::show_plan(sid);
+                            self.push_system_message(reply);
+                        }
+                    }
                 } else {
                     self.push_system_message("No active session.".to_string());
                 }
