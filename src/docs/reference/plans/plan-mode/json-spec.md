@@ -151,11 +151,12 @@ These decisions were locked after validating Adolfo’s OC Dev audit (2026-07-11
 
 | Store | Role |
 |---|---|
-| `~/.opencrabs/agents/session/.opencrabs_plan_{session}.json` | **Live.** The `plan` tool and TUI read and write this file on every checklist operation. |
-| `~/.opencrabs/agents/session/.opencrabs_plan_{session}.md` | Session plan prose while the user is in Editing (design track). |
-| SQLite `plans` / `plan_tasks` | **Dormant.** Migration and `PlanService` exist, but no production code path uses them today. |
+| `~/.opencrabs/agents/session/.opencrabs_plan_{session}.json` | **Live.** The `plan` tool and TUI read and write this file on every checklist operation; the minimal pre-init Editing sidecar uses the same path. Single loader/saver: `src/utils/plan_files.rs`. |
+| `~/.opencrabs/agents/session/.opencrabs_plan_{session}.md` | Session plan prose while Editing (design track). Frozen against generic write tools once Active. Successful writes mirror the full body into JSON `description`. |
+| `~/.opencrabs/agents/session/archive/` | Completed plans retire here with a timestamp (no lingering live Done status). |
+| SQLite `plans` / `plan_tasks` | **Retired** (Cluster C). Zero production callers were confirmed; `PlanService` and `PlanRepository` are deleted. The migration file remains but nothing reads or writes those tables. |
 
-Do not dual-write to SQLite unless we deliberately re-enable that layer. **Cluster C Phase C1** (umbrella Phase 3) must load legacy JSON files that still carry old `PlanStatus` strings (Draft through Cancelled) and map them to Editing, Active, or NoPlan. The `approved_at` timestamp stays on the struct; set on user Approve, not on first `start`.
+JSON is the single live store; SQLite is not dual-written. Legacy JSON files that still carry old `PlanStatus` strings (Draft through Cancelled) are mapped on load by `plan_files::load_plan` (Cluster C Phase C1, umbrella Phase 3); legacy draft checklists (tasks, no `.md`) normalize to Active so they stay executable. The `approved_at` timestamp stays on the struct; set on user Approve, not on first `start`.
 
 ### Status on write (canonical JSON `status` field)
 

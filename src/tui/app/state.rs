@@ -2299,7 +2299,11 @@ impl App {
                 // `preload_pane_session` reload path.
                 if self.is_current_session(session_id) && self.is_processing {
                     self.processing_started_at = Some(std::time::Instant::now());
-                    if tool_name == "plan" {
+                    // Plan-file-changed events: the plan tool mutates the
+                    // JSON directly; write tools may have edited the session
+                    // .md, which the registry mirrors into the JSON
+                    // description while Editing. Reload on both.
+                    if matches!(tool_name.as_str(), "plan" | "write_file" | "edit_file") {
                         self.reload_plan();
                     }
                     if self.auto_scroll {

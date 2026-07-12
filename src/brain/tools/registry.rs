@@ -307,7 +307,26 @@ impl ToolRegistry {
 
         // Execute the tool
         tracing::info!("Executing tool: {}", name);
+        let is_md_write = tool
+            .capabilities()
+            .contains(&crate::brain::tools::r#trait::ToolCapability::WriteFiles)
+            && super::plan_gate::write_targets_session_md(context.session_id, &input);
         let result = tool.execute(input, context).await?;
+
+        // Editing mirror: a successful write to the session plan .md syncs
+        // the full body into the JSON `description` (tasks stay empty), so
+        // the .md remains the Editing source of truth and every JSON reader
+        // (TUI chrome, Telegram sections) sees the fresh design. Advisory
+        // template warnings are logged, never blocking.
+        if result.success && is_md_write {
+            let warnings = crate::utils::plan_files::sync_md_to_json(context.session_id);
+            if !warnings.is_empty() {
+                tracing::debug!(
+                    "Plan .md template warnings after write: {}",
+                    warnings.join("; ")
+                );
+            }
+        }
 
         if result.success {
             tracing::info!("Tool '{}' executed successfully", name);
