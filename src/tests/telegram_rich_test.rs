@@ -1,11 +1,11 @@
 //! Additional coverage for the rich module gate functions and the
-//! `append_footer_to_last_intermediate` path added in PR #202.
+//! last-intermediate footer path added in PR #202.
 //!
 //! The existing `telegram_rich_parse_test` already covers the pure gate
 //! functions (`has_rich_structure`, `contains_table`, `prefers_rich_render`,
 //! `contains_task_list`) and `telegram_last_intermediate_footer_test` covers
 //! `build_last_intermediate_with_footer`. This file adds edge-case coverage
-//! for the new `edit_rich_markdown` and `append_footer_to_last_intermediate`
+//! for the new `edit_rich_markdown` and last-intermediate footer
 //! integration points.
 
 use crate::channels::telegram::rich::api::{build_body, build_body_blocks, build_body_html};

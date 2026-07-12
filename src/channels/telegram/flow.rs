@@ -91,14 +91,16 @@ pub(crate) struct StreamingState {
     /// When true, the edit loop deletes the response message and creates a fresh one
     /// at the bottom of the chat (so it appears below tool/approval messages).
     pub(crate) recreate: bool,
-    /// Pre-block dynamic status message (thinking excerpt / user preview),
-    /// standalone ONLY while no grouping block exists yet. Once the block
-    /// opens (or the final response lands) it is deleted; the id is cleared
-    /// ONLY after a successful delete so a failed delete retries next tick
-    /// instead of orphaning the bubble.
-    pub(crate) status_msg_id: Option<MessageId>,
-    /// Last text rendered into the status message (skip no-op edits).
-    pub(crate) status_last_text: Option<String>,
+    /// Pre-activity header preview (thinking excerpt / Working-on line),
+    /// shown in the flow header while no flow entry yields an activity
+    /// preview of its own. The flow message is the ONLY status surface: the
+    /// legacy pre-block status bubble is gone, so early-turn status rides
+    /// here from the first activity tick.
+    pub(crate) header_preview: Option<String>,
+    /// Always-visible flow sections (plan title, checklist progress, active
+    /// goal, ctx footer). Rolled by the edit loop from live data; ctx is set
+    /// once at final delivery.
+    pub(crate) sections: super::flow_chrome::FlowSections,
     /// Number of tool rounds completed (for display)
     pub(crate) tool_round_count: usize,
     /// When tool execution started (for elapsed time)
@@ -290,11 +292,29 @@ fn cap_narration(text: &str) -> String {
     format!("{capped}…")
 }
 
+// Channel code renders through the `_chrome` variants; these no-chrome
+// wrappers stay as the test entry points pinning the renderer contract.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn render_flow_html(lines: &[FlowLine], live_status: Option<&str>) -> String {
     render_flow_html_with(lines, &FlowHeader::Live(live_status))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> String {
+    render_flow_html_chrome(
+        lines,
+        header,
+        None,
+        &super::flow_chrome::FlowSections::default(),
+    )
+}
+
+pub(crate) fn render_flow_html_chrome(
+    lines: &[FlowLine],
+    header: &FlowHeader,
+    fallback_status: Option<&str>,
+    sections: &super::flow_chrome::FlowSections,
+) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -328,8 +348,35 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
             }
         }
     }
+    // Latest activity now LEADS the header so the COLLAPSED preview shows what
+    // is happening now, not the first entry from many minutes ago (#405), in the
+    // planned status-first order (#509). Live turns only (#498): once the block
+    // settles to a Finished/Failed/Timed out header the narration is stale, so
+    // the settled rollup stands alone. With no entry-derived preview (the
+    // header-only phase before tools), the pre-activity preview (thinking /
+    // Working-on) stands in. Escaped here for the HTML dialect before the
+    // shared builder styles it.
+    let status_msg = match header {
+        FlowHeader::Live(_) => latest_activity_preview(lines)
+            .or_else(|| fallback_status.map(str::to_string))
+            .map(|l| escape_html(&l)),
+        FlowHeader::Settled { .. } => None,
+    };
+    let chrome = sections.chrome_line(HeaderMarkup::Html);
     if out.is_empty() {
-        return String::new();
+        // Header-only render: activity / thinking / duration / sections with
+        // no tool body yet (or a settled no-tool turn). A plain line, no
+        // blockquote, since there is nothing to expand.
+        let header_line = flow_header_text(
+            tool_count,
+            header,
+            status_msg.as_deref(),
+            HeaderMarkup::Html,
+        );
+        return match chrome {
+            Some(c) => format!("{header_line}\n{c}"),
+            None => header_line,
+        };
     }
     // Lone tool line stays plain (#296) while the turn is live; the live status
     // rides on it (#360). A settled outcome always renders the block header so
@@ -343,24 +390,23 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
             None => out.remove(0),
         };
     }
-    // Latest activity now LEADS the header so the COLLAPSED preview shows what
-    // is happening now, not the first entry from many minutes ago (#405), in the
-    // planned status-first order (#509). Live turns only (#498): once the block
-    // settles to a Finished/Failed/Timed out header the narration is stale, so
-    // the settled rollup stands alone. Escaped here for the HTML dialect before
-    // the shared builder styles it.
-    let status_msg = match header {
-        FlowHeader::Live(_) => latest_activity_preview(lines).map(|l| escape_html(&l)),
-        FlowHeader::Settled { .. } => None,
-    };
-    format!(
-        "<blockquote expandable>{}\n\n{}</blockquote>",
-        flow_header_text(
+    // The chrome line sits right under the header so the collapsed preview
+    // keeps plan title / progress / goal / ctx always visible.
+    let header_block = {
+        let header_line = flow_header_text(
             tool_count,
             header,
             status_msg.as_deref(),
-            HeaderMarkup::Html
-        ),
+            HeaderMarkup::Html,
+        );
+        match chrome {
+            Some(c) => format!("{header_line}\n{c}"),
+            None => header_line,
+        }
+    };
+    format!(
+        "<blockquote expandable>{}\n\n{}</blockquote>",
+        header_block,
         out.join("\n\n")
     )
 }
@@ -373,11 +419,27 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
 /// the live header (#360) and the latest-activity preview (#405); the
 /// chronological log is the collapsed body. A lone tool line stays a plain
 /// one-liner (mirrors #296, same as the HTML renderer).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn render_flow_details(lines: &[FlowLine], live_status: Option<&str>) -> String {
     render_flow_details_with(lines, &FlowHeader::Live(live_status))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) -> String {
+    render_flow_details_chrome(
+        lines,
+        header,
+        None,
+        &super::flow_chrome::FlowSections::default(),
+    )
+}
+
+pub(crate) fn render_flow_details_chrome(
+    lines: &[FlowLine],
+    header: &FlowHeader,
+    fallback_status: Option<&str>,
+    sections: &super::flow_chrome::FlowSections,
+) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -404,8 +466,38 @@ pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) 
             }
         }
     }
+    // Latest activity now LEADS the summary so the COLLAPSED rich block shows
+    // what is happening now (#405), status-first (#509). The rich `<details>`
+    // collapses to the summary ALONE, so without the activity here the rich
+    // surface would show only "N tool calls • 45s". Live turns only (#498): a
+    // settled Finished/Failed/Timed out header stands alone with no stale
+    // narration. The pre-activity preview stands in during the header-only
+    // phase. Escaped here for the HTML dialect before the shared builder
+    // styles it.
+    let status_msg = match header {
+        FlowHeader::Live(_) => latest_activity_preview(lines)
+            .or_else(|| fallback_status.map(str::to_string))
+            .map(|l| escape_html(&l)),
+        FlowHeader::Settled { .. } => None,
+    };
+    // Sections ride the summary: the rich <details> collapses to the summary
+    // alone, so the chrome must live there to stay always-visible.
+    let summary = {
+        let header_line = flow_header_text(
+            tool_count,
+            header,
+            status_msg.as_deref(),
+            HeaderMarkup::Html,
+        );
+        match sections.chrome_line(HeaderMarkup::Html) {
+            Some(c) => format!("{header_line} • {c}"),
+            None => header_line,
+        }
+    };
     if out.is_empty() {
-        return String::new();
+        // Header-only render: a plain summary line, no <details> wrapper,
+        // since there is nothing to expand yet.
+        return format!("<sub>{summary}</sub>");
     }
     if out.len() == 1
         && tool_count == 1
@@ -422,27 +514,7 @@ pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) 
     // inline wall. One <p> per entry gives the same visual separation the
     // classic blockquote gets from blank lines.
     let body: String = out.iter().map(|e| format!("<p>{e}</p>")).collect();
-    // Latest activity now LEADS the summary so the COLLAPSED rich block shows
-    // what is happening now (#405), status-first (#509). The rich `<details>`
-    // collapses to the summary ALONE, so without the activity here the rich
-    // surface would show only "N tool calls • 45s". Live turns only (#498): a
-    // settled Finished/Failed/Timed out header stands alone with no stale
-    // narration. Escaped here for the HTML dialect before the shared builder
-    // styles it.
-    let status_msg = match header {
-        FlowHeader::Live(_) => latest_activity_preview(lines).map(|l| escape_html(&l)),
-        FlowHeader::Settled { .. } => None,
-    };
-    format!(
-        "<details><summary><sub>{}</sub></summary>{}</details>",
-        flow_header_text(
-            tool_count,
-            header,
-            status_msg.as_deref(),
-            HeaderMarkup::Html
-        ),
-        body
-    )
+    format!("<details><summary><sub>{summary}</sub></summary>{body}</details>")
 }
 
 /// Render resolved flow lines into markdown for the rich API
@@ -476,7 +548,14 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
         }
     }
     if out.is_empty() {
-        return String::new();
+        // Header-only render: the markdown path allows empty entries too so
+        // the three renderers agree on the header-only contract.
+        return flow_header_text(
+            tool_count,
+            &FlowHeader::Live(live_status),
+            None,
+            HeaderMarkup::Markdown,
+        );
     }
     if out.len() == 1 && tool_count == 1 {
         // Lone tool line stays plain (#296); the live status rides on it so
@@ -497,18 +576,6 @@ pub(crate) fn render_flow_rich(lines: &[FlowLine], live_status: Option<&str>) ->
         HeaderMarkup::Markdown,
     );
     format!("{header}\n\n{}", out.join("\n\n"))
-}
-
-/// Compact elapsed time for the block header ("45s", "1m 20s"). Sub-minute
-/// values snap to 5s steps so the header edit fires at most every ~5s
-/// instead of every tick (#360 — header edits share the per-chat budget).
-pub(crate) fn humanize_elapsed(secs: u64) -> String {
-    let secs = (secs / 5) * 5;
-    if secs >= 60 {
-        format!("{}m {}s", secs / 60, secs % 60)
-    } else {
-        format!("{}s", secs)
-    }
 }
 
 /// Wall-clock duration for the flow-block header (#480): precise seconds under
@@ -573,14 +640,14 @@ pub(crate) enum HeaderMarkup {
 }
 
 impl HeaderMarkup {
-    fn bold(self, s: &str) -> String {
+    pub(crate) fn bold(self, s: &str) -> String {
         match self {
             HeaderMarkup::Html => format!("<b>{s}</b>"),
             HeaderMarkup::Markdown => format!("**{s}**"),
         }
     }
 
-    fn italic(self, s: &str) -> String {
+    pub(crate) fn italic(self, s: &str) -> String {
         match self {
             HeaderMarkup::Html => format!("<i>{s}</i>"),
             HeaderMarkup::Markdown => format!("_{s}_"),
@@ -686,16 +753,23 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
         Some(outcome) => {
             let (icon, verb) = outcome.icon_verb();
             let duration = humanize_duration(s.turn_started_at.elapsed().as_secs());
-            render_flow_html_with(
+            render_flow_html_chrome(
                 &flow_lines(s),
                 &FlowHeader::Settled {
                     icon,
                     verb,
                     duration: &duration,
                 },
+                None,
+                &s.sections,
             )
         }
-        None => render_flow_html(&flow_lines(s), s.flow_status.as_deref()),
+        None => render_flow_html_chrome(
+            &flow_lines(s),
+            &FlowHeader::Live(s.flow_status.as_deref()),
+            s.header_preview.as_deref(),
+            &s.sections,
+        ),
     }
 }
 
@@ -706,16 +780,23 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
         Some(outcome) => {
             let (icon, verb) = outcome.icon_verb();
             let duration = humanize_duration(s.turn_started_at.elapsed().as_secs());
-            render_flow_details_with(
+            render_flow_details_chrome(
                 &flow_lines(s),
                 &FlowHeader::Settled {
                     icon,
                     verb,
                     duration: &duration,
                 },
+                None,
+                &s.sections,
             )
         }
-        None => render_flow_details(&flow_lines(s), s.flow_status.as_deref()),
+        None => render_flow_details_chrome(
+            &flow_lines(s),
+            &FlowHeader::Live(s.flow_status.as_deref()),
+            s.header_preview.as_deref(),
+            &s.sections,
+        ),
     }
 }
 
@@ -1149,7 +1230,7 @@ pub(crate) async fn restick_flow_if_buried(
 /// never lands as a separate bubble. Mid-turn narration is always followed by
 /// more tool calls, so a `Text` entry sitting LAST in the flow is always the
 /// final answer, never interstitial text. This pops it, re-renders the block
-/// without it (or deletes the block if it becomes empty), and returns the text.
+/// without it (header-only when it empties), and returns the text.
 /// Returns `None` when the flow ended on a tool call — then the answer is in
 /// `response.content` and the normal delivery path handles it.
 pub(crate) async fn take_folded_final(
@@ -1162,23 +1243,11 @@ pub(crate) async fn take_folded_final(
         pop_trailing_folded_texts(&mut s.flow_entries)
     };
     text.as_ref()?;
-    // Re-render the block without the promoted answer, or remove it entirely if
-    // that answer was its only remaining entry.
-    let now_empty = {
-        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        s.flow_entries.is_empty()
-    };
-    if now_empty {
-        let mid = {
-            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            s.open_group_msg_id.take()
-        };
-        if let Some(mid) = mid {
-            let _ = bot.delete_message(chat, mid).await;
-        }
-    } else {
-        refresh_flow(bot, chat, streaming).await;
-    }
+    // Re-render the block without the promoted answer. An emptied block is
+    // NOT deleted anymore: the flow message is the turn's chrome surface
+    // (header, sections, ctx) and settles header-only at turn end, same as a
+    // no-tool long turn.
+    refresh_flow(bot, chat, streaming).await;
     text
 }
 

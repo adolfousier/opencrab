@@ -66,8 +66,8 @@ pub(crate) async fn resume_session(
         response: String::new(),
         dirty: false,
         recreate: false,
-        status_msg_id: None,
-        status_last_text: None,
+        header_preview: None,
+        sections: Default::default(),
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
         turn_started_at: std::time::Instant::now(),
@@ -93,6 +93,8 @@ pub(crate) async fn resume_session(
         let st = streaming.clone();
         let cancel = edit_cancel.clone();
         let tg = telegram_state.clone();
+        let agent = agent.clone();
+        let sid = session_id;
         async move {
             loop {
                 tokio::select! {
@@ -104,13 +106,37 @@ pub(crate) async fn resume_session(
                             response_text: String,
                             msg_id: Option<MessageId>,
                             display_items: Vec<DisplayItem>,
+                            /// Any tool flipped status this tick (needs a flow re-render).
+                            tools_dirty: bool,
+                            has_active_tools: bool,
+                            tool_round_count: usize,
+                            processing: bool,
+                            thinking_excerpt: Option<String>,
                         }
 
                         let snap = {
                             let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                             let has_display = !s.display_queue.is_empty();
-                            if !s.dirty && !s.recreate && !has_display { continue; }
+                            let any_tools_dirty = s.tool_msgs.iter().any(|t| t.dirty);
+                            let has_active_tools =
+                                s.tool_msgs.iter().any(|t| t.completed.is_none());
+                            let processing = s.processing;
+                            // Same wake conditions as the main handler loop, so a
+                            // resumed turn ticks its live header while tools run
+                            // instead of only waking on new display items.
+                            if !s.dirty
+                                && !s.recreate
+                                && !has_display
+                                && !any_tools_dirty
+                                && !has_active_tools
+                                && !processing
+                            {
+                                continue;
+                            }
                             let items: Vec<DisplayItem> = s.display_queue.drain(..).collect();
+                            for t in s.tool_msgs.iter_mut().filter(|t| t.dirty) {
+                                t.dirty = false;
+                            }
                             let response_text = s.render();
                             let snap = Snap {
                                 dirty: s.dirty,
@@ -118,6 +144,11 @@ pub(crate) async fn resume_session(
                                 response_text,
                                 msg_id: s.msg_id,
                                 display_items: items,
+                                tools_dirty: any_tools_dirty,
+                                has_active_tools,
+                                tool_round_count: s.tool_round_count,
+                                processing,
+                                thinking_excerpt: thinking_status_excerpt(&s.thinking),
                             };
                             s.dirty = false;
                             s.recreate = false;
@@ -171,6 +202,34 @@ pub(crate) async fn resume_session(
                             let newest = tg.newest_incoming_msg_id(chat_id.0);
                             restick_flow_if_buried(&bot, chat_id, thread_id, &st, newest).await;
                         }
+
+                        // ── Live flow header parity with the main handler ──
+                        // Resume rides the same shared tick: open the flow
+                        // early (header-only), roll the wall-clock duration,
+                        // thinking preview, and plan/goal/ctx sections. A
+                        // resumed turn has no fresh user message, so there is
+                        // no Working-on fallback.
+                        let show_status = snap.has_active_tools
+                            || (snap.tool_round_count > 0 && snap.response_text.is_empty())
+                            || snap.processing;
+                        let turn_done = snap.dirty && !snap.response_text.is_empty();
+                        let preview = snap
+                            .thinking_excerpt
+                            .as_deref()
+                            .map(|t| format!("🧠 {t}"));
+                        super::flow_chrome::tick_flow_header(
+                            &bot,
+                            chat_id,
+                            thread_id,
+                            &st,
+                            &agent,
+                            sid,
+                            show_status,
+                            turn_done,
+                            preview,
+                            snap.tools_dirty,
+                        )
+                        .await;
 
                         // Response message (streaming). Stale-placeholder cleanup
                         // runs unconditionally so a bubble opened before the first
@@ -437,6 +496,20 @@ pub(crate) async fn resume_session(
     let voice_config = Config::current().voice_config();
     let channel_msg_repo = ChannelMessageRepository::new(agent.context().pool().clone());
     let is_dm = chat_id.0 > 0;
+    // Settled header outcome for the flow block (#480), same classification
+    // as the main handler: computed before `result` moves into delivery,
+    // stamped after so it renders on the block's final shape.
+    let flow_outcome = match &result {
+        Ok(_) => FlowOutcome::Finished,
+        Err(e) => {
+            let es = e.to_string().to_lowercase();
+            if es.contains("timed out") || es.contains("timeout") || es.contains("deadline") {
+                FlowOutcome::TimedOut
+            } else {
+                FlowOutcome::Failed
+            }
+        }
+    };
     if !super::handler::deliver_final_response(
         &bot,
         chat_id,
@@ -458,6 +531,14 @@ pub(crate) async fn resume_session(
     {
         return Ok(());
     }
+
+    // Resume parity with the main handler: settle the flow header once the
+    // final delivery has left the block in its final shape.
+    {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.flow_outcome = Some(flow_outcome);
+    }
+    refresh_flow(&bot, chat_id, &streaming).await;
 
     Ok(())
 }

@@ -9,7 +9,7 @@ use super::flow::{
     folded_duplicates_final, take_folded_final,
 };
 use super::handler::{fire_reaction, map_to_allowed_reaction};
-use super::intermediates::{append_footer_to_last_intermediate, send_html_or_plain};
+use super::intermediates::send_html_or_plain;
 use super::markdown::{markdown_to_telegram_html, split_message};
 use super::send::{message_in_thread, photo_in_thread};
 use crate::brain::agent::AgentService;
@@ -216,15 +216,19 @@ pub(crate) async fn deliver_final_response(
                 }
             }
 
-            // Context budget footer is appended to the response text for
-            // display only. It must NOT be stored in the session/messages
-            // table or used for TTS synthesis — it's metadata for the user.
+            // Context budget footer is display-only chrome: it rides the
+            // settled flow message as a section, never the final answer, and
+            // is NOT stored in the session/messages table or used for TTS.
             let ctx_max = agent.context_limit_for_session(session_id);
             let footer = crate::utils::format_ctx_footer(
                 response.context_tokens,
                 ctx_max,
                 response.tokens_per_second,
             );
+            {
+                let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                s.sections.ctx = (!footer.is_empty()).then(|| footer.clone());
+            }
 
             for img_path in img_paths {
                 match tokio::fs::read(&img_path).await {
@@ -250,11 +254,7 @@ pub(crate) async fn deliver_final_response(
                 && !sent.is_empty()
                 && super::rich::should_send_native_rich(&pre_dedup_text)
             {
-                let rich_md = if footer.is_empty() {
-                    pre_dedup_text.clone()
-                } else {
-                    format!("{pre_dedup_text}\n\n{footer}")
-                };
+                let rich_md = pre_dedup_text.clone();
                 match super::rich::api::send_rich_markdown_id(
                     bot.token(),
                     chat_id.0,
@@ -355,17 +355,11 @@ pub(crate) async fn deliver_final_response(
             // Deliver final response — prefer editing the streaming message in-place
             // to avoid the delete+send race that causes duplicates.
             let html = markdown_to_telegram_html(&text_only);
-            // Append ctx footer to display only — never stored in DB or used for TTS.
-            // When text is empty after dedup (all content was already delivered as
-            // intermediate messages), DON'T send a footer-only message. The streaming
-            // placeholder will be deleted instead.
-            let display_html = if html.is_empty() {
-                String::new()
-            } else {
-                format!("{}\n\n<i>{}</i>", html, footer)
-            };
+            // Final answers stay clean prose: the ctx footer lives on the
+            // settled flow message, not here.
+            let display_html = html.clone();
             tracing::info!(
-                "Telegram deliver: html.len={}, footer='{}', text_only ends_with={:?}",
+                "Telegram deliver: html.len={}, ctx footer on flow='{}', text_only ends_with={:?}",
                 html.len(),
                 footer,
                 text_only.lines().last()
@@ -386,11 +380,7 @@ pub(crate) async fn deliver_final_response(
                 // never regressed. Plain prose skips rich entirely so Telegram's
                 // parser never reinterprets incidental characters.
                 let delivered_rich = super::rich::should_send_native_rich(&text_only) && {
-                    let rich_md = if footer.is_empty() {
-                        text_only.clone()
-                    } else {
-                        format!("{text_only}\n\n<sub>{footer}</sub>")
-                    };
+                    let rich_md = text_only.clone();
                     // Send a FRESH rich message rather than editing the streamed
                     // placeholder into rich. Editing a normal message into a rich
                     // one glitches the client render — overlap during the
@@ -412,13 +402,8 @@ pub(crate) async fn deliver_final_response(
                     // fences into <code> artifacts. On ANY rejection fall back
                     // to the markdown rich send (tables good, fences mangle),
                     // then to HTML below — so worst case is exactly today's
-                    // behavior, never a regression. The footer rides as an
-                    // italic paragraph so it is part of the same message.
-                    let block_src = if footer.is_empty() {
-                        text_only.clone()
-                    } else {
-                        format!("{text_only}\n\n_{footer}_")
-                    };
+                    // behavior, never a regression.
+                    let block_src = text_only.clone();
                     let blocks = super::rich::markdown_to_rich_blocks(&block_src);
                     let via_blocks = super::rich::api::send_rich_blocks_id(
                         bot.token(),
@@ -522,29 +507,10 @@ pub(crate) async fn deliver_final_response(
                     }
                 }
             } else if let Some(mid) = streaming_msg_id {
-                // Empty final text — all content was already delivered as
-                // intermediate messages. Append the ctx/tok-s footer to the
-                // last intermediate so the user still sees the budget (it was
-                // being dropped on every tool-using turn — 2026-06-06), then
-                // remove the now-empty streaming placeholder. Never a
-                // standalone footer bubble (7a0ca1c9).
-                let last_inter = {
-                    let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    s.intermediate_msg_ids
-                        .last()
-                        .copied()
-                        .zip(s.sent_intermediates.last().cloned())
-                };
-                if let Some((inter_id, inter_text)) = last_inter {
-                    append_footer_to_last_intermediate(
-                        bot,
-                        chat_id,
-                        inter_id,
-                        &inter_text,
-                        &footer,
-                    )
-                    .await;
-                }
+                // Empty final text: all content was already delivered as
+                // intermediate messages. The ctx budget rides the settled
+                // flow message now, so just remove the now-empty streaming
+                // placeholder.
                 let _ = bot.delete_message(chat_id, mid).await;
             }
 

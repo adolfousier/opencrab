@@ -433,6 +433,7 @@ mod telegram_acl_test;
 mod telegram_attachment_tmp_name_test;
 mod telegram_caption_test;
 pub mod telegram_command_sanitize_test;
+pub mod telegram_flow_chrome_test;
 pub mod telegram_handler_test;
 pub mod telegram_impersonation_test;
 pub mod telegram_join_detection_test;

@@ -102,6 +102,11 @@ pub(crate) async fn flush_intermediates(
 ///
 /// Pure + free function so the fit/reconstruct logic is unit-testable
 /// without a live bot.
+// Channel-unused since the ctx footer moved onto the flow message (the
+// intermediate-footer append path went with the pre-block status bubble);
+// kept because the reconstruct-last-chunk logic is nontrivial and its tests
+// pin the split/fit contract meanwhile.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn build_last_intermediate_with_footer(
     last_intermediate_text: &str,
     footer: &str,
@@ -117,38 +122,6 @@ pub(crate) fn build_last_intermediate_with_footer(
         None
     } else {
         Some(combined)
-    }
-}
-
-/// Append a footer to the last intermediate message, preserving rich format
-/// when the intermediate was sent as a native rich message. Editing with
-/// ParseMode::Html would downgrade rich tables to card view — this helper
-/// tries the rich edit first and falls back to HTML only on failure.
-pub(crate) async fn append_footer_to_last_intermediate(
-    bot: &Bot,
-    chat_id: ChatId,
-    inter_id: MessageId,
-    inter_text: &str,
-    footer: &str,
-) {
-    if super::rich::should_send_native_rich(inter_text) {
-        let rich_md = format!("{inter_text}\n\n{footer}");
-        match super::rich::api::edit_rich_markdown(bot.token(), chat_id.0, inter_id.0, &rich_md)
-            .await
-        {
-            Ok(()) => return,
-            Err(e) => {
-                tracing::warn!("Telegram: rich footer edit failed, falling back to HTML ({e})");
-            }
-        }
-    }
-    if let Some(edited) = build_last_intermediate_with_footer(inter_text, footer)
-        && let Err(e) = bot
-            .edit_message_text(chat_id, inter_id, &edited)
-            .parse_mode(ParseMode::Html)
-            .await
-    {
-        tracing::warn!("Telegram: failed to append ctx footer to last intermediate ({e})");
     }
 }
 

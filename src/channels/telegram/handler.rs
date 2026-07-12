@@ -2848,8 +2848,8 @@ pub(crate) async fn handle_message(
         response: String::new(),
         dirty: false,
         recreate: false,
-        status_msg_id: None,
-        status_last_text: None,
+        header_preview: None,
+        sections: Default::default(),
         tool_round_count: 0,
         tools_started_at: Some(std::time::Instant::now()),
         turn_started_at: std::time::Instant::now(),
@@ -2872,6 +2872,8 @@ pub(crate) async fn handle_message(
         let st = streaming.clone();
         let cancel = edit_cancel.clone();
         let tg = telegram_state.clone();
+        let agent = agent.clone();
+        let sid = session_id;
         async move {
             loop {
                 tokio::select! {
@@ -2884,15 +2886,11 @@ pub(crate) async fn handle_message(
                             response_text: String,
                             msg_id: Option<MessageId>,
                             tool_round_count: usize,
-                            tools_started_at: Option<std::time::Instant>,
-                            /// Turn-start anchor for the header wall clock (#480).
-                            turn_started_at: std::time::Instant,
                             /// Ordered display items (tools + intermediates in chronological order)
                             display_items: Vec<DisplayItem>,
                             /// Dirty tools that already have messages (need editing, not new sends)
                             tool_edits: Vec<(usize, String, Option<bool>, MessageId)>,
                             has_active_tools: bool,
-                            status_msg_id: Option<MessageId>,
                             processing: bool,
                             /// Short excerpt of the latest reasoning chunk used as
                             /// a context-aware status line during the pre-tool
@@ -2947,12 +2945,9 @@ pub(crate) async fn handle_message(
                                 response_text,
                                 msg_id: s.msg_id,
                                 tool_round_count: s.tool_round_count,
-                                tools_started_at: s.tools_started_at,
-                                turn_started_at: s.turn_started_at,
                                 display_items,
                                 tool_edits,
                                 has_active_tools,
-                                status_msg_id: s.status_msg_id,
                                 processing,
                                 thinking_excerpt: thinking_status_excerpt(&s.thinking),
                                 user_message_preview: s.user_message_preview.clone(),
@@ -3063,119 +3058,38 @@ pub(crate) async fn handle_message(
                             || (snap.tool_round_count > 0 && snap.response_text.is_empty())
                             || snap.processing;
 
-                        // ── Single progress surface (#360) ──
-                        // While a processing-log block is open, the live status
-                        // rides in ITS header ("status message • N tool calls •
-                        // 45s") and no standalone ticker exists. Re-read block id:
-                        // the display loop above may have just opened one.
-                        let open_block = {
-                            let s = st.lock().unwrap_or_else(|e| e.into_inner());
-                            s.open_group_msg_id
-                        };
-                        let mut flow_needs_refresh = !snap.tool_edits.is_empty() || settle_flow;
-                        if show_status && open_block.is_some() {
-                            // Live header is the wall clock from turn start, in
-                            // precise seconds (#480), fed as the duration segment.
-                            // Header reads "⚙️ status message • N tool calls •
-                            // 45s" (#509): the activity preview leads bold, the
-                            // count and duration follow italic.
-                            let elapsed_total = snap.turn_started_at.elapsed().as_secs();
-                            let status = (elapsed_total > 0).then(|| humanize_duration(elapsed_total));
-                            if let Some(status) = status {
-                                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                                if s.flow_status.as_deref() != Some(status.as_str()) {
-                                    s.flow_status = Some(status);
-                                    flow_needs_refresh = true;
-                                }
-                            }
-                        }
-                        if flow_needs_refresh {
-                            refresh_flow(&bot, chat, &st).await;
-                        }
-
-                        // ── Pre-block dynamic status ──
-                        // Context-based only (model's own thinking excerpt,
-                        // or what the user asked) — NEVER canned text. Shown
-                        // standalone ONLY while no grouping block exists;
-                        // the block header owns the status afterwards.
+                        // ── Single progress surface: the flow message ──
+                        // The live status (thinking / Working-on / activity
+                        // preview), wall-clock duration, and plan/goal/ctx
+                        // sections all ride the flow header (#360, #480,
+                        // #509). While no flow is open and the turn is still
+                        // working, the shared tick opens it header-only on
+                        // this activity tick; the legacy pre-block status
+                        // bubble is gone.
                         let turn_done = snap.dirty && !snap.response_text.is_empty();
-                        if show_status && open_block.is_none() && !turn_done {
-                            let elapsed = snap
-                                .tools_started_at
-                                .map(|t| t.elapsed().as_secs())
-                                .unwrap_or(0);
-                            let status = snap
-                                .thinking_excerpt
-                                .as_deref()
-                                .map(|t| format!("🧠 {t} ({})", humanize_elapsed(elapsed)))
-                                .or_else(|| {
-                                    snap.user_message_preview.as_deref().map(|p| {
-                                        format!(
-                                            "⚙️ Working on: {p} ({})",
-                                            humanize_elapsed(elapsed)
-                                        )
-                                    })
-                                });
-                            if let Some(status) = status {
-                                let (mid, changed) = {
-                                    let mut s =
-                                        st.lock().unwrap_or_else(|e| e.into_inner());
-                                    let changed =
-                                        s.status_last_text.as_deref() != Some(status.as_str());
-                                    if changed {
-                                        s.status_last_text = Some(status.clone());
-                                    }
-                                    (s.status_msg_id, changed)
-                                };
-                                match mid {
-                                    Some(mid) if changed => {
-                                        if let Err(e) = bot
-                                            .edit_message_text(chat, mid, &status)
-                                            .parse_mode(ParseMode::Html)
-                                            .await
-                                        {
-                                            tracing::debug!(
-                                                "Telegram: status edit failed (kept): {e}"
-                                            );
-                                        }
-                                    }
-                                    Some(_) => {}
-                                    None => {
-                                        if let Ok(m) = message_in_thread(
-                                            &bot, chat, thread_id, &status,
-                                        )
-                                        .parse_mode(ParseMode::Html)
-                                        .await
-                                        {
-                                            let mut s = st
-                                                .lock()
-                                                .unwrap_or_else(|e| e.into_inner());
-                                            s.status_msg_id = Some(m.id);
-                                        }
-                                    }
-                                }
-                            }
-                        } else if let Some(mid) = snap.status_msg_id {
-                            // Block opened or turn finished: the ticker's job
-                            // is done. Clear state ONLY on successful delete;
-                            // a failure keeps the id so next tick retries
-                            // (clearing on failure was the orphan bug).
-                            match bot.delete_message(chat, mid).await {
-                                Ok(_) => {
-                                    let mut s =
-                                        st.lock().unwrap_or_else(|e| e.into_inner());
-                                    if s.status_msg_id == Some(mid) {
-                                        s.status_msg_id = None;
-                                        s.status_last_text = None;
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Telegram: status delete failed (will retry): {e}"
-                                    );
-                                }
-                            }
-                        }
+                        let preview = snap
+                            .thinking_excerpt
+                            .as_deref()
+                            .map(|t| format!("🧠 {t}"))
+                            .or_else(|| {
+                                snap.user_message_preview
+                                    .as_deref()
+                                    .map(|p| format!("Working on: {p}"))
+                            });
+                        let flow_needs_refresh = !snap.tool_edits.is_empty() || settle_flow;
+                        super::flow_chrome::tick_flow_header(
+                            &bot,
+                            chat,
+                            thread_id,
+                            &st,
+                            &agent,
+                            sid,
+                            show_status,
+                            turn_done,
+                            preview,
+                            flow_needs_refresh,
+                        )
+                        .await;
 
                         // ── Response message (thinking + response, always at bottom) ──
                         // Stale-placeholder cleanup runs unconditionally: a bubble
@@ -3194,7 +3108,12 @@ pub(crate) async fn handle_message(
                         // end. Opening a standalone streaming bubble here leaks the
                         // intermediate text as its own message beneath the folded
                         // block (#490), so only stream the placeholder when NO
-                        // processing-log block is open.
+                        // processing-log block is open. Re-read the id: the
+                        // header tick above may have just opened the flow.
+                        let open_block = {
+                            let s = st.lock().unwrap_or_else(|e| e.into_inner());
+                            s.open_group_msg_id
+                        };
                         if (snap.dirty || snap.recreate)
                             && open_block.is_none()
                             && !snap.response_text.is_empty()
@@ -3488,42 +3407,11 @@ pub(crate) async fn handle_message(
     // _typing_guard drop cancels typing loop
 
     // Grab streaming message id and drain queued display items
-    let (streaming_msg_id, remaining_display, leftover_status) = {
+    let (streaming_msg_id, remaining_display) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
-        (s.msg_id, display, s.status_msg_id.take())
+        (s.msg_id, display)
     };
-
-    // The turn is over: any pre-block status bubble still on screen is a
-    // straggler and must go. React-only turns end with EMPTY response text
-    // (the <<react:>> marker strips to nothing), so the edit loop's
-    // final-response delete trigger never fires for them and the bubble
-    // persisted forever (#403). Deleting here, with retries, covers every
-    // turn shape; failures after the retries are logged loudly.
-    if let Some(mid) = leftover_status {
-        let mut deleted = false;
-        for attempt in 1..=3u8 {
-            match bot.delete_message(msg.chat.id, mid).await {
-                Ok(_) => {
-                    deleted = true;
-                    break;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Telegram: end-of-turn status delete attempt {attempt}/3 failed: {e}"
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-                }
-            }
-        }
-        if !deleted {
-            tracing::error!(
-                "Telegram: status bubble {mid:?} could not be deleted after turn end — \
-                 it will remain visible in chat {}",
-                msg.chat.id.0
-            );
-        }
-    }
 
     // Guard against stale delivery BEFORE sending remaining display items:
     // if a newer message cancelled this call, any queued tool/intermediate

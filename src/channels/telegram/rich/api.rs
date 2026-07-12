@@ -98,24 +98,6 @@ pub(crate) async fn send_rich_markdown_id(
         .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
 }
 
-/// Edit an existing message with rich markdown via `editMessageText` + `rich_message`.
-/// Used to append footers to intermediate rich messages without downgrading to HTML.
-/// Returns `Err` so the caller can fall back to the HTML edit path.
-pub(crate) async fn edit_rich_markdown(
-    token: &str,
-    chat_id: i64,
-    message_id: i32,
-    markdown: &str,
-) -> anyhow::Result<()> {
-    let url = format!("https://api.telegram.org/bot{token}/editMessageText");
-    let body = serde_json::json!({
-        "chat_id": chat_id,
-        "message_id": message_id,
-        "rich_message": { "markdown": markdown },
-    });
-    post_and_check(&url, &body).await
-}
-
 /// POST `body` to `url`, treating anything other than `{"ok":true,...}` as an
 /// error (surfacing Telegram's `description`). Returns the `result` object.
 /// Handles 429 RetryAfter with a single retry.

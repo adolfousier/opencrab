@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ✨ Features
 
+- **Telegram flow chrome merge** (#519): one live flow message per turn. The pre-flow status bubble is gone; thinking and Working-on previews ride the flow header from the first activity tick, all three renderers support header-only output (empty entries still emit the header), and no-tool long turns open and settle a header-only Processing log. The ctx footer moved off final answers onto the settled flow message, plan title, checklist progress (from the live session plan JSON), and the active goal one-liner render as always-visible flow sections via one shared section builder, and crash-recovery resume now shares the same open-early, live-duration, and settled-header path as live turns.
 - **Shared PromptAnalyzer soft-nudge on TUI and Telegram** (#518): the keyword analyzer moved from `src/tui/prompt_analyzer.rs` to the shared `src/utils/prompt_analyzer.rs` and now runs on both surfaces. Plan hints teach the live tool contract (`init`, `add_task`, `start`) and explicitly reject the dead `create`/`finalize` operations. Hints are LLM-only (appended to the agent input, never to Telegram `display_text` or TUI chat bubbles), and slash commands plus skill/user-command expansions are never analyzed on either surface.
 
 ## [0.3.66] - 2026-07-10

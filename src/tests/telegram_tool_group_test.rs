@@ -14,8 +14,7 @@ use crate::channels::telegram::flow::{
     render_flow_details_with, render_flow_html_with,
 };
 use crate::channels::telegram::handler::{
-    FlowLine, folded_duplicates_final, humanize_elapsed, render_flow_details, render_flow_html,
-    render_flow_rich,
+    FlowLine, folded_duplicates_final, render_flow_details, render_flow_html, render_flow_rich,
 };
 
 fn tline(label: &str, context: &str) -> FlowLine {
@@ -41,8 +40,14 @@ fn bash_line(raw_command: &str) -> FlowLine {
 }
 
 #[test]
-fn empty_group_renders_nothing() {
-    assert_eq!(render_flow_html(&[], None), "");
+fn empty_group_renders_header_only() {
+    // Header-only render: empty entries still emit the header line (no
+    // blockquote wrapper, since there is nothing to expand).
+    assert_eq!(render_flow_html(&[], None), "<b>Processing log</b>");
+    assert_eq!(
+        render_flow_html(&[], Some("45s")),
+        "⚙️ <i>Processing log</i> • <i>45s</i>"
+    );
 }
 
 #[test]
@@ -362,8 +367,8 @@ fn blank_text_entries_are_dropped() {
 }
 
 #[test]
-fn empty_flow_renders_nothing() {
-    assert_eq!(render_flow_html(&[], None), "");
+fn empty_flow_renders_header_only() {
+    assert_eq!(render_flow_html(&[], None), "<b>Processing log</b>");
 }
 
 // ── folded_duplicates_final: block dedup against the final answer ──
@@ -512,18 +517,6 @@ fn live_status_appends_to_single_tool_line() {
     let out = render_flow_html(&[tline("⚙️ bash", "git status")], Some("bash • 5s"));
     assert_eq!(out, "<b>⚙️ bash</b> <code>git status</code> • bash • 5s");
     assert!(!out.contains("<blockquote"));
-}
-
-#[test]
-fn humanize_elapsed_snaps_to_five_second_steps() {
-    // 5s snapping keeps header edits at most one per ~5s, not one per tick.
-    assert_eq!(humanize_elapsed(0), "0s");
-    assert_eq!(humanize_elapsed(4), "0s");
-    assert_eq!(humanize_elapsed(7), "5s");
-    assert_eq!(humanize_elapsed(59), "55s");
-    assert_eq!(humanize_elapsed(61), "1m 0s");
-    assert_eq!(humanize_elapsed(93), "1m 30s");
-    assert_eq!(humanize_elapsed(3601), "60m 0s");
 }
 
 // ── Header wall-clock duration + settled outcome states (#480) ──
@@ -683,8 +676,8 @@ fn settled_block_carries_no_activity_preview_rich() {
 // ── Rich API flow rendering tests (#393) ─────────────────────────────────────
 
 #[test]
-fn rich_empty_group_renders_nothing() {
-    assert_eq!(render_flow_rich(&[], None), "");
+fn rich_empty_group_renders_header_only() {
+    assert_eq!(render_flow_rich(&[], None), "**Processing log**");
 }
 
 #[test]
@@ -732,8 +725,12 @@ fn rich_single_tool_live_status_appends() {
 // ── Rich-API details flow rendering (#420 path A) ──
 
 #[test]
-fn details_empty_group_renders_nothing() {
-    assert_eq!(render_flow_details(&[], None), "");
+fn details_empty_group_renders_header_only() {
+    // Header-only render: a plain summary line, no <details> wrapper.
+    assert_eq!(
+        render_flow_details(&[], None),
+        "<sub><b>Processing log</b></sub>"
+    );
 }
 
 #[test]
