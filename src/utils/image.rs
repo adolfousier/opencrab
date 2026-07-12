@@ -26,12 +26,14 @@ pub fn extract_vid_markers(text: &str) -> (String, Vec<String>) {
 ///
 /// Both ends of the marker are matched tolerantly. The opening prefix: some
 /// models escape the angle brackets and emit `<\react:` or `<\\react:` instead
-/// of `<<react:`. The closing terminator: `>>`, an XML-style `</react>`, or a
-/// bare `>` all close the directive (see `find_react_close`) — models trained
-/// on Cursor/Cline-style harnesses close directives with `</tag>`, and that
-/// leaked mangled markers as raw text when only `>>` was accepted. All of these
-/// normalize to the same extraction, so the reaction still fires and the
-/// mangled marker never leaks into the chat as raw text.
+/// of `<<react:`, and some drop the `react:` tag entirely and just double-
+/// bracket the emoji, `<<✅>>` (see `match_react_open`). The closing terminator:
+/// `>>`, an XML-style `</react>`, or a bare `>` all close the directive (see
+/// `find_react_close`) — models trained on Cursor/Cline-style harnesses close
+/// directives with `</tag>`, and that leaked mangled markers as raw text when
+/// only `>>` was accepted. All of these normalize to the same extraction, so
+/// the reaction still fires and the mangled marker never leaks into the chat as
+/// raw text.
 ///
 /// Unlike the `<<IMG:path>>` extractor this is deliberately strict, because
 /// the marker can legitimately appear in PROSE when the agent talks about
@@ -84,6 +86,14 @@ pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
 /// match. Returns the byte length of the matched opening (through `react:`),
 /// or `None` when `s` does not begin with a marker opening.
 ///
+/// Also matches the keyword-LESS form `<<EMOJI>>`: some models drop the
+/// `react:` tag entirely and just bracket the emoji. That form is accepted only
+/// when the leading run has at least two `<` characters — a single-bracket
+/// `<x>` is one char from HTML/emoticon noise (and one char from a bare-`>`
+/// terminator), so it must stay prose. The payload is NOT validated here; the
+/// caller's `is_reaction_emoji` guard still rejects word payloads, so
+/// `<<hello>>` stays text and only a real `<<✅>>` fires.
+///
 /// All matched bytes are ASCII (`<`, `\`, `react:`), so the returned length
 /// always lands on a char boundary.
 fn match_react_open(s: &str) -> Option<usize> {
@@ -92,12 +102,24 @@ fn match_react_open(s: &str) -> Option<usize> {
         return None;
     }
     let mut j = 1;
-    while matches!(bytes.get(j), Some(b'<') | Some(b'\\')) {
-        j += 1;
+    let mut angle_brackets = 1usize; // bytes[0] is '<'
+    while let Some(c) = bytes.get(j) {
+        match c {
+            b'<' => {
+                angle_brackets += 1;
+                j += 1;
+            }
+            b'\\' => j += 1,
+            _ => break,
+        }
     }
     const TAG: &str = "react:";
     if s[j..].starts_with(TAG) {
+        // Canonical keyword form: `<<react:` (any bracket count).
         Some(j + TAG.len())
+    } else if angle_brackets >= 2 {
+        // Keyword-less `<<EMOJI>>` — payload validated by the caller.
+        Some(j)
     } else {
         None
     }

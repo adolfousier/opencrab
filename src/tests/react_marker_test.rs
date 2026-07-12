@@ -192,6 +192,63 @@ fn react_bare_terminator_in_code_span_untouched() {
     assert!(emoji.is_none());
 }
 
+// ── keyword-less opener (models that drop the `react:` tag) ──────────────
+
+#[test]
+fn react_keywordless_double_bracket_fires() {
+    // Some models drop the `react:` tag and just double-bracket the emoji.
+    let (text, emoji) = extract_react_marker("<<✅>>");
+    assert_eq!(text, "");
+    assert_eq!(emoji.as_deref(), Some("✅"));
+}
+
+#[test]
+fn react_keywordless_with_text() {
+    let (text, emoji) = extract_react_marker("Done <<🔥>>");
+    assert_eq!(text, "Done");
+    assert_eq!(emoji.as_deref(), Some("🔥"));
+}
+
+#[test]
+fn react_keywordless_bare_terminator_fires() {
+    // Keyword-less opener + a single dropped bracket on the close.
+    let (text, emoji) = extract_react_marker("<<👍>");
+    assert_eq!(text, "");
+    assert_eq!(emoji.as_deref(), Some("👍"));
+}
+
+#[test]
+fn react_keywordless_single_bracket_stays_text() {
+    // A single-bracket `<✅>` is one char from HTML/emoticon noise — it must
+    // NOT be treated as a directive, only the double-bracket form is.
+    let (text, emoji) = extract_react_marker("<✅>");
+    assert_eq!(text, "<✅>");
+    assert!(emoji.is_none());
+}
+
+#[test]
+fn react_keywordless_word_payload_stays_text() {
+    // The emoji guard still applies without the `react:` tag: an ASCII word
+    // between double brackets is prose, not a reaction.
+    let (text, emoji) = extract_react_marker("<<word>>");
+    assert_eq!(text, "<<word>>");
+    assert!(emoji.is_none());
+}
+
+#[test]
+fn react_keywordless_in_code_span_untouched() {
+    let (text, emoji) = extract_react_marker("use `<<✅>>` to react");
+    assert_eq!(text, "use `<<✅>>` to react");
+    assert!(emoji.is_none());
+}
+
+#[test]
+fn react_keywordless_empty_payload_stays_text() {
+    let (text, emoji) = extract_react_marker("<<>>");
+    assert_eq!(text, "<<>>");
+    assert!(emoji.is_none());
+}
+
 // ── prose mentions must NOT extract ──────────────────────────────────────
 
 #[test]
