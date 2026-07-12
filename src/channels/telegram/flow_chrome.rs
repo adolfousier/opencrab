@@ -280,4 +280,16 @@ pub(crate) async fn tick_flow_header(
             open_flow(bot, chat, thread_id, streaming).await;
         }
     }
+
+    // After the first tick that has an open block, stop forcing the header to
+    // lead with the user-query preview and let live activity lead as before
+    // (#527). This tick's renders above already showed "Working on: <query>",
+    // so a CLI provider that opened the block immediately with a synthesized
+    // tool still gets that leading query for its first tick, matching non-CLI.
+    {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        if s.open_group_msg_id.is_some() {
+            s.header_query_shown = true;
+        }
+    }
 }

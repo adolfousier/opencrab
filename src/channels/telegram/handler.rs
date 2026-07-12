@@ -2911,6 +2911,7 @@ pub(crate) async fn handle_message(
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
         processing: true,
+        header_query_shown: false,
         user_message_preview,
     }));
 

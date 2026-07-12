@@ -138,6 +138,14 @@ pub(crate) struct StreamingState {
     /// True from start until first response text arrives — enables rolling messages for CLI providers
     /// where tools complete instantly (ToolStarted+ToolCompleted back-to-back)
     pub(crate) processing: bool,
+    /// True once the flow header has led with the user-query preview for its
+    /// first tick. While false, a live header leads with `header_preview`
+    /// ("Working on: <query>") even if activity lines already exist — so a CLI
+    /// provider that opens the block immediately with a synthesized tool still
+    /// shows the query first, matching the header-only phase non-CLI providers
+    /// get for free (#527). Flipped true after the first tick with an open
+    /// block, after which live activity leads as before.
+    pub(crate) header_query_shown: bool,
     /// Short preview of the user's incoming message, captured once at
     /// handler start. Drives the pre-tool rolling status line: when
     /// the model hasn't streamed any reasoning yet AND no tool is
@@ -319,6 +327,21 @@ pub(crate) fn render_flow_html_chrome(
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
 ) -> String {
+    render_flow_html_chrome_pref(lines, header, fallback_status, sections, false)
+}
+
+/// Like [`render_flow_html_chrome`] but, when `prefer_fallback` is true, a live
+/// header leads with `fallback_status` (the "Working on: <query>" preview)
+/// instead of the latest activity line — used for the first header tick so a
+/// CLI provider that opens the block immediately with a synthesized tool still
+/// shows the query first, matching non-CLI's header-only phase (#527).
+pub(crate) fn render_flow_html_chrome_pref(
+    lines: &[FlowLine],
+    header: &FlowHeader,
+    fallback_status: Option<&str>,
+    sections: &super::flow_chrome::FlowSections,
+    prefer_fallback: bool,
+) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -361,7 +384,10 @@ pub(crate) fn render_flow_html_chrome(
     // Working-on) stands in. Escaped here for the HTML dialect before the
     // shared builder styles it.
     let status_msg = match header {
-        FlowHeader::Live(_) => latest_activity_preview(lines)
+        FlowHeader::Live(_) => prefer_fallback
+            .then(|| fallback_status.map(str::to_string))
+            .flatten()
+            .or_else(|| latest_activity_preview(lines))
             .or_else(|| fallback_status.map(str::to_string))
             .map(|l| escape_html(&l)),
         FlowHeader::Settled { .. } => None,
@@ -444,6 +470,18 @@ pub(crate) fn render_flow_details_chrome(
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
 ) -> String {
+    render_flow_details_chrome_pref(lines, header, fallback_status, sections, false)
+}
+
+/// Like [`render_flow_details_chrome`] but leads a live header with
+/// `fallback_status` when `prefer_fallback` is true (#527, see the HTML twin).
+pub(crate) fn render_flow_details_chrome_pref(
+    lines: &[FlowLine],
+    header: &FlowHeader,
+    fallback_status: Option<&str>,
+    sections: &super::flow_chrome::FlowSections,
+    prefer_fallback: bool,
+) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -479,7 +517,10 @@ pub(crate) fn render_flow_details_chrome(
     // phase. Escaped here for the HTML dialect before the shared builder
     // styles it.
     let status_msg = match header {
-        FlowHeader::Live(_) => latest_activity_preview(lines)
+        FlowHeader::Live(_) => prefer_fallback
+            .then(|| fallback_status.map(str::to_string))
+            .flatten()
+            .or_else(|| latest_activity_preview(lines))
             .or_else(|| fallback_status.map(str::to_string))
             .map(|l| escape_html(&l)),
         FlowHeader::Settled { .. } => None,
@@ -768,11 +809,15 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
                 &s.sections,
             )
         }
-        None => render_flow_html_chrome(
+        None => render_flow_html_chrome_pref(
             &flow_lines(s),
             &FlowHeader::Live(s.flow_status.as_deref()),
             s.header_preview.as_deref(),
             &s.sections,
+            // Lead with the user-query preview until the first tick has shown
+            // it, so CLI providers get the same "Working on: <query>" header
+            // non-CLI providers show before activity takes over (#527).
+            !s.header_query_shown && s.header_preview.is_some(),
         ),
     }
 }
@@ -795,11 +840,12 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
                 &s.sections,
             )
         }
-        None => render_flow_details_chrome(
+        None => render_flow_details_chrome_pref(
             &flow_lines(s),
             &FlowHeader::Live(s.flow_status.as_deref()),
             s.header_preview.as_deref(),
             &s.sections,
+            !s.header_query_shown && s.header_preview.is_some(),
         ),
     }
 }

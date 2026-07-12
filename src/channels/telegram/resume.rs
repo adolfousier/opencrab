@@ -83,6 +83,7 @@ pub(crate) async fn resume_session(
         // resume_session also doesn't currently emit rolling
         // messages — left as None for forward compatibility.
         user_message_preview: None,
+        header_query_shown: false,
     }));
 
     let edit_cancel = CancellationToken::new();

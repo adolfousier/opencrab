@@ -3,7 +3,8 @@
 //! paths that let the flow message open before any tool body exists.
 
 use crate::channels::telegram::flow::{
-    FlowHeader, FlowLine, HeaderMarkup, render_flow_details_chrome, render_flow_html_chrome,
+    FlowHeader, FlowLine, HeaderMarkup, render_flow_details_chrome,
+    render_flow_details_chrome_pref, render_flow_html_chrome, render_flow_html_chrome_pref,
 };
 use crate::channels::telegram::flow_chrome::FlowSections;
 
@@ -194,4 +195,111 @@ fn lone_tool_line_stays_plain_even_with_chrome() {
         &sections(Some("Plan"), None, None),
     );
     assert_eq!(out, "<b>✅ bash</b> <code>git status</code>");
+}
+
+// ── first-tick query lead for CLI providers (#527) ──────────────────
+// A CLI provider (claude-cli) opens the flow block immediately with a
+// synthesized ToolStarted, so it never gets the header-only pre-tool phase
+// non-CLI providers get. The prefer-fallback flag forces the header to lead
+// with the user-query preview for the first tick even when activity lines
+// already exist, so "Working on: <query>" still shows. Without the flag the
+// query fallback is dropped once activity exists (the shipped behavior, see
+// entry_preview_beats_fallback_preview).
+
+#[test]
+fn prefer_fallback_leads_header_with_query_despite_activity() {
+    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
+    let with_prefer = render_flow_html_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("2s")),
+        Some("Working on: ship the release"),
+        &FlowSections::default(),
+        true,
+    );
+    assert!(
+        with_prefer.contains("Working on: ship the release"),
+        "prefer=true must lead the header with the query: {with_prefer}"
+    );
+}
+
+#[test]
+fn without_prefer_activity_leads_and_query_is_dropped() {
+    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
+    let without = render_flow_html_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("2s")),
+        Some("Working on: ship the release"),
+        &FlowSections::default(),
+        false,
+    );
+    assert!(
+        !without.contains("ship the release"),
+        "prefer=false keeps shipped behavior: query fallback dropped once activity exists: {without}"
+    );
+    assert!(without.contains("read_file"), "activity leads instead");
+}
+
+#[test]
+fn prefer_fallback_without_query_falls_through_to_activity() {
+    // prefer=true but no query preview → never blank; activity still leads.
+    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
+    let out = render_flow_html_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("2s")),
+        None,
+        &FlowSections::default(),
+        true,
+    );
+    assert!(out.contains("read_file"));
+}
+
+#[test]
+fn prefer_fallback_details_summary_leads_with_query() {
+    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
+    let out = render_flow_details_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("2s")),
+        Some("Working on: ship the release"),
+        &FlowSections::default(),
+        true,
+    );
+    let summary_end = out.find("</sub></summary>").expect("summary present");
+    assert!(
+        out[..summary_end].contains("ship the release"),
+        "the collapsed summary must lead with the query: {out}"
+    );
+}
+
+#[test]
+fn default_chrome_wrappers_match_no_prefer() {
+    // The public non-pref wrappers must be identical to prefer=false.
+    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
+    let html_wrapper = render_flow_html_chrome(
+        &lines,
+        &FlowHeader::Live(Some("5s")),
+        Some("Working on: x"),
+        &FlowSections::default(),
+    );
+    let html_pref_false = render_flow_html_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("5s")),
+        Some("Working on: x"),
+        &FlowSections::default(),
+        false,
+    );
+    assert_eq!(html_wrapper, html_pref_false);
+    let d_wrapper = render_flow_details_chrome(
+        &lines,
+        &FlowHeader::Live(Some("5s")),
+        Some("Working on: x"),
+        &FlowSections::default(),
+    );
+    let d_pref_false = render_flow_details_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("5s")),
+        Some("Working on: x"),
+        &FlowSections::default(),
+        false,
+    );
+    assert_eq!(d_wrapper, d_pref_false);
 }
