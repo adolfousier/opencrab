@@ -282,6 +282,21 @@ impl ToolRegistry {
         // Validate input
         tool.validate_input(&input)?;
 
+        // Plan-mode write/bash gate: while a session is Editing (pre-init
+        // or design prose) or has a frozen Active design .md, some tools
+        // are deterministically refused with an instructive reason. Checked
+        // after validation so the model's params are sane, before approval
+        // so the user is never prompted for a call that cannot run.
+        if let Some(reason) = super::plan_gate::check_plan_gate(
+            context.session_id,
+            name,
+            &tool.capabilities(),
+            &input,
+        ) {
+            tracing::info!("Plan gate denied tool '{}': session is plan-gated", name);
+            return Ok(ToolResult::error(reason));
+        }
+
         // Check if approval is required
         if tool.requires_approval() && !context.auto_approve {
             return Err(ToolError::ApprovalRequired(format!(

@@ -266,6 +266,7 @@ pub mod phantom_post_success_exemption_test;
 pub mod phantom_pronoun_drop_test;
 pub mod plan_document_test;
 pub mod plan_files_test;
+pub mod plan_gate_test;
 pub mod plan_reminder_test;
 pub mod plan_tool_description_test;
 pub mod plan_tool_test;

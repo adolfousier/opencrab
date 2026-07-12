@@ -52,6 +52,7 @@ pub mod goal_manage;
 pub mod http;
 pub mod load_brain_file;
 pub mod memory_search;
+pub mod plan_gate;
 pub mod plan_tool;
 pub mod provider_vision;
 pub mod rebuild;
