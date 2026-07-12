@@ -1,9 +1,16 @@
-//! Prompt Analysis and Transformation
+//! Prompt Analysis and Transformation (shared soft-nudge)
 //!
-//! Analyzes user prompts to detect keywords and transforms them to include
+//! Analyzes natural-language user prompts to detect keywords and appends
 //! explicit tool call hints for the LLM to ensure proper tool usage.
+//!
+//! Shared by every surface (TUI and Telegram). Hints are LLM-only: they are
+//! appended to the agent input string and must never reach user-visible
+//! display paths (Telegram `display_text`, TUI chat bubbles). Slash commands
+//! and skill/user-command expansions are never analyzed: soft-nudge means
+//! the USER said keyword-shaped language, not that a skill author wrote it.
 
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// Keywords that trigger plan tool usage
 const PLAN_KEYWORDS: &[&str] = &[
@@ -88,6 +95,15 @@ const WEB_SEARCH_KEYWORDS: &[&str] = &[
     "web search",
 ];
 
+static SHARED: LazyLock<PromptAnalyzer> = LazyLock::new(PromptAnalyzer::new);
+
+/// True when an utterance is natural-language chat the analyzer may inspect.
+/// Slash commands and system triggers are never soft-nudged.
+pub fn is_natural_chat(text: &str) -> bool {
+    let t = text.trim_start();
+    !t.starts_with('/') && !t.to_ascii_lowercase().starts_with("[system")
+}
+
 /// Prompt analyzer that detects keywords and suggests tool usage
 pub struct PromptAnalyzer {
     plan_regex: Regex,
@@ -113,6 +129,11 @@ impl PromptAnalyzer {
         }
     }
 
+    /// Process-wide shared instance, so the keyword regexes compile once.
+    pub fn shared() -> &'static PromptAnalyzer {
+        &SHARED
+    }
+
     /// Build a regex from keywords (case-insensitive, word boundaries)
     fn build_keyword_regex(keywords: &[&str]) -> Regex {
         let pattern = keywords
@@ -123,8 +144,10 @@ impl PromptAnalyzer {
         Regex::new(&format!(r"(?i)\b({})\b", pattern)).expect("Failed to compile keyword regex")
     }
 
-    /// Analyze a prompt and transform it if needed
-    pub fn analyze_and_transform(&self, prompt: &str) -> String {
+    /// Return the hint section for a prompt, or `None` when no keyword
+    /// family matches. Callers append this to the LLM agent input only,
+    /// never to user-visible display text.
+    pub fn hints_for(&self, prompt: &str) -> Option<String> {
         let mut transformations = Vec::new();
         let lower_prompt = prompt.to_lowercase();
 
@@ -134,9 +157,13 @@ impl PromptAnalyzer {
             transformations.push(
                 "\n\n**CRITICAL**: You MUST use the `plan` tool now! \
                 DO NOT write text - CALL THE TOOL IMMEDIATELY:\n\
-                1. plan(operation='create', title='...', description='...')\n\
-                2. plan(operation='add_task', ...) for each task\n\
-                3. plan(operation='finalize')\n\
+                1. plan(operation='init', ...) to create the plan (pass inline 'tasks' \
+                to create the plan and its tasks in one call)\n\
+                2. plan(operation='add_task', ...) for any remaining tasks\n\
+                3. plan(operation='start') to begin the first task (the first start \
+                auto-approves the plan)\n\
+                The operations are EXACTLY: init, add_task, start, complete. \
+                There is NO 'create' and NO 'finalize' operation, never call those.\n\
                 **START WITH THE FIRST TOOL CALL NOW!**",
             );
         }
@@ -187,12 +214,18 @@ impl PromptAnalyzer {
             );
         }
 
-        // If any transformations were added, append them to the prompt
-        if !transformations.is_empty() {
-            let hint_section = transformations.join("");
-            format!("{}{}", prompt, hint_section)
+        if transformations.is_empty() {
+            None
         } else {
-            prompt.to_string()
+            Some(transformations.join(""))
+        }
+    }
+
+    /// Analyze a prompt and transform it if needed
+    pub fn analyze_and_transform(&self, prompt: &str) -> String {
+        match self.hints_for(prompt) {
+            Some(hint_section) => format!("{}{}", prompt, hint_section),
+            None => prompt.to_string(),
         }
     }
 }

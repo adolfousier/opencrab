@@ -108,13 +108,13 @@ impl StreamingTpsTracker {
     }
 }
 use super::onboarding::OnboardingWizard;
-use super::prompt_analyzer::PromptAnalyzer;
 use crate::brain::agent::AgentService;
 use crate::brain::provider::Provider;
 use crate::brain::{BrainLoader, CommandLoader, SelfUpdater, UserCommand};
 use crate::db::models::{Message, Session};
 use crate::services::{FileService, MessageService, ServiceContext, SessionService};
 use crate::tui::pane::PaneManager;
+use crate::utils::prompt_analyzer::PromptAnalyzer;
 use anyhow::Result;
 use ratatui::text::Line;
 use serde_json::Value;
@@ -1763,6 +1763,9 @@ impl App {
             }
             TuiEvent::MessageSubmitted(content) => {
                 self.send_message(content).await?;
+            }
+            TuiEvent::CommandSubmitted(content) => {
+                self.send_command_message(content).await?;
             }
             TuiEvent::ResponseChunk { session_id, text } => {
                 let is_current = self.is_current_session(session_id);

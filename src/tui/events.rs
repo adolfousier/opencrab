@@ -45,6 +45,11 @@ pub enum TuiEvent {
     /// User submitted a message
     MessageSubmitted(String),
 
+    /// A slash command, skill, or user-command expansion submitted a prompt.
+    /// Same send path as `MessageSubmitted` but the prompt analyzer is
+    /// skipped: soft-nudge is for natural-language user chat only.
+    CommandSubmitted(String),
+
     /// Agent started processing
     AgentProcessing,
 

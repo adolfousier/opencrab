@@ -5,6 +5,12 @@ All notable changes to OpenCrabs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ✨ Features
+
+- **Shared PromptAnalyzer soft-nudge on TUI and Telegram** (#518): the keyword analyzer moved from `src/tui/prompt_analyzer.rs` to the shared `src/utils/prompt_analyzer.rs` and now runs on both surfaces. Plan hints teach the live tool contract (`init`, `add_task`, `start`) and explicitly reject the dead `create`/`finalize` operations. Hints are LLM-only (appended to the agent input, never to Telegram `display_text` or TUI chat bubbles), and slash commands plus skill/user-command expansions are never analyzed on either surface.
+
 ## [0.3.66] - 2026-07-10
 
 53 commits since v0.3.65. 84 files changed, +7943 / -3582 lines.

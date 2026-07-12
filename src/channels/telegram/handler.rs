@@ -2082,6 +2082,9 @@ pub(crate) async fn handle_message(
     .await;
 
     // ── Channel commands (/help, /usage, /models) ──────────────────────────
+    // Soft-nudge analyzes the user's own words, so capture them before a
+    // slash command resolves to a skill/user-command body and rewrites `text`.
+    let pre_rewrite_user_text = text.clone();
     let mut text = text;
     // When a slash command resolves to a prompt (a skill or user command),
     // remember the raw invocation (e.g. "/drop_release"). A slash command is a
@@ -2746,6 +2749,22 @@ pub(crate) async fn handle_message(
          Do NOT use for: expressing emotions, being cute, filling silence, or replacing substantive answers.]\n\
          {agent_input}"
     );
+
+    // Soft-nudge (shared PromptAnalyzer): append LLM-only tool hints when the
+    // user's pre-rewrite text matches keyword families. Natural-language chat
+    // only: slash commands and skill/user-command expansions are skipped, and
+    // keywords are matched on the user's utterance, never on group history or
+    // channel headers. `display_text` is never touched by this.
+    let agent_input = if command_invocation.is_none()
+        && crate::utils::prompt_analyzer::is_natural_chat(&pre_rewrite_user_text)
+    {
+        match crate::utils::PromptAnalyzer::shared().hints_for(&pre_rewrite_user_text) {
+            Some(hints) => format!("{agent_input}{hints}"),
+            None => agent_input,
+        }
+    } else {
+        agent_input
+    };
 
     // ── Mid-turn steering ──────────────────────────────────────────────────
     // A turn is already running on this session: queue this message for

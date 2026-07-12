@@ -9,7 +9,6 @@ pub mod onboarding;
 pub mod onboarding_render;
 pub mod pane;
 pub mod plan;
-pub mod prompt_analyzer;
 pub mod provider_selector;
 pub mod render;
 pub mod runner;
@@ -23,5 +22,4 @@ pub mod components;
 // Re-exports
 pub use app::{App, DisplayMessage};
 pub use events::{AppMode, EventHandler, TuiEvent};
-pub use prompt_analyzer::PromptAnalyzer;
 pub use runner::run;

@@ -8,6 +8,7 @@ pub mod git_branch;
 pub mod image;
 pub mod install;
 pub mod pdf_vision;
+pub mod prompt_analyzer;
 pub mod provider_pair;
 pub mod providers;
 pub mod retry;
@@ -22,6 +23,7 @@ pub use approval::{
 };
 pub use file_extract::{FileContent, classify_file, inject_file_content, process_file_with_vision};
 pub use image::{extract_img_markers, extract_react_marker, extract_vid_markers};
+pub use prompt_analyzer::PromptAnalyzer;
 pub use retry::{RetryConfig, RetryableError, retry, retry_with_check};
 pub use sanitize::{redact_secrets, redact_tool_input};
 pub use string::{format_ctx_footer, strip_ctx_footer, truncate_str};

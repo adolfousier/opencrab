@@ -641,7 +641,7 @@ impl App {
                     )
                 };
                 let sender = self.event_sender();
-                let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
+                let _ = sender.send(TuiEvent::CommandSubmitted(prompt));
                 true
             }
             // `/models <provider/model>` — direct switch for the current
@@ -783,7 +783,7 @@ impl App {
                 ));
                 // Trigger compaction by sending a special message to the agent
                 let sender = self.event_sender();
-                let _ = sender.send(TuiEvent::MessageSubmitted(
+                let _ = sender.send(TuiEvent::CommandSubmitted(
                     "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                         .to_string(),
                 ));
@@ -972,7 +972,7 @@ impl App {
                 } else {
                     let prompt = crate::brain::goal::goal_command_prompt(args);
                     let sender = self.event_sender();
-                    let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
+                    let _ = sender.send(TuiEvent::CommandSubmitted(prompt));
                 }
                 true
             }
@@ -989,7 +989,7 @@ impl App {
                         _ => {
                             // "prompt" action — send to LLM
                             let sender = self.event_sender();
-                            let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
+                            let _ = sender.send(TuiEvent::CommandSubmitted(prompt));
                         }
                     }
                     return true;
@@ -1001,7 +1001,7 @@ impl App {
                 if let Some(skill) = self.skills.iter().find(|s| s.slash_name == cmd) {
                     let prompt = skill.body.clone();
                     let sender = self.event_sender();
-                    let _ = sender.send(TuiEvent::MessageSubmitted(prompt));
+                    let _ = sender.send(TuiEvent::CommandSubmitted(prompt));
                     return true;
                 }
                 // Unknown slash command — show warning inline, keep input, don't add to chat
@@ -2081,6 +2081,17 @@ impl App {
 
     /// Send a message to the agent
     pub(crate) async fn send_message(&mut self, content: String) -> Result<()> {
+        self.send_message_inner(content, false).await
+    }
+
+    /// Send a prompt that came from a slash command, skill, or user-command
+    /// expansion. Skips the prompt analyzer: soft-nudge is for natural-language
+    /// user chat only, not for prose a command or skill author wrote.
+    pub(crate) async fn send_command_message(&mut self, content: String) -> Result<()> {
+        self.send_message_inner(content, true).await
+    }
+
+    async fn send_message_inner(&mut self, content: String, command_sourced: bool) -> Result<()> {
         tracing::info!(
             "[send_message] START is_processing={} has_session={} content_len={}",
             self.is_processing,
@@ -2181,14 +2192,17 @@ impl App {
                 transformed_content = format!("{}\n\n{}", context, transformed_content);
             }
 
-            // Analyze and transform the prompt before sending to agent
-            let transformed_content = self
-                .prompt_analyzer
-                .analyze_and_transform(&transformed_content);
-
-            // Log if the prompt was transformed
-            if transformed_content != content {
+            // Soft-nudge: append LLM-only tool hints when the USER's own text
+            // matches keyword families. Natural-language chat only: command,
+            // skill, and user-command expansions plus system triggers are
+            // never analyzed. Hints go to the agent string; the chat bubble
+            // below renders `content` untouched.
+            if !command_sourced
+                && crate::utils::prompt_analyzer::is_natural_chat(&content)
+                && let Some(hints) = self.prompt_analyzer.hints_for(&content)
+            {
                 tracing::info!("✨ Prompt transformed with tool hints");
+                transformed_content.push_str(&hints);
             }
 
             // Add user message to UI — skip internal system triggers (e.g. /compact)

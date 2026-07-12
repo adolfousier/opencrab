@@ -18,5 +18,5 @@ pub fn open(app: &mut App) {
 /// flipped `app.mode` back to Chat before invoking this so the prompt
 /// lands in the chat surface.
 pub fn execute(app: &App, body: String) {
-    let _ = app.event_sender().send(TuiEvent::MessageSubmitted(body));
+    let _ = app.event_sender().send(TuiEvent::CommandSubmitted(body));
 }
