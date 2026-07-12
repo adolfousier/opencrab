@@ -7,19 +7,22 @@ fn test_plan_detection() {
     let prompt = "make a plan for implementing JWT authentication";
     let result = analyzer.analyze_and_transform(prompt);
     assert!(result.contains("CRITICAL"));
-    assert!(result.contains("`plan` tool"));
+    assert!(result.contains("design track"));
+    assert!(analyzer.plan_intent(prompt));
 }
 
 #[test]
-fn test_plan_hint_teaches_live_ops_only() {
+fn test_plan_hint_teaches_design_track() {
     let analyzer = PromptAnalyzer::new();
 
     let prompt = "make a plan for the migration";
     let result = analyzer.analyze_and_transform(prompt);
-    // Live tool contract: init -> add_task -> start (complete listed as valid).
-    assert!(result.contains("operation='init'"));
-    assert!(result.contains("operation='add_task'"));
-    assert!(result.contains("operation='start'"));
+    // Design track: init mode=design, write the SESSION PLAN .md, wait
+    // for user Approve. Never start, never edit project files.
+    assert!(result.contains("mode='design'"));
+    assert!(result.contains("SESSION PLAN"));
+    assert!(result.contains("APPROVE"));
+    assert!(result.contains("Do NOT"));
     // Dead ops must never be taught as callable operations.
     assert!(!result.contains("operation='create'"));
     assert!(!result.contains("operation='finalize'"));
@@ -54,7 +57,7 @@ fn test_multiple_detections() {
 
     let prompt = "read file config.toml and make a plan to update it";
     let result = analyzer.analyze_and_transform(prompt);
-    assert!(result.contains("`plan` tool"));
+    assert!(result.contains("mode='design'"));
     assert!(result.contains("`read_file` tool"));
 }
 
@@ -74,7 +77,7 @@ fn test_case_insensitive() {
     let prompt = "MAKE A PLAN for this feature";
     let result = analyzer.analyze_and_transform(prompt);
     assert!(result.contains("CRITICAL"));
-    assert!(result.contains("`plan` tool"));
+    assert!(result.contains("mode='design'"));
 }
 
 #[test]

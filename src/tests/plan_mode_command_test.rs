@@ -1,0 +1,254 @@
+//! Tests for the shared plan-mode command state machine
+//! (`utils::plan_mode`): the Approve validator (golden fixture), the two
+//! idle approve paths (first approve, empty-tasks seed retry), the
+//! deterministic refusals, `/plan`, `/discard`, `/show-plan`, and the
+//! seed window used by the gate and the Building checklist… chrome.
+
+use crate::config::profile::{home_for_profile, with_profile_home_async};
+use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
+use crate::utils::plan_files::{
+    self, PlanModeState, create_design_md, plan_md_path, plan_mode_state, save_plan,
+    set_pre_init_editing,
+};
+use crate::utils::plan_mode::{
+    ApproveOutcome, discard, enter_plan_mode, in_seed_window, show_plan, try_approve,
+    validate_for_approve,
+};
+use uuid::Uuid;
+
+/// The golden session-plan fixture from the plan-mode UX ADR.
+const GOLDEN_MD: &str = "# Add session plan Approve gate\n\n\
+## Context\n\
+- **Problem:** Plan mode has no structured design doc before execution.\n\
+- **Target state:** Users Approve a `.md` plan, then checklist runs automatically.\n\
+- **Intent:** Ship Track A for TUI and Telegram in v1.\n\n\
+## Implementation steps\n\
+1. Add Approve validator — implement Rust scan in Phase 6 harness.\n\
+2. Wire seed turn — synthetic user message, add_tasks, start.\n\
+   - Done when: empty tasks triggers idle retry via /execute (forbidden while turn running).\n";
+
+async fn in_temp_home<F, T>(f: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    let profile = format!("plan-mode-test-{}", Uuid::new_v4());
+    let out = with_profile_home_async(Some(&profile), f).await;
+    let home = home_for_profile(Some(&profile));
+    let _ = std::fs::remove_dir_all(&home);
+    out
+}
+
+fn make_post_init(sid: Uuid, md_body: &str) {
+    let plan = PlanDocument::new(sid, "Golden".to_string(), String::new());
+    save_plan(&plan).unwrap();
+    create_design_md(sid, "Golden").unwrap();
+    std::fs::write(plan_md_path(sid), md_body).unwrap();
+}
+
+#[test]
+fn validator_accepts_golden_fixture_and_rejects_gaps() {
+    assert!(validate_for_approve(GOLDEN_MD).is_ok());
+    assert!(validate_for_approve("").is_err(), "empty .md must refuse");
+    assert!(
+        validate_for_approve("# T\n\n## Context\n- **Problem:** x\n").is_err(),
+        "missing labels and steps must refuse"
+    );
+    // Whitespace-only after a label counts as blank.
+    let blank_intent = GOLDEN_MD.replace(
+        "- **Intent:** Ship Track A for TUI and Telegram in v1.",
+        "- **Intent:**   ",
+    );
+    assert!(validate_for_approve(&blank_intent).is_err());
+    // Strictness locked: any non-empty text passes, even "TBD".
+    let tbd = GOLDEN_MD.replace(
+        "- **Intent:** Ship Track A for TUI and Telegram in v1.",
+        "- **Intent:** TBD",
+    );
+    assert!(validate_for_approve(&tbd).is_ok());
+}
+
+#[tokio::test]
+async fn first_approve_transitions_and_returns_seed_turn() {
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        make_post_init(sid, GOLDEN_MD);
+
+        match try_approve(sid) {
+            ApproveOutcome::SeedTurn { prompt } => {
+                assert!(prompt.contains("PLAN APPROVED"));
+                assert!(prompt.contains("add_tasks"));
+                assert!(prompt.contains(&plan_md_path(sid).display().to_string()));
+                assert!(prompt.contains("Do NOT edit project files"));
+            }
+            other => panic!("expected SeedTurn, got {other:?}"),
+        }
+        let plan = plan_files::load_plan(sid).unwrap();
+        assert_eq!(plan.status, PlanStatus::Active);
+        assert!(
+            plan.approved_at.is_some(),
+            "user Approve stamps approved_at"
+        );
+        assert!(in_seed_window(sid), "post-approve, pre-seed = seed window");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn approve_refuses_invalid_template_without_transition() {
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        make_post_init(sid, "just prose, no template");
+
+        match try_approve(sid) {
+            ApproveOutcome::Refused(msg) => {
+                assert!(
+                    msg.contains("Not ready") || msg.contains("not ready"),
+                    "got: {msg}"
+                );
+            }
+            other => panic!("expected Refused, got {other:?}"),
+        }
+        assert_eq!(plan_mode_state(sid), PlanModeState::PostInitEditing);
+        assert!(plan_files::load_plan(sid).unwrap().approved_at.is_none());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn approve_refuses_no_plan_pre_init_and_running_checklist() {
+    in_temp_home(async {
+        // NoPlan.
+        let sid = Uuid::new_v4();
+        assert!(matches!(try_approve(sid), ApproveOutcome::Refused(_)));
+
+        // Pre-init.
+        set_pre_init_editing(sid).unwrap();
+        assert!(matches!(try_approve(sid), ApproveOutcome::Refused(_)));
+        plan_files::discard_plan(sid);
+
+        // Active with a running checklist: /execute is not applicable.
+        let mut plan = PlanDocument::new(sid, "Run".to_string(), String::new());
+        let mut t = PlanTask::new(1, "t".to_string(), "d".to_string(), TaskType::Edit);
+        t.start();
+        plan.add_task(t);
+        plan.status = PlanStatus::Active;
+        save_plan(&plan).unwrap();
+        match try_approve(sid) {
+            ApproveOutcome::Refused(msg) => assert!(msg.contains("already Active"), "got: {msg}"),
+            other => panic!("expected Refused, got {other:?}"),
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn empty_tasks_seed_retry_redispatches_without_second_approve() {
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        make_post_init(sid, GOLDEN_MD);
+
+        // First approve.
+        let first_stamp = match try_approve(sid) {
+            ApproveOutcome::SeedTurn { .. } => {
+                plan_files::load_plan(sid).unwrap().approved_at.unwrap()
+            }
+            other => panic!("expected SeedTurn, got {other:?}"),
+        };
+
+        // Seed failed (tasks still empty): idle retry re-dispatches the
+        // seed turn with no status transition and no re-stamp.
+        match try_approve(sid) {
+            ApproveOutcome::SeedTurn { prompt } => assert!(prompt.contains("add_tasks")),
+            other => panic!("expected retry SeedTurn, got {other:?}"),
+        }
+        let plan = plan_files::load_plan(sid).unwrap();
+        assert_eq!(plan.status, PlanStatus::Active);
+        assert_eq!(plan.approved_at.unwrap(), first_stamp, "no second approve");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn plan_command_sets_durable_pre_init_and_discard_clears() {
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        let reply = enter_plan_mode(sid);
+        assert!(reply.contains("Plan mode on"), "got: {reply}");
+        assert_eq!(plan_mode_state(sid), PlanModeState::PreInitEditing);
+
+        // /plan over a live design plan refuses.
+        plan_files::discard_plan(sid);
+        make_post_init(sid, GOLDEN_MD);
+        let reply = enter_plan_mode(sid);
+        assert!(reply.contains("already"), "got: {reply}");
+
+        // /discard deletes both artifacts.
+        let reply = discard(sid);
+        assert!(reply.contains("discarded"), "got: {reply}");
+        assert_eq!(plan_mode_state(sid), PlanModeState::NoPlan);
+        assert!(!plan_md_path(sid).exists(), ".md must be deleted");
+
+        // Pre-init discard clears the flag.
+        set_pre_init_editing(sid).unwrap();
+        let reply = discard(sid);
+        assert!(reply.contains("pre-init"), "got: {reply}");
+        assert_eq!(plan_mode_state(sid), PlanModeState::NoPlan);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn show_plan_reports_each_state() {
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        assert!(show_plan(sid).contains("No active plan"));
+
+        set_pre_init_editing(sid).unwrap();
+        assert!(show_plan(sid).contains("pre-init"));
+        plan_files::discard_plan(sid);
+
+        make_post_init(sid, GOLDEN_MD);
+        let s = show_plan(sid);
+        assert!(
+            s.contains("Editing") && s.contains("Ready to approve"),
+            "got: {s}"
+        );
+
+        // Approved but seed not finished: retry guidance.
+        assert!(matches!(try_approve(sid), ApproveOutcome::SeedTurn { .. }));
+        let s = show_plan(sid);
+        assert!(
+            s.contains("seed did not finish") || s.contains("empty"),
+            "got: {s}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn seed_window_closes_when_a_task_starts() {
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        make_post_init(sid, GOLDEN_MD);
+        assert!(matches!(try_approve(sid), ApproveOutcome::SeedTurn { .. }));
+        assert!(in_seed_window(sid));
+
+        // add_tasks alone (all Pending) keeps the window open.
+        let mut plan = plan_files::load_plan(sid).unwrap();
+        plan.add_task(PlanTask::new(
+            1,
+            "t1".to_string(),
+            "d".to_string(),
+            TaskType::Edit,
+        ));
+        save_plan(&plan).unwrap();
+        assert!(in_seed_window(sid), "partial seed stays in the window");
+
+        // start closes it.
+        let mut plan = plan_files::load_plan(sid).unwrap();
+        plan.tasks[0].start();
+        save_plan(&plan).unwrap();
+        assert!(!in_seed_window(sid));
+    })
+    .await;
+}

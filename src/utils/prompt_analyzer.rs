@@ -151,20 +151,25 @@ impl PromptAnalyzer {
         let mut transformations = Vec::new();
         let lower_prompt = prompt.to_lowercase();
 
-        // Check for plan keywords
+        // Check for plan keywords: design track (the user said "plan", so
+        // they get a reviewable SESSION PLAN and an Approve step, not a
+        // checklist that starts executing on its own).
         if self.plan_regex.is_match(&lower_prompt) {
             tracing::info!("🔍 Detected PLAN intent in prompt");
             transformations.push(
-                "\n\n**CRITICAL**: You MUST use the `plan` tool now! \
-                DO NOT write text - CALL THE TOOL IMMEDIATELY:\n\
-                1. plan(operation='init', ...) to create the plan (pass inline 'tasks' \
-                to create the plan and its tasks in one call)\n\
-                2. plan(operation='add_task', ...) for any remaining tasks\n\
-                3. plan(operation='start') to begin the first task (the first start \
-                auto-approves the plan)\n\
-                The operations are EXACTLY: init, add_task, start, complete. \
-                There is NO 'create' and NO 'finalize' operation, never call those.\n\
-                **START WITH THE FIRST TOOL CALL NOW!**",
+                "\n\n**CRITICAL**: The user wants a PLAN — enter the design track NOW:\n\
+                1. Explore first if needed (reads, search, bash are available pre-init).\n\
+                2. plan(operation='init', mode='design', title='...') creates the \
+                SESSION PLAN .md and returns its absolute path.\n\
+                3. Write the design INTO that .md (write_file/edit_file on that exact \
+                path — the only writable file) using the template: ## Context with \
+                **Problem:** / **Target state:** / **Intent:**, then numbered \
+                ## Implementation steps.\n\
+                4. STOP and wait for the user to APPROVE the plan (/execute). Do NOT \
+                call start, do NOT edit project files, do NOT paste the plan in chat.\n\
+                The checklist is seeded automatically after Approve. Valid operations \
+                are EXACTLY: init, add_tasks, add_task, start, complete. There is NO \
+                'create' and NO 'finalize' operation, never call those.",
             );
         }
 
@@ -219,6 +224,13 @@ impl PromptAnalyzer {
         } else {
             Some(transformations.join(""))
         }
+    }
+
+    /// Whether the prompt matches the plan keyword family. Callers use
+    /// this to set the durable `pre_init_editing` flag when a plan-shaped
+    /// message arrives on natural-language chat.
+    pub fn plan_intent(&self, prompt: &str) -> bool {
+        self.plan_regex.is_match(&prompt.to_lowercase())
     }
 
     /// Analyze a prompt and transform it if needed

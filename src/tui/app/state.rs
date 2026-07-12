@@ -151,6 +151,22 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Compact context now",
     },
     SlashCommand {
+        name: "/plan",
+        description: "Enter Plan mode (design a plan for approval)",
+    },
+    SlashCommand {
+        name: "/show-plan",
+        description: "Show the current plan state",
+    },
+    SlashCommand {
+        name: "/execute",
+        description: "Approve the design plan / retry the checklist seed",
+    },
+    SlashCommand {
+        name: "/discard",
+        description: "Discard the live plan",
+    },
+    SlashCommand {
         name: "/help",
         description: "Show available commands",
     },

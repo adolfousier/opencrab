@@ -65,6 +65,30 @@ pub(crate) fn check_plan_gate(
         PlanModeState::NoPlan => None,
 
         PlanModeState::Active => {
+            // Seed tool policy (locked): between user Approve and a
+            // successful `start`, the design-track session may only read
+            // and call the plan tool (add_tasks, start). Project writes,
+            // bash, spawn, sends, and system mutators stay blocked so a
+            // wandering seed turn cannot start editing the project before
+            // the checklist exists.
+            if crate::utils::plan_mode::in_seed_window(session_id) {
+                if EDITING_ALLOWED.contains(&tool_name) {
+                    return None;
+                }
+                let mutator = has(ToolCapability::WriteFiles)
+                    || has(ToolCapability::ExecuteShell)
+                    || has(ToolCapability::SystemModification)
+                    || EDITING_DENIED_NAMES.contains(&tool_name);
+                if mutator {
+                    return Some(format!(
+                        "Plan gate: '{tool_name}' is blocked until the approved plan's \
+                         checklist is seeded. Call `plan` add_tasks with the steps from \
+                         the session .md, then `plan` start; project work begins after \
+                         start succeeds."
+                    ));
+                }
+                return None;
+            }
             // Freeze the live design .md against generic write tools; the
             // checklist executes through the plan tool, not by rewriting
             // the approved design.

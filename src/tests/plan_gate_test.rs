@@ -56,12 +56,11 @@ fn make_post_init_editing(sid: Uuid) {
 
 fn make_active(sid: Uuid, with_md: bool) {
     let mut plan = PlanDocument::new(sid, "Exec".to_string(), String::new());
-    plan.add_task(PlanTask::new(
-        1,
-        "t1".to_string(),
-        "d".to_string(),
-        TaskType::Edit,
-    ));
+    let mut task = PlanTask::new(1, "t1".to_string(), "d".to_string(), TaskType::Edit);
+    // A started checklist: the seed window (all tasks Pending) has its own
+    // stricter policy, covered separately below.
+    task.start();
+    plan.add_task(task);
     plan.status = PlanStatus::Active;
     save_plan(&plan).unwrap();
     if with_md {
@@ -252,6 +251,49 @@ async fn active_checklist_without_md_gates_nothing_on_writes() {
             .is_none()
         );
         assert!(check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"})).is_none());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn seed_window_blocks_mutators_allows_plan_and_reads() {
+    in_temp_home(async {
+        // Approved design plan whose checklist has not started yet (empty
+        // tasks): only reads and the plan tool flow through.
+        let sid = Uuid::new_v4();
+        let mut plan = PlanDocument::new(sid, "Seeding".to_string(), String::new());
+        plan.status = PlanStatus::Active;
+        save_plan(&plan).unwrap();
+        create_design_md(sid, "Seeding").unwrap();
+
+        assert!(check_plan_gate(sid, "plan", PLAN, &json!({"operation": "add_tasks"})).is_none());
+        assert!(check_plan_gate(sid, "read_file", READ, &json!({})).is_none());
+        assert!(check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"})).is_some());
+        assert!(
+            check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/p/main.rs"})).is_some()
+        );
+        assert!(check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({})).is_some());
+
+        // Partial seed (tasks added, none started) stays blocked too.
+        let mut plan = crate::utils::plan_files::load_plan(sid).unwrap();
+        plan.add_task(PlanTask::new(
+            1,
+            "t1".to_string(),
+            "d".to_string(),
+            TaskType::Edit,
+        ));
+        save_plan(&plan).unwrap();
+        assert!(check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"})).is_some());
+
+        // Once a task starts, the seed window closes and normal Active
+        // policy applies (only the .md stays frozen).
+        let mut plan = crate::utils::plan_files::load_plan(sid).unwrap();
+        plan.tasks[0].start();
+        save_plan(&plan).unwrap();
+        assert!(check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"})).is_none());
+        assert!(
+            check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/p/main.rs"})).is_none()
+        );
     })
     .await;
 }

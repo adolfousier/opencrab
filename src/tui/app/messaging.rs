@@ -789,6 +789,81 @@ impl App {
                 ));
                 true
             }
+            "/plan" => {
+                if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
+                    let reply = crate::utils::plan_mode::enter_plan_mode(sid);
+                    self.push_system_message(reply);
+                    self.reload_plan();
+                } else {
+                    self.push_system_message("No active session.".to_string());
+                }
+                true
+            }
+            "/show-plan" | "/showplan" | "/show_plan" => {
+                if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
+                    self.reload_plan();
+                    let reply = crate::utils::plan_mode::show_plan(sid);
+                    self.push_system_message(reply);
+                } else {
+                    self.push_system_message("No active session.".to_string());
+                }
+                true
+            }
+            "/execute" => {
+                // Approve and /execute are FORBIDDEN while a turn is running:
+                // refuse immediately, never queue (locked).
+                if self.is_processing {
+                    self.push_system_message(
+                        "⛔ A turn is running. /execute and Approve are refused while \
+                         busy; try again when the turn finishes."
+                            .to_string(),
+                    );
+                    return true;
+                }
+                let Some(sid) = self.current_session.as_ref().map(|s| s.id) else {
+                    self.push_system_message("No active session.".to_string());
+                    return true;
+                };
+                match crate::utils::plan_mode::try_approve(sid) {
+                    crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
+                        self.push_system_message(reply);
+                    }
+                    crate::utils::plan_mode::ApproveOutcome::SeedTurn { prompt } => {
+                        self.push_system_message(
+                            "✅ Plan approved. Building the checklist…".to_string(),
+                        );
+                        self.reload_plan();
+                        // Visible seed turn: dispatch the locked implement-turn
+                        // prompt as a command-sourced message (analyzer skipped).
+                        let sender = self.event_sender();
+                        if let Err(e) = sender.send(TuiEvent::CommandSubmitted(prompt)) {
+                            tracing::error!("Failed to dispatch seed turn: {e}");
+                        }
+                    }
+                }
+                true
+            }
+            "/discard" => {
+                // /discard cancels the in-flight turn first, then cleans up.
+                let mut cancelled = false;
+                if self.is_processing
+                    && let Some(token) = self.cancel_token.take()
+                {
+                    token.cancel();
+                    cancelled = true;
+                }
+                let Some(sid) = self.current_session.as_ref().map(|s| s.id) else {
+                    self.push_system_message("No active session.".to_string());
+                    return true;
+                };
+                let mut reply = crate::utils::plan_mode::discard(sid);
+                if cancelled {
+                    reply = format!("⏹️ Cancelled the running turn. {reply}");
+                }
+                self.push_system_message(reply);
+                self.plan_document = None;
+                true
+            }
             "/rebuild" => {
                 // Schedule the build in the BACKGROUND via a one-shot cron job
                 // so the session isn't blocked for the minutes a release build
@@ -2184,12 +2259,21 @@ impl App {
             // skill, and user-command expansions plus system triggers are
             // never analyzed. Hints go to the agent string; the chat bubble
             // below renders `content` untouched.
-            if !command_sourced
-                && crate::utils::prompt_analyzer::is_natural_chat(&content)
-                && let Some(hints) = self.prompt_analyzer.hints_for(&content)
-            {
-                tracing::info!("✨ Prompt transformed with tool hints");
-                transformed_content.push_str(&hints);
+            if !command_sourced && crate::utils::prompt_analyzer::is_natural_chat(&content) {
+                // Plan keywords enter Plan mode durably: the pre-init
+                // Editing flag survives restarts and arms the write gate
+                // until `plan init` (or /discard). A live plan refuses the
+                // flag; that's expected.
+                if self.prompt_analyzer.plan_intent(&content)
+                    && let Some(sid) = self.current_session.as_ref().map(|s| s.id)
+                    && let Err(e) = crate::utils::plan_files::set_pre_init_editing(sid)
+                {
+                    tracing::debug!("Plan-keyword pre-init skipped (plan already live): {e}");
+                }
+                if let Some(hints) = self.prompt_analyzer.hints_for(&content) {
+                    tracing::info!("✨ Prompt transformed with tool hints");
+                    transformed_content.push_str(&hints);
+                }
             }
 
             // Add user message to UI — skip internal system triggers (e.g. /compact)

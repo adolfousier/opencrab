@@ -156,6 +156,10 @@ fn variant_name(cmd: &ChannelCommand) -> &'static str {
         ChannelCommand::RespondTo(_) => "RespondTo",
         ChannelCommand::UnknownCommand(_) => "UnknownCommand",
         ChannelCommand::NotACommand => "NotACommand",
+        ChannelCommand::PlanMode(_) => "PlanMode",
+        ChannelCommand::ShowPlan(_) => "ShowPlan",
+        ChannelCommand::ExecutePlan => "ExecutePlan",
+        ChannelCommand::DiscardPlan => "DiscardPlan",
     }
 }
 

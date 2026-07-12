@@ -2382,6 +2382,50 @@ pub(crate) async fn handle_message(
                     .to_string();
                 // fall through to agent
             }
+            ChannelCommand::ExecutePlan => {
+                // Approve and /execute are FORBIDDEN while a turn is
+                // running: refuse immediately, never queue (locked).
+                if telegram_state.is_turn_active(session_id) {
+                    send_retrying_rate_limit("command reply", || {
+                        message_in_thread(
+                            &bot,
+                            msg.chat.id,
+                            thread_id,
+                            "⛔ A turn is running. /execute and Approve are refused while \
+                             busy; try again when the turn finishes.",
+                        )
+                    })
+                    .await?;
+                    return Ok(());
+                }
+                match crate::utils::plan_mode::try_approve(session_id) {
+                    crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
+                        send_retrying_rate_limit("command reply", || {
+                            message_in_thread(&bot, msg.chat.id, thread_id, reply.clone())
+                        })
+                        .await?;
+                        return Ok(());
+                    }
+                    crate::utils::plan_mode::ApproveOutcome::SeedTurn { prompt } => {
+                        // Visible seed turn: fall through to the agent with
+                        // the locked implement-turn prompt as the message.
+                        text = prompt;
+                    }
+                }
+            }
+            ChannelCommand::DiscardPlan => {
+                // /discard cancels an in-flight turn first, then cleans up.
+                let cancelled = telegram_state.cancel_session(session_id).await;
+                let mut reply = crate::utils::plan_mode::discard(session_id);
+                if cancelled {
+                    reply = format!("⏹️ Cancelled the running turn. {reply}");
+                }
+                send_retrying_rate_limit("command reply", || {
+                    message_in_thread(&bot, msg.chat.id, thread_id, reply.clone())
+                })
+                .await?;
+                return Ok(());
+            }
             ChannelCommand::UserPrompt(prompt) => {
                 // Capture the raw invocation ("/drop_release") BEFORE `text` is
                 // overwritten with the resolved skill/command body, so a
@@ -2758,6 +2802,14 @@ pub(crate) async fn handle_message(
     let agent_input = if command_invocation.is_none()
         && crate::utils::prompt_analyzer::is_natural_chat(&pre_rewrite_user_text)
     {
+        // Plan keywords enter Plan mode durably: the pre-init Editing flag
+        // survives restarts and arms the write gate until `plan init` (or
+        // /discard). A live plan refuses the flag; that's expected.
+        if crate::utils::PromptAnalyzer::shared().plan_intent(&pre_rewrite_user_text)
+            && let Err(e) = crate::utils::plan_files::set_pre_init_editing(session_id)
+        {
+            tracing::debug!("Plan-keyword pre-init skipped (plan already live): {e}");
+        }
         match crate::utils::PromptAnalyzer::shared().hints_for(&pre_rewrite_user_text) {
             Some(hints) => format!("{agent_input}{hints}"),
             None => agent_input,

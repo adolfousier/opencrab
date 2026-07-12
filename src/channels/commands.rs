@@ -241,6 +241,17 @@ pub enum ChannelCommand {
     Profiles(ProfilesResponse),
     /// `/respond_to [all|mention|auto]` — show/switch auto-mention mode (#244)
     RespondTo(String),
+    /// `/plan` — enter durable pre-init Plan mode (reply text)
+    PlanMode(String),
+    /// `/show-plan` — plan state summary (reply text)
+    ShowPlan(String),
+    /// `/execute` — Approve the design plan / retry the seed. The channel
+    /// handler owns the busy check (refuse while a turn runs, never queue)
+    /// and dispatches the visible seed turn.
+    ExecutePlan,
+    /// `/discard` — cancel the in-flight turn when needed, then engine
+    /// cleanup back to NoPlan (handled by the channel handler).
+    DiscardPlan,
     /// Not a recognised command — pass through to agent
     NotACommand,
 }
@@ -418,6 +429,30 @@ pub async fn handle_command(
             }
         }
         "/new" => ChannelCommand::NewSession,
+        "/plan" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::PlanMode(crate::utils::plan_mode::enter_plan_mode(session_id))
+            }
+        }
+        "/show-plan" | "/showplan" | "/show_plan" => {
+            ChannelCommand::ShowPlan(crate::utils::plan_mode::show_plan(session_id))
+        }
+        "/execute" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::ExecutePlan
+            }
+        }
+        "/discard" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::DiscardPlan
+            }
+        }
         "/rtk" => {
             if !is_owner {
                 ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
@@ -600,6 +635,10 @@ pub async fn handle_command(
         | ChannelCommand::NotACommand
         | ChannelCommand::UnknownCommand(_) => None,
         ChannelCommand::RespondTo(body) => Some(body.clone()),
+        ChannelCommand::PlanMode(body) | ChannelCommand::ShowPlan(body) => Some(body.clone()),
+        // Handled (and persisted) by the channel handler: busy check +
+        // seed dispatch / cancel + cleanup happen there.
+        ChannelCommand::ExecutePlan | ChannelCommand::DiscardPlan => None,
     };
 
     if let Some(response) = response_text {
@@ -731,7 +770,12 @@ pub(crate) fn format_help() -> String {
             "/cowork",
             "Create a cowork workspace with QR invite (Telegram only)",
         ),
+        ("/discard", "Discard the live plan (back to no plan)"),
         ("/evolve", "Download latest release & restart"),
+        (
+            "/execute",
+            "Approve the design plan / retry the checklist seed",
+        ),
         (
             "/goal",
             "Set/track an autonomous goal (`/goal <text>`, status, pause, resume, clear)",
@@ -742,6 +786,7 @@ pub(crate) fn format_help() -> String {
             "Mission control: analytics, activity, inbox & schedule",
         ),
         ("/models", "Switch AI model"),
+        ("/plan", "Enter Plan mode (design a plan for approval)"),
         ("/profiles", "Manage profiles (create, switch, migrate)"),
         ("/rename", "Rename current session (`/rename <new title>`)"),
         (
@@ -749,6 +794,7 @@ pub(crate) fn format_help() -> String {
             "Show/switch auto-mention mode (`/respond_to <all|mention|auto>`)",
         ),
         ("/rtk", "Show RTK token savings statistics"),
+        ("/show-plan", "Show the current plan state"),
         (
             "/usage",
             "Token & cost stats (`provider [name]` / `model <name>` / `7d`)",
@@ -1984,6 +2030,7 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
         ChannelCommand::UnknownCommand(msg) => Some(msg.to_string()),
         ChannelCommand::ModelSwitched(msg) => Some(msg.to_string()),
         ChannelCommand::RespondTo(body) => Some(body.clone()),
+        ChannelCommand::PlanMode(body) | ChannelCommand::ShowPlan(body) => Some(body.clone()),
         _ => None,
     }
 }
