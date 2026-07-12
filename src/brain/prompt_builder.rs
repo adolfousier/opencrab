@@ -695,6 +695,45 @@ pub struct RuntimeInfo {
     pub working_directory: Option<String>,
 }
 
+/// Rewrite the `Model:` and `Provider:` lines inside the `--- Runtime Info ---`
+/// section of a rendered brain with the session's resolved values.
+///
+/// The brain is rendered from a `RuntimeInfo` snapshot frozen at startup, so
+/// it carries the DEFAULT provider's name and model. A session that swapped
+/// providers afterwards (per-session `/models` pick, channel provider sync,
+/// sticky fallback) keeps sending that stale pair in its prompt, and the model
+/// mis-reports what it is running on when asked. Every display surface already
+/// resolves through `provider_model_for_session()`; this makes the prompt do
+/// the same at injection time.
+///
+/// Only the Runtime Info section is touched: `Model:`/`Provider:` occurrences
+/// elsewhere (brain files, memories) stay intact. No-op when the section or
+/// the lines are absent (cron daemon path renders without runtime info).
+pub fn override_runtime_model_provider(brain: &str, model: &str, provider: &str) -> String {
+    const MARKER: &str = "--- Runtime Info ---";
+    if !brain.contains(MARKER) {
+        return brain.to_string();
+    }
+    let mut out = String::with_capacity(brain.len());
+    let mut in_section = false;
+    for line in brain.split_inclusive('\n') {
+        let trimmed = line.trim_end();
+        if trimmed == MARKER {
+            in_section = true;
+        } else if in_section && trimmed.starts_with("--- ") {
+            in_section = false;
+        }
+        if in_section && trimmed.starts_with("Model: ") {
+            out.push_str(&format!("Model: {}\n", model));
+        } else if in_section && trimmed.starts_with("Provider: ") {
+            out.push_str(&format!("Provider: {}\n", provider));
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 /// Append the home-anchor + tilde-expansion rule directly under the
 /// `Working directory:` line.
 ///

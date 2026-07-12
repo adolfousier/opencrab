@@ -507,6 +507,25 @@ impl AgentService {
         }
     }
 
+    /// [`live_system_brain`](Self::live_system_brain) with the Runtime Info
+    /// block's `Model:`/`Provider:` lines resolved for THIS session. The brain
+    /// renders from a `RuntimeInfo` frozen at startup (the default provider),
+    /// so a session that swapped providers (per-session `/models` pick,
+    /// channel provider sync, sticky fallback) would tell the model it runs
+    /// on the startup default and it mis-reports itself when asked. Display
+    /// surfaces already resolve via `provider_model_for_session()`; the prompt
+    /// must resolve the same way at injection time.
+    pub(super) fn live_system_brain_for_session(&self, session_id: Uuid) -> Option<String> {
+        let brain = self.live_system_brain()?;
+        let model = self.provider_model_for_session(session_id);
+        let provider = self.provider_name_for_session(session_id);
+        Some(
+            crate::brain::prompt_builder::override_runtime_model_provider(
+                &brain, &model, &provider,
+            ),
+        )
+    }
+
     /// Set maximum tool iterations
     pub fn with_max_tool_iterations(mut self, max: usize) -> Self {
         self.max_tool_iterations = max;

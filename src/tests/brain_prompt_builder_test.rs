@@ -431,3 +431,23 @@ fn test_skips_empty_files() {
     // (the filename may appear in BRAIN_PREAMBLE tool docs, so check for the section format)
     assert!(!prompt.contains("--- SOUL.md ("));
 }
+
+#[test]
+fn test_override_runtime_model_provider_rewrites_only_runtime_info() {
+    let brain = "--- MEMORY.md ---\nModel: keep-me\n\n--- Runtime Info ---\nModel: Qwen-Ambassador/Qwen3.7-Plus\nProvider: modelscope\nWorking directory: ~/x\n\n--- SOUL.md ---\nProvider: also-keep\n";
+    let out = override_runtime_model_provider(brain, "claude-fable-5", "claude_cli");
+    assert!(out.contains("Model: claude-fable-5\n"));
+    assert!(out.contains("Provider: claude_cli\n"));
+    assert!(!out.contains("Qwen3.7-Plus"));
+    assert!(!out.contains("modelscope"));
+    // Lines outside the Runtime Info section are untouched
+    assert!(out.contains("Model: keep-me"));
+    assert!(out.contains("Provider: also-keep"));
+}
+
+#[test]
+fn test_override_runtime_model_provider_noop_without_section() {
+    let brain = "--- SOUL.md ---\nModel: untouched\n";
+    let out = override_runtime_model_provider(brain, "m", "p");
+    assert_eq!(out, brain);
+}

@@ -86,8 +86,10 @@ impl AgentService {
 
         // Add system brain if available (count its tokens for accurate tracking).
         // `live_system_brain` rebuilds from disk when a brain file changed so
-        // edits take effect on the next turn without a restart (#213).
-        if let Some(brain) = self.live_system_brain() {
+        // edits take effect on the next turn without a restart (#213). The
+        // session-aware variant patches the Runtime Info Model/Provider lines
+        // to the session's resolved pair, not the startup default.
+        if let Some(brain) = self.live_system_brain_for_session(session_id) {
             context.token_count += AgentContext::estimate_tokens(&brain);
             context.system_brain = Some(brain);
         }

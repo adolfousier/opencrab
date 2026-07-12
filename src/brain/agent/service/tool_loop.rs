@@ -694,8 +694,10 @@ impl AgentService {
         // reflects the full API input from the start — prevents gross undercount
         // that causes the TUI context counter to jump wildly on first calibration)
         // `live_system_brain` rebuilds from disk when a brain file changed so
-        // edits take effect on the next turn without a restart (#213).
-        if let Some(brain) = self.live_system_brain() {
+        // edits take effect on the next turn without a restart (#213). The
+        // session-aware variant patches the Runtime Info Model/Provider lines
+        // to the session's resolved pair, not the startup default.
+        if let Some(brain) = self.live_system_brain_for_session(session_id) {
             // mimo narrates/text-emits tool calls instead of using the
             // structured field; remind it up front (the self-heal + the
             // <tool_call_list> parser are the after-the-fact safety nets).
