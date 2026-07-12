@@ -146,6 +146,14 @@ pub(crate) struct StreamingState {
     /// get for free (#527). Flipped true after the first tick with an open
     /// block, after which live activity leads as before.
     pub(crate) header_query_shown: bool,
+    /// True when the session's provider runs tools inside the CLI
+    /// (`cli_handles_tools()`), i.e. claude-cli. CLI turns fold the whole model
+    /// turn as intermediate narration into the block, so folded entries are
+    /// capped to protect the 30K rich-block budget. API providers keep their
+    /// answer in `response.content` and only fold brief interstitial narration,
+    /// so they skip the per-entry cap and show full reasoning; the block-level
+    /// 30K freeze still guards a pathological turn (#532 / upstream #531).
+    pub(crate) is_cli: bool,
     /// Short preview of the user's incoming message, captured once at
     /// handler start. Drives the pre-tool rolling status line: when
     /// the model hasn't streamed any reasoning yet AND no tool is
@@ -294,13 +302,32 @@ fn human_readable_preview(text: &str) -> Option<String> {
 /// final answer.
 const FOLDED_NARRATION_CAP: usize = 300;
 
-/// Truncate a folded narration entry to [`FOLDED_NARRATION_CAP`] chars on a
-/// char boundary, appending an ellipsis when cut. Short entries pass through.
-fn cap_narration(text: &str) -> String {
-    if text.chars().count() <= FOLDED_NARRATION_CAP {
+/// Per-entry cap for API providers. Their answer lives in `response.content`,
+/// not folded text, so only brief interstitial narration folds into the block;
+/// skipping the tight CLI cap keeps that reasoning readable. `usize::MAX` means
+/// "no per-entry truncation" — the block-level 30K rich freeze remains the
+/// guard against a pathological many-round turn (#532 / upstream #531).
+const API_NARRATION_CAP: usize = usize::MAX;
+
+/// The folded-narration cap for a turn: the tight [`FOLDED_NARRATION_CAP`] for
+/// CLI providers (whose whole turn folds into the block and would fill the 30K
+/// budget), or [`API_NARRATION_CAP`] (uncapped) for API providers.
+fn narration_cap_for(is_cli: bool) -> usize {
+    if is_cli {
+        FOLDED_NARRATION_CAP
+    } else {
+        API_NARRATION_CAP
+    }
+}
+
+/// Truncate a folded narration entry to `cap` chars on a char boundary,
+/// appending an ellipsis when cut. Short entries (and any entry when
+/// `cap == usize::MAX`) pass through unchanged.
+fn cap_narration(text: &str, cap: usize) -> String {
+    if text.chars().count() <= cap {
         return text.to_string();
     }
-    let capped: String = text.chars().take(FOLDED_NARRATION_CAP).collect();
+    let capped: String = text.chars().take(cap).collect();
     format!("{capped}…")
 }
 
@@ -327,20 +354,27 @@ pub(crate) fn render_flow_html_chrome(
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
 ) -> String {
-    render_flow_html_chrome_pref(lines, header, fallback_status, sections, false)
+    render_flow_html_chrome_pref(
+        lines,
+        header,
+        fallback_status,
+        sections,
+        false,
+        FOLDED_NARRATION_CAP,
+    )
 }
 
 /// Like [`render_flow_html_chrome`] but, when `prefer_fallback` is true, a live
 /// header leads with `fallback_status` (the "Working on: <query>" preview)
-/// instead of the latest activity line — used for the first header tick so a
-/// CLI provider that opens the block immediately with a synthesized tool still
-/// shows the query first, matching non-CLI's header-only phase (#527).
+/// instead of the latest activity line (#527); `narration_cap` is the per-entry
+/// folded-narration truncation (tight for CLI, uncapped for API — #532).
 pub(crate) fn render_flow_html_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
     prefer_fallback: bool,
+    narration_cap: usize,
 ) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
@@ -368,9 +402,13 @@ pub(crate) fn render_flow_html_chrome_pref(
                     // the expanded block is formatted, not raw markdown source
                     // (#306). format_inline emits only inline tags, which are
                     // valid inside <blockquote>; no block-level <pre> to break it.
-                    // Capped (#489) so verbose folded narration doesn't blow the
-                    // block size budget; display-only, reclaim reads flow_entries.
-                    out.push(format_inline(&escape_html(&cap_narration(text))));
+                    // Capped for CLI (#489) so verbose folded narration doesn't
+                    // blow the block budget; API providers pass uncapped (#532).
+                    // Display-only, reclaim reads flow_entries.
+                    out.push(format_inline(&escape_html(&cap_narration(
+                        text,
+                        narration_cap,
+                    ))));
                 }
             }
         }
@@ -470,17 +508,26 @@ pub(crate) fn render_flow_details_chrome(
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
 ) -> String {
-    render_flow_details_chrome_pref(lines, header, fallback_status, sections, false)
+    render_flow_details_chrome_pref(
+        lines,
+        header,
+        fallback_status,
+        sections,
+        false,
+        FOLDED_NARRATION_CAP,
+    )
 }
 
 /// Like [`render_flow_details_chrome`] but leads a live header with
-/// `fallback_status` when `prefer_fallback` is true (#527, see the HTML twin).
+/// `fallback_status` when `prefer_fallback` is true (#527), and caps folded
+/// narration at `narration_cap` (tight for CLI, uncapped for API — #532).
 pub(crate) fn render_flow_details_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
     prefer_fallback: bool,
+    narration_cap: usize,
 ) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
@@ -501,9 +548,12 @@ pub(crate) fn render_flow_details_chrome_pref(
             FlowLine::Text(text) => {
                 let text = text.trim();
                 if !text.is_empty() {
-                    // Capped (#489): keeps the block compact so more rounds
-                    // fit before the 30K freeze. Display-only.
-                    out.push(format_inline(&escape_html(&cap_narration(text))));
+                    // Capped for CLI (#489) to keep the block compact before the
+                    // 30K freeze; API passes uncapped (#532). Display-only.
+                    out.push(format_inline(&escape_html(&cap_narration(
+                        text,
+                        narration_cap,
+                    ))));
                 }
             }
         }
@@ -794,11 +844,12 @@ pub(crate) fn flow_lines(s: &StreamingState) -> Vec<FlowLine> {
 /// header; a settled turn → the terminal outcome header with wall-clock
 /// duration from turn start (#480).
 pub(crate) fn render_flow(s: &StreamingState) -> String {
+    let narration_cap = narration_cap_for(s.is_cli);
     match s.flow_outcome {
         Some(outcome) => {
             let (icon, verb) = outcome.icon_verb();
             let duration = humanize_duration(s.turn_started_at.elapsed().as_secs());
-            render_flow_html_chrome(
+            render_flow_html_chrome_pref(
                 &flow_lines(s),
                 &FlowHeader::Settled {
                     icon,
@@ -807,6 +858,8 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
                 },
                 None,
                 &s.sections,
+                false,
+                narration_cap,
             )
         }
         None => render_flow_html_chrome_pref(
@@ -818,6 +871,7 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
             // it, so CLI providers get the same "Working on: <query>" header
             // non-CLI providers show before activity takes over (#527).
             !s.header_query_shown && s.header_preview.is_some(),
+            narration_cap,
         ),
     }
 }
@@ -825,11 +879,12 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
 /// Resolve the flow into the rich-API details HTML (#420 path A), with the same
 /// live/settled header split as [`render_flow`].
 pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
+    let narration_cap = narration_cap_for(s.is_cli);
     match s.flow_outcome {
         Some(outcome) => {
             let (icon, verb) = outcome.icon_verb();
             let duration = humanize_duration(s.turn_started_at.elapsed().as_secs());
-            render_flow_details_chrome(
+            render_flow_details_chrome_pref(
                 &flow_lines(s),
                 &FlowHeader::Settled {
                     icon,
@@ -838,6 +893,8 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
                 },
                 None,
                 &s.sections,
+                false,
+                narration_cap,
             )
         }
         None => render_flow_details_chrome_pref(
@@ -846,6 +903,7 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
             s.header_preview.as_deref(),
             &s.sections,
             !s.header_query_shown && s.header_preview.is_some(),
+            narration_cap,
         ),
     }
 }

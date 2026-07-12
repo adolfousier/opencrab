@@ -215,6 +215,7 @@ fn prefer_fallback_leads_header_with_query_despite_activity() {
         Some("Working on: ship the release"),
         &FlowSections::default(),
         true,
+        usize::MAX,
     );
     assert!(
         with_prefer.contains("Working on: ship the release"),
@@ -231,6 +232,7 @@ fn without_prefer_activity_leads_and_query_is_dropped() {
         Some("Working on: ship the release"),
         &FlowSections::default(),
         false,
+        usize::MAX,
     );
     assert!(
         !without.contains("ship the release"),
@@ -249,6 +251,7 @@ fn prefer_fallback_without_query_falls_through_to_activity() {
         None,
         &FlowSections::default(),
         true,
+        usize::MAX,
     );
     assert!(out.contains("read_file"));
 }
@@ -262,6 +265,7 @@ fn prefer_fallback_details_summary_leads_with_query() {
         Some("Working on: ship the release"),
         &FlowSections::default(),
         true,
+        usize::MAX,
     );
     let summary_end = out.find("</sub></summary>").expect("summary present");
     assert!(
@@ -286,6 +290,7 @@ fn default_chrome_wrappers_match_no_prefer() {
         Some("Working on: x"),
         &FlowSections::default(),
         false,
+        300,
     );
     assert_eq!(html_wrapper, html_pref_false);
     let d_wrapper = render_flow_details_chrome(
@@ -300,6 +305,121 @@ fn default_chrome_wrappers_match_no_prefer() {
         Some("Working on: x"),
         &FlowSections::default(),
         false,
+        300,
     );
     assert_eq!(d_wrapper, d_pref_false);
+}
+
+// ── provider-aware folded-narration cap (#532 / upstream #531) ──────
+// CLI providers fold the whole model turn into the block, so folded
+// narration is capped (300) to protect the 30K rich-block budget. API
+// providers keep their answer in response.content and fold only brief
+// interstitial narration, so they pass uncapped (usize::MAX) and show full
+// reasoning. cap_narration is private, so these exercise it through the
+// render path: a long narration line is truncated at the CLI cap and kept
+// whole at the API cap.
+
+fn long_narration(n: usize) -> String {
+    "x".repeat(n)
+}
+
+// Tool LAST so the header shows the tool; the 1000-char narration is a folded
+// BODY entry. The collapsed-block header always shows the latest narration
+// whole for BOTH providers (latest_activity_preview, #481), so the cap only
+// affects the folded body — hence these compare a capped vs an uncapped render
+// of the same lines rather than scanning the whole output.
+fn narration_then_tool() -> [FlowLine; 2] {
+    [
+        FlowLine::Text(long_narration(1000)),
+        tline("⚙️ read_file", "config.toml"),
+    ]
+}
+
+#[test]
+fn cli_cap_truncates_body_api_keeps_it_full_html() {
+    let lines = narration_then_tool();
+    let cli = render_flow_html_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("2s")),
+        None,
+        &FlowSections::default(),
+        false,
+        300,
+    );
+    let api = render_flow_html_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("2s")),
+        None,
+        &FlowSections::default(),
+        false,
+        usize::MAX,
+    );
+    assert!(
+        cli.contains('…'),
+        "CLI cap truncates the folded body with an ellipsis: {cli}"
+    );
+    assert!(
+        api.chars().count() > cli.chars().count(),
+        "API keeps the full folded body, CLI truncates it (cli={} api={})",
+        cli.chars().count(),
+        api.chars().count()
+    );
+    assert!(
+        api.contains(&long_narration(1000)),
+        "the uncapped API render keeps the whole 1000-char body entry"
+    );
+}
+
+#[test]
+fn cli_cap_truncates_body_api_keeps_it_full_details() {
+    let lines = narration_then_tool();
+    let cli = render_flow_details_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("2s")),
+        None,
+        &FlowSections::default(),
+        false,
+        300,
+    );
+    let api = render_flow_details_chrome_pref(
+        &lines,
+        &FlowHeader::Live(Some("2s")),
+        None,
+        &FlowSections::default(),
+        false,
+        usize::MAX,
+    );
+    assert!(
+        cli.contains('…'),
+        "CLI cap truncates in the details path too"
+    );
+    assert!(
+        api.chars().count() > cli.chars().count(),
+        "API keeps the full folded body in the details path (cli={} api={})",
+        cli.chars().count(),
+        api.chars().count()
+    );
+}
+
+#[test]
+fn short_narration_untouched_by_either_cap() {
+    let lines = [
+        FlowLine::Text("brief note".to_string()),
+        tline("⚙️ read_file", "config.toml"),
+    ];
+    for cap in [300usize, usize::MAX] {
+        let out = render_flow_html_chrome_pref(
+            &lines,
+            &FlowHeader::Live(Some("2s")),
+            None,
+            &FlowSections::default(),
+            false,
+            cap,
+        );
+        assert!(out.contains("brief note"));
+        assert!(
+            !out.contains('…'),
+            "short narration must never be truncated (cap={cap})"
+        );
+    }
 }

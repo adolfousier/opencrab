@@ -2912,6 +2912,10 @@ pub(crate) async fn handle_message(
         voice_msg_ids: Vec::new(),
         processing: true,
         header_query_shown: false,
+        // Provider runs tools in the CLI (claude-cli) → its whole turn folds
+        // into the block, so folded narration is capped; API providers skip
+        // the cap and show full reasoning (#532).
+        is_cli: agent.provider_for_session(session_id).cli_handles_tools(),
         user_message_preview,
     }));
 

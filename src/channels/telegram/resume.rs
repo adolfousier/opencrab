@@ -84,6 +84,8 @@ pub(crate) async fn resume_session(
         // messages — left as None for forward compatibility.
         user_message_preview: None,
         header_query_shown: false,
+        // Cap folded narration only for CLI providers (#532).
+        is_cli: agent.provider_for_session(session_id).cli_handles_tools(),
     }));
 
     let edit_cancel = CancellationToken::new();
