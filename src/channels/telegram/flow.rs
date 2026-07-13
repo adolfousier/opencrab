@@ -455,11 +455,15 @@ pub(crate) fn render_flow_html_chrome_pref(
         ),
         HeaderMarkup::Html,
     );
-    let chrome = sections.chrome_line(HeaderMarkup::Html);
+    // Always-visible plan chrome as vertical blocks (title, then one line per
+    // ☐/☑ checklist task, then the goal one-liner — ADR 0005 Decision 3). The
+    // classic Bot API HTML path preserves raw newlines, so blocks join with a
+    // single newline.
+    let chrome = sections.chrome_blocks(HeaderMarkup::Html);
 
     let mut msg = String::new();
-    if let Some(c) = chrome {
-        msg.push_str(&c);
+    if !chrome.is_empty() {
+        msg.push_str(&chrome.join("\n"));
     }
     // A blank line separates any chrome above from the log/footer cluster
     // (Decision 13, classic uses blank lines). The log body is the full entry
@@ -555,11 +559,16 @@ pub(crate) fn render_flow_details_chrome_pref(
     );
 
     let mut msg = String::new();
-    if let Some(c) = sections.chrome_line(HeaderMarkup::Html) {
-        // Always-visible chrome as its own block (rich HTML input ignores raw
-        // newlines, so each region is a block element), then a kept spacer
+    let chrome = sections.chrome_blocks(HeaderMarkup::Html);
+    if !chrome.is_empty() {
+        // Always-visible chrome blocks: title, one line per ☐/☑ checklist task,
+        // then the goal one-liner (ADR 0005 Decision 3). Rich HTML input ignores
+        // raw newlines, so each block is its own <p>; a kept spacer follows
         // before the footer (Decision 13).
-        msg.push_str(&format!("<p>{c}</p><p>&nbsp;</p>"));
+        for block in &chrome {
+            msg.push_str(&format!("<p>{block}</p>"));
+        }
+        msg.push_str("<p>&nbsp;</p>");
     }
     if has_log {
         // The merged footer is the processing-log summary; the body is the full

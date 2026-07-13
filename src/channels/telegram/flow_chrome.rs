@@ -65,8 +65,11 @@ pub(crate) struct FlowSections {
     pub(crate) plan_kb: PlanKb,
     /// Plan title from the live session plan JSON, when set.
     pub(crate) plan_title: Option<String>,
-    /// Checklist progress from the plan JSON `tasks[]`, e.g. `2/7 tasks`.
-    pub(crate) checklist: Option<String>,
+    /// Full checklist rows from the plan JSON `tasks[]`, each pre-marked with
+    /// the ballot glyph (`☑ done` / `☐ undone`), raw and unescaped. `None`
+    /// until a checklist has tasks; the full list is kept even when every task
+    /// is done, through the completing turn's settle (ADR 0005 Decision 9).
+    pub(crate) checklist: Option<Vec<String>>,
     /// Active goal one-liner from `GoalManager`, when a session goal is set.
     pub(crate) goal: Option<String>,
     /// Ctx budget footer (display-only), set at final delivery.
@@ -74,29 +77,34 @@ pub(crate) struct FlowSections {
 }
 
 impl FlowSections {
-    /// Always-visible plan chrome (`📋 title • 2/7 tasks • 🎯 goal`), styled and
-    /// escaped for the renderer's dialect. `None` when title, checklist, and
-    /// goal are all empty, so callers omit the block entirely. Under ADR 0005
-    /// this is the transitional always-visible block above the merged footer;
-    /// `plan_state` and `ctx` are no longer here, they live in [`merged_footer`]
-    /// (Decision 7 status copy, Decision 12 footer merge). F2 replaces this
-    /// compact line with an independent title block and full `☐`/`☑` rows.
-    pub(crate) fn chrome_line(&self, markup: HeaderMarkup) -> Option<String> {
+    /// Always-visible plan chrome as vertical blocks in reading order: the plan
+    /// title, then one row per checklist task (`☑`/`☐`), then the goal
+    /// one-liner (ADR 0005 Decision 3). Each element is one logical block: the
+    /// classic renderer joins them with newlines, the rich renderer wraps each
+    /// in its own `<p>`. Empty when no plan sections are present. `plan_state`
+    /// and `ctx` are not here; they live in the merged footer (Decision 7 / 12).
+    pub(crate) fn chrome_blocks(&self, markup: HeaderMarkup) -> Vec<String> {
         let esc = |s: &str| match markup {
             HeaderMarkup::Html => escape_html(s),
             HeaderMarkup::Markdown => s.to_string(),
         };
-        let mut segs: Vec<String> = Vec::new();
+        let mut blocks: Vec<String> = Vec::new();
         if let Some(ref t) = self.plan_title {
-            segs.push(format!("📋 {}", markup.bold(&esc(t))));
+            blocks.push(format!("📋 {}", markup.bold(&esc(t))));
         }
-        if let Some(ref c) = self.checklist {
-            segs.push(markup.italic(&esc(c)));
+        if let Some(ref rows) = self.checklist {
+            // One block per task so the rich path gives each its own <p> (rich
+            // HTML ignores raw newlines) and classic gets one line each. The
+            // ballot glyph is not HTML-special, so escaping the whole row only
+            // touches the task title.
+            for row in rows {
+                blocks.push(esc(row));
+            }
         }
         if let Some(ref g) = self.goal {
-            segs.push(format!("🎯 {}", markup.italic(&esc(g))));
+            blocks.push(format!("🎯 {}", markup.italic(&esc(g))));
         }
-        (!segs.is_empty()).then(|| segs.join(" • "))
+        blocks
     }
 }
 
@@ -206,11 +214,11 @@ pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String
     segs.join(" • ")
 }
 
-/// Read plan title + checklist progress from the live session plan JSON
-/// through the shared plan store, which maps legacy statuses onto
-/// Editing/Active and resolves terminal ones (Completed archives,
-/// Cancelled deletes) — so stale chrome never outlives the plan.
-pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Option<String>) {
+/// Read the plan title + full `☐`/`☑` checklist rows from the live session
+/// plan JSON through the shared plan store, which maps legacy statuses onto
+/// Editing/Active and resolves terminal ones (Completed archives, Cancelled
+/// deletes) — so stale chrome never outlives the plan.
+pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Option<Vec<String>>) {
     let Some(plan) = crate::utils::plan_files::load_plan(session_id).await else {
         return (None, None);
     };
@@ -218,15 +226,24 @@ pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Opt
         let t = plan.title.trim();
         (!t.is_empty()).then(|| crate::utils::truncate_str(t, SECTION_TEXT_CAP).to_string())
     };
-    let total = plan.tasks.len();
-    let done = plan
-        .tasks
-        .iter()
-        .filter(|t| matches!(t.status, TaskStatus::Completed))
-        .count();
-    // Progress only while something is still open; a fully ticked checklist
-    // adds nothing the settled header does not already say.
-    let checklist = (total > 0 && done < total).then(|| format!("{done}/{total} tasks"));
+    // Full ballot checklist (ADR 0005 Decision 3): one row per task, `☑` for a
+    // completed task and `☐` otherwise, kept complete even when every task is
+    // done until the completing turn settles (Decision 9). Empty `tasks`
+    // (Editing before the seed) yield no checklist.
+    let checklist = (!plan.tasks.is_empty()).then(|| {
+        plan.tasks
+            .iter()
+            .map(|t| {
+                let mark = if matches!(t.status, TaskStatus::Completed) {
+                    '☑'
+                } else {
+                    '☐'
+                };
+                let title = crate::utils::truncate_str(t.title.trim(), SECTION_TEXT_CAP);
+                format!("{mark} {title}")
+            })
+            .collect()
+    });
     (title, checklist)
 }
 
