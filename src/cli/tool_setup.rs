@@ -34,8 +34,8 @@ pub(crate) fn register_core_agent_tools(
         memory_search::MemorySearchTool, notebook::NotebookEditTool,
         pdf_to_images::PdfToImagesTool, plan_tool::PlanTool, read::ReadTool,
         rename_session::RenameSessionTool, session_search::SessionSearchTool,
-        slash_command::SlashCommandTool, task::TaskTool, web_search::WebSearchTool,
-        write::WriteTool, write_opencrabs_file::WriteOpenCrabsFileTool,
+        slash_command::SlashCommandTool, web_search::WebSearchTool, write::WriteTool,
+        write_opencrabs_file::WriteOpenCrabsFileTool,
     };
     // Phase 1: Essential file operations
     tool_registry.register(Arc::new(ReadTool));
@@ -54,7 +54,10 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(GenerateDocumentTool));
     tool_registry.register(Arc::new(PdfToImagesTool));
     // Phase 3: Workflow & integration
-    tool_registry.register(Arc::new(TaskTool));
+    // task_manager is deprecated in favor of the plan tool (mode=checklist)
+    // and no longer registered, so it leaves the model-facing catalog and
+    // tool_search. The TaskTool code stays in place (brain::tools::task) for
+    // reference and any out-of-band callers.
     tool_registry.register(Arc::new(ContextTool));
     tool_registry.register(Arc::new(HttpClientTool));
     tool_registry.register(Arc::new(PlanTool));
