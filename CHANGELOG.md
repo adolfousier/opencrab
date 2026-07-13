@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🗑️ Removed
+
+- **`opencli` built-in skill** (#536): dropped the skill whose `SKILL.md` advertised 25+ `opencli-rs` dynamic tools (`hn_top`, `twitter_trending`, `google_news`, and others) that require a separate `opencli-rs` binary and a daemon on port 19825. Nothing shipped or provisioned that binary, so on a stock build the skill loaded a doc describing tools that were never registered. Usage history confirms zero successful executions of any opencli-rs tool. Removed the `BUILTIN_SKILLS` registration, the template directory, and the README and BRAIN_CONSTITUTION references.
+
 ### ✨ Features
 
 - **Plan mode UX** (#521): the user-visible product on top of the lifecycle engine. `/plan`, `/show-plan`, `/execute` and `/discard` land on TUI and Telegram; the Approve validator scans the session `.md` (Context labels filled, at least one numbered step) and a passing `/execute` sets Active, stamps `approved_at`, and dispatches one visible seed turn that converts the numbered steps into the checklist and starts task 1. Approve and `/execute` are refused while a turn runs (never queued); `/discard` cancels the turn first. The shared soft-nudge swaps the plan hint to the design track and plan keywords durably enter Plan mode. Prompts now teach SESSION PLAN vs CHECKLIST with the locked track-selection table, every Editing turn pins the plan-mode rules, compaction recovery branches by plan state and the summary carries a harness-written PLAN STATE block, and the deprecated `task_manager` tool left the preamble and catalog. On Telegram, Approve/Discard inline buttons (owner-only in groups, `plan:` callback prefix) plus Editing/Building-checklist chrome ride the latest flow message; on the TUI, `/show-plan` opens a scrollable plan overlay with approve/discard keys, and the checklist strip shows Building checklist… or seed-error while the seed window is open.

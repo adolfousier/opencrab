@@ -62,10 +62,6 @@ const BUILTIN_SKILLS: &[(&str, &str)] = &[
         include_str!("../docs/reference/templates/skills/repo-audit/SKILL.md"),
     ),
     (
-        "opencli",
-        include_str!("../docs/reference/templates/skills/opencli/SKILL.md"),
-    ),
-    (
         "browser-cdp",
         include_str!("../docs/reference/templates/skills/browser-cdp/SKILL.md"),
     ),

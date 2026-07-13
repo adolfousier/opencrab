@@ -62,7 +62,6 @@
 - [Browser CDP](src/docs/reference/templates/skills/browser-cdp/SKILL.md)
 - [A2A Gateway](src/docs/reference/templates/skills/a2a-gateway/SKILL.md)
 - [Dynamic Tools](src/docs/reference/templates/skills/dynamic-tools/SKILL.md)
-- [OpenCLI](src/docs/reference/templates/skills/opencli/SKILL.md)
 
 ### Cron Templates
 - [Cron Jobs Guide](src/docs/reference/templates/cron/README.md)

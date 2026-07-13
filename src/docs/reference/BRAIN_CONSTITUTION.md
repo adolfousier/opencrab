@@ -90,7 +90,7 @@ These are NOT written to by RSI. If feedback relates to content in a user-create
 | Built-in (7) | Embedded in binary at compile time | Loaded first |
 | User | `~/.opencrabs/skills/<name>/SKILL.md` | Overrides built-in of same name |
 
-Built-in skills: `cost-estimate`, `security-audit`, `repo-audit`, `opencli`, `browser-cdp`, `a2a-gateway`, `dynamic-tools`.
+Built-in skills: `cost-estimate`, `security-audit`, `repo-audit`, `browser-cdp`, `a2a-gateway`, `dynamic-tools`.
 
 Format: YAML frontmatter (`name`, `description`) + prompt body. The harness loads all skills and injects them into the system prompt as a skills section.
 
