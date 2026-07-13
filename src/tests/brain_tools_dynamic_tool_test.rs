@@ -288,3 +288,83 @@ async fn test_execute_shell_newlines() {
     assert!(result.success);
     assert!(result.output.contains("line1\nline2") || result.output.contains("line1\nline2"));
 }
+
+// ── render_shell_command: context-aware escaping (#523) ──────────────
+// shell_escape_params only escaped single quotes, so a value in a DOUBLE-
+// quoted argument (the command_code template `-p "{{prompt}}"`) left $,
+// backtick and \ shell-interpreted (44% failure). render_shell_command
+// escapes per quoting context; single-quoted/unquoted stay byte-identical.
+
+#[test]
+fn shell_double_quoted_escapes_dollar_backtick_backslash() {
+    let out = DynamicToolDef::render_shell_command(
+        r#"cmd-wrap -p "{{prompt}}" --yolo"#,
+        &serde_json::json!({ "prompt": "run `date` and $VAR then a\\b" }),
+    );
+    assert_eq!(
+        out,
+        r#"cmd-wrap -p "run \`date\` and \$VAR then a\\b" --yolo"#
+    );
+}
+
+#[test]
+fn shell_double_quoted_escapes_embedded_quote() {
+    let out = DynamicToolDef::render_shell_command(
+        r#"echo "{{p}}""#,
+        &serde_json::json!({ "p": "say \"hi\"" }),
+    );
+    assert_eq!(out, r#"echo "say \"hi\"""#);
+}
+
+#[test]
+fn shell_single_quoted_matches_previous_behavior() {
+    // Byte-for-byte the old shell_escape_params behavior: ' -> '\'' , and $ is
+    // left ALONE (literal inside single quotes), so nothing regresses.
+    let out = DynamicToolDef::render_shell_command(
+        r#"echo 'm={{m}}'"#,
+        &serde_json::json!({ "m": "it's $HOME" }),
+    );
+    assert_eq!(out, r#"echo 'm=it'\''s $HOME'"#);
+}
+
+#[test]
+fn shell_unquoted_matches_previous_behavior() {
+    // Unquoted context: same single-quote escaping as before (unchanged).
+    let out = DynamicToolDef::render_shell_command("run {{x}}", &serde_json::json!({ "x": "a'b" }));
+    assert_eq!(out, r#"run a'\''b"#);
+}
+
+#[test]
+fn shell_non_string_and_unknown_placeholder() {
+    // Numbers pass through; unknown placeholders are emitted verbatim.
+    let out = DynamicToolDef::render_shell_command(
+        "n={{count}} u={{missing}}",
+        &serde_json::json!({ "count": 7 }),
+    );
+    assert_eq!(out, "n=7 u={{missing}}");
+}
+
+#[test]
+fn shell_sections_still_resolve() {
+    let present = DynamicToolDef::render_shell_command(
+        "base{{#flag}} --on {{flag}}{{/flag}}",
+        &serde_json::json!({ "flag": "yes" }),
+    );
+    assert_eq!(present, "base --on yes");
+    let absent = DynamicToolDef::render_shell_command(
+        "base{{#flag}} --on {{flag}}{{/flag}}",
+        &serde_json::json!({}),
+    );
+    assert_eq!(absent, "base");
+}
+
+#[test]
+fn shell_escaped_quote_in_template_stays_in_double_context() {
+    // An author's \" inside the double-quoted span must not close it, so the
+    // following {{p}} is still escaped for a double-quoted context.
+    let out = DynamicToolDef::render_shell_command(
+        r#"echo "a \" {{p}}""#,
+        &serde_json::json!({ "p": "$X" }),
+    );
+    assert_eq!(out, r#"echo "a \" \$X""#);
+}

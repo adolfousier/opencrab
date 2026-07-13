@@ -97,6 +97,32 @@ fn default_string_type() -> String {
     "string".to_string()
 }
 
+/// Shell quoting context a `{{param}}` placeholder lands in, tracked while
+/// scanning a shell command template so each value is escaped correctly (#523).
+#[derive(Clone, Copy, PartialEq)]
+enum ShellQuoteCtx {
+    None,
+    Single,
+    Double,
+}
+
+/// Escape a string value for the shell quoting context it is substituted into
+/// (#523). Single-quoted and unquoted spans use the exact previous single-quote
+/// escaping (`'` → `'\''`) so working templates are byte-for-byte unchanged; a
+/// double-quoted span backslash-escapes the characters the shell still expands
+/// there (`\`, `` ` ``, `$`, `"`). `!` is intentionally not escaped: history
+/// expansion is off in the non-interactive `sh -c` these commands run under.
+fn escape_for_shell_ctx(s: &str, ctx: ShellQuoteCtx) -> String {
+    match ctx {
+        ShellQuoteCtx::Single | ShellQuoteCtx::None => s.replace('\'', "'\\''"),
+        ShellQuoteCtx::Double => s
+            .replace('\\', "\\\\")
+            .replace('`', "\\`")
+            .replace('$', "\\$")
+            .replace('"', "\\\""),
+    }
+}
+
 impl DynamicToolDef {
     pub fn input_schema(&self) -> Value {
         let mut properties = serde_json::Map::new();
@@ -137,19 +163,34 @@ impl DynamicToolDef {
     pub fn render_template(template: &str, params: &Value) -> String {
         let obj = params.as_object();
 
-        // Section pass first. Single-pass left-to-right scan so nested
-        // tags collapse predictably even if a future caller writes
-        // overlapping sections (which we still reject by silently
-        // leaving the malformed bytes alone).
+        // Section pass first, then the standard `{{name}}` substitution.
+        let mut result = Self::resolve_sections(template, obj);
+        if let Some(obj) = obj {
+            for (key, value) in obj {
+                let placeholder = format!("{{{{{}}}}}", key);
+                let replacement = match value {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                result = result.replace(&placeholder, &replacement);
+            }
+        }
+        result
+    }
+
+    /// Resolve `{{#name}}...{{/name}}` conditional sections against the params
+    /// (body kept when `name` is present), leaving `{{name}}` placeholders for
+    /// a later substitution pass. Shared by [`render_template`] and
+    /// [`render_shell_command`]. Single-pass left-to-right so nested tags
+    /// collapse predictably; malformed tags pass through untouched so the
+    /// error is at least visible.
+    fn resolve_sections(template: &str, obj: Option<&serde_json::Map<String, Value>>) -> String {
         let mut after_sections = String::with_capacity(template.len());
         let mut rest = template;
         while let Some(open_at) = rest.find("{{#") {
             after_sections.push_str(&rest[..open_at]);
             let after_open = &rest[open_at + 3..];
             let Some(name_end) = after_open.find("}}") else {
-                // Malformed: no closing `}}` for the open tag. Bail
-                // out and let the rest of the template pass through
-                // untouched so the error is at least visible.
                 after_sections.push_str(&rest[open_at..]);
                 rest = "";
                 break;
@@ -159,7 +200,6 @@ impl DynamicToolDef {
             let close_tag = format!("{{{{/{}}}}}", name);
             let after_name = &after_open[body_start..];
             let Some(close_at) = after_name.find(&close_tag) else {
-                // Malformed section. Emit as-is.
                 after_sections.push_str(&rest[open_at..]);
                 rest = "";
                 break;
@@ -172,21 +212,83 @@ impl DynamicToolDef {
             rest = &after_name[close_at + close_tag.len()..];
         }
         after_sections.push_str(rest);
+        after_sections
+    }
 
-        // Then the standard `{{name}}` substitution pass over the
-        // section-resolved template.
-        let mut result = after_sections;
-        if let Some(obj) = obj {
-            for (key, value) in obj {
-                let placeholder = format!("{{{{{}}}}}", key);
-                let replacement = match value {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                result = result.replace(&placeholder, &replacement);
+    /// Render a SHELL command template, escaping each string parameter for the
+    /// quoting context it lands in (#523). The generic single-quote escaper
+    /// (`shell_escape_params`) corrupted values placed in a DOUBLE-quoted
+    /// argument like `-p "{{prompt}}"`: `$`, backtick and `\` stayed
+    /// shell-interpreted (the `command_code` 44% failure). Here we scan the
+    /// template tracking whether each `{{name}}` sits in a single-quoted,
+    /// double-quoted, or unquoted span and escape accordingly: single-quoted
+    /// and unquoted spans use `'` → `'\''` (the exact previous behavior, so
+    /// every working template is byte-for-byte unchanged), while a
+    /// double-quoted span backslash-escapes `\`, backtick, `$`, and `"`.
+    ///
+    /// Non-string values pass through via `to_string()` (numbers/bools are
+    /// shell-safe). Unknown placeholders are emitted verbatim, as before.
+    pub fn render_shell_command(template: &str, params: &Value) -> String {
+        let resolved = Self::resolve_sections(template, params.as_object());
+        let obj = params.as_object();
+        let mut out = String::with_capacity(resolved.len() + 16);
+        let mut quote = ShellQuoteCtx::None;
+        let mut idx = 0usize;
+        while idx < resolved.len() {
+            let tail = &resolved[idx..];
+            // Placeholder?
+            if let Some(rest) = tail.strip_prefix("{{")
+                && !rest.starts_with(['#', '/'])
+                && let Some(end) = rest.find("}}")
+            {
+                let name = &rest[..end];
+                let advance = 2 + end + 2;
+                if let Some(value) = obj.and_then(|o| o.get(name)) {
+                    match value {
+                        Value::String(s) => out.push_str(&escape_for_shell_ctx(s, quote)),
+                        other => out.push_str(&other.to_string()),
+                    }
+                } else {
+                    // Unknown placeholder: emit verbatim (render_template does
+                    // the same by leaving unmatched keys in place).
+                    out.push_str(&resolved[idx..idx + advance]);
+                }
+                idx += advance;
+                continue;
             }
+            // Literal char: track quote state, honoring backslash escapes in a
+            // double-quoted span so an author's `\"` does not close the quote.
+            let c = tail.chars().next().expect("non-empty tail");
+            let clen = c.len_utf8();
+            match quote {
+                ShellQuoteCtx::None => match c {
+                    '\'' => quote = ShellQuoteCtx::Single,
+                    '"' => quote = ShellQuoteCtx::Double,
+                    _ => {}
+                },
+                ShellQuoteCtx::Single => {
+                    if c == '\'' {
+                        quote = ShellQuoteCtx::None;
+                    }
+                }
+                ShellQuoteCtx::Double => {
+                    if c == '\\' {
+                        out.push(c);
+                        idx += clen;
+                        if let Some(n) = resolved[idx..].chars().next() {
+                            out.push(n);
+                            idx += n.len_utf8();
+                        }
+                        continue;
+                    } else if c == '"' {
+                        quote = ShellQuoteCtx::None;
+                    }
+                }
+            }
+            out.push(c);
+            idx += clen;
         }
-        result
+        out
     }
 
     /// Escape string values in params for use in single-quoted shell
@@ -370,12 +472,12 @@ impl DynamicTool {
             )));
         }
 
-        // Shell-escape string parameter values so single quotes in
-        // values don't break single-quoted shell arguments like
-        // `--string 'message={{message}}'`.
-        let escaped_params = DynamicToolDef::shell_escape_params(params);
+        // Escape string parameters for the quoting context each `{{param}}`
+        // lands in (#523): single-quoted / unquoted keep the previous
+        // `'message={{message}}'` behavior, double-quoted args like
+        // `-p "{{prompt}}"` now escape `$`, backtick and `\` too.
         let cmd = match &self.def.command {
-            Some(c) => DynamicToolDef::render_template(c, &escaped_params),
+            Some(c) => DynamicToolDef::render_shell_command(c, params),
             None => {
                 return Ok(ToolResult::error(
                     "Shell tool missing 'command' field".into(),
