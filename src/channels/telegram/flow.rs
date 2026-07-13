@@ -1355,6 +1355,35 @@ pub(crate) async fn restick_flow_if_buried(
     } else if let Err(e) = bot.delete_message(chat, new_mid).await {
         tracing::warn!("Telegram: restick could not delete stray duplicate: {e}");
     }
+
+    // The relocated block was re-posted bare: the rich send API can't carry
+    // reply_markup and the HTML re-post goes out without it, so burial would
+    // silently strip the plan Approve/Discard keyboard (#539). Reset
+    // applied_plan_kb to None first (the new message genuinely has no keyboard
+    // yet), then re-apply it, so the rich refresh path's want/have check stays
+    // honest instead of seeing want == have and skipping the re-attach.
+    if relocated {
+        let want = {
+            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+            s.applied_plan_kb = super::flow_chrome::PlanKb::None;
+            s.sections.plan_kb
+        };
+        if let Some(kb) = want.keyboard() {
+            match bot
+                .edit_message_reply_markup(chat, new_mid)
+                .reply_markup(kb)
+                .await
+            {
+                Ok(_) => {
+                    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    s.applied_plan_kb = want;
+                }
+                Err(e) => {
+                    tracing::debug!("Telegram: restick plan keyboard re-attach failed: {e}");
+                }
+            }
+        }
+    }
 }
 
 /// Pull the trailing folded intermediate out of the collapsed processing-log
