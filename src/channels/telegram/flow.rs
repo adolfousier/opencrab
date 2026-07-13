@@ -101,6 +101,11 @@ pub(crate) struct StreamingState {
     /// goal, ctx footer). Rolled by the edit loop from live data; ctx is set
     /// once at final delivery.
     pub(crate) sections: super::flow_chrome::FlowSections,
+    /// Last active goal text sighted this turn (ADR 0005 Decision 10): the
+    /// engine deletes the goal row when a plan task completes, so the chrome
+    /// retains the text here and keeps the Goal section until settle. Per-turn
+    /// state — a fresh StreamingState next turn drops any retained goal.
+    pub(crate) retained_goal: Option<String>,
     /// Number of tool rounds completed (for display)
     pub(crate) tool_round_count: usize,
     /// When tool execution started (for elapsed time)
@@ -458,8 +463,9 @@ pub(crate) fn render_flow_html_chrome_pref(
     // Always-visible plan chrome in the locked vertical order (title, prose
     // expandables, ☐/☑ checklist rows, goal — ADR 0005 Decision 3), assembled
     // for the classic Bot API HTML dialect (blank lines stand in for the rich
-    // <hr> boundaries — Decision 13).
-    let chrome = sections.chrome_classic();
+    // <hr> boundaries — Decision 13). Settled renders swap a completed goal's
+    // icon to ✅ (Decision 10).
+    let chrome = sections.chrome_classic(matches!(header, FlowHeader::Settled { .. }));
 
     let mut msg = String::new();
     if !chrome.is_empty() {
@@ -559,7 +565,7 @@ pub(crate) fn render_flow_details_chrome_pref(
     );
 
     let mut msg = String::new();
-    let chrome = sections.chrome_rich();
+    let chrome = sections.chrome_rich(matches!(header, FlowHeader::Settled { .. }));
     if !chrome.is_empty() {
         // Always-visible plan chrome in the locked vertical order: title flush
         // against the per-heading prose <details>, <hr> boundaries, ☐/☑

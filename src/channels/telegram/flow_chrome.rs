@@ -149,6 +149,31 @@ fn prose_body_lines(body: &str) -> Vec<String> {
     out
 }
 
+/// The flow-message Goal section (ADR 0005 Decision 10): the goal text plus
+/// whether it is a retained completed goal (the live `GoalManager` entry
+/// completed or cleared mid-turn). A completed goal keeps the `🎯 Goal:`
+/// prefix while the turn runs and swaps only the icon to `✅ Goal:` on the
+/// settled render; an active goal is `🎯 Goal:` everywhere.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GoalSection {
+    pub(crate) text: String,
+    pub(crate) completed: bool,
+}
+
+impl GoalSection {
+    /// Bold section prefix with the Decision 10 icon: `✅` only for a
+    /// completed goal on a settled render, `🎯` everywhere else. The `Goal:`
+    /// word never changes.
+    fn prefix(&self, settled: bool) -> String {
+        let icon = if self.completed && settled {
+            "✅"
+        } else {
+            "🎯"
+        };
+        format!("<b>{icon} Goal:</b>")
+    }
+}
+
 /// Always-visible flow sections. Built from live data by [`refresh_sections`];
 /// rendered by [`FlowSections::chrome_rich`] / [`FlowSections::chrome_classic`]
 /// so the two flow surfaces can never drift on section formatting.
@@ -170,8 +195,10 @@ pub(crate) struct FlowSections {
     /// until a checklist has tasks; the full list is kept even when every task
     /// is done, through the completing turn's settle (ADR 0005 Decision 9).
     pub(crate) checklist: Option<Vec<String>>,
-    /// Active goal one-liner from `GoalManager`, when a session goal is set.
-    pub(crate) goal: Option<String>,
+    /// Goal section from `GoalManager` (ADR 0005 Decision 10): the active
+    /// goal, or one that completed earlier this turn and is retained until
+    /// settle. Never set while the plan is Editing.
+    pub(crate) goal: Option<GoalSection>,
     /// Ctx budget footer (display-only), set at final delivery.
     pub(crate) ctx: Option<String>,
 }
@@ -187,9 +214,12 @@ impl FlowSections {
     /// before the checklist only when prose precedes it, and before the goal
     /// when prose or checklist precedes it. Section headings are inline
     /// `<summary>` text only — nested blocks inside a summary render as a
-    /// blank disclosure (Decision 12). Empty when no plan sections are
-    /// present; `plan_state` and `ctx` live in the merged footer.
-    pub(crate) fn chrome_rich(&self) -> String {
+    /// blank disclosure (Decision 12). A one-paragraph goal stays plain; a
+    /// multi-paragraph goal collapses with the first paragraph as its inline
+    /// summary. `settled` drives the Decision 10 goal icon. Empty when no
+    /// plan sections are present; `plan_state` and `ctx` live in the merged
+    /// footer.
+    pub(crate) fn chrome_rich(&self, settled: bool) -> String {
         let mut out = String::new();
         if let Some(ref t) = self.plan_title {
             out.push_str(&format!("<p>📋 <b>{}</b></p>", escape_html(t)));
@@ -220,10 +250,30 @@ impl FlowSections {
             }
         }
         if let Some(ref g) = self.goal {
-            if self.checklist.is_some() || self.has_prose() {
-                out.push_str("<hr>");
+            let paras: Vec<&str> = g
+                .text
+                .split("\n\n")
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .collect();
+            if !paras.is_empty() {
+                if self.checklist.is_some() || self.has_prose() {
+                    out.push_str("<hr>");
+                }
+                let prefix = g.prefix(settled);
+                if let [one] = paras.as_slice() {
+                    out.push_str(&format!("<p>{prefix} {}</p>", escape_html(one)));
+                } else {
+                    let body: String = paras[1..]
+                        .iter()
+                        .map(|p| format!("<p>{}</p>", escape_html(p)))
+                        .collect();
+                    out.push_str(&format!(
+                        "<details><summary>{prefix} {}</summary>{body}</details>",
+                        escape_html(paras[0])
+                    ));
+                }
             }
-            out.push_str(&format!("<p>🎯 <i>{}</i></p>", escape_html(g)));
         }
         out
     }
@@ -232,8 +282,10 @@ impl FlowSections {
     /// lines standing in for the rich `<hr>` (Decision 13 — classic HTML has
     /// no divider primitive). Prose sections are `<blockquote expandable>`
     /// blocks whose first line is the bold heading, so Telegram's collapsed
-    /// peek shows it (Decision 12); the orphan preamble stays plain.
-    pub(crate) fn chrome_classic(&self) -> String {
+    /// peek shows it (Decision 12); the orphan preamble stays plain. The
+    /// goal always renders as its own expandable with Telegram's peek as the
+    /// collapsed preview; `settled` drives the Decision 10 goal icon.
+    pub(crate) fn chrome_classic(&self, settled: bool) -> String {
         let mut parts: Vec<String> = Vec::new();
         if let Some(ref t) = self.plan_title {
             parts.push(format!("📋 <b>{}</b>", escape_html(t)));
@@ -259,10 +311,17 @@ impl FlowSections {
             }
         }
         if let Some(ref g) = self.goal {
-            if self.checklist.is_some() || self.has_prose() {
-                parts.push(String::new());
+            let text = g.text.trim();
+            if !text.is_empty() {
+                if self.checklist.is_some() || self.has_prose() {
+                    parts.push(String::new());
+                }
+                parts.push(format!(
+                    "<blockquote expandable>{} {}</blockquote>",
+                    g.prefix(settled),
+                    escape_html(text)
+                ));
             }
-            parts.push(format!("🎯 <i>{}</i>", escape_html(g)));
         }
         parts.join("\n")
     }
@@ -429,13 +488,22 @@ pub(crate) async fn load_plan_prose(session_id: Uuid) -> Option<Vec<ProseSection
     (!sections.is_empty()).then_some(sections)
 }
 
-/// Active goal one-liner from `GoalManager`, when the session has an
-/// active goal.
-pub(crate) async fn load_goal_section(agent: &AgentService, session_id: Uuid) -> Option<String> {
+/// Live `GoalManager` entry for the session as `(text, completed)`: an
+/// active goal, or one the turn-end judge already marked completed (the row
+/// survives with `state = "completed"`). Full text — the Decision 12 goal
+/// chrome handles one- vs multi-paragraph display. `None` when no row
+/// exists (never set, cleared on discard, or deleted by `clear_task_goal`
+/// on task complete — turn-local retention in [`refresh_sections`] covers
+/// that last case).
+pub(crate) async fn load_goal_section(
+    agent: &AgentService,
+    session_id: Uuid,
+) -> Option<(String, bool)> {
     let mgr = GoalManager::new(agent.context().clone());
     match mgr.get_goal(session_id).await {
-        Ok(Some(goal)) if goal.state == "active" => {
-            Some(crate::utils::truncate_str(goal.goal_text.trim(), SECTION_TEXT_CAP).to_string())
+        Ok(Some(goal)) if goal.state == "active" || goal.state == "completed" => {
+            let text = goal.goal_text.trim().to_string();
+            (!text.is_empty()).then_some((text, goal.state == "completed"))
         }
         Ok(_) => None,
         Err(e) => {
@@ -486,14 +554,33 @@ pub(crate) async fn load_plan_state_section(
 /// Reload the plan/goal sections from live data and store them on the
 /// streaming state. Returns true when they changed (the flow needs a
 /// re-render). The ctx section is owned by final delivery and preserved.
+///
+/// Goal retention (ADR 0005 Decision 10): the engine deletes the goal row
+/// when a plan task completes, so the last active goal text sighted this
+/// turn is kept on [`StreamingState::retained_goal`] and rendered as a
+/// completed goal until settle. Retention renders only while a plan is
+/// still live (discard goes to NoPlan and strips all plan chrome at once)
+/// and never while Editing; the per-turn streaming state clears it for the
+/// next turn.
 pub(crate) async fn refresh_sections(
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
     agent: &AgentService,
     session_id: Uuid,
 ) -> bool {
+    use crate::utils::plan_files::{PlanModeState, plan_mode_state};
     let (plan_title, checklist) = load_plan_sections(session_id).await;
     let prose = load_plan_prose(session_id).await;
-    let goal = load_goal_section(agent, session_id).await;
+    let mode = plan_mode_state(session_id).await;
+    let editing = matches!(
+        mode,
+        PlanModeState::PreInitEditing | PlanModeState::PostInitEditing
+    );
+    let live_goal = if editing {
+        // The Goal section never renders during Editing (Decision 3).
+        None
+    } else {
+        load_goal_section(agent, session_id).await
+    };
     // Plan-state derivation reads plan files; keep that IO outside the
     // streaming lock (short double-lock beats file reads under the mutex).
     let turn_active = {
@@ -502,6 +589,33 @@ pub(crate) async fn refresh_sections(
     };
     let (plan_state, plan_kb) = load_plan_state_section(session_id, turn_active).await;
     let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+    let goal = match live_goal {
+        Some((text, false)) => {
+            // Active goal: show it and remember the text — several
+            // completions in one turn keep the LAST goal only.
+            s.retained_goal = Some(text.clone());
+            Some(GoalSection {
+                text,
+                completed: false,
+            })
+        }
+        // The turn-end judge marked it completed (row survives): retained
+        // display, but only when it was sighted active earlier THIS turn —
+        // a leftover completed row from a prior turn never re-renders.
+        Some((text, true)) => s.retained_goal.is_some().then_some(GoalSection {
+            text,
+            completed: true,
+        }),
+        // Row gone. While a plan is Active that means clear_task_goal on a
+        // task complete: keep the retained text until settle. In every
+        // other state (Editing, or NoPlan after discard/clear) the goal
+        // section is gone.
+        None if mode == PlanModeState::Active => s.retained_goal.clone().map(|text| GoalSection {
+            text,
+            completed: true,
+        }),
+        None => None,
+    };
     let next = FlowSections {
         plan_state,
         plan_kb,

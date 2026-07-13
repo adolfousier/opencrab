@@ -8,7 +8,7 @@ use crate::channels::telegram::flow::{
     render_flow_html_chrome, render_flow_html_chrome_pref,
 };
 use crate::channels::telegram::flow_chrome::{
-    FlowSections, ProseSection, clock_glyph, split_plan_prose,
+    FlowSections, GoalSection, ProseSection, clock_glyph, split_plan_prose,
 };
 
 fn sections(title: Option<&str>, checklist: Option<Vec<&str>>, goal: Option<&str>) -> FlowSections {
@@ -18,7 +18,10 @@ fn sections(title: Option<&str>, checklist: Option<Vec<&str>>, goal: Option<&str
         plan_title: title.map(str::to_string),
         prose: None,
         checklist: checklist.map(|rows| rows.into_iter().map(str::to_string).collect()),
-        goal: goal.map(str::to_string),
+        goal: goal.map(|text| GoalSection {
+            text: text.to_string(),
+            completed: false,
+        }),
         ctx: None,
     }
 }
@@ -61,12 +64,14 @@ fn chrome_classic_order_title_checklist_rows_goal_and_omit_state_and_ctx() {
     );
     s.plan_state = Some("✍️ Editing plan".to_string());
     s.ctx = Some("ctx 12.3k/200k".to_string());
-    let out = s.chrome_classic();
+    let out = s.chrome_classic(false);
     // Blank line between checklist and goal (the classic stand-in for the
     // rich <hr> — Decision 13); no blank line between title and checklist.
+    // The goal is its own expandable with the bold Decision 10 prefix.
     assert_eq!(
         out,
-        "📋 <b>Ship plan mode</b>\n☑ scope it\n☐ build it\n\n🎯 <i>close B</i>"
+        "📋 <b>Ship plan mode</b>\n☑ scope it\n☐ build it\n\n\
+         <blockquote expandable><b>🎯 Goal:</b> close B</blockquote>"
     );
     assert!(
         !out.contains("Editing plan"),
@@ -81,14 +86,14 @@ fn chrome_empty_when_all_plan_sections_empty() {
     // plan_state / ctx set but no title/prose/checklist/goal → no chrome.
     s.plan_state = Some("✍️ Editing plan".to_string());
     s.ctx = Some("ctx 1k/200k".to_string());
-    assert!(s.chrome_classic().is_empty());
-    assert!(s.chrome_rich().is_empty());
+    assert!(s.chrome_classic(false).is_empty());
+    assert!(s.chrome_rich(false).is_empty());
 }
 
 #[test]
 fn chrome_escapes_html_in_section_text() {
     let s = sections(Some("a <b> & c"), Some(vec!["☐ x < y"]), None);
-    for out in [s.chrome_classic(), s.chrome_rich()] {
+    for out in [s.chrome_classic(false), s.chrome_rich(false)] {
         assert!(out.contains("a &lt;b&gt; &amp; c"), "title escaped: {out}");
         assert!(out.contains("☐ x &lt; y"), "checklist row escaped: {out}");
         assert!(!out.contains("a <b> & c"));
@@ -152,7 +157,7 @@ fn rich_prose_renders_one_details_per_heading_flush_after_title() {
         prose(None, "intro line"),
         prose(Some("Context"), "why\n\nand how"),
     ]);
-    let out = s.chrome_rich();
+    let out = s.chrome_rich(false);
     // Title flush against prose (no spacer), orphan preamble always visible,
     // heading as inline summary, blank body lines dropped on rich.
     assert_eq!(
@@ -166,25 +171,28 @@ fn rich_prose_renders_one_details_per_heading_flush_after_title() {
 fn rich_prose_then_checklist_then_goal_use_hr_boundaries() {
     let mut s = sections(Some("P"), Some(vec!["☐ a"]), Some("g"));
     s.prose = Some(vec![prose(Some("Ctx"), "body")]);
-    let out = s.chrome_rich();
+    let out = s.chrome_rich(false);
     assert_eq!(
         out,
         "<p>📋 <b>P</b></p><details><summary>Ctx</summary><p>body</p></details>\
-         <hr><p>☐ a</p><hr><p>🎯 <i>g</i></p>"
+         <hr><p>☐ a</p><hr><p><b>🎯 Goal:</b> g</p>"
     );
 }
 
 #[test]
 fn rich_title_and_checklist_without_prose_have_no_hr_between_them() {
     let s = sections(Some("P"), Some(vec!["☐ a", "☐ b"]), None);
-    assert_eq!(s.chrome_rich(), "<p>📋 <b>P</b></p><p>☐ a</p><p>☐ b</p>");
+    assert_eq!(
+        s.chrome_rich(false),
+        "<p>📋 <b>P</b></p><p>☐ a</p><p>☐ b</p>"
+    );
 }
 
 #[test]
 fn classic_prose_puts_bold_heading_inside_the_expandable() {
     let mut s = sections(Some("The Plan"), None, None);
     s.prose = Some(vec![prose(Some("Context"), "why we do it")]);
-    let out = s.chrome_classic();
+    let out = s.chrome_classic(false);
     // The bold heading is the FIRST line inside the blockquote so the
     // collapsed peek shows it (Decision 12) — never a visible line above it.
     assert_eq!(
@@ -200,7 +208,7 @@ fn classic_prose_keeps_blank_lines_and_formats_markdown_body() {
         Some("Steps"),
         "### Sub\n- item **bold**\n\nplain `code`",
     )]);
-    let out = s.chrome_classic();
+    let out = s.chrome_classic(false);
     assert!(out.contains("<b>Sub</b>"), "nested heading bolded: {out}");
     assert!(out.contains("• item <b>bold</b>"), "list bulleted: {out}");
     assert!(out.contains("\n\n"), "paragraph break kept on classic");
@@ -217,13 +225,65 @@ fn prose_body_escapes_html_and_keeps_fenced_code_as_code_lines() {
         Some("Danger"),
         "a <b> tag\n```\nlet x = 1;\n```",
     )]);
-    let out = s.chrome_rich();
+    let out = s.chrome_rich(false);
     assert!(out.contains("a &lt;b&gt; tag"), "body escaped: {out}");
     assert!(
         out.contains("<code>let x = 1;</code>"),
         "fence as code: {out}"
     );
     assert!(!out.contains("```"), "fence markers stripped: {out}");
+}
+
+// ── goal chrome: Decision 10 prefixes + Decision 12 collapse ──
+
+#[test]
+fn rich_multi_paragraph_goal_collapses_with_first_paragraph_summary() {
+    let s = sections(
+        None,
+        None,
+        Some("ship the release\n\nthen tag it\n\nthen announce"),
+    );
+    let out = s.chrome_rich(false);
+    assert_eq!(
+        out,
+        "<details><summary><b>🎯 Goal:</b> ship the release</summary>\
+         <p>then tag it</p><p>then announce</p></details>"
+    );
+}
+
+#[test]
+fn rich_one_paragraph_goal_stays_plain_always_visible() {
+    let s = sections(None, None, Some("ship the release"));
+    let out = s.chrome_rich(false);
+    assert_eq!(out, "<p><b>🎯 Goal:</b> ship the release</p>");
+    assert!(!out.contains("<details"), "one paragraph never collapses");
+}
+
+#[test]
+fn completed_goal_keeps_target_icon_live_and_swaps_to_check_at_settle() {
+    let mut s = sections(None, None, Some("close the audit"));
+    s.goal.as_mut().expect("goal set").completed = true;
+    // While the turn is still running a completed goal keeps 🎯 (Decision 10).
+    assert_eq!(
+        s.chrome_rich(false),
+        "<p><b>🎯 Goal:</b> close the audit</p>"
+    );
+    // At settle only the icon swaps; the Goal: word never changes.
+    assert_eq!(
+        s.chrome_rich(true),
+        "<p><b>✅ Goal:</b> close the audit</p>"
+    );
+    assert_eq!(
+        s.chrome_classic(true),
+        "<blockquote expandable><b>✅ Goal:</b> close the audit</blockquote>"
+    );
+}
+
+#[test]
+fn active_goal_never_shows_check_even_at_settle() {
+    // Settle with the goal still active → 🎯 (Decision 10 rule 5).
+    let s = sections(None, None, Some("still going"));
+    assert_eq!(s.chrome_rich(true), "<p><b>🎯 Goal:</b> still going</p>");
 }
 
 // ── header-only renders (empty flow_entries): plain merged footer ──
@@ -348,9 +408,9 @@ fn details_populated_flow_keeps_chrome_outside_the_details() {
     );
     // Chrome is an always-visible <p> block BEFORE the collapsed log, with a
     // kept spacer, not inside the summary.
-    assert!(
-        out.starts_with("<p>🎯 <i>finish the audit</i></p><p>&nbsp;</p><details><summary><sub>")
-    );
+    assert!(out.starts_with(
+        "<p><b>🎯 Goal:</b> finish the audit</p><p>&nbsp;</p><details><summary><sub>"
+    ));
     assert!(out.ends_with("</details>"));
     assert!(out.contains("⏱ 0:08"));
 }
