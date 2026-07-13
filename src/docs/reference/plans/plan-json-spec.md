@@ -52,11 +52,9 @@ These are always overwritten on import:
 - `status` — always `"Pending"`
 - `notes` — always `null`
 - `completed_at` — always `null`
-- `execution_history` — always `[]`
 - `retry_count` — always `0`
 - `max_retries` — defaults to `3`
 - `artifacts` — always `[]`
-- `reflection` — always `null`
 
 ## task_type Values
 
