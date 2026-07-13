@@ -14,6 +14,7 @@ pub mod active_skill_tracking_test;
 pub mod agent_approval_policies_test;
 pub mod agent_basic_test;
 pub mod agent_context_tracking_test;
+pub mod agent_helpers_react_directive_test;
 pub mod agent_model_selection_test;
 pub mod agent_parallel_sessions_test;
 pub mod agent_service_mocks;

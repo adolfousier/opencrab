@@ -27,6 +27,23 @@ pub(crate) fn is_mimo_model(model: &str) -> bool {
     model.to_ascii_lowercase().contains("mimo")
 }
 
+/// Reduce a CLI text block to its `<<react:…>>` directive when clearing the
+/// displayable text after an IntermediateText flush (#547). The displayable
+/// text was already delivered as an intermediate message, so it is dropped to
+/// avoid duplication — but a `<<react:…>>` marker is a DIRECTIVE, not display
+/// text. Clearing it left a react-only CLI turn reaching delivery with empty
+/// `response.content`, so delivery never took the react-only path and settled a
+/// bare "Finished" flow block. Keeping the marker (rebuilt from the first
+/// recognized emoji) lets delivery treat the turn as react-only, matching the
+/// API providers. Returns the bare directive `<<react:EMOJI>>`, or "" when the
+/// block carried no react directive.
+pub(crate) fn retain_react_directive(text: &str) -> String {
+    match crate::utils::extract_react_marker(text) {
+        (_, Some(emoji)) => format!("<<react:{emoji}>>"),
+        (_, None) => String::new(),
+    }
+}
+
 /// Pick the stream-handshake timeout based on what kind of provider
 /// we're calling. Pulled out as a free `pub(crate)` function so the
 /// matrix is unit-testable without spinning up a real async stream.
@@ -657,13 +674,20 @@ impl AgentService {
                                 reasoning: None,
                             },
                         );
-                        // Clear text from prior text blocks so the final
-                        // response.content only contains text emitted AFTER
-                        // this flush — prevents complete_response from
-                        // overwriting the last intermediate msg with duplicate text.
+                        // Clear DISPLAYABLE text from prior text blocks so the
+                        // final response.content only contains text emitted
+                        // AFTER this flush — prevents complete_response from
+                        // overwriting the last intermediate msg with duplicate
+                        // text. BUT preserve a `<<react:…>>` DIRECTIVE: it is not
+                        // displayable text, and clearing it meant a react-only
+                        // CLI turn reached delivery with empty content, so the
+                        // react-only path never ran and a bare "Finished" flow
+                        // block was left behind (#547). Keeping the marker lets
+                        // delivery treat the turn as react-only (react + block
+                        // cleanup), matching the API providers.
                         for bs in block_states.iter_mut() {
                             if let ContentBlock::Text { text: ref mut t } = bs.block {
-                                t.clear();
+                                *t = retain_react_directive(t);
                             }
                         }
                     }
