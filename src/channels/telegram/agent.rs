@@ -1522,7 +1522,10 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("respond_to", "Show/switch auto-mention mode"),
         BotCommand::new("plan", "Enter Plan mode (design a plan for approval)"),
         BotCommand::new("show_plan", "Show the current plan state"),
-        BotCommand::new("execute", "Approve the design plan / retry the checklist seed"),
+        BotCommand::new(
+            "execute",
+            "Approve the design plan / retry the checklist seed",
+        ),
         BotCommand::new("discard", "Discard the live plan (back to no plan)"),
     ];
 
