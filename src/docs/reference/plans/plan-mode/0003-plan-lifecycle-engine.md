@@ -128,19 +128,20 @@ Keep `approved_at` on the JSON struct. Phase C3 removes today’s auto-approve-o
 
 ### Storage
 
-Plan artifacts live under `~/.opencrabs/agents/session/`.
+Plan artifacts live in the session's resolved data directory, `plan_files::session_dir(session_id)`: project-bound sessions resolve to `~/.opencrabs/projects/<slug>/session/`, everything else to the profile-aware `<home>/session/` (default profile `~/.opencrabs/session/`, named profiles `~/.opencrabs/profiles/<name>/session/`). The project branch is a DB lookup (session to project via the process-global pool), so `session_dir` and all path/load/save helpers on top of it are async. Reads fall back to the legacy flat `~/.opencrabs/agents/session/` via `plan_json_read_path` so plans from older binaries are still found; writes always go to the resolved location.
 
 | Store | Role |
 |---|---|
-| `.opencrabs_plan_{session_id}.json` | **Live.** Status, title, checklist, optional Telegram flow-message ids. Minimal pre-init sidecar uses this path family. |
-| `.opencrabs_plan_{session_id}.md` | Canonical design prose while Editing (post-init). Created on design `init`; frozen while Active. |
-| SQLite `plans` / `plan_tasks` | **Dormant.** Schema in [src/migrations/20251111000001_add_plans.sql](../../../../migrations/20251111000001_add_plans.sql); repository in [src/db/repository/plan.rs](../../../../db/repository/plan.rs); wrapper in [src/services/plan.rs](../../../../services/plan.rs). |
+| `<session_dir>/.opencrabs_plan_{session_id}.json` | **Live.** Status, title, checklist, optional Telegram flow-message ids. Minimal pre-init sidecar uses this path family. |
+| `<session_dir>/.opencrabs_plan_{session_id}.md` | Canonical design prose while Editing (post-init). Created on design `init`; frozen while Active. |
+| `~/.opencrabs/agents/session/` | **Legacy read fallback only.** Never written to. |
+| SQLite `plans` / `plan_tasks` | **Dropped.** `PlanService`/`PlanRepository` are deleted and [src/migrations/20260713000001_drop_orphaned_plans_tables.sql](../../../../migrations/20260713000001_drop_orphaned_plans_tables.sql) removed the tables. |
 
 What is live today for the agent and TUI is only the JSON sidecar and (after C2) the session markdown file. The `plan` tool and TUI `reload_plan` read and write those files. New plans actively use title and description at the JSON root. Older JSON may contain extra root fields — keep them on load, but stop prompting the model for them.
 
-While Editing, sync `.md` content into `description` on save and keep `tasks` empty. When the checklist completes, archive both files under `.../session/archive/` with a timestamp.
+While Editing, sync `.md` content into `description` on save and keep `tasks` empty. When the checklist completes, archive both files under `<session_dir>/archive/` with a timestamp.
 
-Nothing in the production agent path calls `PlanService` today — only tests and wiring in `ServiceContext`. Do not introduce dual-write to SQLite unless we deliberately re-enable that path. In C3 docs/cleanup: confirm zero production callers, then either teach the dormant SQLite parser the same legacy map or retire unused `PlanService`.
+Nothing calls a SQLite plan path anymore: zero production callers were confirmed in C3 and the tables were dropped outright. Do not reintroduce dual-write to SQLite; JSON in the resolved session dir is the single live store.
 
 ### Editing write / bash gate (locked)
 

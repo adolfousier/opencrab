@@ -187,13 +187,13 @@ Yolo, cron, `run`, and a2a never enter Editing. Checklist and import remain allo
 
 ### Storage
 
-Plan artifacts live under `~/.opencrabs/agents/session/`. Knowing which store is actually live matters for migration; Adolfo’s audit correctly pressed on this.
+Plan artifacts live in the session's resolved data directory, `plan_files::session_dir(session_id)` (async): project-bound sessions use `~/.opencrabs/projects/<slug>/session/`, everything else the profile-aware `<home>/session/`; the legacy flat `~/.opencrabs/agents/session/` remains a read-only fallback. Details in [0003-plan-lifecycle-engine.md](0003-plan-lifecycle-engine.md). Knowing which store is actually live matters for migration; Adolfo’s audit correctly pressed on this.
 
 What is live today for the agent and TUI is only the JSON sidecar and the session markdown file. The `plan` tool and TUI [reload_plan](src/tui/app/state.rs) read and write `.opencrabs_plan_{session_id}.md` (canonical while Editing) and `.opencrabs_plan_{session_id}.json` (status, title, checklist, and optional flow-message ids for Telegram chrome).
 
 New plans actively use title and description at the JSON root. Older JSON may contain extra root fields — keep them on load, but stop prompting the model for them. While Editing, sync `.md` content into `description` on save and keep `tasks` empty. When the checklist completes, archive both files under `.../session/archive/` with a timestamp.
 
-SQLite tables `plans` and `plan_tasks` exist ([src/migrations/20251111000001_add_plans.sql](src/migrations/20251111000001_add_plans.sql)), with repository code in [src/db/repository/plan.rs](src/db/repository/plan.rs) and a [PlanService](src/services/plan.rs) wrapper. Nothing in the production agent path calls `PlanService` today — only tests and wiring in `ServiceContext`. Do not introduce dual-write to SQLite unless we deliberately re-enable that path.
+SQLite tables `plans` and `plan_tasks` are gone: `PlanService` and `PlanRepository` were retired in Cluster C after confirming zero production callers, and migration `20260713000001_drop_orphaned_plans_tables.sql` dropped the tables themselves. JSON in the resolved session dir is the single live store; do not reintroduce dual-write to SQLite.
 
 Phase 3 collapses seven legacy `PlanStatus` values into Editing, Active, and NoPlan without breaking plans already on disk. On JSON load, map Draft, PendingApproval, and Rejected to Editing; Approved and InProgress to Active; Completed to silent archive then NoPlan; Cancelled to NoPlan. On write for new plans, persist canonical strings:
 

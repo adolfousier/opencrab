@@ -149,12 +149,20 @@ These decisions were locked after validating Adolfo’s OC Dev audit (2026-07-11
 
 ### Where plan data lives
 
+Plan artifacts live in the session's resolved data directory, `session_dir(session_id)` in `src/utils/plan_files.rs`. Resolution is by what the session is bound to, in order:
+
+1. **Project-bound session** → `~/.opencrabs/projects/<slug>/session/` (DB lookup session → project, mirrors `FileService::project_files_dir` but with a `session/` subdir).
+2. **Otherwise** → `<profile home>/session/` (`opencrabs_home()` is profile-aware, so this is `~/.opencrabs/session/` on the default profile and `~/.opencrabs/profiles/<name>/session/` on a named one).
+
+Because the project branch is a DB lookup, `session_dir` and every path/load/save helper built on it are **async**. Reads fall back to the legacy flat `~/.opencrabs/agents/session/` (via `plan_json_read_path`) so plans written by an older binary are not orphaned; writes always target the resolved location.
+
 | Store | Role |
 |---|---|
-| `~/.opencrabs/agents/session/.opencrabs_plan_{session}.json` | **Live.** The `plan` tool and TUI read and write this file on every checklist operation; the minimal pre-init Editing sidecar uses the same path. Single loader/saver: `src/utils/plan_files.rs`. |
-| `~/.opencrabs/agents/session/.opencrabs_plan_{session}.md` | Session plan prose while Editing (design track). Frozen against generic write tools once Active. Successful writes mirror the full body into JSON `description`. |
-| `~/.opencrabs/agents/session/archive/` | Completed plans retire here with a timestamp (no lingering live Done status). |
-| SQLite `plans` / `plan_tasks` | **Retired** (Cluster C). Zero production callers were confirmed; `PlanService` and `PlanRepository` are deleted. The migration file remains but nothing reads or writes those tables. |
+| `<session_dir>/.opencrabs_plan_{session}.json` | **Live.** The `plan` tool and TUI read and write this file on every checklist operation; the minimal pre-init Editing sidecar uses the same path. Single loader/saver: `src/utils/plan_files.rs`. |
+| `<session_dir>/.opencrabs_plan_{session}.md` | Session plan prose while Editing (design track). Frozen against generic write tools once Active. Successful writes mirror the full body into JSON `description`. |
+| `<session_dir>/archive/` | Completed plans retire here with a timestamp (no lingering live Done status). |
+| `~/.opencrabs/agents/session/` | **Legacy read fallback only.** Pre-resolution flat location; never written to. |
+| SQLite `plans` / `plan_tasks` | **Dropped.** Zero production callers were confirmed; `PlanService` and `PlanRepository` are deleted, and migration `20260713000001_drop_orphaned_plans_tables.sql` removed the tables themselves. |
 
 JSON is the single live store; SQLite is not dual-written. Legacy JSON files that still carry old `PlanStatus` strings (Draft through Cancelled) are mapped on load by `plan_files::load_plan` (Cluster C Phase C1, umbrella Phase 3); legacy draft checklists (tasks, no `.md`) normalize to Active so they stay executable. The `approved_at` timestamp stays on the struct; set on user Approve, not on first `start`.
 
@@ -176,7 +184,7 @@ Legacy strings on disk are mapped on load (Draft/PendingApproval/Rejected → Ed
 - **`add_task`** remains as an alias that appends a single task. Prompts now prefer `add_tasks` (Cluster D Phase D2 shipped); the alias is deprecated in docs but stays in the schema so mid-session models keep working.
 - **`start` / `complete`** are Active only; Editing (pre-init or post-init) gets a deterministic refusal. Auto-approve on first `start` is removed: `approved_at` is stamped only by user Approve on the design track.
 - A started task's non-empty `acceptance_criteria` become the session goal (`GoalManager`); the goal clears on complete or skip (a failed task keeps it for the retry).
-- Completing the last task archives `.json` + `.md` under `agents/session/archive/` and returns the session to NoPlan.
+- Completing the last task archives `.json` + `.md` under `<session_dir>/archive/` and returns the session to NoPlan.
 
 ### User language → mode
 
@@ -209,7 +217,7 @@ The `opencrabs-plan-mode.md` file shared in OC Dev predates this flow-message de
 
 ### Session plan `.md` (design track, light template B)
 
-While Editing, the agent writes `~/.opencrabs/agents/session/.opencrabs_plan_{session}.md`:
+While Editing, the agent writes `<session_dir>/.opencrabs_plan_{session}.md`:
 
 ```markdown
 # {title}
