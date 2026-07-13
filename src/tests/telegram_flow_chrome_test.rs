@@ -286,6 +286,42 @@ fn active_goal_never_shows_check_even_at_settle() {
     assert_eq!(s.chrome_rich(true), "<p><b>🎯 Goal:</b> still going</p>");
 }
 
+// ── plan-state copy (Decision 7): Editing chrome carries no slash hints ──
+
+#[tokio::test]
+async fn plan_state_editing_copy_locked_to_decision_7() {
+    use crate::channels::telegram::flow_chrome::load_plan_state_section;
+    use crate::config::profile::{home_for_profile, with_profile_home_async};
+    use crate::utils::plan_files::{create_design_md, save_plan, set_pre_init_editing};
+    use uuid::Uuid;
+
+    let profile = format!("flow-chrome-test-{}", Uuid::new_v4());
+    with_profile_home_async(Some(&profile), async {
+        let sid = Uuid::new_v4();
+        // NoPlan → no state line.
+        assert_eq!(load_plan_state_section(sid, true).await.0, None);
+
+        // Pre-init Editing: 📝 Discussing plan, no keyboard, no hints.
+        set_pre_init_editing(sid).await.unwrap();
+        let (state, _) = load_plan_state_section(sid, true).await;
+        assert_eq!(state.as_deref(), Some("📝 Discussing plan"));
+
+        // Post-init Editing: ✍️ Editing plan only — the design prose reads on
+        // the flow message and Approve rides the keyboard, so the chrome never
+        // teaches /show-plan or /execute (Decision 14).
+        let plan = crate::tui::plan::PlanDocument::new(sid, "T".to_string(), String::new());
+        save_plan(&plan).await.unwrap();
+        create_design_md(sid, "T").await.unwrap();
+        let (state, _) = load_plan_state_section(sid, true).await;
+        assert_eq!(state.as_deref(), Some("✍️ Editing plan"));
+        let state = state.unwrap();
+        assert!(!state.contains("/show-plan"), "no view hint: {state}");
+        assert!(!state.contains("/execute"), "no approve hint: {state}");
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
+}
+
 // ── header-only renders (empty flow_entries): plain merged footer ──
 
 #[test]

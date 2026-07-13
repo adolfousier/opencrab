@@ -195,6 +195,11 @@ const PLAN_PROSE_CAP: usize = 3000;
 
 /// `/show-plan`: a text summary of the current plan state. Surfaces may
 /// additionally restick chrome (Telegram) or open the overlay (TUI).
+///
+/// Demoted on Telegram (ADR 0005 Decision 14): the flow message renders the
+/// design prose per-heading, so this command is a thin fallback for an idle
+/// or buried chat and for send-failure recovery — chrome never teaches it as
+/// the way to read the plan. The TUI overlay keeps using it as before.
 pub async fn show_plan(session_id: Uuid) -> String {
     match plan_files::plan_mode_state(session_id).await {
         PlanModeState::NoPlan => "No active plan for this session.".to_string(),

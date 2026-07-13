@@ -516,9 +516,12 @@ pub(crate) async fn load_goal_section(
 /// Plan-mode state line + keyboard ownership for the flow message
 /// (Building checklist… machine, locked): while Active with a seed turn
 /// in flight and empty tasks show Building checklist…; when the seed
-/// ended without tasks show the error chrome and the retry hint; while
-/// Editing show the prose summary with the approve hint. Keyboards
-/// attach only after `init` succeeds (pre-init has none).
+/// ended without tasks show the error chrome and the retry hint. Editing
+/// copy is locked to ADR 0005 Decision 7: no slash hints — the design
+/// prose reads directly on the flow message and the Approve keyboard
+/// carries approval, so chrome never teaches `/show-plan` or `/execute`
+/// as the normal path (Decision 14). Keyboards attach only after `init`
+/// succeeds (pre-init has none).
 pub(crate) async fn load_plan_state_section(
     session_id: Uuid,
     turn_active: bool,
@@ -526,11 +529,10 @@ pub(crate) async fn load_plan_state_section(
     use crate::utils::plan_files::{PlanModeState, plan_mode_state};
     match plan_mode_state(session_id).await {
         PlanModeState::NoPlan => (None, PlanKb::None),
-        PlanModeState::PreInitEditing => (Some("📝 Plan mode: drafting".to_string()), PlanKb::None),
-        PlanModeState::PostInitEditing => (
-            Some("✍️ Editing plan • view: /show-plan • approve: /execute".to_string()),
-            PlanKb::ApproveDiscard,
-        ),
+        PlanModeState::PreInitEditing => (Some("📝 Discussing plan".to_string()), PlanKb::None),
+        PlanModeState::PostInitEditing => {
+            (Some("✍️ Editing plan".to_string()), PlanKb::ApproveDiscard)
+        }
         PlanModeState::Active => {
             if crate::utils::plan_mode::in_seed_window(session_id).await {
                 if turn_active {
