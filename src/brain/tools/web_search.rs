@@ -27,9 +27,9 @@ fn default_max_results() -> usize {
 
 // DuckDuckGo HTML search result
 #[derive(Debug, Deserialize)]
-struct SearchResult {
-    title: String,
-    url: String,
+pub(crate) struct SearchResult {
+    pub(crate) title: String,
+    pub(crate) url: String,
 }
 
 #[async_trait]
@@ -107,56 +107,92 @@ impl Tool for WebSearchTool {
             urlencoding::encode(&input.query)
         );
 
-        // Make HTTP request
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .build()
-            .map_err(|e| ToolError::Execution(format!("Failed to create HTTP client: {}", e)))?;
+        // DuckDuckGo Lite 403s on IP/UA reputation and rate limits (#525): a
+        // single hardcoded User-Agent used to fail outright. Rotate through a
+        // small pool of realistic UAs, retrying on a 403 / transient failure
+        // with a short backoff before giving up. A hard failure returns an
+        // actionable error so the agent falls back to exa_search / brave_search
+        // / http_request, exactly as the tool description already instructs.
+        let mut last_err = String::new();
+        for (attempt, ua) in DDG_USER_AGENTS.iter().enumerate() {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .user_agent(*ua)
+                .build()
+                .map_err(|e| ToolError::Execution(format!("Failed to create HTTP client: {e}")))?;
 
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| ToolError::Execution(format!("Search request failed: {}", e)))?;
+            match client.get(&url).send().await {
+                Ok(response) if response.status().is_success() => {
+                    let html = response.text().await.map_err(|e| {
+                        ToolError::Execution(format!("Failed to read response: {e}"))
+                    })?;
+                    let results = parse_lite_results(&html, input.max_results);
+                    return Ok(ToolResult::success(format_results(&input.query, &results)));
+                }
+                Ok(response) => {
+                    last_err = format!("HTTP {}", response.status());
+                    tracing::warn!(
+                        "web_search: DuckDuckGo returned {} (UA {}/{}) — rotating User-Agent",
+                        response.status(),
+                        attempt + 1,
+                        DDG_USER_AGENTS.len(),
+                    );
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    tracing::warn!(
+                        "web_search: request failed (UA {}/{}): {e}",
+                        attempt + 1,
+                        DDG_USER_AGENTS.len(),
+                    );
+                }
+            }
 
-        if !response.status().is_success() {
-            return Ok(ToolResult::error(format!(
-                "Search request failed with status: {}",
-                response.status()
-            )));
-        }
-
-        let html = response
-            .text()
-            .await
-            .map_err(|e| ToolError::Execution(format!("Failed to read response: {}", e)))?;
-
-        // Parse results from HTML
-        let results = parse_lite_results(&html, input.max_results);
-
-        // Build formatted output
-        let mut output = String::new();
-        output.push_str(&format!("🔍 Search results for: \"{}\"\n\n", input.query));
-
-        if results.is_empty() {
-            output.push_str("ℹ️  No results found. Try:\n");
-            output.push_str("  • Rephrasing your query\n");
-            output.push_str("  • Using more specific keywords\n");
-            output.push_str("  • Searching for a different topic\n");
-        } else {
-            for (i, result) in results.iter().enumerate() {
-                output.push_str(&format!("{}. {}\n", i + 1, result.title));
-                output.push_str(&format!("   🔗 {}\n\n", result.url));
+            // Brief backoff before the next UA (skipped after the last attempt).
+            if attempt + 1 < DDG_USER_AGENTS.len() {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
         }
 
-        Ok(ToolResult::success(output))
+        Ok(ToolResult::error(format!(
+            "DuckDuckGo search failed after {} attempts (last error: {last_err}). DuckDuckGo may \
+             be rate-limiting or blocking this IP. Fall back to exa_search or brave_search if they \
+             are in your tool list, otherwise use http_request against a search API.",
+            DDG_USER_AGENTS.len(),
+        )))
     }
 }
 
+/// Rotated User-Agent pool for DuckDuckGo Lite (#525). DDG blocks repetitive UA
+/// patterns from one IP, so trying a few realistic browser UAs recovers most
+/// transient 403s.
+pub(crate) const DDG_USER_AGENTS: &[&str] = &[
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+];
+
+/// Format parsed search results into the tool's human-readable output.
+pub(crate) fn format_results(query: &str, results: &[SearchResult]) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("🔍 Search results for: \"{query}\"\n\n"));
+    if results.is_empty() {
+        output.push_str("ℹ️  No results found. Try:\n");
+        output.push_str("  • Rephrasing your query\n");
+        output.push_str("  • Using more specific keywords\n");
+        output.push_str("  • Searching for a different topic\n");
+    } else {
+        for (i, result) in results.iter().enumerate() {
+            output.push_str(&format!("{}. {}\n", i + 1, result.title));
+            output.push_str(&format!("   🔗 {}\n\n", result.url));
+        }
+    }
+    output
+}
+
 /// Parse DuckDuckGo Lite HTML response to extract search results
-fn parse_lite_results(html: &str, max_results: usize) -> Vec<SearchResult> {
+pub(crate) fn parse_lite_results(html: &str, max_results: usize) -> Vec<SearchResult> {
     let mut results = Vec::new();
 
     // Find result links in the HTML
