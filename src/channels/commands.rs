@@ -415,7 +415,7 @@ pub async fn handle_command(
             if !is_owner {
                 ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
             } else {
-                ChannelCommand::Models(format_providers(agent))
+                ChannelCommand::Models(format_providers(agent, session_id))
             }
         }
         // `/models <provider/model>` — direct switch for the CURRENT session,
@@ -1496,12 +1496,12 @@ async fn format_sessions(
 
 // ── /models ─────────────────────────────────────────────────────────────────
 
-fn format_providers(agent: &AgentService) -> ProvidersResponse {
-    // Use the agent's ACTUAL current provider/model, not config.toml.
-    // Channel model switches call agent.swap_provider() without touching config,
-    // so reading from Config::load() shows stale data after a channel switch.
-    let current_provider = agent.provider_name();
-    let current_model = agent.provider_model();
+fn format_providers(agent: &AgentService, session_id: Uuid) -> ProvidersResponse {
+    // Use the session's ACTUAL current provider/model, not the global config.
+    // Channel model switches call agent.swap_provider_for_session() without touching config,
+    // so reading from Config::load() or agent.provider_name() shows stale data after a channel switch.
+    let current_provider = agent.provider_name_for_session(session_id);
+    let current_model = agent.provider_model_for_session(session_id);
 
     let providers = all_known_providers_with_status_loaded();
 

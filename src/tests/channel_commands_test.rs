@@ -6,6 +6,7 @@ use crate::channels::commands::{
     ChannelCommand, format_help, format_number, match_user_command_inner, normalize_provider_name,
     provider_display_name, provider_names_match,
 };
+use crate::tests::agent_service_mocks::create_test_service_full;
 
 // ── format_number ─────────────────────────────────────────────────────
 
@@ -235,4 +236,66 @@ fn user_command_default_action_is_prompt() {
         match_user_command_inner("/test", &cmds, &[]),
         ChannelCommand::UserPrompt(_)
     ));
+}
+
+// ── format_providers (session-aware) ──────────────────────────────────
+
+#[tokio::test]
+async fn models_command_shows_session_provider_after_override() {
+    // When a session has a provider override, /models should show the session's
+    // provider, not the global one. This tests the fix for issue #543.
+    use crate::tests::agent_service_mocks::MockProviderWithModel;
+    use std::sync::Arc;
+
+    let (agent, session_svc, session_id) = create_test_service_full().await;
+    // Create a different provider for the session
+    let openai_provider = Arc::new(MockProviderWithModel::new("openai", "gpt-4"));
+    // Swap to openai for this session
+    agent.swap_provider_for_session(session_id, openai_provider, "gpt-4");
+    // Now call /models command
+    let cmd = crate::channels::commands::handle_command(
+        "/models",
+        session_id,
+        &agent,
+        &session_svc,
+        true, // is_owner
+        None,
+    )
+    .await;
+    // Should return Models variant with session's provider
+    match cmd {
+        ChannelCommand::Models(response) => {
+            assert_eq!(response.current_provider, "openai");
+            assert_eq!(response.current_model, "gpt-4");
+            assert!(response.text.contains("openai"));
+            assert!(response.text.contains("gpt-4"));
+        }
+        other => panic!("expected Models command, got {:?}", variant_name(&other)),
+    }
+}
+
+#[tokio::test]
+async fn models_command_shows_global_provider_when_no_session_override() {
+    // When a session has no provider override, /models should show the global/default provider.
+    let (agent, session_svc, session_id) = create_test_service_full().await;
+    // Don't swap provider - use the default mock provider
+    let cmd = crate::channels::commands::handle_command(
+        "/models",
+        session_id,
+        &agent,
+        &session_svc,
+        true, // is_owner
+        None,
+    )
+    .await;
+    // Should return Models variant with default provider
+    match cmd {
+        ChannelCommand::Models(response) => {
+            assert_eq!(response.current_provider, "mock");
+            assert_eq!(response.current_model, "mock-model");
+            assert!(response.text.contains("mock"));
+            assert!(response.text.contains("mock-model"));
+        }
+        other => panic!("expected Models command, got {:?}", variant_name(&other)),
+    }
 }
