@@ -38,6 +38,12 @@ pub const KNOWN_PROVIDERS: &[ProviderMeta] = &[
         needs_api_key: false,
     },
     ProviderMeta {
+        id: "command-code-cli",
+        display_name: "Command Code CLI",
+        config_section: "providers.command_code_cli",
+        needs_api_key: false,
+    },
+    ProviderMeta {
         id: "codex",
         display_name: "Codex",
         config_section: "providers.codex",
@@ -124,6 +130,7 @@ pub fn find_provider_meta(name: &str) -> Option<&'static ProviderMeta> {
                 "zhipu" => n == "z.ai glm",
                 "claude-cli" => n == "claude_cli",
                 "codex-cli" => n == "codex_cli",
+                "command-code-cli" => n == "command_code_cli" || n == "cmd-cli",
                 "codex" => n == "codex_oauth",
                 // Only `opencode-cli` / `opencode_cli` — never bare "opencode".
                 // A custom provider named "opencode" (which users do create,
@@ -193,6 +200,7 @@ pub fn config_for<'a>(providers: &'a ProviderConfigs, name: &str) -> Option<&'a 
         Some("xiaomi") => providers.xiaomi.as_ref(),
         Some("claude-cli") => providers.claude_cli.as_ref(),
         Some("codex-cli") => providers.codex_cli.as_ref(),
+        Some("command-code-cli") => providers.command_code_cli.as_ref(),
         Some("opencode-cli") => providers.opencode_cli.as_ref(),
         Some("opencode") => providers.opencode.as_ref(),
         Some("ollama") => providers.ollama.as_ref(),
@@ -308,6 +316,13 @@ pub fn cli_supported_models(name: &str) -> Option<(Vec<String>, &'static str)> {
                 .map(|s| s.to_string())
                 .collect(),
             opencode_cli::DEFAULT_MODEL,
+        )),
+        "command-code-cli" | "command_code_cli" | "cmd-cli" => Some((
+            command_code_cli::SUPPORTED_MODELS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            command_code_cli::DEFAULT_MODEL,
         )),
         _ => None,
     }

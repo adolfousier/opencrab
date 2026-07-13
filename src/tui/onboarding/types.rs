@@ -235,6 +235,24 @@ pub const PROVIDERS: &[ProviderInfo] = &[
         ],
     },
     ProviderInfo {
+        id: "command-code-cli",
+        name: "Command Code CLI",
+        models: &[
+            "taste-1",
+            "deepseek/deepseek-v4-flash",
+            "moonshotai/Kimi-K2.7-Code",
+            "zai-org/GLM-5.2",
+            "xiaomi/mimo-v2.5",
+            "MiniMaxAI/MiniMax-M2.7",
+            "Qwen/Qwen3.6-Max-Preview",
+        ],
+        key_label: "",
+        help_lines: &[
+            "Uses local 'cmd' CLI subprocess — Command Code account, no API key needed",
+            "Requires: npm install -g command-code (then run 'cmd login')",
+        ],
+    },
+    ProviderInfo {
         id: "codex",
         name: "Codex",
         models: &[

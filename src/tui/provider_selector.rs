@@ -90,7 +90,7 @@ impl ProviderSelectorState {
 
     pub fn is_cli(&self) -> bool {
         let id = self.provider_id();
-        id == "claude-cli" || id == "opencode-cli" || id == "codex-cli"
+        id == "claude-cli" || id == "opencode-cli" || id == "codex-cli" || id == "command-code-cli"
     }
 
     pub fn is_oauth(&self) -> bool {
@@ -150,6 +150,7 @@ impl ProviderSelectorState {
                 | "zhipu"
                 | "opencode-cli"
                 | "codex-cli"
+                | "command-code-cli"
                 | "codex"
                 | "opencode"
                 | "claude-cli"
@@ -661,6 +662,7 @@ pub fn load_default_models(provider_id: &str) -> Vec<String> {
             "claude-cli" => "claude_cli",
             "opencode-cli" => "opencode_cli",
             "codex-cli" => "codex_cli",
+            "command-code-cli" => "command_code_cli",
             "codex" => "codex", // Codex OAuth
             "" => "custom",     // empty id = custom providers
             other => other,
