@@ -20,6 +20,7 @@ use super::{
     anthropic::AnthropicProvider,
     claude_cli::ClaudeCliProvider,
     codex_cli::CodexCliProvider,
+    command_code_cli::CommandCodeCliProvider,
     codex_oauth::CodexOAuthProvider,
     custom_openai_compatible::{BodyTransformFn, OpenAIProvider},
     gemini::GeminiProvider,

@@ -301,7 +301,7 @@ pub fn keys_toml_path_hint() -> String {
 /// Two accepted name forms per provider (hyphen and underscore variants)
 /// because both surface from different config-loading paths.
 pub fn cli_supported_models(name: &str) -> Option<(Vec<String>, &'static str)> {
-    use crate::brain::provider::{claude_cli, opencode_cli};
+    use crate::brain::provider::{claude_cli, command_code_cli, opencode_cli};
     match name {
         "claude-cli" | "claude_cli" => Some((
             claude_cli::SUPPORTED_MODELS
