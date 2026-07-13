@@ -1072,7 +1072,8 @@ impl TelegramAgent {
                                 if data == "plan:no" {
                                     let cancelled = state.cancel_session(session_id).await;
                                     let mut reply =
-                                        crate::utils::plan_mode::discard(session_id).await;
+                                        crate::utils::plan_mode::discard(session_id, agent.context())
+                                            .await;
                                     if cancelled {
                                         reply =
                                             format!("⏹️ Cancelled the running turn. {reply}");

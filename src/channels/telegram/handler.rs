@@ -2419,7 +2419,7 @@ pub(crate) async fn handle_message(
             ChannelCommand::DiscardPlan => {
                 // /discard cancels an in-flight turn first, then cleans up.
                 let cancelled = telegram_state.cancel_session(session_id).await;
-                let mut reply = crate::utils::plan_mode::discard(session_id).await;
+                let mut reply = crate::utils::plan_mode::discard(session_id, agent.context()).await;
                 if cancelled {
                     reply = format!("⏹️ Cancelled the running turn. {reply}");
                 }

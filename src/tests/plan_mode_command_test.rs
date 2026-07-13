@@ -5,6 +5,8 @@
 //! seed window used by the gate and the Building checklist… chrome.
 
 use crate::config::profile::{home_for_profile, with_profile_home_async};
+use crate::db::Database;
+use crate::services::ServiceContext;
 use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
 use crate::utils::plan_files::{
     self, PlanModeState, create_design_md, plan_md_path, plan_mode_state, save_plan,
@@ -182,6 +184,9 @@ async fn empty_tasks_seed_retry_redispatches_without_second_approve() {
 #[tokio::test]
 async fn plan_command_sets_durable_pre_init_and_discard_clears() {
     in_temp_home(async {
+        let db = Database::connect_in_memory().await.unwrap();
+        db.run_migrations().await.unwrap();
+        let ctx = ServiceContext::new(db.pool().clone());
         let sid = Uuid::new_v4();
         let reply = enter_plan_mode(sid).await;
         assert!(reply.contains("Plan mode on"), "got: {reply}");
@@ -194,16 +199,55 @@ async fn plan_command_sets_durable_pre_init_and_discard_clears() {
         assert!(reply.contains("already"), "got: {reply}");
 
         // /discard deletes both artifacts.
-        let reply = discard(sid).await;
+        let reply = discard(sid, &ctx).await;
         assert!(reply.contains("discarded"), "got: {reply}");
         assert_eq!(plan_mode_state(sid).await, PlanModeState::NoPlan);
         assert!(!plan_md_path(sid).await.exists(), ".md must be deleted");
 
         // Pre-init discard clears the flag.
         set_pre_init_editing(sid).await.unwrap();
-        let reply = discard(sid).await;
+        let reply = discard(sid, &ctx).await;
         assert!(reply.contains("pre-init"), "got: {reply}");
         assert_eq!(plan_mode_state(sid).await, PlanModeState::NoPlan);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn discard_clears_the_plan_goal() {
+    in_temp_home(async {
+        let db = Database::connect_in_memory().await.unwrap();
+        db.run_migrations().await.unwrap();
+        let ctx = ServiceContext::new(db.pool().clone());
+        let sid = Uuid::new_v4();
+
+        // Post-init Editing plan with a goal set, as a started task with
+        // acceptance criteria would leave behind.
+        make_post_init(sid, GOLDEN_MD).await;
+        crate::brain::goal::GoalManager::new(ctx.clone())
+            .set_goal(sid, "Task 1: t1. Done when: x".to_string(), None, None)
+            .await
+            .unwrap();
+        assert!(
+            crate::brain::goal::GoalManager::new(ctx.clone())
+                .get_goal(sid)
+                .await
+                .unwrap()
+                .is_some(),
+            "goal must be set before discard"
+        );
+
+        let reply = discard(sid, &ctx).await;
+        assert!(reply.contains("discarded"), "got: {reply}");
+        assert_eq!(plan_mode_state(sid).await, PlanModeState::NoPlan);
+        assert!(
+            crate::brain::goal::GoalManager::new(ctx.clone())
+                .get_goal(sid)
+                .await
+                .unwrap()
+                .is_none(),
+            "discard must clear the goal so no stale chrome lingers"
+        );
     })
     .await;
 }

@@ -872,7 +872,8 @@ impl App {
                     self.push_system_message("No active session.".to_string());
                     return true;
                 };
-                let mut reply = crate::utils::plan_mode::discard(sid).await;
+                let mut reply =
+                    crate::utils::plan_mode::discard(sid, self.agent_service.context()).await;
                 if cancelled {
                     reply = format!("⏹️ Cancelled the running turn. {reply}");
                 }

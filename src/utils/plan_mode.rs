@@ -7,6 +7,8 @@
 //! the visible seed turn; everything idle-path and deterministic lives
 //! here so the two surfaces cannot drift.
 
+use crate::brain::goal::GoalManager;
+use crate::services::ServiceContext;
 use crate::tui::plan::PlanStatus;
 use crate::utils::plan_files::{self, PlanModeState};
 use uuid::Uuid;
@@ -165,8 +167,9 @@ pub async fn enter_plan_mode(session_id: Uuid) -> String {
 
 /// `/discard`: clear the pre-init flag or delete plan artifacts,
 /// returning the session to NoPlan. The caller cancels an in-flight turn
-/// first when needed.
-pub async fn discard(session_id: Uuid) -> String {
+/// first when needed. Clears any goal a started task set, mirroring the
+/// complete/skip paths, so discarding never leaves stale goal chrome.
+pub async fn discard(session_id: Uuid, svc: &ServiceContext) -> String {
     match plan_files::plan_mode_state(session_id).await {
         PlanModeState::NoPlan => "No live plan to discard.".to_string(),
         PlanModeState::PreInitEditing => {
@@ -175,6 +178,9 @@ pub async fn discard(session_id: Uuid) -> String {
         }
         PlanModeState::PostInitEditing | PlanModeState::Active => {
             plan_files::discard_plan(session_id).await;
+            if let Err(e) = GoalManager::new(svc.clone()).clear_goal(session_id).await {
+                tracing::warn!("Failed to clear plan goal on discard: {e}");
+            }
             "🗑️ Plan discarded: design document and checklist removed. The session \
              has no live plan."
                 .to_string()
