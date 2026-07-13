@@ -459,6 +459,66 @@ async fn import_refused_while_live_but_replaces_pre_init() {
 }
 
 #[tokio::test]
+async fn import_requires_non_empty_root_title_and_description() {
+    in_temp_home(async {
+        let tool = PlanTool;
+        let dir = tempfile::TempDir::new().unwrap();
+
+        // Missing title entirely (serde defaults it to empty).
+        let no_title = dir.path().join("no-title.json");
+        std::fs::write(
+            &no_title,
+            serde_json::to_string(&json!({
+                "description": "has description but no title",
+                "tasks": [{ "title": "t1", "description": "d", "task_type": "edit" }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let (ok, msg) = run(
+            &tool,
+            &ctx,
+            json!({ "operation": "init", "file_path": no_title.to_str().unwrap() }),
+        )
+        .await;
+        assert!(!ok, "import without root title must be refused, got: {msg}");
+        assert!(msg.contains("'title'"), "got: {msg}");
+        assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::NoPlan);
+
+        // Whitespace-only description present in the JSON.
+        let blank_desc = dir.path().join("blank-desc.json");
+        std::fs::write(
+            &blank_desc,
+            serde_json::to_string(&json!({
+                "title": "Has title",
+                "description": "   ",
+                "tasks": [{ "title": "t1", "description": "d", "task_type": "edit" }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let ctx2 = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let (ok, msg) = run(
+            &tool,
+            &ctx2,
+            json!({ "operation": "init", "file_path": blank_desc.to_str().unwrap() }),
+        )
+        .await;
+        assert!(
+            !ok,
+            "import with blank root description must be refused, got: {msg}"
+        );
+        assert!(msg.contains("'description'"), "got: {msg}");
+        assert_eq!(
+            plan_mode_state(ctx2.session_id).await,
+            PlanModeState::NoPlan
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn import_auto_assigns_order_and_defaults_complexity() {
     in_temp_home(async {
         let tool = PlanTool;

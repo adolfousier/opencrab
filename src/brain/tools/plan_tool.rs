@@ -608,6 +608,25 @@ impl Tool for PlanTool {
                     let mut imported: PlanDocument = serde_json::from_str(&content)
                         .map_err(|e| ToolError::InvalidInput(format!("Invalid plan JSON: {e}")))?;
 
+                    // The spec requires 3 root fields (title, description,
+                    // tasks). PlanDocument defaults title/description so the
+                    // minimal pre-init sidecar still parses, so the required
+                    // contract is enforced here at the import boundary.
+                    let mut missing_root = Vec::new();
+                    if imported.title.trim().is_empty() {
+                        missing_root.push("'title'");
+                    }
+                    if imported.description.trim().is_empty() {
+                        missing_root.push("'description'");
+                    }
+                    if !missing_root.is_empty() {
+                        return Ok(ToolResult::error(format!(
+                            "Import refused: root {} must be present and non-empty \
+                             (plan-json-spec.md requires title, description, and tasks)",
+                            missing_root.join(" and ")
+                        )));
+                    }
+
                     if let Some(existing_plan) = plan.as_ref() {
                         tracing::info!(
                             "Importing plan '{}' over existing plan '{}'",
