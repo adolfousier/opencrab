@@ -648,9 +648,23 @@ impl Tool for PlanTool {
                     }
 
                     // Imported tasks start fresh.
-                    for task in &mut imported.tasks {
+                    for (idx, task) in imported.tasks.iter_mut().enumerate() {
                         let new_id = old_to_new[&task.id];
                         task.id = new_id;
+                        // order is auto-assigned from array position (1-based):
+                        // the schema marks it Do-NOT-Provide, and dependency
+                        // resolution already ran above, so overwrite it here so
+                        // an omitted order never lands a task at 0 (which would
+                        // collide every task on get_task_by_order).
+                        task.order = idx + 1;
+                        // complexity defaults to 3 when omitted (deserializes to
+                        // 0) and clamps to the 1-5 scale otherwise, matching the
+                        // add_task path.
+                        task.complexity = if task.complexity == 0 {
+                            default_complexity()
+                        } else {
+                            task.complexity.clamp(1, 5)
+                        };
                         task.status = TaskStatus::Pending;
                         task.completed_at = None;
                         task.retry_count = 0;

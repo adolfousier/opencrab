@@ -442,3 +442,59 @@ async fn import_refused_while_live_but_replaces_pre_init() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn import_auto_assigns_order_and_defaults_complexity() {
+    in_temp_home(async {
+        let tool = PlanTool;
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("minimal-plan.json");
+        // The schema's recommended minimal shape: omit order (auto-assigned)
+        // and complexity (defaults to 3). A provided out-of-range complexity
+        // must clamp to the 1-5 scale.
+        std::fs::write(
+            &file,
+            serde_json::to_string(&json!({
+                "title": "Minimal",
+                "description": "no order, no complexity",
+                "tasks": [
+                    { "title": "t1", "description": "d1", "task_type": "research" },
+                    { "title": "t2", "description": "d2", "task_type": "edit" },
+                    { "title": "t3", "description": "d3", "task_type": "test", "complexity": 9 }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let (ok, out) = run(
+            &tool,
+            &ctx,
+            json!({ "operation": "init", "file_path": file.to_str().unwrap() }),
+        )
+        .await;
+        assert!(ok, "minimal import must succeed, got: {out}");
+
+        let plan = load_plan(ctx.session_id).await.unwrap();
+        let orders: Vec<usize> = plan.tasks.iter().map(|t| t.order).collect();
+        assert_eq!(
+            orders,
+            vec![1, 2, 3],
+            "order must be auto-assigned 1-based from array position, got: {orders:?}"
+        );
+        assert_eq!(
+            plan.tasks[0].complexity, 3,
+            "omitted complexity must default to 3"
+        );
+        assert_eq!(
+            plan.tasks[1].complexity, 3,
+            "omitted complexity must default to 3"
+        );
+        assert_eq!(
+            plan.tasks[2].complexity, 5,
+            "out-of-range complexity must clamp to the 1-5 scale"
+        );
+    })
+    .await;
+}
