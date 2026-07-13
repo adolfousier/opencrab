@@ -204,10 +204,41 @@ pub(crate) async fn deliver_final_response(
                             tracing::error!("Telegram: emoji text fallback also failed: {}", e);
                         }
                     } else {
-                        tracing::info!(
-                            "Telegram: reaction-only response ({}), skipping text delivery",
-                            mapped
-                        );
+                        // A genuine ack (praise, "got it") completes in seconds.
+                        // A react-only turn that instead took MINUTES engaged
+                        // with real work, ran no tools, and then bailed with
+                        // only a reaction — a dropped request, not an ack (#546:
+                        // "executing a task for 5m, it reacts and just stops").
+                        // #439 only guards the tools-ran case; this catches the
+                        // reasoned-but-no-tools case. Delivery can't re-run the
+                        // model, so surface it as an incomplete turn instead of
+                        // a silent drop, so the user knows to re-send.
+                        let elapsed = {
+                            let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                            s.turn_started_at.elapsed()
+                        };
+                        if elapsed >= std::time::Duration::from_secs(60) {
+                            tracing::warn!(
+                                "Telegram: react-only after {}s with no tools and no text — \
+                                 surfacing as an incomplete turn, not a silent drop (#546)",
+                                elapsed.as_secs()
+                            );
+                            let notice = "⚠️ I ended that turn with only a reaction and did not \
+                                          complete the request. Please re-send it if you needed \
+                                          me to act.";
+                            if let Err(e) = message_in_thread(bot, chat_id, thread_id, notice).await
+                            {
+                                tracing::error!(
+                                    "Telegram: #546 incomplete-turn notice failed: {}",
+                                    e
+                                );
+                            }
+                        } else {
+                            tracing::info!(
+                                "Telegram: reaction-only response ({}), skipping text delivery",
+                                mapped
+                            );
+                        }
                     }
                     // A react-only turn ran no tools (the tools-with-no-text
                     // case returned above, #439), so any open processing-log
