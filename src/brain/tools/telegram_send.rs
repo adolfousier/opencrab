@@ -8,6 +8,7 @@
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use crate::channels::telegram::TelegramState;
+use crate::channels::telegram::intermediates::send_retrying_rate_limit;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
@@ -392,13 +393,18 @@ impl Tool for TelegramSendTool {
                         let html = crate::channels::telegram::handler::markdown_to_telegram_html(
                             &chunk_str,
                         );
-                        let result = crate::channels::telegram::send::message_in_thread(
-                            &bot,
-                            ChatId(chat_id),
-                            thread_id,
-                            html,
-                        )
-                        .parse_mode(teloxide::types::ParseMode::Html)
+                        // Retry Telegram 429 (RetryAfter): a rate-limited send
+                        // must be delayed and retried, not dropped as a failure
+                        // to the agent (#524).
+                        let result = send_retrying_rate_limit("telegram_send send", || {
+                            crate::channels::telegram::send::message_in_thread(
+                                &bot,
+                                ChatId(chat_id),
+                                thread_id,
+                                html.clone(),
+                            )
+                            .parse_mode(teloxide::types::ParseMode::Html)
+                        })
                         .await;
                         match result {
                             Ok(m) => sent.push((m.id.0, chunk_str)),
@@ -426,13 +432,15 @@ impl Tool for TelegramSendTool {
                     resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
                         .await;
                 let reply_text = text.clone();
-                match crate::channels::telegram::send::message_in_thread(
-                    &bot,
-                    ChatId(chat_id),
-                    thread_id,
-                    text,
-                )
-                .reply_parameters(ReplyParameters::new(MessageId(message_id as i32)))
+                match send_retrying_rate_limit("telegram_send reply", || {
+                    crate::channels::telegram::send::message_in_thread(
+                        &bot,
+                        ChatId(chat_id),
+                        thread_id,
+                        text.clone(),
+                    )
+                    .reply_parameters(ReplyParameters::new(MessageId(message_id as i32)))
+                })
                 .await
                 {
                     Ok(m) => {
@@ -452,9 +460,14 @@ impl Tool for TelegramSendTool {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
-                match bot
-                    .edit_message_text(ChatId(chat_id), MessageId(message_id as i32), text)
-                    .await
+                match send_retrying_rate_limit("telegram_send edit", || {
+                    bot.edit_message_text(
+                        ChatId(chat_id),
+                        MessageId(message_id as i32),
+                        text.clone(),
+                    )
+                })
+                .await
                 {
                     Ok(_) => Ok(ToolResult::success(format!("Message {message_id} edited."))),
                     Err(e) => Ok(ToolResult::error(format!("Failed to edit: {e}"))),
@@ -466,9 +479,10 @@ impl Tool for TelegramSendTool {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
-                match bot
-                    .delete_message(ChatId(chat_id), MessageId(message_id as i32))
-                    .await
+                match send_retrying_rate_limit("telegram_send delete", || {
+                    bot.delete_message(ChatId(chat_id), MessageId(message_id as i32))
+                })
+                .await
                 {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Message {message_id} deleted."
@@ -482,9 +496,10 @@ impl Tool for TelegramSendTool {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
-                match bot
-                    .pin_chat_message(ChatId(chat_id), MessageId(message_id as i32))
-                    .await
+                match send_retrying_rate_limit("telegram_send pin", || {
+                    bot.pin_chat_message(ChatId(chat_id), MessageId(message_id as i32))
+                })
+                .await
                 {
                     Ok(_) => Ok(ToolResult::success(format!("Message {message_id} pinned."))),
                     Err(e) => Ok(ToolResult::error(format!("Failed to pin: {e}"))),
@@ -495,7 +510,11 @@ impl Tool for TelegramSendTool {
             "unpin" => {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
-                match bot.unpin_chat_message(ChatId(chat_id)).await {
+                match send_retrying_rate_limit("telegram_send unpin", || {
+                    bot.unpin_chat_message(ChatId(chat_id))
+                })
+                .await
+                {
                     Ok(_) => Ok(ToolResult::success(
                         "Latest pinned message unpinned.".to_string(),
                     )),
@@ -509,13 +528,14 @@ impl Tool for TelegramSendTool {
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let from_chat = pget!(get_id(&input, "from_chat_id"));
                 let message_id = pget!(get_id(&input, "message_id"));
-                match bot
-                    .forward_message(
+                match send_retrying_rate_limit("telegram_send forward", || {
+                    bot.forward_message(
                         ChatId(to_chat),
                         ChatId(from_chat),
                         MessageId(message_id as i32),
                     )
-                    .await
+                })
+                .await
                 {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Message {message_id} forwarded from chat {from_chat} to {to_chat}."
@@ -530,14 +550,23 @@ impl Tool for TelegramSendTool {
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let reference = pget!(get_str(&input, "photo_url")).to_string();
                 let file = pget!(resolve_input_file(&reference, "photo_url").await);
-                let mut req = bot.send_photo(ChatId(chat_id), file);
-                if let Some(caption) = input.get("caption").and_then(|v| v.as_str()) {
-                    req = req.caption(caption);
-                }
-                if let Some(mid) = input.get("message_id").and_then(|v| v.as_i64()) {
-                    req = req.reply_parameters(ReplyParameters::new(MessageId(mid as i32)));
-                }
-                match req.await {
+                let caption = input
+                    .get("caption")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let reply_to = input.get("message_id").and_then(|v| v.as_i64());
+                match send_retrying_rate_limit("telegram_send send_photo", || {
+                    let mut req = bot.send_photo(ChatId(chat_id), file.clone());
+                    if let Some(ref c) = caption {
+                        req = req.caption(c.clone());
+                    }
+                    if let Some(mid) = reply_to {
+                        req = req.reply_parameters(ReplyParameters::new(MessageId(mid as i32)));
+                    }
+                    req
+                })
+                .await
+                {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Photo sent to chat {chat_id}."
                     ))),
@@ -551,14 +580,23 @@ impl Tool for TelegramSendTool {
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let reference = pget!(get_str(&input, "document_url")).to_string();
                 let file = pget!(resolve_input_file(&reference, "document_url").await);
-                let mut req = bot.send_document(ChatId(chat_id), file);
-                if let Some(caption) = input.get("caption").and_then(|v| v.as_str()) {
-                    req = req.caption(caption);
-                }
-                if let Some(mid) = input.get("message_id").and_then(|v| v.as_i64()) {
-                    req = req.reply_parameters(ReplyParameters::new(MessageId(mid as i32)));
-                }
-                match req.await {
+                let caption = input
+                    .get("caption")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let reply_to = input.get("message_id").and_then(|v| v.as_i64());
+                match send_retrying_rate_limit("telegram_send send_document", || {
+                    let mut req = bot.send_document(ChatId(chat_id), file.clone());
+                    if let Some(ref c) = caption {
+                        req = req.caption(c.clone());
+                    }
+                    if let Some(mid) = reply_to {
+                        req = req.reply_parameters(ReplyParameters::new(MessageId(mid as i32)));
+                    }
+                    req
+                })
+                .await
+                {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Document sent to chat {chat_id}."
                     ))),
@@ -586,7 +624,11 @@ impl Tool for TelegramSendTool {
                         ));
                     }
                 };
-                match bot.send_location(ChatId(chat_id), lat, lng).await {
+                match send_retrying_rate_limit("telegram_send send_location", || {
+                    bot.send_location(ChatId(chat_id), lat, lng)
+                })
+                .await
+                {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Location ({lat}, {lng}) sent to chat {chat_id}."
                     ))),
@@ -617,7 +659,11 @@ impl Tool for TelegramSendTool {
                 }
                 let poll_opts: Vec<teloxide::types::InputPollOption> =
                     opts.into_iter().map(|s| s.into()).collect();
-                match bot.send_poll(ChatId(chat_id), question, poll_opts).await {
+                match send_retrying_rate_limit("telegram_send send_poll", || {
+                    bot.send_poll(ChatId(chat_id), question.clone(), poll_opts.clone())
+                })
+                .await
+                {
                     Ok(_) => Ok(ToolResult::success(format!("Poll sent to chat {chat_id}."))),
                     Err(e) => Ok(ToolResult::error(format!("Failed to send poll: {e}"))),
                 }
@@ -654,10 +700,11 @@ impl Tool for TelegramSendTool {
                         }
                     };
                 let keyboard = InlineKeyboardMarkup::new(rows);
-                match bot
-                    .send_message(ChatId(chat_id), text)
-                    .reply_markup(keyboard)
-                    .await
+                match send_retrying_rate_limit("telegram_send send_buttons", || {
+                    bot.send_message(ChatId(chat_id), text.clone())
+                        .reply_markup(keyboard.clone())
+                })
+                .await
                 {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Message with buttons sent to chat {chat_id}."
@@ -778,9 +825,10 @@ impl Tool for TelegramSendTool {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let user_id = pget!(get_id(&input, "user_id"));
-                match bot
-                    .ban_chat_member(ChatId(chat_id), UserId(user_id as u64))
-                    .await
+                match send_retrying_rate_limit("telegram_send ban_user", || {
+                    bot.ban_chat_member(ChatId(chat_id), UserId(user_id as u64))
+                })
+                .await
                 {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "User {user_id} banned from chat {chat_id}."
@@ -794,9 +842,10 @@ impl Tool for TelegramSendTool {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let user_id = pget!(get_id(&input, "user_id"));
-                match bot
-                    .unban_chat_member(ChatId(chat_id), UserId(user_id as u64))
-                    .await
+                match send_retrying_rate_limit("telegram_send unban_user", || {
+                    bot.unban_chat_member(ChatId(chat_id), UserId(user_id as u64))
+                })
+                .await
                 {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "User {user_id} unbanned from chat {chat_id}."
@@ -814,10 +863,11 @@ impl Tool for TelegramSendTool {
                 let reactions = vec![ReactionType::Emoji {
                     emoji: emoji.clone(),
                 }];
-                match bot
-                    .set_message_reaction(ChatId(chat_id), MessageId(message_id as i32))
-                    .reaction(reactions)
-                    .await
+                match send_retrying_rate_limit("telegram_send set_reaction", || {
+                    bot.set_message_reaction(ChatId(chat_id), MessageId(message_id as i32))
+                        .reaction(reactions.clone())
+                })
+                .await
                 {
                     Ok(_) => Ok(ToolResult::success(format!(
                         "Reaction {emoji} set on message {message_id}."
