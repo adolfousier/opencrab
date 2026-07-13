@@ -1,12 +1,13 @@
-//! Tests for the flow-message chrome: always-visible sections (plan title,
-//! checklist progress, active goal, ctx footer) and the header-only render
-//! paths that let the flow message open before any tool body exists.
+//! Tests for the ADR 0005 flow-message structure: the always-visible plan
+//! chrome (title / checklist / goal), the merged footer (status → log summary →
+//! ctx → clock), and the uncollapsed shell — the whole message is never wrapped
+//! in one outer expandable; only the processing log collapses.
 
 use crate::channels::telegram::flow::{
     FlowHeader, FlowLine, HeaderMarkup, render_flow_details_chrome,
     render_flow_details_chrome_pref, render_flow_html_chrome, render_flow_html_chrome_pref,
 };
-use crate::channels::telegram::flow_chrome::FlowSections;
+use crate::channels::telegram::flow_chrome::{FlowSections, clock_glyph};
 
 fn sections(title: Option<&str>, checklist: Option<&str>, goal: Option<&str>) -> FlowSections {
     FlowSections {
@@ -27,26 +28,41 @@ fn tline(label: &str, context: &str) -> FlowLine {
     }
 }
 
-// ── chrome_line: one compact section line, shared by all renderers ──
+// ── clock glyph (Decision 13) ──
 
 #[test]
-fn chrome_line_orders_sections_and_omits_empty() {
+fn clock_glyph_formats_minutes_and_hours() {
+    assert_eq!(clock_glyph(0), "⏱ 0:00");
+    assert_eq!(clock_glyph(9), "⏱ 0:09");
+    assert_eq!(clock_glyph(83), "⏱ 1:23");
+    assert_eq!(clock_glyph(3665), "⏱ 1:01:05");
+}
+
+// ── chrome line: always-visible title / checklist / goal only ──
+// plan_state and ctx moved to the merged footer (Decision 7 / Decision 12), so
+// they must NOT appear on the chrome line anymore.
+
+#[test]
+fn chrome_line_orders_title_checklist_goal_and_omits_state_and_ctx() {
     let mut s = sections(Some("Ship plan mode"), Some("2/7 tasks"), Some("close B"));
+    s.plan_state = Some("✍️ Editing plan".to_string());
     s.ctx = Some("ctx 12.3k/200k".to_string());
-    let line = s.chrome_line(HeaderMarkup::Html).expect("all sections set");
+    let line = s.chrome_line(HeaderMarkup::Html).expect("sections set");
     assert_eq!(
         line,
-        "📋 <b>Ship plan mode</b> • <i>2/7 tasks</i> • 🎯 <i>close B</i> • <i>ctx 12.3k/200k</i>"
+        "📋 <b>Ship plan mode</b> • <i>2/7 tasks</i> • 🎯 <i>close B</i>"
     );
+    assert!(!line.contains("Editing plan"), "plan_state moved to footer");
+    assert!(!line.contains("ctx"), "ctx moved to footer");
 }
 
 #[test]
-fn chrome_line_none_when_all_sections_empty() {
-    assert!(
-        sections(None, None, None)
-            .chrome_line(HeaderMarkup::Html)
-            .is_none()
-    );
+fn chrome_line_none_when_title_checklist_goal_all_empty() {
+    let mut s = sections(None, None, None);
+    // plan_state / ctx set but no title/checklist/goal → no chrome line.
+    s.plan_state = Some("✍️ Editing plan".to_string());
+    s.ctx = Some("ctx 1k/200k".to_string());
+    assert!(s.chrome_line(HeaderMarkup::Html).is_none());
 }
 
 #[test]
@@ -64,41 +80,44 @@ fn chrome_line_markdown_dialect_keeps_raw_text() {
     assert_eq!(line, "📋 **title** • _1/3 tasks_");
 }
 
-// ── header-only renders (empty flow_entries) ──
+// ── header-only renders (empty flow_entries): plain merged footer ──
 
 #[test]
-fn header_only_html_uses_fallback_preview() {
-    // Pre-tool phase: no entries yield an activity preview, so the
-    // thinking / Working-on fallback rides the header.
+fn header_only_html_is_plain_footer_line() {
+    // Pre-tool phase, non-plan: no log, so a plain footer line with the
+    // Working-on status and the clock — no blockquote, no <sub> on classic.
     let out = render_flow_html_chrome(
         &[],
         &FlowHeader::Live(Some("10s")),
         Some("Working on: fix the tests"),
         &FlowSections::default(),
+        10,
     );
-    assert_eq!(
-        out,
-        "⚙️ <b>Working on: fix the tests</b> • <i>Processing log</i> • <i>10s</i>"
+    assert_eq!(out, "Working on: fix the tests • ⏱ 0:10");
+    assert!(!out.contains("<blockquote"), "no outer expandable");
+    assert!(
+        !out.contains("<details"),
+        "no log details before first entry"
     );
 }
 
 #[test]
-fn header_only_html_appends_chrome_line() {
+fn header_only_html_leads_with_chrome_then_footer() {
     let out = render_flow_html_chrome(
         &[],
         &FlowHeader::Live(None),
         None,
         &sections(Some("Ship it"), Some("0/2 tasks"), None),
+        0,
     );
-    assert_eq!(
-        out,
-        "<b>Processing log</b>\n📋 <b>Ship it</b> • <i>0/2 tasks</i>"
-    );
+    // Chrome leads (always visible); a blank line separates it from the plain
+    // footer clock.
+    assert_eq!(out, "📋 <b>Ship it</b> • <i>0/2 tasks</i>\n\n⏱ 0:00");
 }
 
 #[test]
-fn header_only_settled_no_tool_turn_keeps_ctx() {
-    // A settled no-tool turn: the flow message stays as chrome, ctx on it.
+fn header_only_settled_no_tool_turn_puts_ctx_before_clock() {
+    // Settled no-tool turn: footer = outcome → ctx → clock, ctx BEFORE the clock.
     let secs = FlowSections {
         ctx: Some("ctx 9.1k/200k".to_string()),
         ..Default::default()
@@ -112,29 +131,31 @@ fn header_only_settled_no_tool_turn_keeps_ctx() {
         },
         None,
         &secs,
+        3,
     );
-    assert_eq!(out, "<b>✅ Finished (3s)</b>\n<i>ctx 9.1k/200k</i>");
+    assert_eq!(out, "✅ Finished • ctx 9.1k/200k • ⏱ 0:03");
 }
 
 #[test]
-fn header_only_details_is_plain_summary_line() {
+fn header_only_details_is_plain_sub_footer_line() {
     let out = render_flow_details_chrome(
         &[],
         &FlowHeader::Live(Some("5s")),
         Some("🧠 reading the diff"),
         &FlowSections::default(),
+        5,
     );
-    assert_eq!(
-        out,
-        "<sub>⚙️ <b>🧠 reading the diff</b> • <i>Processing log</i> • <i>5s</i></sub>"
+    assert_eq!(out, "<sub>🧠 reading the diff • ⏱ 0:05</sub>");
+    assert!(
+        !out.contains("<details>"),
+        "no log details before first entry"
     );
-    assert!(!out.contains("<details>"));
 }
 
-// ── chrome on populated flows ──
+// ── populated flows: uncollapsed shell, log in its own block, footer last ──
 
 #[test]
-fn html_block_carries_chrome_under_header() {
+fn html_populated_flow_has_no_outer_expandable() {
     let lines = [
         tline("✅ bash", "git status"),
         tline("⚙️ read_file", "a.rs"),
@@ -144,31 +165,50 @@ fn html_block_carries_chrome_under_header() {
         &FlowHeader::Live(Some("20s")),
         None,
         &sections(Some("Plan"), Some("1/4 tasks"), None),
+        20,
     );
-    assert!(out.starts_with("<blockquote expandable>"));
-    assert!(out.contains("📋 <b>Plan</b> • <i>1/4 tasks</i>\n\n"));
-    assert!(out.contains("<b>✅ bash</b>"));
+    // Chrome leads and is always visible (not inside any expandable).
+    assert!(out.starts_with("📋 <b>Plan</b> • <i>1/4 tasks</i>\n\n"));
+    assert!(
+        !out.starts_with("<blockquote"),
+        "the whole message must not be one outer expandable"
+    );
+    // The processing log lives in its OWN expandable, chrome outside it.
+    assert!(out.contains("<blockquote expandable><b>✅ bash</b> <code>git status</code>"));
+    assert!(
+        out.contains("</blockquote>\n"),
+        "footer is a plain line under the log"
+    );
+    // In-flight footer: cog on the log summary, clock last.
+    assert!(out.contains("⚙️"), "in-flight log summary carries the cog");
+    assert!(out.contains("2 tool calls"));
+    assert!(out.ends_with("⏱ 0:20"), "clock is the last footer segment");
 }
 
 #[test]
-fn details_summary_carries_chrome() {
+fn details_populated_flow_keeps_chrome_outside_the_details() {
     let lines = [tline("✅ bash", "ls"), tline("✅ grep", "todo")];
     let out = render_flow_details_chrome(
         &lines,
         &FlowHeader::Live(Some("8s")),
         None,
         &sections(None, None, Some("finish the audit")),
+        8,
     );
-    assert!(out.starts_with("<details><summary><sub>"));
-    // Chrome must live in the summary so it stays visible when collapsed.
-    let summary_end = out.find("</sub></summary>").expect("summary present");
-    assert!(out[..summary_end].contains("🎯 <i>finish the audit</i>"));
+    // Chrome is an always-visible <p> block BEFORE the collapsed log, with a
+    // kept spacer, not inside the summary.
+    assert!(
+        out.starts_with("<p>🎯 <i>finish the audit</i></p><p>&nbsp;</p><details><summary><sub>")
+    );
+    assert!(out.ends_with("</details>"));
+    assert!(out.contains("⏱ 0:08"));
 }
 
 #[test]
-fn entry_preview_beats_fallback_preview() {
-    // Once real activity exists, the latest-activity preview wins over the
-    // pre-activity fallback.
+fn footer_shows_both_working_on_status_and_activity_summary() {
+    // ADR 0005 footer merge: Working-on is segment 1, the live activity is the
+    // segment-2 log summary — both visible (the old "activity beats fallback"
+    // collapsed-preview rule is gone).
     let lines = [
         tline("✅ bash", "ls"),
         FlowLine::Text("Now checking the config.".to_string()),
@@ -177,157 +217,80 @@ fn entry_preview_beats_fallback_preview() {
     let out = render_flow_html_chrome(
         &lines,
         &FlowHeader::Live(Some("30s")),
-        Some("Working on: stale preview"),
+        Some("Working on: ship it"),
         &FlowSections::default(),
+        30,
     );
-    assert!(out.contains("Now checking the config."));
-    assert!(!out.contains("stale preview"));
+    assert!(
+        out.contains("Working on: ship it"),
+        "status segment present"
+    );
+    assert!(
+        out.contains("Now checking the config."),
+        "activity summary present"
+    );
 }
 
 #[test]
-fn lone_tool_line_stays_plain_even_with_chrome() {
-    // #296: a lone live tool line stays a plain one-liner; chrome waits for
-    // the block shape.
+fn single_tool_gets_its_own_log_block_and_footer() {
+    // The lone-tool-plain shortcut is gone under ADR 0005: even one entry sits
+    // in its own expandable with the footer below.
     let out = render_flow_html_chrome(
         &[tline("✅ bash", "git status")],
         &FlowHeader::Live(None),
         None,
         &sections(Some("Plan"), None, None),
+        0,
     );
-    assert_eq!(out, "<b>✅ bash</b> <code>git status</code>");
-}
-
-// ── first-tick query lead for CLI providers (#527) ──────────────────
-// A CLI provider (claude-cli) opens the flow block immediately with a
-// synthesized ToolStarted, so it never gets the header-only pre-tool phase
-// non-CLI providers get. The prefer-fallback flag forces the header to lead
-// with the user-query preview for the first tick even when activity lines
-// already exist, so "Working on: <query>" still shows. Without the flag the
-// query fallback is dropped once activity exists (the shipped behavior, see
-// entry_preview_beats_fallback_preview).
-
-#[test]
-fn prefer_fallback_leads_header_with_query_despite_activity() {
-    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
-    let with_prefer = render_flow_html_chrome_pref(
-        &lines,
-        &FlowHeader::Live(Some("2s")),
-        Some("Working on: ship the release"),
-        &FlowSections::default(),
-        true,
-        usize::MAX,
-    );
+    assert!(out.starts_with("📋 <b>Plan</b>\n\n"));
     assert!(
-        with_prefer.contains("Working on: ship the release"),
-        "prefer=true must lead the header with the query: {with_prefer}"
+        out.contains(
+            "<blockquote expandable><b>✅ bash</b> <code>git status</code></blockquote>\n"
+        )
     );
+    assert!(out.contains("1 tool calls"));
+    assert!(out.ends_with("⏱ 0:00"));
 }
 
 #[test]
-fn without_prefer_activity_leads_and_query_is_dropped() {
-    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
-    let without = render_flow_html_chrome_pref(
+fn settled_footer_drops_the_cog() {
+    // Settled footer: outcome carries ✅/❌, the log summary is a bare tool
+    // count with NO cog (Decision 4 / 12).
+    let lines = [tline("✅ bash", "ls"), tline("✅ grep", "todo")];
+    let out = render_flow_html_chrome(
         &lines,
-        &FlowHeader::Live(Some("2s")),
-        Some("Working on: ship the release"),
-        &FlowSections::default(),
-        false,
-        usize::MAX,
-    );
-    assert!(
-        !without.contains("ship the release"),
-        "prefer=false keeps shipped behavior: query fallback dropped once activity exists: {without}"
-    );
-    assert!(without.contains("read_file"), "activity leads instead");
-}
-
-#[test]
-fn prefer_fallback_without_query_falls_through_to_activity() {
-    // prefer=true but no query preview → never blank; activity still leads.
-    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
-    let out = render_flow_html_chrome_pref(
-        &lines,
-        &FlowHeader::Live(Some("2s")),
+        &FlowHeader::Settled {
+            icon: "✅",
+            verb: "Finished",
+            duration: "2m",
+        },
         None,
         &FlowSections::default(),
-        true,
-        usize::MAX,
+        124,
     );
-    assert!(out.contains("read_file"));
-}
-
-#[test]
-fn prefer_fallback_details_summary_leads_with_query() {
-    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
-    let out = render_flow_details_chrome_pref(
-        &lines,
-        &FlowHeader::Live(Some("2s")),
-        Some("Working on: ship the release"),
-        &FlowSections::default(),
-        true,
-        usize::MAX,
-    );
-    let summary_end = out.find("</sub></summary>").expect("summary present");
+    // Footer is the plain final line under the log block.
+    let footer = out
+        .rsplit("</blockquote>\n")
+        .next()
+        .expect("footer present");
+    assert!(footer.starts_with("✅ Finished • 2 tool calls • ⏱ 2:04"));
     assert!(
-        out[..summary_end].contains("ship the release"),
-        "the collapsed summary must lead with the query: {out}"
+        !footer.contains("⚙️"),
+        "settled footer never carries the cog"
     );
-}
-
-#[test]
-fn default_chrome_wrappers_match_no_prefer() {
-    // The public non-pref wrappers must be identical to prefer=false.
-    let lines = [tline("✅ bash", "ls"), tline("⚙️ read_file", "config.toml")];
-    let html_wrapper = render_flow_html_chrome(
-        &lines,
-        &FlowHeader::Live(Some("5s")),
-        Some("Working on: x"),
-        &FlowSections::default(),
-    );
-    let html_pref_false = render_flow_html_chrome_pref(
-        &lines,
-        &FlowHeader::Live(Some("5s")),
-        Some("Working on: x"),
-        &FlowSections::default(),
-        false,
-        300,
-    );
-    assert_eq!(html_wrapper, html_pref_false);
-    let d_wrapper = render_flow_details_chrome(
-        &lines,
-        &FlowHeader::Live(Some("5s")),
-        Some("Working on: x"),
-        &FlowSections::default(),
-    );
-    let d_pref_false = render_flow_details_chrome_pref(
-        &lines,
-        &FlowHeader::Live(Some("5s")),
-        Some("Working on: x"),
-        &FlowSections::default(),
-        false,
-        300,
-    );
-    assert_eq!(d_wrapper, d_pref_false);
 }
 
 // ── provider-aware folded-narration cap (#532 / upstream #531) ──────
-// CLI providers fold the whole model turn into the block, so folded
-// narration is capped (300) to protect the 30K rich-block budget. API
-// providers keep their answer in response.content and fold only brief
-// interstitial narration, so they pass uncapped (usize::MAX) and show full
-// reasoning. cap_narration is private, so these exercise it through the
-// render path: a long narration line is truncated at the CLI cap and kept
-// whole at the API cap.
+// CLI providers fold the whole model turn into the block, so folded narration
+// is capped (300); API providers pass uncapped (usize::MAX) and keep full
+// reasoning. cap_narration is private, so these exercise it through the render
+// path: a long narration line is truncated at the CLI cap and kept whole at the
+// API cap.
 
 fn long_narration(n: usize) -> String {
     "x".repeat(n)
 }
 
-// Tool LAST so the header shows the tool; the 1000-char narration is a folded
-// BODY entry. The collapsed-block header always shows the latest narration
-// whole for BOTH providers (latest_activity_preview, #481), so the cap only
-// affects the folded body — hence these compare a capped vs an uncapped render
-// of the same lines rather than scanning the whole output.
 fn narration_then_tool() -> [FlowLine; 2] {
     [
         FlowLine::Text(long_narration(1000)),
@@ -343,16 +306,16 @@ fn cli_cap_truncates_body_api_keeps_it_full_html() {
         &FlowHeader::Live(Some("2s")),
         None,
         &FlowSections::default(),
-        false,
         300,
+        2,
     );
     let api = render_flow_html_chrome_pref(
         &lines,
         &FlowHeader::Live(Some("2s")),
         None,
         &FlowSections::default(),
-        false,
         usize::MAX,
+        2,
     );
     assert!(
         cli.contains('…'),
@@ -378,16 +341,16 @@ fn cli_cap_truncates_body_api_keeps_it_full_details() {
         &FlowHeader::Live(Some("2s")),
         None,
         &FlowSections::default(),
-        false,
         300,
+        2,
     );
     let api = render_flow_details_chrome_pref(
         &lines,
         &FlowHeader::Live(Some("2s")),
         None,
         &FlowSections::default(),
-        false,
         usize::MAX,
+        2,
     );
     assert!(
         cli.contains('…'),
@@ -413,8 +376,8 @@ fn short_narration_untouched_by_either_cap() {
             &FlowHeader::Live(Some("2s")),
             None,
             &FlowSections::default(),
-            false,
             cap,
+            2,
         );
         assert!(out.contains("brief note"));
         assert!(

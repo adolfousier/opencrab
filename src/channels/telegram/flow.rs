@@ -138,14 +138,6 @@ pub(crate) struct StreamingState {
     /// True from start until first response text arrives — enables rolling messages for CLI providers
     /// where tools complete instantly (ToolStarted+ToolCompleted back-to-back)
     pub(crate) processing: bool,
-    /// True once the flow header has led with the user-query preview for its
-    /// first tick. While false, a live header leads with `header_preview`
-    /// ("Working on: <query>") even if activity lines already exist — so a CLI
-    /// provider that opens the block immediately with a synthesized tool still
-    /// shows the query first, matching the header-only phase non-CLI providers
-    /// get for free (#527). Flipped true after the first tick with an open
-    /// block, after which live activity leads as before.
-    pub(crate) header_query_shown: bool,
     /// True when the session's provider runs tools inside the CLI
     /// (`cli_handles_tools()`), i.e. claude-cli. CLI turns fold the whole model
     /// turn as intermediate narration into the block, so folded entries are
@@ -345,6 +337,7 @@ pub(crate) fn render_flow_html_with(lines: &[FlowLine], header: &FlowHeader) -> 
         header,
         None,
         &super::flow_chrome::FlowSections::default(),
+        0,
     )
 }
 
@@ -353,29 +346,51 @@ pub(crate) fn render_flow_html_chrome(
     header: &FlowHeader,
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
+    elapsed_secs: u64,
 ) -> String {
     render_flow_html_chrome_pref(
         lines,
         header,
         fallback_status,
         sections,
-        false,
         FOLDED_NARRATION_CAP,
+        elapsed_secs,
     )
 }
 
-/// Like [`render_flow_html_chrome`] but, when `prefer_fallback` is true, a live
-/// header leads with `fallback_status` (the "Working on: <query>" preview)
-/// instead of the latest activity line (#527); `narration_cap` is the per-entry
-/// folded-narration truncation (tight for CLI, uncapped for API — #532).
-pub(crate) fn render_flow_html_chrome_pref(
-    lines: &[FlowLine],
-    header: &FlowHeader,
-    fallback_status: Option<&str>,
-    sections: &super::flow_chrome::FlowSections,
-    prefer_fallback: bool,
-    narration_cap: usize,
-) -> String {
+/// Decompose the renderer's header / sections / activity into the merged-footer
+/// inputs (ADR 0005 Decision 12), shared by the classic and rich paths so the
+/// footer join can never drift between surfaces.
+fn footer_parts<'a>(
+    header: &'a FlowHeader,
+    fallback_status: Option<&'a str>,
+    sections: &'a super::flow_chrome::FlowSections,
+    activity: Option<&'a str>,
+    tool_count: usize,
+    has_log: bool,
+    elapsed_secs: u64,
+) -> super::flow_chrome::FooterParts<'a> {
+    let outcome = match header {
+        FlowHeader::Settled { icon, verb, .. } => Some((*icon, *verb)),
+        FlowHeader::Live(_) => None,
+    };
+    super::flow_chrome::FooterParts {
+        outcome,
+        plan_state: sections.plan_state.as_deref(),
+        working_on: fallback_status,
+        activity,
+        tool_count,
+        has_log,
+        ctx: sections.ctx.as_deref(),
+        elapsed_secs,
+    }
+}
+
+/// Build the flow-message body entries (tool + intermediate-text lines) shared
+/// by the classic and rich renderers, plus the tool count. `Text` narration is
+/// inline-formatted and capped per `narration_cap` (tight for CLI, uncapped for
+/// API — #532).
+fn flow_body_entries(lines: &[FlowLine], narration_cap: usize) -> (Vec<String>, usize) {
     let mut out: Vec<String> = Vec::new();
     let mut tool_count = 0usize;
     for line in lines {
@@ -397,14 +412,9 @@ pub(crate) fn render_flow_html_chrome_pref(
             FlowLine::Text(text) => {
                 let text = text.trim();
                 if !text.is_empty() {
-                    // Render intermediate narration with the same inline markdown
-                    // (bold, italics, `code`, links) as the final completion, so
-                    // the expanded block is formatted, not raw markdown source
-                    // (#306). format_inline emits only inline tags, which are
-                    // valid inside <blockquote>; no block-level <pre> to break it.
-                    // Capped for CLI (#489) so verbose folded narration doesn't
-                    // blow the block budget; API providers pass uncapped (#532).
-                    // Display-only, reclaim reads flow_entries.
+                    // Same inline markdown as the final completion so the
+                    // expanded log is formatted, not raw source (#306); capped
+                    // for CLI (#489), uncapped for API (#532). Display-only.
                     out.push(format_inline(&escape_html(&cap_narration(
                         text,
                         narration_cap,
@@ -413,70 +423,63 @@ pub(crate) fn render_flow_html_chrome_pref(
             }
         }
     }
-    // Latest activity now LEADS the header so the COLLAPSED preview shows what
-    // is happening now, not the first entry from many minutes ago (#405), in the
-    // planned status-first order (#509). Live turns only (#498): once the block
-    // settles to a Finished/Failed/Timed out header the narration is stale, so
-    // the settled rollup stands alone. With no entry-derived preview (the
-    // header-only phase before tools), the pre-activity preview (thinking /
-    // Working-on) stands in. Escaped here for the HTML dialect before the
-    // shared builder styles it.
-    let status_msg = match header {
-        FlowHeader::Live(_) => prefer_fallback
-            .then(|| fallback_status.map(str::to_string))
-            .flatten()
-            .or_else(|| latest_activity_preview(lines))
-            .or_else(|| fallback_status.map(str::to_string))
-            .map(|l| escape_html(&l)),
-        FlowHeader::Settled { .. } => None,
-    };
+    (out, tool_count)
+}
+
+/// Classic HTML flow message (ADR 0005): an uncollapsed shell, never one outer
+/// expandable. The always-visible plan chrome (title / progress / goal) leads;
+/// the processing log, when it has entries, sits in its own
+/// `<blockquote expandable>` (full body, no summary line above it — Decision
+/// 11/12); the merged footer is the plain final line (Decision 3).
+/// `elapsed_secs` drives the footer clock (Decision 13).
+pub(crate) fn render_flow_html_chrome_pref(
+    lines: &[FlowLine],
+    header: &FlowHeader,
+    fallback_status: Option<&str>,
+    sections: &super::flow_chrome::FlowSections,
+    narration_cap: usize,
+    elapsed_secs: u64,
+) -> String {
+    let (out, tool_count) = flow_body_entries(lines, narration_cap);
+    let has_log = !out.is_empty();
+    let activity = latest_activity_preview(lines);
+    let footer = super::flow_chrome::merged_footer(
+        &footer_parts(
+            header,
+            fallback_status,
+            sections,
+            activity.as_deref(),
+            tool_count,
+            has_log,
+            elapsed_secs,
+        ),
+        HeaderMarkup::Html,
+    );
     let chrome = sections.chrome_line(HeaderMarkup::Html);
-    if out.is_empty() {
-        // Header-only render: activity / thinking / duration / sections with
-        // no tool body yet (or a settled no-tool turn). A plain line, no
-        // blockquote, since there is nothing to expand.
-        let header_line = flow_header_text(
-            tool_count,
-            header,
-            status_msg.as_deref(),
-            HeaderMarkup::Html,
-        );
-        return match chrome {
-            Some(c) => format!("{header_line}\n{c}"),
-            None => header_line,
-        };
+
+    let mut msg = String::new();
+    if let Some(c) = chrome {
+        msg.push_str(&c);
     }
-    // Lone tool line stays plain (#296) while the turn is live; the live status
-    // rides on it (#360). A settled outcome always renders the block header so
-    // the ✅/❌/⏱ badge and duration show (#480).
-    if out.len() == 1
-        && tool_count == 1
-        && let FlowHeader::Live(status) = header
-    {
-        return match status {
-            Some(st) => format!("{} • {}", out.remove(0), st),
-            None => out.remove(0),
-        };
-    }
-    // The chrome line sits right under the header so the collapsed preview
-    // keeps plan title / progress / goal / ctx always visible.
-    let header_block = {
-        let header_line = flow_header_text(
-            tool_count,
-            header,
-            status_msg.as_deref(),
-            HeaderMarkup::Html,
-        );
-        match chrome {
-            Some(c) => format!("{header_line}\n{c}"),
-            None => header_line,
+    // A blank line separates any chrome above from the log/footer cluster
+    // (Decision 13, classic uses blank lines). The log body is the full entry
+    // list in one expandable with no summary line above it; the merged footer
+    // is the plain final line under it.
+    if has_log {
+        if !msg.is_empty() {
+            msg.push_str("\n\n");
         }
-    };
-    format!(
-        "<blockquote expandable>{}\n\n{}</blockquote>",
-        header_block,
-        out.join("\n\n")
-    )
+        msg.push_str(&format!(
+            "<blockquote expandable>{}</blockquote>\n{footer}",
+            out.join("\n\n")
+        ));
+    } else {
+        if !msg.is_empty() {
+            msg.push_str("\n\n");
+        }
+        msg.push_str(&footer);
+    }
+    msg
 }
 
 /// Render resolved flow lines as a `<details><summary>` collapsible for the
@@ -499,6 +502,7 @@ pub(crate) fn render_flow_details_with(lines: &[FlowLine], header: &FlowHeader) 
         header,
         None,
         &super::flow_chrome::FlowSections::default(),
+        0,
     )
 }
 
@@ -507,109 +511,69 @@ pub(crate) fn render_flow_details_chrome(
     header: &FlowHeader,
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
+    elapsed_secs: u64,
 ) -> String {
     render_flow_details_chrome_pref(
         lines,
         header,
         fallback_status,
         sections,
-        false,
         FOLDED_NARRATION_CAP,
+        elapsed_secs,
     )
 }
 
-/// Like [`render_flow_details_chrome`] but leads a live header with
-/// `fallback_status` when `prefer_fallback` is true (#527), and caps folded
-/// narration at `narration_cap` (tight for CLI, uncapped for API — #532).
+/// Rich `<details>` flow message (#420 path A) reshaped for ADR 0005: an
+/// uncollapsed shell, never one outer expandable. Always-visible plan chrome
+/// leads as a `<p>` block; a `<p>&nbsp;</p>` spacer precedes the footer when
+/// chrome is present (Decision 13); the merged footer is a `<sub>` line, and
+/// when the log has entries that `<sub>` becomes the processing-log `<summary>`
+/// with the full entry list as the collapsed body (Decision 12). `elapsed_secs`
+/// drives the footer clock.
 pub(crate) fn render_flow_details_chrome_pref(
     lines: &[FlowLine],
     header: &FlowHeader,
     fallback_status: Option<&str>,
     sections: &super::flow_chrome::FlowSections,
-    prefer_fallback: bool,
     narration_cap: usize,
+    elapsed_secs: u64,
 ) -> String {
-    let mut out: Vec<String> = Vec::new();
-    let mut tool_count = 0usize;
-    for line in lines {
-        match line {
-            FlowLine::Tool { label, context, .. } => {
-                tool_count += 1;
-                if context.is_empty() {
-                    out.push(format!("<b>{}</b>", escape_html(label)));
-                } else {
-                    out.push(format!(
-                        "<b>{}</b> <code>{}</code>",
-                        escape_html(label),
-                        escape_html(context)
-                    ));
-                }
-            }
-            FlowLine::Text(text) => {
-                let text = text.trim();
-                if !text.is_empty() {
-                    // Capped for CLI (#489) to keep the block compact before the
-                    // 30K freeze; API passes uncapped (#532). Display-only.
-                    out.push(format_inline(&escape_html(&cap_narration(
-                        text,
-                        narration_cap,
-                    ))));
-                }
-            }
-        }
-    }
-    // Latest activity now LEADS the summary so the COLLAPSED rich block shows
-    // what is happening now (#405), status-first (#509). The rich `<details>`
-    // collapses to the summary ALONE, so without the activity here the rich
-    // surface would show only "N tool calls • 45s". Live turns only (#498): a
-    // settled Finished/Failed/Timed out header stands alone with no stale
-    // narration. The pre-activity preview stands in during the header-only
-    // phase. Escaped here for the HTML dialect before the shared builder
-    // styles it.
-    let status_msg = match header {
-        FlowHeader::Live(_) => prefer_fallback
-            .then(|| fallback_status.map(str::to_string))
-            .flatten()
-            .or_else(|| latest_activity_preview(lines))
-            .or_else(|| fallback_status.map(str::to_string))
-            .map(|l| escape_html(&l)),
-        FlowHeader::Settled { .. } => None,
-    };
-    // Sections ride the summary: the rich <details> collapses to the summary
-    // alone, so the chrome must live there to stay always-visible.
-    let summary = {
-        let header_line = flow_header_text(
-            tool_count,
+    let (out, tool_count) = flow_body_entries(lines, narration_cap);
+    let has_log = !out.is_empty();
+    let activity = latest_activity_preview(lines);
+    let footer = super::flow_chrome::merged_footer(
+        &footer_parts(
             header,
-            status_msg.as_deref(),
-            HeaderMarkup::Html,
-        );
-        match sections.chrome_line(HeaderMarkup::Html) {
-            Some(c) => format!("{header_line} • {c}"),
-            None => header_line,
-        }
-    };
-    if out.is_empty() {
-        // Header-only render: a plain summary line, no <details> wrapper,
-        // since there is nothing to expand yet.
-        return format!("<sub>{summary}</sub>");
+            fallback_status,
+            sections,
+            activity.as_deref(),
+            tool_count,
+            has_log,
+            elapsed_secs,
+        ),
+        HeaderMarkup::Html,
+    );
+
+    let mut msg = String::new();
+    if let Some(c) = sections.chrome_line(HeaderMarkup::Html) {
+        // Always-visible chrome as its own block (rich HTML input ignores raw
+        // newlines, so each region is a block element), then a kept spacer
+        // before the footer (Decision 13).
+        msg.push_str(&format!("<p>{c}</p><p>&nbsp;</p>"));
     }
-    if out.len() == 1
-        && tool_count == 1
-        && let FlowHeader::Live(status) = header
-    {
-        return match status {
-            Some(st) => format!("{} • {}", out.remove(0), st),
-            None => out.remove(0),
-        };
+    if has_log {
+        // The merged footer is the processing-log summary; the body is the full
+        // <p>-wrapped entry list (one <p> per entry so the rich parser keeps
+        // them separated).
+        let body: String = out.iter().map(|e| format!("<p>{e}</p>")).collect();
+        msg.push_str(&format!(
+            "<details><summary><sub>{footer}</sub></summary>{body}</details>"
+        ));
+    } else {
+        // No log yet: a plain <sub> footer line.
+        msg.push_str(&format!("<sub>{footer}</sub>"));
     }
-    // The rich HTML input mode is a real HTML parser: raw newlines are
-    // ignored (unlike the classic Bot API HTML path), so each entry must be
-    // its own block-level element or the whole log runs together as one
-    // inline wall. One <p> per entry gives the same visual separation the
-    // classic blockquote gets from blank lines.
-    let body: String = out.iter().map(|e| format!("<p>{e}</p>")).collect();
-    format!("<details><summary><sub>{summary}</sub></summary>{body}</details>")
+    msg
 }
 
 /// Render resolved flow lines into markdown for the rich API
@@ -845,10 +809,11 @@ pub(crate) fn flow_lines(s: &StreamingState) -> Vec<FlowLine> {
 /// duration from turn start (#480).
 pub(crate) fn render_flow(s: &StreamingState) -> String {
     let narration_cap = narration_cap_for(s.is_cli);
+    let elapsed = s.turn_started_at.elapsed().as_secs();
     match s.flow_outcome {
         Some(outcome) => {
             let (icon, verb) = outcome.icon_verb();
-            let duration = humanize_duration(s.turn_started_at.elapsed().as_secs());
+            let duration = humanize_duration(elapsed);
             render_flow_html_chrome_pref(
                 &flow_lines(s),
                 &FlowHeader::Settled {
@@ -858,8 +823,8 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
                 },
                 None,
                 &s.sections,
-                false,
                 narration_cap,
+                elapsed,
             )
         }
         None => render_flow_html_chrome_pref(
@@ -867,11 +832,8 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
             &FlowHeader::Live(s.flow_status.as_deref()),
             s.header_preview.as_deref(),
             &s.sections,
-            // Lead with the user-query preview until the first tick has shown
-            // it, so CLI providers get the same "Working on: <query>" header
-            // non-CLI providers show before activity takes over (#527).
-            !s.header_query_shown && s.header_preview.is_some(),
             narration_cap,
+            elapsed,
         ),
     }
 }
@@ -880,10 +842,11 @@ pub(crate) fn render_flow(s: &StreamingState) -> String {
 /// live/settled header split as [`render_flow`].
 pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
     let narration_cap = narration_cap_for(s.is_cli);
+    let elapsed = s.turn_started_at.elapsed().as_secs();
     match s.flow_outcome {
         Some(outcome) => {
             let (icon, verb) = outcome.icon_verb();
-            let duration = humanize_duration(s.turn_started_at.elapsed().as_secs());
+            let duration = humanize_duration(elapsed);
             render_flow_details_chrome_pref(
                 &flow_lines(s),
                 &FlowHeader::Settled {
@@ -893,8 +856,8 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
                 },
                 None,
                 &s.sections,
-                false,
                 narration_cap,
+                elapsed,
             )
         }
         None => render_flow_details_chrome_pref(
@@ -902,8 +865,8 @@ pub(crate) fn render_flow_details_state(s: &StreamingState) -> String {
             &FlowHeader::Live(s.flow_status.as_deref()),
             s.header_preview.as_deref(),
             &s.sections,
-            !s.header_query_shown && s.header_preview.is_some(),
             narration_cap,
+            elapsed,
         ),
     }
 }
@@ -950,7 +913,7 @@ pub(crate) async fn refresh_flow_rich_details(
         return;
     }
     if details.chars().count() > 30000 {
-        freeze_flow_block(streaming, mid, "rich size limit reached");
+        freeze_flow_block_and_strip_kb(bot, chat, streaming, mid, "rich size limit reached").await;
         return;
     }
     match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details).await {
@@ -1009,7 +972,7 @@ pub(crate) async fn refresh_flow_html(
     // Proactive freeze: past Telegram's 4096-char edit limit the edit can
     // only fail. Keep the message as last rendered and start a new block.
     if html.chars().count() > 4000 {
-        freeze_flow_block(streaming, mid, "size limit reached");
+        freeze_flow_block_and_strip_kb(bot, chat, streaming, mid, "size limit reached").await;
         return;
     }
     // Plan Approve/Discard keyboard rides the latest flow message. Telegram
@@ -1057,7 +1020,7 @@ pub(crate) async fn refresh_flow_html(
             if msg.contains("message is not modified") {
                 // Content already correct — nothing to do.
             } else if msg.contains("MESSAGE_TOO_LONG") {
-                freeze_flow_block(streaming, mid, "MESSAGE_TOO_LONG");
+                freeze_flow_block_and_strip_kb(bot, chat, streaming, mid, "MESSAGE_TOO_LONG").await;
             } else if msg.contains("message to edit not found") {
                 // Genuinely gone (deleted externally) — forget the id.
                 tracing::warn!(
@@ -1122,6 +1085,34 @@ pub(crate) fn freeze_flow_block(
     if s.open_group_msg_id == Some(mid) {
         s.open_group_msg_id = None;
         s.flow_entries.clear();
+    }
+}
+
+/// Freeze the current flow block AND strip any plan keyboard from the sealed
+/// prior message, so only the next live flow message can own Approve/Discard
+/// (ADR 0005 Decision 6). [`freeze_flow_block`] is sync with no bot handle, so
+/// the keyboard strip lives here where `bot`/`chat` are in scope. No-op strip
+/// when the message never carried a plan keyboard (the common non-plan freeze).
+async fn freeze_flow_block_and_strip_kb(
+    bot: &Bot,
+    chat: ChatId,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    mid: MessageId,
+    reason: &str,
+) {
+    let had_kb = {
+        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.sections.plan_kb != super::flow_chrome::PlanKb::None
+            || s.applied_plan_kb != super::flow_chrome::PlanKb::None
+    };
+    freeze_flow_block(streaming, mid, reason);
+    if had_kb {
+        // Omitting reply_markup clears the inline keyboard on the sealed message.
+        if let Err(e) = bot.edit_message_reply_markup(chat, mid).await {
+            tracing::debug!("Failed to strip plan keyboard from frozen flow {mid}: {e}");
+        }
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.applied_plan_kb = super::flow_chrome::PlanKb::None;
     }
 }
 

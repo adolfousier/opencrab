@@ -74,18 +74,19 @@ pub(crate) struct FlowSections {
 }
 
 impl FlowSections {
-    /// One compact chrome line (`📋 title • 2/7 tasks • 🎯 goal • ctx …`),
-    /// styled and escaped for the renderer's dialect. `None` when every
-    /// section is empty, so callers omit the line entirely.
+    /// Always-visible plan chrome (`📋 title • 2/7 tasks • 🎯 goal`), styled and
+    /// escaped for the renderer's dialect. `None` when title, checklist, and
+    /// goal are all empty, so callers omit the block entirely. Under ADR 0005
+    /// this is the transitional always-visible block above the merged footer;
+    /// `plan_state` and `ctx` are no longer here, they live in [`merged_footer`]
+    /// (Decision 7 status copy, Decision 12 footer merge). F2 replaces this
+    /// compact line with an independent title block and full `☐`/`☑` rows.
     pub(crate) fn chrome_line(&self, markup: HeaderMarkup) -> Option<String> {
         let esc = |s: &str| match markup {
             HeaderMarkup::Html => escape_html(s),
             HeaderMarkup::Markdown => s.to_string(),
         };
         let mut segs: Vec<String> = Vec::new();
-        if let Some(ref p) = self.plan_state {
-            segs.push(markup.italic(&esc(p)));
-        }
         if let Some(ref t) = self.plan_title {
             segs.push(format!("📋 {}", markup.bold(&esc(t))));
         }
@@ -95,11 +96,114 @@ impl FlowSections {
         if let Some(ref g) = self.goal {
             segs.push(format!("🎯 {}", markup.italic(&esc(g))));
         }
-        if let Some(ref x) = self.ctx {
-            segs.push(markup.italic(&esc(x)));
-        }
         (!segs.is_empty()).then(|| segs.join(" • "))
     }
+}
+
+/// Format an elapsed duration as the locked flow clock glyph `⏱ M:SS`
+/// (`⏱ H:MM:SS` past an hour) — ADR 0005 Decision 13. This is the last
+/// segment of every merged footer; never render a bare `M:SS` without the
+/// glyph.
+pub(crate) fn clock_glyph(secs: u64) -> String {
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if h > 0 {
+        format!("⏱ {h}:{m:02}:{s:02}")
+    } else {
+        format!("⏱ {m}:{s:02}")
+    }
+}
+
+/// Inputs to the merged flow footer (ADR 0005 Decision 12). The renderer
+/// decomposes its `FlowHeader` / lines / sections into these primitives so the
+/// footer join lives in one place and both the classic and rich paths agree.
+pub(crate) struct FooterParts<'a> {
+    /// Settled outcome `(icon, verb)` (e.g. `("✅", "Finished")`) once the turn
+    /// ends; `None` while live. Drives segment 1 and drops the in-flight cog.
+    pub(crate) outcome: Option<(&'a str, &'a str)>,
+    /// Plan-mode status line (Decision 7) when in Plan mode; leads segment 1
+    /// on a live turn.
+    pub(crate) plan_state: Option<&'a str>,
+    /// Non-plan "Working on …" / thinking preview; segment 1 fallback on a live
+    /// turn with no plan status.
+    pub(crate) working_on: Option<&'a str>,
+    /// Latest-activity preview for the in-flight progress-log summary
+    /// (segment 2); shown only while live and only when a log exists.
+    pub(crate) activity: Option<&'a str>,
+    /// Count of tool entries in the log (`N tool calls` when `>= 1`).
+    pub(crate) tool_count: usize,
+    /// Whether a processing log exists at all (drives segment 2 presence).
+    pub(crate) has_log: bool,
+    /// Ctx budget string (segment 3), display-only, before the clock.
+    pub(crate) ctx: Option<&'a str>,
+    /// Elapsed wall-clock seconds for the segment-4 clock glyph.
+    pub(crate) elapsed_secs: u64,
+}
+
+/// Build the merged flow footer: one ` • `-joined string in the locked order
+/// status → progress-log summary → ctx → clock (ADR 0005 Decision 12). The
+/// renderer wraps it: rich as `<sub>` (plain footer line, or the processing-log
+/// `<summary>`); classic as a plain final line. In-flight the log summary
+/// carries the `⚙️` cog; a settled footer never does (segment 1 carries the
+/// `✅`/`❌` outcome instead).
+pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String {
+    let esc = |s: &str| match markup {
+        HeaderMarkup::Html => escape_html(s),
+        HeaderMarkup::Markdown => s.to_string(),
+    };
+    let settled = parts.outcome.is_some();
+    let mut segs: Vec<String> = Vec::new();
+
+    // Segment 1 — status: settled outcome, else plan state, else Working-on.
+    if let Some((icon, verb)) = parts.outcome {
+        segs.push(format!("{icon} {}", esc(verb)));
+    } else if let Some(ps) = parts.plan_state {
+        segs.push(esc(ps));
+    } else if let Some(w) = parts.working_on {
+        segs.push(esc(w));
+    }
+
+    // Segment 2 — progress-log summary, only when a log exists. Live turns lead
+    // with the cog + activity; settled turns show a bare tool-call count with
+    // no cog (the stale narration is dropped, #498). Strip a leading cog from
+    // the activity so the prefix is never doubled (#509 follow-up).
+    if parts.has_log {
+        let mut seg2 = String::new();
+        if !settled && let Some(act) = parts.activity {
+            let act = act.trim_start_matches(['⚙', '\u{fe0f}']).trim_start();
+            if !act.is_empty() {
+                seg2 = format!("⚙️ {}", esc(act));
+            }
+        }
+        if parts.tool_count >= 1 {
+            let count = format!("{} tool calls", parts.tool_count);
+            if seg2.is_empty() {
+                seg2 = if settled {
+                    count
+                } else {
+                    format!("⚙️ {count}")
+                };
+            } else {
+                seg2 = format!("{seg2} • {count}");
+            }
+        } else if !settled && seg2.is_empty() {
+            // In-flight log with no tools and no activity preview yet: a bare
+            // cog beats an empty segment so the footer still reads as active.
+            seg2 = "⚙️".to_string();
+        }
+        if !seg2.is_empty() {
+            segs.push(seg2);
+        }
+    }
+
+    // Segment 3 — ctx, before the clock.
+    if let Some(c) = parts.ctx {
+        segs.push(esc(c));
+    }
+
+    // Segment 4 — clock, always last.
+    segs.push(clock_glyph(parts.elapsed_secs));
+
+    segs.join(" • ")
 }
 
 /// Read plan title + checklist progress from the live session plan JSON
@@ -278,18 +382,6 @@ pub(crate) async fn tick_flow_header(
             }
             refresh_sections(streaming, agent, session_id).await;
             open_flow(bot, chat, thread_id, streaming).await;
-        }
-    }
-
-    // After the first tick that has an open block, stop forcing the header to
-    // lead with the user-query preview and let live activity lead as before
-    // (#527). This tick's renders above already showed "Working on: <query>",
-    // so a CLI provider that opened the block immediately with a synthesized
-    // tool still gets that leading query for its first tick, matching non-CLI.
-    {
-        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        if s.open_group_msg_id.is_some() {
-            s.header_query_shown = true;
         }
     }
 }
