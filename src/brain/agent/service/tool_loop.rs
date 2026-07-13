@@ -5600,6 +5600,22 @@ impl AgentService {
         self.finalize_manual_switch(session_id, start_switch_epoch, &session_service)
             .await;
 
+        // Plan archive at turn settle (ADR 0005 Decision 9): the completing
+        // turn keeps its live plan and full all-☑ checklist through delivery;
+        // once the turn settles here the finished plan archives and the session
+        // returns to NoPlan, so the next turn carries no plan chrome. This is
+        // the surface-agnostic settle hook every surface's turn ends through, so
+        // TUI and Telegram both archive without a channel-specific path.
+        // `is_complete` requires non-empty, all-resolved tasks, so Editing and
+        // in-progress plans are untouched; `load_plan` is a fast no-op when the
+        // session has no live plan.
+        if let Some(finished) = crate::utils::plan_files::load_plan(session_id).await
+            && finished.is_complete()
+            && let Err(e) = crate::utils::plan_files::archive_plan(session_id).await
+        {
+            tracing::warn!("Failed to archive completed plan at turn settle: {e}");
+        }
+
         Ok(AgentResponse {
             message_id: assistant_db_msg.id,
             content: final_text,

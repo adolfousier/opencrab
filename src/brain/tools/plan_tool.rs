@@ -1105,8 +1105,8 @@ impl Tool for PlanTool {
                     .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
                 {
                     msg.push_str(&format!(
-                        "\n\n✅ Plan complete. All {} tasks done. The plan is archived; \
-                         the session has no live plan.",
+                        "\n\n✅ Plan complete. All {} tasks done. The checklist stays \
+                         visible until this turn settles, then the plan archives.",
                         current_plan.tasks.len()
                     ));
                 } else {
@@ -1131,14 +1131,11 @@ impl Tool for PlanTool {
                 current_plan.status
             );
 
-            // Archive on last complete: the finished plan (just saved with
-            // every task resolved) moves under `archive/` with a timestamp
-            // and the session returns to NoPlan. No lingering Done status.
-            if current_plan.is_complete()
-                && let Err(e) = crate::utils::plan_files::archive_plan(context.session_id).await
-            {
-                tracing::warn!("Failed to archive completed plan: {e}");
-            }
+            // Archive does NOT run here on last complete (ADR 0005 Decision 9):
+            // the completing turn keeps its live plan and full all-☑ checklist
+            // through delivery. Archive + NoPlan run at turn settle in the
+            // shared tool loop (run_tool_loop_inner), which every surface hits,
+            // so TUI and Telegram both archive without a surface-specific hook.
         }
 
         Ok(ToolResult::success(result))

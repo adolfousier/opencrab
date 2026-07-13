@@ -2,8 +2,8 @@
 //! mode disambiguation (design vs checklist), pre-init upgrade/replace
 //! rules, re-init refusal while a plan is live, Active-only checklist
 //! operations, `add_tasks` plus the `add_task` alias, import rules,
-//! archive on last complete, and the removal of auto-approve on first
-//! `start`.
+//! keeping a completed plan live until turn settle (no mid-complete
+//! archive), and the removal of auto-approve on first `start`.
 
 use crate::brain::tools::plan_tool::PlanTool;
 use crate::brain::tools::{Tool, ToolExecutionContext};
@@ -330,7 +330,7 @@ async fn first_start_does_not_auto_approve() {
 }
 
 #[tokio::test]
-async fn completing_last_task_archives_to_no_plan() {
+async fn completing_last_task_keeps_plan_live_until_settle() {
     in_temp_home(async {
         let tool = PlanTool;
         let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
@@ -348,13 +348,28 @@ async fn completing_last_task_archives_to_no_plan() {
         )
         .await;
         assert!(ok);
+        // ADR 0005 Decision 9: the tool no longer archives mid-complete. The
+        // plan stays live with its full all-☑ checklist until the turn settles.
         assert!(
-            out.contains("archived"),
-            "completion reports the archive, got: {out}"
+            out.contains("Plan complete"),
+            "completion reported, got: {out}"
         );
         assert!(
+            plan_json_path(ctx.session_id).await.exists(),
+            "live JSON stays until turn settle, not archived mid-complete"
+        );
+        let plan = load_plan(ctx.session_id).await.expect("plan still live");
+        assert!(plan.is_complete(), "every task is resolved");
+        assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::Active);
+
+        // The surface-agnostic settle hook (run_tool_loop_inner) runs exactly
+        // this: a finished plan archives to NoPlan once the turn settles.
+        crate::utils::plan_files::archive_plan(ctx.session_id)
+            .await
+            .unwrap();
+        assert!(
             !plan_json_path(ctx.session_id).await.exists(),
-            "live JSON must be archived away"
+            "settle archive removes the live JSON"
         );
         assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::NoPlan);
     })
