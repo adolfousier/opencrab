@@ -195,7 +195,7 @@ When the user says **plan**, infer **design track** (Editing, session `.md`, wai
 
 **A3 — without “plan”:** execute-shaped multi-step (“implement”, “fix”, “refactor”, “audit and fix”) → proactive **checklist** guidance before project writes. Pure Q&A/research → no forced plan tool. Ambiguous → ask once.
 
-**Soft-nudge (Cluster A / locked grill item, TUI + Telegram):** full shared [src/utils/prompt_analyzer.rs](src/utils/prompt_analyzer.rs) on both surfaces (LLM-only hints). Phase 1 ships live-ops plan hints (`init` / `add_task` / `start`); Phase 6 swaps to design-track + may set durable `pre_init_editing`. **Skip slash/skill expansions on both surfaces.** Telegram still has `/plan` + flow chrome alongside the analyzer. Do not confuse this with Cluster C Phase C1 (status/gate engine work).
+**Soft-nudge (Cluster A / locked grill item, TUI + Telegram):** full shared [src/utils/prompt_analyzer.rs](src/utils/prompt_analyzer.rs) on both surfaces (LLM-only hints). The design-track nudge is shipped: `PromptAnalyzer::plan_intent` matches the plan keyword family and its callers set the durable `pre_init_editing` flag on both surfaces (the earlier live-ops hints were superseded by this). **Skip slash/skill expansions on both surfaces.** Telegram still has `/plan` + flow chrome alongside the analyzer. Do not confuse this with Cluster C Phase C1 (status/gate engine work).
 
 **Compaction:** auto-compaction summary must include plan state (Editing/Active/NoPlan, `.md` path, next action) whenever session plan files exist; recovery prompt branches match that state.
 
