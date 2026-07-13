@@ -114,7 +114,8 @@ fn default_action() -> String {
 }
 
 /// Parse a task-type string into a `TaskType`, mapping anything unrecognized
-/// to `Other`.
+/// to `Other` (lossless: the original string is preserved). The fallback is
+/// logged so out-of-enum values stay observable.
 fn parse_task_type(s: &str) -> TaskType {
     match s.to_lowercase().as_str() {
         "research" => TaskType::Research,
@@ -126,7 +127,11 @@ fn parse_task_type(s: &str) -> TaskType {
         "documentation" => TaskType::Documentation,
         "configuration" => TaskType::Configuration,
         "build" => TaskType::Build,
-        other => TaskType::Other(other.to_string()),
+        "other" => TaskType::Other("other".to_string()),
+        unknown => {
+            tracing::debug!("Unknown task_type '{unknown}' mapped to the 'other' category");
+            TaskType::Other(unknown.to_string())
+        }
     }
 }
 

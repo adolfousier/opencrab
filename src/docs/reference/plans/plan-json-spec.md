@@ -69,8 +69,13 @@ Case-insensitive. Examples: `"Research"`, `"research"`, `"RESEARCH"` all work.
 | `create` | Build new things from scratch |
 | `delete` | Remove code/files |
 | `test` | Write or run tests |
+| `refactor` | Restructure existing code without changing behavior |
 | `documentation` | Docs, comments, specs |
 | `configuration` | Config, setup, infrastructure |
+| `build` | Compile, package, release |
+| `other` | Anything that fits no category above (also the default when omitted) |
+
+Fallback: a value outside this table is not rejected. It is preserved verbatim and categorized as `other`.
 
 ## Dependencies
 

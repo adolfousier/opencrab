@@ -148,7 +148,9 @@ where
     serializer.serialize_str(s)
 }
 
-/// Custom deserializer for task type - case-insensitive
+/// Custom deserializer for task type - case-insensitive. Values outside the
+/// documented enum are preserved verbatim as `Other` (lossless fallback) and
+/// logged so the mapping stays observable.
 pub fn deserialize_task_type<'de, D>(deserializer: D) -> Result<TaskType, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -164,7 +166,11 @@ where
         "documentation" => Ok(TaskType::Documentation),
         "configuration" => Ok(TaskType::Configuration),
         "build" => Ok(TaskType::Build),
-        other => Ok(TaskType::Other(other.to_string())),
+        "other" => Ok(TaskType::Other("other".to_string())),
+        unknown => {
+            tracing::debug!("Unknown task_type '{unknown}' mapped to the 'other' category");
+            Ok(TaskType::Other(unknown.to_string()))
+        }
     }
 }
 
