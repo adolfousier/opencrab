@@ -17,6 +17,29 @@ use std::time::Duration;
 /// Callback fired on every successful config reload.
 pub type ReloadCallback = Arc<dyn Fn(Config) + Send + Sync>;
 
+/// `" (profile: NAME)"` when a named profile is active, else `""` — appended to
+/// config-reload alerts so a multi-profile operator knows WHICH profile's config
+/// was rejected (#534).
+fn profile_suffix() -> String {
+    profile_suffix_from(crate::config::profile::active_profile())
+}
+
+/// Pure core of [`profile_suffix`], for tests.
+pub(crate) fn profile_suffix_from(profile: Option<&str>) -> String {
+    match profile {
+        Some(name) if !name.is_empty() && name != "default" => format!(" (profile: {name})"),
+        _ => String::new(),
+    }
+}
+
+/// Callback fired with a user-facing message when a hot reload does NOT cleanly
+/// apply the on-disk config: either it recovered from last-known-good (the file
+/// failed to parse) or the load failed entirely and the running config is kept.
+/// Without this the failure was log-only, so an operator editing `config.toml`
+/// had no signal that their change was rejected and the process kept serving
+/// the old provider set (#534, mirror of upstream #517).
+pub type ReloadNotify = Arc<dyn Fn(String) + Send + Sync>;
+
 /// Spawn a background task that watches config files and fires callbacks on change.
 /// Debounces rapid file-save events (300 ms window) before reloading.
 ///
@@ -31,7 +54,10 @@ pub type ReloadCallback = Arc<dyn Fn(Config) + Send + Sync>;
 ///     }),
 /// ]);
 /// ```
-pub fn spawn(callbacks: Vec<ReloadCallback>) -> tokio::task::JoinHandle<()> {
+pub fn spawn(
+    callbacks: Vec<ReloadCallback>,
+    notify: Option<ReloadNotify>,
+) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
         let base = opencrabs_home();
@@ -117,6 +143,15 @@ pub fn spawn(callbacks: Vec<ReloadCallback>) -> tokio::task::JoinHandle<()> {
                             "ConfigWatcher: config.toml failed to parse — running on \
                              last-known-good, snapshot left untouched"
                         );
+                        if let Some(ref notify) = notify {
+                            notify(format!(
+                                "⚠️ config.toml failed to parse{} — running on the previous \
+                                 config. Your on-disk edits are NOT active until the TOML parses \
+                                 cleanly. Fix {} and save; hot-reload will apply automatically.",
+                                profile_suffix(),
+                                base.join("config.toml").display(),
+                            ));
+                        }
                     } else {
                         // config.toml changed AND parsed cleanly — the real
                         // "last known good" moment. Snapshot it now (debounced, so
@@ -138,6 +173,15 @@ pub fn spawn(callbacks: Vec<ReloadCallback>) -> tokio::task::JoinHandle<()> {
                         "ConfigWatcher: reload failed, keeping current config: {}",
                         e
                     );
+                    if let Some(ref notify) = notify {
+                        notify(format!(
+                            "⚠️ config reload failed{} — keeping the running config. Error: {}. \
+                             Fix {} and save; hot-reload will apply automatically.",
+                            profile_suffix(),
+                            e,
+                            base.join("config.toml").display(),
+                        ));
+                    }
                 }
             }
         }

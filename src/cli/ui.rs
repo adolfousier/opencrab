@@ -1337,9 +1337,38 @@ async fn cmd_chat_inner(
             }));
         }
 
+        // Out-of-band alert when a hot reload does NOT cleanly apply the
+        // on-disk config (#534, mirror of upstream #517): the old path was
+        // log-only, so an operator whose config.toml edit failed to parse got
+        // no signal that the process kept serving the previous provider set.
+        // Surface it as a global TUI notice AND, best-effort, a Telegram DM to
+        // the owner so a headless daemon (the real-world case) is not silent.
+        let notify_sender = app.event_sender();
+        #[cfg(feature = "telegram")]
+        let notify_tg = telegram_state.clone();
+        let notify: config_watcher::ReloadNotify = Arc::new(move |msg: String| {
+            let _ = notify_sender.send(TuiEvent::SystemMessage {
+                session_id: uuid::Uuid::nil(),
+                text: msg.clone(),
+            });
+            #[cfg(feature = "telegram")]
+            {
+                let state = notify_tg.clone();
+                tokio::spawn(async move {
+                    use teloxide::prelude::Requester;
+                    if let (Some(bot), Some(owner)) =
+                        (state.bot().await, state.owner_chat_id().await)
+                        && let Err(e) = bot.send_message(teloxide::types::ChatId(owner), msg).await
+                    {
+                        tracing::warn!("ConfigWatcher: owner DM of config alert failed: {e}");
+                    }
+                });
+            }
+        });
+
         // spawn() returns a JoinHandle; the watcher runs detached, so there is
         // nothing to hold. Don't bind a handle we never await or abort.
-        config_watcher::spawn(callbacks);
+        config_watcher::spawn(callbacks, Some(notify));
     }
 
     // Set force onboard flag if requested

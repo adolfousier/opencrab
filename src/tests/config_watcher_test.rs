@@ -9,7 +9,7 @@
 //! Config/keys TOML files in the user's home dir — the test just needs
 //! to verify that a filesystem change triggers the callback plumbing.
 
-use crate::utils::config_watcher::ReloadCallback;
+use crate::utils::config_watcher::{ReloadCallback, ReloadNotify, profile_suffix_from};
 use notify::Watcher;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,6 +18,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn reload_callback_type_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<ReloadCallback>();
+    assert_send_sync::<ReloadNotify>();
+}
+
+// ── profile_suffix_from: which profile a config-reload alert names (#534) ──
+
+#[test]
+fn profile_suffix_is_empty_for_default_or_none() {
+    assert_eq!(profile_suffix_from(None), "");
+    assert_eq!(profile_suffix_from(Some("default")), "");
+    assert_eq!(profile_suffix_from(Some("")), "");
+}
+
+#[test]
+fn profile_suffix_names_a_named_profile() {
+    assert_eq!(profile_suffix_from(Some("ops")), " (profile: ops)");
+    assert_eq!(profile_suffix_from(Some("family")), " (profile: family)");
 }
 
 #[tokio::test]
