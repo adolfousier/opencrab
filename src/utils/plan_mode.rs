@@ -182,6 +182,11 @@ pub fn discard(session_id: Uuid) -> String {
     }
 }
 
+/// Cap for the design prose echoed by `/show-plan`. Telegram's hard message
+/// limit is 4096 chars; leave headroom for the title, ready-line, and the
+/// document path rendered around the body.
+const PLAN_PROSE_CAP: usize = 3000;
+
 /// `/show-plan`: a text summary of the current plan state. Surfaces may
 /// additionally restick chrome (Telegram) or open the overlay (TUI).
 pub fn show_plan(session_id: Uuid) -> String {
@@ -202,8 +207,18 @@ pub fn show_plan(session_id: Uuid) -> String {
                 Ok(()) => "Ready to approve: /execute.".to_string(),
                 Err(why) => format!("Not approvable yet: {why}."),
             };
+            // Surface the design prose itself, not just its path: a reviewer on
+            // a chat channel has no file access, so the document body IS the
+            // thing under review (#540). Truncated to stay inside one chat
+            // message; the untruncated text is always on disk at `md`.
+            let trimmed = body.trim();
+            let prose = if trimmed.is_empty() {
+                "(design document is still empty)".to_string()
+            } else {
+                crate::utils::truncate_str(trimmed, PLAN_PROSE_CAP).to_string()
+            };
             format!(
-                "📋 Editing design plan{}\nDocument: {}\n{ready}",
+                "📋 Editing design plan{}\n{ready}\n\n{prose}\n\nDocument: {}",
                 if title.is_empty() {
                     String::new()
                 } else {

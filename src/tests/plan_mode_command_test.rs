@@ -213,6 +213,13 @@ async fn show_plan_reports_each_state() {
             s.contains("Editing") && s.contains("Ready to approve"),
             "got: {s}"
         );
+        // #540: the design prose itself is surfaced, not just the path, so a
+        // chat reviewer with no file access can read the document under review.
+        assert!(
+            s.contains("Implementation steps")
+                && s.contains("Plan mode has no structured design doc"),
+            "prose body not surfaced: {s}"
+        );
 
         // Approved but seed not finished: retry guidance.
         assert!(matches!(try_approve(sid), ApproveOutcome::SeedTurn { .. }));
@@ -220,6 +227,28 @@ async fn show_plan_reports_each_state() {
         assert!(
             s.contains("seed did not finish") || s.contains("empty"),
             "got: {s}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn show_plan_truncates_long_prose() {
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        // A valid-but-huge design doc: the golden fixture padded well past the
+        // prose cap. #540 must surface the head without blowing Telegram's
+        // 4096-char message limit.
+        let big = format!(
+            "{GOLDEN_MD}{}",
+            "\nfiller line to pad the body.".repeat(300)
+        );
+        make_post_init(sid, &big);
+        let s = show_plan(sid);
+        assert!(s.len() < 3600, "prose not truncated: {} chars", s.len());
+        assert!(
+            s.contains("Add session plan Approve gate"),
+            "document head missing: {s}"
         );
     })
     .await;

@@ -157,7 +157,7 @@ pub(crate) fn load_plan_state_section(
         PlanModeState::NoPlan => (None, PlanKb::None),
         PlanModeState::PreInitEditing => (Some("📝 Plan mode: drafting".to_string()), PlanKb::None),
         PlanModeState::PostInitEditing => (
-            Some("✍️ Editing plan • approve: /execute".to_string()),
+            Some("✍️ Editing plan • view: /show-plan • approve: /execute".to_string()),
             PlanKb::ApproveDiscard,
         ),
         PlanModeState::Active => {
