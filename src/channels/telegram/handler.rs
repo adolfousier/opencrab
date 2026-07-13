@@ -1654,17 +1654,20 @@ pub(crate) async fn handle_message(
         }
     }
 
-    // Strip @bot_username suffix from ALL text (Telegram appends it in menus, even in DMs).
-    // Without this, /stop@opencrabsbot won't match /stop in handle_command.
+    // Strip @bot_username only as a COMMAND SUFFIX (Telegram appends it to
+    // commands from menus: /stop@opencrabsbot -> /stop, so handle_command
+    // matches). Standalone mentions ("hey @opencrabsbot do X") are LEFT intact
+    // so the agent knows it was addressed and multi-bot groups keep their
+    // context (#528) — the old code stripped every occurrence.
     let original_text = text.clone();
     let text = if let Some(ref uname) = telegram_state.bot_username().await {
-        text.replace(&format!("@{}", uname), "").trim().to_string()
+        strip_command_mention_suffix(&text, uname)
     } else {
         text
     };
     if original_text != text {
         tracing::info!(
-            "Telegram: stripped @botname: {:?} → {:?} (chat={})",
+            "Telegram: stripped @botname command suffix: {:?} → {:?} (chat={})",
             original_text,
             text,
             msg.chat.id.0
@@ -4069,6 +4072,21 @@ pub(crate) fn channel_id_hint(chat_id: i64, thread_id: Option<i32>) -> String {
     match thread_id {
         Some(t) => format!("chat_id: {chat_id}, thread_id: {t}"),
         None => format!("chat_id: {chat_id}"),
+    }
+}
+
+/// Strip a `@bot_username` that Telegram appends as a COMMAND SUFFIX
+/// (`/stop@opencrabsbot` -> `/stop`, so `handle_command` matches `/stop`),
+/// while leaving STANDALONE mentions (`hey @opencrabsbot do X`) intact so the
+/// agent still sees it was addressed and multi-bot groups keep their context
+/// (#528). Only an `@username` immediately following a `/command` token is
+/// removed; a trailing word boundary keeps `@opencrabsbot2` from matching
+/// `@opencrabsbot`. On a bad regex the text is returned trimmed, unchanged.
+pub(crate) fn strip_command_mention_suffix(text: &str, bot_username: &str) -> String {
+    let pattern = format!(r"(/\w+)@{}\b", regex::escape(bot_username));
+    match regex::Regex::new(&pattern) {
+        Ok(re) => re.replace_all(text, "$1").trim().to_string(),
+        Err(_) => text.trim().to_string(),
     }
 }
 

@@ -2,7 +2,7 @@
 
 use crate::channels::telegram::handler::{
     build_midturn_queued_message, channel_id_hint, escape_html, markdown_to_telegram_html,
-    split_message,
+    split_message, strip_command_mention_suffix,
 };
 
 // ── split_message ─────────────────────────────────────────────────────
@@ -136,4 +136,57 @@ fn channel_id_hint_includes_thread_for_forum_topics() {
 #[test]
 fn channel_id_hint_omits_thread_for_plain_chats() {
     assert_eq!(channel_id_hint(8535704842, None), "chat_id: 8535704842");
+}
+
+// ── strip_command_mention_suffix: only strip @bot as a command suffix (#528)
+// A command suffix (/stop@opencrabsbot) is stripped for command matching, but
+// standalone mentions are preserved so the agent knows it was addressed and
+// multi-bot groups keep context.
+
+#[test]
+fn strips_at_bot_only_as_command_suffix() {
+    assert_eq!(
+        strip_command_mention_suffix("/stop@opencrabsbot", "opencrabsbot"),
+        "/stop"
+    );
+    assert_eq!(
+        strip_command_mention_suffix("/models@opencrabsbot gpt", "opencrabsbot"),
+        "/models gpt"
+    );
+}
+
+#[test]
+fn preserves_standalone_mention_for_the_agent() {
+    // The whole point of #528: a standalone mention survives so the agent sees
+    // it was addressed.
+    assert_eq!(
+        strip_command_mention_suffix("hey @opencrabsbot do X", "opencrabsbot"),
+        "hey @opencrabsbot do X"
+    );
+    // Multi-bot: only THIS bot's command suffix goes; the other mention stays.
+    assert_eq!(
+        strip_command_mention_suffix("hey @opencrabsbot @otherbot do X", "opencrabsbot"),
+        "hey @opencrabsbot @otherbot do X"
+    );
+}
+
+#[test]
+fn does_not_strip_a_longer_username_prefix() {
+    // @opencrabsbot must not match inside @opencrabsbot2.
+    assert_eq!(
+        strip_command_mention_suffix("/stop@opencrabsbot2", "opencrabsbot"),
+        "/stop@opencrabsbot2"
+    );
+}
+
+#[test]
+fn plain_text_and_bare_commands_are_unchanged() {
+    assert_eq!(
+        strip_command_mention_suffix("just a message", "opencrabsbot"),
+        "just a message"
+    );
+    assert_eq!(
+        strip_command_mention_suffix("/stop", "opencrabsbot"),
+        "/stop"
+    );
 }
