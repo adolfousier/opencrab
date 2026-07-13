@@ -209,6 +209,22 @@ pub(crate) async fn deliver_final_response(
                             mapped
                         );
                     }
+                    // A react-only turn ran no tools (the tools-with-no-text
+                    // case returned above, #439), so any open processing-log
+                    // block is header-only — the model's thinking preview plus
+                    // persistent plan chrome. Left up, it reads as a "Processing
+                    // log" bubble with no answer, i.e. a dropped request (#544).
+                    // Remove it and clear its state so ONLY the reaction remains;
+                    // the plan state persists independently (/show-plan still
+                    // works).
+                    let flow_mid = {
+                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                        s.flow_entries.clear();
+                        s.open_group_msg_id.take()
+                    };
+                    if let Some(mid) = flow_mid {
+                        let _ = bot.delete_message(chat_id, mid).await;
+                    }
                     if let Some(mid) = streaming_msg_id {
                         let _ = bot.delete_message(chat_id, mid).await;
                     }
