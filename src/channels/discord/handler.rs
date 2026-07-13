@@ -635,9 +635,12 @@ pub(crate) async fn handle_message(
     };
 
     // Tell the LLM its text response is automatically delivered to the chat,
-    // so it should NOT use discord_send for simple text replies.
+    // so it should NOT use discord_send for simple text replies. Surface the
+    // channel_id so the agent can target THIS channel for cron reports /
+    // cross-surface sends without guessing (#533, mirror of upstream #510).
+    let channel_id = msg.channel_id.get();
     let agent_input = format!(
-        "[Channel: Discord — your text response is automatically sent to this channel. \
+        "[Channel: Discord (channel_id: {channel_id}) — your text response is automatically sent to this channel. \
          Do NOT call discord_send to deliver your answer. Only use discord_send for: \
          sending to a different channel, embeds, reactions, threads, files, or moderation.]\n{agent_input}"
     );

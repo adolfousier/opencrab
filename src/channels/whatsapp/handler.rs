@@ -992,8 +992,11 @@ pub(crate) async fn handle_message(
     };
 
     // Tell the LLM its text response is automatically delivered to the chat.
+    // Surface the chat JID so the agent can target THIS chat for cron reports
+    // without guessing (#533, mirror of upstream #510).
+    let chat_id = info.source.chat.to_string();
     let agent_input = format!(
-        "[Channel: WhatsApp — your text response is automatically sent to this chat. \
+        "[Channel: WhatsApp (chat_id: {chat_id}) — your text response is automatically sent to this chat. \
          There is no whatsapp_send tool. Just reply with text.]\n{agent_input}"
     );
 

@@ -1,7 +1,8 @@
 //! Tests for Telegram handler: `split_message`, `markdown_to_telegram_html`, `escape_html`.
 
 use crate::channels::telegram::handler::{
-    build_midturn_queued_message, escape_html, markdown_to_telegram_html, split_message,
+    build_midturn_queued_message, channel_id_hint, escape_html, markdown_to_telegram_html,
+    split_message,
 };
 
 // ── split_message ─────────────────────────────────────────────────────
@@ -118,4 +119,21 @@ fn plain_followup_midturn_keeps_the_fold_in_wrapper() {
     // A plain follow-up must NOT read as a command invocation.
     assert!(!q.context_text.contains("explicit NEW directive"));
     assert_eq!(q.display_text, "also check the logs");
+}
+
+// ── channel_id_hint: chat_id / thread_id in the [Channel: ...] header (#533)
+// The agent needs the current chat_id (and forum thread_id) to target this
+// conversation for cron reports / cross-surface sends without guessing.
+
+#[test]
+fn channel_id_hint_includes_thread_for_forum_topics() {
+    assert_eq!(
+        channel_id_hint(-1001234567890, Some(12)),
+        "chat_id: -1001234567890, thread_id: 12"
+    );
+}
+
+#[test]
+fn channel_id_hint_omits_thread_for_plain_chats() {
+    assert_eq!(channel_id_hint(8535704842, None), "chat_id: 8535704842");
 }

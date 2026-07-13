@@ -1396,9 +1396,11 @@ async fn handle_message(
     };
 
     // Tell the LLM its text response is automatically delivered to the chat,
-    // so it should NOT use slack_send for simple text replies.
+    // so it should NOT use slack_send for simple text replies. Surface the
+    // channel id so the agent can target THIS channel for cron reports /
+    // cross-surface sends without guessing (#533, mirror of upstream #510).
     let agent_input = format!(
-        "[Channel: Slack — your text response is automatically sent to this channel. \
+        "[Channel: Slack (channel_id: {channel_id}) — your text response is automatically sent to this channel. \
          Do NOT call slack_send to deliver your answer. Only use slack_send for: \
          sending to a different channel, threads, blocks, reactions, files, or moderation.]\n{image_hint}{agent_input}"
     );

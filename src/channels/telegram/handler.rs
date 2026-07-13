@@ -2758,8 +2758,12 @@ pub(crate) async fn handle_message(
 
     // Tell the LLM its text response is automatically delivered to the chat,
     // so it should NOT use telegram_send for simple text replies.
+    // Surface the chat_id (and forum thread_id) so the agent can target THIS
+    // conversation for cron reports / cross-surface sends without guessing or
+    // asking (#533, mirror of upstream #510).
+    let chan_ids = channel_id_hint(msg.chat.id.0, thread_id.map(|t| t.0.0));
     let agent_input = format!(
-        "[Channel: Telegram — your text response is automatically sent to this chat. \
+        "[Channel: Telegram ({chan_ids}) — your text response is automatically sent to this chat. \
          Do NOT call telegram_send to deliver your answer. Only use telegram_send for: \
          sending to a different chat_id, media, polls, buttons, reactions, or moderation. \
          ORDERING: send any files/documents/photos FIRST, then write your final text — \
@@ -4053,6 +4057,18 @@ pub(crate) fn build_midturn_queued_message(
             ),
             display_text: display_text.to_string(),
         },
+    }
+}
+
+/// Build the `chat_id: X[, thread_id: Y]` hint injected into the Telegram
+/// `[Channel: ...]` header (#533, mirror of upstream #510) so the agent knows
+/// which chat (and forum topic) it is in and can target it for cron reports or
+/// cross-surface sends without guessing. `thread_id` is present only for forum
+/// topic messages.
+pub(crate) fn channel_id_hint(chat_id: i64, thread_id: Option<i32>) -> String {
+    match thread_id {
+        Some(t) => format!("chat_id: {chat_id}, thread_id: {t}"),
+        None => format!("chat_id: {chat_id}"),
     }
 }
 
