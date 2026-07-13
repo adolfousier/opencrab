@@ -10,6 +10,7 @@
 
 use super::flow::{HeaderMarkup, StreamingState, humanize_duration, open_flow, refresh_flow};
 use super::handler::escape_html;
+use super::markdown::format_inline;
 use crate::brain::agent::AgentService;
 use crate::brain::goal::GoalManager;
 use crate::tui::plan::TaskStatus;
@@ -52,9 +53,105 @@ impl PlanKb {
     }
 }
 
+/// One top-level section of the session plan `.md` prose (ADR 0005
+/// Decision 12): `heading` is the `##` text (`None` for the orphan preamble
+/// before the first top-level heading) and `body` is the raw markdown under
+/// it, nested `###` headings, lists, and tables included.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ProseSection {
+    pub(crate) heading: Option<String>,
+    pub(crate) body: String,
+}
+
+/// Split session-plan markdown into per-top-level-heading prose sections
+/// (ADR 0005 Decision 12): strip the leading `# …` H1 (the plan title block
+/// already carries it), then cut on `##` headings. Text before the first
+/// `##` becomes the orphan preamble (`heading: None`). Fenced code lines are
+/// never treated as headings. Sections whose body is empty are dropped — a
+/// heading with nothing under it has nothing to disclose.
+pub(crate) fn split_plan_prose(md: &str) -> Vec<ProseSection> {
+    let mut raw: Vec<(Option<String>, Vec<&str>)> = vec![(None, Vec::new())];
+    let mut in_fence = false;
+    let mut seen_content = false;
+    let mut h1_stripped = false;
+    for line in md.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            seen_content = true;
+            raw.last_mut().expect("raw starts non-empty").1.push(line);
+            continue;
+        }
+        if !in_fence {
+            if !h1_stripped && !seen_content && trimmed.starts_with("# ") {
+                h1_stripped = true;
+                seen_content = true;
+                continue;
+            }
+            if let Some(h) = trimmed.strip_prefix("## ") {
+                let h = h.trim();
+                if !h.is_empty() {
+                    raw.push((Some(h.to_string()), Vec::new()));
+                    seen_content = true;
+                    continue;
+                }
+            }
+        }
+        if !trimmed.is_empty() {
+            seen_content = true;
+        }
+        raw.last_mut().expect("raw starts non-empty").1.push(line);
+    }
+    raw.into_iter()
+        .filter_map(|(heading, lines)| {
+            let body = lines.join("\n").trim().to_string();
+            (!body.is_empty()).then_some(ProseSection { heading, body })
+        })
+        .collect()
+}
+
+/// Format the markdown body of one prose section into per-line Telegram
+/// HTML: fenced code lines as `<code>`, `#` headings as bold, list items as
+/// bullets, inline markdown elsewhere. Blank source lines come through as
+/// empty strings so the classic join keeps paragraph breaks; the rich path
+/// drops them (each line is already its own `<p>` block).
+fn prose_body_lines(body: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut in_fence = false;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            out.push(format!("<code>{}</code>", escape_html(line)));
+            continue;
+        }
+        if trimmed.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            let content = trimmed.trim_start_matches('#').trim();
+            out.push(format!("<b>{}</b>", format_inline(&escape_html(content))));
+            continue;
+        }
+        if let Some(item) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            out.push(format!("• {}", format_inline(&escape_html(item))));
+            continue;
+        }
+        out.push(format_inline(&escape_html(line)));
+    }
+    out
+}
+
 /// Always-visible flow sections. Built from live data by [`refresh_sections`];
-/// rendered into one compact `•`-separated chrome line so the three flow
-/// renderers can never drift on section formatting.
+/// rendered by [`FlowSections::chrome_rich`] / [`FlowSections::chrome_classic`]
+/// so the two flow surfaces can never drift on section formatting.
 #[derive(Default, Clone, PartialEq)]
 pub(crate) struct FlowSections {
     /// Plan-mode state line: Editing prose summary, Building checklist…,
@@ -65,6 +162,9 @@ pub(crate) struct FlowSections {
     pub(crate) plan_kb: PlanKb,
     /// Plan title from the live session plan JSON, when set.
     pub(crate) plan_title: Option<String>,
+    /// Per-top-level-heading prose sections from the session plan `.md`
+    /// (ADR 0005 Decision 12), `None` when the session has no design prose.
+    pub(crate) prose: Option<Vec<ProseSection>>,
     /// Full checklist rows from the plan JSON `tasks[]`, each pre-marked with
     /// the ballot glyph (`☑ done` / `☐ undone`), raw and unescaped. `None`
     /// until a checklist has tasks; the full list is kept even when every task
@@ -77,34 +177,94 @@ pub(crate) struct FlowSections {
 }
 
 impl FlowSections {
-    /// Always-visible plan chrome as vertical blocks in reading order: the plan
-    /// title, then one row per checklist task (`☑`/`☐`), then the goal
-    /// one-liner (ADR 0005 Decision 3). Each element is one logical block: the
-    /// classic renderer joins them with newlines, the rich renderer wraps each
-    /// in its own `<p>`. Empty when no plan sections are present. `plan_state`
-    /// and `ctx` are not here; they live in the merged footer (Decision 7 / 12).
-    pub(crate) fn chrome_blocks(&self, markup: HeaderMarkup) -> Vec<String> {
-        let esc = |s: &str| match markup {
-            HeaderMarkup::Html => escape_html(s),
-            HeaderMarkup::Markdown => s.to_string(),
-        };
-        let mut blocks: Vec<String> = Vec::new();
+    fn has_prose(&self) -> bool {
+        self.prose.as_ref().is_some_and(|p| !p.is_empty())
+    }
+
+    /// Rich-path plan chrome in reading order (ADR 0005 Decision 3): title,
+    /// per-heading prose `<details>`, `<hr>`, checklist rows, `<hr>`, goal.
+    /// The title sits flush against the prose (Decision 13); `<hr>` appears
+    /// before the checklist only when prose precedes it, and before the goal
+    /// when prose or checklist precedes it. Section headings are inline
+    /// `<summary>` text only — nested blocks inside a summary render as a
+    /// blank disclosure (Decision 12). Empty when no plan sections are
+    /// present; `plan_state` and `ctx` live in the merged footer.
+    pub(crate) fn chrome_rich(&self) -> String {
+        let mut out = String::new();
         if let Some(ref t) = self.plan_title {
-            blocks.push(format!("📋 {}", markup.bold(&esc(t))));
+            out.push_str(&format!("<p>📋 <b>{}</b></p>", escape_html(t)));
+        }
+        if let Some(ref sections) = self.prose {
+            for sec in sections {
+                let body: String = prose_body_lines(&sec.body)
+                    .into_iter()
+                    .filter(|l| !l.is_empty())
+                    .map(|l| format!("<p>{l}</p>"))
+                    .collect();
+                match &sec.heading {
+                    Some(h) => out.push_str(&format!(
+                        "<details><summary>{}</summary>{body}</details>",
+                        escape_html(h)
+                    )),
+                    // Orphan preamble: plain always-visible blocks.
+                    None => out.push_str(&body),
+                }
+            }
         }
         if let Some(ref rows) = self.checklist {
-            // One block per task so the rich path gives each its own <p> (rich
-            // HTML ignores raw newlines) and classic gets one line each. The
-            // ballot glyph is not HTML-special, so escaping the whole row only
-            // touches the task title.
+            if self.has_prose() {
+                out.push_str("<hr>");
+            }
             for row in rows {
-                blocks.push(esc(row));
+                out.push_str(&format!("<p>{}</p>", escape_html(row)));
             }
         }
         if let Some(ref g) = self.goal {
-            blocks.push(format!("🎯 {}", markup.italic(&esc(g))));
+            if self.checklist.is_some() || self.has_prose() {
+                out.push_str("<hr>");
+            }
+            out.push_str(&format!("<p>🎯 <i>{}</i></p>", escape_html(g)));
         }
-        blocks
+        out
+    }
+
+    /// Classic-path plan chrome: the same locked vertical order with blank
+    /// lines standing in for the rich `<hr>` (Decision 13 — classic HTML has
+    /// no divider primitive). Prose sections are `<blockquote expandable>`
+    /// blocks whose first line is the bold heading, so Telegram's collapsed
+    /// peek shows it (Decision 12); the orphan preamble stays plain.
+    pub(crate) fn chrome_classic(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(ref t) = self.plan_title {
+            parts.push(format!("📋 <b>{}</b>", escape_html(t)));
+        }
+        if let Some(ref sections) = self.prose {
+            for sec in sections {
+                let body = prose_body_lines(&sec.body).join("\n");
+                match &sec.heading {
+                    Some(h) => parts.push(format!(
+                        "<blockquote expandable><b>{}</b>\n{body}</blockquote>",
+                        escape_html(h)
+                    )),
+                    None => parts.push(body),
+                }
+            }
+        }
+        if let Some(ref rows) = self.checklist {
+            if self.has_prose() {
+                parts.push(String::new());
+            }
+            for row in rows {
+                parts.push(escape_html(row));
+            }
+        }
+        if let Some(ref g) = self.goal {
+            if self.checklist.is_some() || self.has_prose() {
+                parts.push(String::new());
+            }
+            parts.push(format!("🎯 <i>{}</i>", escape_html(g)));
+        }
+        parts.join("\n")
     }
 }
 
@@ -247,6 +407,28 @@ pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Opt
     (title, checklist)
 }
 
+/// Per-heading prose sections from the session plan `.md`, when it exists
+/// (Editing, or Active where the approved design stays frozen on disk —
+/// discard and archive both delete the file, so stale prose never outlives
+/// the plan). `None` when the file is absent or yields no sections.
+pub(crate) async fn load_plan_prose(session_id: Uuid) -> Option<Vec<ProseSection>> {
+    let path = crate::utils::plan_files::plan_md_path(session_id).await;
+    let body = match tokio::fs::read_to_string(&path).await {
+        Ok(body) => body,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::debug!(
+                    "Telegram flow chrome: plan prose read failed for {}: {e}",
+                    path.display()
+                );
+            }
+            return None;
+        }
+    };
+    let sections = split_plan_prose(&body);
+    (!sections.is_empty()).then_some(sections)
+}
+
 /// Active goal one-liner from `GoalManager`, when the session has an
 /// active goal.
 pub(crate) async fn load_goal_section(agent: &AgentService, session_id: Uuid) -> Option<String> {
@@ -310,6 +492,7 @@ pub(crate) async fn refresh_sections(
     session_id: Uuid,
 ) -> bool {
     let (plan_title, checklist) = load_plan_sections(session_id).await;
+    let prose = load_plan_prose(session_id).await;
     let goal = load_goal_section(agent, session_id).await;
     // Plan-state derivation reads plan files; keep that IO outside the
     // streaming lock (short double-lock beats file reads under the mutex).
@@ -323,6 +506,7 @@ pub(crate) async fn refresh_sections(
         plan_state,
         plan_kb,
         plan_title,
+        prose,
         checklist,
         goal,
         ctx: s.sections.ctx.clone(),

@@ -4,19 +4,29 @@
 //! in one outer expandable; only the processing log collapses.
 
 use crate::channels::telegram::flow::{
-    FlowHeader, FlowLine, HeaderMarkup, render_flow_details_chrome,
-    render_flow_details_chrome_pref, render_flow_html_chrome, render_flow_html_chrome_pref,
+    FlowHeader, FlowLine, render_flow_details_chrome, render_flow_details_chrome_pref,
+    render_flow_html_chrome, render_flow_html_chrome_pref,
 };
-use crate::channels::telegram::flow_chrome::{FlowSections, clock_glyph};
+use crate::channels::telegram::flow_chrome::{
+    FlowSections, ProseSection, clock_glyph, split_plan_prose,
+};
 
 fn sections(title: Option<&str>, checklist: Option<Vec<&str>>, goal: Option<&str>) -> FlowSections {
     FlowSections {
         plan_state: None,
         plan_kb: Default::default(),
         plan_title: title.map(str::to_string),
+        prose: None,
         checklist: checklist.map(|rows| rows.into_iter().map(str::to_string).collect()),
         goal: goal.map(str::to_string),
         ctx: None,
+    }
+}
+
+fn prose(heading: Option<&str>, body: &str) -> ProseSection {
+    ProseSection {
+        heading: heading.map(str::to_string),
+        body: body.to_string(),
     }
 }
 
@@ -38,12 +48,12 @@ fn clock_glyph_formats_minutes_and_hours() {
     assert_eq!(clock_glyph(3665), "⏱ 1:01:05");
 }
 
-// ── chrome blocks: always-visible title / full checklist / goal (Decision 3) ──
+// ── chrome assembly: title / prose / checklist / goal (Decision 3 / 12 / 13) ──
 // plan_state and ctx moved to the merged footer (Decision 7 / Decision 12), so
-// they must NOT appear in the chrome blocks.
+// they must NOT appear in the chrome.
 
 #[test]
-fn chrome_blocks_order_title_checklist_rows_goal_and_omit_state_and_ctx() {
+fn chrome_classic_order_title_checklist_rows_goal_and_omit_state_and_ctx() {
     let mut s = sections(
         Some("Ship plan mode"),
         Some(vec!["☑ scope it", "☐ build it"]),
@@ -51,51 +61,169 @@ fn chrome_blocks_order_title_checklist_rows_goal_and_omit_state_and_ctx() {
     );
     s.plan_state = Some("✍️ Editing plan".to_string());
     s.ctx = Some("ctx 12.3k/200k".to_string());
-    let blocks = s.chrome_blocks(HeaderMarkup::Html);
+    let out = s.chrome_classic();
+    // Blank line between checklist and goal (the classic stand-in for the
+    // rich <hr> — Decision 13); no blank line between title and checklist.
     assert_eq!(
-        blocks,
-        vec![
-            "📋 <b>Ship plan mode</b>".to_string(),
-            "☑ scope it".to_string(),
-            "☐ build it".to_string(),
-            "🎯 <i>close B</i>".to_string(),
-        ]
+        out,
+        "📋 <b>Ship plan mode</b>\n☑ scope it\n☐ build it\n\n🎯 <i>close B</i>"
     );
-    let joined = blocks.join("\n");
     assert!(
-        !joined.contains("Editing plan"),
+        !out.contains("Editing plan"),
         "plan_state stays in the footer"
     );
-    assert!(!joined.contains("ctx"), "ctx stays in the footer");
+    assert!(!out.contains("ctx"), "ctx stays in the footer");
 }
 
 #[test]
-fn chrome_blocks_empty_when_title_checklist_goal_all_empty() {
+fn chrome_empty_when_all_plan_sections_empty() {
     let mut s = sections(None, None, None);
-    // plan_state / ctx set but no title/checklist/goal → no chrome blocks.
+    // plan_state / ctx set but no title/prose/checklist/goal → no chrome.
     s.plan_state = Some("✍️ Editing plan".to_string());
     s.ctx = Some("ctx 1k/200k".to_string());
-    assert!(s.chrome_blocks(HeaderMarkup::Html).is_empty());
+    assert!(s.chrome_classic().is_empty());
+    assert!(s.chrome_rich().is_empty());
 }
 
 #[test]
-fn chrome_blocks_escape_html_in_section_text() {
+fn chrome_escapes_html_in_section_text() {
     let s = sections(Some("a <b> & c"), Some(vec!["☐ x < y"]), None);
-    let blocks = s.chrome_blocks(HeaderMarkup::Html);
-    let joined = blocks.join("\n");
-    assert!(joined.contains("a &lt;b&gt; &amp; c"), "title escaped");
-    assert!(joined.contains("☐ x &lt; y"), "checklist row escaped");
-    assert!(!joined.contains("a <b> & c"));
+    for out in [s.chrome_classic(), s.chrome_rich()] {
+        assert!(out.contains("a &lt;b&gt; &amp; c"), "title escaped: {out}");
+        assert!(out.contains("☐ x &lt; y"), "checklist row escaped: {out}");
+        assert!(!out.contains("a <b> & c"));
+    }
+}
+
+// ── per-heading prose split (Decision 12) ──
+
+#[test]
+fn split_plan_prose_strips_h1_and_cuts_on_top_level_headings() {
+    let md = "# The Plan\n\nintro paragraph\n\n## Context\nwhy we do it\n\n## Steps\n1. first\n2. second\n";
+    let secs = split_plan_prose(md);
+    assert_eq!(
+        secs,
+        vec![
+            prose(None, "intro paragraph"),
+            prose(Some("Context"), "why we do it"),
+            prose(Some("Steps"), "1. first\n2. second"),
+        ]
+    );
 }
 
 #[test]
-fn chrome_blocks_markdown_dialect_keeps_raw_text() {
-    let s = sections(Some("title"), Some(vec!["☐ do X"]), None);
-    let blocks = s.chrome_blocks(HeaderMarkup::Markdown);
+fn split_plan_prose_keeps_nested_headings_in_the_body() {
+    let secs = split_plan_prose("## Design\n### Option A\ntext a\n### Option B\ntext b");
     assert_eq!(
-        blocks,
-        vec!["📋 **title**".to_string(), "☐ do X".to_string()]
+        secs,
+        vec![prose(
+            Some("Design"),
+            "### Option A\ntext a\n### Option B\ntext b"
+        )]
     );
+}
+
+#[test]
+fn split_plan_prose_ignores_headings_inside_code_fences() {
+    let md = "## Setup\n```\n## not a heading\n# neither\n```\ndone";
+    let secs = split_plan_prose(md);
+    assert_eq!(secs.len(), 1);
+    assert_eq!(secs[0].heading.as_deref(), Some("Setup"));
+    assert!(secs[0].body.contains("## not a heading"));
+}
+
+#[test]
+fn split_plan_prose_drops_empty_sections_and_empty_input() {
+    assert!(split_plan_prose("").is_empty());
+    assert!(split_plan_prose("# Title Only\n\n").is_empty());
+    // A heading with nothing under it has nothing to disclose.
+    assert_eq!(
+        split_plan_prose("## Empty\n\n## Real\ncontent"),
+        vec![prose(Some("Real"), "content")]
+    );
+}
+
+// ── prose rendering: rich details per heading / classic expandables ──
+
+#[test]
+fn rich_prose_renders_one_details_per_heading_flush_after_title() {
+    let mut s = sections(Some("The Plan"), None, None);
+    s.prose = Some(vec![
+        prose(None, "intro line"),
+        prose(Some("Context"), "why\n\nand how"),
+    ]);
+    let out = s.chrome_rich();
+    // Title flush against prose (no spacer), orphan preamble always visible,
+    // heading as inline summary, blank body lines dropped on rich.
+    assert_eq!(
+        out,
+        "<p>📋 <b>The Plan</b></p><p>intro line</p>\
+         <details><summary>Context</summary><p>why</p><p>and how</p></details>"
+    );
+}
+
+#[test]
+fn rich_prose_then_checklist_then_goal_use_hr_boundaries() {
+    let mut s = sections(Some("P"), Some(vec!["☐ a"]), Some("g"));
+    s.prose = Some(vec![prose(Some("Ctx"), "body")]);
+    let out = s.chrome_rich();
+    assert_eq!(
+        out,
+        "<p>📋 <b>P</b></p><details><summary>Ctx</summary><p>body</p></details>\
+         <hr><p>☐ a</p><hr><p>🎯 <i>g</i></p>"
+    );
+}
+
+#[test]
+fn rich_title_and_checklist_without_prose_have_no_hr_between_them() {
+    let s = sections(Some("P"), Some(vec!["☐ a", "☐ b"]), None);
+    assert_eq!(s.chrome_rich(), "<p>📋 <b>P</b></p><p>☐ a</p><p>☐ b</p>");
+}
+
+#[test]
+fn classic_prose_puts_bold_heading_inside_the_expandable() {
+    let mut s = sections(Some("The Plan"), None, None);
+    s.prose = Some(vec![prose(Some("Context"), "why we do it")]);
+    let out = s.chrome_classic();
+    // The bold heading is the FIRST line inside the blockquote so the
+    // collapsed peek shows it (Decision 12) — never a visible line above it.
+    assert_eq!(
+        out,
+        "📋 <b>The Plan</b>\n<blockquote expandable><b>Context</b>\nwhy we do it</blockquote>"
+    );
+}
+
+#[test]
+fn classic_prose_keeps_blank_lines_and_formats_markdown_body() {
+    let mut s = sections(None, None, None);
+    s.prose = Some(vec![prose(
+        Some("Steps"),
+        "### Sub\n- item **bold**\n\nplain `code`",
+    )]);
+    let out = s.chrome_classic();
+    assert!(out.contains("<b>Sub</b>"), "nested heading bolded: {out}");
+    assert!(out.contains("• item <b>bold</b>"), "list bulleted: {out}");
+    assert!(out.contains("\n\n"), "paragraph break kept on classic");
+    assert!(
+        out.contains("plain <code>code</code>"),
+        "inline code: {out}"
+    );
+}
+
+#[test]
+fn prose_body_escapes_html_and_keeps_fenced_code_as_code_lines() {
+    let mut s = sections(None, None, None);
+    s.prose = Some(vec![prose(
+        Some("Danger"),
+        "a <b> tag\n```\nlet x = 1;\n```",
+    )]);
+    let out = s.chrome_rich();
+    assert!(out.contains("a &lt;b&gt; tag"), "body escaped: {out}");
+    assert!(
+        out.contains("<code>let x = 1;</code>"),
+        "fence as code: {out}"
+    );
+    assert!(!out.contains("```"), "fence markers stripped: {out}");
 }
 
 // ── header-only renders (empty flow_entries): plain merged footer ──

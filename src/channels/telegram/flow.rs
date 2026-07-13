@@ -455,15 +455,15 @@ pub(crate) fn render_flow_html_chrome_pref(
         ),
         HeaderMarkup::Html,
     );
-    // Always-visible plan chrome as vertical blocks (title, then one line per
-    // ☐/☑ checklist task, then the goal one-liner — ADR 0005 Decision 3). The
-    // classic Bot API HTML path preserves raw newlines, so blocks join with a
-    // single newline.
-    let chrome = sections.chrome_blocks(HeaderMarkup::Html);
+    // Always-visible plan chrome in the locked vertical order (title, prose
+    // expandables, ☐/☑ checklist rows, goal — ADR 0005 Decision 3), assembled
+    // for the classic Bot API HTML dialect (blank lines stand in for the rich
+    // <hr> boundaries — Decision 13).
+    let chrome = sections.chrome_classic();
 
     let mut msg = String::new();
     if !chrome.is_empty() {
-        msg.push_str(&chrome.join("\n"));
+        msg.push_str(&chrome);
     }
     // A blank line separates any chrome above from the log/footer cluster
     // (Decision 13, classic uses blank lines). The log body is the full entry
@@ -559,15 +559,13 @@ pub(crate) fn render_flow_details_chrome_pref(
     );
 
     let mut msg = String::new();
-    let chrome = sections.chrome_blocks(HeaderMarkup::Html);
+    let chrome = sections.chrome_rich();
     if !chrome.is_empty() {
-        // Always-visible chrome blocks: title, one line per ☐/☑ checklist task,
-        // then the goal one-liner (ADR 0005 Decision 3). Rich HTML input ignores
-        // raw newlines, so each block is its own <p>; a kept spacer follows
-        // before the footer (Decision 13).
-        for block in &chrome {
-            msg.push_str(&format!("<p>{block}</p>"));
-        }
+        // Always-visible plan chrome in the locked vertical order: title flush
+        // against the per-heading prose <details>, <hr> boundaries, ☐/☑
+        // checklist rows, goal (ADR 0005 Decision 3/12/13); a kept spacer
+        // follows before the footer.
+        msg.push_str(&chrome);
         msg.push_str("<p>&nbsp;</p>");
     }
     if has_log {
