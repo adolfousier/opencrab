@@ -37,10 +37,10 @@ These are always overwritten on import:
 ### Root Level
 - `id` — UUID, regenerated
 - `session_id` — UUID, from session
-- `status` — always `"Draft"`
+- `status` — set on write: `"Editing"` on `plan init`, `"Active"` on Approve / `/execute` (never `"Draft"`)
 - `created_at` — ISO timestamp
 - `updated_at` — ISO timestamp  
-- `approved_at` — always `null`
+- `approved_at` — `null` until user Approve on the design track, then an ISO timestamp
 - `context` — defaults to empty string
 - `risks` — defaults to `[]`
 - `technical_stack` — defaults to `[]`
