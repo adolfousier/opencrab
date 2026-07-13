@@ -52,13 +52,13 @@ const EDITING_DENIED_NAMES: &[&str] = &[
 /// Check a tool call against the session's plan-mode state. `None` means
 /// the call proceeds (normal approval policy applies); `Some(reason)` is
 /// a deterministic denial the model receives as the tool result.
-pub(crate) fn check_plan_gate(
+pub(crate) async fn check_plan_gate(
     session_id: Uuid,
     tool_name: &str,
     capabilities: &[ToolCapability],
     input: &Value,
 ) -> Option<String> {
-    let state = plan_files::plan_mode_state(session_id);
+    let state = plan_files::plan_mode_state(session_id).await;
     let has = |cap: ToolCapability| capabilities.contains(&cap);
 
     match state {
@@ -71,7 +71,7 @@ pub(crate) fn check_plan_gate(
             // bash, spawn, sends, and system mutators stay blocked so a
             // wandering seed turn cannot start editing the project before
             // the checklist exists.
-            if crate::utils::plan_mode::in_seed_window(session_id) {
+            if crate::utils::plan_mode::in_seed_window(session_id).await {
                 if EDITING_ALLOWED.contains(&tool_name) {
                     return None;
                 }
@@ -92,7 +92,8 @@ pub(crate) fn check_plan_gate(
             // Freeze the live design .md against generic write tools; the
             // checklist executes through the plan tool, not by rewriting
             // the approved design.
-            if has(ToolCapability::WriteFiles) && write_targets_session_md(session_id, input) {
+            if has(ToolCapability::WriteFiles) && write_targets_session_md(session_id, input).await
+            {
                 Some(
                     "Plan gate: the session plan .md is frozen while the checklist is \
                      Active. Execute tasks with the plan tool (start/complete); the \
@@ -162,10 +163,10 @@ pub(crate) fn check_plan_gate(
                 );
             }
             if has(ToolCapability::WriteFiles) {
-                if write_targets_session_md(session_id, input) {
+                if write_targets_session_md(session_id, input).await {
                     return None;
                 }
-                let md = plan_files::plan_md_path(session_id);
+                let md = plan_files::plan_md_path(session_id).await;
                 return Some(format!(
                     "Plan gate: while the plan is being designed (Editing), the ONLY \
                      writable file is the session plan document at {}. Write the \
@@ -194,7 +195,7 @@ pub(crate) fn check_plan_gate(
 /// write tool whose target cannot be determined does NOT match, so in
 /// post-init Editing it is denied (safe default) and in Active it is
 /// allowed (the freeze only guards the .md).
-pub(crate) fn write_targets_session_md(session_id: Uuid, input: &Value) -> bool {
+pub(crate) async fn write_targets_session_md(session_id: Uuid, input: &Value) -> bool {
     let Some(raw) = input
         .get("path")
         .or_else(|| input.get("file_path"))
@@ -202,7 +203,7 @@ pub(crate) fn write_targets_session_md(session_id: Uuid, input: &Value) -> bool 
     else {
         return false;
     };
-    let md = plan_files::plan_md_path(session_id);
+    let md = plan_files::plan_md_path(session_id).await;
     let candidate = PathBuf::from(raw);
     if candidate.is_absolute() {
         paths_match(&candidate, &md)

@@ -1072,7 +1072,7 @@ impl TelegramAgent {
                                 if data == "plan:no" {
                                     let cancelled = state.cancel_session(session_id).await;
                                     let mut reply =
-                                        crate::utils::plan_mode::discard(session_id);
+                                        crate::utils::plan_mode::discard(session_id).await;
                                     if cancelled {
                                         reply =
                                             format!("⏹️ Cancelled the running turn. {reply}");
@@ -1105,7 +1105,7 @@ impl TelegramAgent {
                                         .await;
                                     return ResponseResult::Ok(());
                                 }
-                                match crate::utils::plan_mode::try_approve(session_id) {
+                                match crate::utils::plan_mode::try_approve(session_id).await {
                                     crate::utils::plan_mode::ApproveOutcome::Refused(msg) => {
                                         let _ =
                                             bot.answer_callback_query(query.id.clone()).await;

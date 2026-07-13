@@ -17,14 +17,20 @@ use crate::utils::plan_files::{self, PlanModeState};
 pub(super) fn render_plan_overlay(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Clear, area);
 
-    let Some(sid) = app.current_session.as_ref().map(|s| s.id) else {
+    if app.current_session.is_none() {
         let p = Paragraph::new("No active session.")
             .block(Block::default().borders(Borders::ALL).title(" Plan "));
         f.render_widget(p, area);
         return;
-    };
+    }
 
-    let state = plan_files::plan_mode_state(sid);
+    // Render from state the async layer already resolved: the loaded plan
+    // (reload_plan) and the resolved plan file path. Deriving the mode-state
+    // and body here keeps the render loop sync, since the location resolver
+    // is a DB lookup that must not run per frame.
+    let md_path = app.plan_file_path.as_ref().map(|p| p.with_extension("md"));
+    let md_exists = md_path.as_ref().is_some_and(|p| p.exists());
+    let state = plan_files::plan_mode_state_of(app.plan_document.as_ref(), md_exists);
     let (badge, badge_style) = match state {
         PlanModeState::NoPlan => ("no plan", Style::default().fg(Color::DarkGray)),
         PlanModeState::PreInitEditing => (
@@ -57,9 +63,15 @@ pub(super) fn render_plan_overlay(f: &mut Frame, app: &App, area: Rect) {
                                           SESSION PLAN for your approval. Leave Plan mode \
                                           with /discard."
             .to_string(),
-        PlanModeState::PostInitEditing => std::fs::read_to_string(plan_files::plan_md_path(sid))
-            .unwrap_or_else(|_| "(the session plan .md is unreadable)".to_string()),
-        PlanModeState::Active => crate::utils::plan_mode::show_plan(sid),
+        PlanModeState::PostInitEditing => md_path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_else(|| "(the session plan .md is unreadable)".to_string()),
+        PlanModeState::Active => app
+            .plan_document
+            .as_ref()
+            .map(crate::utils::plan_mode::format_active_checklist)
+            .unwrap_or_else(|| "Plan JSON is unreadable.".to_string()),
     };
 
     let title = Line::from(vec![

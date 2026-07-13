@@ -63,9 +63,9 @@ fn seed_prompt(md_path: &std::path::Path) -> String {
 ///
 /// Everything else refuses with a deterministic message. The caller MUST
 /// have already refused when a turn is in flight.
-pub fn try_approve(session_id: Uuid) -> ApproveOutcome {
-    let md_path = plan_files::plan_md_path(session_id);
-    match plan_files::plan_mode_state(session_id) {
+pub async fn try_approve(session_id: Uuid) -> ApproveOutcome {
+    let md_path = plan_files::plan_md_path(session_id).await;
+    match plan_files::plan_mode_state(session_id).await {
         PlanModeState::NoPlan => ApproveOutcome::Refused(
             "No plan to approve: this session has no live plan. Start one with /plan \
              (design) or ask for a checklist."
@@ -85,7 +85,7 @@ pub fn try_approve(session_id: Uuid) -> ApproveOutcome {
                     md_path.display()
                 ));
             }
-            let Some(mut plan) = plan_files::load_plan(session_id) else {
+            let Some(mut plan) = plan_files::load_plan(session_id).await else {
                 return ApproveOutcome::Refused(
                     "Plan JSON is unreadable; cannot approve. /discard and start over.".to_string(),
                 );
@@ -93,7 +93,7 @@ pub fn try_approve(session_id: Uuid) -> ApproveOutcome {
             // First approve: Editing -> Active + approved_at. The .md
             // freezes automatically (the gate keys off Active status).
             plan.approve();
-            if let Err(e) = plan_files::save_plan(&plan) {
+            if let Err(e) = plan_files::save_plan(&plan).await {
                 return ApproveOutcome::Refused(format!(
                     "Failed to persist the approval: {e}. The .md is untouched; try again."
                 ));
@@ -103,7 +103,7 @@ pub fn try_approve(session_id: Uuid) -> ApproveOutcome {
             }
         }
         PlanModeState::Active => {
-            let Some(plan) = plan_files::load_plan(session_id) else {
+            let Some(plan) = plan_files::load_plan(session_id).await else {
                 return ApproveOutcome::Refused(
                     "Plan JSON is unreadable; cannot retry. /discard and start over.".to_string(),
                 );
@@ -140,8 +140,8 @@ pub fn try_approve(session_id: Uuid) -> ApproveOutcome {
 
 /// `/plan`: set durable pre-init Editing. It does not create an
 /// approvable plan; the agent must still call `plan init`.
-pub fn enter_plan_mode(session_id: Uuid) -> String {
-    match plan_files::plan_mode_state(session_id) {
+pub async fn enter_plan_mode(session_id: Uuid) -> String {
+    match plan_files::plan_mode_state(session_id).await {
         PlanModeState::PostInitEditing => {
             "A design plan is already being edited. Refine it, then approve with \
              /execute (or /discard it)."
@@ -151,7 +151,7 @@ pub fn enter_plan_mode(session_id: Uuid) -> String {
              /discard it before planning something new."
             .to_string(),
         PlanModeState::PreInitEditing | PlanModeState::NoPlan => {
-            match plan_files::set_pre_init_editing(session_id) {
+            match plan_files::set_pre_init_editing(session_id).await {
                 Ok(()) => "📋 Plan mode on. Describe what you want planned: the agent \
                            will explore, then draft a design document for your approval. \
                            Project writes stay blocked until you approve. Leave with \
@@ -166,15 +166,15 @@ pub fn enter_plan_mode(session_id: Uuid) -> String {
 /// `/discard`: clear the pre-init flag or delete plan artifacts,
 /// returning the session to NoPlan. The caller cancels an in-flight turn
 /// first when needed.
-pub fn discard(session_id: Uuid) -> String {
-    match plan_files::plan_mode_state(session_id) {
+pub async fn discard(session_id: Uuid) -> String {
+    match plan_files::plan_mode_state(session_id).await {
         PlanModeState::NoPlan => "No live plan to discard.".to_string(),
         PlanModeState::PreInitEditing => {
-            plan_files::discard_plan(session_id);
+            plan_files::discard_plan(session_id).await;
             "Plan mode off (pre-init flag cleared).".to_string()
         }
         PlanModeState::PostInitEditing | PlanModeState::Active => {
-            plan_files::discard_plan(session_id);
+            plan_files::discard_plan(session_id).await;
             "🗑️ Plan discarded: design document and checklist removed. The session \
              has no live plan."
                 .to_string()
@@ -189,8 +189,8 @@ const PLAN_PROSE_CAP: usize = 3000;
 
 /// `/show-plan`: a text summary of the current plan state. Surfaces may
 /// additionally restick chrome (Telegram) or open the overlay (TUI).
-pub fn show_plan(session_id: Uuid) -> String {
-    match plan_files::plan_mode_state(session_id) {
+pub async fn show_plan(session_id: Uuid) -> String {
+    match plan_files::plan_mode_state(session_id).await {
         PlanModeState::NoPlan => "No active plan for this session.".to_string(),
         PlanModeState::PreInitEditing => {
             "Plan mode is on (pre-init): no design document yet. The agent still \
@@ -198,9 +198,10 @@ pub fn show_plan(session_id: Uuid) -> String {
                 .to_string()
         }
         PlanModeState::PostInitEditing => {
-            let md = plan_files::plan_md_path(session_id);
+            let md = plan_files::plan_md_path(session_id).await;
             let body = std::fs::read_to_string(&md).unwrap_or_default();
             let title = plan_files::load_plan(session_id)
+                .await
                 .map(|p| p.title)
                 .unwrap_or_default();
             let ready = match validate_for_approve(&body) {
@@ -228,54 +229,61 @@ pub fn show_plan(session_id: Uuid) -> String {
             )
         }
         PlanModeState::Active => {
-            let Some(plan) = plan_files::load_plan(session_id) else {
+            let Some(plan) = plan_files::load_plan(session_id).await else {
                 return "Plan JSON is unreadable.".to_string();
             };
-            if plan.tasks.is_empty() {
-                return format!(
-                    "📋 {} is Active but the checklist is still empty (seed did not \
-                     finish). Retry with /execute, or /discard.",
-                    plan.title
-                );
-            }
-            let done = plan
-                .tasks
-                .iter()
-                .filter(|t| {
-                    matches!(
-                        t.status,
-                        crate::tui::plan::TaskStatus::Completed
-                            | crate::tui::plan::TaskStatus::Skipped
-                    )
-                })
-                .count();
-            let lines = plan
-                .tasks
-                .iter()
-                .map(|t| format!("{} {}. {}", t.status.icon(), t.order, t.title))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "📋 {} (Active, {done}/{} done)\n{lines}",
-                plan.title,
-                plan.tasks.len()
-            )
+            format_active_checklist(&plan)
         }
     }
+}
+
+/// The Active-checklist summary shared by `/show-plan` and the TUI plan
+/// overlay: the seed-incomplete notice when tasks are empty, otherwise the
+/// checklist with progress. Pure (takes the already-loaded plan), so the
+/// sync render path can reuse it without touching the async store.
+pub fn format_active_checklist(plan: &crate::tui::plan::PlanDocument) -> String {
+    if plan.tasks.is_empty() {
+        return format!(
+            "📋 {} is Active but the checklist is still empty (seed did not \
+             finish). Retry with /execute, or /discard.",
+            plan.title
+        );
+    }
+    let done = plan
+        .tasks
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.status,
+                crate::tui::plan::TaskStatus::Completed | crate::tui::plan::TaskStatus::Skipped
+            )
+        })
+        .count();
+    let lines = plan
+        .tasks
+        .iter()
+        .map(|t| format!("{} {}. {}", t.status.icon(), t.order, t.title))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "📋 {} (Active, {done}/{} done)\n{lines}",
+        plan.title,
+        plan.tasks.len()
+    )
 }
 
 /// Whether the session is in the seed window: Active design plan whose
 /// checklist has not successfully started (empty tasks, or tasks present
 /// but none ever left Pending). Surfaces show Building checklist… chrome
 /// while a seed turn is in flight in this window.
-pub fn in_seed_window(session_id: Uuid) -> bool {
-    if plan_files::plan_mode_state(session_id) != PlanModeState::Active {
+pub async fn in_seed_window(session_id: Uuid) -> bool {
+    if plan_files::plan_mode_state(session_id).await != PlanModeState::Active {
         return false;
     }
-    if !plan_files::plan_md_path(session_id).exists() {
+    if !plan_files::plan_md_path(session_id).await.exists() {
         return false;
     }
-    plan_files::load_plan(session_id).is_some_and(|p| {
+    plan_files::load_plan(session_id).await.is_some_and(|p| {
         p.status == PlanStatus::Active
             && p.tasks
                 .iter()

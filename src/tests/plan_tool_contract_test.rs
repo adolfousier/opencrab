@@ -51,7 +51,7 @@ async fn design_init_creates_md_and_enters_editing() {
         )
         .await;
         assert!(ok, "design init must succeed, got: {out}");
-        let md = plan_md_path(ctx.session_id);
+        let md = plan_md_path(ctx.session_id).await;
         assert!(md.exists(), "design init must create the session .md");
         assert!(
             out.contains(&md.display().to_string()),
@@ -62,10 +62,10 @@ async fn design_init_creates_md_and_enters_editing() {
             "design init must steer the model away from start, got: {out}"
         );
         assert_eq!(
-            plan_mode_state(ctx.session_id),
+            plan_mode_state(ctx.session_id).await,
             PlanModeState::PostInitEditing
         );
-        let plan = load_plan(ctx.session_id).unwrap();
+        let plan = load_plan(ctx.session_id).await.unwrap();
         assert_eq!(plan.status, PlanStatus::Editing);
         assert!(plan.tasks.is_empty());
         assert!(plan.approved_at.is_none());
@@ -82,7 +82,7 @@ async fn omitted_mode_disambiguates_by_tasks() {
         let (ok, _) = run(&tool, &ctx, json!({ "operation": "init", "title": "D" })).await;
         assert!(ok);
         assert_eq!(
-            plan_mode_state(ctx.session_id),
+            plan_mode_state(ctx.session_id).await,
             PlanModeState::PostInitEditing
         );
 
@@ -99,7 +99,10 @@ async fn omitted_mode_disambiguates_by_tasks() {
             out.contains("Active"),
             "checklist init reports Active, got: {out}"
         );
-        assert_eq!(plan_mode_state(ctx2.session_id), PlanModeState::Active);
+        assert_eq!(
+            plan_mode_state(ctx2.session_id).await,
+            PlanModeState::Active
+        );
     })
     .await;
 }
@@ -128,7 +131,7 @@ async fn conflicting_mode_and_tasks_are_refused() {
         assert!(msg.contains("checklist"), "got: {msg}");
 
         // Neither refusal left plan artifacts behind.
-        assert_eq!(plan_mode_state(ctx.session_id), PlanModeState::NoPlan);
+        assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::NoPlan);
     })
     .await;
 }
@@ -169,7 +172,7 @@ async fn pre_init_upgrades_to_design_and_replaces_for_checklist() {
 
         // Upgrade: pre-init → design init → post-init Editing.
         let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
-        set_pre_init_editing(ctx.session_id).unwrap();
+        set_pre_init_editing(ctx.session_id).await.unwrap();
         let (ok, _) = run(
             &tool,
             &ctx,
@@ -178,15 +181,15 @@ async fn pre_init_upgrades_to_design_and_replaces_for_checklist() {
         .await;
         assert!(ok, "design init from pre-init must upgrade the sidecar");
         assert_eq!(
-            plan_mode_state(ctx.session_id),
+            plan_mode_state(ctx.session_id).await,
             PlanModeState::PostInitEditing
         );
-        let plan = load_plan(ctx.session_id).unwrap();
+        let plan = load_plan(ctx.session_id).await.unwrap();
         assert!(!plan.pre_init_editing, "the flag is consumed by init");
 
         // Replace: pre-init → checklist init → Active, no /discard needed.
         let ctx2 = ToolExecutionContext::new(uuid::Uuid::new_v4());
-        set_pre_init_editing(ctx2.session_id).unwrap();
+        set_pre_init_editing(ctx2.session_id).await.unwrap();
         let (ok, _) = run(
             &tool,
             &ctx2,
@@ -194,7 +197,10 @@ async fn pre_init_upgrades_to_design_and_replaces_for_checklist() {
         )
         .await;
         assert!(ok, "checklist init from pre-init must replace the flag");
-        assert_eq!(plan_mode_state(ctx2.session_id), PlanModeState::Active);
+        assert_eq!(
+            plan_mode_state(ctx2.session_id).await,
+            PlanModeState::Active
+        );
     })
     .await;
 }
@@ -293,7 +299,7 @@ async fn add_tasks_appends_multiple_and_alias_still_works() {
 
         let (ok, out) = run(&tool, &ctx, json!({ "operation": "add_task", "title": "four" })).await;
         assert!(ok, "add_task alias must keep working, got: {out}");
-        assert_eq!(load_plan(ctx.session_id).unwrap().tasks.len(), 4);
+        assert_eq!(load_plan(ctx.session_id).await.unwrap().tasks.len(), 4);
 
         let (ok, msg) = run(&tool, &ctx, json!({ "operation": "add_tasks", "tasks": [] })).await;
         assert!(!ok, "empty add_tasks must be refused, got: {msg}");
@@ -314,7 +320,7 @@ async fn first_start_does_not_auto_approve() {
         .await;
         let (ok, _) = run(&tool, &ctx, json!({ "operation": "start" })).await;
         assert!(ok);
-        let plan = load_plan(ctx.session_id).unwrap();
+        let plan = load_plan(ctx.session_id).await.unwrap();
         assert!(
             plan.approved_at.is_none(),
             "start must not stamp approved_at: that belongs to user Approve"
@@ -347,10 +353,10 @@ async fn completing_last_task_archives_to_no_plan() {
             "completion reports the archive, got: {out}"
         );
         assert!(
-            !plan_json_path(ctx.session_id).exists(),
+            !plan_json_path(ctx.session_id).await.exists(),
             "live JSON must be archived away"
         );
-        assert_eq!(plan_mode_state(ctx.session_id), PlanModeState::NoPlan);
+        assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::NoPlan);
     })
     .await;
 }
@@ -381,7 +387,7 @@ async fn empty_import_is_refused() {
         .await;
         assert!(!ok, "empty import must be refused");
         assert!(msg.contains("no tasks"), "got: {msg}");
-        assert_eq!(plan_mode_state(ctx.session_id), PlanModeState::NoPlan);
+        assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::NoPlan);
     })
     .await;
 }
@@ -405,7 +411,7 @@ async fn import_refused_while_live_but_replaces_pre_init() {
 
         // From pre-init: import replaces the flag and goes Active.
         let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
-        set_pre_init_editing(ctx.session_id).unwrap();
+        set_pre_init_editing(ctx.session_id).await.unwrap();
         let (ok, _) = run(
             &tool,
             &ctx,
@@ -413,7 +419,7 @@ async fn import_refused_while_live_but_replaces_pre_init() {
         )
         .await;
         assert!(ok, "import from pre-init must replace the flag");
-        assert_eq!(plan_mode_state(ctx.session_id), PlanModeState::Active);
+        assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::Active);
 
         // From post-init Editing: refused.
         let ctx2 = ToolExecutionContext::new(uuid::Uuid::new_v4());

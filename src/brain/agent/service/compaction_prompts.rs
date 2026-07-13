@@ -76,9 +76,9 @@ pub enum PlanRecovery {
 
 impl PlanRecovery {
     /// Derive from the session's plan files.
-    pub fn for_session(session_id: uuid::Uuid) -> Self {
+    pub async fn for_session(session_id: uuid::Uuid) -> Self {
         use crate::utils::plan_files::{PlanModeState, plan_mode_state};
-        match plan_mode_state(session_id) {
+        match plan_mode_state(session_id).await {
             PlanModeState::NoPlan => PlanRecovery::NoPlan,
             PlanModeState::PreInitEditing | PlanModeState::PostInitEditing => PlanRecovery::Editing,
             PlanModeState::Active => PlanRecovery::Active,

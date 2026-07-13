@@ -292,7 +292,9 @@ impl ToolRegistry {
             name,
             &tool.capabilities(),
             &input,
-        ) {
+        )
+        .await
+        {
             tracing::info!("Plan gate denied tool '{}': session is plan-gated", name);
             return Ok(ToolResult::error(reason));
         }
@@ -310,7 +312,7 @@ impl ToolRegistry {
         let is_md_write = tool
             .capabilities()
             .contains(&crate::brain::tools::r#trait::ToolCapability::WriteFiles)
-            && super::plan_gate::write_targets_session_md(context.session_id, &input);
+            && super::plan_gate::write_targets_session_md(context.session_id, &input).await;
         let result = tool.execute(input, context).await?;
 
         // Editing mirror: a successful write to the session plan .md syncs
@@ -319,7 +321,7 @@ impl ToolRegistry {
         // (TUI chrome, Telegram sections) sees the fresh design. Advisory
         // template warnings are logged, never blocking.
         if result.success && is_md_write {
-            let warnings = crate::utils::plan_files::sync_md_to_json(context.session_id);
+            let warnings = crate::utils::plan_files::sync_md_to_json(context.session_id).await;
             if !warnings.is_empty() {
                 tracing::debug!(
                     "Plan .md template warnings after write: {}",

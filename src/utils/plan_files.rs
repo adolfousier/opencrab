@@ -1,13 +1,20 @@
 //! Shared session plan file store: the single loader/saver for the plan
 //! lifecycle engine (NoPlan / Editing / Active).
 //!
-//! Plan artifacts live under `~/.opencrabs/agents/session/`:
+//! Plan artifacts live in the session's resolved directory (see
+//! [`session_dir`]): `<project>/session/` when the session is bound to a
+//! project, otherwise the profile/default `<home>/session/`:
 //! - `.opencrabs_plan_{session_id}.json`: the live store (status, title,
 //!   checklist). The minimal pre-init Editing sidecar uses the same path.
 //! - `.opencrabs_plan_{session_id}.md`: canonical design prose while the
 //!   plan is post-init Editing; frozen against generic writes once Active.
 //! - `archive/`: completed plans move here with a timestamp; there is no
 //!   lingering live "Done" status.
+//!
+//! Resolution is a DB lookup (session -> project), so the path helpers are
+//! async. Reads fall back to the legacy flat `~/.opencrabs/agents/session/`
+//! so plans written by an older binary are not orphaned; writes always go to
+//! the resolved location.
 //!
 //! Legacy seven-status JSON is mapped on load (see [`PlanStatus`]'s
 //! deserializer). Two terminal legacy statuses are resolved here, at the
@@ -19,26 +26,90 @@ use crate::tui::plan::{PlanDocument, PlanStatus};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// `~/.opencrabs/agents/session/`: where session plan artifacts live.
-pub fn session_dir() -> PathBuf {
+/// The session's data directory, resolved by what the session is bound to
+/// (project > profile > neither), holding its plan artifacts (and, going
+/// forward, its attachments):
+/// - project-bound: `~/.opencrabs/projects/<slug>/session/`
+/// - named profile / default: `<profile home>/session/`
+///
+/// The project branch is a DB lookup (session -> project), so this is async.
+/// It reads the process-global pool the same way the channel-send tools do
+/// (`crate::db::global_pool`), and falls back to the profile/default home
+/// when there is no pool (tests, early startup) or the session is not bound
+/// to a project. `opencrabs_home()` is already profile-aware, so its
+/// `session/` child covers both the named-profile and default cases.
+pub async fn session_dir(session_id: Uuid) -> PathBuf {
+    if let Some(pool) = crate::db::global_pool()
+        && let Some(dir) = project_session_dir(session_id, pool).await
+    {
+        return dir;
+    }
+    crate::config::opencrabs_home().join("session")
+}
+
+/// `<project>/session/` when the session is bound to a project. Mirrors
+/// [`crate::services::FileService::project_files_dir`] but resolves the
+/// session subdir instead of `files/`, so a project's plan and attachments
+/// live under one roof.
+async fn project_session_dir(session_id: Uuid, pool: &crate::db::Pool) -> Option<PathBuf> {
+    use crate::db::repository::{ProjectRepository, SessionRepository};
+    let session = SessionRepository::new(pool.clone())
+        .find_by_id(session_id)
+        .await
+        .ok()??;
+    let project_id = session.project_id?;
+    let project = ProjectRepository::new(pool.clone())
+        .find_by_id(project_id)
+        .await
+        .ok()??;
+    Some(
+        crate::services::ProjectService::projects_dir()
+            .join(crate::services::file::slugify_project_name(&project.name))
+            .join("session"),
+    )
+}
+
+/// Legacy pre-resolution location: the flat `~/.opencrabs/agents/session/`
+/// every plan used before the location became project/profile-aware. Read
+/// paths fall back here so plans written by an older binary aren't orphaned;
+/// writes always go to the resolved [`session_dir`].
+fn legacy_session_dir() -> PathBuf {
     crate::config::opencrabs_home()
         .join("agents")
         .join("session")
 }
 
-/// `~/.opencrabs/agents/session/archive/`: where completed plans retire.
-pub fn archive_dir() -> PathBuf {
-    session_dir().join("archive")
+/// `<session_dir>/archive/`: where completed plans retire.
+pub async fn archive_dir(session_id: Uuid) -> PathBuf {
+    session_dir(session_id).await.join("archive")
 }
 
-/// Live plan JSON path for a session.
-pub fn plan_json_path(session_id: Uuid) -> PathBuf {
-    session_dir().join(format!(".opencrabs_plan_{session_id}.json"))
+/// Live plan JSON path for a session (resolved write location).
+pub async fn plan_json_path(session_id: Uuid) -> PathBuf {
+    session_dir(session_id)
+        .await
+        .join(format!(".opencrabs_plan_{session_id}.json"))
 }
 
-/// Session design markdown path (exists only after a design-track `init`).
-pub fn plan_md_path(session_id: Uuid) -> PathBuf {
-    session_dir().join(format!(".opencrabs_plan_{session_id}.md"))
+/// Session design markdown path (resolved write location; exists only after a
+/// design-track `init`).
+pub async fn plan_md_path(session_id: Uuid) -> PathBuf {
+    session_dir(session_id)
+        .await
+        .join(format!(".opencrabs_plan_{session_id}.md"))
+}
+
+/// The JSON path to READ from: the resolved location if the file is present
+/// there, else the legacy flat dir (so an older binary's plan is still
+/// found), else the resolved path (the not-yet-created case). Writes never
+/// use this: they always target [`plan_json_path`].
+pub async fn plan_json_read_path(session_id: Uuid) -> PathBuf {
+    let resolved = plan_json_path(session_id).await;
+    if resolved.exists() {
+        return resolved;
+    }
+    let legacy = legacy_session_dir().join(format!(".opencrabs_plan_{session_id}.json"));
+    if legacy.exists() { legacy } else { resolved }
 }
 
 /// The live plan-mode state of a session, derived from the files on disk.
@@ -70,15 +141,25 @@ impl PlanModeState {
 }
 
 /// Derive the session's plan-mode state from disk.
-pub fn plan_mode_state(session_id: Uuid) -> PlanModeState {
-    let json = plan_json_path(session_id);
-    if !json.exists() {
-        return PlanModeState::NoPlan;
-    }
-    let Some(plan) = load_plan(session_id) else {
+pub async fn plan_mode_state(session_id: Uuid) -> PlanModeState {
+    let json = plan_json_read_path(session_id).await;
+    // load_plan_from_path returns None for a missing/unreadable/terminal file
+    // (Completed archives, Cancelled deletes), which maps to NoPlan below.
+    let plan = load_plan_from_path(&json);
+    // The `.md` sits next to whichever `.json` we actually found, so derive
+    // it from that path rather than re-resolving (handles the legacy dir).
+    let md_exists = md_path_for(&json).exists();
+    plan_mode_state_of(plan.as_ref(), md_exists)
+}
+
+/// Map an already-loaded (and legacy-normalized) plan plus `.md` existence
+/// onto the lifecycle state. Split out so sync surfaces (the TUI overlay,
+/// which already holds the loaded `PlanDocument`) derive the same state
+/// without re-reading or re-resolving through the async path helpers.
+pub fn plan_mode_state_of(plan: Option<&PlanDocument>, md_exists: bool) -> PlanModeState {
+    let Some(plan) = plan else {
         return PlanModeState::NoPlan;
     };
-    let md_exists = plan_md_path(session_id).exists();
     match plan.status {
         PlanStatus::Active => PlanModeState::Active,
         PlanStatus::Editing if plan.pre_init_editing && !md_exists => PlanModeState::PreInitEditing,
@@ -98,8 +179,8 @@ pub fn plan_mode_state(session_id: Uuid) -> PlanModeState {
 ///   non-empty, no `.md`, no pre-init flag) are normalized to `Active` in
 ///   memory: they were executable in the old world and stay executable.
 /// - anything else parses through [`PlanStatus`]'s legacy string map.
-pub fn load_plan(session_id: Uuid) -> Option<PlanDocument> {
-    load_plan_from_path(&plan_json_path(session_id))
+pub async fn load_plan(session_id: Uuid) -> Option<PlanDocument> {
+    load_plan_from_path(&plan_json_read_path(session_id).await)
 }
 
 /// Maximum plan file size (10MB): guards every consumer of the loader.
@@ -166,10 +247,10 @@ pub fn load_plan_from_path(path: &Path) -> Option<PlanDocument> {
 
 /// Save the plan atomically (temp file + rename), writing the canonical
 /// `"Editing"` / `"Active"` status strings.
-pub fn save_plan(plan: &PlanDocument) -> std::io::Result<()> {
-    let dir = session_dir();
+pub async fn save_plan(plan: &PlanDocument) -> std::io::Result<()> {
+    let dir = session_dir(plan.session_id).await;
     std::fs::create_dir_all(&dir)?;
-    let path = plan_json_path(plan.session_id);
+    let path = plan_json_path(plan.session_id).await;
     let json = serde_json::to_string_pretty(plan)
         .map_err(|e| std::io::Error::other(format!("serialize plan: {e}")))?;
     let tmp = path.with_extension("tmp");
@@ -182,8 +263,8 @@ pub fn save_plan(plan: &PlanDocument) -> std::io::Result<()> {
 /// but `plan init` has not succeeded yet. Durable (survives restart); the
 /// sidecar is a minimal plan JSON with the flag set, empty tasks, and no
 /// approvable content. Refused (Err) when a real plan is already live.
-pub fn set_pre_init_editing(session_id: Uuid) -> std::io::Result<()> {
-    match plan_mode_state(session_id) {
+pub async fn set_pre_init_editing(session_id: Uuid) -> std::io::Result<()> {
+    match plan_mode_state(session_id).await {
         PlanModeState::PostInitEditing | PlanModeState::Active => {
             return Err(std::io::Error::other(
                 "a plan is already live for this session",
@@ -194,22 +275,28 @@ pub fn set_pre_init_editing(session_id: Uuid) -> std::io::Result<()> {
     let mut sidecar = PlanDocument::new(session_id, String::new(), String::new());
     sidecar.pre_init_editing = true;
     sidecar.status = PlanStatus::Editing;
-    save_plan(&sidecar)
+    save_plan(&sidecar).await
 }
 
 /// Whether the durable pre-init Editing flag is set for the session.
-pub fn is_pre_init_editing(session_id: Uuid) -> bool {
-    plan_mode_state(session_id) == PlanModeState::PreInitEditing
+pub async fn is_pre_init_editing(session_id: Uuid) -> bool {
+    plan_mode_state(session_id).await == PlanModeState::PreInitEditing
 }
 
 /// Archive the session's plan artifacts (`.json` and `.md`) under
 /// `archive/` with a timestamp, returning the session to NoPlan.
-pub fn archive_plan(session_id: Uuid) -> std::io::Result<()> {
-    archive_plan_files(&plan_json_path(session_id))
+pub async fn archive_plan(session_id: Uuid) -> std::io::Result<()> {
+    archive_plan_files(&plan_json_read_path(session_id).await)
 }
 
 fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
-    let dir = archive_dir();
+    // Archive next to wherever the plan actually lives (resolved or legacy
+    // dir), so this stays sync and path-based for the loader's terminal-status
+    // path, which holds a path but no session id.
+    let dir = json_path
+        .parent()
+        .map(|p| p.join("archive"))
+        .unwrap_or_else(|| PathBuf::from("archive"));
     std::fs::create_dir_all(&dir)?;
     let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let stem = json_path
@@ -231,8 +318,8 @@ fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
 /// Delete the session's plan artifacts (or clear the pre-init sidecar),
 /// returning the session to NoPlan. The engine half of Discard; command
 /// wiring is the UX layer's.
-pub fn discard_plan(session_id: Uuid) {
-    remove_plan_files(&plan_json_path(session_id));
+pub async fn discard_plan(session_id: Uuid) {
+    remove_plan_files(&plan_json_read_path(session_id).await);
 }
 
 fn remove_plan_files(json_path: &Path) {
@@ -256,10 +343,10 @@ fn md_path_for(json_path: &Path) -> PathBuf {
 /// Create the session design `.md` with the light template B scaffold.
 /// The model fills the sections with natural language; only the headings,
 /// context labels, and step numbering are structural.
-pub fn create_design_md(session_id: Uuid, title: &str) -> std::io::Result<PathBuf> {
-    let dir = session_dir();
+pub async fn create_design_md(session_id: Uuid, title: &str) -> std::io::Result<PathBuf> {
+    let dir = session_dir(session_id).await;
     std::fs::create_dir_all(&dir)?;
-    let path = plan_md_path(session_id);
+    let path = plan_md_path(session_id).await;
     let scaffold = format!(
         "# {title}\n\n\
          ## Context\n\
@@ -277,12 +364,16 @@ pub fn create_design_md(session_id: Uuid, title: &str) -> std::io::Result<PathBu
 /// Editing mirror). Tasks are never touched: Editing cannot persist a
 /// checklist. Returns any template-section warnings (advisory only; a
 /// missing section never blocks the write).
-pub fn sync_md_to_json(session_id: Uuid) -> Vec<String> {
-    let md = plan_md_path(session_id);
+pub async fn sync_md_to_json(session_id: Uuid) -> Vec<String> {
+    // Read the `.md` and `.json` from the same active location (resolved or
+    // legacy), so an in-place edit is mirrored regardless of which dir the
+    // plan currently lives in.
+    let json = plan_json_read_path(session_id).await;
+    let md = md_path_for(&json);
     let Ok(body) = std::fs::read_to_string(&md) else {
         return Vec::new();
     };
-    let Some(mut plan) = load_plan(session_id) else {
+    let Some(mut plan) = load_plan_from_path(&json) else {
         return Vec::new();
     };
     if plan.status != PlanStatus::Editing {
@@ -290,7 +381,7 @@ pub fn sync_md_to_json(session_id: Uuid) -> Vec<String> {
     }
     plan.description = body.clone();
     plan.updated_at = chrono::Utc::now();
-    if let Err(e) = save_plan(&plan) {
+    if let Err(e) = save_plan(&plan).await {
         tracing::warn!("Failed to mirror plan .md into JSON description: {e}");
     }
     template_section_warnings(&body)

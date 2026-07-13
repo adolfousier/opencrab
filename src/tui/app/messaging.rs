@@ -80,7 +80,7 @@ impl App {
         // user was on BEFORE creating the new one — restarts loaded the
         // old session and the user saw their fresh work as "gone".
         Self::save_last_session_id(session.id);
-        self.set_plan_file_for_session(session.id);
+        self.set_plan_file_for_session(session.id).await;
         self.is_processing = false; // New session is never processing
         self.messages.clear();
         self.auto_scroll = true;
@@ -187,7 +187,7 @@ impl App {
         }
 
         self.current_session = Some(session.clone());
-        self.set_plan_file_for_session(session.id);
+        self.set_plan_file_for_session(session.id).await;
         // Sync is_processing flag with per-session state
         self.is_processing = self.processing_sessions.contains(&session.id);
 
@@ -791,7 +791,7 @@ impl App {
             }
             "/plan" => {
                 if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
-                    let reply = crate::utils::plan_mode::enter_plan_mode(sid);
+                    let reply = crate::utils::plan_mode::enter_plan_mode(sid).await;
                     self.push_system_message(reply);
                     self.reload_plan();
                 } else {
@@ -803,7 +803,7 @@ impl App {
                 if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
                     self.reload_plan();
                     use crate::utils::plan_files::{PlanModeState, plan_mode_state};
-                    match plan_mode_state(sid) {
+                    match plan_mode_state(sid).await {
                         // A live plan opens the overlay (scrollable design
                         // .md with the Approve/Discard footer, or the Active
                         // checklist view).
@@ -816,7 +816,7 @@ impl App {
                             }
                         }
                         PlanModeState::NoPlan => {
-                            let reply = crate::utils::plan_mode::show_plan(sid);
+                            let reply = crate::utils::plan_mode::show_plan(sid).await;
                             self.push_system_message(reply);
                         }
                     }
@@ -840,7 +840,7 @@ impl App {
                     self.push_system_message("No active session.".to_string());
                     return true;
                 };
-                match crate::utils::plan_mode::try_approve(sid) {
+                match crate::utils::plan_mode::try_approve(sid).await {
                     crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
                         self.push_system_message(reply);
                     }
@@ -872,7 +872,7 @@ impl App {
                     self.push_system_message("No active session.".to_string());
                     return true;
                 };
-                let mut reply = crate::utils::plan_mode::discard(sid);
+                let mut reply = crate::utils::plan_mode::discard(sid).await;
                 if cancelled {
                     reply = format!("⏹️ Cancelled the running turn. {reply}");
                 }
@@ -2282,7 +2282,7 @@ impl App {
                 // flag; that's expected.
                 if self.prompt_analyzer.plan_intent(&content)
                     && let Some(sid) = self.current_session.as_ref().map(|s| s.id)
-                    && let Err(e) = crate::utils::plan_files::set_pre_init_editing(sid)
+                    && let Err(e) = crate::utils::plan_files::set_pre_init_editing(sid).await
                 {
                     tracing::debug!("Plan-keyword pre-init skipped (plan already live): {e}");
                 }

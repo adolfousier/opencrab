@@ -2401,7 +2401,7 @@ pub(crate) async fn handle_message(
                     .await?;
                     return Ok(());
                 }
-                match crate::utils::plan_mode::try_approve(session_id) {
+                match crate::utils::plan_mode::try_approve(session_id).await {
                     crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
                         send_retrying_rate_limit("command reply", || {
                             message_in_thread(&bot, msg.chat.id, thread_id, reply.clone())
@@ -2419,7 +2419,7 @@ pub(crate) async fn handle_message(
             ChannelCommand::DiscardPlan => {
                 // /discard cancels an in-flight turn first, then cleans up.
                 let cancelled = telegram_state.cancel_session(session_id).await;
-                let mut reply = crate::utils::plan_mode::discard(session_id);
+                let mut reply = crate::utils::plan_mode::discard(session_id).await;
                 if cancelled {
                     reply = format!("⏹️ Cancelled the running turn. {reply}");
                 }
@@ -2813,7 +2813,7 @@ pub(crate) async fn handle_message(
         // survives restarts and arms the write gate until `plan init` (or
         // /discard). A live plan refuses the flag; that's expected.
         if crate::utils::PromptAnalyzer::shared().plan_intent(&pre_rewrite_user_text)
-            && let Err(e) = crate::utils::plan_files::set_pre_init_editing(session_id)
+            && let Err(e) = crate::utils::plan_files::set_pre_init_editing(session_id).await
         {
             tracing::debug!("Plan-keyword pre-init skipped (plan already live): {e}");
         }

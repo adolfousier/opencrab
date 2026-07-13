@@ -15,16 +15,16 @@ impl AgentService {
     /// design prose) gets the Editing rules (`format_editing_reminder`),
     /// and NoPlan gets nothing. Loaded through the shared plan store so
     /// legacy statuses map (and terminal ones resolve) first.
-    fn active_plan_reminder(session_id: Uuid) -> Option<String> {
+    async fn active_plan_reminder(session_id: Uuid) -> Option<String> {
         use crate::utils::plan_files::{self, PlanModeState};
-        match plan_files::plan_mode_state(session_id) {
+        match plan_files::plan_mode_state(session_id).await {
             PlanModeState::NoPlan => None,
             PlanModeState::PreInitEditing => Some(format_editing_reminder(None)),
             PlanModeState::PostInitEditing => Some(format_editing_reminder(Some(
-                plan_files::plan_md_path(session_id),
+                plan_files::plan_md_path(session_id).await,
             ))),
             PlanModeState::Active => {
-                let plan = plan_files::load_plan(session_id)?;
+                let plan = plan_files::load_plan(session_id).await?;
                 format_plan_reminder(&plan)
             }
         }
@@ -100,7 +100,7 @@ impl AgentService {
         // recency window in a long conversation and the model forgets it was
         // mid-plan (discussion #177). Regenerated each turn from the plan file;
         // the DB only ever stores the clean user message, so it never piles up.
-        let context_user_message = match Self::active_plan_reminder(session_id) {
+        let context_user_message = match Self::active_plan_reminder(session_id).await {
             Some(reminder) => format!("{user_message}\n\n{reminder}"),
             None => user_message.clone(),
         };
@@ -327,7 +327,7 @@ impl AgentService {
         // alone is a separate message and can scroll away, while this block
         // rides inside the persisted marker. Harness-written, so it is
         // present even when the model's summary forgot the plan.
-        let summary = match plan_state_block(session_id) {
+        let summary = match plan_state_block(session_id).await {
             Some(block) => format!("{summary}\n\n{block}"),
             None => summary,
         };
@@ -722,10 +722,10 @@ impl AgentService {
 /// while session plan artifacts exist: state (Editing / Active), the
 /// absolute `.md` path when present, and one line on what to do next.
 /// `None` when the session is NoPlan (no plan chatter in the summary).
-pub(crate) fn plan_state_block(session_id: Uuid) -> Option<String> {
+pub(crate) async fn plan_state_block(session_id: Uuid) -> Option<String> {
     use crate::utils::plan_files::{self, PlanModeState};
-    let md = plan_files::plan_md_path(session_id);
-    match plan_files::plan_mode_state(session_id) {
+    let md = plan_files::plan_md_path(session_id).await;
+    match plan_files::plan_mode_state(session_id).await {
         PlanModeState::NoPlan => None,
         PlanModeState::PreInitEditing => Some(
             "## PLAN STATE (harness)\n\
@@ -744,6 +744,7 @@ pub(crate) fn plan_state_block(session_id: Uuid) -> Option<String> {
         )),
         PlanModeState::Active => {
             let (title, done, total) = plan_files::load_plan(session_id)
+                .await
                 .map(|p| {
                     let done = p
                         .tasks

@@ -107,7 +107,7 @@ impl FlowSections {
 /// Editing/Active and resolves terminal ones (Completed archives,
 /// Cancelled deletes) — so stale chrome never outlives the plan.
 pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Option<String>) {
-    let Some(plan) = crate::utils::plan_files::load_plan(session_id) else {
+    let Some(plan) = crate::utils::plan_files::load_plan(session_id).await else {
         return (None, None);
     };
     let title = {
@@ -148,12 +148,12 @@ pub(crate) async fn load_goal_section(agent: &AgentService, session_id: Uuid) ->
 /// ended without tasks show the error chrome and the retry hint; while
 /// Editing show the prose summary with the approve hint. Keyboards
 /// attach only after `init` succeeds (pre-init has none).
-pub(crate) fn load_plan_state_section(
+pub(crate) async fn load_plan_state_section(
     session_id: Uuid,
     turn_active: bool,
 ) -> (Option<String>, PlanKb) {
     use crate::utils::plan_files::{PlanModeState, plan_mode_state};
-    match plan_mode_state(session_id) {
+    match plan_mode_state(session_id).await {
         PlanModeState::NoPlan => (None, PlanKb::None),
         PlanModeState::PreInitEditing => (Some("📝 Plan mode: drafting".to_string()), PlanKb::None),
         PlanModeState::PostInitEditing => (
@@ -161,7 +161,7 @@ pub(crate) fn load_plan_state_section(
             PlanKb::ApproveDiscard,
         ),
         PlanModeState::Active => {
-            if crate::utils::plan_mode::in_seed_window(session_id) {
+            if crate::utils::plan_mode::in_seed_window(session_id).await {
                 if turn_active {
                     (
                         Some("⏳ Building checklist…".to_string()),
@@ -196,7 +196,7 @@ pub(crate) async fn refresh_sections(
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.flow_outcome.is_none()
     };
-    let (plan_state, plan_kb) = load_plan_state_section(session_id, turn_active);
+    let (plan_state, plan_kb) = load_plan_state_section(session_id, turn_active).await;
     let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
     let next = FlowSections {
         plan_state,

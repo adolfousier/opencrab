@@ -534,8 +534,8 @@ impl Tool for PlanTool {
         // pre-init / post-init Editing / Active) is derived from the same
         // files.
         let mut plan: Option<PlanDocument> =
-            crate::utils::plan_files::load_plan(context.session_id);
-        let state = crate::utils::plan_files::plan_mode_state(context.session_id);
+            crate::utils::plan_files::load_plan(context.session_id).await;
+        let state = crate::utils::plan_files::plan_mode_state(context.session_id).await;
 
         let result = match operation {
             PlanOperation::Init {
@@ -792,6 +792,7 @@ impl Tool for PlanTool {
                     if design {
                         let md_path =
                             crate::utils::plan_files::create_design_md(context.session_id, &title)
+                                .await
                                 .map_err(ToolError::Io)?;
                         format!(
                             "📋 Created design plan: {title} (Editing)\n\n\
@@ -1108,6 +1109,7 @@ impl Tool for PlanTool {
         // "Editing" / "Active" status strings).
         if let Some(ref current_plan) = plan {
             crate::utils::plan_files::save_plan(current_plan)
+                .await
                 .map_err(|e| ToolError::InvalidInput(format!("Failed to save plan: {e}")))?;
             tracing::info!(
                 "💾 Plan saved to file: {} (status: {:?})",
@@ -1119,7 +1121,7 @@ impl Tool for PlanTool {
             // every task resolved) moves under `archive/` with a timestamp
             // and the session returns to NoPlan. No lingering Done status.
             if current_plan.is_complete()
-                && let Err(e) = crate::utils::plan_files::archive_plan(context.session_id)
+                && let Err(e) = crate::utils::plan_files::archive_plan(context.session_id).await
             {
                 tracing::warn!("Failed to archive completed plan: {e}");
             }

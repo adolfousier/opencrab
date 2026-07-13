@@ -433,11 +433,11 @@ pub async fn handle_command(
             if !is_owner {
                 ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
             } else {
-                ChannelCommand::PlanMode(crate::utils::plan_mode::enter_plan_mode(session_id))
+                ChannelCommand::PlanMode(crate::utils::plan_mode::enter_plan_mode(session_id).await)
             }
         }
         "/show-plan" | "/showplan" | "/show_plan" => {
-            ChannelCommand::ShowPlan(crate::utils::plan_mode::show_plan(session_id))
+            ChannelCommand::ShowPlan(crate::utils::plan_mode::show_plan(session_id).await)
         }
         "/execute" => {
             if !is_owner {

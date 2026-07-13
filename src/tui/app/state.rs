@@ -1041,13 +1041,11 @@ impl App {
     }
 
     /// Set the plan file path for a session and attempt to load it.
-    pub(crate) fn set_plan_file_for_session(&mut self, session_id: Uuid) {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let path = std::path::PathBuf::from(format!(
-            "{}/.opencrabs/agents/session/.opencrabs_plan_{}.json",
-            home, session_id
-        ));
-        self.plan_file_path = Some(path);
+    pub(crate) async fn set_plan_file_for_session(&mut self, session_id: Uuid) {
+        // Resolve through the shared store so the path is project/profile-aware
+        // (and falls back to the legacy flat dir) instead of hardcoding
+        // `agents/session/` under a raw `$HOME` that ignores the active profile.
+        self.plan_file_path = Some(crate::utils::plan_files::plan_json_read_path(session_id).await);
         self.reload_plan();
     }
 

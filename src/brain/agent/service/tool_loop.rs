@@ -831,7 +831,7 @@ impl AgentService {
                         super::compaction_prompts::CompactionKind::Manual,
                         self.silent_compaction,
                         self.auto_approve_tools,
-                        super::compaction_prompts::PlanRecovery::for_session(session_id),
+                        super::compaction_prompts::PlanRecovery::for_session(session_id).await,
                     );
                     message_service
                         .create_message(session_id, "user".to_string(), cont_text.clone())
@@ -946,7 +946,7 @@ impl AgentService {
                 super::compaction_prompts::CompactionKind::Regular,
                 self.silent_compaction,
                 self.auto_approve_tools,
-                super::compaction_prompts::PlanRecovery::for_session(session_id),
+                super::compaction_prompts::PlanRecovery::for_session(session_id).await,
             );
             context.add_message(Message::user(cont_text));
         }
@@ -1298,7 +1298,7 @@ impl AgentService {
                     super::compaction_prompts::CompactionKind::MidLoop,
                     self.silent_compaction,
                     self.auto_approve_tools,
-                    super::compaction_prompts::PlanRecovery::for_session(session_id),
+                    super::compaction_prompts::PlanRecovery::for_session(session_id).await,
                 );
                 context.add_message(Message::user(cont_text));
             }
@@ -1428,7 +1428,8 @@ impl AgentService {
                                 super::compaction_prompts::CompactionKind::Emergency,
                                 self.silent_compaction,
                                 self.auto_approve_tools,
-                                super::compaction_prompts::PlanRecovery::for_session(session_id),
+                                super::compaction_prompts::PlanRecovery::for_session(session_id)
+                                    .await,
                             );
                             context.add_message(Message::user(cont_text));
 
@@ -5405,7 +5406,7 @@ impl AgentService {
                     super::compaction_prompts::CompactionKind::PostTool,
                     self.silent_compaction,
                     self.auto_approve_tools,
-                    super::compaction_prompts::PlanRecovery::for_session(session_id),
+                    super::compaction_prompts::PlanRecovery::for_session(session_id).await,
                 );
                 context.add_message(Message::user(cont_text));
             }
