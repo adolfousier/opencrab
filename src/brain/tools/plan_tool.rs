@@ -143,9 +143,9 @@ fn add_task_to_plan(
     acceptance_criteria: Vec<String>,
 ) -> Result<usize> {
     validate_string(&title, MAX_TITLE_LENGTH, "Task title")?;
-    if !description.is_empty() {
-        validate_string(&description, MAX_DESCRIPTION_LENGTH, "Task description")?;
-    }
+    // Title and description are both required on each task (ADR 0003
+    // checklist contract), so an empty description is refused, not skipped.
+    validate_string(&description, MAX_DESCRIPTION_LENGTH, "Task description")?;
     let order = plan.tasks.len() + 1;
     let mut task = PlanTask::new(order, title, description, parse_task_type(task_type));
     task.complexity = complexity.clamp(1, 5);
@@ -625,6 +625,19 @@ impl Tool for PlanTool {
                              (plan-json-spec.md requires title, description, and tasks)",
                             missing_root.join(" and ")
                         )));
+                    }
+
+                    // Same contract per task: title and description are both
+                    // required (ADR 0003). Serde requires the fields to be
+                    // present, so only blank values need catching here.
+                    for (idx, task) in imported.tasks.iter().enumerate() {
+                        if task.title.trim().is_empty() || task.description.trim().is_empty() {
+                            return Ok(ToolResult::error(format!(
+                                "Import refused: task {} must have a non-empty title and \
+                                 description (plan-json-spec.md requires both per task)",
+                                idx + 1
+                            )));
+                        }
                     }
 
                     if let Some(existing_plan) = plan.as_ref() {

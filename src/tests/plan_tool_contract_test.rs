@@ -91,7 +91,7 @@ async fn omitted_mode_disambiguates_by_tasks() {
         let (ok, out) = run(
             &tool,
             &ctx2,
-            json!({ "operation": "init", "title": "C", "tasks": [{ "title": "t1" }] }),
+            json!({ "operation": "init", "title": "C", "tasks": [{ "title": "t1", "description": "d1" }] }),
         )
         .await;
         assert!(ok, "checklist init must succeed, got: {out}");
@@ -115,7 +115,7 @@ async fn conflicting_mode_and_tasks_are_refused() {
         let (ok, msg) = run(
             &tool,
             &ctx,
-            json!({ "operation": "init", "title": "X", "mode": "design", "tasks": [{ "title": "t" }] }),
+            json!({ "operation": "init", "title": "X", "mode": "design", "tasks": [{ "title": "t", "description": "d" }] }),
         )
         .await;
         assert!(!ok, "design with tasks must be refused");
@@ -157,7 +157,7 @@ async fn design_init_refused_under_auto_approve() {
         let (ok, _) = run(
             &tool,
             &ctx,
-            json!({ "operation": "init", "title": "Yolo checklist", "tasks": [{ "title": "t" }] }),
+            json!({ "operation": "init", "title": "Yolo checklist", "tasks": [{ "title": "t", "description": "d" }] }),
         )
         .await;
         assert!(ok, "yolo checklist init must succeed");
@@ -193,7 +193,7 @@ async fn pre_init_upgrades_to_design_and_replaces_for_checklist() {
         let (ok, _) = run(
             &tool,
             &ctx2,
-            json!({ "operation": "init", "title": "Changed my mind", "tasks": [{ "title": "t" }] }),
+            json!({ "operation": "init", "title": "Changed my mind", "tasks": [{ "title": "t", "description": "d" }] }),
         )
         .await;
         assert!(ok, "checklist init from pre-init must replace the flag");
@@ -232,7 +232,7 @@ async fn reinit_refused_while_plan_is_live() {
         run(
             &tool,
             &ctx2,
-            json!({ "operation": "init", "title": "Live", "tasks": [{ "title": "t" }] }),
+            json!({ "operation": "init", "title": "Live", "tasks": [{ "title": "t", "description": "d" }] }),
         )
         .await;
         let (ok, msg) = run(
@@ -262,8 +262,8 @@ async fn checklist_ops_blocked_while_editing() {
         for op in [
             json!({ "operation": "start" }),
             json!({ "operation": "complete", "task_order": 1 }),
-            json!({ "operation": "add_tasks", "tasks": [{ "title": "t" }] }),
-            json!({ "operation": "add_task", "title": "t" }),
+            json!({ "operation": "add_tasks", "tasks": [{ "title": "t", "description": "d" }] }),
+            json!({ "operation": "add_task", "title": "t", "description": "d" }),
         ] {
             let (ok, msg) = run(&tool, &ctx, op.clone()).await;
             assert!(!ok, "{op} must be refused while Editing");
@@ -284,20 +284,25 @@ async fn add_tasks_appends_multiple_and_alias_still_works() {
         run(
             &tool,
             &ctx,
-            json!({ "operation": "init", "title": "List", "tasks": [{ "title": "one" }] }),
+            json!({ "operation": "init", "title": "List", "tasks": [{ "title": "one", "description": "d1" }] }),
         )
         .await;
 
         let (ok, out) = run(
             &tool,
             &ctx,
-            json!({ "operation": "add_tasks", "tasks": [{ "title": "two" }, { "title": "three" }] }),
+            json!({ "operation": "add_tasks", "tasks": [{ "title": "two", "description": "d2" }, { "title": "three", "description": "d3" }] }),
         )
         .await;
         assert!(ok, "add_tasks must succeed, got: {out}");
         assert!(out.contains("2 task(s)") && out.contains("3 tasks"), "got: {out}");
 
-        let (ok, out) = run(&tool, &ctx, json!({ "operation": "add_task", "title": "four" })).await;
+        let (ok, out) = run(
+            &tool,
+            &ctx,
+            json!({ "operation": "add_task", "title": "four", "description": "d4" }),
+        )
+        .await;
         assert!(ok, "add_task alias must keep working, got: {out}");
         assert_eq!(load_plan(ctx.session_id).await.unwrap().tasks.len(), 4);
 
@@ -315,7 +320,7 @@ async fn first_start_does_not_auto_approve() {
         run(
             &tool,
             &ctx,
-            json!({ "operation": "init", "title": "NoAutoApprove", "tasks": [{ "title": "t" }] }),
+            json!({ "operation": "init", "title": "NoAutoApprove", "tasks": [{ "title": "t", "description": "d" }] }),
         )
         .await;
         let (ok, _) = run(&tool, &ctx, json!({ "operation": "start" })).await;
@@ -337,7 +342,7 @@ async fn completing_last_task_keeps_plan_live_until_settle() {
         run(
             &tool,
             &ctx,
-            json!({ "operation": "init", "title": "Short", "tasks": [{ "title": "only" }] }),
+            json!({ "operation": "init", "title": "Short", "tasks": [{ "title": "only", "description": "d" }] }),
         )
         .await;
         run(&tool, &ctx, json!({ "operation": "start" })).await;
@@ -453,6 +458,99 @@ async fn import_refused_while_live_but_replaces_pre_init() {
         assert!(
             !ok,
             "import over post-init Editing must be refused, got: {msg}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn tasks_require_non_empty_description_on_every_entry_point() {
+    in_temp_home(async {
+        let tool = PlanTool;
+
+        // init with inline tasks: blank description refused (ToolError).
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let result = tool
+            .execute(
+                json!({
+                    "operation": "init",
+                    "title": "Checklist",
+                    "mode": "checklist",
+                    "tasks": [{ "title": "t1", "description": "  " }]
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "inline task with blank description must be refused"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Task description cannot be empty")
+        );
+
+        // add_tasks on a live checklist: omitted description refused.
+        let ctx2 = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let (ok, out) = run(
+            &tool,
+            &ctx2,
+            json!({
+                "operation": "init",
+                "title": "Checklist",
+                "mode": "checklist",
+                "tasks": [{ "title": "t1", "description": "real work" }]
+            }),
+        )
+        .await;
+        assert!(ok, "valid checklist init must succeed, got: {out}");
+        let result = tool
+            .execute(
+                json!({
+                    "operation": "add_tasks",
+                    "tasks": [{ "title": "t2" }]
+                }),
+                &ctx2,
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "add_tasks without description must be refused"
+        );
+
+        // import: blank task description refused, session stays NoPlan.
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("blank-task-desc.json");
+        std::fs::write(
+            &file,
+            serde_json::to_string(&json!({
+                "title": "Imported",
+                "description": "structured",
+                "tasks": [
+                    { "title": "t1", "description": "d1", "task_type": "edit" },
+                    { "title": "t2", "description": "", "task_type": "edit" }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let ctx3 = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let (ok, msg) = run(
+            &tool,
+            &ctx3,
+            json!({ "operation": "init", "file_path": file.to_str().unwrap() }),
+        )
+        .await;
+        assert!(
+            !ok,
+            "import with blank task description must be refused, got: {msg}"
+        );
+        assert!(msg.contains("task 2"), "got: {msg}");
+        assert_eq!(
+            plan_mode_state(ctx3.session_id).await,
+            PlanModeState::NoPlan
         );
     })
     .await;
