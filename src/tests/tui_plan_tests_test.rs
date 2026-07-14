@@ -4,11 +4,7 @@ use uuid::Uuid;
 
 // Helper function to create a test plan
 fn create_test_plan(session_id: Uuid) -> PlanDocument {
-    PlanDocument::new(
-        session_id,
-        "Test Plan".to_string(),
-        "A test plan for unit testing".to_string(),
-    )
+    PlanDocument::new(session_id, "Test Plan".to_string())
 }
 
 // Helper function to create a test task
@@ -28,7 +24,7 @@ fn test_plan_document_new() {
 
     assert_eq!(plan.session_id, session_id);
     assert_eq!(plan.title, "Test Plan");
-    assert_eq!(plan.description, "A test plan for unit testing");
+    assert_eq!(plan.description, "");
     assert_eq!(plan.status, PlanStatus::Editing);
     assert!(plan.tasks.is_empty());
     assert!(plan.risks.is_empty());

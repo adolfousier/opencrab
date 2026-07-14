@@ -309,7 +309,7 @@ async fn plan_state_editing_copy_locked_to_decision_7() {
         // Post-init Editing: ✍️ Editing plan only — the design prose reads on
         // the flow message and Approve rides the keyboard, so the chrome never
         // teaches /show-plan or /execute (Decision 14).
-        let plan = crate::tui::plan::PlanDocument::new(sid, "T".to_string(), String::new());
+        let plan = crate::tui::plan::PlanDocument::new(sid, "T".to_string());
         save_plan(&plan).await.unwrap();
         create_design_md(sid, "T").await.unwrap();
         let (state, _) = load_plan_state_section(sid, true).await;

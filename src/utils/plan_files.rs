@@ -272,7 +272,7 @@ pub async fn set_pre_init_editing(session_id: Uuid) -> std::io::Result<()> {
         }
         PlanModeState::NoPlan | PlanModeState::PreInitEditing => {}
     }
-    let mut sidecar = PlanDocument::new(session_id, String::new(), String::new());
+    let mut sidecar = PlanDocument::new(session_id, String::new());
     sidecar.pre_init_editing = true;
     sidecar.status = PlanStatus::Editing;
     save_plan(&sidecar).await

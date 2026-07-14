@@ -11,7 +11,7 @@ use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskStatus, TaskType}
 use uuid::Uuid;
 
 fn plan_with(status: PlanStatus, tasks: Vec<(&str, TaskStatus)>) -> PlanDocument {
-    let mut p = PlanDocument::new(Uuid::new_v4(), "Ship login flow".to_string(), String::new());
+    let mut p = PlanDocument::new(Uuid::new_v4(), "Ship login flow".to_string());
     p.status = status;
     for (i, (title, st)) in tasks.into_iter().enumerate() {
         let mut t = PlanTask::new(i, title.to_string(), String::new(), TaskType::Edit);

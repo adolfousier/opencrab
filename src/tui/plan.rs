@@ -250,12 +250,12 @@ pub struct PlanDocument {
 
 impl PlanDocument {
     /// Create a new plan document
-    pub fn new(session_id: Uuid, title: String, description: String) -> Self {
+    pub fn new(session_id: Uuid, title: String) -> Self {
         Self {
             id: Uuid::new_v4(),
             session_id,
             title,
-            description,
+            description: String::new(),
             tasks: Vec::new(),
             context: String::new(),
             risks: Vec::new(),

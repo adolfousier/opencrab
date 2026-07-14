@@ -25,8 +25,6 @@ enum PlanOperation {
         #[serde(default)]
         title: Option<String>,
         #[serde(default)]
-        description: Option<String>,
-        #[serde(default)]
         context: String,
         #[serde(default)]
         risks: Vec<String>,
@@ -195,31 +193,6 @@ fn checklist_blocked_reason(state: crate::utils::plan_files::PlanModeState) -> O
     }
 }
 
-/// Push a started task's acceptance criteria into the session goal so the
-/// live chrome (TUI widget, Telegram flow sections) shows what "done"
-/// means. Tasks without criteria get no goal. Failures are logged, never
-/// fatal: goal chrome is auxiliary to plan execution.
-async fn set_task_goal(context: &ToolExecutionContext, session_id: uuid::Uuid, task: &PlanTask) {
-    if task.acceptance_criteria.is_empty() {
-        return;
-    }
-    let Some(svc) = context.service_context.as_ref() else {
-        return;
-    };
-    let goal = format!(
-        "Task {}: {}. Done when: {}",
-        task.order,
-        task.title,
-        task.acceptance_criteria.join("; ")
-    );
-    if let Err(e) = crate::brain::goal::GoalManager::new(svc.clone())
-        .set_goal(session_id, goal, None, None)
-        .await
-    {
-        tracing::warn!("Failed to set plan-task goal: {e}");
-    }
-}
-
 /// Clear the session goal a plan task set (on complete or skip).
 async fn clear_task_goal(context: &ToolExecutionContext, session_id: uuid::Uuid) {
     let Some(svc) = context.service_context.as_ref() else {
@@ -366,17 +339,17 @@ impl Tool for PlanTool {
 
     fn description(&self) -> &str {
         "Manage a structured task plan for multi-step work. TWO TRACKS on `init`: \
-         checklist (`mode`=\"checklist\", or inline `tasks` present) goes Active immediately \
-         so you can `start` at once; design (`mode`=\"design\", or no tasks) creates a session \
-         plan .md to refine and WAITS for the user to Approve it. While a design plan is \
-         Editing, checklist operations are refused and only the session .md is writable. \
-         There is NO auto-approve: a design plan goes Active only on user Approve. \
+         checklist (`mode`=\"checklist\", or inline `tasks` present) goes to Editing first \
+         so the user can review before execution; design (`mode`=\"design\", or no tasks) \
+         creates a session plan .md to refine and WAITS for the user to Approve it. Both \
+         tracks go Active only on user Approve. While a plan is Editing, checklist \
+         operations are refused and only the session .md is writable (design track). \
          \n\nOPERATIONS: `init` (create a plan, or import from a JSON `file_path`; allowed only \
          when no plan is live), `add_tasks` (append one or more tasks in a single call — the \
          primary append op), `add_task` (alias appending a single task), `start` (begin the \
          next task, or a specific one via `task_order`), `complete` (finish a task and \
          auto-start the next). `add_tasks`/`add_task`/`start`/`complete` are Active-only. \
-         \n\nFLOW (checklist): init with `tasks` → start → (do the work) → complete → \
+         \n\nFLOW (checklist): init with `tasks` → WAIT for user Approve → start → (do the work) → complete → \
          (auto-starts next) → complete → … `start` and `complete` return the FULL task details \
          (description, acceptance criteria, dependencies), so the plan doubles as durable \
          memory across context compactions — call `start` with no args to re-surface the \
@@ -422,7 +395,7 @@ impl Tool for PlanTool {
                 },
                 "description": {
                     "type": "string",
-                    "description": "Plan or task description (init / add_task)"
+                    "description": "Task description (add_task)"
                 },
                 "context": {
                     "type": "string",
@@ -545,7 +518,6 @@ impl Tool for PlanTool {
         let result = match operation {
             PlanOperation::Init {
                 title,
-                description,
                 context: ctx,
                 risks,
                 test_strategy,
@@ -663,8 +635,10 @@ impl Tool for PlanTool {
                     imported.id = uuid::Uuid::new_v4();
                     imported.session_id = context.session_id;
                     // Import is checklist-track: tasks are already structured,
-                    // so the plan goes straight to Active (no Approve step).
-                    imported.status = PlanStatus::Active;
+                    // but the plan still goes to Editing first so the user can
+                    // review before execution starts (start/complete are blocked
+                    // until approval).
+                    imported.status = PlanStatus::Editing;
                     imported.created_at = Utc::now();
                     imported.updated_at = Utc::now();
                     imported.approved_at = None;
@@ -750,10 +724,6 @@ impl Tool for PlanTool {
                         )
                     })?;
                     validate_string(&title, MAX_TITLE_LENGTH, "Plan title")?;
-                    let description = description.unwrap_or_default();
-                    if !description.is_empty() {
-                        validate_string(&description, MAX_DESCRIPTION_LENGTH, "Plan description")?;
-                    }
                     if !ctx.is_empty() {
                         validate_string(&ctx, MAX_CONTEXT_LENGTH, "Plan context")?;
                     }
@@ -812,17 +782,12 @@ impl Tool for PlanTool {
                         );
                     }
 
-                    let mut new_plan =
-                        PlanDocument::new(context.session_id, title.clone(), description);
+                    let mut new_plan = PlanDocument::new(context.session_id, title.clone());
                     new_plan.context = ctx;
                     new_plan.risks = risks;
                     new_plan.test_strategy = test_strategy;
                     new_plan.technical_stack = technical_stack;
-                    new_plan.status = if design {
-                        PlanStatus::Editing
-                    } else {
-                        PlanStatus::Active
-                    };
+                    new_plan.status = PlanStatus::Editing;
 
                     for it in tasks {
                         add_task_to_plan(
@@ -840,11 +805,12 @@ impl Tool for PlanTool {
                     let list = render_task_list(&new_plan);
                     plan = Some(new_plan);
 
+                    let md_path =
+                        crate::utils::plan_files::create_design_md(context.session_id, &title)
+                            .await
+                            .map_err(ToolError::Io)?;
+
                     if design {
-                        let md_path =
-                            crate::utils::plan_files::create_design_md(context.session_id, &title)
-                                .await
-                                .map_err(ToolError::Io)?;
                         format!(
                             "📋 Created design plan: {title} (Editing)\n\n\
                              Plan document: {}\n\n\
@@ -856,8 +822,11 @@ impl Tool for PlanTool {
                         )
                     } else {
                         format!(
-                            "📋 Created plan: {title} ({count} tasks, Active)\n\n{list}\n\n\
-                             Call 'start' now — it returns the first task's full details."
+                            "📋 Created plan: {title} ({count} tasks, Editing)\n\n{list}\n\n\
+                             Plan document: {}\n\n\
+                             WAIT for the user to approve the plan before calling 'start'. \
+                             Checklist operations are blocked until approval.",
+                            md_path.display()
                         )
                     }
                 }
@@ -1030,9 +999,6 @@ impl Tool for PlanTool {
                             // Failed task for retry).
                             current_plan.get_task_by_order_mut(order).unwrap().start();
                             current_plan.status = PlanStatus::Active;
-                            // Criteria become the session goal while it runs.
-                            let started = current_plan.get_task_by_order(order).unwrap();
-                            set_task_goal(context, context.session_id, started).await;
                         }
 
                         let done = current_plan
@@ -1130,7 +1096,6 @@ impl Tool for PlanTool {
                     current_plan.get_task_by_order_mut(no).unwrap().start();
                     current_plan.status = PlanStatus::Active;
                     let next = current_plan.get_task_by_order(no).unwrap();
-                    set_task_goal(context, context.session_id, next).await;
                     let details = render_task_details(current_plan, next);
                     msg.push_str(&format!(
                         "\n\n▶️ Started Task #{no}: {}\n{details}",

@@ -39,6 +39,14 @@ async fn run(
     (r.success, text)
 }
 
+/// Helper to approve a plan so start/complete operations are allowed.
+async fn approve_plan(ctx: &ToolExecutionContext) {
+    if let Some(mut plan) = load_plan(ctx.session_id).await {
+        plan.approve();
+        crate::utils::plan_files::save_plan(&plan).await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn design_init_creates_md_and_enters_editing() {
     in_temp_home(async {
@@ -86,7 +94,7 @@ async fn omitted_mode_disambiguates_by_tasks() {
             PlanModeState::PostInitEditing
         );
 
-        // Tasks → checklist, Active immediately.
+        // Tasks → checklist, Editing (requires approval before start).
         let ctx2 = ToolExecutionContext::new(uuid::Uuid::new_v4());
         let (ok, out) = run(
             &tool,
@@ -96,12 +104,12 @@ async fn omitted_mode_disambiguates_by_tasks() {
         .await;
         assert!(ok, "checklist init must succeed, got: {out}");
         assert!(
-            out.contains("Active"),
-            "checklist init reports Active, got: {out}"
+            out.contains("Editing"),
+            "checklist init reports Editing, got: {out}"
         );
         assert_eq!(
             plan_mode_state(ctx2.session_id).await,
-            PlanModeState::Active
+            PlanModeState::PostInitEditing
         );
     })
     .await;
@@ -187,7 +195,7 @@ async fn pre_init_upgrades_to_design_and_replaces_for_checklist() {
         let plan = load_plan(ctx.session_id).await.unwrap();
         assert!(!plan.pre_init_editing, "the flag is consumed by init");
 
-        // Replace: pre-init → checklist init → Active, no /discard needed.
+        // Replace: pre-init → checklist init → PostInitEditing (requires approval).
         let ctx2 = ToolExecutionContext::new(uuid::Uuid::new_v4());
         set_pre_init_editing(ctx2.session_id).await.unwrap();
         let (ok, _) = run(
@@ -199,7 +207,7 @@ async fn pre_init_upgrades_to_design_and_replaces_for_checklist() {
         assert!(ok, "checklist init from pre-init must replace the flag");
         assert_eq!(
             plan_mode_state(ctx2.session_id).await,
-            PlanModeState::Active
+            PlanModeState::PostInitEditing
         );
     })
     .await;
@@ -287,6 +295,7 @@ async fn add_tasks_appends_multiple_and_alias_still_works() {
             json!({ "operation": "init", "title": "List", "tasks": [{ "title": "one", "description": "d1" }] }),
         )
         .await;
+        approve_plan(&ctx).await;
 
         let (ok, out) = run(
             &tool,
@@ -323,12 +332,19 @@ async fn first_start_does_not_auto_approve() {
             json!({ "operation": "init", "title": "NoAutoApprove", "tasks": [{ "title": "t", "description": "d" }] }),
         )
         .await;
+        // Start is blocked until approval.
+        let (ok, msg) = run(&tool, &ctx, json!({ "operation": "start" })).await;
+        assert!(!ok, "start must be blocked until approval");
+        assert!(msg.contains("Editing") || msg.contains("approval"), "got: {msg}");
+
+        // After approval, start works.
+        approve_plan(&ctx).await;
         let (ok, _) = run(&tool, &ctx, json!({ "operation": "start" })).await;
         assert!(ok);
         let plan = load_plan(ctx.session_id).await.unwrap();
         assert!(
-            plan.approved_at.is_none(),
-            "start must not stamp approved_at: that belongs to user Approve"
+            plan.approved_at.is_some(),
+            "approve() stamps approved_at"
         );
     })
     .await;
@@ -345,6 +361,7 @@ async fn completing_last_task_keeps_plan_live_until_settle() {
             json!({ "operation": "init", "title": "Short", "tasks": [{ "title": "only", "description": "d" }] }),
         )
         .await;
+        approve_plan(&ctx).await;
         run(&tool, &ctx, json!({ "operation": "start" })).await;
         let (ok, out) = run(
             &tool,
@@ -506,6 +523,7 @@ async fn tasks_require_non_empty_description_on_every_entry_point() {
         )
         .await;
         assert!(ok, "valid checklist init must succeed, got: {out}");
+        approve_plan(&ctx2).await;
         let result = tool
             .execute(
                 json!({

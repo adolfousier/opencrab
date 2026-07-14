@@ -451,13 +451,17 @@ async fn setup_plan_with_tasks(tool: &PlanTool, n: usize) -> ToolExecutionContex
         serde_json::json!({
             "operation": "init",
             "title": "Flow test",
-            "description": "Exercising the command flow",
             "tasks": tasks
         }),
         &ctx,
     )
     .await
     .unwrap();
+    // Approve the plan so start/complete operations are allowed.
+    if let Some(mut plan) = crate::utils::plan_files::load_plan(ctx.session_id).await {
+        plan.approve();
+        crate::utils::plan_files::save_plan(&plan).await.unwrap();
+    }
     ctx
 }
 

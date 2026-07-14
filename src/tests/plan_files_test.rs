@@ -31,7 +31,7 @@ fn task(order: usize, title: &str) -> PlanTask {
 }
 
 async fn write_raw_plan(session_id: Uuid, status: &str, task_count: usize) {
-    let mut plan = PlanDocument::new(session_id, "Legacy plan".to_string(), String::new());
+    let mut plan = PlanDocument::new(session_id, "Legacy plan".to_string());
     for i in 0..task_count {
         plan.add_task(task(i + 1, &format!("t{}", i + 1)));
     }
@@ -89,7 +89,7 @@ async fn pre_init_flag_is_durable_and_gates_state() {
 async fn pre_init_refused_when_plan_is_live() {
     in_temp_home(async {
         let sid = Uuid::new_v4();
-        let mut plan = PlanDocument::new(sid, "Live".to_string(), String::new());
+        let mut plan = PlanDocument::new(sid, "Live".to_string());
         plan.add_task(task(1, "t1"));
         plan.status = PlanStatus::Active;
         save_plan(&plan).await.unwrap();
@@ -104,7 +104,7 @@ async fn pre_init_refused_when_plan_is_live() {
 async fn post_init_editing_requires_md() {
     in_temp_home(async {
         let sid = Uuid::new_v4();
-        let plan = PlanDocument::new(sid, "Design".to_string(), String::new());
+        let plan = PlanDocument::new(sid, "Design".to_string());
         save_plan(&plan).await.unwrap();
         create_design_md(sid, "Design").await.unwrap();
 
@@ -118,7 +118,7 @@ async fn post_init_editing_requires_md() {
 async fn save_writes_canonical_status_strings() {
     in_temp_home(async {
         let sid = Uuid::new_v4();
-        let mut plan = PlanDocument::new(sid, "Canonical".to_string(), String::new());
+        let mut plan = PlanDocument::new(sid, "Canonical".to_string());
         save_plan(&plan).await.unwrap();
         let raw = std::fs::read_to_string(plan_json_path(sid).await).unwrap();
         assert!(raw.contains("\"Editing\""), "got: {raw}");
@@ -210,7 +210,7 @@ async fn idle_active_plan_with_empty_tasks_survives_load() {
         // idle retry path can pick it up: loading is never destructive for
         // live statuses.
         let sid = Uuid::new_v4();
-        let mut plan = PlanDocument::new(sid, "Seed failed".to_string(), String::new());
+        let mut plan = PlanDocument::new(sid, "Seed failed".to_string());
         plan.status = PlanStatus::Active;
         save_plan(&plan).await.unwrap();
 
@@ -227,7 +227,7 @@ async fn idle_active_plan_with_empty_tasks_survives_load() {
 async fn design_md_scaffold_and_mirror() {
     in_temp_home(async {
         let sid = Uuid::new_v4();
-        let plan = PlanDocument::new(sid, "Design doc".to_string(), String::new());
+        let plan = PlanDocument::new(sid, "Design doc".to_string());
         save_plan(&plan).await.unwrap();
         let md_path = create_design_md(sid, "Design doc").await.unwrap();
         let scaffold = std::fs::read_to_string(&md_path).unwrap();

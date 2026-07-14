@@ -49,13 +49,13 @@ where
 }
 
 async fn make_post_init_editing(sid: Uuid) {
-    let plan = PlanDocument::new(sid, "Design".to_string(), String::new());
+    let plan = PlanDocument::new(sid, "Design".to_string());
     save_plan(&plan).await.unwrap();
     create_design_md(sid, "Design").await.unwrap();
 }
 
 async fn make_active(sid: Uuid, with_md: bool) {
-    let mut plan = PlanDocument::new(sid, "Exec".to_string(), String::new());
+    let mut plan = PlanDocument::new(sid, "Exec".to_string());
     let mut task = PlanTask::new(1, "t1".to_string(), "d".to_string(), TaskType::Edit);
     // A started checklist: the seed window (all tasks Pending) has its own
     // stricter policy, covered separately below.
@@ -355,7 +355,7 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
         // Approved design plan whose checklist has not started yet (empty
         // tasks): only reads and the plan tool flow through.
         let sid = Uuid::new_v4();
-        let mut plan = PlanDocument::new(sid, "Seeding".to_string(), String::new());
+        let mut plan = PlanDocument::new(sid, "Seeding".to_string());
         plan.status = PlanStatus::Active;
         save_plan(&plan).await.unwrap();
         create_design_md(sid, "Seeding").await.unwrap();

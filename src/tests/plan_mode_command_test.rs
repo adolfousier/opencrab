@@ -41,7 +41,7 @@ where
 }
 
 async fn make_post_init(sid: Uuid, md_body: &str) {
-    let plan = PlanDocument::new(sid, "Golden".to_string(), String::new());
+    let plan = PlanDocument::new(sid, "Golden".to_string());
     save_plan(&plan).await.unwrap();
     create_design_md(sid, "Golden").await.unwrap();
     std::fs::write(plan_md_path(sid).await, md_body).unwrap();
@@ -138,7 +138,7 @@ async fn approve_refuses_no_plan_pre_init_and_running_checklist() {
         plan_files::discard_plan(sid).await;
 
         // Active with a running checklist: /execute is not applicable.
-        let mut plan = PlanDocument::new(sid, "Run".to_string(), String::new());
+        let mut plan = PlanDocument::new(sid, "Run".to_string());
         let mut t = PlanTask::new(1, "t".to_string(), "d".to_string(), TaskType::Edit);
         t.start();
         plan.add_task(t);

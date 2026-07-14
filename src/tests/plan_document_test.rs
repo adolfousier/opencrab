@@ -9,10 +9,10 @@ use crate::tui::plan::*;
 #[test]
 fn new_plan_starts_editing() {
     let session_id = Uuid::new_v4();
-    let plan = PlanDocument::new(session_id, "Test Plan".to_string(), "Desc".to_string());
+    let plan = PlanDocument::new(session_id, "Test Plan".to_string());
     assert_eq!(plan.status, PlanStatus::Editing);
     assert_eq!(plan.title, "Test Plan");
-    assert_eq!(plan.description, "Desc");
+    assert_eq!(plan.description, "");
     assert_eq!(plan.session_id, session_id);
     assert!(plan.tasks.is_empty());
     assert!(plan.approved_at.is_none());
@@ -21,8 +21,8 @@ fn new_plan_starts_editing() {
 #[test]
 fn new_plan_has_unique_id() {
     let s = Uuid::new_v4();
-    let p1 = PlanDocument::new(s, "A".to_string(), "".to_string());
-    let p2 = PlanDocument::new(s, "B".to_string(), "".to_string());
+    let p1 = PlanDocument::new(s, "A".to_string());
+    let p2 = PlanDocument::new(s, "B".to_string());
     assert_ne!(p1.id, p2.id);
 }
 
@@ -30,7 +30,7 @@ fn new_plan_has_unique_id() {
 
 #[test]
 fn add_task_appends() {
-    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string(), "D".to_string());
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
     let task = PlanTask::new(
         1,
         "Task 1".to_string(),
@@ -44,7 +44,7 @@ fn add_task_appends() {
 
 #[test]
 fn add_task_updates_timestamp() {
-    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string(), "D".to_string());
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
     let before = plan.updated_at;
     std::thread::sleep(std::time::Duration::from_millis(10));
     plan.add_task(PlanTask::new(
@@ -58,7 +58,7 @@ fn add_task_updates_timestamp() {
 
 #[test]
 fn add_multiple_tasks() {
-    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string(), "D".to_string());
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
     for i in 0..5 {
         plan.add_task(PlanTask::new(
             i,
@@ -114,7 +114,7 @@ fn task_status_eq() {
 
 #[test]
 fn tasks_in_order_no_deps() {
-    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string(), "D".to_string());
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
     let t1 = PlanTask::new(1, "A".to_string(), "".to_string(), TaskType::Create);
     let t2 = PlanTask::new(2, "B".to_string(), "".to_string(), TaskType::Create);
     plan.add_task(t1);
@@ -126,7 +126,7 @@ fn tasks_in_order_no_deps() {
 
 #[test]
 fn tasks_with_linear_deps() {
-    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string(), "D".to_string());
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
     let t1 = PlanTask::new(1, "First".to_string(), "".to_string(), TaskType::Create);
     let t1_id = t1.id;
     let mut t2 = PlanTask::new(2, "Second".to_string(), "".to_string(), TaskType::Create);
@@ -145,7 +145,7 @@ fn tasks_with_linear_deps() {
 
 #[test]
 fn plan_document_serializes_to_json() {
-    let plan = PlanDocument::new(Uuid::new_v4(), "Test".to_string(), "Desc".to_string());
+    let plan = PlanDocument::new(Uuid::new_v4(), "Test".to_string());
     let json = serde_json::to_string(&plan).unwrap();
     assert!(json.contains("Test"));
     assert!(json.contains("Editing"));
@@ -153,7 +153,7 @@ fn plan_document_serializes_to_json() {
 
 #[test]
 fn plan_document_round_trip() {
-    let mut plan = PlanDocument::new(Uuid::new_v4(), "Round Trip".to_string(), "D".to_string());
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "Round Trip".to_string());
     plan.add_task(PlanTask::new(
         1,
         "T1".to_string(),

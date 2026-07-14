@@ -730,8 +730,24 @@ pub(crate) async fn plan_state_block(session_id: Uuid) -> Option<String> {
         PlanModeState::PreInitEditing => Some(
             "## PLAN STATE (harness)\n\
              State: Editing (pre-init). Plan mode is on but `plan init` has not run.\n\
-             Next: explore, then call plan init mode='design' and write the SESSION \
-             PLAN .md. Do not edit project files."
+             Next: explore with reads/search/bash, then call:\n\
+             \n\
+             plan init mode='design' title='<3-8 word title>'\n\
+             \n\
+             The harness creates a SESSION PLAN .md for you. Write the design into it \
+             using this structure:\n\
+             \n\
+             ## Context\n\
+             **Problem:** <what's broken or missing>\n\
+             **Target state:** <what success looks like>\n\
+             **Intent:** <one-sentence goal>\n\
+             \n\
+             ## Implementation steps\n\
+             1. <step one>\n\
+             2. <step two>\n\
+             ...\n\
+             \n\
+             Do NOT edit project files. Do NOT paste the plan in chat."
                 .to_string(),
         ),
         PlanModeState::PostInitEditing => Some(format!(
@@ -794,9 +810,25 @@ pub(crate) fn format_editing_reminder(md_path: Option<std::path::PathBuf>) -> St
         ),
         None => "[PLAN MODE REMINDER — injected by the harness, not from the user]\n\
                  📋 This session is in Plan mode (pre-init). Explore with reads, search, \
-                 and bash as needed, then call plan init mode='design' to create the \
-                 SESSION PLAN .md and write the design into it. Project writes stay \
-                 blocked until the user approves the plan. Do NOT paste a plan in chat."
+                 and bash as needed, then call:\n\
+                 \n\
+                 plan init mode='design' title='<3-8 word title>'\n\
+                 \n\
+                 The harness creates a SESSION PLAN .md for you. Write the design into it \
+                 using this structure:\n\
+                 \n\
+                 ## Context\n\
+                 **Problem:** <what's broken or missing>\n\
+                 **Target state:** <what success looks like>\n\
+                 **Intent:** <one-sentence goal>\n\
+                 \n\
+                 ## Implementation steps\n\
+                 1. <step one>\n\
+                 2. <step two>\n\
+                 ...\n\
+                 \n\
+                 Project writes stay blocked until the user approves the plan. \
+                 Do NOT paste the plan in chat."
             .to_string(),
     }
 }
