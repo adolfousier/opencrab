@@ -15,7 +15,7 @@ impl AgentService {
     /// design prose) gets the Editing rules (`format_editing_reminder`),
     /// and NoPlan gets nothing. Loaded through the shared plan store so
     /// legacy statuses map (and terminal ones resolve) first.
-    async fn active_plan_reminder(session_id: Uuid) -> Option<String> {
+    pub(super) async fn active_plan_reminder(session_id: Uuid) -> Option<String> {
         use crate::utils::plan_files::{self, PlanModeState};
         match plan_files::plan_mode_state(session_id).await {
             PlanModeState::NoPlan => None,

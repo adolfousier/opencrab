@@ -513,42 +513,44 @@ pub(crate) async fn load_goal_section(
     }
 }
 
-/// Plan-mode state line + keyboard ownership for the flow message
-/// (Building checklist… machine, locked): while Active with a seed turn
-/// in flight and empty tasks show Building checklist…; when the seed
-/// ended without tasks show the error chrome and the retry hint. Editing
-/// copy is locked to ADR 0005 Decision 7: no slash hints — the design
-/// prose reads directly on the flow message and the Approve keyboard
-/// carries approval, so chrome never teaches `/show-plan` or `/execute`
-/// as the normal path (Decision 14). Keyboards attach only after `init`
-/// succeeds (pre-init has none).
 /// Pure plan-chrome decision: maps the plan state (plus whether the turn is
-/// still running and whether we are inside the checklist-seed window) to the
-/// header label and the keyboard the flow message should carry. Kept pure and
-/// separate from the plan-file IO so the settle-gating of the Approve/Discard
-/// keyboard (#571) is unit-testable.
+/// still running, whether we are inside the checklist-seed window, and whether
+/// the design `.md` currently passes the approval gate) to the header label and
+/// the keyboard the flow message should carry. Kept pure and separate from the
+/// plan-file IO so the keyboard gating (#571) is unit-testable.
 ///
-/// Keyboard gating: the Approve/Discard keyboard is actionable ONLY once the
-/// turn settles. `/execute` and the Approve tap are both refused while a turn
-/// is running (they would fork/deadlock against the in-flight turn), so
-/// presenting the button mid-edit only invites a tap that bounces with "a turn
-/// is running". While editing, show the label the whole time but attach the
-/// keyboard only at settle (`turn_active == false`); the settle path re-runs
-/// `refresh_sections` so the button materializes then.
+/// Keyboard gating for the Editing state, both parts locked to real approval
+/// behaviour so a visible Approve button always does something:
+/// - While the turn runs (`turn_active`), attach NO keyboard. `/execute` and
+///   the Approve tap are both refused while a turn is in flight (they would
+///   fork/deadlock against it), so a mid-edit button only invites a tap that
+///   bounces with "a turn is running".
+/// - At settle, attach Approve/Discard ONLY when the plan actually passes the
+///   gate (`plan_ready`). An incomplete draft (empty template, no numbered
+///   steps) can never be approved, so surfacing Approve there just lets the tap
+///   repeat the same "plan not ready to approve" refusal forever; show
+///   Discard-only until the draft is complete.
+///
+/// The settle path re-runs `refresh_sections` so the keyboard is recomputed
+/// with `turn_active == false` (and current readiness) once the turn ends.
 pub(crate) fn plan_state_chrome(
     mode: crate::utils::plan_files::PlanModeState,
     turn_active: bool,
     in_seed_window: bool,
+    plan_ready: bool,
 ) -> (Option<String>, PlanKb) {
     use crate::utils::plan_files::PlanModeState;
     match mode {
         PlanModeState::NoPlan => (None, PlanKb::None),
         PlanModeState::PreInitEditing => (Some("📝 Discussing plan".to_string()), PlanKb::None),
         PlanModeState::PostInitEditing => {
-            let kb = if turn_active {
+            let kb = if !turn_active && plan_ready {
+                PlanKb::ApproveDiscard
+            } else if turn_active {
                 PlanKb::None
             } else {
-                PlanKb::ApproveDiscard
+                // Settled but the draft still fails the gate: Discard only.
+                PlanKb::DiscardOnly
             };
             (Some("✍️ Editing plan".to_string()), kb)
         }
@@ -581,7 +583,18 @@ pub(crate) async fn load_plan_state_section(
     // in_seed_window only matters (and only does IO) for the Active state.
     let in_seed_window = matches!(mode, PlanModeState::Active)
         && crate::utils::plan_mode::in_seed_window(session_id).await;
-    plan_state_chrome(mode, turn_active, in_seed_window)
+    // Readiness only matters for the settled Editing state, where it decides
+    // whether the Approve button is offered. Only read the .md in that case.
+    let plan_ready = if matches!(mode, PlanModeState::PostInitEditing) && !turn_active {
+        let md_path = crate::utils::plan_files::plan_md_path(session_id).await;
+        let body = tokio::fs::read_to_string(&md_path)
+            .await
+            .unwrap_or_default();
+        crate::utils::plan_mode::validate_for_approve(&body).is_ok()
+    } else {
+        false
+    };
+    plan_state_chrome(mode, turn_active, in_seed_window, plan_ready)
 }
 
 /// Reload the plan/goal sections from live data and store them on the

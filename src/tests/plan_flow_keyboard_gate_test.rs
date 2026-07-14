@@ -13,7 +13,8 @@ use crate::utils::plan_files::PlanModeState;
 
 #[test]
 fn editing_hides_keyboard_while_turn_active() {
-    let (label, kb) = plan_state_chrome(PlanModeState::PostInitEditing, true, false);
+    // turn_active, so no keyboard even if the draft already passes the gate.
+    let (label, kb) = plan_state_chrome(PlanModeState::PostInitEditing, true, false, true);
     assert_eq!(label.as_deref(), Some("✍️ Editing plan"));
     assert_eq!(
         kb,
@@ -23,13 +24,26 @@ fn editing_hides_keyboard_while_turn_active() {
 }
 
 #[test]
-fn editing_shows_keyboard_at_settle() {
-    let (label, kb) = plan_state_chrome(PlanModeState::PostInitEditing, false, false);
+fn editing_shows_approve_at_settle_only_when_ready() {
+    let (label, kb) = plan_state_chrome(PlanModeState::PostInitEditing, false, false, true);
     assert_eq!(label.as_deref(), Some("✍️ Editing plan"));
     assert_eq!(
         kb,
         PlanKb::ApproveDiscard,
-        "Approve/Discard appears once the turn settles, when approval is accepted"
+        "Approve/Discard appears at settle when the plan passes the gate"
+    );
+}
+
+#[test]
+fn editing_settled_but_incomplete_offers_discard_only() {
+    // The core of the sticky-button bug: a settled but incomplete draft must
+    // NOT offer Approve, or the tap repeats "plan not ready to approve" forever.
+    let (label, kb) = plan_state_chrome(PlanModeState::PostInitEditing, false, false, false);
+    assert_eq!(label.as_deref(), Some("✍️ Editing plan"));
+    assert_eq!(
+        kb,
+        PlanKb::DiscardOnly,
+        "an unapprovable draft shows Discard only, never a spammable Approve"
     );
 }
 
@@ -37,11 +51,11 @@ fn editing_shows_keyboard_at_settle() {
 fn pre_init_never_shows_keyboard() {
     // Discussing the plan (pre-init) carries no keyboard in either phase.
     assert_eq!(
-        plan_state_chrome(PlanModeState::PreInitEditing, true, false).1,
+        plan_state_chrome(PlanModeState::PreInitEditing, true, false, false).1,
         PlanKb::None
     );
     assert_eq!(
-        plan_state_chrome(PlanModeState::PreInitEditing, false, false).1,
+        plan_state_chrome(PlanModeState::PreInitEditing, false, false, true).1,
         PlanKb::None
     );
 }
@@ -50,11 +64,11 @@ fn pre_init_never_shows_keyboard() {
 fn active_seed_window_keeps_discard_only_in_both_phases() {
     // The checklist-seed window is a separate concern and unchanged: it shows
     // Discard-only whether the seed turn is running or already ended.
-    let (running_label, running_kb) = plan_state_chrome(PlanModeState::Active, true, true);
+    let (running_label, running_kb) = plan_state_chrome(PlanModeState::Active, true, true, false);
     assert_eq!(running_label.as_deref(), Some("⏳ Building checklist…"));
     assert_eq!(running_kb, PlanKb::DiscardOnly);
 
-    let (done_label, done_kb) = plan_state_chrome(PlanModeState::Active, false, true);
+    let (done_label, done_kb) = plan_state_chrome(PlanModeState::Active, false, true, false);
     assert!(
         done_label.as_deref().unwrap_or_default().contains("retry"),
         "a stalled seed surfaces the retry hint"
@@ -64,7 +78,7 @@ fn active_seed_window_keeps_discard_only_in_both_phases() {
 
 #[test]
 fn active_outside_seed_window_has_no_label() {
-    let (label, kb) = plan_state_chrome(PlanModeState::Active, false, false);
+    let (label, kb) = plan_state_chrome(PlanModeState::Active, false, false, false);
     assert_eq!(label, None);
     assert_eq!(kb, PlanKb::DiscardOnly);
 }
@@ -72,7 +86,7 @@ fn active_outside_seed_window_has_no_label() {
 #[test]
 fn no_plan_has_no_chrome() {
     assert_eq!(
-        plan_state_chrome(PlanModeState::NoPlan, false, false),
+        plan_state_chrome(PlanModeState::NoPlan, false, false, false),
         (None, PlanKb::None)
     );
 }

@@ -767,7 +767,22 @@ impl AgentService {
 
         // Build user message — `<<IMG:path>>` markers become text hints; the
         // agent views images via analyze_image (no inline image_url content).
-        let user_msg = Self::build_user_message(&user_message);
+        //
+        // Append the plan-mode per-turn reminder (Editing template rules, or the
+        // Active incomplete-task nudge) so it rides at the END of the prompt
+        // every turn, exactly like the simple send_message path does in
+        // prepare_message_context. This tool-loop path drives Telegram and every
+        // channel that uses tools; it previously never injected the reminder, so
+        // in plan mode the agent was never told the plan-template rules and wrote
+        // an empty template that the approval gate then refused forever. The DB
+        // still stores the clean `user_message` below (persistence uses it
+        // directly), so the reminder is context-only and never piles up (#571
+        // follow-up).
+        let context_user_message = match Self::active_plan_reminder(session_id).await {
+            Some(reminder) => format!("{user_message}\n\n{reminder}"),
+            None => user_message.clone(),
+        };
+        let user_msg = Self::build_user_message(&context_user_message);
         context.add_message(user_msg);
 
         // Save user message to database (text only — images are ephemeral).
