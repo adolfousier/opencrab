@@ -280,8 +280,43 @@ impl Tool for SlashCommandTool {
                  in the input box to launch the floating voice-to-text tool."
                     .into(),
             )),
+            // Plan-lifecycle and session commands are driven by the user on the
+            // channel / TUI (and, for the plan itself, by the `plan` tool), not
+            // executable from this tool. They used to fall through to the
+            // "Unknown command" error arm even though they are real commands the
+            // model sees in use (#574); return actionable guidance instead, the
+            // same way /settings and /onboard do.
+            "/plan" | "/execute" | "/discard" | "/show-plan" | "/showplan" | "/show_plan"
+            | "/new" | "/clear" | "/cowork" => {
+                Ok(ToolResult::success(channel_command_guidance(command)))
+            }
             _ => self.handle_user_command(command, args),
         }
+    }
+}
+
+/// Actionable guidance for channel/TUI/plan commands this tool cannot execute
+/// directly, so the model gets a next step instead of an "Unknown command"
+/// error (#574).
+fn channel_command_guidance(command: &str) -> String {
+    match command {
+        "/plan" | "/execute" | "/discard" | "/show-plan" | "/showplan" | "/show_plan" => {
+            "Plan mode is driven by the user on the channel and by the `plan` tool, not by \
+             this command tool. To build or change the plan yourself, use the `plan` tool \
+             (create, add_tasks, start, update). Entering plan mode (/plan), approving \
+             (/execute), and discarding (/discard) are user actions — you cannot toggle them \
+             from here. /show-plan just opens the plan view for the user."
+                .to_string()
+        }
+        "/new" | "/clear" => {
+            "Starting a new session or clearing history is a user/TUI action; this tool \
+             cannot create or reset sessions. Continue working in the current session."
+                .to_string()
+        }
+        "/cowork" => "Cowork is a TUI-only interactive mode. Tell the user to type /cowork \
+             in the input box to launch it."
+            .to_string(),
+        other => format!("'{other}' is a channel/TUI command and cannot be run from this tool."),
     }
 }
 

@@ -70,3 +70,43 @@ async fn test_unknown_command() {
     assert!(!result.success);
     assert!(result.error.unwrap().contains("Unknown command"));
 }
+
+#[tokio::test]
+async fn test_plan_lifecycle_commands_return_guidance_not_error() {
+    // /plan, /execute, /discard, /show-plan are real channel/plan commands the
+    // model sees in use; they must not hit the "Unknown command" error arm.
+    // Instead they return actionable guidance as a successful result (#574).
+    let tool = SlashCommandTool;
+    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+    for cmd in ["/plan", "/execute", "/discard", "/show-plan"] {
+        let result = tool
+            .execute(serde_json::json!({ "command": cmd }), &ctx)
+            .await
+            .unwrap();
+        assert!(
+            result.success,
+            "{cmd} should return guidance as success, not an Unknown-command error"
+        );
+        assert!(
+            result.output.to_lowercase().contains("plan"),
+            "{cmd} guidance should mention the plan: {}",
+            result.output
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_new_and_cowork_return_guidance_not_error() {
+    let tool = SlashCommandTool;
+    let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+    for cmd in ["/new", "/clear", "/cowork"] {
+        let result = tool
+            .execute(serde_json::json!({ "command": cmd }), &ctx)
+            .await
+            .unwrap();
+        assert!(
+            result.success,
+            "{cmd} should return guidance as success, not an error"
+        );
+    }
+}
