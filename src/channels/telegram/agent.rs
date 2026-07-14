@@ -1137,12 +1137,9 @@ impl TelegramAgent {
                                             )
                                             .await;
                                         // Visible seed turn, spawned so the
-                                        // callback answers fast. The turn
-                                        // guard keeps concurrent messages from
-                                        // forking a second turn. (The /execute
-                                        // COMMAND path gets full flow chrome;
-                                        // the button path delivers the final
-                                        // text: same engine, lighter surface.)
+                                        // callback answers fast. The turn guard
+                                        // keeps concurrent messages from forking a
+                                        // second turn.
                                         let bot2 = bot.clone();
                                         let agent2 = agent.clone();
                                         let state2 = state.clone();
@@ -1152,61 +1149,30 @@ impl TelegramAgent {
                                                     Some(g) => g,
                                                     None => return,
                                                 };
-                                            let display =
-                                                "[System: Plan approved — seeding checklist]"
-                                                    .to_string();
-                                            // MUST run the tool loop: the approval turn has to
-                                            // actually call `plan` start/add_tasks and execute.
-                                            // The old send_message_with_display was a single
-                                            // tool-less completion, so the agent could only emit
-                                            // text ("Starting now.") and the plan never started.
-                                            // Lighter surface than /execute (no streaming
-                                            // progress callback) but the SAME tool-enabled engine.
-                                            let chat_id_str = chat_id.0.to_string();
-                                            match agent2
-                                                .send_message_with_tools_and_display(
+                                            // Run the approval turn through the full streaming
+                                            // pipeline — typing indicator, live flow chrome with
+                                            // the checklist progressing, tool messages, final
+                                            // delivery — the same surface /execute gets. Without
+                                            // it the tool loop still ran but silently, so a long
+                                            // execution looked dead after "starting now…".
+                                            // resume_session is the shared full-streaming session
+                                            // runner; a button tap triggers it exactly like a
+                                            // resumed turn (no inbound message to react to).
+                                            if let Err(e) =
+                                                crate::channels::telegram::resume::resume_session(
+                                                    bot2,
+                                                    chat_id,
+                                                    thread_id,
                                                     session_id,
                                                     prompt,
-                                                    Some(display),
-                                                    None, // model
-                                                    None, // cancel token
-                                                    None, // approval callback
-                                                    None, // progress callback (final text only)
-                                                    None, // question callback
-                                                    "telegram",
-                                                    Some(&chat_id_str),
+                                                    agent2,
+                                                    state2,
                                                 )
                                                 .await
                                             {
-                                                Ok(resp) => {
-                                                    let text =
-                                                        crate::utils::sanitize::strip_llm_artifacts(
-                                                            &resp.content,
-                                                        );
-                                                    let text = crate::utils::redact_secrets(&text);
-                                                    if !text.trim().is_empty() {
-                                                        let html = crate::channels::telegram::handler::md_to_html(&text);
-                                                        let _ = crate::channels::telegram::handler::send_html_or_plain(
-                                                            &bot2, chat_id, thread_id, &html,
-                                                        )
-                                                        .await;
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "Plan seed turn failed for session {session_id}: {e}"
-                                                    );
-                                                    let _ = crate::channels::telegram::send::message_in_thread(
-                                                        &bot2,
-                                                        chat_id,
-                                                        thread_id,
-                                                        format!(
-                                                            "⚠️ Checklist seed failed: {e}. \
-                                                             Retry with /execute when idle."
-                                                        ),
-                                                    )
-                                                    .await;
-                                                }
+                                                tracing::warn!(
+                                                    "Plan approval turn failed for session {session_id}: {e}"
+                                                );
                                             }
                                         });
                                     }
