@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.67] - 2026-07-14
+
+52 commits since v0.3.66. 104 files changed, +11090 / -3413 lines.
+
+### ✨ Features
+
+- `1df3c044` **Multilanguage prompt analyzer**: shared PromptAnalyzer with soft-nudge on TUI and Telegram, 6 language packs (EN/ES/FR/ID/PT/RU) (#518, #538)
+- `7b7ea4d6` **Plan-state copy lock**: F3 plan-state copy lock and /show-plan demotion (ADR 0005)
+- `ad3e04ae` **Goal chrome**: F3 goal chrome with turn-local retention (ADR 0005)
+- `1ab25268` **Per-heading plan prose**: F3 per-heading plan prose in flow chrome (ADR 0005)
+- `84b2ed5e` **Archive at turn settle**: archive completed plan at turn settle, not mid-complete (ADR 0005)
+- `9ac48392` **Always-visible title**: F2 always-visible title and full checklist chrome (ADR 0005)
+- `356e21ba` **Uncollapsed flow shell**: F1 uncollapsed flow shell with merged footer (ADR 0005)
+- `797a6d6f` **Web search retry**: rotate User-Agent and retry DuckDuckGo 403s (#525)
+- `6c9b5084` **Telegram rate-limit retry**: retry telegram_send on 429 rate limits (#524)
+- `14a1303d` **Config reload feedback**: surface silent config.toml hot-reload recovery to the user (#534)
+- `6ab209ce` **Channel context header**: include chat_id/thread_id in the [Channel: ...] prompt header (#533)
+- `96648fb1` **Provider-aware narration cap**: make folded-narration cap provider-aware (#532)
+- `9eab3285` **Approve/Discard flow**: D3 Telegram Approve/Discard flow chrome and TUI plan overlay (#521)
+- `f25278c1` **Dual-track prompts**: D2 dual-track prompts, state-branched compaction recovery (#521)
+- `93414269` **Design-track commands**: D1 commands, Approve validator, seed turn, design-track soft-nudge (#521)
+- `756bdd05` **Plan tool contract**: C3 plan tool contract, design/checklist tracks, goal wiring (#520)
+- `f457593d` **Session markdown mirror**: C2 session markdown mirror and plan-file-changed reloads (#520)
+- `99bc0f8d` **Tool-loop write gate**: C1b tool-loop write/bash gate and Active .md freeze (#520)
+- `39641597` **Lifecycle engine core**: C1a lifecycle engine core, Editing/Active status model with durable pre-init flag (#520)
+- `491c4d24` **Merged flow message**: merge pre-flow into the flow message, flow chrome sections (#519)
+
+### 🔧 Fixes
+
+- `297bcb64` **task_type enum**: document the full task_type enum and log the Other fallback
+- `18971bea` **Non-empty description**: require a non-empty description on every task entry point
+- `675e4cf2` **Checklist validation**: enforce required root title and description on checklist import
+- `ed7476aa` **React-only marker**: keep react-only marker so claude-cli turn ends cleanly
+- `3baf00af` **/models provider**: /models command shows session provider instead of global
+- `d8bd3de7` **React-only turn**: surface a long no-tool react-only turn instead of silently dropping it (#546)
+- `a1f62fe7` **Goal cleanup**: clear the session goal on plan discard
+- `19b11029` **Checklist defaults**: assign order and default complexity on checklist import
+- `7e1021bc` **Header-only cleanup**: clean up the header-only flow block on a react-only turn (#544)
+- `b3c3eab7` **Design prose display**: surface design prose in /show-plan and point chrome at it
+- `b606e7d6` **Plan keyboard re-attach**: re-attach plan keyboard after flow restick
+- `cd178879` **Bot menu commands**: register plan mode commands in bot menu (#537)
+- `ce3c008b` **Shell escaping**: context-aware shell escaping so double-quoted params are safe (#523)
+- `a327e1d9` **@bot mention strip**: strip @bot only as a command suffix, preserve standalone mentions (#528)
+- `024e0cc2` **Reaction markers**: accept keyword-less <<EMOJI>> reaction markers
+- `35c5891f` **Working header**: show the 'Working on: <query>' header for claude-cli turns (#527)
+- `6926ba2b` **Reaction terminators**: accept </react> and bare > as reaction-marker terminators
+- `08993632` **Session model/provider**: resolve Runtime Info model/provider per session at prompt injection
+- `cd0c4782` **Attachment handling**: preserve attachment names, store directed files durably, organize channel_attachments by platform (#513)
+- `09ee09f0` **Double gear dedup**: dedup the double gear when the live header status is the bare-tool fallback
+
+### 📖 Documentation
+
+- `e295b307` Seed plan-mode umbrella SSOT, cluster ADRs and specs
+- `11b708f3` Correct stale status and approved_at semantics in the live spec
+- `150a6572` Fix self-contradiction on when the analyzer sets pre_init_editing
+- `1465fa39` Drop phantom execution_history and reflection from the spec
+- `82c8e8e3` Describe async project/profile-aware session dir resolution
+
+### 🧹 Miscellaneous
+
+- `12b6386d` Drop deprecated task_manager from the tool catalog
+- `81496afd` Drop orphaned plans/plan_tasks tables
+- `54611a75` rustfmt the /execute BotCommand registration
+- `31ff3990` Remove unused opencli skill pointing at unbundled binary (#536)
+- `87180a31` Retire orphaned Plan/PlanTask row models, CHANGELOG for the lifecycle engine (#520)
+- `89ead77f` Resolve session dir async, project/profile-aware
+
+### 📊 Stats
+
+- 52 commits since v0.3.66
+- 104 files changed, +11090 / -3413 lines
+- 4938 tests (4938 passed, 0 failed, 29 ignored)
+
 ### 🗑️ Removed
 
 - **`opencli` built-in skill** (#536): dropped the skill whose `SKILL.md` advertised 25+ `opencli-rs` dynamic tools (`hn_top`, `twitter_trending`, `google_news`, and others) that require a separate `opencli-rs` binary and a daemon on port 19825. Nothing shipped or provisioned that binary, so on a stock build the skill loaded a doc describing tools that were never registered. Usage history confirms zero successful executions of any opencli-rs tool. Removed the `BUILTIN_SKILLS` registration, the template directory, and the README and BRAIN_CONSTITUTION references.
@@ -6755,10 +6828,14 @@ fixes.
 [0.3.54]: https://github.com/adolfousier/opencrabs/compare/v0.3.53...v0.3.54
 [0.3.55]: https://github.com/adolfousier/opencrabs/compare/v0.3.54...v0.3.55
 [0.3.56]: https://github.com/adolfousier/opencrabs/compare/v0.3.55...v0.3.56
-[0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57[0.3.58]: https://github.com/adolfousier/opencrabs/compare/v0.3.57...v0.3.58
-[0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59[0.3.60]: https://github.com/adolfousier/opencrabs/compare/v0.3.59...v0.3.60
-[0.3.62]: https://github.com/adolfousier/opencrabs/compare/v0.3.61...v0.3.62
+[0.3.57]: https://github.com/adolfousier/opencrabs/compare/v0.3.56...v0.3.57
+[0.3.58]: https://github.com/adolfousier/opencrabs/compare/v0.3.57...v0.3.58
+[0.3.59]: https://github.com/adolfousier/opencrabs/compare/v0.3.58...v0.3.59
+[0.3.60]: https://github.com/adolfousier/opencrabs/compare/v0.3.59...v0.3.60
 [0.3.61]: https://github.com/adolfousier/opencrabs/compare/v0.3.60...v0.3.61
-[0.3.63]: https://github.com/adolfousier/opencrabs/compare/v0.3.62...v0.3.63[0.3.64]: https://github.com/adolfousier/opencrabs/compare/v0.3.63...v0.3.64
+[0.3.62]: https://github.com/adolfousier/opencrabs/compare/v0.3.61...v0.3.62
+[0.3.63]: https://github.com/adolfousier/opencrabs/compare/v0.3.62...v0.3.63
+[0.3.64]: https://github.com/adolfousier/opencrabs/compare/v0.3.63...v0.3.64
 [0.3.65]: https://github.com/adolfousier/opencrabs/compare/v0.3.64...v0.3.65
 [0.3.66]: https://github.com/adolfousier/opencrabs/compare/v0.3.65...v0.3.66
+[0.3.67]: https://github.com/adolfousier/opencrabs/compare/v0.3.66...v0.3.67
