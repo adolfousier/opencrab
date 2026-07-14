@@ -4,15 +4,15 @@ use serde::{Deserialize, Serialize};
 
 /// A reference to a specific line by its content hash.
 ///
-/// Format: `ID` or `#ID` where ID is the 2-char hash.
-/// Example: `VK` or `#VK`
+/// Format: `ID` or `#ID` where ID is the [`HASH_LEN`](super::hash::HASH_LEN)-char
+/// content hash. Example: `VKQM` or `#VKQM`.
 ///
 /// Note: Line numbers are NOT included in the ref to avoid the "avalanche" problem
 /// where inserting/deleting lines invalidates all subsequent refs. The tool looks
 /// up the line by hash alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashRef {
-    /// 2-character content hash
+    /// Content hash (see [`HASH_LEN`](super::hash::HASH_LEN)).
     pub hash: String,
 }
 
@@ -49,10 +49,12 @@ impl HashRef {
             hash_str
         };
 
-        if hash_str.len() != 2 {
+        if hash_str.len() != super::hash::HASH_LEN {
             return Err(format!(
-                "Invalid hash ref '{}': hash must be exactly 2 characters (got '{}')",
-                s, hash_str
+                "Invalid hash ref '{}': hash must be exactly {} characters (got '{}')",
+                s,
+                super::hash::HASH_LEN,
+                hash_str
             ));
         }
 

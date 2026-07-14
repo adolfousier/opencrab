@@ -5,13 +5,13 @@ fn test_hash_deterministic() {
     let h1 = hash_line("hello world");
     let h2 = hash_line("hello world");
     assert_eq!(h1, h2);
-    assert_eq!(h1.len(), 2);
+    assert_eq!(h1.len(), HASH_LEN);
 }
 
 #[test]
-fn test_hash_two_chars_from_alphabet() {
+fn test_hash_chars_from_alphabet() {
     let h = hash_line("some code here");
-    assert_eq!(h.len(), 2);
+    assert_eq!(h.len(), HASH_LEN);
     for c in h.chars() {
         assert!(
             HASH_ALPHABET.contains(&(c as u8)),
@@ -55,23 +55,40 @@ fn test_hash_all_lines() {
     assert_eq!(hashes[0].0, 1);
     assert_eq!(hashes[1].0, 2);
     assert_eq!(hashes[2].0, 3);
-    assert_eq!(hashes[0].1.len(), 2);
+    assert_eq!(hashes[0].1.len(), HASH_LEN);
 }
 
 #[test]
 fn test_format_hashline() {
-    let formatted = format_hashline(12, "VK", "function hello() {");
-    assert_eq!(formatted, "VK|function hello() {");
+    let formatted = format_hashline(12, "VKQM", "function hello() {");
+    assert_eq!(formatted, "VKQM|function hello() {");
 }
 
 #[test]
 fn test_empty_content() {
     let h = hash_line("");
-    assert_eq!(h.len(), 2);
+    assert_eq!(h.len(), HASH_LEN);
 }
 
 #[test]
 fn test_unicode_content() {
     let h = hash_line("héllo wörld 🦀");
-    assert_eq!(h.len(), 2);
+    assert_eq!(h.len(), HASH_LEN);
+}
+
+#[test]
+fn test_wider_hash_reduces_false_collisions() {
+    // Guard against a silent narrowing of HASH_LEN (#573). A 2-char (256-value)
+    // tag turned ~40 distinct lines into ~37 distinct hashes (heavy false
+    // collisions, ~91% of reads affected); a 4-char (65536-value) tag keeps
+    // them almost all distinct.
+    use std::collections::HashSet;
+    let distinct: HashSet<String> = (0..40)
+        .map(|i| hash_line(&format!("let value_{i} = compute({i});")))
+        .collect();
+    assert!(
+        distinct.len() >= 39,
+        "40 distinct lines produced only {} distinct hashes — tag too narrow",
+        distinct.len()
+    );
 }

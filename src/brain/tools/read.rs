@@ -68,7 +68,7 @@ struct ReadInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     line_count: Option<usize>,
 
-    /// Optional: Output with hashline tags (HASH|content format, where HASH is a 2-char content hash)
+    /// Optional: Output with hashline tags (HASH|content format, where HASH is a 4-char content hash)
     #[serde(default)]
     hashline: Option<bool>,
 }
@@ -103,7 +103,7 @@ impl Tool for ReadTool {
                 },
                 "hashline": {
                     "type": "boolean",
-                    "description": "Optional: Output lines in HASH|content format (2-char content hash) for use with hashline_edit tool. Default: false."
+                    "description": "Optional: Output lines in HASH|content format (4-char content hash) for use with hashline_edit tool. Default: false."
                 }
             },
             "required": ["path"]

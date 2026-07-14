@@ -4,7 +4,7 @@
 //! instead of reproducing text. Eliminates stale-line errors and reduces token
 //! usage, especially for weaker models.
 
-use super::hash::hash_all_lines;
+use super::hash::{HASH_ALPHABET, HASH_LEN, hash_all_lines};
 use super::types::{HashRef, HashlineEditInput, HashlineEditOp, ResolvedEdit, ResolvedOp};
 use crate::brain::tools::brain_file_safety;
 use crate::brain::tools::edit::build_edit_diff;
@@ -24,10 +24,10 @@ impl Tool for HashlineEditTool {
     }
 
     fn description(&self) -> &str {
-        "Edit a file using hash-anchored line references. Each line is identified by a 2-char \
-         content hash (from read_file with hashline=true). Reference lines by hash alone (e.g. 'VK' \
-         or '#VK'); legacy 'LINE#HASH' format is accepted but the line number is ignored. Stale \
-         hashes are rejected before any changes are applied. Supports batch edits (multiple \
+        "Edit a file using hash-anchored line references. Each line is identified by a 4-char \
+         content hash (from read_file with hashline=true). Reference lines by hash alone (e.g. \
+         'VKQM' or '#VKQM'); legacy 'LINE#HASH' format is accepted but the line number is ignored. \
+         Stale hashes are rejected before any changes are applied. Supports batch edits (multiple \
          operations in one call)."
     }
 
@@ -52,7 +52,7 @@ impl Tool for HashlineEditTool {
                             },
                             "pos": {
                                 "type": "string",
-                                "description": "Anchor: 2-char content hash from hashline read (e.g. 'VK' or '#VK'). Legacy 'LINE#HASH' accepted; line number ignored. Required for replace, optional for append/prepend."
+                                "description": "Anchor: 4-char content hash from hashline read (e.g. 'VKQM' or '#VKQM'). Legacy 'LINE#HASH' accepted; line number ignored. Required for replace, optional for append/prepend."
                             },
                             "end": {
                                 "type": "string",
@@ -430,29 +430,48 @@ fn apply_edit(lines: &mut Vec<String>, edit: &ResolvedEdit) {
     }
 }
 
-/// Strip hashline prefixes from content lines if the model accidentally included them.
+/// Strip a leading hashline tag the model echoed from the read output.
 ///
-/// Detects lines starting with `DIGITS#XX|` pattern and strips the prefix.
+/// `read_file hashline=true` prints each line as `<HASH>|content`, and marks
+/// ambiguous lines `COLLISION|content`. Models routinely copy those exact forms
+/// into the replacement `lines`, so without stripping, `VKQM|let x = 1;` would
+/// be written verbatim into the file — the "edit mangled my file" reports
+/// (#573). Strip a leading tag when it is unambiguously one of ours:
+///   - `COLLISION|` (the ambiguity marker), or
+///   - `<HASH>|` where `<HASH>` is exactly `HASH_LEN` chars all from the hash
+///     alphabet, or
+///   - the legacy `<DIGITS>#<HASH>|` form.
+///
+/// The hash-alphabet check keeps real content that merely contains an early
+/// `|` (markdown tables, `a | b`) untouched: those tags are not valid hashes.
 fn strip_hashline_prefixes(text: &str) -> Vec<String> {
-    text.lines()
-        .map(|line| {
-            // Check for pattern: digits + '#' + 2 chars + '|'
-            if let Some(hash_pos) = line.find('#') {
-                let before = &line[..hash_pos];
-                let after = &line[hash_pos + 1..];
+    text.lines().map(strip_one_hashline_prefix).collect()
+}
 
-                // before must be all digits
-                if !before.is_empty()
-                    && before.chars().all(|c| c.is_ascii_digit())
-                    && after.len() >= 3
-                    && after.as_bytes()[0].is_ascii_uppercase()
-                    && after.as_bytes()[1].is_ascii_uppercase()
-                    && after.as_bytes()[2] == b'|'
-                {
-                    return after[3..].to_string();
-                }
-            }
-            line.to_string()
-        })
-        .collect()
+/// True when every byte of `tag` is a hash-alphabet character and the tag is
+/// exactly `HASH_LEN` long.
+fn is_hash_tag(tag: &str) -> bool {
+    tag.len() == HASH_LEN && tag.bytes().all(|b| HASH_ALPHABET.contains(&b))
+}
+
+fn strip_one_hashline_prefix(line: &str) -> String {
+    if let Some(rest) = line.strip_prefix("COLLISION|") {
+        return rest.to_string();
+    }
+    let Some(pipe) = line.find('|') else {
+        return line.to_string();
+    };
+    let (tag, after) = (&line[..pipe], &line[pipe + 1..]);
+    // Current format: `<HASH>|content`.
+    if is_hash_tag(tag) {
+        return after.to_string();
+    }
+    // Legacy format: `<DIGITS>#<HASH>|content`.
+    if let Some(hash_pos) = tag.find('#') {
+        let (num, hash) = (&tag[..hash_pos], &tag[hash_pos + 1..]);
+        if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) && is_hash_tag(hash) {
+            return after.to_string();
+        }
+    }
+    line.to_string()
 }

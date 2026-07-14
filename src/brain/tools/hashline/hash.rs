@@ -1,8 +1,16 @@
 //! Hash computation for hashline editing.
 //!
-//! Each line in a file gets a 2-character content hash tag computed via FNV-1a.
-//! The hash alphabet uses 16 visually-distinct letters (no O/0, I/l confusion),
-//! giving 256 possible hash values per line.
+//! Each line in a file gets a [`HASH_LEN`]-character content hash tag computed
+//! via FNV-1a. The hash alphabet uses 16 visually-distinct letters (no O/0,
+//! I/l confusion), giving `16^HASH_LEN` possible hash values per line.
+//!
+//! The tag width matters a lot: with a 2-char tag (256 values) even a 20-line
+//! read had a ~54% chance of a FALSE collision (distinct lines that happen to
+//! share a tag), and a 60-line read ~99.9% — which made `hashline_edit` refuse
+//! most real edits. A 4-char tag (65536 values) drops those to ~0.3% / ~4%.
+//! Identical-content lines still share a tag at any width (that is inherent and
+//! is deferred to `edit_file` via the collision path), but the false collisions
+//! that drove the failure rate are gone. See #573.
 
 /// 16 visually-distinct uppercase letters for the hash alphabet.
 /// Excludes: O (looks like 0), I (looks like l/1), A (looks like 4 in some fonts),
@@ -13,6 +21,11 @@
 /// Actually let's use the same alphabet as oh-my-pi for consistency:
 /// Z P M Q V R W S N K T X J B Y H
 pub(crate) const HASH_ALPHABET: &[u8; 16] = b"ZPMQVRWSNKTXJBYH";
+
+/// Number of characters in a line-hash tag. Widened from 2 to 4 (#573): a
+/// 2-char tag has only 256 values, so distinct lines collided constantly and
+/// the edit tool refused them. 4 chars gives 65536 values.
+pub(crate) const HASH_LEN: usize = 4;
 
 /// FNV-1a 32-bit offset basis.
 const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
@@ -44,15 +57,19 @@ fn fnv1a_32(data: &[u8]) -> u32 {
 /// * `content` - the line content (without newline)
 ///
 /// # Returns
-/// A 2-character string from HASH_ALPHABET.
+/// A [`HASH_LEN`]-character string from HASH_ALPHABET.
 pub fn hash_line(content: &str) -> String {
     let h = fnv1a_32(content.as_bytes());
 
-    // Extract two 4-bit nibbles for the two hash characters
-    let hi = ((h >> 4) & 0xF) as usize;
-    let lo = (h & 0xF) as usize;
-
-    format!("{}{}", HASH_ALPHABET[hi] as char, HASH_ALPHABET[lo] as char)
+    // Take one 4-bit nibble per tag character, from the high nibbles down, so
+    // the tag uses the most-mixed bits of the FNV hash first.
+    let mut tag = String::with_capacity(HASH_LEN);
+    for i in 0..HASH_LEN {
+        let shift = 4 * (HASH_LEN - 1 - i) as u32;
+        let nibble = ((h >> shift) & 0xF) as usize;
+        tag.push(HASH_ALPHABET[nibble] as char);
+    }
+    tag
 }
 
 /// Compute hashes for all lines in a file content.

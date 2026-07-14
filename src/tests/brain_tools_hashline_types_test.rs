@@ -2,58 +2,70 @@ use crate::brain::tools::hashline::types::*;
 
 #[test]
 fn test_parse_hashref_valid() {
-    let hr = HashRef::parse("12#VK").unwrap();
-    assert_eq!(hr.hash, "VK");
+    let hr = HashRef::parse("12#VKQM").unwrap();
+    assert_eq!(hr.hash, "VKQM");
+}
+
+#[test]
+fn test_parse_hashref_bare_hash() {
+    // The current read format references lines by hash alone.
+    let hr = HashRef::parse("VKQM").unwrap();
+    assert_eq!(hr.hash, "VKQM");
+    let hr = HashRef::parse("#VKQM").unwrap();
+    assert_eq!(hr.hash, "VKQM");
 }
 
 #[test]
 fn test_parse_hashref_single_digit() {
-    let hr = HashRef::parse("1#ZP").unwrap();
-    assert_eq!(hr.hash, "ZP");
+    let hr = HashRef::parse("1#ZPMQ").unwrap();
+    assert_eq!(hr.hash, "ZPMQ");
 }
 
 #[test]
 fn test_parse_hashref_large_line() {
-    let hr = HashRef::parse("1234#AB").unwrap();
-    assert_eq!(hr.hash, "AB");
+    let hr = HashRef::parse("1234#RWSN").unwrap();
+    assert_eq!(hr.hash, "RWSN");
 }
 
 #[test]
 fn test_parse_hashref_with_pipe_content() {
     // Model might include the content after the pipe
-    let hr = HashRef::parse("5#XY|some code here").unwrap();
-    assert_eq!(hr.hash, "XY");
+    let hr = HashRef::parse("5#TXJB|some code here").unwrap();
+    assert_eq!(hr.hash, "TXJB");
 }
 
 #[test]
 fn test_parse_hashref_lowercase_uppercased() {
-    let hr = HashRef::parse("3#vk").unwrap();
-    assert_eq!(hr.hash, "VK");
+    let hr = HashRef::parse("3#vkqm").unwrap();
+    assert_eq!(hr.hash, "VKQM");
 }
 
 #[test]
 fn test_parse_hashref_missing_separator() {
-    assert!(HashRef::parse("12VK").is_err());
+    // A line number glued to a hash with no `#` is the wrong length.
+    assert!(HashRef::parse("12VKQM").is_err());
 }
 
 #[test]
 fn test_parse_hashref_invalid_line_ignored() {
     // Legacy format: line number is ignored, only hash matters
-    let hr = HashRef::parse("abc#VK").unwrap();
-    assert_eq!(hr.hash, "VK");
+    let hr = HashRef::parse("abc#VKQM").unwrap();
+    assert_eq!(hr.hash, "VKQM");
 }
 
 #[test]
 fn test_parse_hashref_zero_line_ignored() {
     // Legacy format: line number is ignored, only hash matters
-    let hr = HashRef::parse("0#VK").unwrap();
-    assert_eq!(hr.hash, "VK");
+    let hr = HashRef::parse("0#VKQM").unwrap();
+    assert_eq!(hr.hash, "VKQM");
 }
 
 #[test]
 fn test_parse_hashref_wrong_hash_length() {
+    // Too short and too long both rejected (hash is exactly HASH_LEN chars).
     assert!(HashRef::parse("5#V").is_err());
     assert!(HashRef::parse("5#VKA").is_err());
+    assert!(HashRef::parse("5#VKQMX").is_err());
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! Comprehensive tests for hashline editing functionality
 
 use crate::brain::tools::hashline::edit::HashlineEditTool;
-use crate::brain::tools::hashline::hash::{format_hashline, hash_line};
+use crate::brain::tools::hashline::hash::{HASH_LEN, format_hashline, hash_line};
 use crate::brain::tools::hashline::types::{HashRef, HashlineEditInput, HashlineEditOp};
 use crate::brain::tools::read::ReadTool;
 use crate::brain::tools::{Tool, ToolExecutionContext};
@@ -14,7 +14,7 @@ fn test_hash_line_deterministic() {
     let hash1 = hash_line("test content");
     let hash2 = hash_line("test content");
     assert_eq!(hash1, hash2);
-    assert_eq!(hash1.len(), 2);
+    assert_eq!(hash1.len(), HASH_LEN);
 }
 
 #[test]
@@ -52,46 +52,47 @@ fn test_format_hashline() {
 
 #[test]
 fn test_hashref_parse_valid() {
-    let href = HashRef::parse("42#AB").unwrap();
-    assert_eq!(href.hash, "AB");
+    let href = HashRef::parse("42#RWSN").unwrap();
+    assert_eq!(href.hash, "RWSN");
 }
 
 #[test]
 fn test_hashref_parse_lowercase() {
-    let href = HashRef::parse("10#cd").unwrap();
-    assert_eq!(href.hash, "CD");
+    let href = HashRef::parse("10#txjb").unwrap();
+    assert_eq!(href.hash, "TXJB");
 }
 
 #[test]
 fn test_hashref_parse_with_content() {
-    let href = HashRef::parse("5#XY|some code here").unwrap();
-    assert_eq!(href.hash, "XY");
+    let href = HashRef::parse("5#TXJB|some code here").unwrap();
+    assert_eq!(href.hash, "TXJB");
 }
 
 #[test]
 fn test_hashref_parse_missing_separator() {
-    let result = HashRef::parse("42AB");
+    // A line number glued to a hash with no `#` is the wrong length.
+    let result = HashRef::parse("42RWSN");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_hashref_parse_invalid_line_ignored() {
     // Legacy format: line number is ignored, only hash matters
-    let href = HashRef::parse("abc#AB").unwrap();
-    assert_eq!(href.hash, "AB");
+    let href = HashRef::parse("abc#RWSN").unwrap();
+    assert_eq!(href.hash, "RWSN");
 }
 
 #[test]
 fn test_hashref_parse_zero_line_ignored() {
     // Legacy format: line number is ignored, only hash matters
-    let href = HashRef::parse("0#AB").unwrap();
-    assert_eq!(href.hash, "AB");
+    let href = HashRef::parse("0#RWSN").unwrap();
+    assert_eq!(href.hash, "RWSN");
 }
 
 #[test]
 fn test_hashref_parse_wrong_hash_length() {
-    let result = HashRef::parse("5#ABC");
-    assert!(result.is_err());
+    assert!(HashRef::parse("5#ABC").is_err());
+    assert!(HashRef::parse("5#RWSNX").is_err());
 }
 
 #[test]
@@ -317,12 +318,12 @@ async fn test_hashline_edit_hash_mismatch() {
         .with_working_directory(temp_dir.path().to_path_buf())
         .with_auto_approve(true);
 
-    // Use wrong hash
+    // Use a well-formed hash that is not present in the file.
     let input = json!({
         "path": file_path.to_str().unwrap(),
         "edits": [{
             "op": "replace",
-            "pos": "1#ZZ",
+            "pos": "1#ZZZZ",
             "lines": "new content"
         }]
     });
@@ -442,6 +443,77 @@ async fn test_hashline_edit_strip_prefix_autocorrect() {
 }
 
 #[tokio::test]
+async fn test_hashline_edit_strips_current_read_prefix() {
+    // The real "edit mangled my file" case (#573): read_file hashline=true
+    // prints lines as `HASH|content`, and models echo that exact form back
+    // into the replacement. The bare `HASH|` prefix must be stripped, or it
+    // lands verbatim in the file.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "line one\nline two\n").unwrap();
+
+    let tool = HashlineEditTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4())
+        .with_working_directory(temp_dir.path().to_path_buf())
+        .with_auto_approve(true);
+
+    let hash = hash_line("line one");
+    let echoed = format!("{hash}|NEW CONTENT"); // exactly what the read prints
+
+    let input = json!({
+        "path": file_path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": hash.clone(),
+            "lines": echoed,
+        }]
+    });
+
+    let result = tool.execute(input, &context).await.unwrap();
+    assert!(result.success);
+
+    let content = std::fs::read_to_string(&file_path).unwrap();
+    assert!(content.contains("NEW CONTENT"));
+    assert!(
+        !content.contains(&format!("{hash}|")),
+        "the echoed HASH| prefix leaked into the file: {content:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_hashline_edit_keeps_markdown_pipe_content() {
+    // A real content line that merely contains an early `|` (markdown table)
+    // must NOT be treated as a hash prefix and truncated.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.md");
+    std::fs::write(&file_path, "header\nrow\n").unwrap();
+
+    let tool = HashlineEditTool;
+    let context = ToolExecutionContext::new(Uuid::new_v4())
+        .with_working_directory(temp_dir.path().to_path_buf())
+        .with_auto_approve(true);
+
+    let hash = hash_line("row");
+    let input = json!({
+        "path": file_path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": hash,
+            "lines": "| a | b |",
+        }]
+    });
+
+    let result = tool.execute(input, &context).await.unwrap();
+    assert!(result.success);
+
+    let content = std::fs::read_to_string(&file_path).unwrap();
+    assert!(
+        content.contains("| a | b |"),
+        "markdown table row was mangled: {content:?}"
+    );
+}
+
+#[tokio::test]
 async fn test_read_file_hashline_mode() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");
@@ -467,10 +539,10 @@ async fn test_read_file_hashline_mode() {
     assert!(lines[0].contains("|line one"));
     assert!(lines[1].contains("|line two"));
     assert!(lines[2].contains("|line three"));
-    // Each line should start with a 2-char hash followed by |
+    // Each line should start with a HASH_LEN-char hash followed by |
     for line in &lines {
         assert!(
-            line.len() >= 3 && line.as_bytes()[2] == b'|',
+            line.len() > HASH_LEN && line.as_bytes()[HASH_LEN] == b'|',
             "Expected format ID|content, got: {}",
             line
         );
@@ -528,10 +600,10 @@ async fn test_read_file_hashline_with_start_line() {
     // Should contain the requested lines in ID|content format
     assert!(lines[0].contains("|three"));
     assert!(lines[1].contains("|four"));
-    // Each line should start with a 2-char hash followed by |
+    // Each line should start with a HASH_LEN-char hash followed by |
     for line in &lines {
         assert!(
-            line.len() >= 3 && line.as_bytes()[2] == b'|',
+            line.len() > HASH_LEN && line.as_bytes()[HASH_LEN] == b'|',
             "Expected format ID|content, got: {}",
             line
         );
