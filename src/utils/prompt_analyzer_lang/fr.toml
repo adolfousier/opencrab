@@ -1,0 +1,73 @@
+# French keyword families for prompt analyzer
+
+plan = [
+    "fais un plan",
+    "crée un plan",
+    "plan pour",
+    "plan d'implémentation",
+    "planifie",
+    "planification",
+    "faire un plan",
+    "plan d'action",
+]
+
+read_file = [
+    "lis le fichier",
+    "lire le fichier",
+    "montre-moi le fichier",
+    "afficher le fichier",
+    "contenu du fichier",
+    "qu'y a-t-il dans",
+    "ouvre le fichier",
+    "vérifie le fichier",
+    "voir le fichier",
+]
+
+search = [
+    "cherche",
+    "chercher",
+    "trouve",
+    "recherche dans le code",
+    "chercher dans les fichiers",
+    "chercher dans",
+    "où se trouve",
+    "localise",
+    "grep",
+]
+
+write_file = [
+    "crée un fichier",
+    "créer un fichier",
+    "écris le fichier",
+    "écrire dans le fichier",
+    "nouveau fichier",
+    "fais un fichier",
+]
+
+edit_file = [
+    "édite le fichier",
+    "modifie le fichier",
+    "mets à jour le fichier",
+    "change le fichier",
+    "corrige dans le fichier",
+    "ajuste dans le fichier",
+]
+
+bash = [
+    "exécute la commande",
+    "exécuter la commande",
+    "commande terminal",
+    "commande shell",
+    "commande bash",
+    "exécute dans le terminal",
+]
+
+web_search = [
+    "cherche sur internet",
+    "chercher sur internet",
+    "cherche sur le web",
+    "recherche web",
+    "trouve en ligne",
+    "chercher en ligne",
+    "google",
+]

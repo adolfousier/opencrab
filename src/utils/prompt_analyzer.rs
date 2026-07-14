@@ -8,92 +8,139 @@
 //! display paths (Telegram `display_text`, TUI chat bubbles). Slash commands
 //! and skill/user-command expansions are never analyzed: soft-nudge means
 //! the USER said keyword-shaped language, not that a skill author wrote it.
+//!
+//! ## Multilanguage support
+//!
+//! Keywords are loaded from per-language TOML files at compile time via
+//! `include_str!`. Language detection uses character-set heuristics
+//! (Cyrillic → ru, ã/õ/ç → pt, ñ/¿/¡ → es, accented Latin → fr, else en).
+//!
+//! Multi-word phrases are scanned across all languages to catch code-switched
+//! input (e.g. "Voy a usar write_file" with no ñ/¿). Single-word keywords
+//! are gated to the detected language to avoid false positives.
 
 use regex::Regex;
+use serde::Deserialize;
 use std::sync::LazyLock;
 
-/// Keywords that trigger plan tool usage
-const PLAN_KEYWORDS: &[&str] = &[
-    "make a plan",
-    "create a plan",
-    "plan for",
-    "plan to implement",
-    "plan out",
-    "planning",
-    "create plan",
-    "make plan",
-];
+/// Language-specific prompt analyzer configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnalyzerLang {
+    #[serde(default)]
+    pub plan: Vec<String>,
+    #[serde(default)]
+    pub read_file: Vec<String>,
+    #[serde(default)]
+    pub search: Vec<String>,
+    #[serde(default)]
+    pub write_file: Vec<String>,
+    #[serde(default)]
+    pub edit_file: Vec<String>,
+    #[serde(default)]
+    pub bash: Vec<String>,
+    #[serde(default)]
+    pub web_search: Vec<String>,
+}
 
-/// Keywords that trigger read_file tool usage
-const READ_FILE_KEYWORDS: &[&str] = &[
-    "read file",
-    "read the file",
-    "show me file",
-    "show me the file",
-    "show file content",
-    "what's in",
-    "what is in",
-    "display file",
-    "view file",
-    "look at file",
-    "check file",
-];
+/// Embedded TOML content (compile-time validated).
+const EN_TOML: &str = include_str!("prompt_analyzer_lang/en.toml");
+const RU_TOML: &str = include_str!("prompt_analyzer_lang/ru.toml");
+const ES_TOML: &str = include_str!("prompt_analyzer_lang/es.toml");
+const PT_TOML: &str = include_str!("prompt_analyzer_lang/pt.toml");
+const FR_TOML: &str = include_str!("prompt_analyzer_lang/fr.toml");
+const ID_TOML: &str = include_str!("prompt_analyzer_lang/id.toml");
 
-/// Keywords that trigger grep/search tool usage
-const SEARCH_KEYWORDS: &[&str] = &[
-    "search for",
-    "find",
-    "look for",
-    "grep",
-    "search code",
-    "find in files",
-    "search in",
-    "where is",
-    "locate",
-];
+pub(crate) static LANG_EN: LazyLock<AnalyzerLang> =
+    LazyLock::new(|| toml::from_str(EN_TOML).expect("BUG: en.toml failed to parse at runtime"));
+pub(crate) static LANG_RU: LazyLock<AnalyzerLang> =
+    LazyLock::new(|| toml::from_str(RU_TOML).expect("BUG: ru.toml failed to parse at runtime"));
+pub(crate) static LANG_ES: LazyLock<AnalyzerLang> =
+    LazyLock::new(|| toml::from_str(ES_TOML).expect("BUG: es.toml failed to parse at runtime"));
+pub(crate) static LANG_PT: LazyLock<AnalyzerLang> =
+    LazyLock::new(|| toml::from_str(PT_TOML).expect("BUG: pt.toml failed to parse at runtime"));
+pub(crate) static LANG_FR: LazyLock<AnalyzerLang> =
+    LazyLock::new(|| toml::from_str(FR_TOML).expect("BUG: fr.toml failed to parse at runtime"));
+pub(crate) static LANG_ID: LazyLock<AnalyzerLang> =
+    LazyLock::new(|| toml::from_str(ID_TOML).expect("BUG: id.toml failed to parse at runtime"));
 
-/// Keywords that trigger write_file tool usage
-const WRITE_FILE_KEYWORDS: &[&str] = &[
-    "create file",
-    "create a file",
-    "write file",
-    "write to file",
-    "make a file",
-    "make file",
-    "new file",
-];
+/// Detect language from text content using character-set heuristics.
+/// Returns a static reference to the appropriate language config.
+pub fn detect_language(text: &str) -> &'static AnalyzerLang {
+    let mut cyrillic = 0u32;
+    let mut latin_accent = 0u32;
+    let mut total_alpha = 0u32;
 
-/// Keywords that trigger edit_file tool usage
-const EDIT_FILE_KEYWORDS: &[&str] = &[
-    "edit file",
-    "modify file",
-    "update file",
-    "change file",
-    "fix in file",
-    "update the file",
-    "modify the file",
-];
+    for ch in text.chars().take(500) {
+        if ch.is_alphabetic() {
+            total_alpha += 1;
+            if ('\u{0400}'..='\u{04FF}').contains(&ch) {
+                cyrillic += 1;
+            } else if ('\u{00C0}'..='\u{024F}').contains(&ch) {
+                latin_accent += 1;
+            }
+        }
+    }
 
-/// Keywords that trigger bash tool usage
-const BASH_KEYWORDS: &[&str] = &[
-    "run command",
-    "execute command",
-    "run shell",
-    "shell command",
-    "terminal command",
-    "bash command",
-];
+    if total_alpha == 0 {
+        return &LANG_EN;
+    }
 
-/// Keywords that trigger web_search tool usage
-const WEB_SEARCH_KEYWORDS: &[&str] = &[
-    "search online",
-    "search the web",
-    "google",
-    "search internet",
-    "find online",
-    "look up online",
-    "web search",
-];
+    // Cyrillic > 20% of alpha chars → Russian
+    if cyrillic * 5 > total_alpha {
+        return &LANG_RU;
+    }
+
+    // For Latin-accent text, distinguish Spanish/Portuguese/French
+    // by looking for language-specific characters
+    if latin_accent > 0 {
+        // Portuguese-specific: ã, õ, ç
+        if text.contains('ã')
+            || text.contains('õ')
+            || text.contains('ç')
+            || text.contains('Ã')
+            || text.contains('Õ')
+            || text.contains('Ç')
+        {
+            return &LANG_PT;
+        }
+        // Spanish-specific: ñ, ¿, ¡
+        if text.contains('ñ') || text.contains('Ñ') || text.contains('¿') || text.contains('¡')
+        {
+            return &LANG_ES;
+        }
+        // If we have significant accented Latin but no PT/ES markers,
+        // check for French patterns (à, â, ç, é, è, ê, ë, î, ï, ô, ù, û, ü, ÿ)
+        // French is the fallback for accented Latin since it's the most
+        // common accented-Latin language after Spanish/Portuguese
+        if text.contains('à')
+            || text.contains('â')
+            || text.contains('é')
+            || text.contains('è')
+            || text.contains('ê')
+            || text.contains('ë')
+            || text.contains('î')
+            || text.contains('ï')
+            || text.contains('ô')
+            || text.contains('û')
+            || text.contains('ù')
+            || text.contains('ü')
+            || text.contains('ÿ')
+        {
+            return &LANG_FR;
+        }
+    }
+
+    &LANG_EN
+}
+
+/// Every loaded language config, in detection-priority order.
+///
+/// Multi-word phrases are scanned across all languages to catch code-switched
+/// input. Single-word keywords stay gated to the detected language to avoid
+/// false positives.
+pub fn all_langs() -> [&'static AnalyzerLang; 6] {
+    [&LANG_EN, &LANG_RU, &LANG_ES, &LANG_PT, &LANG_FR, &LANG_ID]
+}
 
 static SHARED: LazyLock<PromptAnalyzer> = LazyLock::new(PromptAnalyzer::new);
 
@@ -106,26 +153,92 @@ pub fn is_natural_chat(text: &str) -> bool {
 
 /// Prompt analyzer that detects keywords and suggests tool usage
 pub struct PromptAnalyzer {
-    plan_regex: Regex,
-    read_file_regex: Regex,
-    search_regex: Regex,
-    write_file_regex: Regex,
-    edit_file_regex: Regex,
-    bash_regex: Regex,
-    web_search_regex: Regex,
+    /// Multi-word phrase regexes (scanned across all languages)
+    plan_phrase: Regex,
+    read_file_phrase: Regex,
+    search_phrase: Regex,
+    write_file_phrase: Regex,
+    edit_file_phrase: Regex,
+    bash_phrase: Regex,
+    web_search_phrase: Regex,
 }
 
 impl PromptAnalyzer {
     /// Create a new prompt analyzer
     pub fn new() -> Self {
+        // Collect all multi-word phrases across all languages
+        let plan_phrases: Vec<&str> = all_langs()
+            .iter()
+            .flat_map(|lang| {
+                lang.plan
+                    .iter()
+                    .filter(|k| k.contains(' '))
+                    .map(|s| s.as_str())
+            })
+            .collect();
+        let read_file_phrases: Vec<&str> = all_langs()
+            .iter()
+            .flat_map(|lang| {
+                lang.read_file
+                    .iter()
+                    .filter(|k| k.contains(' '))
+                    .map(|s| s.as_str())
+            })
+            .collect();
+        let search_phrases: Vec<&str> = all_langs()
+            .iter()
+            .flat_map(|lang| {
+                lang.search
+                    .iter()
+                    .filter(|k| k.contains(' '))
+                    .map(|s| s.as_str())
+            })
+            .collect();
+        let write_file_phrases: Vec<&str> = all_langs()
+            .iter()
+            .flat_map(|lang| {
+                lang.write_file
+                    .iter()
+                    .filter(|k| k.contains(' '))
+                    .map(|s| s.as_str())
+            })
+            .collect();
+        let edit_file_phrases: Vec<&str> = all_langs()
+            .iter()
+            .flat_map(|lang| {
+                lang.edit_file
+                    .iter()
+                    .filter(|k| k.contains(' '))
+                    .map(|s| s.as_str())
+            })
+            .collect();
+        let bash_phrases: Vec<&str> = all_langs()
+            .iter()
+            .flat_map(|lang| {
+                lang.bash
+                    .iter()
+                    .filter(|k| k.contains(' '))
+                    .map(|s| s.as_str())
+            })
+            .collect();
+        let web_search_phrases: Vec<&str> = all_langs()
+            .iter()
+            .flat_map(|lang| {
+                lang.web_search
+                    .iter()
+                    .filter(|k| k.contains(' '))
+                    .map(|s| s.as_str())
+            })
+            .collect();
+
         Self {
-            plan_regex: Self::build_keyword_regex(PLAN_KEYWORDS),
-            read_file_regex: Self::build_keyword_regex(READ_FILE_KEYWORDS),
-            search_regex: Self::build_keyword_regex(SEARCH_KEYWORDS),
-            write_file_regex: Self::build_keyword_regex(WRITE_FILE_KEYWORDS),
-            edit_file_regex: Self::build_keyword_regex(EDIT_FILE_KEYWORDS),
-            bash_regex: Self::build_keyword_regex(BASH_KEYWORDS),
-            web_search_regex: Self::build_keyword_regex(WEB_SEARCH_KEYWORDS),
+            plan_phrase: Self::build_keyword_regex(&plan_phrases),
+            read_file_phrase: Self::build_keyword_regex(&read_file_phrases),
+            search_phrase: Self::build_keyword_regex(&search_phrases),
+            write_file_phrase: Self::build_keyword_regex(&write_file_phrases),
+            edit_file_phrase: Self::build_keyword_regex(&edit_file_phrases),
+            bash_phrase: Self::build_keyword_regex(&bash_phrases),
+            web_search_phrase: Self::build_keyword_regex(&web_search_phrases),
         }
     }
 
@@ -136,12 +249,26 @@ impl PromptAnalyzer {
 
     /// Build a regex from keywords (case-insensitive, word boundaries)
     fn build_keyword_regex(keywords: &[&str]) -> Regex {
+        if keywords.is_empty() {
+            // Return a regex that never matches
+            return Regex::new(r"(?i)\b(NEVER_MATCH_THIS)\b").expect("Failed to compile regex");
+        }
         let pattern = keywords
             .iter()
             .map(|k| regex::escape(k))
             .collect::<Vec<_>>()
             .join("|");
         Regex::new(&format!(r"(?i)\b({})\b", pattern)).expect("Failed to compile keyword regex")
+    }
+
+    /// Build a regex for a specific language's single-word keywords
+    fn build_word_regex_for_lang(keywords: &[String]) -> Regex {
+        let words: Vec<&str> = keywords
+            .iter()
+            .filter(|k| !k.contains(' '))
+            .map(|s| s.as_str())
+            .collect();
+        Self::build_keyword_regex(&words)
     }
 
     /// Return the hint section for a prompt, or `None` when no keyword
@@ -151,11 +278,61 @@ impl PromptAnalyzer {
         let mut transformations = Vec::new();
         let lower_prompt = prompt.to_lowercase();
 
+        // Detect language for single-word keyword gating
+        let lang = detect_language(prompt);
+        let lang_name = if std::ptr::eq(lang, &*LANG_RU) {
+            "ru"
+        } else if std::ptr::eq(lang, &*LANG_ES) {
+            "es"
+        } else if std::ptr::eq(lang, &*LANG_PT) {
+            "pt"
+        } else if std::ptr::eq(lang, &*LANG_FR) {
+            "fr"
+        } else if std::ptr::eq(lang, &*LANG_ID) {
+            "id"
+        } else {
+            "en"
+        };
+
+        // Build language-specific word regexes on the fly (cheap, only when needed)
+        let plan_word_lang = Self::build_word_regex_for_lang(&lang.plan);
+        let read_file_word_lang = Self::build_word_regex_for_lang(&lang.read_file);
+        let search_word_lang = Self::build_word_regex_for_lang(&lang.search);
+        let write_file_word_lang = Self::build_word_regex_for_lang(&lang.write_file);
+        let edit_file_word_lang = Self::build_word_regex_for_lang(&lang.edit_file);
+        let bash_word_lang = Self::build_word_regex_for_lang(&lang.bash);
+        let web_search_word_lang = Self::build_word_regex_for_lang(&lang.web_search);
+
+        // Prompt snippet for logging (first 40 chars, respecting char boundaries)
+        let snippet = if prompt.len() > 40 {
+            let mut end = 40;
+            while end > 0 && !prompt.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...", &prompt[..end])
+        } else {
+            prompt.to_string()
+        };
+
         // Check for plan keywords: design track (the user said "plan", so
         // they get a reviewable SESSION PLAN and an Approve step, not a
         // checklist that starts executing on its own).
-        if self.plan_regex.is_match(&lower_prompt) {
-            tracing::info!("🔍 Detected PLAN intent in prompt");
+        // Multi-word phrases scanned across all languages, single-word gated to detected lang
+        let plan_match = self.plan_phrase.captures(&lower_prompt).or_else(|| {
+            if plan_word_lang.is_match(&lower_prompt) {
+                plan_word_lang.captures(&lower_prompt)
+            } else {
+                None
+            }
+        });
+        if let Some(caps) = plan_match {
+            let matched = caps.get(1).map_or("unknown", |m| m.as_str());
+            tracing::info!(
+                "🔍 Detected PLAN intent: keyword='{}', lang={}, prompt='{}'",
+                matched,
+                lang_name,
+                snippet
+            );
             transformations.push(
                 "\n\n**CRITICAL**: The user wants a PLAN — enter the design track NOW:\n\
                 1. Explore first if needed (reads, search, bash are available pre-init).\n\
@@ -174,15 +351,41 @@ impl PromptAnalyzer {
         }
 
         // Check for read_file keywords
-        if self.read_file_regex.is_match(&lower_prompt) {
-            tracing::info!("🔍 Detected READ_FILE intent in prompt");
+        let read_file_match = self.read_file_phrase.captures(&lower_prompt).or_else(|| {
+            if read_file_word_lang.is_match(&lower_prompt) {
+                read_file_word_lang.captures(&lower_prompt)
+            } else {
+                None
+            }
+        });
+        if let Some(caps) = read_file_match {
+            let matched = caps.get(1).map_or("unknown", |m| m.as_str());
+            tracing::info!(
+                "🔍 Detected READ_FILE intent: keyword='{}', lang={}, prompt='{}'",
+                matched,
+                lang_name,
+                snippet
+            );
             transformations
                 .push("\n\n**TOOL HINT**: Use the `read_file` tool to read the contents of files.");
         }
 
         // Check for search keywords
-        if self.search_regex.is_match(&lower_prompt) {
-            tracing::info!("🔍 Detected SEARCH/GREP intent in prompt");
+        let search_match = self.search_phrase.captures(&lower_prompt).or_else(|| {
+            if search_word_lang.is_match(&lower_prompt) {
+                search_word_lang.captures(&lower_prompt)
+            } else {
+                None
+            }
+        });
+        if let Some(caps) = search_match {
+            let matched = caps.get(1).map_or("unknown", |m| m.as_str());
+            tracing::info!(
+                "🔍 Detected SEARCH/GREP intent: keyword='{}', lang={}, prompt='{}'",
+                matched,
+                lang_name,
+                snippet
+            );
             transformations.push(
                 "\n\n**TOOL HINT**: Use the `grep` tool to search for patterns in files, \
                 or use `glob` to find files by pattern.",
@@ -190,29 +393,81 @@ impl PromptAnalyzer {
         }
 
         // Check for write_file keywords
-        if self.write_file_regex.is_match(&lower_prompt) {
-            tracing::info!("🔍 Detected WRITE_FILE intent in prompt");
+        let write_file_match = self.write_file_phrase.captures(&lower_prompt).or_else(|| {
+            if write_file_word_lang.is_match(&lower_prompt) {
+                write_file_word_lang.captures(&lower_prompt)
+            } else {
+                None
+            }
+        });
+        if let Some(caps) = write_file_match {
+            let matched = caps.get(1).map_or("unknown", |m| m.as_str());
+            tracing::info!(
+                "🔍 Detected WRITE_FILE intent: keyword='{}', lang={}, prompt='{}'",
+                matched,
+                lang_name,
+                snippet
+            );
             transformations
                 .push("\n\n**TOOL HINT**: Use the `write_file` tool to create new files.");
         }
 
         // Check for edit_file keywords
-        if self.edit_file_regex.is_match(&lower_prompt) {
-            tracing::info!("🔍 Detected EDIT_FILE intent in prompt");
+        let edit_file_match = self.edit_file_phrase.captures(&lower_prompt).or_else(|| {
+            if edit_file_word_lang.is_match(&lower_prompt) {
+                edit_file_word_lang.captures(&lower_prompt)
+            } else {
+                None
+            }
+        });
+        if let Some(caps) = edit_file_match {
+            let matched = caps.get(1).map_or("unknown", |m| m.as_str());
+            tracing::info!(
+                "🔍 Detected EDIT_FILE intent: keyword='{}', lang={}, prompt='{}'",
+                matched,
+                lang_name,
+                snippet
+            );
             transformations
                 .push("\n\n**TOOL HINT**: Use the `edit_file` tool to modify existing files.");
         }
 
         // Check for bash keywords
-        if self.bash_regex.is_match(&lower_prompt) {
-            tracing::info!("🔍 Detected BASH intent in prompt");
+        let bash_match = self.bash_phrase.captures(&lower_prompt).or_else(|| {
+            if bash_word_lang.is_match(&lower_prompt) {
+                bash_word_lang.captures(&lower_prompt)
+            } else {
+                None
+            }
+        });
+        if let Some(caps) = bash_match {
+            let matched = caps.get(1).map_or("unknown", |m| m.as_str());
+            tracing::info!(
+                "🔍 Detected BASH intent: keyword='{}', lang={}, prompt='{}'",
+                matched,
+                lang_name,
+                snippet
+            );
             transformations
                 .push("\n\n**TOOL HINT**: Use the `bash` tool to execute shell commands.");
         }
 
         // Check for web_search keywords
-        if self.web_search_regex.is_match(&lower_prompt) {
-            tracing::info!("🔍 Detected WEB_SEARCH intent in prompt");
+        let web_search_match = self.web_search_phrase.captures(&lower_prompt).or_else(|| {
+            if web_search_word_lang.is_match(&lower_prompt) {
+                web_search_word_lang.captures(&lower_prompt)
+            } else {
+                None
+            }
+        });
+        if let Some(caps) = web_search_match {
+            let matched = caps.get(1).map_or("unknown", |m| m.as_str());
+            tracing::info!(
+                "🔍 Detected WEB_SEARCH intent: keyword='{}', lang={}, prompt='{}'",
+                matched,
+                lang_name,
+                snippet
+            );
             transformations.push(
                 "\n\n**TOOL HINT**: Use the `web_search` tool to search the internet for \
                 real-time information.",
@@ -230,7 +485,10 @@ impl PromptAnalyzer {
     /// this to set the durable `pre_init_editing` flag when a plan-shaped
     /// message arrives on natural-language chat.
     pub fn plan_intent(&self, prompt: &str) -> bool {
-        self.plan_regex.is_match(&prompt.to_lowercase())
+        let lower_prompt = prompt.to_lowercase();
+        let lang = detect_language(prompt);
+        let plan_word_lang = Self::build_word_regex_for_lang(&lang.plan);
+        self.plan_phrase.is_match(&lower_prompt) || plan_word_lang.is_match(&lower_prompt)
     }
 
     /// Analyze a prompt and transform it if needed

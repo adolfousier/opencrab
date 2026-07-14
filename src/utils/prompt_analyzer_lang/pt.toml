@@ -1,0 +1,73 @@
+# Portuguese keyword families for prompt analyzer
+
+plan = [
+    "faz um plano",
+    "cria um plano",
+    "plano para",
+    "plano de implementação",
+    "planeja",
+    "planejamento",
+    "fazer um plano",
+    "plano de ação",
+]
+
+read_file = [
+    "lê o arquivo",
+    "ler arquivo",
+    "mostra o arquivo",
+    "mostrar arquivo",
+    "conteúdo do arquivo",
+    "o que tem em",
+    "abre o arquivo",
+    "revisa o arquivo",
+    "ver arquivo",
+]
+
+search = [
+    "busca",
+    "buscar",
+    "encontra",
+    "busca no código",
+    "buscar em arquivos",
+    "buscar em",
+    "onde está",
+    "localiza",
+    "grep",
+]
+
+write_file = [
+    "cria um arquivo",
+    "criar arquivo",
+    "escreve arquivo",
+    "escrever em arquivo",
+    "novo arquivo",
+    "faz um arquivo",
+]
+
+edit_file = [
+    "edita o arquivo",
+    "modifica o arquivo",
+    "atualiza o arquivo",
+    "muda o arquivo",
+    "corrige no arquivo",
+    "ajusta no arquivo",
+]
+
+bash = [
+    "executa comando",
+    "executar comando",
+    "comando no terminal",
+    "comando shell",
+    "comando bash",
+    "executa no terminal",
+]
+
+web_search = [
+    "pesquisa na internet",
+    "pesquisar na internet",
+    "pesquisa na web",
+    "pesquisa web",
+    "encontra online",
+    "pesquisar online",
+    "google",
+]

@@ -1,0 +1,77 @@
+# English keyword families for prompt analyzer
+
+plan = [
+    "make a plan",
+    "create a plan",
+    "plan for",
+    "plan to implement",
+    "plan out",
+    "planning",
+    "create plan",
+    "make plan",
+]
+
+read_file = [
+    "read file",
+    "read the file",
+    "show me file",
+    "show me the file",
+    "show file content",
+    "what's in",
+    "what is in",
+    "display file",
+    "view file",
+    "look at file",
+    "check file",
+]
+
+search = [
+    "search for",
+    "find",
+    "look for",
+    "grep",
+    "search code",
+    "find in files",
+    "search in",
+    "where is",
+    "locate",
+]
+
+write_file = [
+    "create file",
+    "create a file",
+    "write file",
+    "write to file",
+    "make a file",
+    "make file",
+    "new file",
+]
+
+edit_file = [
+    "edit file",
+    "modify file",
+    "update file",
+    "change file",
+    "fix in file",
+    "update the file",
+    "modify the file",
+]
+
+bash = [
+    "run command",
+    "execute command",
+    "run shell",
+    "shell command",
+    "terminal command",
+    "bash command",
+]
+
+web_search = [
+    "search online",
+    "search the web",
+    "google",
+    "search internet",
+    "find online",
+    "look up online",
+    "web search",
+]

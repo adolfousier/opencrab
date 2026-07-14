@@ -1,0 +1,73 @@
+# Indonesian keyword families for prompt analyzer
+
+plan = [
+    "buat rencana",
+    "buatkan rencana",
+    "rencana untuk",
+    "rencana implementasi",
+    "rencanakan",
+    "perencanaan",
+    "membuat rencana",
+    "rencana aksi",
+]
+
+read_file = [
+    "baca file",
+    "baca filenya",
+    "tunjukkan file",
+    "tampilkan file",
+    "isi file",
+    "apa isi",
+    "buka file",
+    "periksa file",
+    "lihat file",
+]
+
+search = [
+    "cari",
+    "mencari",
+    "temukan",
+    "cari di kode",
+    "cari di file",
+    "cari di",
+    "di mana",
+    "temukan lokasi",
+    "grep",
+]
+
+write_file = [
+    "buat file",
+    "buatkan file",
+    "tulis file",
+    "tulis ke file",
+    "file baru",
+    "buat file baru",
+]
+
+edit_file = [
+    "edit file",
+    "ubah file",
+    "perbarui file",
+    "ganti file",
+    "perbaiki di file",
+    "koreksi di file",
+]
+
+bash = [
+    "jalankan perintah",
+    "eksekusi perintah",
+    "perintah terminal",
+    "perintah shell",
+    "perintah bash",
+    "jalankan di terminal",
+]
+
+web_search = [
+    "cari di internet",
+    "mencari di internet",
+    "cari di web",
+    "pencarian web",
+    "temukan online",
+    "cari online",
+    "google",
+]

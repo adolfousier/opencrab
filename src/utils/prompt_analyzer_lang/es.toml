@@ -1,0 +1,73 @@
+# Spanish keyword families for prompt analyzer
+
+plan = [
+    "haz un plan",
+    "crea un plan",
+    "plan para",
+    "plan de implementación",
+    "planifica",
+    "planificación",
+    "hacer un plan",
+    "plan de acción",
+]
+
+read_file = [
+    "lee el archivo",
+    "leer archivo",
+    "muéstrame el archivo",
+    "muestra el archivo",
+    "contenido del archivo",
+    "qué hay en",
+    "abre el archivo",
+    "revisa el archivo",
+    "ver archivo",
+]
+
+search = [
+    "busca",
+    "buscar",
+    "encuentra",
+    "búsqueda de código",
+    "buscar en archivos",
+    "buscar en",
+    "dónde está",
+    "localiza",
+    "grep",
+]
+
+write_file = [
+    "crea un archivo",
+    "crear archivo",
+    "escribe archivo",
+    "escribir en archivo",
+    "nuevo archivo",
+    "haz un archivo",
+]
+
+edit_file = [
+    "edita el archivo",
+    "modifica el archivo",
+    "actualiza el archivo",
+    "cambia el archivo",
+    "arregla en el archivo",
+    "corrige en el archivo",
+]
+
+bash = [
+    "ejecuta comando",
+    "ejecutar comando",
+    "comando de terminal",
+    "comando shell",
+    "comando bash",
+    "ejecuta en terminal",
+]
+
+web_search = [
+    "busca en internet",
+    "buscar en internet",
+    "busca en la web",
+    "búsqueda web",
+    "encuentra en línea",
+    "buscar en línea",
+    "googlea",
+]
