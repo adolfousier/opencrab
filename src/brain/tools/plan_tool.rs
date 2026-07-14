@@ -802,7 +802,6 @@ impl Tool for PlanTool {
                     }
 
                     let count = new_plan.tasks.len();
-                    let list = render_task_list(&new_plan);
                     plan = Some(new_plan);
 
                     let md_path =
@@ -822,7 +821,12 @@ impl Tool for PlanTool {
                         )
                     } else {
                         format!(
-                            "📋 Created plan: {title} ({count} tasks, Editing)\n\n{list}\n\n\
+                            "📋 Created plan: {title} ({count} tasks, Editing).\n\n\
+                             The task list is ALREADY shown to the user in the plan card \
+                             (the message carrying the Approve/Discard buttons). Do NOT \
+                             repeat the tasks in your reply — that duplicates the card. \
+                             Confirm the plan is ready in one short line and ask the user \
+                             to approve.\n\n\
                              Plan document: {}\n\n\
                              WAIT for the user to approve the plan before calling 'start'. \
                              Checklist operations are blocked until approval.",

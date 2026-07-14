@@ -1133,8 +1133,7 @@ impl TelegramAgent {
                                                 &bot,
                                                 chat_id,
                                                 thread_id,
-                                                "✅ Plan approved. Building the checklist…"
-                                                    .to_string(),
+                                                "✅ Plan approved — starting now…".to_string(),
                                             )
                                             .await;
                                         // Visible seed turn, spawned so the

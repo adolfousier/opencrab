@@ -639,11 +639,26 @@ async fn init_with_inline_tasks_creates_plan_and_tasks() {
             .unwrap();
         assert!(result.success);
         assert!(
-            result.output.contains("2 tasks")
-                && result.output.contains("Alpha")
-                && result.output.contains("Beta"),
-            "init must create the plan with both inline tasks, got: {}",
+            result.output.contains("2 tasks"),
+            "init should report the task count: {}",
             result.output
+        );
+        // Dup-1 fix (#577): the tool result no longer echoes the task list — the
+        // plan card already shows it — so verify the tasks landed on the plan
+        // document, and that the result does NOT re-list them.
+        assert!(
+            !result.output.contains("Alpha") && !result.output.contains("Beta"),
+            "the tool result must not duplicate the card's task list: {}",
+            result.output
+        );
+        let plan = crate::utils::plan_files::load_plan(ctx.session_id)
+            .await
+            .unwrap();
+        assert_eq!(plan.tasks.len(), 2);
+        let titles: Vec<&str> = plan.tasks.iter().map(|t| t.title.as_str()).collect();
+        assert!(
+            titles.contains(&"Alpha") && titles.contains(&"Beta"),
+            "both inline tasks must be on the plan, got {titles:?}"
         );
     })
     .await;

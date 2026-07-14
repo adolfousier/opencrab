@@ -51,7 +51,9 @@ fn seed_prompt(md_path: &std::path::Path) -> String {
          dependencies unless step prose explicitly requires ordering \
          (depends on / after / blocked by). Then call `plan` start and \
          continue executing the checklist in this same turn. Do NOT edit \
-         project files until start succeeds.",
+         project files until start succeeds. The approval was already \
+         acknowledged to the user — do NOT restate that the plan is approved or \
+         announce that you are starting; go straight to the work.",
         md_path.display()
     )
 }
@@ -64,7 +66,9 @@ fn start_prompt() -> String {
      already defined — do NOT call `plan` add_tasks again. Call `plan` start to \
      begin the first task, then execute the checklist in this same turn, \
      calling `plan` complete as each task finishes. Do NOT edit project files \
-     until start succeeds."
+     until start succeeds. The approval was already acknowledged to the user — \
+     do NOT restate that the plan is approved or announce that you are starting; \
+     go straight to the work and report results as you go."
         .to_string()
 }
 

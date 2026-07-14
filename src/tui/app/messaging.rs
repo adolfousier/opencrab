@@ -845,9 +845,7 @@ impl App {
                         self.push_system_message(reply);
                     }
                     crate::utils::plan_mode::ApproveOutcome::SeedTurn { prompt } => {
-                        self.push_system_message(
-                            "✅ Plan approved. Building the checklist…".to_string(),
-                        );
+                        self.push_system_message("✅ Plan approved — starting now…".to_string());
                         self.reload_plan();
                         // Visible seed turn: dispatch the locked implement-turn
                         // prompt as a command-sourced message (analyzer skipped).
