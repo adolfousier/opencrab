@@ -100,16 +100,87 @@ async fn forbidden_response_surfaces_body_to_caller() {
         "url": format!("{}/forbidden", url),
     });
     let result = tool.execute(input, &ctx()).await.expect("tool execute");
-    assert!(!result.success, "403 should produce a failed ToolResult");
-    let body = result.error.as_deref().unwrap_or("");
+    // The request COMPLETED (the server answered 403), so the tool succeeded;
+    // a non-2xx status is data for the model, not a tool failure (#574). What
+    // matters is that the status and the server's explanation reach the model.
+    assert!(
+        result.success,
+        "a completed HTTP response is a successful tool invocation"
+    );
+    let body = result.output;
     assert!(
         body.contains("403"),
-        "error text should mention the status code: {}",
+        "output should mention the status code: {}",
         body
     );
     assert!(
         body.contains("User-Agent header"),
-        "error text should surface the server's explanation: {}",
+        "output should surface the server's explanation: {}",
         body
     );
+    assert!(
+        body.contains("non-2xx"),
+        "output should flag the non-2xx status so the model notices: {}",
+        body
+    );
+    assert_eq!(
+        result.metadata.get("status_code").map(String::as_str),
+        Some("403"),
+        "status code stays available in metadata"
+    );
+}
+
+#[tokio::test]
+async fn not_found_is_a_successful_invocation_with_status_surfaced() {
+    // A 404 is a valid answer to "does this exist?" — the request completed, so
+    // the tool succeeded. The status must still be visible to the model (#574).
+    let mut server = mockito::Server::new_async().await;
+    let url = server.url();
+    let _mock = server
+        .mock("GET", "/missing")
+        .with_status(404)
+        .with_body("not here")
+        .create_async()
+        .await;
+
+    let tool = HttpClientTool;
+    let input = json!({
+        "method": "GET",
+        "url": format!("{}/missing", url),
+    });
+    let result = tool.execute(input, &ctx()).await.expect("tool execute");
+    assert!(
+        result.success,
+        "a completed 404 response is a successful tool invocation"
+    );
+    assert!(
+        result.output.contains("404") && result.output.contains("non-2xx"),
+        "status and non-2xx note must reach the model: {}",
+        result.output
+    );
+    assert_eq!(
+        result.metadata.get("status_code").map(String::as_str),
+        Some("404")
+    );
+}
+
+#[tokio::test]
+async fn server_error_is_still_a_successful_invocation() {
+    let mut server = mockito::Server::new_async().await;
+    let url = server.url();
+    let _mock = server
+        .mock("GET", "/boom")
+        .with_status(500)
+        .with_body("kaboom")
+        .create_async()
+        .await;
+
+    let tool = HttpClientTool;
+    let input = json!({ "method": "GET", "url": format!("{}/boom", url) });
+    let result = tool.execute(input, &ctx()).await.expect("tool execute");
+    assert!(
+        result.success,
+        "a completed 5xx response is not a tool failure"
+    );
+    assert!(result.output.contains("kaboom"), "body reaches the model");
 }

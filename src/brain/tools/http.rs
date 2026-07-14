@@ -308,11 +308,23 @@ impl Tool for HttpClientTool {
             }
         }
 
-        let mut tool_result = if is_success {
-            ToolResult::success(output)
-        } else {
-            ToolResult::error(output)
-        };
+        // Tool success reflects whether the REQUEST completed, not the HTTP
+        // status. A 3xx/4xx/5xx is a valid, informative response: the server
+        // answered, and the model reads the status + body to decide what to do
+        // next. Marking those as tool errors misreported reliability (a 404
+        // existence probe, a 401/403 auth check, a 429 rate limit are expected,
+        // not tool malfunctions) and could trip the agent's error-recovery path.
+        // Only genuine transport failures (timeout, connect, DNS, body-read)
+        // return Err above and count as failures (#574). Prepend a clear note on
+        // non-2xx so the model still notices the status.
+        if !is_success {
+            output = format!(
+                "⚠️ The server returned a non-2xx status ({status_code}). The request \
+                 itself completed; treat the status and body below as the result, \
+                 not as a tool failure.\n\n{output}"
+            );
+        }
+        let mut tool_result = ToolResult::success(output);
 
         tool_result
             .metadata
