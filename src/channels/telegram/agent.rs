@@ -1156,12 +1156,26 @@ impl TelegramAgent {
                                             let display =
                                                 "[System: Plan approved — seeding checklist]"
                                                     .to_string();
+                                            // MUST run the tool loop: the approval turn has to
+                                            // actually call `plan` start/add_tasks and execute.
+                                            // The old send_message_with_display was a single
+                                            // tool-less completion, so the agent could only emit
+                                            // text ("Starting now.") and the plan never started.
+                                            // Lighter surface than /execute (no streaming
+                                            // progress callback) but the SAME tool-enabled engine.
+                                            let chat_id_str = chat_id.0.to_string();
                                             match agent2
-                                                .send_message_with_display(
+                                                .send_message_with_tools_and_display(
                                                     session_id,
                                                     prompt,
                                                     Some(display),
-                                                    None,
+                                                    None, // model
+                                                    None, // cancel token
+                                                    None, // approval callback
+                                                    None, // progress callback (final text only)
+                                                    None, // question callback
+                                                    "telegram",
+                                                    Some(&chat_id_str),
                                                 )
                                                 .await
                                             {
