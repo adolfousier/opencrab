@@ -791,9 +791,21 @@ impl App {
             }
             "/plan" => {
                 if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
+                    let query = input
+                        .split_once(' ')
+                        .map(|x| x.1.trim().to_string())
+                        .unwrap_or_default();
                     let reply = crate::utils::plan_mode::enter_plan_mode(sid).await;
-                    self.push_system_message(reply);
                     self.reload_plan();
+                    if query.is_empty() {
+                        self.push_system_message(reply);
+                    } else {
+                        // `/plan <query>`: Plan mode is armed; run the query as
+                        // the planning turn so the agent drafts the design from
+                        // it in one step (#579).
+                        let sender = self.event_sender();
+                        let _ = sender.send(TuiEvent::CommandSubmitted(query));
+                    }
                 } else {
                     self.push_system_message("No active session.".to_string());
                 }

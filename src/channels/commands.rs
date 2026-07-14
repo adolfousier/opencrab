@@ -243,6 +243,10 @@ pub enum ChannelCommand {
     RespondTo(String),
     /// `/plan` — enter durable pre-init Plan mode (reply text)
     PlanMode(String),
+    /// `/plan <query>` — enter pre-init Plan mode AND dispatch the trailing
+    /// text as the first planning turn, so the agent drafts the design from
+    /// the query in one step (the channel handler runs it as an agent turn).
+    PlanModeWithQuery(String),
     /// `/show-plan` — plan state summary (reply text)
     ShowPlan(String),
     /// `/execute` — Approve the design plan / retry the seed. The channel
@@ -448,6 +452,27 @@ pub async fn handle_command(
                 ChannelCommand::PlanMode(crate::utils::plan_mode::enter_plan_mode(session_id).await)
             }
         }
+        // `/plan <query>`: enter Plan mode AND use the trailing text as the
+        // planning intent, so the agent drafts the design in one step instead
+        // of waiting for a second message (#579).
+        t if t.starts_with("/plan ") => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                let query = t.strip_prefix("/plan ").unwrap_or("").trim().to_string();
+                if query.is_empty() {
+                    ChannelCommand::PlanMode(
+                        crate::utils::plan_mode::enter_plan_mode(session_id).await,
+                    )
+                } else {
+                    // Arm pre-init Plan mode now (side effect: set_pre_init_editing;
+                    // the returned prompt text is unused here because the agent's
+                    // planning turn is the reply). The handler dispatches `query`.
+                    crate::utils::plan_mode::enter_plan_mode(session_id).await;
+                    ChannelCommand::PlanModeWithQuery(query)
+                }
+            }
+        }
         "/show-plan" | "/showplan" | "/show_plan" => {
             ChannelCommand::ShowPlan(crate::utils::plan_mode::show_plan(session_id).await)
         }
@@ -644,6 +669,7 @@ pub async fn handle_command(
         ChannelCommand::Profiles(resp) => Some(resp.text.clone()),
         ChannelCommand::Compact
         | ChannelCommand::UserPrompt(_)
+        | ChannelCommand::PlanModeWithQuery(_)
         | ChannelCommand::NotACommand
         | ChannelCommand::UnknownCommand(_) => None,
         ChannelCommand::RespondTo(body) => Some(body.clone()),

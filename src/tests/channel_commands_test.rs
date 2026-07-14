@@ -147,6 +147,7 @@ fn variant_name(cmd: &ChannelCommand) -> &'static str {
         ChannelCommand::Sessions(_) => "Sessions",
         ChannelCommand::Stop => "Stop",
         ChannelCommand::UserPrompt(_) => "UserPrompt",
+        ChannelCommand::PlanModeWithQuery(_) => "PlanModeWithQuery",
         ChannelCommand::UserSystem(_) => "UserSystem",
         ChannelCommand::Doctor => "Doctor",
         ChannelCommand::Evolve => "Evolve",
@@ -298,4 +299,57 @@ async fn models_command_shows_global_provider_when_no_session_override() {
         }
         other => panic!("expected Models command, got {:?}", variant_name(&other)),
     }
+}
+
+#[tokio::test]
+async fn plan_with_query_enters_plan_mode_and_carries_the_query() {
+    // `/plan <query>` arms Plan mode and returns the trailing text as the
+    // planning intent so the agent drafts the design in one step (#579).
+    use crate::config::profile::{home_for_profile, with_profile_home_async};
+    let profile = format!("plan-query-test-{}", uuid::Uuid::new_v4());
+    with_profile_home_async(Some(&profile), async {
+        let (agent, session_svc, session_id) = create_test_service_full().await;
+        let cmd = crate::channels::commands::handle_command(
+            "/plan audit the last 2 closed issues",
+            session_id,
+            &agent,
+            &session_svc,
+            true, // is_owner
+            None,
+        )
+        .await;
+        match cmd {
+            ChannelCommand::PlanModeWithQuery(q) => {
+                assert_eq!(q, "audit the last 2 closed issues");
+            }
+            other => panic!("expected PlanModeWithQuery, got {:?}", variant_name(&other)),
+        }
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
+}
+
+#[tokio::test]
+async fn bare_plan_still_enters_plan_mode() {
+    use crate::config::profile::{home_for_profile, with_profile_home_async};
+    let profile = format!("plan-bare-test-{}", uuid::Uuid::new_v4());
+    with_profile_home_async(Some(&profile), async {
+        let (agent, session_svc, session_id) = create_test_service_full().await;
+        let cmd = crate::channels::commands::handle_command(
+            "/plan",
+            session_id,
+            &agent,
+            &session_svc,
+            true,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(cmd, ChannelCommand::PlanMode(_)),
+            "bare /plan enters Plan mode and prompts for a description, got {:?}",
+            variant_name(&cmd)
+        );
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(home_for_profile(Some(&profile)));
 }

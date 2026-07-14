@@ -2438,6 +2438,14 @@ pub(crate) async fn handle_message(
                 text = prompt;
                 // fall through to agent with the prompt as the message
             }
+            ChannelCommand::PlanModeWithQuery(query) => {
+                // `/plan <query>`: Plan mode was already armed in handle_command;
+                // run `query` as the planning turn so the agent drafts the design
+                // from it in one step (#579).
+                command_invocation = Some("/plan".to_string());
+                text = query;
+                // fall through to agent with the query as the message
+            }
             ChannelCommand::NotACommand => {} // fall through to agent
             // Help, Usage, Evolve, Doctor, UserSystem handled by try_execute_text_command above
             _ => {}
