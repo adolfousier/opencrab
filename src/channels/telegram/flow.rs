@@ -898,9 +898,34 @@ pub(crate) async fn refresh_flow(
     }
 }
 
+/// How a failed rich-details edit should be recovered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RichEditError {
+    /// Telegram reports the content is unchanged — nothing to do.
+    NotModified,
+    /// A 429 rate limit — skip and retry rich next tick (never fall back to
+    /// HTML, whose smaller limit would split the block; #580).
+    RateLimited,
+    /// Any other failure — fall back to the HTML edit path.
+    Fallback,
+}
+
+/// Classify a rich-edit error string into a recovery action. Kept pure so the
+/// rate-limit-vs-fallback decision is unit-testable without a live Bot API.
+pub(crate) fn classify_rich_edit_error(msg: &str) -> RichEditError {
+    if msg.contains("message is not modified") {
+        RichEditError::NotModified
+    } else if msg.contains("429") || msg.contains("Too Many Requests") {
+        RichEditError::RateLimited
+    } else {
+        RichEditError::Fallback
+    }
+}
+
 /// Rich-details edit path (#420 path A). 32K char limit, 30K freeze
-/// threshold. A not-modified response is a no-op; any other failure falls
-/// back to the classic HTML edit so the block never silently stops updating.
+/// threshold. A not-modified response is a no-op; a 429 is retried on the rich
+/// path next tick; any other failure falls back to the classic HTML edit so the
+/// block never silently stops updating.
 pub(crate) async fn refresh_flow_rich_details(
     bot: &Bot,
     chat: ChatId,
@@ -943,17 +968,33 @@ pub(crate) async fn refresh_flow_rich_details(
                 }
             }
         }
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("message is not modified") {
-                return;
+        Err(e) => match classify_rich_edit_error(&e.to_string()) {
+            RichEditError::NotModified => {}
+            // A transient 429 must NOT fall back to HTML. The rich API holds 32K
+            // chars; the HTML path caps at 4096, so a large block that fits rich
+            // gets frozen and split into a second message on the smaller HTML
+            // limit — that is what split a long plan-execution block into "…23
+            // tool calls" + a separate "Finished" block (#580). Skip this tick
+            // instead: the ~1.5s edit loop retries the rich edit, and once the
+            // rate limit clears the block updates whole, never splitting.
+            RichEditError::RateLimited => {
+                tracing::warn!(
+                    "Telegram: rich details edit rate-limited for mid={:?} — skipping this tick, \
+                     will retry rich (not HTML, to avoid a size-split)",
+                    mid
+                );
             }
-            tracing::warn!(
-                "Telegram: rich details edit failed for mid={:?}: {msg} — falling back to HTML",
-                mid
-            );
-            refresh_flow_html(bot, chat, mid, streaming).await;
-        }
+            // Non-rate-limit errors (malformed content, etc.) fall back to HTML,
+            // which is the right recovery there.
+            RichEditError::Fallback => {
+                tracing::warn!(
+                    "Telegram: rich details edit failed for mid={:?}: {} — falling back to HTML",
+                    mid,
+                    e
+                );
+                refresh_flow_html(bot, chat, mid, streaming).await;
+            }
+        },
     }
 }
 

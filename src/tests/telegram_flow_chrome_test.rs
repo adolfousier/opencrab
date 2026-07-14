@@ -663,3 +663,31 @@ fn short_narration_untouched_by_either_cap() {
         );
     }
 }
+
+#[test]
+fn rich_edit_429_retries_rich_never_falls_back_to_html() {
+    // A transient 429 on the rich edit must classify as RateLimited (skip and
+    // retry rich next tick), NOT Fallback — the HTML path's 4096-char cap would
+    // freeze and split a large block that fits the rich 32K limit (#580). Uses
+    // the exact error string the rich API surfaced in the wild.
+    use crate::channels::telegram::flow::{RichEditError, classify_rich_edit_error};
+
+    let real = "Telegram rich API error (429 Too Many Requests): Too Many Requests: retry after 33";
+    assert_eq!(classify_rich_edit_error(real), RichEditError::RateLimited);
+    assert_eq!(
+        classify_rich_edit_error("Too Many Requests: retry after 5"),
+        RichEditError::RateLimited
+    );
+
+    // Unchanged content is a no-op.
+    assert_eq!(
+        classify_rich_edit_error("Bad Request: message is not modified"),
+        RichEditError::NotModified
+    );
+
+    // Any other failure still falls back to HTML.
+    assert_eq!(
+        classify_rich_edit_error("Bad Request: can't parse entities"),
+        RichEditError::Fallback
+    );
+}
