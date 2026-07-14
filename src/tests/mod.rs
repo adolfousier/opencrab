@@ -98,6 +98,7 @@ pub mod build_user_message_image_test;
 pub mod bundled_plans_test;
 pub mod candle_whisper_test;
 pub mod channel_action_test;
+pub mod channel_command_media_marker_test;
 pub mod channel_command_owner_gate_test;
 pub mod channel_search_test;
 pub mod channel_session_resolve_test;

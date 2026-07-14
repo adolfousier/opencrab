@@ -377,10 +377,22 @@ pub async fn handle_command(
     is_owner: bool,
     chat_id: Option<&str>,
 ) -> ChannelCommand {
+    // Strip structured `<<IMG:…>>` / `<<VID:…>>` markers before matching. The
+    // channel handler appends these when a photo/video is in context — attached
+    // to THIS message OR pulled from recent chat / a reply — so a command sent
+    // while an image sits in context arrives as `/models\n<<IMG:…>>`. An exact
+    // command match then fails, the command falls through to the agent, and the
+    // switch silently runs as a prose reply instead of executing (confirmed in
+    // logs: a `/models` with an auto-injected recent-photo marker returned
+    // NotACommand). The markers are machine context, not part of the typed
+    // command, so drop them for detection; the image still reaches the agent
+    // via the handler's own text when the message is genuinely not a command.
+    let (text_no_media, _imgs) = crate::utils::extract_img_markers(text);
+    let (text_no_media, _vids) = crate::utils::extract_vid_markers(&text_no_media);
     // Strip @botname from the command token — defense-in-depth: handler.rs
     // already strips this bot's own handle, but if bot_username() returns
     // None there, this catch ensures commands still match.
-    let normalized = strip_command_handle(text);
+    let normalized = strip_command_handle(&text_no_media);
     let trimmed = normalized.as_str();
     let result = match trimmed {
         "/compact" => {
