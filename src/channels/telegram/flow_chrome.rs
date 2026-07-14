@@ -514,43 +514,33 @@ pub(crate) async fn load_goal_section(
 }
 
 /// Pure plan-chrome decision: maps the plan state (plus whether the turn is
-/// still running, whether we are inside the checklist-seed window, and whether
-/// the design `.md` currently passes the approval gate) to the header label and
-/// the keyboard the flow message should carry. Kept pure and separate from the
-/// plan-file IO so the keyboard gating (#571) is unit-testable.
+/// still running and whether we are inside the checklist-seed window) to the
+/// header label and the keyboard the flow message should carry. Kept pure and
+/// separate from the plan-file IO so the keyboard gating (#571) is unit-testable.
 ///
-/// Keyboard gating for the Editing state, both parts locked to real approval
-/// behaviour so a visible Approve button always does something:
-/// - While the turn runs (`turn_active`), attach NO keyboard. `/execute` and
-///   the Approve tap are both refused while a turn is in flight (they would
-///   fork/deadlock against it), so a mid-edit button only invites a tap that
-///   bounces with "a turn is running".
-/// - At settle, attach Approve/Discard ONLY when the plan actually passes the
-///   gate (`plan_ready`). An incomplete draft (empty template, no numbered
-///   steps) can never be approved, so surfacing Approve there just lets the tap
-///   repeat the same "plan not ready to approve" refusal forever; show
-///   Discard-only until the draft is complete.
-///
-/// The settle path re-runs `refresh_sections` so the keyboard is recomputed
-/// with `turn_active == false` (and current readiness) once the turn ends.
+/// Editing keyboard: while the turn runs (`turn_active`) attach NO keyboard —
+/// `/execute` and the Approve tap are both refused mid-turn (they would
+/// fork/deadlock against the in-flight turn), so a button then only invites a
+/// tap that bounces with "a turn is running". At settle, show Approve/Discard.
+/// (An earlier attempt also gated Approve on the plan passing `validate_for_
+/// approve`, but that HID the button on plans the user could actually approve —
+/// far worse than the occasional early tap, which already gets a clear "not
+/// ready" message. #574 follow-up.) The settle path re-runs `refresh_sections`
+/// so the keyboard is recomputed with `turn_active == false` once the turn ends.
 pub(crate) fn plan_state_chrome(
     mode: crate::utils::plan_files::PlanModeState,
     turn_active: bool,
     in_seed_window: bool,
-    plan_ready: bool,
 ) -> (Option<String>, PlanKb) {
     use crate::utils::plan_files::PlanModeState;
     match mode {
         PlanModeState::NoPlan => (None, PlanKb::None),
         PlanModeState::PreInitEditing => (Some("📝 Discussing plan".to_string()), PlanKb::None),
         PlanModeState::PostInitEditing => {
-            let kb = if !turn_active && plan_ready {
-                PlanKb::ApproveDiscard
-            } else if turn_active {
+            let kb = if turn_active {
                 PlanKb::None
             } else {
-                // Settled but the draft still fails the gate: Discard only.
-                PlanKb::DiscardOnly
+                PlanKb::ApproveDiscard
             };
             (Some("✍️ Editing plan".to_string()), kb)
         }
@@ -583,18 +573,7 @@ pub(crate) async fn load_plan_state_section(
     // in_seed_window only matters (and only does IO) for the Active state.
     let in_seed_window = matches!(mode, PlanModeState::Active)
         && crate::utils::plan_mode::in_seed_window(session_id).await;
-    // Readiness only matters for the settled Editing state, where it decides
-    // whether the Approve button is offered. Only read the .md in that case.
-    let plan_ready = if matches!(mode, PlanModeState::PostInitEditing) && !turn_active {
-        let md_path = crate::utils::plan_files::plan_md_path(session_id).await;
-        let body = tokio::fs::read_to_string(&md_path)
-            .await
-            .unwrap_or_default();
-        crate::utils::plan_mode::validate_for_approve(&body).is_ok()
-    } else {
-        false
-    };
-    plan_state_chrome(mode, turn_active, in_seed_window, plan_ready)
+    plan_state_chrome(mode, turn_active, in_seed_window)
 }
 
 /// Reload the plan/goal sections from live data and store them on the
