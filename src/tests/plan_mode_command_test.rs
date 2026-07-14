@@ -99,6 +99,49 @@ async fn first_approve_transitions_and_returns_seed_turn() {
 }
 
 #[tokio::test]
+async fn checklist_approve_transitions_without_md_validation() {
+    // #573 audit-plan shape: init mode="checklist" authored tasks during
+    // Editing, held there by an empty placeholder scaffold `.md`. Approve must
+    // succeed on the checklist — the tasks are the deliverable — instead of
+    // refusing because the design template is unfilled.
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        let mut plan = PlanDocument::new(sid, "Audit".to_string());
+        for i in 1..=3 {
+            plan.add_task(PlanTask::new(
+                i,
+                format!("task {i}"),
+                "d".to_string(),
+                TaskType::Edit,
+            ));
+        }
+        plan.status = PlanStatus::Editing;
+        save_plan(&plan).await.unwrap();
+        // Empty scaffold .md (Problem/Target/Intent blank, no numbered step):
+        // the exact template that used to fail validate_for_approve.
+        create_design_md(sid, "Audit").await.unwrap();
+
+        assert_eq!(plan_mode_state(sid).await, PlanModeState::PostInitEditing);
+
+        match try_approve(sid).await {
+            ApproveOutcome::SeedTurn { prompt } => {
+                assert!(prompt.contains("PLAN APPROVED"));
+                assert!(
+                    prompt.contains("already defined"),
+                    "checklist approval dispatches the start prompt, not the .md seed: {prompt}"
+                );
+            }
+            other => panic!("checklist approve should transition, got {other:?}"),
+        }
+        let plan = plan_files::load_plan(sid).await.unwrap();
+        assert_eq!(plan.status, PlanStatus::Active);
+        assert!(plan.approved_at.is_some());
+        assert_eq!(plan.tasks.len(), 3, "tasks are preserved, not reseeded");
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn approve_refuses_invalid_template_without_transition() {
     in_temp_home(async {
         let sid = Uuid::new_v4();

@@ -56,11 +56,27 @@ fn seed_prompt(md_path: &std::path::Path) -> String {
     )
 }
 
-/// Idle `/execute` / Approve. Two allowed paths (locked):
+/// Implement-turn prompt for approving a CHECKLIST-mode plan whose tasks were
+/// authored during Editing. The tasks already exist (no design `.md` to seed
+/// from), so the agent must NOT `add_tasks` again — just start and execute.
+fn start_prompt() -> String {
+    "[SYSTEM: PLAN APPROVED] The user approved the checklist. Its tasks are \
+     already defined — do NOT call `plan` add_tasks again. Call `plan` start to \
+     begin the first task, then execute the checklist in this same turn, \
+     calling `plan` complete as each task finishes. Do NOT edit project files \
+     until start succeeds."
+        .to_string()
+}
+
+/// Idle `/execute` / Approve. Allowed paths (locked):
 ///
-/// 1. First approve (post-init Editing, `.md` passes the validator):
-///    set Active, stamp `approved_at`, return the seed turn.
-/// 2. Seed retry (Active, design `.md` present, `tasks` still empty):
+/// 1. Checklist approve (post-init Editing, `tasks` already present): the
+///    reviewed task list IS the plan, so set Active and dispatch a start turn;
+///    no design-`.md` validation, no seed.
+/// 2. Design approve (post-init Editing, no tasks, `.md` passes the validator):
+///    set Active, stamp `approved_at`, return the seed turn that authors tasks
+///    from the `.md`.
+/// 3. Seed retry (Active, design `.md` present, `tasks` still empty):
 ///    re-dispatch the seed turn only; no second approve, no transition.
 ///
 /// Everything else refuses with a deterministic message. The caller MUST
@@ -80,6 +96,31 @@ pub async fn try_approve(session_id: Uuid) -> ApproveOutcome {
                 .to_string(),
         ),
         PlanModeState::PostInitEditing => {
+            let Some(mut plan) = plan_files::load_plan(session_id).await else {
+                return ApproveOutcome::Refused(
+                    "Plan JSON is unreadable; cannot approve. /discard and start over.".to_string(),
+                );
+            };
+            // Checklist-mode plan: the user authored a task list during Editing
+            // (init mode="checklist") and just reviewed it. The deliverable is
+            // the checklist, not a design `.md` — the placeholder scaffold `.md`
+            // only exists to hold the plan in Editing for approval. Validating
+            // that empty scaffold as design prose wrongly refused a ready plan
+            // (#573 audit: 6 real tasks, empty template). Approve straight to
+            // Active and start executing; there is nothing to seed.
+            if !plan.tasks.is_empty() {
+                plan.approve();
+                if let Err(e) = plan_files::save_plan(&plan).await {
+                    return ApproveOutcome::Refused(format!(
+                        "Failed to persist the approval: {e}. Try again."
+                    ));
+                }
+                return ApproveOutcome::SeedTurn {
+                    prompt: start_prompt(),
+                };
+            }
+            // Design track: no tasks yet, so the `.md` prose IS the plan.
+            // Validate it, approve, and seed tasks from its numbered steps.
             let body = std::fs::read_to_string(&md_path).unwrap_or_default();
             if let Err(why) = validate_for_approve(&body) {
                 return ApproveOutcome::Refused(format!(
@@ -87,11 +128,6 @@ pub async fn try_approve(session_id: Uuid) -> ApproveOutcome {
                     md_path.display()
                 ));
             }
-            let Some(mut plan) = plan_files::load_plan(session_id).await else {
-                return ApproveOutcome::Refused(
-                    "Plan JSON is unreadable; cannot approve. /discard and start over.".to_string(),
-                );
-            };
             // First approve: Editing -> Active + approved_at. The .md
             // freezes automatically (the gate keys off Active status).
             plan.approve();
