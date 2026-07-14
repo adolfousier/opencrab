@@ -3572,6 +3572,12 @@ pub(crate) async fn handle_message(
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.flow_outcome = Some(flow_outcome);
     }
+    // Recompute sections now that the turn has settled: the plan Approve/Discard
+    // keyboard attaches only at turn end (load_plan_state_section keys off
+    // turn_active = flow_outcome.is_none(), now false), so it must be refreshed
+    // here before the final render or the last in-flight tick's PlanKb::None
+    // would leave the button off for good (#571).
+    super::flow_chrome::refresh_sections(&streaming, &agent, session_id).await;
     refresh_flow(&bot, msg.chat.id, &streaming).await;
 
     // Drop the active-turn guard before flushing so any reaction arriving during

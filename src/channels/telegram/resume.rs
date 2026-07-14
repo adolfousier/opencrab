@@ -536,6 +536,10 @@ pub(crate) async fn resume_session(
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         s.flow_outcome = Some(flow_outcome);
     }
+    // Recompute sections at settle so the plan Approve/Discard keyboard, which
+    // attaches only at turn end (#571), materializes on the final render — the
+    // main handler does the same right after stamping the outcome.
+    super::flow_chrome::refresh_sections(&streaming, &agent, session_id).await;
     refresh_flow(&bot, chat_id, &streaming).await;
 
     Ok(())

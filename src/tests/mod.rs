@@ -268,6 +268,7 @@ pub mod phantom_post_success_exemption_test;
 pub mod phantom_pronoun_drop_test;
 pub mod plan_document_test;
 pub mod plan_files_test;
+pub mod plan_flow_keyboard_gate_test;
 pub mod plan_gate_test;
 pub mod plan_mode_command_test;
 pub mod plan_reminder_test;

@@ -522,19 +522,38 @@ pub(crate) async fn load_goal_section(
 /// carries approval, so chrome never teaches `/show-plan` or `/execute`
 /// as the normal path (Decision 14). Keyboards attach only after `init`
 /// succeeds (pre-init has none).
-pub(crate) async fn load_plan_state_section(
-    session_id: Uuid,
+/// Pure plan-chrome decision: maps the plan state (plus whether the turn is
+/// still running and whether we are inside the checklist-seed window) to the
+/// header label and the keyboard the flow message should carry. Kept pure and
+/// separate from the plan-file IO so the settle-gating of the Approve/Discard
+/// keyboard (#571) is unit-testable.
+///
+/// Keyboard gating: the Approve/Discard keyboard is actionable ONLY once the
+/// turn settles. `/execute` and the Approve tap are both refused while a turn
+/// is running (they would fork/deadlock against the in-flight turn), so
+/// presenting the button mid-edit only invites a tap that bounces with "a turn
+/// is running". While editing, show the label the whole time but attach the
+/// keyboard only at settle (`turn_active == false`); the settle path re-runs
+/// `refresh_sections` so the button materializes then.
+pub(crate) fn plan_state_chrome(
+    mode: crate::utils::plan_files::PlanModeState,
     turn_active: bool,
+    in_seed_window: bool,
 ) -> (Option<String>, PlanKb) {
-    use crate::utils::plan_files::{PlanModeState, plan_mode_state};
-    match plan_mode_state(session_id).await {
+    use crate::utils::plan_files::PlanModeState;
+    match mode {
         PlanModeState::NoPlan => (None, PlanKb::None),
         PlanModeState::PreInitEditing => (Some("📝 Discussing plan".to_string()), PlanKb::None),
         PlanModeState::PostInitEditing => {
-            (Some("✍️ Editing plan".to_string()), PlanKb::ApproveDiscard)
+            let kb = if turn_active {
+                PlanKb::None
+            } else {
+                PlanKb::ApproveDiscard
+            };
+            (Some("✍️ Editing plan".to_string()), kb)
         }
         PlanModeState::Active => {
-            if crate::utils::plan_mode::in_seed_window(session_id).await {
+            if in_seed_window {
                 if turn_active {
                     (
                         Some("⏳ Building checklist…".to_string()),
@@ -551,6 +570,18 @@ pub(crate) async fn load_plan_state_section(
             }
         }
     }
+}
+
+pub(crate) async fn load_plan_state_section(
+    session_id: Uuid,
+    turn_active: bool,
+) -> (Option<String>, PlanKb) {
+    use crate::utils::plan_files::{PlanModeState, plan_mode_state};
+    let mode = plan_mode_state(session_id).await;
+    // in_seed_window only matters (and only does IO) for the Active state.
+    let in_seed_window = matches!(mode, PlanModeState::Active)
+        && crate::utils::plan_mode::in_seed_window(session_id).await;
+    plan_state_chrome(mode, turn_active, in_seed_window)
 }
 
 /// Reload the plan/goal sections from live data and store them on the
