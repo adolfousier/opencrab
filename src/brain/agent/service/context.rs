@@ -728,34 +728,37 @@ pub(crate) async fn plan_state_block(session_id: Uuid) -> Option<String> {
     match plan_files::plan_mode_state(session_id).await {
         PlanModeState::NoPlan => None,
         PlanModeState::PreInitEditing => Some(
-            "## PLAN STATE (harness)\n\
-             State: Editing (pre-init). Plan mode is on but `plan init` has not run.\n\
-             Next: explore with reads/search/bash, then call:\n\
+            "[PLAN MODE — injected by the harness, not from the user]\n\
              \n\
-             plan init mode='design' title='<3-8 word title>'\n\
+             **State:** Pre-init (no plan yet)\n\
              \n\
-             The harness creates a SESSION PLAN .md for you. Write the design into it \
-             using this structure:\n\
+             **Now:**\n\
+             1. Explore with reads/search/bash\n\
+             2. Call: `plan init mode='design' title='<3-8 words>'`\n\
              \n\
-             ## Context\n\
-             **Problem:** <what's broken or missing>\n\
-             **Target state:** <what success looks like>\n\
-             **Intent:** <one-sentence goal>\n\
+             **Next:** Harness creates .md with template for you to edit.\n\
              \n\
-             ## Implementation steps\n\
-             1. <step one>\n\
-             2. <step two>\n\
-             ...\n\
-             \n\
-             Do NOT edit project files. Do NOT paste the plan in chat."
+             **Constraints:**\n\
+             - No project file edits\n\
+             - No pasting plan in chat"
                 .to_string(),
         ),
         PlanModeState::PostInitEditing => Some(format!(
-            "## PLAN STATE (harness)\n\
-             State: Editing (design prose).\n\
-             Plan document: {}\n\
-             Next: re-read and refine that .md; wait for the user to approve with \
-             /execute. Do NOT call plan start and do NOT edit project files.",
+            "[PLAN MODE — injected by the harness, not from the user]\n\
+             \n\
+             **State:** Editing design prose\n\
+             **File:** {}\n\
+             \n\
+             **Now:**\n\
+             1. Re-read .md\n\
+             2. Refine design\n\
+             \n\
+             **Next:** Wait for `/execute` approval.\n\
+             \n\
+             **Constraints:**\n\
+             - No `plan start`/`complete`\n\
+             - No project file edits\n\
+             - No pasting plan in chat",
             md.display()
         )),
         PlanModeState::Active => {
@@ -798,37 +801,36 @@ pub(crate) async fn plan_state_block(session_id: Uuid) -> Option<String> {
 pub(crate) fn format_editing_reminder(md_path: Option<std::path::PathBuf>) -> String {
     match md_path {
         Some(md) => format!(
-            "[PLAN MODE REMINDER — injected by the harness, not from the user]\n\
-             📋 This session's plan is Editing (design track). The SESSION PLAN lives at \
-             {}, the ONLY writable file. Refine it there using the template: ## Context \
-             with **Problem:** / **Target state:** / **Intent:** filled, then numbered \
-             ## Implementation steps. Do NOT paste the plan in chat, do NOT call plan \
-             start/complete, no bash, no project writes. When the document is ready, \
-             tell the user to approve it with /execute (Approve seeds the checklist \
-             automatically).",
+            "[PLAN MODE — injected by the harness, not from the user]\n\
+             \n\
+             **State:** Editing design prose\n\
+             **File:** {}\n\
+             \n\
+             **Now:**\n\
+             1. Re-read .md\n\
+             2. Refine design\n\
+             \n\
+             **Next:** Wait for `/execute` approval.\n\
+             \n\
+             **Constraints:**\n\
+             - No `plan start`/`complete`\n\
+             - No project file edits\n\
+             - No pasting plan in chat",
             md.display()
         ),
-        None => "[PLAN MODE REMINDER — injected by the harness, not from the user]\n\
-                 📋 This session is in Plan mode (pre-init). Explore with reads, search, \
-                 and bash as needed, then call:\n\
+        None => "[PLAN MODE — injected by the harness, not from the user]\n\
                  \n\
-                 plan init mode='design' title='<3-8 word title>'\n\
+                 **State:** Pre-init (no plan yet)\n\
                  \n\
-                 The harness creates a SESSION PLAN .md for you. Write the design into it \
-                 using this structure:\n\
+                 **Now:**\n\
+                 1. Explore with reads/search/bash\n\
+                 2. Call: `plan init mode='design' title='<3-8 words>'`\n\
                  \n\
-                 ## Context\n\
-                 **Problem:** <what's broken or missing>\n\
-                 **Target state:** <what success looks like>\n\
-                 **Intent:** <one-sentence goal>\n\
+                 **Next:** Harness creates .md with template for you to edit.\n\
                  \n\
-                 ## Implementation steps\n\
-                 1. <step one>\n\
-                 2. <step two>\n\
-                 ...\n\
-                 \n\
-                 Project writes stay blocked until the user approves the plan. \
-                 Do NOT paste the plan in chat."
+                 **Constraints:**\n\
+                 - No project file edits\n\
+                 - No pasting plan in chat"
             .to_string(),
     }
 }

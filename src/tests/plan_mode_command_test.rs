@@ -357,7 +357,7 @@ async fn editing_reminder_and_plan_state_block_follow_state() {
         // Pre-init: reminder and block teach init mode='design', never start.
         set_pre_init_editing(sid).await.unwrap();
         let block = plan_state_block(sid).await.unwrap();
-        assert!(block.contains("pre-init") && block.contains("mode='design'"));
+        assert!(block.contains("Pre-init") && block.contains("mode='design'"));
         let reminder = format_editing_reminder(None);
         assert!(reminder.contains("plan init") && !reminder.contains("operation=\"start\""));
         plan_files::discard_plan(sid).await;
@@ -366,10 +366,10 @@ async fn editing_reminder_and_plan_state_block_follow_state() {
         make_post_init(sid, GOLDEN_MD).await;
         let md = plan_md_path(sid).await.display().to_string();
         let block = plan_state_block(sid).await.unwrap();
-        assert!(block.contains(&md) && block.contains("Do NOT call plan start"));
+        assert!(block.contains(&md) && block.contains("No `plan start`"));
         let reminder = format_editing_reminder(Some(plan_md_path(sid).await));
         assert!(reminder.contains(&md));
-        assert!(reminder.contains("Do NOT paste the plan in chat"));
+        assert!(reminder.contains("No pasting plan in chat"));
 
         // Active: block names the checklist and says plan start.
         assert!(matches!(
