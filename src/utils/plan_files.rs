@@ -99,6 +99,35 @@ pub async fn plan_md_path(session_id: Uuid) -> PathBuf {
         .join(format!(".opencrabs_plan_{session_id}.md"))
 }
 
+/// Durable pre-init marker path (resolved write location). Its mere presence
+/// means the session entered Plan-mode intent (`/plan` / soft-nudge) before any
+/// `plan init`. It carries no content — pre-init has no approvable document —
+/// so this replaces the old stub plan JSON that materialized a fake
+/// `PlanDocument` purely to hold this one bit (#569). Named as a sibling of the
+/// plan `.json`/`.md` so the sync cleanup helpers can derive it path-only.
+pub async fn pre_init_marker_path(session_id: Uuid) -> PathBuf {
+    session_dir(session_id)
+        .await
+        .join(format!(".opencrabs_plan_{session_id}.preinit"))
+}
+
+/// The pre-init marker to READ: resolved location if present, else the legacy
+/// flat dir, else the resolved path (mirrors [`plan_json_read_path`]).
+async fn pre_init_marker_read_path(session_id: Uuid) -> PathBuf {
+    let resolved = pre_init_marker_path(session_id).await;
+    if resolved.exists() {
+        return resolved;
+    }
+    let legacy = legacy_session_dir().join(format!(".opencrabs_plan_{session_id}.preinit"));
+    if legacy.exists() { legacy } else { resolved }
+}
+
+/// The pre-init marker sibling of a plan JSON path (same stem, `.preinit`), for
+/// the sync path-based cleanup helpers that hold a path but no session id.
+fn pre_init_marker_for(json_path: &Path) -> PathBuf {
+    json_path.with_extension("preinit")
+}
+
 /// The JSON path to READ from: the resolved location if the file is present
 /// there, else the legacy flat dir (so an older binary's plan is still
 /// found), else the resolved path (the not-yet-created case). Writes never
@@ -149,7 +178,15 @@ pub async fn plan_mode_state(session_id: Uuid) -> PlanModeState {
     // The `.md` sits next to whichever `.json` we actually found, so derive
     // it from that path rather than re-resolving (handles the legacy dir).
     let md_exists = md_path_for(&json).exists();
-    plan_mode_state_of(plan.as_ref(), md_exists)
+    let state = plan_mode_state_of(plan.as_ref(), md_exists);
+    // Pre-init is a durable MARKER file, not a stored PlanDocument (#569). When
+    // no real plan resolves, an existing marker means Plan-mode intent without
+    // an approvable document yet. (Legacy on-disk stub JSONs still resolve to
+    // PreInitEditing inside plan_mode_state_of, so both representations work.)
+    if state == PlanModeState::NoPlan && pre_init_marker_read_path(session_id).await.exists() {
+        return PlanModeState::PreInitEditing;
+    }
+    state
 }
 
 /// Map an already-loaded (and legacy-normalized) plan plus `.md` existence
@@ -256,13 +293,22 @@ pub async fn save_plan(plan: &PlanDocument) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, &json)?;
     std::fs::rename(&tmp, &path)?;
+    // A real plan supersedes any pre-init marker: `plan init` writing the first
+    // JSON clears the intent bit so a stale marker can't later resurrect
+    // pre-init after the plan is archived (#569).
+    let marker = dir.join(format!(".opencrabs_plan_{}.preinit", plan.session_id));
+    if marker.exists()
+        && let Err(e) = std::fs::remove_file(&marker)
+    {
+        tracing::warn!("Failed to clear pre-init marker {}: {e}", marker.display());
+    }
     Ok(())
 }
 
 /// Mark the session as pre-init Editing: the user entered Plan-mode intent
-/// but `plan init` has not succeeded yet. Durable (survives restart); the
-/// sidecar is a minimal plan JSON with the flag set, empty tasks, and no
-/// approvable content. Refused (Err) when a real plan is already live.
+/// but `plan init` has not succeeded yet. Durable (survives restart) via an
+/// empty marker file — no fake `PlanDocument`, no approvable content (#569).
+/// Refused (Err) when a real plan is already live.
 pub async fn set_pre_init_editing(session_id: Uuid) -> std::io::Result<()> {
     match plan_mode_state(session_id).await {
         PlanModeState::PostInitEditing | PlanModeState::Active => {
@@ -272,10 +318,12 @@ pub async fn set_pre_init_editing(session_id: Uuid) -> std::io::Result<()> {
         }
         PlanModeState::NoPlan | PlanModeState::PreInitEditing => {}
     }
-    let mut sidecar = PlanDocument::new(session_id, String::new());
-    sidecar.pre_init_editing = true;
-    sidecar.status = PlanStatus::Editing;
-    save_plan(&sidecar).await
+    let dir = session_dir(session_id).await;
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        dir.join(format!(".opencrabs_plan_{session_id}.preinit")),
+        b"",
+    )
 }
 
 /// Whether the durable pre-init Editing flag is set for the session.
@@ -312,6 +360,15 @@ fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
     if md.exists() {
         std::fs::rename(&md, dir.join(format!("{stem}-{ts}.md")))?;
     }
+    // Defensive: a real plan's save already cleared any pre-init marker, but if
+    // one somehow lingered, drop it so archiving can't leave the session
+    // looking pre-init (#569).
+    let marker = pre_init_marker_for(json_path);
+    if marker.exists()
+        && let Err(e) = std::fs::remove_file(&marker)
+    {
+        tracing::warn!("Failed to remove pre-init marker {}: {e}", marker.display());
+    }
     Ok(())
 }
 
@@ -333,6 +390,14 @@ fn remove_plan_files(json_path: &Path) {
         && let Err(e) = std::fs::remove_file(&md)
     {
         tracing::warn!("Failed to remove plan markdown {}: {e}", md.display());
+    }
+    // Pre-init discard: there is no JSON/`.md`, only the marker — clear it so
+    // the session returns to NoPlan (#569).
+    let marker = pre_init_marker_for(json_path);
+    if marker.exists()
+        && let Err(e) = std::fs::remove_file(&marker)
+    {
+        tracing::warn!("Failed to remove pre-init marker {}: {e}", marker.display());
     }
 }
 

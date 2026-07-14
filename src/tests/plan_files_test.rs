@@ -8,8 +8,8 @@ use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
 use crate::utils::plan_files::{
     PlanModeState, archive_dir, create_design_md, discard_plan, is_pre_init_editing, load_plan,
-    plan_json_path, plan_md_path, plan_mode_state, save_plan, set_pre_init_editing,
-    sync_md_to_json, template_section_warnings,
+    plan_json_path, plan_md_path, plan_mode_state, pre_init_marker_path, save_plan,
+    set_pre_init_editing, sync_md_to_json, template_section_warnings,
 };
 use uuid::Uuid;
 
@@ -61,26 +61,67 @@ async fn pre_init_flag_is_durable_and_gates_state() {
         let sid = Uuid::new_v4();
         set_pre_init_editing(sid).await.unwrap();
 
-        // The flag is a durable file, not process state: a fresh read of
-        // disk (what a restart does) still sees it.
-        assert!(plan_json_path(sid).await.exists());
+        // The flag is a durable marker file, not process state: a fresh read
+        // of disk (what a restart does) still sees it. It is NOT a fake plan
+        // JSON (#569): no plan document, no approvable `.md`.
+        assert!(pre_init_marker_path(sid).await.exists());
+        assert!(!plan_json_path(sid).await.exists());
+        assert!(!plan_md_path(sid).await.exists());
+        assert!(load_plan(sid).await.is_none());
+
         assert!(is_pre_init_editing(sid).await);
         assert_eq!(plan_mode_state(sid).await, PlanModeState::PreInitEditing);
-
-        // The sidecar is minimal: no approvable .md, no tasks.
-        assert!(!plan_md_path(sid).await.exists());
-        let plan = load_plan(sid).await.unwrap();
-        assert!(plan.pre_init_editing);
-        assert!(plan.tasks.is_empty());
-        assert_eq!(plan.status, PlanStatus::Editing);
 
         // Setting it again is idempotent.
         set_pre_init_editing(sid).await.unwrap();
         assert!(is_pre_init_editing(sid).await);
 
-        // Discard clears the flag and returns to NoPlan.
+        // Discard clears the marker and returns to NoPlan.
         discard_plan(sid).await;
         assert_eq!(plan_mode_state(sid).await, PlanModeState::NoPlan);
+        assert!(!pre_init_marker_path(sid).await.exists());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn init_clears_pre_init_marker_and_archive_does_not_resurrect_it() {
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        set_pre_init_editing(sid).await.unwrap();
+        assert!(pre_init_marker_path(sid).await.exists());
+
+        // `plan init` writes the first real plan JSON via save_plan, which must
+        // clear the marker so a later archive can't leave the session looking
+        // pre-init (#569).
+        let mut plan = PlanDocument::new(sid, "Design".to_string());
+        save_plan(&plan).await.unwrap();
+        assert!(!pre_init_marker_path(sid).await.exists());
+
+        // Take it Active, then archive: back to NoPlan, never PreInitEditing.
+        plan.add_task(task(1, "t1"));
+        plan.status = PlanStatus::Active;
+        save_plan(&plan).await.unwrap();
+        crate::utils::plan_files::archive_plan(sid).await.unwrap();
+        assert_eq!(plan_mode_state(sid).await, PlanModeState::NoPlan);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn legacy_stub_pre_init_json_still_resolves() {
+    // Back-compat: sessions that already have the old stub plan JSON on disk
+    // (pre_init_editing=true, empty tasks, no .md) must still resolve to
+    // PreInitEditing even though new pre-init uses a marker file (#569).
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        let mut stub = PlanDocument::new(sid, String::new());
+        stub.pre_init_editing = true;
+        stub.status = PlanStatus::Editing;
+        save_plan(&stub).await.unwrap();
+
+        assert_eq!(plan_mode_state(sid).await, PlanModeState::PreInitEditing);
+        assert!(is_pre_init_editing(sid).await);
     })
     .await;
 }

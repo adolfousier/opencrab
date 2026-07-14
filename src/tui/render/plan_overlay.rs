@@ -31,6 +31,21 @@ pub(super) fn render_plan_overlay(f: &mut Frame, app: &App, area: Rect) {
     let md_path = app.plan_file_path.as_ref().map(|p| p.with_extension("md"));
     let md_exists = md_path.as_ref().is_some_and(|p| p.exists());
     let state = plan_files::plan_mode_state_of(app.plan_document.as_ref(), md_exists);
+    // Pre-init is now a durable marker file, not a loaded PlanDocument (#569),
+    // so a pre-init session has no `plan_document` and resolves to NoPlan above.
+    // Detect it here the same way `md_exists` is derived — a sibling `.preinit`
+    // of the resolved plan path — so the render loop stays sync (no DB lookup).
+    let state = if state == PlanModeState::NoPlan
+        && app
+            .plan_file_path
+            .as_ref()
+            .map(|p| p.with_extension("preinit"))
+            .is_some_and(|p| p.exists())
+    {
+        PlanModeState::PreInitEditing
+    } else {
+        state
+    };
     let (badge, badge_style) = match state {
         PlanModeState::NoPlan => ("no plan", Style::default().fg(Color::DarkGray)),
         PlanModeState::PreInitEditing => (
