@@ -2889,12 +2889,6 @@ pub(crate) async fn handle_message(
     };
 
     // ── Streaming setup ───────────────────────────────────────────────────────
-    // Preview from the BARE user text: never the wrapped agent input
-    // (attachment turns used to leak the internal "[User attached an
-    // image...]" preamble, #407), and never display_text — its group-chat
-    // sender prefix let a long display name consume the whole 60-char
-    // budget and truncate away the task the bubble exists to show (#427).
-    let user_message_preview = build_user_message_preview(&text);
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         msg_id: None,
         thinking: String::new(),
@@ -2923,7 +2917,6 @@ pub(crate) async fn handle_message(
         // into the block, so folded narration is capped; API providers skip
         // the cap and show full reasoning (#532).
         is_cli: agent.provider_for_session(session_id).cli_handles_tools(),
-        user_message_preview,
     }));
 
     let edit_cancel = CancellationToken::new();
@@ -2962,11 +2955,6 @@ pub(crate) async fn handle_message(
                             /// phase. Falls back to a fun-quip rotation when
                             /// reasoning hasn't started yet.
                             thinking_excerpt: Option<String>,
-                            /// Snapshot of `StreamingState.user_message_preview`
-                            /// — the truncated user input that drives the
-                            /// rolling status line when no tool/reasoning
-                            /// signal is yet available.
-                            user_message_preview: Option<String>,
                         }
 
                         let mut settle_flow = false;
@@ -3015,7 +3003,6 @@ pub(crate) async fn handle_message(
                                 has_active_tools,
                                 processing,
                                 thinking_excerpt: thinking_status_excerpt(&s.thinking),
-                                user_message_preview: s.user_message_preview.clone(),
                             };
 
                             // Pre-clear state that will be handled
@@ -3132,15 +3119,16 @@ pub(crate) async fn handle_message(
                         // this activity tick; the legacy pre-block status
                         // bubble is gone.
                         let turn_done = snap.dirty && !snap.response_text.is_empty();
+                        // Only show the thinking excerpt as a status preview.
+                        // The user's message is NOT what the bot is "working on"
+                        // it's just the input request, so showing it as
+                        // "Working on: <user message>" is confusing. The goal
+                        // section (from GoalManager) already shows what the bot
+                        // is actually working on when a plan task is active.
                         let preview = snap
                             .thinking_excerpt
                             .as_deref()
-                            .map(|t| format!("🧠 {t}"))
-                            .or_else(|| {
-                                snap.user_message_preview
-                                    .as_deref()
-                                    .map(|p| format!("Working on: {p}"))
-                            });
+                            .map(|t| format!("🧠 {t}"));
                         let flow_needs_refresh = !snap.tool_edits.is_empty() || settle_flow;
                         super::flow_chrome::tick_flow_header(
                             &bot,
@@ -4007,21 +3995,6 @@ pub(crate) fn thinking_status_excerpt(thinking: &str) -> Option<String> {
     } else {
         capped
     })
-}
-
-pub(crate) fn build_user_message_preview(text: &str) -> Option<String> {
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
-    let collapsed: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        return None;
-    }
-    let char_count = collapsed.chars().count();
-    if char_count <= 60 {
-        Some(collapsed)
-    } else {
-        let capped: String = collapsed.chars().take(60).collect();
-        Some(format!("{}…", capped))
-    }
 }
 
 /// Build the `QueuedUserMessage` for a message that landed mid-turn.

@@ -78,12 +78,6 @@ pub(crate) async fn resume_session(
         intermediate_msg_ids: Vec::new(),
         voice_msg_ids: Vec::new(),
         processing: true,
-        // resume_session restarts an interrupted turn; the user did
-        // not just type a fresh message, so there's no preview to
-        // surface in the rolling status line. The status path in
-        // resume_session also doesn't currently emit rolling
-        // messages — left as None for forward compatibility.
-        user_message_preview: None,
         // Cap folded narration only for CLI providers (#532).
         is_cli: agent.provider_for_session(session_id).cli_handles_tools(),
     }));

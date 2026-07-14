@@ -151,17 +151,6 @@ pub(crate) struct StreamingState {
     /// so they skip the per-entry cap and show full reasoning; the block-level
     /// 30K freeze still guards a pathological turn (#532 / upstream #531).
     pub(crate) is_cli: bool,
-    /// Short preview of the user's incoming message, captured once at
-    /// handler start. Drives the pre-tool rolling status line: when
-    /// the model hasn't streamed any reasoning yet AND no tool is
-    /// running, we still want to surface SOMETHING context-aware to
-    /// the user (e.g. "Working on: how do I add a topic? (5s)")
-    /// rather than going silent. Silence here was the regression —
-    /// the original status pipeline never went quiet, it just had
-    /// nothing real to show; build_status_message uses this preview
-    /// as honest content derived from the real user input rather
-    /// than reintroducing hardcoded filler quips.
-    pub(crate) user_message_preview: Option<String>,
 }
 
 /// A resolved line in the processing-log flow, ready to render. Tool lines
