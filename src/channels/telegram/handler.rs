@@ -3871,10 +3871,24 @@ pub(crate) async fn handle_reaction(
     };
 
     // ── 9. Sanitize ─────────────────────────────────────────────────────
+    // This turn's expected output IS a bare <<react:emoji>> marker, so extract
+    // it leniently (a small model wraps it in a code span and narrates its
+    // reasoning, which the strict extractor misses — leaving the marker as
+    // visible text and firing no reaction). When a marker is found and the
+    // incoming reaction is not a stop signal (the react-only default), drop any
+    // surrounding leaked text: it is the model's reasoning, not a real reply.
     let (text_only, _img_paths) = crate::utils::extract_img_markers(&response.content);
     let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
     let text_only = redact_secrets(&text_only);
-    let (text_only, react_emoji) = crate::utils::extract_react_marker(&text_only);
+    let (text_only, react_emoji) = crate::utils::extract_react_marker_lenient(&text_only);
+    let text_only = if react_emoji.is_some()
+        && super::reaction_prompt::classify_reaction(&emoji)
+            != super::reaction_prompt::ReactionSentiment::Negative
+    {
+        String::new()
+    } else {
+        text_only
+    };
 
     // ── 10. Deliver reaction back on the original message ───────────────
     if let Some(ref r_emoji) = react_emoji {

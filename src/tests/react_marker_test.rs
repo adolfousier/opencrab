@@ -298,3 +298,30 @@ fn react_long_payload_rejected() {
     assert_eq!(text, "<<react:🔥🔥🔥🔥🔥🔥🔥🔥🔥>>");
     assert!(emoji.is_none());
 }
+
+#[test]
+fn lenient_extractor_fires_a_code_span_marker() {
+    // On a reaction turn the expected output IS a bare marker; a small model
+    // wraps it in a code span and narrates its reasoning (#583). The strict
+    // extractor leaves it as prose; the lenient one fires and strips it.
+    use crate::utils::{extract_react_marker, extract_react_marker_lenient};
+
+    let leaky = "So I should reply with only `<<react:🙏>>`.";
+    let (strict_text, strict_emoji) = extract_react_marker(leaky);
+    assert_eq!(
+        strict_emoji, None,
+        "strict leaves a code-span marker as prose"
+    );
+    assert!(strict_text.contains("<<react:🙏>>"));
+
+    let (lenient_text, lenient_emoji) = extract_react_marker_lenient(leaky);
+    assert_eq!(lenient_emoji.as_deref(), Some("🙏"));
+    assert!(
+        !lenient_text.contains("<<react:"),
+        "lenient strips the marker: {lenient_text:?}"
+    );
+
+    // Lenient still validates the payload: a word payload never fires.
+    let (_t, none) = extract_react_marker_lenient("see `<<react:emoji>>` in the docs");
+    assert_eq!(none, None);
+}

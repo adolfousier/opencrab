@@ -46,6 +46,21 @@ pub fn extract_vid_markers(text: &str) -> (String, Vec<String>) {
 ///   of the message landed in the chat);
 /// * occurrences inside backtick code spans are never treated as directives.
 pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
+    extract_react_marker_inner(text, true)
+}
+
+/// Like [`extract_react_marker`] but ignores backtick code spans — a marker
+/// inside `` `…` `` still fires and is stripped. Use ONLY where the marker is
+/// known to be a genuine directive, not prose that might discuss the feature:
+/// a reaction-notification turn's response, whose expected output IS a bare
+/// `<<react:emoji>>`. Small models there wrap the marker in a code span and
+/// narrate their reasoning, so the strict extractor misses it — leaving the
+/// marker as visible `<code>` text and firing no reaction.
+pub fn extract_react_marker_lenient(text: &str) -> (String, Option<String>) {
+    extract_react_marker_inner(text, false)
+}
+
+fn extract_react_marker_inner(text: &str, respect_code_spans: bool) -> (String, Option<String>) {
     let mut out = String::with_capacity(text.len());
     let mut emoji: Option<String> = None;
     let mut in_code = false;
@@ -59,7 +74,7 @@ pub fn extract_react_marker(text: &str) -> (String, Option<String>) {
             i += 1;
             continue;
         }
-        if !in_code
+        if (!respect_code_spans || !in_code)
             && let Some(open_len) = match_react_open(&text[i..])
             && let Some((rel_end, term_len)) = find_react_close(&text[i + open_len..])
         {
