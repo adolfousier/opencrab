@@ -691,3 +691,29 @@ fn rich_edit_429_retries_rich_never_falls_back_to_html() {
         RichEditError::Fallback
     );
 }
+
+#[test]
+fn plan_card_renders_title_and_checklist_or_none() {
+    // The persistent plan card (#580) renders the plan title + checklist, or
+    // None when there is no plan content (the caller removes the card then).
+    use crate::channels::telegram::plan_card::render_plan_card_html;
+
+    assert_eq!(render_plan_card_html(None, None), None);
+    assert_eq!(render_plan_card_html(Some("   "), None), None);
+
+    let title_only = render_plan_card_html(Some("Audit changes"), None).unwrap();
+    assert!(title_only.contains("📋") && title_only.contains("Audit changes"));
+
+    let rows = vec!["☑ Task one".to_string(), "☐ Task two".to_string()];
+    let full = render_plan_card_html(Some("Audit changes"), Some(&rows)).unwrap();
+    assert!(full.contains("Audit changes"));
+    assert!(full.contains("☑ Task one") && full.contains("☐ Task two"));
+
+    // Checklist without a title still renders.
+    let no_title = render_plan_card_html(None, Some(&rows)).unwrap();
+    assert!(no_title.contains("☑ Task one"));
+
+    // HTML in a title is escaped, not injected.
+    let escaped = render_plan_card_html(Some("a <b> & c"), None).unwrap();
+    assert!(escaped.contains("&lt;b&gt;") && escaped.contains("&amp;"));
+}

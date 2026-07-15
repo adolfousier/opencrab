@@ -1082,11 +1082,15 @@ impl TelegramAgent {
                                         .answer_callback_query(query.id.clone())
                                         .text("Plan discarded")
                                         .await;
-                                    if let Some(mid) = kb_msg_id {
-                                        let _ = bot
-                                            .edit_message_reply_markup(chat_id, mid)
-                                            .await;
-                                    }
+                                    // The Approve/Discard keyboard rides the plan
+                                    // card (#580); discard removes the whole card.
+                                    crate::channels::telegram::plan_card::remove_plan_card(
+                                        &bot,
+                                        chat_id,
+                                        &state,
+                                        session_id,
+                                    )
+                                    .await;
                                     let _ = crate::channels::telegram::send::message_in_thread(
                                         &bot, chat_id, thread_id, reply,
                                     )

@@ -593,7 +593,9 @@ pub(crate) async fn refresh_sections(
     session_id: Uuid,
 ) -> bool {
     use crate::utils::plan_files::{PlanModeState, plan_mode_state};
-    let (plan_title, checklist) = load_plan_sections(session_id).await;
+    // Plan title + checklist now live on the persistent plan card, not in the
+    // per-turn flow block (#580) — the card reads them itself via
+    // load_plan_sections, so they are not populated on FlowSections here.
     let prose = load_plan_prose(session_id).await;
     let mode = plan_mode_state(session_id).await;
     let editing = matches!(
@@ -643,10 +645,13 @@ pub(crate) async fn refresh_sections(
     };
     let next = FlowSections {
         plan_state,
+        // plan_kb is still tracked here so the plan card can read it, but the
+        // keyboard is attached to the CARD, not the flow block (#580).
         plan_kb,
-        plan_title,
+        // Title + checklist moved to the persistent plan card (#580).
+        plan_title: None,
         prose,
-        checklist,
+        checklist: None,
         goal,
         ctx: s.sections.ctx.clone(),
     };

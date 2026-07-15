@@ -2420,6 +2420,10 @@ pub(crate) async fn handle_message(
                 // /discard cancels an in-flight turn first, then cleans up.
                 let cancelled = telegram_state.cancel_session(session_id).await;
                 let mut reply = crate::utils::plan_mode::discard(session_id, agent.context()).await;
+                // Remove the persistent plan card — no turn runs to refresh it
+                // away (#580).
+                super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
+                    .await;
                 if cancelled {
                     reply = format!("⏹️ Cancelled the running turn. {reply}");
                 }
@@ -3152,6 +3156,17 @@ pub(crate) async fn handle_message(
                         )
                         .await;
 
+                        // Update the persistent plan card in place (#580): the
+                        // checklist lives on its own card now, not the flow
+                        // block, so it advances here as tasks complete.
+                        let plan_kb = {
+                            st.lock().unwrap_or_else(|e| e.into_inner()).sections.plan_kb
+                        };
+                        super::plan_card::refresh_plan_card(
+                            &bot, chat, thread_id, &tg, sid, plan_kb,
+                        )
+                        .await;
+
                         // ── Response message (thinking + response, always at bottom) ──
                         // Stale-placeholder cleanup runs unconditionally: a bubble
                         // opened before the first tool call must still be removed
@@ -3587,6 +3602,26 @@ pub(crate) async fn handle_message(
     // would leave the button off for good (#571).
     super::flow_chrome::refresh_sections(&streaming, &agent, session_id).await;
     refresh_flow(&bot, msg.chat.id, &streaming).await;
+    // Settle the persistent plan card too (#580): final checklist state + the
+    // Approve/Discard keyboard (gated to turn end on the card).
+    {
+        let plan_kb = {
+            streaming
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .sections
+                .plan_kb
+        };
+        super::plan_card::refresh_plan_card(
+            &bot,
+            msg.chat.id,
+            thread_id,
+            &telegram_state,
+            session_id,
+            plan_kb,
+        )
+        .await;
+    }
 
     // Drop the active-turn guard before flushing so any reaction arriving during
     // the flush is treated as fresh, not re-queued against a finished turn.

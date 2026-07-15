@@ -944,30 +944,9 @@ pub(crate) async fn refresh_flow_rich_details(
         return;
     }
     match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details).await {
-        Ok(_) => {
-            // The rich edit API cannot carry reply_markup, so the plan
-            // Approve/Discard keyboard is applied through a separate
-            // editMessageReplyMarkup call, only when it changed.
-            let (want, have) = {
-                let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                (s.sections.plan_kb, s.applied_plan_kb)
-            };
-            if want != have {
-                let mut req = bot.edit_message_reply_markup(chat, mid);
-                if let Some(kb) = want.keyboard() {
-                    req = req.reply_markup(kb);
-                }
-                match req.await {
-                    Ok(_) => {
-                        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                        s.applied_plan_kb = want;
-                    }
-                    Err(e) => {
-                        tracing::debug!("Telegram: plan keyboard update failed: {e}");
-                    }
-                }
-            }
-        }
+        // The plan Approve/Discard keyboard now rides the persistent plan card,
+        // not the flow block (#580), so the flow block carries no reply_markup.
+        Ok(_) => {}
         Err(e) => match classify_rich_edit_error(&e.to_string()) {
             RichEditError::NotModified => {}
             // A transient 429 must NOT fall back to HTML. The rich API holds 32K
@@ -1005,9 +984,9 @@ pub(crate) async fn refresh_flow_html(
     mid: MessageId,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
 ) {
-    let (html, plan_kb) = {
+    let html = {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        (render_flow(&s), s.sections.plan_kb)
+        render_flow(&s)
     };
     if html.is_empty() {
         return;
@@ -1018,15 +997,11 @@ pub(crate) async fn refresh_flow_html(
         freeze_flow_block_and_strip_kb(bot, chat, streaming, mid, "size limit reached").await;
         return;
     }
-    // Plan Approve/Discard keyboard rides the latest flow message. Telegram
-    // clears reply_markup on any edit that omits it, so it is re-attached
-    // on every refresh while the plan state calls for one.
-    let mut req = bot
+    // The plan Approve/Discard keyboard now rides the persistent plan card, not
+    // the flow block (#580), so no reply_markup is attached here.
+    let req = bot
         .edit_message_text(chat, mid, html)
         .parse_mode(ParseMode::Html);
-    if let Some(kb) = plan_kb.keyboard() {
-        req = req.reply_markup(kb);
-    }
     match req.await {
         Ok(_) => {}
         // Transient rate limit: wait it out and retry once with fresh
@@ -1389,35 +1364,9 @@ pub(crate) async fn restick_flow_if_buried(
     } else if let Err(e) = bot.delete_message(chat, new_mid).await {
         tracing::warn!("Telegram: restick could not delete stray duplicate: {e}");
     }
-
-    // The relocated block was re-posted bare: the rich send API can't carry
-    // reply_markup and the HTML re-post goes out without it, so burial would
-    // silently strip the plan Approve/Discard keyboard (#539). Reset
-    // applied_plan_kb to None first (the new message genuinely has no keyboard
-    // yet), then re-apply it, so the rich refresh path's want/have check stays
-    // honest instead of seeing want == have and skipping the re-attach.
-    if relocated {
-        let want = {
-            let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-            s.applied_plan_kb = super::flow_chrome::PlanKb::None;
-            s.sections.plan_kb
-        };
-        if let Some(kb) = want.keyboard() {
-            match bot
-                .edit_message_reply_markup(chat, new_mid)
-                .reply_markup(kb)
-                .await
-            {
-                Ok(_) => {
-                    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-                    s.applied_plan_kb = want;
-                }
-                Err(e) => {
-                    tracing::debug!("Telegram: restick plan keyboard re-attach failed: {e}");
-                }
-            }
-        }
-    }
+    // The plan Approve/Discard keyboard rides the persistent plan card, not the
+    // flow block (#580), so a relocated block re-posts bare — nothing to
+    // re-attach here.
 }
 
 /// Pull the trailing folded intermediate out of the collapsed processing-log

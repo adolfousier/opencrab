@@ -229,6 +229,17 @@ pub(crate) async fn resume_session(
                         )
                         .await;
 
+                        // Update the persistent plan card in place (#580): the
+                        // checklist now lives on its own card, not in the flow
+                        // block, so it advances here as tasks complete.
+                        let plan_kb = {
+                            st.lock().unwrap_or_else(|e| e.into_inner()).sections.plan_kb
+                        };
+                        super::plan_card::refresh_plan_card(
+                            &bot, chat_id, thread_id, &tg, sid, plan_kb,
+                        )
+                        .await;
+
                         // Response message (streaming). Stale-placeholder cleanup
                         // runs unconditionally so a bubble opened before the first
                         // tool call is still removed once a block opens.
@@ -541,6 +552,24 @@ pub(crate) async fn resume_session(
     // main handler does the same right after stamping the outcome.
     super::flow_chrome::refresh_sections(&streaming, &agent, session_id).await;
     refresh_flow(&bot, chat_id, &streaming).await;
+    // Settle the plan card too (#580): final checklist state + the Approve/
+    // Discard keyboard, which is now gated to turn end on the card.
+    let plan_kb = {
+        streaming
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sections
+            .plan_kb
+    };
+    super::plan_card::refresh_plan_card(
+        &bot,
+        chat_id,
+        thread_id,
+        &telegram_state,
+        session_id,
+        plan_kb,
+    )
+    .await;
 
     Ok(())
 }

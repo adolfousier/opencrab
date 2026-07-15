@@ -14,6 +14,7 @@ pub(crate) mod intermediates;
 pub(crate) mod keyboards;
 pub(crate) mod markdown;
 pub(crate) mod media;
+pub(crate) mod plan_card;
 pub(crate) mod raw_updates;
 pub(crate) mod reaction_prompt;
 pub(crate) mod resume;
@@ -95,6 +96,14 @@ pub struct TelegramState {
     session_pending_question: Mutex<HashMap<Uuid, String>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
+    /// Persistent plan-card message per session (#580): the single Telegram
+    /// message that shows the plan title + checklist and the Approve/Discard
+    /// keyboard, edited in place across the creation/execution/completion turns
+    /// instead of re-rendered inside each per-turn flow block. The `String` is a
+    /// content signature (rendered body + keyboard) so a per-tick refresh skips
+    /// the edit API call when nothing changed — avoiding a redundant-edit
+    /// rate-limit storm.
+    plan_cards: Mutex<HashMap<Uuid, (teloxide::types::MessageId, String)>>,
     /// Photo batching buffer: (chat_id, user_id, media_group_id) → Vec<(img_marker, Option<caption>)>
     /// When user sends multiple photos in an album, we buffer them and only fire the agent
     /// after a quiet period (no new photos for 3s). Keyed by media_group_id to avoid merging
@@ -184,6 +193,7 @@ impl TelegramState {
             pending_questions: Mutex::new(HashMap::new()),
             session_pending_question: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
+            plan_cards: Mutex::new(HashMap::new()),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
             cowork_conversations: Mutex::new(HashMap::new()),
@@ -510,6 +520,41 @@ impl TelegramState {
         {
             tokens.remove(&session_id);
         }
+    }
+
+    /// The persistent plan-card message id + last rendered signature for a
+    /// session, if one is live (#580).
+    pub(crate) async fn plan_card(
+        &self,
+        session_id: Uuid,
+    ) -> Option<(teloxide::types::MessageId, String)> {
+        self.plan_cards.lock().await.get(&session_id).cloned()
+    }
+
+    /// Track the plan-card message id + its rendered signature for a session.
+    pub(crate) async fn set_plan_card(
+        &self,
+        session_id: Uuid,
+        msg_id: teloxide::types::MessageId,
+        signature: String,
+    ) {
+        self.plan_cards
+            .lock()
+            .await
+            .insert(session_id, (msg_id, signature));
+    }
+
+    /// Stop tracking the plan card and return the id that was tracked, if any
+    /// (the caller deletes the message). Used on discard / plan completion.
+    pub(crate) async fn take_plan_card(
+        &self,
+        session_id: Uuid,
+    ) -> Option<teloxide::types::MessageId> {
+        self.plan_cards
+            .lock()
+            .await
+            .remove(&session_id)
+            .map(|(mid, _)| mid)
     }
 
     /// Mark `session_id` as having a turn in flight, returning an RAII guard
