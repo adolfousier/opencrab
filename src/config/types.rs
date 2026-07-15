@@ -1322,6 +1322,8 @@ pub struct ProviderConfigs {
     /// Codex CLI (ChatGPT/Codex subscription) — direct subprocess, no API key needed
     #[serde(default)]
     pub codex_cli: Option<ProviderConfig>,
+    /// Command Code CLI (`cmd`) subprocess provider config.
+    pub command_code_cli: Option<ProviderConfig>,
 
     /// Codex OAuth — native device-code flow, stores tokens in ~/.opencrabs/auth/codex.json
     #[serde(default)]
@@ -1418,6 +1420,7 @@ impl ProviderConfigs {
                 self.opencode_cli.as_ref(),
             ),
             ("codex-cli", "Codex CLI", false, self.codex_cli.as_ref()),
+            ("command-code-cli", "Command Code CLI", false, self.command_code_cli.as_ref()),
             ("codex", "Codex OAuth", false, self.codex.as_ref()),
             // OpenCode API — OAuth-backed but registered as a regular provider
             ("opencode", "OpenCode", false, self.opencode.as_ref()),
@@ -1870,6 +1873,17 @@ pub struct ProviderConfig {
     /// Default: 300 (5 minutes). Only used when cache_enabled is true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_ttl: Option<u32>,
+
+    /// Extra HTTP headers injected into every request to this provider.
+    /// Useful for API gateways that validate client identity via User-Agent
+    /// or other headers (e.g. AgentRouter requires `User-Agent: openclaw`).
+    /// Format in TOML:
+    /// ```toml
+    /// [providers.custom.mygateway]
+    /// extra_headers = { User-Agent = "openclaw" }
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_headers: Option<std::collections::BTreeMap<String, String>>,
 }
 
 fn default_enabled() -> bool {

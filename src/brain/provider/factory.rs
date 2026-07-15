@@ -20,6 +20,7 @@ use super::{
     anthropic::AnthropicProvider,
     claude_cli::ClaudeCliProvider,
     codex_cli::CodexCliProvider,
+    command_code_cli::CommandCodeCliProvider,
     codex_oauth::CodexOAuthProvider,
     custom_openai_compatible::{BodyTransformFn, OpenAIProvider},
     gemini::GeminiProvider,
@@ -102,6 +103,14 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
             is_enabled: |c| c.providers.codex_cli.as_ref().is_some_and(|p| p.enabled),
             factory: sync_factory(try_create_codex_cli),
             config_field: |c| c.providers.codex_cli.as_ref(),
+        },
+        ProviderRegistration {
+            display_name: "Command Code CLI",
+            session_id: "command-code-cli",
+            aliases: &["command_code_cli", "cmd-cli"],
+            is_enabled: |c| c.providers.command_code_cli.as_ref().is_some_and(|p| p.enabled),
+            factory: sync_factory(try_create_command_code_cli),
+            config_field: |c| c.providers.command_code_cli.as_ref(),
         },
         ProviderRegistration {
             display_name: "Codex",
@@ -238,6 +247,7 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "Claude CLI",
     "OpenCode CLI",
     "Codex CLI",
+    "Command Code CLI",
     "Codex",
     "OpenCode",
     "Qwen",
@@ -580,6 +590,7 @@ pub(crate) fn force_enable_section(config: &mut Config, session_id: &str) -> boo
         "claude-cli" => Some(&mut p.claude_cli),
         "opencode-cli" => Some(&mut p.opencode_cli),
         "codex-cli" => Some(&mut p.codex_cli),
+        "command-code-cli" => Some(&mut p.command_code_cli),
         "codex" => Some(&mut p.codex),
         "opencode" => Some(&mut p.opencode),
         "qwen" => Some(&mut p.qwen),
@@ -596,7 +607,7 @@ pub(crate) fn force_enable_section(config: &mut Config, session_id: &str) -> boo
     let Some(slot) = slot else {
         return false;
     };
-    let cli_auth = matches!(session_id, "claude-cli" | "opencode-cli" | "codex-cli");
+    let cli_auth = matches!(session_id, "claude-cli" | "opencode-cli" | "codex-cli" | "command-code-cli");
     match slot {
         Some(cfg) => {
             cfg.enabled = true;
@@ -1560,6 +1571,15 @@ fn configure_openai_compatible(
         provider = provider.with_cache_ttl(ttl);
         tracing::info!("OpenRouter cache TTL: {}s", ttl);
     }
+    // Extra headers from config (e.g. User-Agent for API gateway auth)
+    if let Some(ref extra) = config.extra_headers {
+        let headers: Vec<(String, String)> = extra
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        tracing::info!("Applying {} extra header(s) from config", headers.len());
+        provider = provider.with_extra_headers(headers);
+    }
     provider
 }
 
@@ -1704,6 +1724,32 @@ fn try_create_codex_cli(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     }
 }
 
+fn try_create_command_code_cli(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
+    let cli_config = match &config.providers.command_code_cli {
+        Some(cfg) if cfg.enabled => cfg,
+        _ => return Ok(None),
+    };
+
+    match CommandCodeCliProvider::new() {
+        Ok(mut provider) => {
+            if let Some(model) = &cli_config.default_model {
+                provider = provider.with_default_model(model.clone());
+            }
+            if let Some(cw) = cli_config.context_window {
+                provider = provider.with_context_window(cw);
+            }
+            tracing::info!(
+                "Using Command Code CLI provider (Command Code account, no API key needed)"
+            );
+            Ok(Some(Arc::new(provider)))
+        }
+        Err(e) => {
+            tracing::warn!("Command Code CLI enabled but binary not found: {}", e);
+            Ok(None)
+        }
+    }
+}
+
 /// Try to create Codex OAuth provider if configured and tokens are available.
 fn try_create_codex_oauth(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     let codex_config = match &config.providers.codex {
@@ -1784,6 +1830,14 @@ fn try_create_anthropic(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     if let Some(cw) = anthropic_config.context_window {
         tracing::info!("Anthropic context window override: {} tokens", cw);
         provider = provider.with_context_window(cw);
+    }
+    if let Some(base_url) = &anthropic_config.base_url {
+        tracing::info!("Anthropic base URL override: {}", base_url);
+        provider = provider.with_base_url(base_url.clone());
+    }
+    if let Some(extra) = &anthropic_config.extra_headers {
+        tracing::info!("Anthropic extra headers: {} header(s)", extra.len());
+        provider = provider.with_extra_headers(extra.clone());
     }
 
     tracing::info!("Using Anthropic provider");
