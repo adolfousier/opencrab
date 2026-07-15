@@ -162,6 +162,7 @@ impl OnboardingWizard {
             let binary = match self.ps.provider_id() {
                 "claude-cli" => "claude",
                 "codex-cli" => "codex",
+                "command-code-cli" => "command-code",
                 _ => "opencode",
             };
             if which::which(binary).is_ok() {

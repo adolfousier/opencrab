@@ -1,17 +1,17 @@
 //! Command Code CLI Provider — direct subprocess integration
 //!
-//! Spawns the `cmd` CLI binary (Command Code) in non-interactive mode
-//! (`cmd -p`) and reads its plain-text output, converting it to standard
-//! `StreamEvent`s. OpenCrabs handles all tools, memory, and context
-//! locally; Command Code is used as the LLM backend so users can piggyback
-//! on their existing Command Code account/auth (`~/.commandcode/auth.json`)
-//! without needing a separate API key.
+//! Spawns the `command-code` CLI binary (Command Code, also available as the
+//! `cmd` shorthand) in non-interactive mode (`command-code -p`) and reads its
+//! plain-text output, converting it to standard `StreamEvent`s. OpenCrabs
+//! handles all tools, memory, and context locally; Command Code is used as the
+//! LLM backend so users can piggyback on their existing Command Code
+//! account/auth (`~/.commandcode/auth.json`) without needing a separate API key.
 //!
-//! Unlike the Claude/Codex CLIs, `cmd -p` emits plain text (not NDJSON), so
-//! this provider spawns the subprocess, collects stdout, and emits a single
-//! `MessageStart` -> `ContentBlockDelta` -> `MessageDelta`/`MessageStop`
-//! translation. The model list mirrors `cmd --list-models` (abridged to the
-//! recommended set); the CLI itself validates the model name.
+//! Unlike the Claude/Codex CLIs, `command-code -p` emits plain text (not
+//! NDJSON), so this provider spawns the subprocess, collects stdout, and emits a
+//! single `MessageStart` -> `ContentBlockDelta` -> `MessageDelta`/`MessageStop`
+//! translation. The model list mirrors `command-code --list-models`; the CLI
+//! itself validates the model name against what the account can access.
 
 use super::error::{ProviderError, Result};
 use super::r#trait::{Provider, ProviderStream};
@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use futures::stream::StreamExt;
 use std::process::Stdio;
 use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 
 /// Command Code CLI provider — talks directly to the `cmd` binary.
@@ -139,7 +140,9 @@ impl CommandCodeCliProvider {
     }
 }
 
-/// Resolve the `cmd` CLI binary path.
+/// Resolve the Command Code CLI binary path. The canonical binary is
+/// `command-code`; `cmd` is a shorthand symlink installed alongside it, kept
+/// here as a fallback for setups that only expose the short name.
 fn resolve_cmd_path() -> Result<String> {
     if let Ok(path) = std::env::var("CMD_PATH") {
         if std::path::Path::new(&path).exists() {
@@ -152,44 +155,79 @@ fn resolve_cmd_path() -> Result<String> {
     }
 
     for candidate in &[
+        std::path::PathBuf::from("/opt/homebrew/bin/command-code"),
+        std::path::PathBuf::from("/usr/local/bin/command-code"),
+        std::path::PathBuf::from("/usr/bin/command-code"),
+        std::path::PathBuf::from("/opt/homebrew/bin/cmd"),
         std::path::PathBuf::from("/usr/local/bin/cmd"),
         std::path::PathBuf::from("/usr/bin/cmd"),
-        std::path::PathBuf::from("/opt/homebrew/bin/cmd"),
     ] {
         if candidate.exists() {
             return Ok(candidate.to_string_lossy().to_string());
         }
     }
 
-    if let Some(path) = super::which_binary("cmd") {
+    if let Some(path) = super::which_binary("command-code").or_else(|| super::which_binary("cmd")) {
         return Ok(path);
     }
 
     Err(ProviderError::Internal(
-        "Command Code CLI (`cmd`) not found — install `command-code` or set CMD_PATH".to_string(),
+        "Command Code CLI not found — install `command-code` (provides `cmd`) or set CMD_PATH"
+            .to_string(),
     ))
 }
 
-/// Canonical model list for Command Code CLI. Abridged from `cmd --list-models`;
-/// the CLI validates whatever the account can access. Adding or removing a
-/// variant only requires editing this const.
+/// Canonical model list for Command Code CLI, mirroring `command-code
+/// --list-models` (v0.41.3). The CLI validates whatever the account can access
+/// and accepts either the full id or the short name after the last `/`. Adding
+/// or removing a variant only requires editing this const.
 pub(crate) const SUPPORTED_MODELS: &[&str] = &[
-    "taste-1",
+    // Anthropic
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-fable-5",
+    "claude-haiku-4-5",
+    // OpenAI
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.3-codex",
+    "gpt-5.4-mini",
+    // Google
+    "google/gemini-3.5-flash",
+    "google/gemini-3.1-flash-lite",
+    // Open source
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
     "moonshotai/Kimi-K2.7-Code",
+    "moonshotai/Kimi-K2.7-Code-Highspeed",
     "moonshotai/Kimi-K2.6",
+    "moonshotai/Kimi-K2.5",
     "zai-org/GLM-5.2",
+    "zai-org/GLM-5.2-Fast",
     "zai-org/GLM-5.1",
-    "xiaomi/mimo-v2.5-pro",
-    "xiaomi/mimo-v2.5",
+    "zai-org/GLM-5",
     "MiniMaxAI/MiniMax-M3",
     "MiniMaxAI/MiniMax-M2.7",
+    "MiniMaxAI/MiniMax-M2.5",
+    "xiaomi/mimo-v2.5-pro",
+    "xiaomi/mimo-v2.5",
+    "Qwen/Qwen3.7-Max",
+    "Qwen/Qwen3.7-Plus",
     "Qwen/Qwen3.6-Max-Preview",
+    "Qwen/Qwen3.6-Plus",
+    "stepfun/Step-3.7-Flash",
+    "stepfun/Step-3.5-Flash",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "tencent/HY3",
+    "sakana/fugu-ultra",
 ];
 
-/// Default model when no per-session override is set.
-pub(crate) const DEFAULT_MODEL: &str = "taste-1";
+/// Default model when no per-session override is set. Matches the binary's own
+/// default (`deepseek/deepseek-v4-flash`) — fast and low-cost for a keyless
+/// subprocess that spends the account's credits.
+pub(crate) const DEFAULT_MODEL: &str = "deepseek/deepseek-v4-flash";
 
 #[async_trait]
 impl Provider for CommandCodeCliProvider {
@@ -279,7 +317,9 @@ impl Provider for CommandCodeCliProvider {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| ProviderError::Internal(format!("failed to spawn Command Code CLI: {}", e)))?;
+            .map_err(|e| {
+                ProviderError::Internal(format!("failed to spawn Command Code CLI: {}", e))
+            })?;
 
         // Write prompt via stdin to avoid leaking in `ps aux`.
         let mut stdin = child
@@ -384,7 +424,9 @@ impl Provider for CommandCodeCliProvider {
                 let _ = tx
                     .send(Ok(StreamEvent::ContentBlockStart {
                         index: 0,
-                        content_block: ContentBlock::Text { text: String::new() },
+                        content_block: ContentBlock::Text {
+                            text: String::new(),
+                        },
                     }))
                     .await;
 
@@ -425,7 +467,9 @@ impl Provider for CommandCodeCliProvider {
                 let _ = tx
                     .send(Ok(StreamEvent::ContentBlockStart {
                         index: 0,
-                        content_block: ContentBlock::Text { text: String::new() },
+                        content_block: ContentBlock::Text {
+                            text: String::new(),
+                        },
                     }))
                     .await;
                 let _ = tx
