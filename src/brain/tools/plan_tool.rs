@@ -94,6 +94,15 @@ enum PlanOperation {
     /// user's Approve again. Call when the user asks to go back to approving
     /// plans themselves (#581).
     RevokeAutonomy,
+    /// Discard the live plan (remove its files → NoPlan). Call ONLY when the
+    /// user asks to abandon / scrap / replace the current plan (#585). Unlike
+    /// `approve` it is not a bypass of the user — it executes the user's own
+    /// request — so it is not autonomy-gated.
+    Discard,
+    /// Return the current plan state (title, status, checklist progress) with no
+    /// side effects. Use to answer "what's the plan / where are we"; unlike
+    /// `start` it never mutates the plan (#585).
+    ShowPlan,
 }
 
 /// Inline task definition accepted by `init` so a plan and its tasks can be
@@ -362,7 +371,10 @@ impl Tool for PlanTool {
          when no plan is live), `add_tasks` (append one or more tasks in a single call — the \
          primary append op), `add_task` (alias appending a single task), `start` (begin the \
          next task, or a specific one via `task_order`), `complete` (finish a task and \
-         auto-start the next). `add_tasks`/`add_task`/`start`/`complete` are Active-only. \
+         auto-start the next), `discard` (abandon the live plan when the user asks to scrap or \
+         replace it), `show_plan` (read-only: report the current plan + checklist progress, e.g. \
+         to answer 'what's the plan / where are we'). `add_tasks`/`add_task`/`start`/`complete` \
+         are Active-only. \
          \n\nAPPROVAL: by default a plan waits in Editing for the USER to Approve (button / \
          /execute) before `start` works. If the user grants autonomy ('go for it', 'no \
          hand-holding', 'don't wait for me'), call `grant_autonomy` then `approve` to \
@@ -401,8 +413,8 @@ impl Tool for PlanTool {
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["init", "add_tasks", "add_task", "start", "complete", "approve", "grant_autonomy", "revoke_autonomy"],
-                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task, auto-start next), approve (self-approve Editing→Active, only if the user granted autonomy), grant_autonomy (allow self-approval this session — call only when the user says to proceed without approving), revoke_autonomy (require user Approve again)"
+                    "enum": ["init", "add_tasks", "add_task", "start", "complete", "approve", "discard", "show_plan", "grant_autonomy", "revoke_autonomy"],
+                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task, auto-start next), approve (self-approve Editing→Active, only if the user granted autonomy), discard (abandon the live plan → no plan; call only when the user asks to scrap/replace it), show_plan (return the current plan state, read-only), grant_autonomy (allow self-approval this session — call only when the user says to proceed without approving), revoke_autonomy (require user Approve again)"
                 },
                 "mode": {
                     "type": "string",
@@ -1205,6 +1217,25 @@ impl Tool for PlanTool {
                     })?;
                 return Ok(ToolResult::success(
                     "🔒 Autonomy revoked: plans now require the user's Approve again.".to_string(),
+                ));
+            }
+            PlanOperation::Discard => {
+                if matches!(state, crate::utils::plan_files::PlanModeState::NoPlan) {
+                    return Ok(ToolResult::error("No live plan to discard.".to_string()));
+                }
+                let reply = if let Some(ref svc) = context.service_context {
+                    // Full discard (also clears the plan's goal).
+                    crate::utils::plan_mode::discard(context.session_id, svc).await
+                } else {
+                    // No service context: just remove the plan files.
+                    crate::utils::plan_files::discard_plan(context.session_id).await;
+                    "🗑️ Plan discarded — back to no plan.".to_string()
+                };
+                return Ok(ToolResult::success(reply));
+            }
+            PlanOperation::ShowPlan => {
+                return Ok(ToolResult::success(
+                    crate::utils::plan_mode::show_plan(context.session_id).await,
                 ));
             }
         };

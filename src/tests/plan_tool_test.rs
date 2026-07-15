@@ -723,3 +723,60 @@ async fn approve_op_is_gated_on_granted_autonomy() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn discard_op_abandons_the_plan_and_show_plan_reports_state() {
+    // The agent can discard the live plan on the user's request, and read the
+    // plan state without side effects (#585).
+    use crate::utils::plan_files::{PlanModeState, plan_mode_state};
+    in_temp_home(async {
+        let tool = PlanTool;
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+
+        // No plan yet: discard is a no-op error, show_plan still answers.
+        let empty_discard = tool
+            .execute(serde_json::json!({ "operation": "discard" }), &ctx)
+            .await
+            .unwrap();
+        assert!(!empty_discard.success);
+        let empty_show = tool
+            .execute(serde_json::json!({ "operation": "show_plan" }), &ctx)
+            .await
+            .unwrap();
+        assert!(empty_show.success);
+
+        // Create a checklist plan.
+        tool.execute(
+            serde_json::json!({
+                "operation": "init",
+                "title": "Scrap me",
+                "tasks": [{ "title": "a", "description": "d", "task_type": "edit" }]
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+        assert_ne!(plan_mode_state(ctx.session_id).await, PlanModeState::NoPlan);
+
+        // show_plan reports it without mutating.
+        let shown = tool
+            .execute(serde_json::json!({ "operation": "show_plan" }), &ctx)
+            .await
+            .unwrap();
+        assert!(shown.success);
+        assert_ne!(
+            plan_mode_state(ctx.session_id).await,
+            PlanModeState::NoPlan,
+            "show_plan must not change the plan"
+        );
+
+        // discard abandons it → NoPlan.
+        let discarded = tool
+            .execute(serde_json::json!({ "operation": "discard" }), &ctx)
+            .await
+            .unwrap();
+        assert!(discarded.success, "got {:?}", discarded.error);
+        assert_eq!(plan_mode_state(ctx.session_id).await, PlanModeState::NoPlan);
+    })
+    .await;
+}
