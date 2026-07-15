@@ -3080,14 +3080,26 @@ pub(crate) async fn handle_message(
                                         fire_reaction(&bot, msg.chat.id, msg.id, emoji).await;
                                     }
 
-                                    // Folded intermediates are hidden inside the
-                                    // collapsed log, so they are NOT recorded in
-                                    // sent_intermediates: the final-response
-                                    // dedup must not suppress the visible answer
-                                    // just because it also appears in the
-                                    // collapsed trace.
-                                    append_intermediate_to_flow(&bot, chat, thread_id, &st, &text)
+                                    // A substantial rich report (a table) the
+                                    // model emits before a tool call would be
+                                    // buried in the collapsed log — surface it as
+                                    // its own rich message instead (#582). Thin
+                                    // narration keeps folding: folded intermediates
+                                    // are NOT recorded in sent_intermediates, so
+                                    // the final-response dedup does not suppress the
+                                    // visible answer just because it also appears in
+                                    // the collapsed trace.
+                                    if super::intermediates::is_deliverable_rich_report(&text) {
+                                        super::intermediates::deliver_intermediate_message(
+                                            &bot, chat, thread_id, &st, &text,
+                                        )
                                         .await;
+                                    } else {
+                                        append_intermediate_to_flow(
+                                            &bot, chat, thread_id, &st, &text,
+                                        )
+                                        .await;
+                                    }
                                 }
                             }
                         }

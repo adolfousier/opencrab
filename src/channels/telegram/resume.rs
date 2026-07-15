@@ -182,10 +182,22 @@ pub(crate) async fn resume_session(
                                         crate::utils::extract_img_markers(&text);
                                     let (text, _react_emoji) =
                                         crate::utils::extract_react_marker(&text);
-                                    append_intermediate_to_flow(
-                                        &bot, chat_id, thread_id, &st, &text,
-                                    )
-                                    .await;
+                                    // Surface a substantial rich report (a table)
+                                    // as its own rich message rather than burying
+                                    // it in the folded log (#582). This is the
+                                    // approval/execution turn's loop, where a plan
+                                    // report before `plan complete` was folded.
+                                    if super::intermediates::is_deliverable_rich_report(&text) {
+                                        super::intermediates::deliver_intermediate_message(
+                                            &bot, chat_id, thread_id, &st, &text,
+                                        )
+                                        .await;
+                                    } else {
+                                        append_intermediate_to_flow(
+                                            &bot, chat_id, thread_id, &st, &text,
+                                        )
+                                        .await;
+                                    }
                                 }
                             }
                         }

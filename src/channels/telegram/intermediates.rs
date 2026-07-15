@@ -146,6 +146,59 @@ pub(crate) async fn try_send_intermediate_rich(
     }
 }
 
+/// True when a folded intermediate is a substantial rich report worth
+/// delivering as its OWN message rather than burying in the collapsed
+/// processing log (#582). Keyed on a real markdown table plus some length, so
+/// thin narration (no table) keeps folding and only report-shaped content —
+/// which the model may emit before a tool call (e.g. text + `plan complete` in
+/// one step) — is surfaced.
+pub(crate) fn is_deliverable_rich_report(text: &str) -> bool {
+    super::rich::contains_table(text) && text.trim().chars().count() >= 200
+}
+
+/// Deliver `text` as its own message (rich-first, HTML fallback) and record it
+/// in `sent_intermediates` so the final-response dedup will not resend it.
+/// Returns true when something was delivered. Used to surface a rich report the
+/// model emitted before a tool call, which folding would otherwise bury (#582).
+pub(crate) async fn deliver_intermediate_message(
+    bot: &Bot,
+    chat: ChatId,
+    thread_id: Option<teloxide::types::ThreadId>,
+    streaming: &Arc<std::sync::Mutex<StreamingState>>,
+    text: &str,
+) -> bool {
+    {
+        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        if s.sent_intermediates.iter().any(|prev| prev == text) {
+            return true;
+        }
+    }
+    if let Some(id) = try_send_intermediate_rich(bot, chat, thread_id, text).await {
+        let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.sent_intermediates.push(text.to_string());
+        s.intermediate_msg_ids.push(id);
+        return true;
+    }
+    let html = markdown_to_telegram_html(text);
+    if html.is_empty() {
+        return false;
+    }
+    let mut sent_ids: Vec<MessageId> = Vec::new();
+    for chunk in split_message(&html, 4096) {
+        match send_html_or_plain(bot, chat, thread_id, chunk).await {
+            Ok(id) => sent_ids.push(id),
+            Err(e) => {
+                tracing::warn!("Telegram: rich-intermediate send failed ({e})");
+                return false;
+            }
+        }
+    }
+    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+    s.sent_intermediates.push(text.to_string());
+    s.intermediate_msg_ids.extend(sent_ids);
+    true
+}
+
 /// Run a Telegram send, waiting out `RetryAfter` (429) up to 3 attempts.
 ///
 /// Command replies are programmatic: a per-chat rate limit (typically a

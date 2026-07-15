@@ -737,3 +737,27 @@ fn empty_scaffold_lines_are_hidden_filled_ones_kept() {
     assert!(!is_empty_scaffold_line("plain prose line"));
     assert!(!is_empty_scaffold_line(""));
 }
+
+#[test]
+fn deliverable_rich_report_surfaces_tables_not_narration() {
+    // A substantial report with a table is delivered as its own message; thin
+    // narration and trivially-short tables keep folding (#582).
+    use crate::channels::telegram::intermediates::is_deliverable_rich_report;
+
+    let report = "## Summary\n\n\
+        | Fix | Verdict | Medium Gaps | Low Gaps | Cosmetic |\n\
+        |-----|---------|-------------|----------|----------|\n\
+        | hashline_edit (#573) | PASS | 4 | 4 | 3 |\n\
+        | http_request (#574) | PASS | 3 | 8 | 1 |\n\
+        | slash_command (#574) | PASS | 0 | 5 | 0 |\n\
+        | TOTAL | PASS | 7 | 17 | 4 |\n\n\
+        No data loss, no security issues, no regressions. All three fixes are correct and isolated.";
+    assert!(is_deliverable_rich_report(report));
+
+    // No table → stays folded (normal progress narration).
+    assert!(!is_deliverable_rich_report(
+        "Reading the hashline files now, then I'll run clippy and report the gaps back to you."
+    ));
+    // A table under the length floor isn't worth its own message.
+    assert!(!is_deliverable_rich_report("| a | b |\n|-|-|\n| 1 | 2 |"));
+}
