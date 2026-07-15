@@ -1879,17 +1879,6 @@ pub struct ProviderConfig {
     /// Default: 300 (5 minutes). Only used when cache_enabled is true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_ttl: Option<u32>,
-
-    /// Extra HTTP headers injected into every request to this provider.
-    /// Useful for API gateways that validate client identity via User-Agent
-    /// or other headers (e.g. AgentRouter requires `User-Agent: openclaw`).
-    /// Format in TOML:
-    /// ```toml
-    /// [providers.custom.mygateway]
-    /// extra_headers = { User-Agent = "openclaw" }
-    /// ```
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extra_headers: Option<std::collections::BTreeMap<String, String>>,
 }
 
 fn default_enabled() -> bool {

@@ -1579,13 +1579,6 @@ fn configure_openai_compatible(
         provider = provider.with_cache_ttl(ttl);
         tracing::info!("OpenRouter cache TTL: {}s", ttl);
     }
-    // Extra headers from config (e.g. User-Agent for API gateway auth)
-    if let Some(ref extra) = config.extra_headers {
-        let headers: Vec<(String, String)> =
-            extra.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        tracing::info!("Applying {} extra header(s) from config", headers.len());
-        provider = provider.with_extra_headers(headers);
-    }
     provider
 }
 
@@ -1836,14 +1829,6 @@ fn try_create_anthropic(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     if let Some(cw) = anthropic_config.context_window {
         tracing::info!("Anthropic context window override: {} tokens", cw);
         provider = provider.with_context_window(cw);
-    }
-    if let Some(base_url) = &anthropic_config.base_url {
-        tracing::info!("Anthropic base URL override: {}", base_url);
-        provider = provider.with_base_url(base_url.clone());
-    }
-    if let Some(extra) = &anthropic_config.extra_headers {
-        tracing::info!("Anthropic extra headers: {} header(s)", extra.len());
-        provider = provider.with_extra_headers(extra.clone());
     }
 
     tracing::info!("Using Anthropic provider");
