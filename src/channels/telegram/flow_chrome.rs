@@ -484,8 +484,58 @@ pub(crate) async fn load_plan_prose(session_id: Uuid) -> Option<Vec<ProseSection
             return None;
         }
     };
-    let sections = split_plan_prose(&body);
+    // Drop unfilled scaffold lines (empty `**Label:**` fields, empty `N.`
+    // steps) so a checklist plan's blank `.md` template does not render as
+    // hollow "Context / Problem: / Target state: / …" sections (#580). A filled
+    // design plan keeps every non-empty line. Sections that become empty after
+    // filtering are dropped entirely.
+    let sections: Vec<ProseSection> = split_plan_prose(&body)
+        .into_iter()
+        .filter_map(|mut sec| {
+            let kept: Vec<&str> = sec
+                .body
+                .lines()
+                .filter(|l| !is_empty_scaffold_line(l))
+                .collect();
+            let new_body = kept.join("\n").trim().to_string();
+            (!new_body.is_empty()).then(|| {
+                sec.body = new_body;
+                sec
+            })
+        })
+        .collect();
     (!sections.is_empty()).then_some(sections)
+}
+
+/// True for an unfilled session-plan scaffold line: a bold `**Label:**` field
+/// with nothing after it, or a bare numbered step `N.` with no text. These are
+/// the `create_design_md` template placeholders; hiding them keeps a
+/// checklist plan's empty `.md` from rendering as hollow sections (#580).
+pub(crate) fn is_empty_scaffold_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let body = t
+        .strip_prefix("- ")
+        .or_else(|| t.strip_prefix("* "))
+        .unwrap_or(t);
+    // Empty `**Label:**` field (the colon sits inside the bold markers).
+    if body.starts_with("**")
+        && let Some(idx) = body.find(":**")
+        && body[idx + 3..].trim().is_empty()
+    {
+        return true;
+    }
+    // Empty `N.` numbered step.
+    let digits: String = body.chars().take_while(char::is_ascii_digit).collect();
+    if !digits.is_empty()
+        && let Some(after) = body[digits.len()..].trim_start().strip_prefix('.')
+        && after.trim().is_empty()
+    {
+        return true;
+    }
+    false
 }
 
 /// Live `GoalManager` entry for the session as `(text, completed)`: an

@@ -717,3 +717,23 @@ fn plan_card_renders_title_and_checklist_or_none() {
     let escaped = render_plan_card_html(Some("a <b> & c"), None).unwrap();
     assert!(escaped.contains("&lt;b&gt;") && escaped.contains("&amp;"));
 }
+
+#[test]
+fn empty_scaffold_lines_are_hidden_filled_ones_kept() {
+    // A checklist plan's unfilled .md template must not render as hollow
+    // "Problem: / Target state: / Intent: / 1." lines (#580).
+    use crate::channels::telegram::flow_chrome::is_empty_scaffold_line;
+
+    assert!(is_empty_scaffold_line("- **Problem:** "));
+    assert!(is_empty_scaffold_line("- **Target state:**"));
+    assert!(is_empty_scaffold_line("**Intent:**   "));
+    assert!(is_empty_scaffold_line("1. "));
+    assert!(is_empty_scaffold_line("  1.  "));
+
+    assert!(!is_empty_scaffold_line(
+        "- **Problem:** the gate refuses a ready plan"
+    ));
+    assert!(!is_empty_scaffold_line("1. Widen the hash to 4 chars"));
+    assert!(!is_empty_scaffold_line("plain prose line"));
+    assert!(!is_empty_scaffold_line(""));
+}
