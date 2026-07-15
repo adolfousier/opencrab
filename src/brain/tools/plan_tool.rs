@@ -80,6 +80,20 @@ enum PlanOperation {
         #[serde(default)]
         output: String,
     },
+    /// Self-approve the plan (Editing -> Active) WITHOUT the user's Approve
+    /// button / `/execute`. Allowed ONLY when the user has granted autonomy for
+    /// this session (`grant_autonomy`); otherwise refused so the default stays
+    /// user-gated (#581).
+    Approve,
+    /// Grant this session autonomy so the agent may `approve` its own plans.
+    /// Call this ONLY when the user explicitly says to proceed without waiting
+    /// for approval ("go for it", "no hand-holding", "don't wait for me").
+    /// Durable until revoked (#581).
+    GrantAutonomy,
+    /// Revoke this session's self-approval autonomy — future plans require the
+    /// user's Approve again. Call when the user asks to go back to approving
+    /// plans themselves (#581).
+    RevokeAutonomy,
 }
 
 /// Inline task definition accepted by `init` so a plan and its tasks can be
@@ -349,7 +363,13 @@ impl Tool for PlanTool {
          primary append op), `add_task` (alias appending a single task), `start` (begin the \
          next task, or a specific one via `task_order`), `complete` (finish a task and \
          auto-start the next). `add_tasks`/`add_task`/`start`/`complete` are Active-only. \
-         \n\nFLOW (checklist): init with `tasks` → WAIT for user Approve → start → (do the work) → complete → \
+         \n\nAPPROVAL: by default a plan waits in Editing for the USER to Approve (button / \
+         /execute) before `start` works. If the user grants autonomy ('go for it', 'no \
+         hand-holding', 'don't wait for me'), call `grant_autonomy` then `approve` to \
+         self-approve and proceed WITHOUT the user; `approve` is refused unless autonomy was \
+         granted. Even with autonomy you may still leave the plan for the user to Approve when \
+         you judge it needs review. `revoke_autonomy` turns self-approval back off. \
+         \n\nFLOW (checklist, no autonomy): init with `tasks` → WAIT for user Approve → start → (do the work) → complete → \
          (auto-starts next) → complete → … `start` and `complete` return the FULL task details \
          (description, acceptance criteria, dependencies), so the plan doubles as durable \
          memory across context compactions — call `start` with no args to re-surface the \
@@ -381,8 +401,8 @@ impl Tool for PlanTool {
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["init", "add_tasks", "add_task", "start", "complete"],
-                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task, auto-start next)"
+                    "enum": ["init", "add_tasks", "add_task", "start", "complete", "approve", "grant_autonomy", "revoke_autonomy"],
+                    "description": "init (create/import a plan), add_tasks (append one or more tasks — primary), add_task (alias, single task), start (begin next/specific task), complete (finish a task, auto-start next), approve (self-approve Editing→Active, only if the user granted autonomy), grant_autonomy (allow self-approval this session — call only when the user says to proceed without approving), revoke_autonomy (require user Approve again)"
                 },
                 "mode": {
                     "type": "string",
@@ -801,6 +821,15 @@ impl Tool for PlanTool {
                         )?;
                     }
 
+                    // Under tool auto-approve (yolo / cron / run / a2a) there is
+                    // no user Approve step, so a checklist plan goes live now
+                    // instead of stalling in Editing with nobody to approve it
+                    // (#581 — the previous behavior left it stuck).
+                    let auto_active = !design && context.auto_approve;
+                    if auto_active {
+                        new_plan.approve();
+                    }
+
                     let count = new_plan.tasks.len();
                     plan = Some(new_plan);
 
@@ -818,6 +847,11 @@ impl Tool for PlanTool {
                              the plan. Do NOT call 'start': checklist operations stay \
                              blocked until the plan is Active.",
                             md_path.display()
+                        )
+                    } else if auto_active {
+                        format!(
+                            "📋 Created plan: {title} ({count} tasks, Active — auto-approve). \
+                             No user Approve step in this mode; call 'start' to begin executing."
                         )
                     } else {
                         format!(
@@ -1122,6 +1156,56 @@ impl Tool for PlanTool {
                     );
                 }
                 msg
+            }
+
+            // These operations return early (they don't fall through to the
+            // shared save below): Approve mutates + saves the plan via
+            // try_approve, so re-saving the stale local copy would clobber it;
+            // the autonomy ops touch a session marker, not the plan.
+            PlanOperation::Approve => {
+                if !crate::utils::plan_files::is_plan_autonomy(context.session_id).await {
+                    return Ok(ToolResult::error(
+                        "Self-approval is off for this session. The user approves the plan via \
+                         the Approve button or /execute. If the user told you to proceed \
+                         autonomously ('go for it', 'no hand-holding'), call operation \
+                         'grant_autonomy' first, then 'approve'."
+                            .to_string(),
+                    ));
+                }
+                return match crate::utils::plan_mode::try_approve(context.session_id).await {
+                    crate::utils::plan_mode::ApproveOutcome::Refused(msg) => {
+                        Ok(ToolResult::error(msg))
+                    }
+                    crate::utils::plan_mode::ApproveOutcome::SeedTurn { prompt } => {
+                        Ok(ToolResult::success(format!(
+                            "✅ Plan self-approved (autonomy).\n\n{prompt}"
+                        )))
+                    }
+                };
+            }
+            PlanOperation::GrantAutonomy => {
+                crate::utils::plan_files::set_plan_autonomy(context.session_id, true)
+                    .await
+                    .map_err(|e| {
+                        ToolError::InvalidInput(format!("Failed to grant autonomy: {e}"))
+                    })?;
+                return Ok(ToolResult::success(
+                    "🔓 Autonomy granted for this session: I can self-approve plans with \
+                     'approve' instead of waiting for the user's Approve button. Tell the user \
+                     it is on and that they can revoke it any time (/plan-auto off, or ask me \
+                     to stop)."
+                        .to_string(),
+                ));
+            }
+            PlanOperation::RevokeAutonomy => {
+                crate::utils::plan_files::set_plan_autonomy(context.session_id, false)
+                    .await
+                    .map_err(|e| {
+                        ToolError::InvalidInput(format!("Failed to revoke autonomy: {e}"))
+                    })?;
+                return Ok(ToolResult::success(
+                    "🔒 Autonomy revoked: plans now require the user's Approve again.".to_string(),
+                ));
             }
         };
 

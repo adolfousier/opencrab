@@ -663,3 +663,63 @@ async fn init_with_inline_tasks_creates_plan_and_tasks() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn approve_op_is_gated_on_granted_autonomy() {
+    // `plan approve` self-approves only after the user granted autonomy (#581);
+    // otherwise it is refused so the default stays user-gated.
+    use crate::tui::plan::PlanStatus;
+    use crate::utils::plan_files::{PlanModeState, is_plan_autonomy, load_plan, plan_mode_state};
+    in_temp_home(async {
+        let tool = PlanTool;
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        // Checklist plan → Editing.
+        tool.execute(
+            serde_json::json!({
+                "operation": "init",
+                "title": "Autonomy test",
+                "tasks": [{ "title": "a", "description": "d", "task_type": "edit" }]
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        // Refused without a grant; plan stays Editing.
+        let refused = tool
+            .execute(serde_json::json!({ "operation": "approve" }), &ctx)
+            .await
+            .unwrap();
+        assert!(!refused.success);
+        assert!(refused.error.unwrap().contains("Self-approval is off"));
+        assert_eq!(
+            plan_mode_state(ctx.session_id).await,
+            PlanModeState::PostInitEditing
+        );
+
+        // Grant, then approve → Active.
+        let granted = tool
+            .execute(serde_json::json!({ "operation": "grant_autonomy" }), &ctx)
+            .await
+            .unwrap();
+        assert!(granted.success);
+        assert!(is_plan_autonomy(ctx.session_id).await);
+
+        let approved = tool
+            .execute(serde_json::json!({ "operation": "approve" }), &ctx)
+            .await
+            .unwrap();
+        assert!(approved.success, "got {:?}", approved.error);
+        assert_eq!(
+            load_plan(ctx.session_id).await.unwrap().status,
+            PlanStatus::Active
+        );
+
+        // Revoke turns it back off.
+        tool.execute(serde_json::json!({ "operation": "revoke_autonomy" }), &ctx)
+            .await
+            .unwrap();
+        assert!(!is_plan_autonomy(ctx.session_id).await);
+    })
+    .await;
+}

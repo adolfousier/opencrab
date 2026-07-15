@@ -7,9 +7,10 @@
 use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
 use crate::utils::plan_files::{
-    PlanModeState, archive_dir, create_design_md, discard_plan, is_pre_init_editing, load_plan,
-    plan_json_path, plan_md_path, plan_mode_state, pre_init_marker_path, save_plan,
-    set_pre_init_editing, sync_md_to_json, template_section_warnings,
+    PlanModeState, archive_dir, create_design_md, discard_plan, is_plan_autonomy,
+    is_pre_init_editing, load_plan, plan_json_path, plan_md_path, plan_mode_state,
+    pre_init_marker_path, save_plan, set_plan_autonomy, set_pre_init_editing, sync_md_to_json,
+    template_section_warnings,
 };
 use uuid::Uuid;
 
@@ -313,4 +314,29 @@ fn template_warnings_flag_missing_sections() {
     let filled = "## Context\n- **Problem:** broken\n- **Target state:** fixed\n\
                   - **Intent:** asked\n\n## Implementation steps\n1. do the thing\n";
     assert!(template_section_warnings(filled).is_empty());
+}
+
+#[tokio::test]
+async fn plan_autonomy_is_a_durable_session_policy() {
+    // Self-approval autonomy is granted/revoked per session, survives across
+    // plans (not cleared by discard), and defaults off (#581).
+    in_temp_home(async {
+        let sid = Uuid::new_v4();
+        assert!(!is_plan_autonomy(sid).await, "default off");
+
+        set_plan_autonomy(sid, true).await.unwrap();
+        assert!(is_plan_autonomy(sid).await);
+
+        // A plan lifecycle does not touch the session policy.
+        set_pre_init_editing(sid).await.unwrap();
+        discard_plan(sid).await;
+        assert!(
+            is_plan_autonomy(sid).await,
+            "autonomy is a session policy, not cleared by plan discard"
+        );
+
+        set_plan_autonomy(sid, false).await.unwrap();
+        assert!(!is_plan_autonomy(sid).await);
+    })
+    .await;
 }

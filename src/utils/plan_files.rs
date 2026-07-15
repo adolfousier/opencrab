@@ -128,6 +128,54 @@ fn pre_init_marker_for(json_path: &Path) -> PathBuf {
     json_path.with_extension("preinit")
 }
 
+/// Durable per-session plan-autonomy marker. Its presence means the user has
+/// granted the agent autonomy to self-approve plans in this session ("go for
+/// it" / no hand-holding), so `plan approve` is allowed without the user's
+/// Approve button / `/execute` (#581). It is a SESSION policy, not tied to any
+/// one plan, so it is NOT removed on plan discard/complete — only by an explicit
+/// revoke. Default absent = today's behavior (user approval required).
+async fn plan_autonomy_marker_path(session_id: Uuid) -> PathBuf {
+    session_dir(session_id)
+        .await
+        .join(format!(".opencrabs_autonomy_{session_id}"))
+}
+
+/// True when plan self-approval is granted for the session (#581). Checks the
+/// resolved location then the legacy flat dir.
+pub async fn is_plan_autonomy(session_id: Uuid) -> bool {
+    if plan_autonomy_marker_path(session_id).await.exists() {
+        return true;
+    }
+    legacy_session_dir()
+        .join(format!(".opencrabs_autonomy_{session_id}"))
+        .exists()
+}
+
+/// Grant (`true`) or revoke (`false`) plan self-approval autonomy for the
+/// session (#581). Durable across restart and across plans.
+pub async fn set_plan_autonomy(session_id: Uuid, enabled: bool) -> std::io::Result<()> {
+    let marker = plan_autonomy_marker_path(session_id).await;
+    if enabled {
+        if let Some(dir) = marker.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&marker, b"")
+    } else {
+        // Remove both the resolved and legacy markers so a revoke is complete.
+        for p in [
+            marker,
+            legacy_session_dir().join(format!(".opencrabs_autonomy_{session_id}")),
+        ] {
+            if p.exists()
+                && let Err(e) = std::fs::remove_file(&p)
+            {
+                tracing::warn!("Failed to clear plan-autonomy marker {}: {e}", p.display());
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The JSON path to READ from: the resolved location if the file is present
 /// there, else the legacy flat dir (so an older binary's plan is still
 /// found), else the resolved path (the not-yet-created case). Writes never
