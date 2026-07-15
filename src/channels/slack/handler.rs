@@ -2243,7 +2243,7 @@ pub(crate) fn make_approval_callback(
                 SlackActionId::new(format!("approve:{}", approval_id)),
                 SlackBlockPlainTextOnly::from(SlackBlockPlainText::new("✅ Yes".to_string())),
             )
-            .with_style("primary".to_string());
+            .with_style(SlackBlockButtonStyle::Primary);
             let always_btn = SlackBlockButtonElement::new(
                 SlackActionId::new(format!("always:{}", approval_id)),
                 SlackBlockPlainTextOnly::from(SlackBlockPlainText::new(
@@ -2258,7 +2258,7 @@ pub(crate) fn make_approval_callback(
                 SlackActionId::new(format!("deny:{}", approval_id)),
                 SlackBlockPlainTextOnly::from(SlackBlockPlainText::new("❌ No".to_string())),
             )
-            .with_style("danger".to_string());
+            .with_style(SlackBlockButtonStyle::Danger);
             let actions = SlackBlock::Actions(SlackActionsBlock::new(vec![
                 SlackActionBlockElement::Button(approve_btn),
                 SlackActionBlockElement::Button(always_btn),
