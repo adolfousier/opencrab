@@ -44,12 +44,13 @@ fn provider_order_after_github_insertion() {
     assert_eq!(PROVIDERS[7].name, "Claude CLI");
     assert_eq!(PROVIDERS[8].name, "OpenCode CLI");
     assert_eq!(PROVIDERS[9].name, "Codex CLI");
-    assert_eq!(PROVIDERS[10].name, "Codex");
-    assert_eq!(PROVIDERS[11].name, "OpenCode");
-    assert_eq!(PROVIDERS[12].name, "Qwen");
-    assert_eq!(PROVIDERS[13].name, "Ollama");
-    assert_eq!(PROVIDERS[14].name, "Xiaomi");
-    assert_eq!(PROVIDERS[15].name, "Custom OpenAI-Compatible");
+    assert_eq!(PROVIDERS[10].name, "Command Code CLI");
+    assert_eq!(PROVIDERS[11].name, "Codex");
+    assert_eq!(PROVIDERS[12].name, "OpenCode");
+    assert_eq!(PROVIDERS[13].name, "Qwen");
+    assert_eq!(PROVIDERS[14].name, "Ollama");
+    assert_eq!(PROVIDERS[15].name, "Xiaomi");
+    assert_eq!(PROVIDERS[16].name, "Custom OpenAI-Compatible");
 }
 
 // ── Config struct ───────────────────────────────────────────────

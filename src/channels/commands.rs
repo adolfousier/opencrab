@@ -1619,7 +1619,12 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
     // but we can still show models from config or hardcoded defaults.
     let is_cli_provider = matches!(
         provider_name,
-        "claude-cli" | "claude_cli" | "opencode-cli" | "opencode_cli"
+        "claude-cli"
+            | "claude_cli"
+            | "opencode-cli"
+            | "opencode_cli"
+            | "command-code-cli"
+            | "command_code_cli"
     );
 
     if is_cli_provider {

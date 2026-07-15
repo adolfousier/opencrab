@@ -1322,7 +1322,8 @@ pub struct ProviderConfigs {
     /// Codex CLI (ChatGPT/Codex subscription) — direct subprocess, no API key needed
     #[serde(default)]
     pub codex_cli: Option<ProviderConfig>,
-    /// Command Code CLI (`cmd`) subprocess provider config.
+    /// Command Code CLI (`command-code`) subprocess provider — no API key needed
+    #[serde(default)]
     pub command_code_cli: Option<ProviderConfig>,
 
     /// Codex OAuth — native device-code flow, stores tokens in ~/.opencrabs/auth/codex.json
@@ -1404,7 +1405,7 @@ impl ProviderConfigs {
     /// providers handled separately by the caller via `active_custom()`.
     fn provider_registry(
         &self,
-    ) -> [(&'static str, &'static str, bool, Option<&ProviderConfig>); 17] {
+    ) -> [(&'static str, &'static str, bool, Option<&ProviderConfig>); 18] {
         [
             // Xiaomi MiMo — keyed (requires_api_key = true): the user supplies
             // an API key from platform.xiaomimimo.com. An enabled-but-keyless
@@ -1420,7 +1421,12 @@ impl ProviderConfigs {
                 self.opencode_cli.as_ref(),
             ),
             ("codex-cli", "Codex CLI", false, self.codex_cli.as_ref()),
-            ("command-code-cli", "Command Code CLI", false, self.command_code_cli.as_ref()),
+            (
+                "command-code-cli",
+                "Command Code CLI",
+                false,
+                self.command_code_cli.as_ref(),
+            ),
             ("codex", "Codex OAuth", false, self.codex.as_ref()),
             // OpenCode API — OAuth-backed but registered as a regular provider
             ("opencode", "OpenCode", false, self.opencode.as_ref()),

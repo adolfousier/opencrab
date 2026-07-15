@@ -163,21 +163,24 @@ models = [
     "gpt-5.2",
 ]
 
-# Command Code CLI — local `cmd` subprocess. Uses your Command Code account
-# (~/.commandcode/auth.json from `cmd login`). No proxy, no API key.
-# Install: npm install -g command-code   (then run `cmd login`)
-# Models per `cmd --list-models`. taste-1 is the flagship meta model.
+# Command Code CLI — local `command-code` subprocess (also on PATH as `cmd`).
+# Uses your Command Code account (~/.commandcode/auth.json from `command-code
+# login`). No proxy, no API key.
+# Install: npm install -g command-code   (then run `command-code login`)
+# Models per `command-code --list-models` — full ids or the short name after
+# the last `/` both work. Leave `models` unset to use the built-in list.
 [providers.command_code_cli]
 enabled = false
-default_model = "taste-1"
+default_model = "deepseek/deepseek-v4-flash"
 models = [
-    "taste-1",
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "gpt-5.5",
+    "google/gemini-3.5-flash",
     "deepseek/deepseek-v4-flash",
     "moonshotai/Kimi-K2.7-Code",
     "zai-org/GLM-5.2",
-    "xiaomi/mimo-v2.5",
-    "MiniMaxAI/MiniMax-M2.7",
-    "Qwen/Qwen3.6-Max-Preview",
+    "Qwen/Qwen3.7-Max",
 ]
 
 # ========================================

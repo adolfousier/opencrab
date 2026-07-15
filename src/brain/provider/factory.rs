@@ -20,8 +20,8 @@ use super::{
     anthropic::AnthropicProvider,
     claude_cli::ClaudeCliProvider,
     codex_cli::CodexCliProvider,
-    command_code_cli::CommandCodeCliProvider,
     codex_oauth::CodexOAuthProvider,
+    command_code_cli::CommandCodeCliProvider,
     custom_openai_compatible::{BodyTransformFn, OpenAIProvider},
     gemini::GeminiProvider,
     opencode_cli::OpenCodeCliProvider,
@@ -108,7 +108,12 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
             display_name: "Command Code CLI",
             session_id: "command-code-cli",
             aliases: &["command_code_cli", "cmd-cli"],
-            is_enabled: |c| c.providers.command_code_cli.as_ref().is_some_and(|p| p.enabled),
+            is_enabled: |c| {
+                c.providers
+                    .command_code_cli
+                    .as_ref()
+                    .is_some_and(|p| p.enabled)
+            },
             factory: sync_factory(try_create_command_code_cli),
             config_field: |c| c.providers.command_code_cli.as_ref(),
         },
@@ -607,7 +612,10 @@ pub(crate) fn force_enable_section(config: &mut Config, session_id: &str) -> boo
     let Some(slot) = slot else {
         return false;
     };
-    let cli_auth = matches!(session_id, "claude-cli" | "opencode-cli" | "codex-cli" | "command-code-cli");
+    let cli_auth = matches!(
+        session_id,
+        "claude-cli" | "opencode-cli" | "codex-cli" | "command-code-cli"
+    );
     match slot {
         Some(cfg) => {
             cfg.enabled = true;
@@ -1573,10 +1581,8 @@ fn configure_openai_compatible(
     }
     // Extra headers from config (e.g. User-Agent for API gateway auth)
     if let Some(ref extra) = config.extra_headers {
-        let headers: Vec<(String, String)> = extra
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let headers: Vec<(String, String)> =
+            extra.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         tracing::info!("Applying {} extra header(s) from config", headers.len());
         provider = provider.with_extra_headers(headers);
     }

@@ -46,6 +46,30 @@ fn opencode_cli_menu_matches_provider_supported_models() {
 }
 
 #[test]
+fn command_code_cli_menu_matches_provider_supported_models() {
+    let (menu_models, default) = cli_supported_models("command-code-cli")
+        .expect("command-code-cli must be a known CLI provider");
+    let provider_models: Vec<String> = crate::brain::provider::command_code_cli::SUPPORTED_MODELS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        menu_models, provider_models,
+        "menu and provider must read from the same SUPPORTED_MODELS const"
+    );
+    // The menu default must be a model the CLI actually accepts (taste-1 was a
+    // phantom that failed `command-code -m taste-1` with `unknown model`).
+    assert!(
+        menu_models.iter().any(|m| m == default),
+        "default {default} must appear in the menu list"
+    );
+    assert!(
+        !menu_models.iter().any(|m| m == "taste-1"),
+        "taste-1 is not a real Command Code model"
+    );
+}
+
+#[test]
 fn underscore_alias_resolves_same_list() {
     let (hyphen, _) = cli_supported_models("opencode-cli").unwrap();
     let (underscore, _) = cli_supported_models("opencode_cli").unwrap();
@@ -57,6 +81,14 @@ fn underscore_alias_resolves_same_list() {
     let (hyphen_c, _) = cli_supported_models("claude-cli").unwrap();
     let (underscore_c, _) = cli_supported_models("claude_cli").unwrap();
     assert_eq!(hyphen_c, underscore_c);
+
+    // Command Code exposes a third alias (`cmd-cli`) alongside the hyphen and
+    // underscore forms — all three must resolve to the same canonical list.
+    let (hyphen_cc, _) = cli_supported_models("command-code-cli").unwrap();
+    let (underscore_cc, _) = cli_supported_models("command_code_cli").unwrap();
+    let (short_cc, _) = cli_supported_models("cmd-cli").unwrap();
+    assert_eq!(hyphen_cc, underscore_cc);
+    assert_eq!(hyphen_cc, short_cc);
 }
 
 #[test]

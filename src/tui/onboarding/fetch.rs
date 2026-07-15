@@ -206,6 +206,14 @@ pub async fn fetch_provider_models(
         return fetch_opencode_models().await;
     }
 
+    // Command Code CLI — curated list mirroring `command-code --list-models`.
+    if provider_id == "command-code-cli" {
+        return crate::brain::provider::command_code_cli::SUPPORTED_MODELS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    }
+
     // Codex CLI & Codex OAuth — model list is curated; no /v1/models endpoint.
     if provider_id == "codex-cli" || provider_id == "codex" {
         let config_key = if provider_id == "codex" {

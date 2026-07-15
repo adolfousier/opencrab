@@ -201,10 +201,11 @@ impl ProviderSelectorState {
             let id = PROVIDERS[idx].id;
             match id {
                 // CLI providers — always "configured" if binary exists
-                "claude-cli" | "opencode-cli" | "codex-cli" => {
+                "claude-cli" | "opencode-cli" | "codex-cli" | "command-code-cli" => {
                     let bin = match id {
                         "claude-cli" => "claude",
                         "opencode-cli" => "opencode",
+                        "command-code-cli" => "command-code",
                         _ => "codex",
                     };
                     which::which(bin).is_ok()
