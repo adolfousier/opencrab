@@ -87,6 +87,9 @@ entries = [
 
 [providers.moonshot]
 entries = [
+  # Kimi K3 — Moonshot AI (256k context). Live model id is "k3", normalized to "kimi-k3".
+  # Cache hit: $0.30/1M, cache miss (input): $3.00/1M, output: $15.00/1M. Cache-write not published.
+  { prefix = "kimi-k3",              input_per_m = 3.0,   output_per_m = 15.0,  cache_read_per_m = 0.30 },
   # Kimi K2.6 — Moonshot AI (≤262k context)
   # Cache hit: $0.16/1M, Cache miss: $0.95/1M
   { prefix = "kimi-k2.6",            input_per_m = 0.95,  output_per_m = 4.0,   cache_write_per_m = 0.95, cache_read_per_m = 0.16 },

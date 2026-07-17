@@ -135,6 +135,9 @@ fn test_normalize_model_name() {
     assert_eq!(normalize_model_name("mimo-v2-omni-free"), "mimo-v2-omni");
     assert_eq!(normalize_model_name("mimo-v2-pro-free"), "mimo-v2-pro");
     assert_eq!(normalize_model_name("kimi-k2.5"), "kimi-k2.5");
+    // Kimi K3 live model id "k3" folds to the canonical "kimi-k3" pricing key
+    assert_eq!(normalize_model_name("k3"), "kimi-k3");
+    assert_eq!(normalize_model_name("kimi-k3"), "kimi-k3");
     // Everything lowercased
     assert_eq!(normalize_model_name("GPT-5-mini"), "gpt-5-mini");
 }

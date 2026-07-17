@@ -58,6 +58,7 @@ pub(crate) fn normalize_model_name(model: &str) -> String {
         "mimo-v2-omni" | "mimo-v2-omni-free" => "mimo-v2-omni".to_string(),
         "mimo-v2-pro" | "mimo-v2-pro-free" => "mimo-v2-pro".to_string(),
         // Kimi
+        "k3" | "kimi-k3" => "kimi-k3".to_string(),
         "kimi-k2.6" | "kimi-k2-6" | "kimik2.6" => "kimi-k2.6".to_string(),
         "kimi-k2.5" | "kimi-k2-5" => "kimi-k2.5".to_string(),
         // GLM / ZhiPu — keep 5.1 and turbo separate
