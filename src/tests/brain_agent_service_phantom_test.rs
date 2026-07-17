@@ -159,3 +159,28 @@ fn registered_tool_mention_detected_word_boundary() {
         &names
     ));
 }
+
+// Regression fixture (#589): a reasoning-model planning monologue that leads
+// with a structured task-restatement (a numbered list) BEFORE the real
+// narration. `prose_lead_in` truncates at the first numbered line, so the
+// lead-in-only detector `has_phantom_tool_intent_no_tools` sees only a benign
+// description and misses it. The strict full-text `has_phantom_tool_intent`
+// must catch it via the ">=2 'Let me' line-starts" and ">=2 numbered action
+// steps" signals. Synthetic content — same structure, no real request quoted.
+const STRUCTURED_PREAMBLE_PHANTOM: &str = "The user wants a full audit of the dashboard module. They described the intended behaviour:\n\n1. **Widgets tab** structure:\n   - list view: items created by the user.\n   - detail view: interactions from other users.\n\nThey want me to: break down this context, verify what's in the codebase, and audit for gaps.\n\nThe system reminder says I described changes but did not execute tool calls.\n\nLet me explore the dashboard section of the codebase:\n- lib/dashboard/ probably exists\n\nLet me start by exploring the directory structure.\n\nPlan of attack:\n1. ls the dashboard directory structure\n2. Look at the main dashboard screen\n3. Check each sub-view\n4. Check notification logic\n5. Check the integration\n\nLet me start. I'll make parallel independent calls where possible.\n\nFirst batch:\n- ls lib/dashboard/ recursive\n\nLet me go.\n\nLet me start exploring.";
+
+#[test]
+fn structured_preamble_phantom_slips_leadin_but_strict_catches() {
+    // The bug: the lead-in detector (used by the zero-tool retry gate) MISSES it
+    // because the numbered list truncates prose_lead_in to a benign description.
+    assert!(
+        !has_phantom_tool_intent_no_tools(STRUCTURED_PREAMBLE_PHANTOM),
+        "lead-in detector unexpectedly caught it — bug premise changed"
+    );
+    // The fix (#589): the strict full-text detector DOES catch it, so wiring it
+    // into the retry gate closes the hole.
+    assert!(
+        has_phantom_tool_intent(STRUCTURED_PREAMBLE_PHANTOM),
+        "strict detector must catch the buried 'Let me ...' + numbered-step narration"
+    );
+}

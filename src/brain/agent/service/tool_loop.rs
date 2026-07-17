@@ -3820,6 +3820,15 @@ impl AgentService {
                 if phantom_retries_used < MAX_PHANTOM_RETRIES
                     && phantom_eligible
                     && (super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
+                        // Strict full-text detector (#589): the lead-in-only
+                        // gate above misses a narrated plan when a structured
+                        // preamble (a numbered task-restatement or table)
+                        // precedes it, because prose_lead_in truncates at the
+                        // first structural line and the real "Let me …" /
+                        // numbered-step narration sits after it. The strict
+                        // detector scans the whole text and catches it.
+                        // Language-agnostic — works for every phantom_lang locale.
+                        || super::phantom::has_phantom_tool_intent(&iteration_text)
                         // Language-agnostic tell (#463): a zero-tool turn
                         // whose text NAMES a registered tool is narrating
                         // usage it never executed, in any language.
