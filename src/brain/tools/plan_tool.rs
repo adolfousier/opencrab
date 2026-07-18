@@ -795,13 +795,23 @@ impl Tool for PlanTool {
                         None => tasks.is_empty(),
                     };
 
-                    // Yolo, cron, run, and a2a never enter Editing: with
-                    // auto-approve there is no user Approve step to wait for.
-                    if design && context.auto_approve {
+                    // Yolo design gate: only an explicit `/plan` slash arms
+                    // the review pause (PreInitEditing with Slash origin).
+                    // Anything else under auto-approve — agent-initiated
+                    // design, or a keyword soft-nudge — keeps the rush
+                    // behavior and is refused toward the checklist track.
+                    let slash_armed = matches!(state, PlanModeState::PreInitEditing)
+                        && matches!(
+                            crate::utils::plan_files::pre_init_origin(context.session_id).await,
+                            crate::utils::plan_files::PreInitOrigin::Slash
+                        );
+                    if design && context.auto_approve && !slash_armed {
                         return Ok(ToolResult::error(
-                            "The design track is unavailable while tool auto-approve is on: \
-                             there is no user Approve step. Use mode=\"checklist\" with \
-                             inline tasks instead."
+                            "The design track under tool auto-approve is available only \
+                             when the user entered Plan mode with the /plan command (the \
+                             review gate). Use mode=\"checklist\" with inline tasks to \
+                             proceed without a review pause, or ask the user to type \
+                             /plan first."
                                 .to_string(),
                         ));
                     }

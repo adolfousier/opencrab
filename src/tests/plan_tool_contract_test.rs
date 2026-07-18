@@ -10,7 +10,8 @@ use crate::brain::tools::{Tool, ToolExecutionContext};
 use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::tui::plan::PlanStatus;
 use crate::utils::plan_files::{
-    PlanModeState, load_plan, plan_json_path, plan_md_path, plan_mode_state, set_pre_init_editing,
+    PlanModeState, PreInitOrigin, load_plan, plan_json_path, plan_md_path, plan_mode_state,
+    set_pre_init_editing, set_pre_init_editing_with_origin,
 };
 use serde_json::json;
 
@@ -148,6 +149,8 @@ async fn conflicting_mode_and_tasks_are_refused() {
 async fn design_init_refused_under_auto_approve() {
     in_temp_home(async {
         let tool = PlanTool;
+        // Agent-initiated design in yolo (no /plan slash, NoPlan state):
+        // refused toward the checklist track — words are the gas.
         let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
         let (ok, msg) = run(
             &tool,
@@ -155,11 +158,29 @@ async fn design_init_refused_under_auto_approve() {
             json!({ "operation": "init", "title": "Yolo design", "mode": "design" }),
         )
         .await;
-        assert!(!ok, "yolo plus design must be refused");
+        assert!(!ok, "yolo plus design must be refused without the slash");
         assert!(
             msg.contains("checklist"),
             "refusal names the alternative, got: {msg}"
         );
+        assert!(
+            msg.contains("/plan"),
+            "refusal names /plan as the review gate, got: {msg}"
+        );
+
+        // Keyword soft-nudge origin (user typed plan-shaped words, never the
+        // slash): same refusal. Only an explicit /plan arms the gate.
+        let ctx_nudge =
+            ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
+        set_pre_init_editing(ctx_nudge.session_id).await.unwrap();
+        let (ok, msg) = run(
+            &tool,
+            &ctx_nudge,
+            json!({ "operation": "init", "title": "Nudge design", "mode": "design" }),
+        )
+        .await;
+        assert!(!ok, "nudge-origin yolo design must be refused");
+        assert!(msg.contains("/plan"), "got: {msg}");
 
         // Checklist stays allowed under auto-approve.
         let (ok, _) = run(
@@ -169,6 +190,66 @@ async fn design_init_refused_under_auto_approve() {
         )
         .await;
         assert!(ok, "yolo checklist init must succeed");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn design_init_allowed_under_auto_approve_when_plan_slash_armed() {
+    // The user typed /plan themselves: the deliberate brake. Design init is
+    // allowed, the plan parks in Editing for review, and /execute resumes
+    // the rush (approve -> Active + seed turn).
+    in_temp_home(async {
+        let tool = PlanTool;
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4()).with_auto_approve(true);
+        set_pre_init_editing_with_origin(ctx.session_id, PreInitOrigin::Slash)
+            .await
+            .unwrap();
+
+        let (ok, msg) = run(
+            &tool,
+            &ctx,
+            json!({ "operation": "init", "title": "Yolo design", "mode": "design" }),
+        )
+        .await;
+        assert!(ok, "slash-armed yolo design must be allowed, got: {msg}");
+        assert_eq!(
+            plan_mode_state(ctx.session_id).await,
+            PlanModeState::PostInitEditing,
+            "the design parks in Editing for review"
+        );
+        let plan = load_plan(ctx.session_id).await.unwrap();
+        assert_eq!(plan.status, PlanStatus::Editing);
+
+        // The scaffold .md is not approvable yet.
+        assert!(matches!(
+            crate::utils::plan_mode::try_approve(ctx.session_id).await,
+            crate::utils::plan_mode::ApproveOutcome::Refused(_)
+        ));
+
+        // Agent writes the design prose; /execute then resumes the rush.
+        std::fs::write(
+            plan_md_path(ctx.session_id).await,
+            "# Yolo design\n\n\
+             ## Context\n\
+             - **Problem:** Yolo cannot review plans.\n\
+             - **Target state:** /plan in yolo parks for review.\n\
+             - **Intent:** Ship the gate.\n\n\
+             ## Implementation steps\n\
+             1. Scope the refusal to slash origin.\n\
+             2. Amend the ADRs.\n",
+        )
+        .unwrap();
+        match crate::utils::plan_mode::try_approve(ctx.session_id).await {
+            crate::utils::plan_mode::ApproveOutcome::SeedTurn { prompt } => {
+                assert!(prompt.contains("PLAN APPROVED"), "got: {prompt}");
+                assert!(prompt.contains("add_tasks"), "got: {prompt}");
+            }
+            other => panic!("expected SeedTurn from /execute, got {other:?}"),
+        }
+        let plan = load_plan(ctx.session_id).await.unwrap();
+        assert_eq!(plan.status, PlanStatus::Active);
+        assert!(plan.approved_at.is_some());
     })
     .await;
 }

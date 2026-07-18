@@ -354,10 +354,34 @@ pub async fn save_plan(plan: &PlanDocument) -> std::io::Result<()> {
 }
 
 /// Mark the session as pre-init Editing: the user entered Plan-mode intent
-/// but `plan init` has not succeeded yet. Durable (survives restart) via an
-/// empty marker file — no fake `PlanDocument`, no approvable content (#569).
+/// but `plan init` has not succeeded yet. Durable (survives restart) via a
+/// marker file — no fake `PlanDocument`, no approvable content (#569).
 /// Refused (Err) when a real plan is already live.
+///
+/// This is the keyword-nudge entry point; it never downgrades a flag that
+/// an explicit `/plan` slash already armed (see `PreInitOrigin`).
 pub async fn set_pre_init_editing(session_id: Uuid) -> std::io::Result<()> {
+    set_pre_init_editing_with_origin(session_id, PreInitOrigin::Nudge).await
+}
+
+/// Where the pre-init flag came from. Only an explicit `/plan` slash arms
+/// the yolo design-review gate: a keyword soft-nudge (or a legacy empty
+/// marker) keeps the rush behavior under tool auto-approve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreInitOrigin {
+    /// The user typed `/plan` (TUI or channel) — the deliberate brake.
+    Slash,
+    /// Plan-keyword soft-nudge, legacy empty marker, or anything else.
+    Nudge,
+}
+
+/// `set_pre_init_editing` with an explicit origin. Re-arming is allowed
+/// while no real plan is live: a `/plan` slash upgrades a nudge flag to
+/// slash-origin, and a nudge never downgrades a slash-armed flag.
+pub async fn set_pre_init_editing_with_origin(
+    session_id: Uuid,
+    origin: PreInitOrigin,
+) -> std::io::Result<()> {
     match plan_mode_state(session_id).await {
         PlanModeState::PostInitEditing | PlanModeState::Active => {
             return Err(std::io::Error::other(
@@ -366,12 +390,33 @@ pub async fn set_pre_init_editing(session_id: Uuid) -> std::io::Result<()> {
         }
         PlanModeState::NoPlan | PlanModeState::PreInitEditing => {}
     }
+    if origin == PreInitOrigin::Nudge
+        && matches!(pre_init_origin(session_id).await, PreInitOrigin::Slash)
+    {
+        return Ok(());
+    }
     let dir = session_dir(session_id).await;
     std::fs::create_dir_all(&dir)?;
+    let content: &[u8] = match origin {
+        PreInitOrigin::Slash => b"slash",
+        PreInitOrigin::Nudge => b"",
+    };
     std::fs::write(
         dir.join(format!(".opencrabs_plan_{session_id}.preinit")),
-        b"",
+        content,
     )
+}
+
+/// The origin of the durable pre-init flag. Missing, empty, or unknown
+/// marker content maps to `Nudge` — conservative: no review gate without
+/// an explicit `/plan` slash.
+pub async fn pre_init_origin(session_id: Uuid) -> PreInitOrigin {
+    let dir = session_dir(session_id).await;
+    let marker = dir.join(format!(".opencrabs_plan_{session_id}.preinit"));
+    match std::fs::read(&marker) {
+        Ok(bytes) if bytes == b"slash" => PreInitOrigin::Slash,
+        _ => PreInitOrigin::Nudge,
+    }
 }
 
 /// Whether the durable pre-init Editing flag is set for the session.

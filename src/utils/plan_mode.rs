@@ -193,7 +193,15 @@ pub async fn enter_plan_mode(session_id: Uuid) -> String {
              /discard it before planning something new."
             .to_string(),
         PlanModeState::PreInitEditing | PlanModeState::NoPlan => {
-            match plan_files::set_pre_init_editing(session_id).await {
+            // Explicit `/plan` slash: arm the flag with Slash origin so the
+            // design track stays available under tool auto-approve (the yolo
+            // review gate). A keyword soft-nudge keeps Nudge origin instead.
+            match plan_files::set_pre_init_editing_with_origin(
+                session_id,
+                plan_files::PreInitOrigin::Slash,
+            )
+            .await
+            {
                 Ok(()) => "📋 Plan mode on. Describe what you want planned: the agent \
                            will explore, then draft a design document for your approval. \
                            Project writes stay blocked until you approve. Leave with \
