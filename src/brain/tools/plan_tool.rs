@@ -94,10 +94,12 @@ enum PlanOperation {
     /// user's Approve again. Call when the user asks to go back to approving
     /// plans themselves (#581).
     RevokeAutonomy,
-    /// Discard the live plan (remove its files → NoPlan). Call ONLY when the
-    /// user asks to abandon / scrap / replace the current plan (#585). Unlike
-    /// `approve` it is not a bypass of the user — it executes the user's own
-    /// request — so it is not autonomy-gated.
+    /// Discard the live plan (remove its files → NoPlan). This is a USER
+    /// action: the agent's call is refused unless the session has granted
+    /// plan autonomy, because a model that can shred its own plan can
+    /// wiggle out of the review harness mid-gate — or be told to by a
+    /// malicious message. The user discards via /discard or the plan
+    /// card's Discard button; both bypass this tool.
     Discard,
     /// Return the current plan state (title, status, checklist progress) with no
     /// side effects. Use to answer "what's the plan / where are we"; unlike
@@ -371,8 +373,9 @@ impl Tool for PlanTool {
          when no plan is live), `add_tasks` (append one or more tasks in a single call — the \
          primary append op), `add_task` (alias appending a single task), `start` (begin the \
          next task, or a specific one via `task_order`), `complete` (finish a task and \
-         auto-start the next), `discard` (abandon the live plan when the user asks to scrap or \
-         replace it), `show_plan` (read-only: report the current plan + checklist progress, e.g. \
+         auto-start the next), `discard` (USER-ONLY: refused for the agent unless the \
+         session granted plan autonomy — the user discards via /discard or the plan card's \
+         Discard button), `show_plan` (read-only: report the current plan + checklist progress, e.g. \
          to answer 'what's the plan / where are we'). `add_tasks`/`add_task`/`start`/`complete` \
          are Active-only. \
          \n\nAPPROVAL: by default a plan waits in Editing for the USER to Approve (button / \
@@ -1232,6 +1235,23 @@ impl Tool for PlanTool {
             PlanOperation::Discard => {
                 if matches!(state, crate::utils::plan_files::PlanModeState::NoPlan) {
                     return Ok(ToolResult::error("No live plan to discard.".to_string()));
+                }
+                // Discarding a live plan is the user's call, not the agent's:
+                // a model that can shred its own plan can wiggle out of the
+                // review harness mid-gate, or be told to by a malicious
+                // message. The user discards via /discard or the plan card's
+                // Discard button — both call plan_mode::discard directly and
+                // never touch this tool. Sessions with granted plan autonomy
+                // keep the old behavior: the user explicitly handed the agent
+                // the keys (cron / a2a / hands-off flows).
+                if !crate::utils::plan_files::is_plan_autonomy(context.session_id).await {
+                    return Ok(ToolResult::error(
+                        "Discarding a plan is a user action: ask the user to run /discard \
+                         or tap the plan card's Discard button. If the user asked you in \
+                         their own words to scrap the plan, relay that request instead of \
+                         discarding it yourself."
+                            .to_string(),
+                    ));
                 }
                 let reply = if let Some(ref svc) = context.service_context {
                     // Full discard (also clears the plan's goal).

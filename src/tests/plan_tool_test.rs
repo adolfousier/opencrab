@@ -726,9 +726,11 @@ async fn approve_op_is_gated_on_granted_autonomy() {
 
 #[tokio::test]
 async fn discard_op_abandons_the_plan_and_show_plan_reports_state() {
-    // The agent can discard the live plan on the user's request, and read the
-    // plan state without side effects (#585).
-    use crate::utils::plan_files::{PlanModeState, plan_mode_state};
+    // show_plan reads plan state without side effects (#585). The discard op
+    // is a USER action: refused for the agent unless the session granted plan
+    // autonomy — a model must not be able to shred its own review harness,
+    // whether on its own initiative or because a malicious message told it to.
+    use crate::utils::plan_files::{PlanModeState, plan_mode_state, set_plan_autonomy};
     in_temp_home(async {
         let tool = PlanTool;
         let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
@@ -770,7 +772,27 @@ async fn discard_op_abandons_the_plan_and_show_plan_reports_state() {
             "show_plan must not change the plan"
         );
 
-        // discard abandons it → NoPlan.
+        // Without plan autonomy the agent's discard is refused, naming the
+        // user's own paths, and the plan stays live.
+        let refused = tool
+            .execute(serde_json::json!({ "operation": "discard" }), &ctx)
+            .await
+            .unwrap();
+        assert!(
+            !refused.success,
+            "agent discard must be refused without plan autonomy"
+        );
+        let msg = format!("{:?}", refused.error);
+        assert!(msg.contains("/discard"), "got: {msg}");
+        assert!(msg.contains("Discard button"), "got: {msg}");
+        assert_ne!(
+            plan_mode_state(ctx.session_id).await,
+            PlanModeState::NoPlan,
+            "a refused discard must leave the plan live"
+        );
+
+        // With plan autonomy granted, the agent discard goes through → NoPlan.
+        set_plan_autonomy(ctx.session_id, true).await.unwrap();
         let discarded = tool
             .execute(serde_json::json!({ "operation": "discard" }), &ctx)
             .await
