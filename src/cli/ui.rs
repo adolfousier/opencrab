@@ -607,6 +607,12 @@ async fn cmd_chat_inner(
                     session_id,
                     text: format!("⏳ Retry {}/{} — {}", attempt, max, reason),
                 }),
+                ProgressEvent::SuggestedFollowups(options) => {
+                    progress_sender.send(TuiEvent::SuggestedFollowups {
+                        session_id,
+                        options,
+                    })
+                }
             };
             if let Err(e) = result {
                 tracing::error!("Progress event channel closed: {}", e);

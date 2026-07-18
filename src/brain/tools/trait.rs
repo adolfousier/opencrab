@@ -47,6 +47,12 @@ pub struct ToolExecutionContext {
     /// have no interactive surface (A2A) or sessions where the caller
     /// did not wire one.
     pub question_callback: Option<crate::brain::agent::QuestionCallback>,
+
+    /// Non-blocking progress-event sink. Tools that surface fire-and-forget
+    /// UI signals (e.g. `suggest_followups`) emit a `ProgressEvent` through
+    /// this without awaiting the user. None on surfaces that wire no progress
+    /// bridge. Distinct from `question_callback`, which blocks for an answer.
+    pub progress_callback: Option<crate::brain::agent::ProgressCallback>,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -76,6 +82,7 @@ impl ToolExecutionContext {
             shared_working_directory: None,
             service_context: None,
             question_callback: None,
+            progress_callback: None,
         }
     }
 

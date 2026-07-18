@@ -540,6 +540,14 @@ pub struct App {
     /// Byte offset in input_buffer where the `:` trigger starts
     pub emoji_colon_offset: usize,
 
+    /// Optional follow-up suggestions surfaced by the `suggest_followups` tool.
+    /// One suggestion renders as ghost text in the input (Tab fills it); several
+    /// render as a pick-list. Accepting fills the input as editable text (never
+    /// submits). Cleared when the user types, submits, or a new turn starts.
+    pub followup_suggestions: Vec<String>,
+    /// Selected row in the multi-suggestion pick-list.
+    pub followup_selected_index: usize,
+
     /// Session rename state
     pub session_renaming: bool,
     pub session_rename_buffer: String,
@@ -845,6 +853,8 @@ impl App {
             emoji_filtered: Vec::new(),
             emoji_selected_index: 0,
             emoji_colon_offset: 0,
+            followup_suggestions: Vec::new(),
+            followup_selected_index: 0,
             session_renaming: false,
             session_rename_buffer: String::new(),
             session_search: String::new(),
@@ -2813,6 +2823,21 @@ impl App {
                 // currently focused session.
                 if session_id == Uuid::nil() || self.is_current_session(session_id) {
                     self.push_system_message(text);
+                }
+            }
+            TuiEvent::SuggestedFollowups {
+                session_id,
+                options,
+            } => {
+                // Only surface in the session that produced them, and only when
+                // the input is empty so we never shove a suggestion in front of
+                // text the user is already typing. Always optional.
+                if self.is_current_session(session_id)
+                    && self.input_buffer.is_empty()
+                    && !options.is_empty()
+                {
+                    self.followup_suggestions = options;
+                    self.followup_selected_index = 0;
                 }
             }
             TuiEvent::ProviderSwitched {

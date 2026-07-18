@@ -34,7 +34,8 @@ pub(crate) fn register_core_agent_tools(
         memory_search::MemorySearchTool, notebook::NotebookEditTool,
         pdf_to_images::PdfToImagesTool, plan_tool::PlanTool, read::ReadTool,
         rename_session::RenameSessionTool, session_search::SessionSearchTool,
-        slash_command::SlashCommandTool, web_search::WebSearchTool, write::WriteTool,
+        slash_command::SlashCommandTool, suggest_followups::SuggestFollowupsTool,
+        web_search::WebSearchTool, write::WriteTool,
         write_opencrabs_file::WriteOpenCrabsFileTool,
     };
     // Phase 1: Essential file operations
@@ -103,6 +104,7 @@ pub(crate) fn register_core_agent_tools(
     // Follow-up question — agent asks the user a multi-choice question
     // mid-task and blocks until they click an option button.
     tool_registry.register(Arc::new(FollowUpQuestionTool));
+    tool_registry.register(Arc::new(SuggestFollowupsTool));
     // Tool discovery — lets the agent activate extended tools on demand
     // (lazy-tools mode). Holds the registry Arc so it can search all tools;
     // harmless when lazy_tools is off (just one more always-available tool).

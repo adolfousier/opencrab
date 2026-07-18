@@ -65,6 +65,7 @@ pub const CORE_TOOLS: &[&str] = &[
     "slash_command",
     "rename_session",
     "follow_up_question",
+    "suggest_followups",
     // Vision — always available when configured (only registered if vision backend exists)
     "analyze_image",
     "analyze_video",
