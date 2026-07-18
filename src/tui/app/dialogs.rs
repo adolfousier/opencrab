@@ -239,7 +239,7 @@ impl App {
                         .name;
                         let loaded = crate::config::Config::load().ok();
                         match provider_name {
-                            "Anthropic Claude" => loaded
+                            "Anthropic" => loaded
                                 .as_ref()
                                 .and_then(|c| c.providers.anthropic.as_ref())
                                 .and_then(|p| p.api_key.clone()),

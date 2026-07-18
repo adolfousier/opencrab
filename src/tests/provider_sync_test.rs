@@ -82,7 +82,7 @@ fn onboarding_providers_covers_all_named_providers() {
     // Every named config provider must have a corresponding onboarding entry.
     // Map from config field name → expected onboarding display name.
     let required = [
-        ("anthropic", "Anthropic Claude"),
+        ("anthropic", "Anthropic"),
         ("openai", "OpenAI"),
         ("github", "GitHub Copilot"),
         ("gemini", "Google Gemini"),

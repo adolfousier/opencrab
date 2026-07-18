@@ -74,7 +74,7 @@ fn provider_count_matches_expected() {
 
 #[test]
 fn anthropic_is_first_provider() {
-    assert_eq!(PROVIDERS[0].name, "Anthropic Claude");
+    assert_eq!(PROVIDERS[0].name, "Anthropic");
 }
 
 #[test]

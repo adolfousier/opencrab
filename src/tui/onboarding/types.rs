@@ -147,7 +147,7 @@ impl TtsProvider {
 pub const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
         id: "anthropic",
-        name: "Anthropic Claude",
+        name: "Anthropic",
         models: &[], // Fetched from API
         key_label: "Setup Token",
         help_lines: &[

@@ -161,11 +161,8 @@ fn test_provider_auth_defaults() {
     assert_eq!(wizard.auth_field, AuthField::Provider);
     assert!(wizard.ps.api_key_input.is_empty());
     assert_eq!(wizard.ps.selected_model, 0);
-    // First provider is Anthropic Claude
-    assert_eq!(
-        PROVIDERS[wizard.ps.selected_provider].name,
-        "Anthropic Claude"
-    );
+    // First provider is Anthropic
+    assert_eq!(PROVIDERS[wizard.ps.selected_provider].name, "Anthropic");
     assert!(!PROVIDERS[wizard.ps.selected_provider].help_lines.is_empty());
 }
 

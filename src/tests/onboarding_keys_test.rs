@@ -11,7 +11,7 @@ fn test_provider_count_matches() {
     assert_eq!(PROVIDERS.len(), 18);
 
     // Verify provider names
-    assert_eq!(PROVIDERS[0].name, "Anthropic Claude");
+    assert_eq!(PROVIDERS[0].name, "Anthropic");
     assert_eq!(PROVIDERS[1].name, "OpenAI");
     assert_eq!(PROVIDERS[2].name, "GitHub Copilot");
     assert_eq!(PROVIDERS[3].name, "Google Gemini");

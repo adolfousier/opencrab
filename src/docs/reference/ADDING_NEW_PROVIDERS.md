@@ -644,7 +644,7 @@ fn try_create_yourprovider(config: &Config) -> Result<Option<Arc<dyn Provider>>>
 15. Custom (custom)
 
 ### Onboarding Order (UI Presentation)
-1. Anthropic Claude (anthropic)
+1. Anthropic (anthropic)
 2. OpenAI (openai)
 3. GitHub Copilot (github)
 4. Google Gemini (gemini)

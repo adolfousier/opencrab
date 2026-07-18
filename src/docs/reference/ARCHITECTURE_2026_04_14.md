@@ -143,7 +143,7 @@ flowchart TD
     PROM1 --> RESP
     PROM2 --> RESP
     PROM3 --> RESP
-    ANTH[Anthropic Claude] --> FB
+    ANTH[Anthropic] --> FB
     QWEN[Qwen OAuth] --> FB
     GEMINI[Gemini] --> FB
     OPENAI[OpenAI] --> FB

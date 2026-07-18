@@ -34,7 +34,7 @@ fn github_copilot_has_help_lines() {
 
 #[test]
 fn provider_order_after_github_insertion() {
-    assert_eq!(PROVIDERS[0].name, "Anthropic Claude");
+    assert_eq!(PROVIDERS[0].name, "Anthropic");
     assert_eq!(PROVIDERS[1].name, "OpenAI");
     assert_eq!(PROVIDERS[2].name, "GitHub Copilot");
     assert_eq!(PROVIDERS[3].name, "Google Gemini");
