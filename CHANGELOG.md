@@ -7,251 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.68] - 2026-07-14
+## [0.3.69] - 2026-07-18
 
-21 commits since v0.3.67. 42 files changed, +1898 / -488 lines.
-
-### ✨ Features
-
-- `6a26b66d` **Agent self-approval**: agent self-approval when the user grants autonomy
-- `376000df` **Persistent plan card**: single persistent plan card instead of per-turn checklists
-- `0fe21498` **/plan <query>**: /plan <query> enters plan mode with the query as the intent
-
-### 🔧 Fixes
-
-- `3cc1d31c` **Rich report intermediate**: deliver a rich report intermediate instead of folding it
-- `6c94a2e6` **Hide unfilled fields**: hide unfilled plan-scaffold fields in the flow block
-- `9afd1e0f` **Retry on 429**: retry rich flow edit on 429 instead of splitting to HTML
-- `e5464868` **Stream plan execution**: stream plan Approve-button execution to Telegram
-- `edf0fb84` **No duplicate presentation**: stop duplicating plan presentation and approval acknowledgement
-- `402f22c6` **Run tool loop on Approve**: run the tool loop on plan Approve button, so it actually starts
-- `53d529fa` **Approve on tasks**: approve a checklist-mode plan on its tasks, not the design .md
-- `e8848378` **Guide plan commands**: guide plan/session commands instead of erroring
-- `2e99c020` **Successful invocation**: a completed response is a successful invocation
-- `b129ab74` **Always show Approve/Discard**: always show plan Approve/Discard at settle, don't gate on readiness
-- `10ab4ab6` **Widen hash**: widen hash to 4 chars and strip the real read prefix
-- `36be030c` **Inject plan reminder**: inject plan reminder in tool loop and gate Approve on readiness
-- `5f45cf5f` **Keyboard at turn end**: show plan Approve/Discard keyboard only at turn end
-- `0cc1a226` **Resolve channel commands**: resolve channel commands despite auto-injected media markers
-- `e0c4aacf` **Require approval**: require approval for checklist mode, drop description param from init
-- `986f8b17` **Remove preview**: remove user message preview from flow status
-
-### 🧹 Miscellaneous
-
-- `ba8f3b98` Back pre-init with a marker file, not a stub plan JSON
-- `937f8b6f` Simplify prompts for LLM clarity (#568)
-
-### 📊 Stats
-
-- 21 commits since v0.3.67
-- 42 files changed, +1898 / -488 lines
-- 4964 tests (4964 passed, 0 failed, 29 ignored)
-
-
-## [0.3.68] - 2026-07-14
-
-21 commits since v0.3.67. 42 files changed, +1898 / -488 lines.
+19 commits since v0.3.68. 74 files changed, +2646 / -88 lines.
 
 ### ✨ Features
 
-- `6a26b66d` **Agent self-approval**: agent self-approval when the user grants autonomy
-- `376000df` **Persistent plan card**: single persistent plan card instead of per-turn checklists
-- `0fe21498` **/plan <query>**: /plan <query> enters plan mode with the query as the intent
+- `a38a8eb7` **Built-in Moonshot AI provider**: Moonshot (Kimi) as a first-class provider with API plan (api.moonshot.ai) and Coding plan (api.kimi.com) endpoints, alias-resolved from kimi/moonshotai
+- `abeff7cf` **Moonshot onboarding wizard**: API plan / Coding plan picker before the API key field, with live model fetch per plan
+- `15a57720` **Command Code CLI provider**: add Command Code CLI (cmd) subprocess provider
+- `1617a5aa` **MiniMax-M3**: wire the current flagship into the config example, README, crate docs, and usage normalizer; default_model bumped to MiniMax-M3
+- `d47cbf4e` **Plan discard/show**: agent can discard and show the plan on the user's request
+- `775a2f60` **Click-to-expand**: left-click a tool-call or reasoning block to expand just that block, complementing Ctrl+O
+- `de89f73b` **Follow-up suggestions tool**: suggest_followups tool plus event plumbing
+- `0857d066` **Follow-up suggestions in the TUI**: rendering and keys, fill-not-submit
+- `1b91ce47` **Telegram follow-up suggestions**: tap-to-send optional follow-ups
+- `b3e849b8` **Discord follow-up suggestions**: tap-to-send optional follow-ups
+- `ae64c1a7` **Slack follow-up suggestions**: tap-to-send optional follow-ups
+- `661506a7` **WhatsApp follow-up suggestions**: numbered tap-to-send optional follow-ups
 
 ### 🔧 Fixes
 
-- `3cc1d31c` **Rich report intermediate**: deliver a rich report intermediate instead of folding it
-- `6c94a2e6` **Hide unfilled fields**: hide unfilled plan-scaffold fields in the flow block
-- `9afd1e0f` **Retry on 429**: retry rich flow edit on 429 instead of splitting to HTML
-- `e5464868` **Stream plan execution**: stream plan Approve-button execution to Telegram
-- `edf0fb84` **No duplicate presentation**: stop duplicating plan presentation and approval acknowledgement
-- `402f22c6` **Run tool loop on Approve**: run the tool loop on plan Approve button, so it actually starts
-- `53d529fa` **Approve on tasks**: approve a checklist-mode plan on its tasks, not the design .md
-- `e8848378` **Guide plan commands**: guide plan/session commands instead of erroring
-- `2e99c020` **Successful invocation**: a completed response is a successful invocation
-- `b129ab74` **Always show Approve/Discard**: always show plan Approve/Discard at settle, don't gate on readiness
-- `10ab4ab6` **Widen hash**: widen hash to 4 chars and strip the real read prefix
-- `36be030c` **Inject plan reminder**: inject plan reminder in tool loop and gate Approve on readiness
-- `5f45cf5f` **Keyboard at turn end**: show plan Approve/Discard keyboard only at turn end
-- `0cc1a226` **Resolve channel commands**: resolve channel commands despite auto-injected media markers
-- `e0c4aacf` **Require approval**: require approval for checklist mode, drop description param from init
-- `986f8b17` **Remove preview**: remove user message preview from flow status
+- `5e416d0c` **Kimi K3 pricing**: price Kimi K3 correctly on /usage instead of billing $0.00
+- `36228a36` **Phantom plan detection**: catch narrated plans hidden behind a structured preamble
+- `9132a620` **Telegram react marker**: recover a leaked react marker on reaction turns
+- `745ad200` **Command Code CLI build**: make the provider build and actually work
+
+### 📖 Documentation
+
+- `e4d540ef` Moonshot config example section and README provider docs
 
 ### 🧹 Miscellaneous
 
-- `ba8f3b98` Back pre-init with a marker file, not a stub plan JSON
-- `937f8b6f` Simplify prompts for LLM clarity (#568)
+- `95f8fd53` refactor(provider): rename Moonshot display name "Moonshot Kimi" to "Moonshot AI"
+- `ac17513b` refactor(provider): rename onboarding display name "Anthropic Claude" to "Anthropic"
 
 ### 📊 Stats
 
-- 21 commits since v0.3.67
-- 42 files changed, +1898 / -488 lines
-- 4964 tests (4964 passed, 0 failed, 29 ignored)
-
-
-## [0.3.68] - 2026-07-14
-
-21 commits since v0.3.67. 42 files changed, +1898 / -488 lines.
-
-### ✨ Features
-
-- `6a26b66d` **Agent self-approval**: agent self-approval when the user grants autonomy
-- `376000df` **Persistent plan card**: single persistent plan card instead of per-turn checklists
-- `0fe21498` **/plan <query>**: /plan <query> enters plan mode with the query as the intent
-
-### 🔧 Fixes
-
-- `3cc1d31c` **Rich report intermediate**: deliver a rich report intermediate instead of folding it
-- `6c94a2e6` **Hide unfilled fields**: hide unfilled plan-scaffold fields in the flow block
-- `9afd1e0f` **Retry on 429**: retry rich flow edit on 429 instead of splitting to HTML
-- `e5464868` **Stream plan execution**: stream plan Approve-button execution to Telegram
-- `edf0fb84` **No duplicate presentation**: stop duplicating plan presentation and approval acknowledgement
-- `402f22c6` **Run tool loop on Approve**: run the tool loop on plan Approve button, so it actually starts
-- `53d529fa` **Approve on tasks**: approve a checklist-mode plan on its tasks, not the design .md
-- `e8848378` **Guide plan commands**: guide plan/session commands instead of erroring
-- `2e99c020` **Successful invocation**: a completed response is a successful invocation
-- `b129ab74` **Always show Approve/Discard**: always show plan Approve/Discard at settle, don't gate on readiness
-- `10ab4ab6` **Widen hash**: widen hash to 4 chars and strip the real read prefix
-- `36be030c` **Inject plan reminder**: inject plan reminder in tool loop and gate Approve on readiness
-- `5f45cf5f` **Keyboard at turn end**: show plan Approve/Discard keyboard only at turn end
-- `0cc1a226` **Resolve channel commands**: resolve channel commands despite auto-injected media markers
-- `e0c4aacf` **Require approval**: require approval for checklist mode, drop description param from init
-- `986f8b17` **Remove preview**: remove user message preview from flow status
-
-### 🧹 Miscellaneous
-
-- `ba8f3b98` Back pre-init with a marker file, not a stub plan JSON
-- `937f8b6f` Simplify prompts for LLM clarity (#568)
-
-### 📊 Stats
-
-- 21 commits since v0.3.67
-- 42 files changed, +1898 / -488 lines
-- 4964 tests (4964 passed, 0 failed, 29 ignored)
-
-
-## [0.3.68] - 2026-07-14
-
-21 commits since v0.3.67. 42 files changed, +1898 / -488 lines.
-
-### ✨ Features
-
-- `6a26b66d` **Agent self-approval**: agent self-approval when the user grants autonomy
-- `376000df` **Persistent plan card**: single persistent plan card instead of per-turn checklists
-- `0fe21498` **/plan <query>**: /plan <query> enters plan mode with the query as the intent
-
-### 🔧 Fixes
-
-- `3cc1d31c` **Rich report intermediate**: deliver a rich report intermediate instead of folding it
-- `6c94a2e6` **Hide unfilled fields**: hide unfilled plan-scaffold fields in the flow block
-- `9afd1e0f` **Retry on 429**: retry rich flow edit on 429 instead of splitting to HTML
-- `e5464868` **Stream plan execution**: stream plan Approve-button execution to Telegram
-- `edf0fb84` **No duplicate presentation**: stop duplicating plan presentation and approval acknowledgement
-- `402f22c6` **Run tool loop on Approve**: run the tool loop on plan Approve button, so it actually starts
-- `53d529fa` **Approve on tasks**: approve a checklist-mode plan on its tasks, not the design .md
-- `e8848378` **Guide plan commands**: guide plan/session commands instead of erroring
-- `2e99c020` **Successful invocation**: a completed response is a successful invocation
-- `b129ab74` **Always show Approve/Discard**: always show plan Approve/Discard at settle, don't gate on readiness
-- `10ab4ab6` **Widen hash**: widen hash to 4 chars and strip the real read prefix
-- `36be030c` **Inject plan reminder**: inject plan reminder in tool loop and gate Approve on readiness
-- `5f45cf5f` **Keyboard at turn end**: show plan Approve/Discard keyboard only at turn end
-- `0cc1a226` **Resolve channel commands**: resolve channel commands despite auto-injected media markers
-- `e0c4aacf` **Require approval**: require approval for checklist mode, drop description param from init
-- `986f8b17` **Remove preview**: remove user message preview from flow status
-
-### 🧹 Miscellaneous
-
-- `ba8f3b98` Back pre-init with a marker file, not a stub plan JSON
-- `937f8b6f` Simplify prompts for LLM clarity (#568)
-
-### 📊 Stats
-
-- 21 commits since v0.3.67
-- 42 files changed, +1898 / -488 lines
-- 4964 tests (4964 passed, 0 failed, 29 ignored)
-
-
-## [0.3.68] - 2026-07-14
-
-21 commits since v0.3.67. 42 files changed, +1898 / -488 lines.
-
-### ✨ Features
-
-- `6a26b66d` **Agent self-approval**: agent self-approval when the user grants autonomy
-- `376000df` **Persistent plan card**: single persistent plan card instead of per-turn checklists
-- `0fe21498` **/plan <query>**: /plan <query> enters plan mode with the query as the intent
-
-### 🔧 Fixes
-
-- `3cc1d31c` **Rich report intermediate**: deliver a rich report intermediate instead of folding it
-- `6c94a2e6` **Hide unfilled fields**: hide unfilled plan-scaffold fields in the flow block
-- `9afd1e0f` **Retry on 429**: retry rich flow edit on 429 instead of splitting to HTML
-- `e5464868` **Stream plan execution**: stream plan Approve-button execution to Telegram
-- `edf0fb84` **No duplicate presentation**: stop duplicating plan presentation and approval acknowledgement
-- `402f22c6` **Run tool loop on Approve**: run the tool loop on plan Approve button, so it actually starts
-- `53d529fa` **Approve on tasks**: approve a checklist-mode plan on its tasks, not the design .md
-- `e8848378` **Guide plan commands**: guide plan/session commands instead of erroring
-- `2e99c020` **Successful invocation**: a completed response is a successful invocation
-- `b129ab74` **Always show Approve/Discard**: always show plan Approve/Discard at settle, don't gate on readiness
-- `10ab4ab6` **Widen hash**: widen hash to 4 chars and strip the real read prefix
-- `36be030c` **Inject plan reminder**: inject plan reminder in tool loop and gate Approve on readiness
-- `5f45cf5f` **Keyboard at turn end**: show plan Approve/Discard keyboard only at turn end
-- `0cc1a226` **Resolve channel commands**: resolve channel commands despite auto-injected media markers
-- `e0c4aacf` **Require approval**: require approval for checklist mode, drop description param from init
-- `986f8b17` **Remove preview**: remove user message preview from flow status
-
-### 🧹 Miscellaneous
-
-- `ba8f3b98` Back pre-init with a marker file, not a stub plan JSON
-- `937f8b6f` Simplify prompts for LLM clarity (#568)
-
-### 📊 Stats
-
-- 21 commits since v0.3.67
-- 42 files changed, +1898 / -488 lines
-- 4964 tests (4964 passed, 0 failed, 29 ignored)
-
-
-## [0.3.68] - 2026-07-14
-
-21 commits since v0.3.67. 42 files changed, +1898 / -488 lines.
-
-### ✨ Features
-
-- `6a26b66d` **Agent self-approval**: agent self-approval when the user grants autonomy
-- `376000df` **Persistent plan card**: single persistent plan card instead of per-turn checklists
-- `0fe21498` **/plan <query>**: /plan <query> enters plan mode with the query as the intent
-
-### 🔧 Fixes
-
-- `3cc1d31c` **Rich report intermediate**: deliver a rich report intermediate instead of folding it
-- `6c94a2e6` **Hide unfilled fields**: hide unfilled plan-scaffold fields in the flow block
-- `9afd1e0f` **Retry on 429**: retry rich flow edit on 429 instead of splitting to HTML
-- `e5464868` **Stream plan execution**: stream plan Approve-button execution to Telegram
-- `edf0fb84` **No duplicate presentation**: stop duplicating plan presentation and approval acknowledgement
-- `402f22c6` **Run tool loop on Approve**: run the tool loop on plan Approve button, so it actually starts
-- `53d529fa` **Approve on tasks**: approve a checklist-mode plan on its tasks, not the design .md
-- `e8848378` **Guide plan commands**: guide plan/session commands instead of erroring
-- `2e99c020` **Successful invocation**: a completed response is a successful invocation
-- `b129ab74` **Always show Approve/Discard**: always show plan Approve/Discard at settle, don't gate on readiness
-- `10ab4ab6` **Widen hash**: widen hash to 4 chars and strip the real read prefix
-- `36be030c` **Inject plan reminder**: inject plan reminder in tool loop and gate Approve on readiness
-- `5f45cf5f` **Keyboard at turn end**: show plan Approve/Discard keyboard only at turn end
-- `0cc1a226` **Resolve channel commands**: resolve channel commands despite auto-injected media markers
-- `e0c4aacf` **Require approval**: require approval for checklist mode, drop description param from init
-- `986f8b17` **Remove preview**: remove user message preview from flow status
-
-### 🧹 Miscellaneous
-
-- `ba8f3b98` Back pre-init with a marker file, not a stub plan JSON
-- `937f8b6f` Simplify prompts for LLM clarity (#568)
-
-### 📊 Stats
-
-- 21 commits since v0.3.67
-- 42 files changed, +1898 / -488 lines
-- 4964 tests (4964 passed, 0 failed, 29 ignored)
-
+- 19 commits since v0.3.68
+- 74 files changed, +2646 / -88 lines
+- 5018 tests (4989 passed, 0 failed, 29 ignored)
 
 ## [0.3.68] - 2026-07-14
 
@@ -7127,3 +6922,4 @@ fixes.
 [0.3.66]: https://github.com/adolfousier/opencrabs/compare/v0.3.65...v0.3.66
 [0.3.67]: https://github.com/adolfousier/opencrabs/compare/v0.3.66...v0.3.67
 [0.3.68]: https://github.com/adolfousier/opencrabs/compare/v0.3.67...v0.3.68
+[0.3.69]: https://github.com/adolfousier/opencrabs/compare/v0.3.68...v0.3.69
