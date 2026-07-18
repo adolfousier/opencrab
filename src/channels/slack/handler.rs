@@ -63,6 +63,50 @@ pub async fn on_interaction(
                     continue;
                 }
 
+                // Optional follow-up suggestion tapped (#599): inject the chosen
+                // suggestion as the user's next message (a fresh turn).
+                if let Some(rest) =
+                    action_id.strip_prefix(super::suggest_followups::FOLLOWUP_PREFIX)
+                {
+                    if let Some((sid_str, idx_str)) = rest.rsplit_once(':')
+                        && let Ok(sid) = uuid::Uuid::parse_str(sid_str)
+                        && let Ok(idx) = idx_str.parse::<usize>()
+                        && let Some(text) = state.slack_state.take_pending_followup(sid, idx).await
+                        && let Some(ref channel) = block_actions.channel
+                    {
+                        let agent_clone = state.agent.clone();
+                        let bot_token = state.current_bot_token();
+                        let channel_id_clone = channel.id.clone();
+                        let client_clone = client.clone();
+                        tokio::spawn(async move {
+                            let token = SlackApiToken::new(SlackApiTokenValue::from(bot_token));
+                            let session = client_clone.open_session(&token);
+                            // Echo the pick.
+                            let echo = SlackApiChatPostMessageRequest::new(
+                                channel_id_clone.clone(),
+                                SlackMessageContent::new()
+                                    .with_text(format!("\u{25b6}\u{fe0f} {text}")),
+                            );
+                            let _ = session.chat_post_message(&echo).await;
+                            match agent_clone.send_message(sid, text, None).await {
+                                Ok(r) => {
+                                    let clean =
+                                        crate::utils::sanitize::strip_llm_artifacts(&r.content);
+                                    let request = SlackApiChatPostMessageRequest::new(
+                                        channel_id_clone,
+                                        SlackMessageContent::new().with_text(clean),
+                                    );
+                                    let _ = session.chat_post_message(&request).await;
+                                }
+                                Err(e) => {
+                                    tracing::error!("Slack follow-up tap turn failed: {e}")
+                                }
+                            }
+                        });
+                    }
+                    continue;
+                }
+
                 // Provider picker callback → show models for that provider
                 if let Some(provider_name) = action_id.strip_prefix("provider:") {
                     let resp = crate::channels::commands::models_for_provider(provider_name).await;
@@ -894,6 +938,10 @@ async fn handle_message(
         }
     };
 
+    // The user sent their own message — any follow-up suggestion buttons from
+    // the previous turn are stale now (#599).
+    state.slack_state.clear_pending_followups(session_id).await;
+
     // Process attached files — images as <<IMG:tmp_path>>, text files extracted inline
     let mut content = text.clone();
     // Set to true if an incoming audio attachment is successfully transcribed.
@@ -1494,7 +1542,7 @@ async fn handle_message(
 
         let slack_state_outer = state.slack_state.clone();
 
-        Arc::new(move |_session_id, event| {
+        Arc::new(move |session_id, event| {
             let tools = tools.clone();
             let tool_group_ts_cb = tool_group_ts_outer.clone();
             let slack_state_grp = slack_state_outer.clone();
@@ -1743,6 +1791,15 @@ async fn handle_message(
                             req = req.with_thread_ts(ts.clone());
                         }
                         let _ = session.chat_post_message(&req).await;
+                    });
+                }
+                // Optional follow-up suggestions (#599): post tap-to-send
+                // buttons under the response; a tap injects a new turn.
+                ProgressEvent::SuggestedFollowups(options) => {
+                    let state = slack_state_grp.clone();
+                    tokio::spawn(async move {
+                        super::suggest_followups::render_suggestions(&state, session_id, options)
+                            .await;
                     });
                 }
                 _ => {}

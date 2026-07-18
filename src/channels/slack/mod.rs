@@ -8,6 +8,7 @@ pub(crate) mod blocks;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod reactions;
+pub(crate) mod suggest_followups;
 pub(crate) mod tool_group;
 pub(crate) mod upload;
 
@@ -41,6 +42,11 @@ pub struct SlackState {
     /// carries the option index, the click handler maps it back via
     /// the stored options list.
     pending_questions: Mutex<HashMap<String, PendingSlackQuestion>>,
+    /// Per-session OPTIONAL follow-up suggestions from `suggest_followups`
+    /// (#599). Non-blocking: buttons ride under the response and a tap injects
+    /// the chosen suggestion as a new turn. Keyed by session; the tap handler
+    /// resolves `idx -> text`. Cleared on tap or when the user sends anything.
+    pending_followups: Mutex<HashMap<Uuid, Vec<String>>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Collapsible tool groups keyed by their message ts, so the Expand /
@@ -64,6 +70,7 @@ impl SlackState {
             session_channels: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
             pending_questions: Mutex::new(HashMap::new()),
+            pending_followups: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             tool_groups: Mutex::new((Vec::new(), HashMap::new())),
         }
@@ -129,6 +136,25 @@ impl SlackState {
         let answer = options.get(idx)?.clone();
         let _ = tx.send(answer.clone());
         Some(answer)
+    }
+
+    /// Stash this session's optional follow-up suggestions (#599).
+    pub async fn set_pending_followups(&self, session_id: Uuid, options: Vec<String>) {
+        self.pending_followups
+            .lock()
+            .await
+            .insert(session_id, options);
+    }
+
+    /// Take a tapped follow-up suggestion by index, consuming the whole set.
+    pub async fn take_pending_followup(&self, session_id: Uuid, idx: usize) -> Option<String> {
+        let options = self.pending_followups.lock().await.remove(&session_id)?;
+        options.get(idx).cloned()
+    }
+
+    /// Drop this session's pending follow-up suggestions (user sent their own).
+    pub async fn clear_pending_followups(&self, session_id: Uuid) {
+        self.pending_followups.lock().await.remove(&session_id);
     }
 
     /// Store the connected client, bot token, and optionally the owner's channel.
