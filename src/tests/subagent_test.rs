@@ -368,6 +368,7 @@ mod send_input_tool {
             shared_working_directory: None,
             service_context: None,
             question_callback: None,
+            progress_callback: None,
         }
     }
 
@@ -521,6 +522,7 @@ mod close_agent_tool {
             shared_working_directory: None,
             service_context: None,
             question_callback: None,
+            progress_callback: None,
         }
     }
 
@@ -647,6 +649,7 @@ mod wait_agent_tool {
             shared_working_directory: None,
             service_context: None,
             question_callback: None,
+            progress_callback: None,
         }
     }
 
@@ -1263,6 +1266,7 @@ mod team_delete_tool {
             shared_working_directory: None,
             service_context: None,
             question_callback: None,
+            progress_callback: None,
         }
     }
 
@@ -1389,6 +1393,7 @@ mod team_broadcast_tool {
             shared_working_directory: None,
             service_context: None,
             question_callback: None,
+            progress_callback: None,
         }
     }
 

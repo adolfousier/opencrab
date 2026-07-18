@@ -1197,6 +1197,43 @@ impl App {
             // Other keys fall through to normal handling (typing more chars refines the filter)
         }
 
+        // Follow-up suggestions (#596): ghost text (1 option) or pick-list (2+),
+        // only while the input is empty. Accepting FILLS the input as editable
+        // text and never submits, so the user can edit before sending. Typing
+        // any other key falls through and the suggestions clear when the buffer
+        // is no longer empty (both the render and this block gate on that).
+        if !self.followup_suggestions.is_empty() && self.input_buffer.is_empty() {
+            let multi = self.followup_suggestions.len() >= 2;
+            if multi && keys::is_up(&event) {
+                self.followup_selected_index = self.followup_selected_index.saturating_sub(1);
+                return Ok(());
+            } else if multi && keys::is_down(&event) {
+                self.followup_selected_index =
+                    (self.followup_selected_index + 1).min(self.followup_suggestions.len() - 1);
+                return Ok(());
+            } else if event.code == KeyCode::Tab
+                || (multi && (keys::is_enter(&event) || keys::is_submit(&event)))
+            {
+                let idx = if multi {
+                    self.followup_selected_index
+                } else {
+                    0
+                };
+                if let Some(text) = self.followup_suggestions.get(idx).cloned() {
+                    self.input_buffer = text;
+                    self.cursor_position = self.input_buffer.len();
+                }
+                self.followup_suggestions.clear();
+                self.followup_selected_index = 0;
+                return Ok(());
+            } else if keys::is_cancel(&event) {
+                self.followup_suggestions.clear();
+                self.followup_selected_index = 0;
+                return Ok(());
+            }
+            // Any other key falls through to normal handling.
+        }
+
         // Any key other than Escape resets escape confirmation
         if !keys::is_cancel(&event) {
             self.escape_pending_at = None;

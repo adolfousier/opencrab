@@ -51,7 +51,10 @@ use dialogs::{
     render_directory_picker, render_file_picker, render_restart_dialog, render_update_dialog,
 };
 use help::{render_help, render_settings};
-use input::{render_emoji_picker, render_input, render_slash_autocomplete, render_status_bar};
+use input::{
+    render_emoji_picker, render_followup, render_input, render_slash_autocomplete,
+    render_status_bar,
+};
 use plan_widget::render_plan_checklist;
 use projects::render_projects;
 use session_files::render_session_files;
@@ -183,6 +186,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 render_slash_autocomplete(f, app, chunks[3]);
             } else if app.emoji_picker_active {
                 render_emoji_picker(f, app, chunks[3]);
+            } else if app.followup_suggestions.len() >= 2 && app.input_buffer.is_empty() {
+                render_followup(f, app, chunks[3]);
             }
         }
         AppMode::Sessions => {

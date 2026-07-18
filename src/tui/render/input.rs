@@ -252,10 +252,25 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
     };
 
     if app.input_buffer.is_empty() {
-        input_lines.push(Line::from(vec![
+        let mut spans = vec![
             Span::styled("\u{276F} ", Style::default().fg(Color::Rgb(100, 100, 100))),
             Span::styled(" ", cursor_style),
-        ]));
+        ];
+        // Single follow-up suggestion → gray ghost text after the cursor; Tab
+        // fills the input with it (editable, never submits). Several
+        // suggestions render as a pick-list instead (see render_followup), so
+        // ghost text is exactly the len == 1 case.
+        if app.followup_suggestions.len() == 1 {
+            spans.push(Span::styled(
+                app.followup_suggestions[0].clone(),
+                Style::default().fg(Color::Rgb(100, 100, 100)),
+            ));
+            spans.push(Span::styled(
+                "  \u{21e5} Tab",
+                Style::default().fg(Color::Rgb(70, 70, 70)),
+            ));
+        }
+        input_lines.push(Line::from(spans));
     } else {
         let buf = &app.input_buffer;
         let cursor_pos = app.cursor_position;
@@ -739,6 +754,87 @@ pub(super) fn render_slash_autocomplete(f: &mut Frame, app: &App, input_area: Re
     padded_lines.push(Line::from(""));
 
     // Clear the area and render the dropdown
+    f.render_widget(Clear, dropdown_area);
+    let dropdown = Paragraph::new(padded_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(120, 120, 120))),
+    );
+    f.render_widget(dropdown, dropdown_area);
+}
+
+/// Render the follow-up suggestion pick-list above the input box (2+ options).
+/// A single option renders inline as ghost text instead (see `render_input`).
+/// Selecting an option FILLS the input as editable text; it never submits.
+pub(super) fn render_followup(f: &mut Frame, app: &App, input_area: Rect) {
+    let count = app.followup_suggestions.len() as u16;
+    if count < 2 {
+        return;
+    }
+
+    let pad_x: u16 = 1;
+    let pad_y: u16 = 1;
+    // +1 extra row for the key hint line inside the box.
+    let chrome = 2 + pad_y * 2 + 1;
+
+    let selected = app.followup_selected_index as u16;
+    let Some(fit) = fit_dropdown(count, selected, input_area.y, chrome) else {
+        return;
+    };
+    let visible_items_count = fit.visible_items as usize;
+    let scroll_offset = fit.scroll_offset as usize;
+    let visible_end = (scroll_offset + visible_items_count).min(app.followup_suggestions.len());
+    let visible_slice = &app.followup_suggestions[scroll_offset..visible_end];
+
+    // Width grows to the longest visible option, capped inside the frame.
+    let longest = visible_slice
+        .iter()
+        .map(|o| o.chars().count())
+        .max()
+        .unwrap_or(0);
+    let hint = "\u{2191}\u{2193} pick  \u{21e5}/\u{21b5} fill  Esc dismiss";
+    let inner = longest.max(hint.chars().count()) + 2; // marker + trailing pad
+    let width = ((inner as u16) + 2 + pad_x * 2).min(input_area.width.saturating_sub(1));
+    let text_budget = width.saturating_sub(2 + pad_x * 2) as usize;
+
+    let dropdown_area = Rect {
+        x: input_area.x + 1,
+        y: input_area.y.saturating_sub(fit.height),
+        width,
+        height: fit.height,
+    };
+
+    let mut lines: Vec<Line> = visible_slice
+        .iter()
+        .enumerate()
+        .map(|(i, opt)| {
+            let is_selected = (scroll_offset + i) == app.followup_selected_index;
+            let marker = if is_selected { "\u{25b6} " } else { "  " };
+            let text = truncate_to_chars(opt, text_budget.saturating_sub(2));
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Gray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Reset)
+            };
+            Line::from(vec![Span::styled(
+                format!("{}{}", marker, text.as_ref()),
+                style,
+            )])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        format!("  {hint}"),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let mut padded_lines = Vec::with_capacity(lines.len() + 2);
+    padded_lines.push(Line::from(""));
+    padded_lines.extend(lines);
+    padded_lines.push(Line::from(""));
+
     f.render_widget(Clear, dropdown_area);
     let dropdown = Paragraph::new(padded_lines).block(
         Block::default()

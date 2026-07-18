@@ -2194,6 +2194,10 @@ impl App {
     }
 
     async fn send_message_inner(&mut self, content: String, command_sourced: bool) -> Result<()> {
+        // A new turn is starting — drop any follow-up suggestions from the
+        // previous turn so they can't reappear on the next empty input (#596).
+        self.followup_suggestions.clear();
+        self.followup_selected_index = 0;
         tracing::info!(
             "[send_message] START is_processing={} has_session={} content_len={}",
             self.is_processing,

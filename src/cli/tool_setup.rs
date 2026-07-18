@@ -35,8 +35,7 @@ pub(crate) fn register_core_agent_tools(
         pdf_to_images::PdfToImagesTool, plan_tool::PlanTool, read::ReadTool,
         rename_session::RenameSessionTool, session_search::SessionSearchTool,
         slash_command::SlashCommandTool, suggest_followups::SuggestFollowupsTool,
-        web_search::WebSearchTool, write::WriteTool,
-        write_opencrabs_file::WriteOpenCrabsFileTool,
+        web_search::WebSearchTool, write::WriteTool, write_opencrabs_file::WriteOpenCrabsFileTool,
     };
     // Phase 1: Essential file operations
     tool_registry.register(Arc::new(ReadTool));
