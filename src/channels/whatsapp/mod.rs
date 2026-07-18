@@ -53,6 +53,11 @@ pub struct WhatsAppState {
     /// ButtonsMessage is deprecated, so we render the question as a
     /// numbered text list and parse the user's next numeric reply.
     pub pending_questions: Mutex<HashMap<String, PendingWhatsAppQuestion>>,
+    /// Per-session OPTIONAL follow-up suggestions from `suggest_followups`
+    /// (#600). WhatsApp has no working button UI, so these render as a numbered
+    /// text list; a bare numeric reply selects the matching suggestion. Keyed by
+    /// session; consumed on a valid numeric reply, cleared on any other message.
+    pending_followups: Mutex<HashMap<Uuid, Vec<String>>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Broadcast channel for QR codes — onboarding subscribes to this.
@@ -114,6 +119,7 @@ impl WhatsAppState {
             owner_jid: Mutex::new(None),
             pending_approvals: Mutex::new(HashMap::new()),
             pending_questions: Mutex::new(HashMap::new()),
+            pending_followups: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             qr_tx,
             connected_tx,
@@ -178,6 +184,37 @@ impl WhatsAppState {
         let answer = options.get(idx)?.clone();
         let _ = tx.send(answer.clone());
         Some(answer)
+    }
+
+    /// Stash this session's optional follow-up suggestions (#600).
+    pub async fn set_pending_followups(&self, session_id: Uuid, options: Vec<String>) {
+        self.pending_followups
+            .lock()
+            .await
+            .insert(session_id, options);
+    }
+
+    /// If this session has pending suggestions and `reply` parses as a 1-based
+    /// option number in range, consume the whole set and return the chosen
+    /// suggestion. Returns None otherwise (leaving the set for the caller to
+    /// clear on a non-selecting message).
+    pub async fn take_followup_by_reply(&self, session_id: Uuid, reply: &str) -> Option<String> {
+        let parsed: usize = reply.trim().parse().ok()?;
+        if parsed == 0 {
+            return None;
+        }
+        let mut map = self.pending_followups.lock().await;
+        let options = map.get(&session_id)?;
+        let chosen = options.get(parsed - 1).cloned();
+        if chosen.is_some() {
+            map.remove(&session_id);
+        }
+        chosen
+    }
+
+    /// Drop this session's pending follow-up suggestions (non-selecting message).
+    pub async fn clear_pending_followups(&self, session_id: Uuid) {
+        self.pending_followups.lock().await.remove(&session_id);
     }
 
     /// Check whether a phone has a pending question without consuming

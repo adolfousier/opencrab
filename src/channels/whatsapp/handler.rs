@@ -737,6 +737,18 @@ pub(crate) async fn handle_message(
         }
     };
 
+    // Optional follow-up suggestions (#600): a bare numeric reply selects the
+    // matching suggestion — rewrite the turn text to it. Any other message
+    // clears the stale set so an old number can't fire later.
+    if let Some(picked) = wa_state
+        .take_followup_by_reply(session_id, content.trim())
+        .await
+    {
+        content = picked;
+    } else {
+        wa_state.clear_pending_followups(session_id).await;
+    }
+
     // Fast-cancel: "stop" exact match — cancel and reply immediately.
     //
     // Cancellation is scoped to explicit stop requests and genuine follow-up
@@ -1034,7 +1046,8 @@ pub(crate) async fn handle_message(
         let client_cb = client.clone();
         let jid_cb = reply_target.clone();
         let was_streamed_cb = was_streamed.clone();
-        Arc::new(move |_session_id, event| match event {
+        let wa_state_cb = wa_state.clone();
+        Arc::new(move |session_id, event| match event {
             ProgressEvent::IntermediateText { text, .. } => {
                 let (clean, _) = crate::utils::extract_img_markers(&text);
                 let clean = redact_secrets(&clean);
@@ -1116,6 +1129,31 @@ pub(crate) async fn handle_message(
                     if let Err(e) = client.send_message(jid, msg).await {
                         tracing::error!("WhatsApp: provider switched send failed: {}", e);
                     }
+                });
+            }
+            // Optional follow-up suggestions (#600): no button UI, so post a
+            // numbered list. A bare numeric reply selects one (see the inbound
+            // router); anything else clears the set.
+            ProgressEvent::SuggestedFollowups(options) if !options.is_empty() => {
+                let client = client_cb.clone();
+                let jid = jid_cb.clone();
+                let wa = wa_state_cb.clone();
+                tokio::spawn(async move {
+                    let numbered: String = options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, o)| format!("{}. {}", i + 1, o))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let body = format!(
+                        "\u{1f4a1} Suggested next:\n\n{numbered}\n\nReply with a number, or type your own."
+                    );
+                    wa.set_pending_followups(session_id, options).await;
+                    let msg = waproto::whatsapp::Message {
+                        conversation: Some(body),
+                        ..Default::default()
+                    };
+                    let _ = client.send_message(jid, msg).await;
                 });
             }
             _ => {}
