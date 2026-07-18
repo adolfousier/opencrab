@@ -183,7 +183,7 @@ A further `init` while a plan is **post-init Editing or Active** is refused with
 
 Today’s tool may replace an existing session plan file on `init` — that upgrade/replace path is the intended happy path after `/plan` / soft-nudge. Tool approval on `init` is unchanged. `/plan` and soft-nudge still do not create an approvable `.md`; they set durable pre-init Editing as above.
 
-Yolo, cron, `run`, and a2a never enter Editing. Checklist and import remain allowed under the existing approval policy.
+Yolo + explicit `/plan` slash enters Editing (the review gate — the slash is the deliberate brake; see the amendment in [0003](0003-plan-lifecycle-engine.md)); `/execute` resumes the rush. Agent-initiated design and keyword nudges under yolo stay refused toward checklist. cron, `run`, and a2a never enter Editing. Checklist and import remain allowed under the existing approval policy.
 
 ### Storage
 
@@ -342,7 +342,8 @@ Do not paste a plan in chat. While Editing, write the SESSION PLAN to the `.md` 
 | User supplies task list | Checklist | `init` with tasks (or import) |
 | Pure Q&A, research, single-step fix | None | No forced plan tool |
 | Ambiguous | Ask | One question: design first or checklist? |
-| Yolo / cron / `run` / a2a + design ask | Refuse design | Checklist or import only |
+| Yolo + explicit `/plan` slash | Design (review gate) | Editing, `init mode=design`, write `.md`, wait for Approve; `/execute` resumes full-rush |
+| Yolo / cron / `run` / a2a + design ask (no slash) | Refuse design | Checklist or import only |
 
 A3 keeps the useful “don’t wing a large refactor” guardrail for execute-shaped work, but does not force `plan init` on every multi-step question. Audit-only requests (“explain how auth works”) stay out of Plan mode unless the user says plan or asks for a design.
 
@@ -391,7 +392,7 @@ Surfaces to update for prompts include [src/utils/prompt_analyzer.rs](src/utils/
 
 On every Editing turn, inject the absolute path to the session `.md` so the model knows where to write.
 
-Return fixed, deterministic tool results for common mistakes: design `init` tells the model to edit the `.md` and wait for Approve; checklist or import `init` tells the model to call `start` now; checklist operations while Editing are blocked with a clear reason; a second `init` while a plan is live is refused; `mode=design` with tasks, yolo plus design, or empty import is refused with the allowed alternative.
+Return fixed, deterministic tool results for common mistakes: design `init` tells the model to edit the `.md` and wait for Approve; checklist or import `init` tells the model to call `start` now; checklist operations while Editing are blocked with a clear reason; a second `init` while a plan is live is refused; `mode=design` with tasks, yolo plus design without the `/plan` slash, or empty import is refused with the allowed alternative.
 
 After Approve on the design track, the synthetic implement turn maps `## Implementation steps` to one `add_tasks` before any project writes, then `start`. Checklist and import paths skip that seed step. Prompt behavior is fully specified in Prompt policy above.
 
@@ -415,7 +416,7 @@ Accepted pushbacks: split Phase 3 so the write/bash gate has isolated tests; fix
 
 After an incomplete first bot review, Adolfo forwarded a fuller audit ([#12671](https://t.me/c/3627148483/12671), following [#12670](https://t.me/c/3627148483/12670)). Direction is sound. Two audit corrections matter for this document: do not re-open Bot API pin for Plan mode (extend the per-turn flow message instead), and do not assume dual-write to SQLite (JSON is live; SQLite is schema-only today).
 
-Accepted findings include the SQLite migration and `approved_at` gap, the need for an `add_task` alias rather than a hard rename, the TUI overlay gap versus tool-policy `/approve`, Telegram’s lack of live plan sync today, v1 scope of TUI plus Telegram, and yolo skipping Editing. The claim that spawn `"plan"` → `"architect"` renames a ghost was rejected — both strings parse today in `agent_type.rs`. The pin-era `opencrabs-plan-mode.md` shared in OC Dev is not source of truth; this document is.
+Accepted findings include the SQLite migration and `approved_at` gap, the need for an `add_task` alias rather than a hard rename, the TUI overlay gap versus tool-policy `/approve`, Telegram’s lack of live plan sync today, and v1 scope of TUI plus Telegram. The "yolo skipping Editing" finding was later amended (2026-07-18, Alexey's intent correction): yolo enters Editing on an explicit `/plan` slash — the review gate — and `/execute` resumes the rush; see the amendment in [0003](0003-plan-lifecycle-engine.md). The claim that spawn `"plan"` → `"architect"` renames a ghost was rejected — both strings parse today in `agent_type.rs`. The pin-era `opencrabs-plan-mode.md` shared in OC Dev is not source of truth; this document is.
 
 ---
 

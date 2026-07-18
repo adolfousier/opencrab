@@ -177,7 +177,8 @@ Implement Prompt policy in full. In prompt copy, SESSION PLAN means design prose
 | User supplies task list | Checklist | `init` with tasks (or import) |
 | Pure Q&A, research, single-step fix | None | No forced plan tool |
 | Ambiguous | Ask | One question: design first or checklist? |
-| Yolo / cron / `run` / a2a + design ask | Refuse design | Checklist or import only |
+| Yolo + explicit `/plan` slash | Design (review gate) | Editing, `init mode=design`, write `.md`, wait for Approve; `/execute` resumes full-rush |
+| Yolo / cron / `run` / a2a + design ask (no slash) | Refuse design | Checklist or import only |
 
 A3 keeps the useful “don’t wing a large refactor” guardrail for execute-shaped work, but does not force `plan init` on every multi-step question. Audit-only requests stay out of Plan mode unless the user says plan or asks for a design. When design language and execute-shaped language coexist, design wins when “plan” is explicit; otherwise execute-shaped cues favor checklist.
 

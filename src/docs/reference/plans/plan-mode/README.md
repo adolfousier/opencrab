@@ -78,7 +78,7 @@ These items span clusters. Prefer the umbrella for full wording; this list exist
 | Collapse / refresh | Keep 1.5s `refresh_flow`; accept client expand reset (#480 option 1); always-visible chrome is title, progress, goal one-liner, ctx | Umbrella Surfaces; Cluster B |
 | Pin-era docs | OC Dev `opencrabs-plan-mode.md` and any Bot API pin design are not SoT | Umbrella Review feedback; Cluster D docs/cleanup |
 | Deviation policy | UI send failure must not orphan `.md`; strip Approve keyboards from older flow messages; empty-task seed → idle retry; partial seed → discard-only in v1 | Umbrella Deviation policy; engine constraints in Cluster C; recovery UX in Cluster D |
-| Yolo / non-interactive | Yolo, cron, `run`, and a2a paths never enter Editing — checklist/Active or no plan chrome | Umbrella Product model |
+| Yolo / non-interactive | Yolo + explicit `/plan` slash enters Editing (review gate); `/execute` resumes full-rush. No slash → checklist/Active or no plan chrome. cron, `run`, a2a never enter Editing | Umbrella Product model; 0003 amendment |
 | Review-ops note | In-context attachment truncation during OC Dev bot review is separate ops work, not Plan mode product scope | Umbrella Review feedback only |
 
 ## How to use this folder

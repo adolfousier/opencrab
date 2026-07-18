@@ -87,7 +87,9 @@ Earlier wording “no files until init” is narrowed: pre-init may leave a **mi
 
 **Track C — import.** `init(file_path=…)` from **NoPlan or pre-init** only, any readable path, non-empty `tasks` required. From pre-init, import **replaces** the flag and skips Editing → Active immediately (no `/discard`). From post-init Editing or Active, refuse import; user must Discard first. No design-track seed turn because tasks are already structured.
 
-Yolo, cron, `run`, and a2a never enter Editing. Checklist and import remain allowed under the existing approval policy.
+Yolo + explicit `/plan` slash enters Editing (the review gate — typing the slash is the user reaching for the brake on purpose); `/execute` or Approve resumes the rush: approve, seed, all tasks auto-approved. Agent-initiated design and keyword soft-nudges under yolo stay refused toward checklist. cron, `run`, and a2a (no user to brake) never enter Editing. Checklist and import remain allowed under the existing approval policy.
+
+> **Amendment (2026-07-18, Alexey's intent correction, OC Dev):** the original line read "Yolo, cron, `run`, and a2a never enter Editing" — written before yolo semantics were understood. The intent was always: in always-approve mode, `/plan` is the deliberate pause to review the plan prose until `/execute` says rush again. A user who wanted to keep rushing would not press `/plan` at all. The slash-origin marker on the pre-init flag distinguishes the two entry paths.
 
 ### `init` disambiguation and pre-init upgrade rules (locked)
 
@@ -203,7 +205,7 @@ Required outline:
 
 ### Deterministic tool results (model navigation)
 
-Return fixed, deterministic tool results for common mistakes: design `init` tells the model to edit the `.md` and wait for Approve; checklist or import `init` tells the model to call `start` now; checklist operations while Editing are blocked with a clear reason; a second `init` while a plan is live (post-init / Active) is refused; `mode=design` with tasks, yolo plus design, or empty import is refused with the allowed alternative.
+Return fixed, deterministic tool results for common mistakes: design `init` tells the model to edit the `.md` and wait for Approve; checklist or import `init` tells the model to call `start` now; checklist operations while Editing are blocked with a clear reason; a second `init` while a plan is live (post-init / Active) is refused; `mode=design` with tasks, yolo plus design without the `/plan` slash, or empty import is refused with the allowed alternative.
 
 ### Deviation policy (engine-relevant)
 

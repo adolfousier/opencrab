@@ -92,7 +92,7 @@ These are NOT written to by RSI. If feedback relates to content in a user-create
 
 Built-in skills: `cost-estimate`, `security-audit`, `repo-audit`, `browser-cdp`, `a2a-gateway`, `dynamic-tools`.
 
-Format: YAML frontmatter (`name`, `description`) + prompt body. The harness loads all skills and injects them into the system prompt as a skills section.
+Format: YAML frontmatter (`name`, `description`, optional `review_gate: true`) + prompt body. The harness loads all skills and injects them into the system prompt as a skills section. A skill declaring `review_gate: true` gets a review-gate reminder prepended to its body on slash invocation: the agent presents the skill's output and waits for explicit user approval before any side effects, even under tool auto-approve — typing the slash is the user choosing to review first (natural-language requests that never touch the slash keep the usual flow). `/drop-release` is the first consumer.
 
 RSI can propose new skills via `rsi_propose` (kind=`skill`). Proposals land in `~/.opencrabs/rsi/proposed_skills.toml` for human review.
 

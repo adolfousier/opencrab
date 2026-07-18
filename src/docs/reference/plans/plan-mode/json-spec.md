@@ -182,7 +182,7 @@ Legacy strings on disk are mapped on load (Draft/PendingApproval/Rejected → Ed
 
 ### Tool contract (implemented, Cluster C Phase C3)
 
-- **`init`** takes `mode` (`design` | `checklist`). Omitted mode: tasks present imply checklist, none imply design. `mode=design` with tasks, `mode=checklist` without tasks, design under tool auto-approve (yolo), and empty imports are all refused with the allowed alternative. `init` is permitted from NoPlan or pre-init only (the first successful `init` upgrades or replaces the pre-init sidecar); a live post-init or Active plan refuses with "discard first".
+- **`init`** takes `mode` (`design` | `checklist`). Omitted mode: tasks present imply checklist, none imply design. `mode=design` with tasks, `mode=checklist` without tasks, and empty imports are all refused with the allowed alternative. Design under tool auto-approve (yolo) is refused UNLESS the session's pre-init flag carries slash origin (the user typed `/plan` — the review gate); slash-armed yolo design inits park in Editing for review and `/execute` resumes the rush. `init` is permitted from NoPlan or pre-init only (the first successful `init` upgrades or replaces the pre-init sidecar); a live post-init or Active plan refuses with "discard first".
 - **`add_tasks`** is the primary way to append checklist items (array, at least one element). Active only.
 - **`add_task`** remains as an alias that appends a single task. Prompts now prefer `add_tasks` (Cluster D Phase D2 shipped); the alias is deprecated in docs but stays in the schema so mid-session models keep working.
 - **`start` / `complete`** are Active only; Editing (pre-init or post-init) gets a deterministic refusal. Auto-approve on first `start` is removed: `approved_at` is stamped only by user Approve on the design track.
@@ -214,8 +214,8 @@ The `opencrabs-plan-mode.md` file shared in OC Dev predates this flow-message de
 
 ### Pre-init Editing and `/plan`
 
-- **`/plan` and soft-nudge (shared analyzer)** set durable **`pre_init_editing`** on a **minimal JSON sidecar** (survives restart; no `.md` until `plan init`). Not stored on per-turn `AgentContext`. TUI mirrors for UI; Telegram reads the same sidecar.
-- **`/discard`** clears pre-init flag; post-init deletes `.md` + `.json`.
+- **`/plan` and soft-nudge (shared analyzer)** set durable **`pre_init_editing`** on a **minimal JSON sidecar** (survives restart; no `.md` until `plan init`). Not stored on per-turn `AgentContext`. TUI mirrors for UI; Telegram reads the same sidecar. The marker records its **origin**: an explicit `/plan` slash writes `slash` (arms the yolo review gate); a keyword soft-nudge writes nothing (nudge origin). A later slash upgrades a nudge flag; a nudge never downgrades a slash flag.
+- **`/discard`** clears pre-init flag; post-init deletes `.md` + `.json`. The **`discard` tool op is user-only**: the agent's call is refused whenever a plan is live, unless the session granted plan autonomy (`grant_autonomy` — cron / a2a / hands-off flows). A model must not shred its own review harness, whether on its own initiative or because a malicious message told it to.
 - **`/execute` / Approve:** **forbidden while a turn is running**; when idle — first approve from Editing, or seed-retry from Active with empty `tasks`.
 
 ### Session plan `.md` (design track, light template B)
