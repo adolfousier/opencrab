@@ -268,79 +268,90 @@ pub fn is_stuck_in_intent_loop(text: &str) -> bool {
     max_repeated_intent_line(text) >= STUCK_INTENT_LOOP_THRESHOLD
 }
 
+/// Highest match count of `regex_of(lang)` across ALL supported languages.
+/// Scanning the union (not just `detect_language`'s pick) makes phantom
+/// detection immune to language mis-detection — e.g. one accented word
+/// ("Activité") flipping an English monologue to French and silencing the
+/// English patterns (the Kimi K3 case). The per-language regexes carry
+/// language-distinctive tokens, so the union is collision-free.
+fn max_lang_regex_count(
+    lower: &str,
+    regex_of: impl Fn(&phantom_lang::LangConfig) -> &str,
+) -> usize {
+    phantom_lang::all_langs()
+        .iter()
+        .filter_map(|lang| {
+            let re = regex_of(lang);
+            (!re.is_empty())
+                .then(|| Regex::new(re).ok().map(|r| r.find_iter(lower).count()))
+                .flatten()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Whether `regex_of(lang)` matches `text` in ANY supported language.
+fn any_lang_regex_match(text: &str, regex_of: impl Fn(&phantom_lang::LangConfig) -> &str) -> bool {
+    phantom_lang::all_langs().iter().any(|lang| {
+        let re = regex_of(lang);
+        !re.is_empty() && Regex::new(re).map(|r| r.is_match(text)).unwrap_or(false)
+    })
+}
+
 pub fn has_phantom_tool_intent(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.len() < 40 {
         return false;
     }
     let lower = trimmed.to_lowercase();
-    let lang = phantom_lang::detect_language(trimmed);
 
     // ── Strong signals (standalone — no corroboration needed) ─────────
+    // All signals scan EVERY language (not just detect_language's pick), so a
+    // mis-detected language can't disable them (#602 follow-up: one accented
+    // word mis-routed an English monologue to French and slipped the detector).
 
     // 2+ imperative "Now <verb>" / "Let me <verb>" at line start = multi-step plan
-    if !lang.now_imperative_re.is_empty()
-        && let Ok(re) = Regex::new(&lang.now_imperative_re)
-        && re.find_iter(&lower).count() >= 2
-    {
+    if max_lang_regex_count(&lower, |l| &l.now_imperative_re) >= 2 {
         return true;
     }
 
     // 2+ numbered steps with action verbs = narrated plan
-    if !lang.numbered_steps_re.is_empty()
-        && let Ok(re) = Regex::new(&lang.numbered_steps_re)
-        && re.find_iter(&lower).count() >= 2
-    {
+    if max_lang_regex_count(&lower, |l| &l.numbered_steps_re) >= 2 {
         return true;
     }
 
     // 2+ past-tense standalone sentences = phantom completion narration
-    if !lang.past_tense_standalone_re.is_empty()
-        && let Ok(re) = Regex::new(&lang.past_tense_standalone_re)
-        && re.find_iter(&lower).count() >= 2
-    {
+    if max_lang_regex_count(&lower, |l| &l.past_tense_standalone_re) >= 2 {
         return true;
     }
 
     // ── Completion claims (standalone) ────────────────────────────────
-    if lang_completion_match(&lower, &lang.completion_claims) {
+    if phantom_lang::all_langs()
+        .iter()
+        .any(|l| lang_completion_match(&lower, &l.completion_claims))
+    {
         return true;
     }
 
     // ── Now + gerund status-then-action drops (standalone) ─────────────
-    if !lang.gerund_re.is_empty()
-        && let Ok(re) = Regex::new(&lang.gerund_re)
-        && re.is_match(trimmed)
-    {
+    if any_lang_regex_match(trimmed, |l| &l.gerund_re) {
         return true;
     }
 
     // ── Trailing-colon intent ─────────────────────────────────────────
-    if !lang.trailing_colon_re.is_empty()
-        && let Ok(re) = Regex::new(&lang.trailing_colon_re)
-        && re.is_match(trimmed)
-    {
+    if any_lang_regex_match(trimmed, |l| &l.trailing_colon_re) {
         return true;
     }
 
     // ── Weak signals (need corroboration) ─────────────────────────────
-    let has_intent = lang_intent_match(&lower, &lang.intent_phrases);
-
-    if has_intent {
-        // Corroborate with file paths, extensions, or backtick code refs
-        let path_match = !lang.path_re.is_empty()
-            && Regex::new(&lang.path_re)
-                .map(|re| re.is_match(trimmed))
-                .unwrap_or(false);
-        let ext_match = !lang.ext_re.is_empty()
-            && Regex::new(&lang.ext_re)
-                .map(|re| re.is_match(trimmed))
-                .unwrap_or(false);
-        let backtick_match = !lang.backtick_code_re.is_empty()
-            && Regex::new(&lang.backtick_code_re)
-                .map(|re| re.is_match(trimmed))
-                .unwrap_or(false);
-        if path_match || ext_match || backtick_match {
+    // `lang_intent_match_any` already scans all languages.
+    if lang_intent_match_any(&lower) {
+        // Corroborate with file paths, extensions, or backtick code refs.
+        // These are language-agnostic, so any language's regex works.
+        let path = any_lang_regex_match(trimmed, |l| &l.path_re)
+            || any_lang_regex_match(trimmed, |l| &l.ext_re)
+            || any_lang_regex_match(trimmed, |l| &l.backtick_code_re);
+        if path {
             return true;
         }
     }

@@ -211,3 +211,20 @@ fn leading_now_gerund_announcement_detected() {
     // The shared helper matches the leading-now form directly.
     assert!(matches_now_gerund(t), "matches_now_gerund must fire");
 }
+
+// Regression: an English planning monologue with a single accented word
+// ("Activité") was mis-detected as French by detect_language (which flips on any
+// accent), so the strict detector used French patterns and missed the English
+// "Let me ..." narration — the phantom slipped and no retry fired (Kimi K3).
+// The strict detector now scans ALL languages, so a mis-detected language can't
+// disable it. Synthetic content, no real request quoted.
+#[test]
+fn english_monologue_with_accent_still_detected() {
+    let t = "New task: investigate why the \"Activité\" sub-tab shows no properties even though the MATCH counter header shows a number.\n\nLet me parse the report carefully.\n\nLet me investigate the widget.\n\nLet me start by reading the activity feed widget and finding where the match counter gets its number.";
+    assert!(
+        has_phantom_tool_intent(t),
+        "strict detector must catch the English 'Let me ...' narration despite the accented word mis-detecting as French"
+    );
+    // And it still works with the accent stripped (plain English path).
+    assert!(has_phantom_tool_intent(&t.replace('é', "e")));
+}
