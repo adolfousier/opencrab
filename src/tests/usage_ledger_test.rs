@@ -129,6 +129,8 @@ fn test_normalize_model_name() {
     assert_eq!(normalize_model_name("MiniMax-M2.5"), "minimax-m2.5");
     assert_eq!(normalize_model_name("MiniMax-M2.7"), "minimax-m2.7");
     assert_eq!(normalize_model_name("minimax-m2.7"), "minimax-m2.7");
+    assert_eq!(normalize_model_name("MiniMax-M3"), "minimax-m3");
+    assert_eq!(normalize_model_name("minimax-m3"), "minimax-m3");
     assert_eq!(normalize_model_name("glm-5.1"), "glm-5.1");
     assert_eq!(normalize_model_name("glm-5-turbo"), "glm-5-turbo");
     assert_eq!(normalize_model_name("zhipu"), "glm-5-turbo");

@@ -698,7 +698,7 @@ The CLI `migrate` command currently supports OpenClaw and Hermes. For everything
 | [GitHub Copilot](#github-copilot) | OAuth | GPT-4o, Claude Sonnet 4+ | ✅ | ✅ | Uses your Copilot subscription — no API charges |
 | [OpenRouter](#openrouter--400-models-one-key) | API key | 400+ models | ✅ | ✅ | Free models available (DeepSeek-R1, Llama 3.3, etc.) |
 | [Google Gemini](#google-gemini) | API key | Gemini 2.5 Flash, 2.0, 1.5 Pro | ✅ | ✅ | 1M+ context, vision, image generation |
-| [MiniMax](#minimax) | API key | M2.7, M2.5, M2.1, Text-01 | ✅ | ✅ | Competitive pricing, auto-configured vision |
+| [MiniMax](#minimax) | API key | M3, M2.7, M2.5, M2.1, Text-01 | ✅ | ✅ | Competitive pricing, auto-configured vision |
 | [z.ai GLM](#zai-glm) | API key | GLM-4.5 through GLM-5 Turbo | ✅ | ✅ | General API + Coding API endpoints |
 | [Moonshot Kimi](#moonshot-kimi) | API key | K3, kimi-for-coding | ✅ | ✅ | API plan + Coding plan (Kimi subscription) endpoints |
 | [Claude CLI](#claude-code-cli) | CLI auth | Via `claude` binary | ✅ | ✅ | Uses your Claude Code subscription |
@@ -805,7 +805,7 @@ default_model = "gemini-2.5-flash"
 
 ### MiniMax
 
-**Models:** `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-Text-01`
+**Models:** `MiniMax-M3`, `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-Text-01`
 
 **Setup** — get your API key from [platform.minimax.io](https://platform.minimax.io). Add to `keys.toml`:
 
@@ -1088,7 +1088,7 @@ If your default model doesn't support vision but another model on the same provi
 
 ```toml
 [providers.minimax]
-default_model = "MiniMax-M2.7"
+default_model = "MiniMax-M3"
 vision_model = "MiniMax-Text-01"  # describes images for the chat model
 ```
 
@@ -2049,7 +2049,7 @@ model = "gemini-3.1-flash-image-preview"
 
 [cron]
 default_provider = "minimax"      # Provider for cron jobs that don't specify one
-default_model = "MiniMax-M2.7"    # Model for cron jobs that don't specify one
+default_model = "MiniMax-M3"    # Model for cron jobs that don't specify one
 ```
 
 > API keys go in `keys.toml`, not here. See [API Keys (keys.toml)](#-api-keys-keystoml).
@@ -3243,7 +3243,7 @@ Creating a job (CLI or the `cron_manage` tool) **echoes the next few run times i
 ```toml
 [cron]
 default_provider = "minimax"
-default_model = "MiniMax-M2.7"
+default_model = "MiniMax-M3"
 ```
 
 ### Heartbeats — Proactive Background Checks

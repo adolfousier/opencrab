@@ -56,7 +56,7 @@ base_url = "http://localhost:11434/v1/chat/completions"
 [providers.custom.lm_studio]
 enabled = true
 base_url = "http://localhost:1234/v1/chat/completions"  # LM Studio default
-models = ["kimi-k2.5", "glm-5", "MiniMax-M2.7", "qwen3-coder", "gpt-oss-120b", "llama-4-70B", "mistral-Large-3", "qwen3-coder-next"]
+models = ["kimi-k2.5", "glm-5", "MiniMax-M3", "qwen3-coder", "gpt-oss-120b", "llama-4-70B", "mistral-Large-3", "qwen3-coder-next"]
 
 # ⭐ IMPORTANT: Set this to match the model name loaded in LM Studio!
 # Common examples:
@@ -213,8 +213,8 @@ models = [
 [providers.minimax]
 enabled = false
 base_url = "https://api.minimax.io/v1"
-default_model = "MiniMax-M2.7"
-models = ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-Text-01"]
+default_model = "MiniMax-M3"
+models = ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-Text-01"]
 vision_model = "MiniMax-Text-01"  # Describes images for the chat model when it lacks vision
 
 [providers.zhipu]
@@ -339,7 +339,7 @@ profile_id = ""
 # Useful for routing cron jobs to a cheaper provider.
 [cron]
 # default_provider = "minimax"
-# default_model = "MiniMax-M2.7"
+# default_model = "MiniMax-M3"
 
 # ========================================
 # Agent / Sub-Agent Defaults
