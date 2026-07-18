@@ -19,6 +19,11 @@ use crate::db::repository::{FeedbackLedgerRepository, ToolExecutionRepository};
 const TOP_N: usize = 10;
 /// A tool needs at least this many calls before its fail rate is meaningful.
 const FLAKY_MIN_CALLS: i64 = 5;
+/// The Flakiest panel is computed over this recent window (days), so a tool that
+/// was flaky then fixed ages out instead of showing its historical rate forever
+/// (#605). Kept wider than the RSI detector's 7-day window so a lightly-used
+/// tool still accumulates the >=5 calls needed to rank.
+const FLAKY_WINDOW_DAYS: i64 = 30;
 
 fn round1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
@@ -27,7 +32,13 @@ fn round1(v: f64) -> f64 {
 /// Build the analytics snapshot. Never errors: a DB blip yields zeros so the
 /// panel degrades gracefully instead of taking Mission Control down.
 pub async fn summary(pool: Pool) -> McAnalytics {
-    let tools = tool_stats(pool.clone()).await;
+    // Top-tools + totals stay ALL-TIME (lifetime usage is what matters there).
+    let tools = tool_stats(pool.clone(), None).await;
+    // Flakiest is computed over a RECENT WINDOW so a tool that was flaky then
+    // fixed ages out, and a fixed-but-idle tool drops off entirely (#605). The
+    // RSI opportunity detector already windows for exactly this reason.
+    let window_since = chrono::Utc::now().timestamp() - FLAKY_WINDOW_DAYS * 86_400;
+    let recent_tools = tool_stats(pool.clone(), Some(window_since)).await;
     let (rsi_last_call_ts, tool_events_since_rsi) = rsi_staleness(pool.clone()).await;
     let (rsi_applied_total, rsi_top_dimensions) = rsi_stats(pool).await;
     let brain_files = collect_brain_sizes();
@@ -37,7 +48,7 @@ pub async fn summary(pool: Pool) -> McAnalytics {
     let tool_total_fails = tools.iter().map(|t| t.failures).sum();
     let top_tools = tools.iter().take(TOP_N).cloned().collect();
 
-    let mut flakiest_tools: Vec<McToolStat> = tools
+    let mut flakiest_tools: Vec<McToolStat> = recent_tools
         .into_iter()
         .filter(|t| t.total >= FLAKY_MIN_CALLS && t.failures > 0)
         .collect();
@@ -62,10 +73,11 @@ pub async fn summary(pool: Pool) -> McAnalytics {
     }
 }
 
-/// Per-tool usage with fail rate, most-used first.
-async fn tool_stats(pool: Pool) -> Vec<McToolStat> {
+/// Per-tool usage with fail rate, most-used first. `since` bounds the query to
+/// a recent window (epoch seconds) when set; `None` is all-time.
+async fn tool_stats(pool: Pool, since: Option<i64>) -> Vec<McToolStat> {
     let repo = ToolExecutionRepository::new(pool);
-    let rows = repo.stats_with_failures(None).await.unwrap_or_else(|e| {
+    let rows = repo.stats_with_failures(since).await.unwrap_or_else(|e| {
         tracing::warn!("analytics_service: tool stats query failed: {e:#}");
         Vec::new()
     });

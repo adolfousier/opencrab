@@ -138,7 +138,7 @@ fn flakiest_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
     if a.flakiest_tools.is_empty() {
         return Vec::new();
     }
-    let mut lines = vec![header("Flakiest (≥5 calls)")];
+    let mut lines = vec![header("Flakiest (≥5 calls, 30d)")];
     for t in a.flakiest_tools.iter().take(8) {
         lines.push(value_row(
             &t.name,
