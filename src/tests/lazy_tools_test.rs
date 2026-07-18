@@ -188,6 +188,47 @@ fn activate_tools_is_per_session() {
 }
 
 #[test]
+fn active_set_is_lru_bounded() {
+    use crate::brain::tools::registry::MAX_ACTIVE_EXTENDED;
+    let reg = crate::brain::tools::ToolRegistry::new();
+    let s = Uuid::new_v4();
+
+    // Activate more than the cap, oldest first (t0 is least-recently-touched).
+    let n = MAX_ACTIVE_EXTENDED + 6;
+    for i in 0..n {
+        reg.activate_tools(s, [format!("t{i}")]);
+    }
+    let active = reg.active_tools(s);
+    assert_eq!(
+        active.len(),
+        MAX_ACTIVE_EXTENDED,
+        "active set must be capped at MAX_ACTIVE_EXTENDED"
+    );
+    // The 6 oldest were evicted; the newest MAX_ACTIVE_EXTENDED survive.
+    assert!(
+        !active.contains("t0"),
+        "least-recently-used must be evicted"
+    );
+    assert!(
+        active.contains(&format!("t{}", n - 1)),
+        "most-recently-activated must survive"
+    );
+
+    // Touching an about-to-be-evicted tool refreshes its recency, so a further
+    // activation evicts a different (now-older) one instead.
+    let victim_before = format!("t{}", n - MAX_ACTIVE_EXTENDED); // oldest survivor
+    reg.activate_tools(s, [victim_before.clone()]); // refresh it
+    reg.activate_tools(s, ["fresh".to_string()]); // push over cap again
+    let active = reg.active_tools(s);
+    assert_eq!(active.len(), MAX_ACTIVE_EXTENDED);
+    assert!(
+        active.contains(&victim_before),
+        "a refreshed tool must not be the one evicted"
+    );
+    assert!(active.contains("fresh"));
+}
+
+#[test]
 fn vision_tools_are_core_when_registered() {
     // When vision is configured, analyze_image/analyze_video are registered
     // and should appear in the core set without needing tool_search activation.

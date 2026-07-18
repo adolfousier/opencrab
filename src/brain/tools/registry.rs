@@ -69,12 +69,23 @@ fn normalize_tool_input(tool_name: &str, mut input: Value) -> Value {
 ///
 /// Thread-safe via internal `RwLock` — all methods take `&self`, allowing
 /// runtime registration/removal through a shared `Arc<ToolRegistry>`.
+/// Cap on how many EXTENDED tools stay active per session (#603). Once the
+/// working set exceeds this, the least-recently-used tools are evicted so the
+/// per-turn schema cost can't drift back toward the full ~95-tool baseline over
+/// a long session. Evicted tools re-activate on next use (JIT-on-execute), so
+/// nothing breaks — the set just stays small. Core tools are never counted here
+/// (they always ship).
+pub(crate) const MAX_ACTIVE_EXTENDED: usize = 24;
+
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
-    /// EXTENDED tools each session has activated via `tool_search` (lazy-tools
-    /// mode). Lives here because both the agent loop and the `tool_search`
-    /// tool already share this registry's `Arc` — no separate plumbing.
-    session_active: RwLock<HashMap<uuid::Uuid, std::collections::HashSet<String>>>,
+    /// EXTENDED tools each session has activated via `tool_search` or a by-name
+    /// call (lazy-tools mode), mapped to a monotonic last-touch sequence for
+    /// LRU eviction (#603). Lives here because both the agent loop and the
+    /// `tool_search` tool already share this registry's `Arc`.
+    session_active: RwLock<HashMap<uuid::Uuid, HashMap<String, u64>>>,
+    /// Monotonic counter stamping each activation/touch for LRU ordering.
+    activation_seq: std::sync::atomic::AtomicU64,
 }
 
 impl ToolRegistry {
@@ -83,14 +94,33 @@ impl ToolRegistry {
         Self {
             tools: RwLock::new(HashMap::new()),
             session_active: RwLock::new(HashMap::new()),
+            activation_seq: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
-    /// Mark EXTENDED tools as active for a session, so subsequent requests
-    /// include their schemas. Called by `tool_search` after a discovery.
+    /// Mark EXTENDED tools as active for a session (or refresh their recency),
+    /// so subsequent requests include their schemas. Called on the JIT-on-execute
+    /// path when a non-core tool is actually used — so recency tracks real use.
+    /// Evicts the least-recently-used tools once the session exceeds
+    /// [`MAX_ACTIVE_EXTENDED`] (#603).
     pub fn activate_tools(&self, session_id: uuid::Uuid, names: impl IntoIterator<Item = String>) {
+        use std::sync::atomic::Ordering;
         let mut map = self.session_active.write().unwrap();
-        map.entry(session_id).or_default().extend(names);
+        let set = map.entry(session_id).or_default();
+        for name in names {
+            let seq = self.activation_seq.fetch_add(1, Ordering::Relaxed);
+            set.insert(name, seq);
+        }
+        // LRU eviction: keep only the most-recently-touched MAX_ACTIVE_EXTENDED.
+        if set.len() > MAX_ACTIVE_EXTENDED {
+            let mut by_recency: Vec<(u64, String)> =
+                set.iter().map(|(n, &s)| (s, n.clone())).collect();
+            // Newest first, so `skip(MAX)` leaves the oldest to evict.
+            by_recency.sort_unstable_by_key(|&(s, _)| std::cmp::Reverse(s));
+            for (_, name) in by_recency.into_iter().skip(MAX_ACTIVE_EXTENDED) {
+                set.remove(&name);
+            }
+        }
     }
 
     /// The EXTENDED tools currently active for a session (empty if none yet).
@@ -99,7 +129,7 @@ impl ToolRegistry {
             .read()
             .unwrap()
             .get(&session_id)
-            .cloned()
+            .map(|m| m.keys().cloned().collect())
             .unwrap_or_default()
     }
 
