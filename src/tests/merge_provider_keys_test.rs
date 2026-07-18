@@ -112,3 +112,20 @@ fn anthropic_openai_qwen_keys_still_merge_after_opencode_addition() {
         Some("qwen_key")
     );
 }
+
+#[test]
+fn moonshot_api_key_from_keys_toml_lands_in_runtime_config() {
+    // #610: the built-in Moonshot AI (Kimi) provider wrote its key to keys.toml
+    // ("Wrote secret key [providers.moonshot].api_key") but merge_provider_keys
+    // had no moonshot branch, so runtime config.providers.moonshot.api_key
+    // stayed None and the factory reported "Moonshot AI enabled but API key
+    // missing" right after setup.
+    let base = ProviderConfigs::default();
+    let keys = ProviderConfigs {
+        moonshot: Some(key_only("sk-kimi-test")),
+        ..Default::default()
+    };
+    let merged = merge_provider_keys(base, keys);
+    let moonshot = merged.moonshot.expect("moonshot entry created");
+    assert_eq!(moonshot.api_key.as_deref(), Some("sk-kimi-test"));
+}

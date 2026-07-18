@@ -418,6 +418,16 @@ pub(crate) fn merge_provider_keys(
         let entry = base.minimax.get_or_insert_with(ProviderConfig::default);
         entry.api_key = Some(key);
     }
+    // Moonshot AI (Kimi) built-in provider — merge its keys.toml secret like any
+    // other provider (#610). Without this the key wrote to keys.toml but never
+    // merged back, so the factory reported "API key missing" right after setup.
+    if let Some(k) = keys.moonshot
+        && let Some(key) = k.api_key
+        && is_real_key(&key)
+    {
+        let entry = base.moonshot.get_or_insert_with(ProviderConfig::default);
+        entry.api_key = Some(key);
+    }
     // Xiaomi: merge the user's key from keys.toml like any other provider.
     if let Some(k) = keys.xiaomi
         && let Some(key) = k.api_key
