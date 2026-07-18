@@ -17,6 +17,7 @@ fn skill(name: &str, body: &str) -> Skill {
         slash_name: format!("/{name}"),
         description: format!("test skill {name}"),
         body: body.to_string(),
+        review_gate: false,
         source: SkillSource::Builtin,
     }
 }
@@ -89,6 +90,28 @@ fn skill_with_no_args_returns_body_unchanged() {
     match match_user_command_inner("/estimate", &[], &skills) {
         ChannelCommand::UserPrompt(p) => assert_eq!(p, "Estimate the cost."),
         _ => panic!("expected UserPrompt with body verbatim"),
+    }
+}
+
+#[test]
+fn review_gated_skill_dispatch_prepends_reminder() {
+    // `review_gate: true` skills carry the gate reminder through the slash
+    // dispatch; unflagged skills (above) are byte-identical to before.
+    let gated = Skill {
+        name: "drop-release".to_string(),
+        slash_name: "/drop-release".to_string(),
+        description: "gated release flow".to_string(),
+        body: "Draft the release.".to_string(),
+        review_gate: true,
+        source: crate::brain::skills::SkillSource::User,
+    };
+    let skills = vec![gated];
+    match match_user_command_inner("/drop-release", &[], &skills) {
+        ChannelCommand::UserPrompt(p) => {
+            assert!(p.contains("SKILL REVIEW GATE"), "reminder missing: {p}");
+            assert!(p.contains("Draft the release."), "body missing: {p}");
+        }
+        _ => panic!("expected UserPrompt for gated skill dispatch"),
     }
 }
 

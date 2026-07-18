@@ -777,10 +777,14 @@ pub(crate) fn match_user_command_inner(
         .iter()
         .find(|s| norm_command_key(&s.slash_name) == key)
     {
+        // `prompt_body()` prepends the review-gate reminder when the skill
+        // declares `review_gate: true`: slash invocation is the user asking
+        // to review the output before any side effects.
+        let base = skill.prompt_body();
         let prompt = if args.is_empty() {
-            skill.body.clone()
+            base
         } else {
-            format!("{}\n\n{}", skill.body, args)
+            format!("{base}\n\n{args}")
         };
         return ChannelCommand::UserPrompt(prompt);
     }

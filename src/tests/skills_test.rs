@@ -110,6 +110,55 @@ fn unknown_skill_returns_none() {
 }
 
 #[test]
+fn parses_review_gate_flag_and_prepends_reminder() {
+    // A flagged skill's slash prompt carries the review gate: output first,
+    // side effects only after the user's explicit approval, yolo included.
+    let raw =
+        "---\nname: gated\ndescription: Gated skill\nreview_gate: true\n---\n\nDraft the thing.\n";
+    let skill = Skill::parse("gated", raw, SkillSource::User).unwrap();
+    assert!(skill.review_gate);
+    let prompt = skill.prompt_body();
+    assert!(
+        prompt.contains("SKILL REVIEW GATE"),
+        "reminder missing: {prompt}"
+    );
+    assert!(
+        prompt.contains("Draft the thing."),
+        "body must follow the reminder: {prompt}"
+    );
+
+    // Accepted truthy spellings.
+    for spelling in ["true", "yes", "1", "on", "TRUE"] {
+        let raw = format!("---\nname: g\ndescription: d\nreview_gate: {spelling}\n---\n\nBody.\n");
+        let skill = Skill::parse("g", &raw, SkillSource::User).unwrap();
+        assert!(
+            skill.review_gate,
+            "spelling '{spelling}' must parse as true"
+        );
+    }
+}
+
+#[test]
+fn review_gate_defaults_false_and_prompt_is_untouched() {
+    // Unflagged skills dispatch their body verbatim — exactly as before.
+    let raw = "---\nname: plain\ndescription: Plain skill\n---\n\nBody.\n";
+    let skill = Skill::parse("plain", raw, SkillSource::User).unwrap();
+    assert!(!skill.review_gate);
+    assert_eq!(skill.prompt_body(), "Body.");
+
+    // False-ish and unknown values stay false.
+    for spelling in ["false", "no", "0", "off", "maybe"] {
+        let raw = format!("---\nname: p\ndescription: d\nreview_gate: {spelling}\n---\n\nBody.\n");
+        let skill = Skill::parse("p", &raw, SkillSource::User).unwrap();
+        assert!(
+            !skill.review_gate,
+            "spelling '{spelling}' must parse as false"
+        );
+        assert_eq!(skill.prompt_body(), "Body.");
+    }
+}
+
+#[test]
 fn load_all_includes_every_builtin() {
     let skills = load_all_skills();
     let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();

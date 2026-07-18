@@ -95,8 +95,26 @@ pub struct Skill {
     pub description: String,
     /// Prompt body (everything after the closing `---`, trimmed).
     pub body: String,
+    /// `review_gate: true` in frontmatter: slash invocation of this skill
+    /// is the user reaching for the brake on purpose. The agent must
+    /// present the skill's output and wait for explicit user approval
+    /// before any side effects, tool auto-approve notwithstanding.
+    /// Natural-language requests that never touch the slash keep the
+    /// usual flow — the gate lives on the slash, not the skill's topic.
+    pub review_gate: bool,
     pub source: SkillSource,
 }
+
+/// Hard reminder prepended to a skill's body when it declares
+/// `review_gate: true`. The gate is a property of the skill as invoked
+/// via its slash: output first, side effects only after the user's
+/// explicit approval — even under tool auto-approve (yolo).
+pub const REVIEW_GATE_REMINDER: &str = "[SKILL REVIEW GATE] This skill declares `review_gate: true`. \
+     Present its output (draft, plan, summary) to the user and WAIT for their explicit \
+     approval before any side effects — sending, publishing, pushing, deploying, or writing \
+     outside the workspace — even if tool auto-approve is on. The user typed the slash \
+     because they want to review first; if they had wanted end-to-end execution they would \
+     have asked in plain words.";
 
 impl Skill {
     /// Parse a `SKILL.md` blob into a `Skill`. Returns `Err` if the
@@ -111,6 +129,7 @@ impl Skill {
 
         let mut fm_name: Option<String> = None;
         let mut fm_description: Option<String> = None;
+        let mut fm_review_gate = false;
 
         for line in frontmatter.lines() {
             let trimmed = line.trim();
@@ -125,6 +144,12 @@ impl Skill {
             match key {
                 "name" => fm_name = Some(value.to_string()),
                 "description" => fm_description = Some(value.to_string()),
+                "review_gate" => {
+                    fm_review_gate = matches!(
+                        value.to_ascii_lowercase().as_str(),
+                        "true" | "yes" | "1" | "on"
+                    );
+                }
                 _ => {}
             }
         }
@@ -139,8 +164,20 @@ impl Skill {
             slash_name,
             description,
             body: body.trim().to_string(),
+            review_gate: fm_review_gate,
             source,
         })
+    }
+
+    /// The prompt dispatched on slash invocation: the skill body with
+    /// [`REVIEW_GATE_REMINDER`] prepended when the skill declares
+    /// `review_gate: true`. Unflagged skills return the body unchanged.
+    pub fn prompt_body(&self) -> String {
+        if self.review_gate {
+            format!("{REVIEW_GATE_REMINDER}\n\n---\n\n{}", self.body)
+        } else {
+            self.body.clone()
+        }
     }
 }
 

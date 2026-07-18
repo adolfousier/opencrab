@@ -1101,7 +1101,9 @@ impl App {
                 // means a user dropping a SKILL.md gets a working slash command
                 // immediately, no commands.toml entry required.
                 if let Some(skill) = self.skills.iter().find(|s| s.slash_name == cmd) {
-                    let prompt = skill.body.clone();
+                    // `prompt_body()` prepends the review-gate reminder when
+                    // the skill declares `review_gate: true`.
+                    let prompt = skill.prompt_body();
                     let sender = self.event_sender();
                     let _ = sender.send(TuiEvent::CommandSubmitted(prompt));
                     return true;

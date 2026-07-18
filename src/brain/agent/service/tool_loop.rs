@@ -720,9 +720,12 @@ impl AgentService {
             let mut skill_section = String::new();
             for skill in &skills {
                 if active_skills.contains(&skill.slash_name) {
+                    // `prompt_body()` carries the review-gate reminder for
+                    // flagged skills so the gate survives compaction too.
                     skill_section.push_str(&format!(
                         "\n\n--- Active Skill: {} ---\n{}",
-                        skill.slash_name, skill.body
+                        skill.slash_name,
+                        skill.prompt_body()
                     ));
                 }
             }

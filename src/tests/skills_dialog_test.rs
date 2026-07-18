@@ -15,6 +15,7 @@ fn skill(name: &str, description: &str, body: &str, source: SkillSource) -> Skil
         slash_name: format!("/{name}"),
         description: description.to_string(),
         body: body.to_string(),
+        review_gate: false,
         source,
     }
 }

@@ -57,7 +57,9 @@ pub fn decide(state: &mut SkillsDialogState, skills: &[Skill], key: KeyEvent) ->
         KeyCode::Enter => {
             let visible = matching(skills, &state.filter);
             match visible.get(state.selected_index) {
-                Some(s) => KeyOutcome::Execute(s.body.clone()),
+                // `prompt_body()` carries the review-gate reminder for
+                // flagged skills, same as the `/name` slash path.
+                Some(s) => KeyOutcome::Execute(s.prompt_body()),
                 None => KeyOutcome::Consumed,
             }
         }
