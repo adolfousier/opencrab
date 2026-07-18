@@ -252,3 +252,22 @@ async fn manual_switch_is_restored_after_a_fallback_turn_atomically() {
     let now = svc.manual_switch_epoch(sid);
     assert_eq!(svc.restore_manual_switch_if_changed(sid, now), None);
 }
+
+#[tokio::test]
+async fn context_limit_falls_back_to_provider_window_without_manual_swap() {
+    // The global provider carries a configured window (like Kimi K3's 1M in
+    // config), but the session is NEVER manually /models-swapped, so
+    // session_context_limits stays empty. Before #609 the budget fell back to
+    // agent.context_limit (200k default) while the header showed 1M, so
+    // compaction fired at ~185K. The session must now honor the provider window.
+    let provider = Arc::new(
+        crate::brain::provider::AnthropicProvider::new("k".to_string())
+            .with_context_window(1_000_000),
+    );
+    let (svc, sid) = create_test_service_with_provider(provider).await;
+    assert_eq!(
+        svc.context_limit_for_session(sid),
+        1_000_000,
+        "an un-swapped session must honor its provider's configured window, not the 200k default"
+    );
+}

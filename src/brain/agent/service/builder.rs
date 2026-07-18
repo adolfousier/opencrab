@@ -404,6 +404,19 @@ impl AgentService {
         {
             return cw;
         }
+        // Fall back to the session's ACTIVE provider's configured window before
+        // the static agent.context_limit default (#609). session_context_limits
+        // is only populated on a manual /models swap, so a session that just
+        // uses the configured provider would otherwise compact against the 200K
+        // default while the flow header shows the provider's real window (e.g.
+        // Kimi K3 configured for 1M compacted at ~185K because the budget was
+        // silently 200K). Honor the provider window for every session.
+        if let Some(cw) = self
+            .provider_for_session(session_id)
+            .configured_context_window()
+        {
+            return cw;
+        }
         self.context_limit()
     }
 
