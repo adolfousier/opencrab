@@ -8,6 +8,7 @@ pub(crate) mod follow_up_question;
 pub(crate) mod handler;
 pub(crate) mod interactions;
 pub(crate) mod reactions;
+pub(crate) mod suggest_followups;
 pub(crate) mod tool_group;
 
 pub use agent::DiscordAgent;

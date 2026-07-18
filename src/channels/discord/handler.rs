@@ -680,7 +680,7 @@ pub(crate) async fn handle_message(
         let http = ctx.http.clone();
         let channel = msg.channel_id;
 
-        Arc::new(move |_session_id, event| {
+        Arc::new(move |session_id, event| {
             let tools = tools.clone();
             let http = http.clone();
 
@@ -878,6 +878,19 @@ pub(crate) async fn handle_message(
                     tokio::spawn(async move {
                         let text = format!("🔄 Now using {}/{}", to_name, to_model);
                         let _ = channel.say(&http, &text).await;
+                    });
+                }
+                // Optional follow-up suggestions (#598): post tap-to-send
+                // buttons under the response. A tap injects the suggestion as a
+                // new turn via route_interaction_turn.
+                ProgressEvent::SuggestedFollowups(options) => {
+                    let http = http.clone();
+                    let state = group_state_cb.clone();
+                    tokio::spawn(async move {
+                        super::suggest_followups::render_suggestions(
+                            &http, &state, session_id, options,
+                        )
+                        .await;
                     });
                 }
                 _ => {}

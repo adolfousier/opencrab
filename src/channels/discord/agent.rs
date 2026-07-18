@@ -263,6 +263,78 @@ impl EventHandler for Handler {
             let custom_id = comp.data.custom_id.as_str();
             tracing::info!("Discord callback received: custom_id={}", custom_id);
 
+            // Optional follow-up suggestion tapped (#598): inject the chosen
+            // suggestion as the user's next message (a fresh turn). Options were
+            // stashed under `followup:<id>:<idx>` via the TTL-bounded select map.
+            if let Some(rest) = custom_id.strip_prefix(super::suggest_followups::FOLLOWUP_PREFIX) {
+                let ttl = self.config_rx.borrow().channels.discord.component_ttl_hours;
+                let picked: Option<String> = if let Some((id, idx_str)) = rest.rsplit_once(':') {
+                    match (
+                        self.discord_state.take_select(id, ttl).await,
+                        idx_str.parse::<usize>(),
+                    ) {
+                        (Some(opts), Ok(idx)) => opts.get(idx).cloned(),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                use serenity::builder::{
+                    CreateInteractionResponse, CreateInteractionResponseMessage,
+                };
+                let Some(choice) = picked else {
+                    let _e = comp
+                        .create_response(
+                            &ctx.http,
+                            CreateInteractionResponse::UpdateMessage(
+                                CreateInteractionResponseMessage::new()
+                                    .content("⌛ These suggestions expired.")
+                                    .components(Vec::new()),
+                            ),
+                        )
+                        .await;
+                    return;
+                };
+                let user = comp.user.id.get();
+                let is_dm = comp.guild_id.is_none();
+                let channel_id = comp.channel_id.get();
+                let display_tag = comp
+                    .user
+                    .global_name
+                    .clone()
+                    .unwrap_or_else(|| comp.user.name.clone());
+                // Ack by disabling the buttons and echoing the pick.
+                let _e = comp
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::UpdateMessage(
+                            CreateInteractionResponseMessage::new()
+                                .content(format!("\u{25b6}\u{fe0f} {choice}"))
+                                .components(Vec::new()),
+                        ),
+                    )
+                    .await;
+                let agent = self.agent.clone();
+                let session_svc = self.session_svc.clone();
+                let idle = self.config_rx.borrow().channels.discord.session_idle_hours;
+                let ctx2 = ctx.clone();
+                tokio::spawn(async move {
+                    super::interactions::route_interaction_turn(
+                        &ctx2,
+                        agent,
+                        session_svc,
+                        is_dm,
+                        user,
+                        channel_id,
+                        idle,
+                        choice,
+                        display_tag,
+                    )
+                    .await;
+                });
+                return;
+            }
+
             // Select menu pick (#382), with lazy TTL (#386).
             if let Some(sel_id) = custom_id.strip_prefix("sel:") {
                 let ttl = self.config_rx.borrow().channels.discord.component_ttl_hours;

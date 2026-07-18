@@ -1,0 +1,82 @@
+//! Discord-side rendering for the OPTIONAL `suggest_followups` tool (#598).
+//!
+//! Non-blocking counterpart to `follow_up_question`: the agent surfaces
+//! `ProgressEvent::SuggestedFollowups`, and we post one Secondary button per
+//! suggestion under the finished response. Tapping a button injects that
+//! suggestion as the user's next message (a fresh turn) via
+//! `interactions::route_interaction_turn`. Typing your own message always
+//! works; there is no oneshot or timeout.
+//!
+//! Reuses the existing TTL-bounded select-map (`register_select`/`take_select`)
+//! to stash `idx -> suggestion text`, since the text can exceed Discord's
+//! 100-char `custom_id` limit.
+
+use std::sync::Arc;
+
+use serenity::builder::{CreateActionRow, CreateButton, CreateMessage};
+use serenity::model::application::ButtonStyle;
+use serenity::model::id::ChannelId;
+use uuid::Uuid;
+
+use crate::utils::truncate_str;
+
+/// Callback-id prefix for a tapped follow-up suggestion: `followup:<id>:<idx>`.
+pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
+
+/// Post the follow-up suggestion buttons under the response and stash the
+/// option list under a fresh id so the interaction handler resolves
+/// `idx -> text`. No-op on empty options or a missing channel/bot.
+pub(crate) async fn render_suggestions(
+    http: &Arc<serenity::http::Http>,
+    state: &Arc<super::DiscordState>,
+    session_id: Uuid,
+    options: Vec<String>,
+) {
+    if options.is_empty() {
+        return;
+    }
+
+    let channel_id = match state.session_channel(session_id).await {
+        Some(id) => id,
+        None => match state.owner_channel_id().await {
+            Some(id) => id,
+            None => return,
+        },
+    };
+
+    let followup_id = Uuid::new_v4().to_string();
+
+    // Up to 5 buttons per ActionRow; suggest_followups caps at 4, so one row.
+    let rows: Vec<CreateActionRow> = options
+        .iter()
+        .enumerate()
+        .collect::<Vec<_>>()
+        .chunks(5)
+        .map(|chunk| {
+            CreateActionRow::Buttons(
+                chunk
+                    .iter()
+                    .map(|(idx, opt)| {
+                        CreateButton::new(format!("{FOLLOWUP_PREFIX}{followup_id}:{idx}"))
+                            .label(truncate_str(opt, 80))
+                            .style(ButtonStyle::Secondary)
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+
+    state.register_select(followup_id, options).await;
+
+    if let Err(e) = ChannelId::new(channel_id)
+        .send_message(
+            http,
+            CreateMessage::new()
+                .content("\u{1f4a1} Suggested next:")
+                .components(rows),
+        )
+        .await
+    {
+        tracing::warn!("Discord suggest_followups: send failed: {e}");
+    }
+}
