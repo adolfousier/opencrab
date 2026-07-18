@@ -198,6 +198,14 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
             config_field: |c| c.providers.zhipu.as_ref(),
         },
         ProviderRegistration {
+            display_name: "Moonshot Kimi",
+            session_id: "moonshot",
+            aliases: &["kimi", "moonshotai"],
+            is_enabled: |c| c.providers.moonshot.as_ref().is_some_and(|p| p.enabled),
+            factory: sync_factory(try_create_moonshot),
+            config_field: |c| c.providers.moonshot.as_ref(),
+        },
+        ProviderRegistration {
             display_name: "Ollama",
             session_id: "ollama",
             aliases: &[],
@@ -263,6 +271,7 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "OpenRouter",
     "Minimax",
     "z.ai GLM",
+    "Moonshot Kimi",
     "Ollama",
     "Custom",
 ];
@@ -606,6 +615,7 @@ pub(crate) fn force_enable_section(config: &mut Config, session_id: &str) -> boo
         "openrouter" => Some(&mut p.openrouter),
         "minimax" => Some(&mut p.minimax),
         "zhipu" => Some(&mut p.zhipu),
+        "moonshot" => Some(&mut p.moonshot),
         "ollama" => Some(&mut p.ollama),
         _ => None,
     };
@@ -1444,6 +1454,49 @@ fn try_create_zhipu(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     let provider = configure_openai_compatible(
         OpenAIProvider::with_base_url(api_key.clone(), base_url.to_string()).with_name("zhipu"),
         zhipu_config,
+    );
+    Ok(Some(Arc::new(provider)))
+}
+
+/// Try to create Moonshot AI (Kimi) provider if configured.
+/// Supports two endpoint types:
+/// - `"api"` (default): platform pay-per-token at `api.moonshot.ai`
+/// - `"coding"`: Kimi Code token plan at `api.kimi.com/coding/v1`
+///   (models: k3, kimi-for-coding, kimi-for-coding-highspeed)
+fn try_create_moonshot(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
+    let moonshot_config = match &config.providers.moonshot {
+        Some(cfg) => cfg,
+        None => return Ok(None),
+    };
+
+    let Some(api_key) = &moonshot_config.api_key else {
+        tracing::warn!("Moonshot Kimi enabled but API key missing — check keys.toml");
+        return Ok(None);
+    };
+
+    // User-set base_url wins; otherwise pick by endpoint_type.
+    let base_url = moonshot_config
+        .base_url
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| match moonshot_config.endpoint_type.as_deref() {
+            Some("coding") => "https://api.kimi.com/coding/v1/chat/completions".to_string(),
+            _ => "https://api.moonshot.ai/v1/chat/completions".to_string(),
+        });
+    let base_url = if base_url.contains("/chat/completions") {
+        base_url
+    } else {
+        format!("{}/chat/completions", base_url.trim_end_matches('/'))
+    };
+
+    tracing::info!(
+        "Using Moonshot Kimi at: {} (endpoint_type: {:?})",
+        base_url,
+        moonshot_config.endpoint_type
+    );
+    let provider = configure_openai_compatible(
+        OpenAIProvider::with_base_url(api_key.clone(), base_url).with_name("moonshot"),
+        moonshot_config,
     );
     Ok(Some(Arc::new(provider)))
 }

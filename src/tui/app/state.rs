@@ -1355,6 +1355,12 @@ impl App {
                 .as_ref()
                 .filter(|p| p.enabled)
                 .map(|_| "zhipu"),
+            config
+                .providers
+                .moonshot
+                .as_ref()
+                .filter(|p| p.enabled)
+                .map(|_| "moonshot"),
             config.providers.active_custom().map(|_| "custom"),
         ]
         .into_iter()

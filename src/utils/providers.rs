@@ -128,6 +128,7 @@ pub fn find_provider_meta(name: &str) -> Option<&'static ProviderMeta> {
                 "github" => n == "github copilot",
                 "gemini" => n == "google" || n == "google gemini",
                 "zhipu" => n == "z.ai glm",
+                "moonshot" => n == "kimi" || n == "moonshotai" || n == "moonshot ai",
                 "claude-cli" => n == "claude_cli",
                 "codex-cli" => n == "codex_cli",
                 "command-code-cli" => n == "command_code_cli" || n == "cmd-cli",

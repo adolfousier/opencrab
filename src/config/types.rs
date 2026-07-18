@@ -1292,6 +1292,15 @@ pub struct ProviderConfigs {
     #[serde(default)]
     pub zhipu: Option<ProviderConfig>,
 
+    /// Moonshot AI (Kimi) configuration. Supports the API plan and the Coding
+    /// (token) plan via `endpoint_type`:
+    ///
+    /// - `"api"` (default) → `https://api.moonshot.ai/v1` pay-per-token
+    /// - `"coding"` → `https://api.kimi.com/coding/v1` (Kimi Code token plan:
+    ///   k3, kimi-for-coding, kimi-for-coding-highspeed)
+    #[serde(default)]
+    pub moonshot: Option<ProviderConfig>,
+
     /// Xiaomi MiMo configuration. OpenAI-compatible, keyed: the user supplies an
     /// API key from platform.xiaomimimo.com. Defaults to a canonical metadata
     /// section (model list, vision model, context window) when the TOML omits
@@ -1405,7 +1414,7 @@ impl ProviderConfigs {
     /// providers handled separately by the caller via `active_custom()`.
     fn provider_registry(
         &self,
-    ) -> [(&'static str, &'static str, bool, Option<&ProviderConfig>); 18] {
+    ) -> [(&'static str, &'static str, bool, Option<&ProviderConfig>); 19] {
         [
             // Xiaomi MiMo — keyed (requires_api_key = true): the user supplies
             // an API key from platform.xiaomimimo.com. An enabled-but-keyless
@@ -1434,6 +1443,7 @@ impl ProviderConfigs {
             ("qwen", "Qwen", true, self.qwen.as_ref()),
             ("minimax", "Minimax", true, self.minimax.as_ref()),
             ("zhipu", "z.ai GLM", true, self.zhipu.as_ref()),
+            ("moonshot", "Moonshot Kimi", true, self.moonshot.as_ref()),
             ("openrouter", "OpenRouter", true, self.openrouter.as_ref()),
             ("anthropic", "Anthropic", true, self.anthropic.as_ref()),
             ("openai", "OpenAI", true, self.openai.as_ref()),
