@@ -64,7 +64,7 @@ impl Tool for ToolSearchTool {
         vec![]
     }
 
-    async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
+    async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
         let query = input
             .get("query")
             .and_then(|v| v.as_str())
@@ -85,16 +85,18 @@ impl Tool for ToolSearchTool {
             )));
         }
 
-        // Activate the matches for this session so their schemas ship on the
-        // next request, then hand back the full schemas for immediate use.
+        // Hand back the full schemas as text so the model can call the ONE it
+        // needs immediately with correct params. We deliberately do NOT
+        // pre-activate all matches (#604): activation happens on actual use via
+        // the JIT-on-execute path, so only the tool the model really calls gets
+        // its structured schema injected — a search for "send a photo" no longer
+        // balloons the request with 8 unused schemas.
         let names: std::collections::HashSet<String> =
             matches.iter().map(|(n, ..)| n.clone()).collect();
-        self.registry
-            .activate_tools(context.session_id, names.clone());
         let defs = self.registry.definitions_for(&names);
 
         let mut out = format!(
-            "Activated {} tool(s) for this session — they are now callable (call them directly):\n\n",
+            "Found {} tool(s) — call the one you need directly (params below); it activates on use:\n\n",
             defs.len()
         );
         for def in &defs {
