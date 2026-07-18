@@ -305,6 +305,17 @@ impl App {
                         None
                     };
 
+                    // Capture moonshot endpoint type from wizard state (not yet saved to config)
+                    let moonshot_et = if wizard.ps.provider_id() == "moonshot" {
+                        Some(if wizard.ps.moonshot_endpoint_type == 1 {
+                            "coding".to_string()
+                        } else {
+                            "api".to_string()
+                        })
+                    } else {
+                        None
+                    };
+
                     let sender = self.event_sender();
                     tokio::spawn(async move {
                         let models = super::onboarding::fetch_provider_models(
@@ -312,6 +323,7 @@ impl App {
                             api_key.as_deref(),
                             zhipu_et.as_deref(),
                             xiaomi_et.as_deref(),
+                            moonshot_et.as_deref(),
                             base_url.as_deref(),
                         )
                         .await;

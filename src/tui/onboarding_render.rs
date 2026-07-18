@@ -1003,6 +1003,47 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(""));
         }
 
+        // Moonshot Kimi plan toggle (api vs coding) — BEFORE API key
+        if wizard.ps.provider_id() == "moonshot" {
+            let et_focused = wizard.auth_field == AuthField::MoonshotEndpointType;
+            let api_marker = if wizard.ps.moonshot_endpoint_type == 0 {
+                "[*]"
+            } else {
+                "[ ]"
+            };
+            let coding_marker = if wizard.ps.moonshot_endpoint_type == 1 {
+                "[*]"
+            } else {
+                "[ ]"
+            };
+            lines.push(Line::from(Span::styled(
+                "  Plan:",
+                Style::default().fg(if et_focused { BRAND_BLUE } else { Color::Gray }),
+            )));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("    {} API plan (platform.moonshot.ai)  ", api_marker),
+                    Style::default().fg(if et_focused && wizard.ps.moonshot_endpoint_type == 0 {
+                        Color::White
+                    } else {
+                        Color::Gray
+                    }),
+                ),
+                Span::styled(
+                    format!(
+                        "{} Coding plan (api.kimi.com — token subscription)",
+                        coding_marker
+                    ),
+                    Style::default().fg(if et_focused && wizard.ps.moonshot_endpoint_type == 1 {
+                        Color::White
+                    } else {
+                        Color::Gray
+                    }),
+                ),
+            ]));
+            lines.push(Line::from(""));
+        }
+
         // CLI providers have no API key — skip the field
         if !wizard.ps.is_cli() {
             let key_focused = wizard.auth_field == AuthField::ApiKey;

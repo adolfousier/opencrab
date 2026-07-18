@@ -170,6 +170,7 @@ pub async fn fetch_provider_models(
     api_key: Option<&str>,
     zhipu_endpoint_type: Option<&str>,
     xiaomi_endpoint_type: Option<&str>,
+    moonshot_endpoint_type: Option<&str>,
     base_url: Option<&str>,
 ) -> Vec<String> {
     use crate::tui::onboarding::PROVIDERS;
@@ -543,6 +544,69 @@ pub async fn fetch_provider_models(
             let user_models = crate::config::Config::load()
                 .ok()
                 .and_then(|c| c.providers.zhipu.clone())
+                .map(|p| p.models)
+                .unwrap_or_default();
+            return merge_minimax_baseline(api_models, user_models);
+        }
+        "moonshot" => {
+            // Moonshot Kimi — /v1/models on api.moonshot.ai (API plan,
+            // pay-per-token) or api.kimi.com/coding/v1 (Coding plan, token
+            // subscription). Use passed endpoint_type (from wizard state),
+            // fall back to config, then default "api".
+            let endpoint_type = moonshot_endpoint_type
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    crate::config::Config::load()
+                        .ok()
+                        .and_then(|c| c.providers.moonshot.clone())
+                        .and_then(|p| p.endpoint_type)
+                })
+                .unwrap_or_else(|| "api".to_string());
+
+            let base = match endpoint_type.as_str() {
+                "coding" => "https://api.kimi.com/coding/v1/models",
+                _ => "https://api.moonshot.ai/v1/models",
+            };
+
+            let mut req = client.get(base);
+            if let Some(key) = api_key
+                && !key.is_empty()
+            {
+                req = req.header("Authorization", format!("Bearer {}", key));
+            }
+
+            // Same entitlement-gating caveat as z.ai: /models may omit models
+            // the key cannot access, so merge the user's config.toml
+            // [providers.moonshot].models as a pin-by-exact-id fallback.
+            let api_models: Vec<String> = match req.send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<ModelsResponse>().await {
+                        Ok(body) => {
+                            let mut entries = body.data;
+                            entries.sort_by_key(|e| std::cmp::Reverse(e.created));
+                            entries.into_iter().map(|m| m.id).collect()
+                        }
+                        Err(e) => {
+                            tracing::warn!("[fetch_provider_models] moonshot parse error: {}", e);
+                            Vec::new()
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    tracing::warn!(
+                        "[fetch_provider_models] moonshot /models HTTP {}",
+                        resp.status()
+                    );
+                    Vec::new()
+                }
+                Err(e) => {
+                    tracing::warn!("[fetch_provider_models] moonshot request failed: {}", e);
+                    Vec::new()
+                }
+            };
+            let user_models = crate::config::Config::load()
+                .ok()
+                .and_then(|c| c.providers.moonshot.clone())
                 .map(|p| p.models)
                 .unwrap_or_default();
             return merge_minimax_baseline(api_models, user_models);

@@ -107,7 +107,7 @@ mod tests {
         };
 
         eprintln!("Calling fetch_provider_models(3, key, None)...");
-        let models = fetch_provider_models(3, Some(&key), None, None, None).await;
+        let models = fetch_provider_models(3, Some(&key), None, None, None, None).await;
 
         eprintln!("Returned {} models", models.len());
         for m in models.iter().take(10) {
@@ -125,7 +125,7 @@ mod tests {
     /// Test that calling with None key returns empty (not a crash).
     #[tokio::test]
     async fn test_gemini_fetch_no_key() {
-        let models = fetch_provider_models(3, None, None, None, None).await;
+        let models = fetch_provider_models(3, None, None, None, None, None).await;
         assert!(models.is_empty(), "Should return empty with no key");
     }
 }

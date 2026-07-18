@@ -116,6 +116,12 @@ pub const KNOWN_PROVIDERS: &[ProviderMeta] = &[
         config_section: "providers.zhipu",
         needs_api_key: true,
     },
+    ProviderMeta {
+        id: "moonshot",
+        display_name: "Moonshot Kimi",
+        config_section: "providers.moonshot",
+        needs_api_key: true,
+    },
 ];
 
 /// Look up a known provider by any of its aliases (e.g. "claude_cli", "claude-cli").

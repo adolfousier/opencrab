@@ -198,6 +198,16 @@ pub const PROVIDERS: &[ProviderInfo] = &[
         help_lines: &["Get key from open.bigmodel.cn"],
     },
     ProviderInfo {
+        id: "moonshot",
+        name: "Moonshot Kimi",
+        models: &[], // Fetched from API
+        key_label: "API Key",
+        help_lines: &[
+            "API plan: key from platform.moonshot.ai",
+            "Coding plan: key from kimi.com (token subscription)",
+        ],
+    },
+    ProviderInfo {
         id: "claude-cli",
         name: "Claude CLI",
         models: &["sonnet", "opus", "haiku"],
@@ -531,6 +541,7 @@ pub enum AuthField {
     CustomContextWindow,
     ZhipuEndpointType,
     XiaomiEndpointType,
+    MoonshotEndpointType,
 }
 
 /// Which field is focused in DiscordSetup step

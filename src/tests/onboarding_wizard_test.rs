@@ -267,8 +267,8 @@ fn test_handle_key_provider_navigation() {
     assert_eq!(wizard.ps.selected_provider, 0);
 
     wizard.handle_key(key(KeyCode::Down));
-    // Next alphabetically after Anthropic: Claude CLI(7)
-    assert_eq!(wizard.ps.selected_provider, 7);
+    // Next alphabetically after Anthropic: Claude CLI(8)
+    assert_eq!(wizard.ps.selected_provider, 8);
 
     wizard.handle_key(key(KeyCode::Up));
     assert_eq!(wizard.ps.selected_provider, 0);
@@ -490,7 +490,7 @@ fn test_supports_model_fetch() {
 #[test]
 fn test_fetch_models_unsupported_provider_returns_empty() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(fetch_provider_models(99, None, None, None, None));
+    let result = rt.block_on(fetch_provider_models(99, None, None, None, None, None));
     assert!(result.is_empty());
 }
 
@@ -503,7 +503,7 @@ fn test_fetch_anthropic_models_with_api_key() {
         _ => return, // ANTHROPIC_API_KEY not set, skip
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let models = rt.block_on(fetch_provider_models(0, Some(&key), None, None, None));
+    let models = rt.block_on(fetch_provider_models(0, Some(&key), None, None, None, None));
     assert!(
         !models.is_empty(),
         "Anthropic should return models with API key"
@@ -523,7 +523,7 @@ fn test_fetch_anthropic_models_with_setup_token() {
         _ => return, // ANTHROPIC_MAX_SETUP_TOKEN not set, skip
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let models = rt.block_on(fetch_provider_models(0, Some(&key), None, None, None));
+    let models = rt.block_on(fetch_provider_models(0, Some(&key), None, None, None, None));
     assert!(
         !models.is_empty(),
         "Anthropic should return models with setup token"
@@ -542,7 +542,7 @@ fn test_fetch_openai_models_with_api_key() {
         _ => return, // OPENAI_API_KEY not set, skip
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let models = rt.block_on(fetch_provider_models(1, Some(&key), None, None, None));
+    let models = rt.block_on(fetch_provider_models(1, Some(&key), None, None, None, None));
     assert!(
         !models.is_empty(),
         "OpenAI should return models with API key"
@@ -561,7 +561,7 @@ fn test_fetch_openrouter_models_with_api_key() {
         _ => return, // OPENROUTER_API_KEY not set, skip
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let models = rt.block_on(fetch_provider_models(4, Some(&key), None, None, None));
+    let models = rt.block_on(fetch_provider_models(4, Some(&key), None, None, None, None));
     assert!(!models.is_empty(), "OpenRouter should return models");
     // OpenRouter has 400+ models
     assert!(
@@ -578,6 +578,7 @@ fn test_fetch_models_bad_key_returns_empty() {
     let models = rt.block_on(fetch_provider_models(
         0,
         Some("sk-bad-key-definitely-invalid"),
+        None,
         None,
         None,
         None,
@@ -978,6 +979,7 @@ fn test_provider_display_order_no_customs() {
         index_of_provider("github").unwrap(),
         index_of_provider("gemini").unwrap(),
         index_of_provider("minimax").unwrap(),
+        index_of_provider("moonshot").unwrap(),
         index_of_provider("ollama").unwrap(),
         index_of_provider("openai").unwrap(),
         index_of_provider("opencode").unwrap(),
@@ -1008,6 +1010,7 @@ fn test_provider_display_order_with_customs() {
         index_of_provider("github").unwrap(),
         index_of_provider("gemini").unwrap(),
         index_of_provider("minimax").unwrap(),
+        index_of_provider("moonshot").unwrap(),
         index_of_provider("ollama").unwrap(),
         index_of_provider("openai").unwrap(),
         index_of_provider("opencode").unwrap(),

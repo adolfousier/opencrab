@@ -41,16 +41,17 @@ fn provider_order_after_github_insertion() {
     assert_eq!(PROVIDERS[4].name, "OpenRouter");
     assert_eq!(PROVIDERS[5].name, "Minimax");
     assert_eq!(PROVIDERS[6].name, "z.ai GLM");
-    assert_eq!(PROVIDERS[7].name, "Claude CLI");
-    assert_eq!(PROVIDERS[8].name, "OpenCode CLI");
-    assert_eq!(PROVIDERS[9].name, "Codex CLI");
-    assert_eq!(PROVIDERS[10].name, "Command Code CLI");
-    assert_eq!(PROVIDERS[11].name, "Codex");
-    assert_eq!(PROVIDERS[12].name, "OpenCode");
-    assert_eq!(PROVIDERS[13].name, "Qwen");
-    assert_eq!(PROVIDERS[14].name, "Ollama");
-    assert_eq!(PROVIDERS[15].name, "Xiaomi");
-    assert_eq!(PROVIDERS[16].name, "Custom OpenAI-Compatible");
+    assert_eq!(PROVIDERS[7].name, "Moonshot Kimi");
+    assert_eq!(PROVIDERS[8].name, "Claude CLI");
+    assert_eq!(PROVIDERS[9].name, "OpenCode CLI");
+    assert_eq!(PROVIDERS[10].name, "Codex CLI");
+    assert_eq!(PROVIDERS[11].name, "Command Code CLI");
+    assert_eq!(PROVIDERS[12].name, "Codex");
+    assert_eq!(PROVIDERS[13].name, "OpenCode");
+    assert_eq!(PROVIDERS[14].name, "Qwen");
+    assert_eq!(PROVIDERS[15].name, "Ollama");
+    assert_eq!(PROVIDERS[16].name, "Xiaomi");
+    assert_eq!(PROVIDERS[17].name, "Custom OpenAI-Compatible");
 }
 
 // ── Config struct ───────────────────────────────────────────────

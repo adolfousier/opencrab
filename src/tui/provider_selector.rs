@@ -46,6 +46,8 @@ pub struct ProviderSelectorState {
     pub models_fetching: bool,
     /// z.ai GLM endpoint type: 0=API, 1=Coding
     pub zhipu_endpoint_type: usize,
+    /// Moonshot Kimi endpoint type: 0=API plan, 1=Coding (token) plan
+    pub moonshot_endpoint_type: usize,
     /// Xiaomi MiMo endpoint type: 0=API, 1=Token Plan
     pub xiaomi_endpoint_type: usize,
     /// Base URL for custom providers
@@ -111,6 +113,10 @@ impl ProviderSelectorState {
         self.provider_id() == "zhipu"
     }
 
+    pub fn is_moonshot(&self) -> bool {
+        self.provider_id() == "moonshot"
+    }
+
     pub fn is_xiaomi(&self) -> bool {
         self.provider_id() == "xiaomi"
     }
@@ -148,6 +154,7 @@ impl ProviderSelectorState {
                 | "openrouter"
                 | "xiaomi"
                 | "zhipu"
+                | "moonshot"
                 | "opencode-cli"
                 | "codex-cli"
                 | "command-code-cli"
@@ -162,7 +169,7 @@ impl ProviderSelectorState {
     pub fn max_field(&self) -> usize {
         if self.is_custom() {
             6 // provider(0), base_url(1), api_key(2), model(3), name(4), context_window(5)
-        } else if self.is_zhipu() || self.is_xiaomi() {
+        } else if self.is_zhipu() || self.is_xiaomi() || self.is_moonshot() {
             4 // provider(0), endpoint_type(1), api_key(2), model(3)
         } else {
             3 // provider(0), api_key(1), model(2)
@@ -349,6 +356,15 @@ impl ProviderSelectorState {
         {
             self.xiaomi_endpoint_type = match xiaomi.endpoint_type.as_deref() {
                 Some("token-plan") => 1,
+                _ => 0,
+            };
+        }
+        if self.is_moonshot()
+            && let Ok(config) = crate::config::Config::load()
+            && let Some(moonshot) = &config.providers.moonshot
+        {
+            self.moonshot_endpoint_type = match moonshot.endpoint_type.as_deref() {
+                Some("coding") => 1,
                 _ => 0,
             };
         }

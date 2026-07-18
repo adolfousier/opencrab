@@ -465,6 +465,16 @@ impl OnboardingWizard {
                     // hurts. Pin it on the written section so it always survives.
                     try_write!(write_errors, section, "context_window", "200000");
                 }
+                "moonshot" => {
+                    // Plan: "api" (default, platform.moonshot.ai pay-per-token)
+                    // or "coding" (api.kimi.com/coding/v1 token subscription)
+                    let endpoint_type = if self.ps.moonshot_endpoint_type == 1 {
+                        "coding"
+                    } else {
+                        "api"
+                    };
+                    try_write!(write_errors, section, "endpoint_type", endpoint_type);
+                }
                 "" => {
                     if !self.ps.base_url.is_empty() {
                         try_write!(write_errors, section, "base_url", &self.ps.base_url);
@@ -506,8 +516,10 @@ impl OnboardingWizard {
                 }
             }
             if !models_to_write.is_empty()
-                && (matches!(self.ps.provider_id(), "github" | "minimax" | "zhipu" | "")
-                    || self.ps.selected_provider >= CUSTOM_PROVIDER_IDX)
+                && (matches!(
+                    self.ps.provider_id(),
+                    "github" | "minimax" | "zhipu" | "moonshot" | ""
+                ) || self.ps.selected_provider >= CUSTOM_PROVIDER_IDX)
             {
                 try_write_array!(write_errors, section, "models", &models_to_write);
             }

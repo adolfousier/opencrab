@@ -410,6 +410,15 @@ impl OnboardingWizard {
                     self.ps.api_key_input.push_str(clean);
                     self.ps.api_key_cursor = self.ps.api_key_input.len();
                 }
+                AuthField::MoonshotEndpointType => {
+                    // User pasted on endpoint type — they meant to paste API key
+                    self.auth_field = AuthField::ApiKey;
+                    if self.ps.has_existing_key_sentinel() {
+                        self.ps.api_key_input.clear();
+                    }
+                    self.ps.api_key_input.push_str(clean);
+                    self.ps.api_key_cursor = self.ps.api_key_input.len();
+                }
                 _ => {}
             },
             _ => {}
@@ -531,6 +540,9 @@ impl OnboardingWizard {
                     } else if self.ps.provider_id() == "xiaomi" {
                         // Xiaomi: endpoint type first, then API key
                         self.auth_field = AuthField::XiaomiEndpointType;
+                    } else if self.ps.provider_id() == "moonshot" {
+                        // Moonshot Kimi: plan picker first, then API key
+                        self.auth_field = AuthField::MoonshotEndpointType;
                     } else {
                         self.auth_field = AuthField::ApiKey;
                     }
@@ -902,6 +914,20 @@ impl OnboardingWizard {
                 }
                 KeyCode::Enter | KeyCode::Tab => {
                     // Endpoint type selected → now enter API key
+                    self.auth_field = AuthField::ApiKey;
+                }
+                KeyCode::BackTab => {
+                    self.auth_field = AuthField::Provider;
+                }
+                _ => {}
+            },
+            AuthField::MoonshotEndpointType => match event.code {
+                KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') => {
+                    // Toggle between 0 (api plan) and 1 (coding plan)
+                    self.ps.moonshot_endpoint_type = 1 - self.ps.moonshot_endpoint_type;
+                }
+                KeyCode::Enter | KeyCode::Tab => {
+                    // Plan selected → now enter API key
                     self.auth_field = AuthField::ApiKey;
                 }
                 KeyCode::BackTab => {

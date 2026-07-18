@@ -260,6 +260,18 @@ impl OnboardingWizard {
                     )
                 } else if config
                     .providers
+                    .moonshot
+                    .as_ref()
+                    .is_some_and(|p| p.enabled)
+                {
+                    (
+                        crate::tui::provider_selector::index_of_provider("moonshot").unwrap_or(7),
+                        EXISTING_KEY_SENTINEL.to_string(),
+                        String::new(),
+                        String::new(),
+                    )
+                } else if config
+                    .providers
                     .claude_cli
                     .as_ref()
                     .is_some_and(|p| p.enabled)
@@ -366,8 +378,9 @@ impl OnboardingWizard {
                 .and_then(|c| c.providers.custom.as_ref())
                 .map(|m| m.keys().cloned().collect())
                 .unwrap_or_default(),
-            zhipu_endpoint_type: 0,  // default to API mode
-            xiaomi_endpoint_type: 0, // default to API mode
+            zhipu_endpoint_type: 0,    // default to API mode
+            xiaomi_endpoint_type: 0,   // default to API mode
+            moonshot_endpoint_type: 0, // default to API plan
             model_filter: String::new(),
             ..Default::default()
         };
@@ -594,6 +607,23 @@ impl OnboardingWizard {
                 .and_then(|p| p.default_model.clone())
             {
                 wizard.ps.custom_model = model.clone();
+            }
+        } else if config
+            .providers
+            .moonshot
+            .as_ref()
+            .is_some_and(|p| p.enabled)
+        {
+            wizard.ps.selected_provider = resolve("moonshot");
+            if let Some(p) = config.providers.moonshot.as_ref() {
+                wizard.ps.moonshot_endpoint_type = if p.endpoint_type.as_deref() == Some("coding") {
+                    1
+                } else {
+                    0
+                };
+                if let Some(model) = &p.default_model {
+                    wizard.ps.custom_model = model.clone();
+                }
             }
         } else if config
             .providers

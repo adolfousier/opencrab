@@ -69,7 +69,7 @@ fn all_steps_have_titles() {
 
 #[test]
 fn provider_count_matches_expected() {
-    assert_eq!(PROVIDERS.len(), 17);
+    assert_eq!(PROVIDERS.len(), 18);
 }
 
 #[test]
