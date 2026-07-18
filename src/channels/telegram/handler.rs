@@ -2859,6 +2859,11 @@ pub(crate) async fn handle_message(
     // below, so a follow-up landing in that window forked a second
     // concurrent turn instead of enqueuing. The guard (RAII) clears the flag
     // on every exit path, including early returns and panic.
+    // The user sent their own message — any follow-up suggestion buttons from
+    // the previous turn are stale now (#597). Drop the stash so a later tap on
+    // them can't inject an out-of-context turn.
+    telegram_state.clear_pending_followups(session_id).await;
+
     let turn_guard = match telegram_state.try_begin_turn(session_id) {
         Some(guard) => guard,
         None => {
@@ -3250,7 +3255,8 @@ pub(crate) async fn handle_message(
         let st = streaming.clone();
         let bot_typing = bot.clone();
         let chat_typing = msg.chat.id;
-        Arc::new(move |_sid, event| {
+        let tg_followups = telegram_state.clone();
+        Arc::new(move |sid, event| {
             match event {
                 // Auto-compaction produces zero streaming chunks for 10-60s.
                 // The 4s typing pinger upstream stays alive, but fire an
@@ -3379,6 +3385,21 @@ pub(crate) async fn handle_message(
                             to_name, to_model
                         )));
                     }
+                }
+                // Optional follow-up suggestions (#597): post tap-to-send
+                // buttons under the response. Non-blocking — spawned like the
+                // other async arms; a tap injects the suggestion as a new turn.
+                ProgressEvent::SuggestedFollowups(options) => {
+                    let bot = bot_typing.clone();
+                    let tg = tg_followups.clone();
+                    let chat = chat_typing;
+                    let tid = thread_id;
+                    tokio::spawn(async move {
+                        super::suggest_followups::render_suggestions(
+                            &bot, &tg, sid, chat, tid, options,
+                        )
+                        .await;
+                    });
                 }
                 _ => {}
             }

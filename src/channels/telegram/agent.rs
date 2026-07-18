@@ -253,6 +253,68 @@ impl TelegramAgent {
                         if let Some(data) = query.data.as_deref() {
                             tracing::info!("Telegram callback query received: data={}", data);
 
+                            // Optional follow-up suggestion tapped (#597): inject
+                            // the chosen suggestion as the user's next message (a
+                            // fresh turn). Non-blocking — the whole set is consumed.
+                            if let Some(rest) = data.strip_prefix(
+                                crate::channels::telegram::suggest_followups::FOLLOWUP_PREFIX,
+                            ) {
+                                let _ = bot.answer_callback_query(query.id.clone()).await;
+                                if let Some((sid_str, idx_str)) = rest.rsplit_once(':')
+                                    && let Ok(sid) = uuid::Uuid::parse_str(sid_str)
+                                    && let Ok(idx) = idx_str.parse::<usize>()
+                                    && let Some(text) = state.take_pending_followup(sid, idx).await
+                                {
+                                    let (chat_id, thread_id) = query
+                                        .message
+                                        .as_ref()
+                                        .map(|m| {
+                                            (
+                                                m.chat().id,
+                                                m.regular_message().and_then(|r| r.thread_id),
+                                            )
+                                        })
+                                        .unwrap_or((teloxide::types::ChatId(0), None));
+                                    let agent_clone = agent.clone();
+                                    let bot_clone = bot.clone();
+                                    tokio::spawn(async move {
+                                        // Echo the chosen suggestion so the chat
+                                        // shows what was picked.
+                                        let echo = crate::channels::telegram::handler::md_to_html(
+                                            &format!("\u{25b6}\u{fe0f} {text}"),
+                                        );
+                                        let _ = crate::channels::telegram::send::message_in_thread(
+                                            &bot_clone, chat_id, thread_id, echo,
+                                        )
+                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                        .await;
+                                        match agent_clone.send_message(sid, text, None).await {
+                                            Ok(resp) => {
+                                                let clean = crate::utils::sanitize::strip_llm_artifacts(
+                                                    &resp.content,
+                                                );
+                                                let html =
+                                                    crate::channels::telegram::handler::md_to_html(
+                                                        &clean,
+                                                    );
+                                                let _ =
+                                                    crate::channels::telegram::send::message_in_thread(
+                                                        &bot_clone, chat_id, thread_id, html,
+                                                    )
+                                                    .parse_mode(teloxide::types::ParseMode::Html)
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                tracing::error!(
+                                                    "Telegram follow-up tap turn failed: {e}"
+                                                );
+                                            }
+                                        }
+                                    });
+                                }
+                                return Ok::<(), teloxide::RequestError>(());
+                            }
+
                             // Setup callback for unconfigured providers — show the
                             // help text from `unconfigured_provider_help` instead
                             // of trying to switch (no API key would just fail).

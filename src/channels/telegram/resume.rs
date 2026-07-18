@@ -319,7 +319,8 @@ pub(crate) async fn resume_session(
         let st = streaming.clone();
         let bot_typing = bot.clone();
         let chat_typing = chat_id;
-        Arc::new(move |_sid, event| match event {
+        let tg_followups = telegram_state.clone();
+        Arc::new(move |sid, event| match event {
             // Auto-compaction silent window — immediate typing refresh.
             // See handle_message for the full rationale.
             ProgressEvent::Compacting => {
@@ -435,6 +436,18 @@ pub(crate) async fn resume_session(
                         to_name, to_model
                     )));
                 }
+            }
+            ProgressEvent::SuggestedFollowups(options) => {
+                let bot = bot_typing.clone();
+                let tg = tg_followups.clone();
+                let chat = chat_typing;
+                let tid = thread_id;
+                tokio::spawn(async move {
+                    super::suggest_followups::render_suggestions(
+                        &bot, &tg, sid, chat, tid, options,
+                    )
+                    .await;
+                });
             }
             _ => {}
         })

@@ -22,6 +22,7 @@ pub(crate) mod rich;
 pub(crate) mod rich_decode;
 pub(crate) mod send;
 pub(crate) mod session_resolve;
+pub(crate) mod suggest_followups;
 
 pub use agent::TelegramAgent;
 pub(crate) use agent::register_bot_commands;
@@ -94,6 +95,13 @@ pub struct TelegramState {
     /// session with an entry here, we fire the oneshot with the text so the
     /// tool unblocks and returns it as the answer, instead of queueing.
     session_pending_question: Mutex<HashMap<Uuid, String>>,
+    /// Per-session OPTIONAL follow-up suggestions surfaced by the
+    /// `suggest_followups` tool (#597). Unlike `pending_questions` these are
+    /// non-blocking: the buttons ride under the response and a tap injects the
+    /// chosen suggestion as the user's next message. Keyed by session so the
+    /// tap handler resolves `idx -> suggestion string`; cleared on tap or when
+    /// the user sends anything.
+    pending_followups: Mutex<HashMap<Uuid, Vec<String>>>,
     /// Per-session cancel tokens for aborting in-flight agent tasks via /stop
     cancel_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     /// Persistent plan-card message per session (#580): the single Telegram
@@ -192,6 +200,7 @@ impl TelegramState {
             pending_approvals: Mutex::new(HashMap::new()),
             pending_questions: Mutex::new(HashMap::new()),
             session_pending_question: Mutex::new(HashMap::new()),
+            pending_followups: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
             photo_buffer: Mutex::new(HashMap::new()),
@@ -457,6 +466,30 @@ impl TelegramState {
             return false;
         }
         true
+    }
+
+    /// Stash this session's optional follow-up suggestions (#597) so the tap
+    /// handler can resolve `idx -> suggestion string`. Replaces any prior set.
+    pub async fn set_pending_followups(&self, session_id: Uuid, options: Vec<String>) {
+        self.pending_followups
+            .lock()
+            .await
+            .insert(session_id, options);
+    }
+
+    /// Take a tapped follow-up suggestion by index, consuming the WHOLE set for
+    /// the session (one suggestion starts one turn; the rest are stale). Returns
+    /// the suggestion string, or None if nothing is pending or the index is out
+    /// of range.
+    pub async fn take_pending_followup(&self, session_id: Uuid, idx: usize) -> Option<String> {
+        let options = self.pending_followups.lock().await.remove(&session_id)?;
+        options.get(idx).cloned()
+    }
+
+    /// Drop this session's pending follow-up suggestions (the user sent their
+    /// own message, so the buttons are stale).
+    pub async fn clear_pending_followups(&self, session_id: Uuid) {
+        self.pending_followups.lock().await.remove(&session_id);
     }
 
     /// Clear a pending question's bookkeeping from both maps. Idempotent;
