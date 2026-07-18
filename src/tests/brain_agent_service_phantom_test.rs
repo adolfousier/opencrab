@@ -184,3 +184,30 @@ fn structured_preamble_phantom_slips_leadin_but_strict_catches() {
         "strict detector must catch the buried 'Let me ...' + numbered-step narration"
     );
 }
+
+// Regression: a leading-imminence work announcement after a real tool call
+// ("Issue #<n> filed. Now downloading the font files ... as local assets.").
+// The work-announcement regex needs a TRAILING imminence marker (now / … / :),
+// so an announcement that leads with "Now" and ends on a plain period slipped
+// every detector, and the post-success eligibility gate never let phantom
+// detection run — so the model narrated "Now downloading ..." with no tool call
+// and no retry fired. `matches_now_gerund` + the broadened gerund verb list fix
+// it (downloading was also missing from the gerund verb set). Synthetic issue
+// number, no real request quoted.
+#[test]
+fn leading_now_gerund_announcement_detected() {
+    let t = "Issue filed. Now downloading the font files (Fraunces, Inter, DM Mono, Source Code Pro) as local assets.";
+    // Zero-tool relaxed detector catches it.
+    assert!(
+        has_phantom_tool_intent_no_tools(t),
+        "no_tools must catch leading-now gerund announcement"
+    );
+    // Post-success eligibility gate (tools already ran this turn) catches it —
+    // this is the gate that let the live case through.
+    assert!(
+        has_forward_intent_post_success(t),
+        "post-success gate must treat 'Now downloading ...' as forward-looking"
+    );
+    // The shared helper matches the leading-now form directly.
+    assert!(matches_now_gerund(t), "matches_now_gerund must fire");
+}

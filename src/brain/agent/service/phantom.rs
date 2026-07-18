@@ -51,6 +51,11 @@ pub fn has_phantom_tool_intent_no_tools(text: &str) -> bool {
     if matches_work_announcement(lead) {
         return true;
     }
+    // Leading-imminence announcement ("... Now downloading the fonts.") — the
+    // work-announcement regex needs a trailing marker and misses it.
+    if matches_now_gerund(lead) {
+        return true;
+    }
     if trimmed.len() < 20 {
         return false;
     }
@@ -150,8 +155,10 @@ pub fn has_forward_intent_post_success(text: &str) -> bool {
     // now.") is inherently FORWARD-looking — it can never be a completion
     // ack, no matter how many tools already ran this turn. The gate used
     // to check intent phrases only, so announcements after a successful
-    // tool call closed turns as fake completions (#464).
-    lang_intent_match_any(&lower) || matches_work_announcement(lead)
+    // tool call closed turns as fake completions (#464). `matches_now_gerund`
+    // adds the leading-imminence form ("... Now downloading the fonts.") that
+    // the trailing-marker work-announcement regex misses.
+    lang_intent_match_any(&lower) || matches_work_announcement(lead) || matches_now_gerund(lead)
 }
 
 /// Remove inline channel directives (`<<react:🔥>>`, `<<IMG:path>>`, …)
@@ -420,6 +427,22 @@ fn announcement_matches_anywhere(re: &Regex, lead: &str) -> bool {
         }
     }
     false
+}
+
+/// Does `text` contain a "Now &lt;gerund&gt;" work announcement at a sentence
+/// start in ANY supported language (`gerund_re`)? This catches the
+/// leading-imminence form ("Issue #22 filed. Now downloading the fonts.") that
+/// `matches_work_announcement` misses — that regex requires a TRAILING imminence
+/// marker (now / … / :), so an announcement that leads with "Now" and ends on a
+/// plain period slips it. Scanned across all languages like the other tells.
+pub(crate) fn matches_now_gerund(text: &str) -> bool {
+    let text = strip_inline_directives(text);
+    phantom_lang::all_langs().iter().any(|lang| {
+        !lang.gerund_re.is_empty()
+            && Regex::new(&lang.gerund_re)
+                .map(|re| re.is_match(&text))
+                .unwrap_or(false)
+    })
 }
 
 /// Check if `lower` contains any completion claim.
