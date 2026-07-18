@@ -1069,6 +1069,10 @@ pub fn spawn_rsi_engine(
             if cycle_number.is_multiple_of(DEDUP_SCAN_EVERY_N_CYCLES) {
                 let brain_path = crate::config::opencrabs_home();
                 let store = crate::brain::rsi_proposals::ProposalsStore::new();
+                // Housekeeping (#606): drop any pending proposal whose name is
+                // already applied/rejected so the store doesn't carry stale
+                // legacy entries the inbox filter only hides at read time.
+                store.prune_handled();
                 let filed = crate::brain::dedup_scan::file_dedup_proposals(&brain_path, &store);
                 if filed > 0 {
                     tracing::info!("RSI dedup scan: filed {filed} brain-file dedup proposal(s)");

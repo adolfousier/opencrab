@@ -69,6 +69,38 @@ fn storage_add_and_list_tool_proposal() {
 }
 
 #[test]
+fn prune_handled_removes_only_archived_pending_entries() {
+    let dir = TempDir::new().unwrap();
+    let store = ProposalsStore::with_dir(dir.path().to_path_buf());
+
+    // Handled: filed, then archived-as-applied WITHOUT taking it — recreates
+    // the stale legacy state (name in the applied archive AND still pending).
+    store
+        .add_tool_proposal("rsi-autonomous", "ev", sample_tool_def())
+        .unwrap();
+    let p = store.list_tool_proposals().into_iter().next().unwrap();
+    store.archive_applied_tool(&p).unwrap();
+
+    // Unhandled: a genuinely-pending proposal that must survive prune.
+    let mut fresh = sample_tool_def();
+    fresh.name = "brand_new_tool".to_string();
+    store
+        .add_tool_proposal("rsi-autonomous", "ev2", fresh)
+        .unwrap();
+
+    // The inbox already hid the handled one; prune removes it from the file.
+    assert_eq!(
+        store.prune_handled(),
+        1,
+        "only the handled entry is removed"
+    );
+    let remaining = store.list_tool_proposals();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].def.name, "brand_new_tool");
+    assert_eq!(store.prune_handled(), 0, "second prune is a no-op");
+}
+
+#[test]
 fn storage_add_and_list_command_proposal() {
     let dir = TempDir::new().unwrap();
     let store = ProposalsStore::with_dir(dir.path().to_path_buf());

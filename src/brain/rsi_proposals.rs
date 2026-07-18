@@ -323,6 +323,56 @@ impl ProposalsStore {
         names
     }
 
+    /// Remove pending proposals whose name is already applied or rejected from
+    /// all three files (#606). `add_*_proposal` already blocks re-filing handled
+    /// names, but entries filed before that check landed linger in the pending
+    /// files and only get hidden at read time. Pruning keeps the store honest
+    /// and bounded. Returns how many entries were removed. Only ever drops
+    /// handled entries — a genuinely-pending proposal is untouched.
+    pub fn prune_handled(&self) -> usize {
+        let mut pruned = 0usize;
+
+        let handled = self.handled_names("tools");
+        let mut f = self.read_tools();
+        let before = f.proposals.len();
+        f.proposals.retain(|p| !handled.contains(&p.def.name));
+        if f.proposals.len() != before {
+            pruned += before - f.proposals.len();
+            if let Err(e) = self.write_tools(&f) {
+                tracing::warn!("RSI prune_handled: failed to write tools: {e:#}");
+            }
+        }
+
+        let handled = self.handled_names("commands");
+        let mut f = self.read_commands();
+        let before = f.proposals.len();
+        f.proposals.retain(|p| !handled.contains(&p.command.name));
+        if f.proposals.len() != before {
+            pruned += before - f.proposals.len();
+            if let Err(e) = self.write_commands(&f) {
+                tracing::warn!("RSI prune_handled: failed to write commands: {e:#}");
+            }
+        }
+
+        let handled = self.handled_names("skills");
+        let mut f = self.read_skills();
+        let before = f.proposals.len();
+        f.proposals.retain(|p| !handled.contains(&p.skill.name));
+        if f.proposals.len() != before {
+            pruned += before - f.proposals.len();
+            if let Err(e) = self.write_skills(&f) {
+                tracing::warn!("RSI prune_handled: failed to write skills: {e:#}");
+            }
+        }
+
+        if pruned > 0 {
+            tracing::info!(
+                "RSI prune_handled: removed {pruned} already-handled pending proposal(s)"
+            );
+        }
+        pruned
+    }
+
     /// Append a tool proposal. Generates the id, dedups against existing
     /// entries with the same `def.name` (latest wins), and persists.
     pub fn add_tool_proposal(
