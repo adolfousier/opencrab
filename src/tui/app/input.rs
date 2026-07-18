@@ -281,10 +281,32 @@ impl App {
 
     /// Left-click: select/highlight a message
     pub(crate) fn handle_click_select(&mut self, row: u16) {
-        // A fresh click clears any in-flight drag selection and message highlight.
+        // A fresh click clears any in-flight drag selection.
         self.drag_anchor = None;
         self.drag_current = None;
         let msg_idx = self.row_to_msg_idx(row);
+        // Click on an expandable block (tool group or reasoning details)
+        // toggles that single block's expand state, mirroring Ctrl+O but
+        // scoped to the one message under the cursor. Live/streaming groups
+        // live in active_tool_group and aren't in `messages`; those stay on
+        // Ctrl+O. Plain text rows keep the highlight-select behavior.
+        if let Some(idx) = msg_idx
+            && let Some(msg) = self.messages.get_mut(idx)
+        {
+            match msg.click_action() {
+                ClickAction::ToggleToolGroup => {
+                    if let Some(ref mut group) = msg.tool_group {
+                        group.expanded = !group.expanded;
+                    }
+                    return;
+                }
+                ClickAction::ToggleDetails => {
+                    msg.expanded = !msg.expanded;
+                    return;
+                }
+                ClickAction::Select => {}
+            }
+        }
         // Toggle: click same message deselects, click different selects
         if self.selected_message_idx == msg_idx {
             self.selected_message_idx = None;

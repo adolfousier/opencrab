@@ -357,6 +357,20 @@ pub struct ToolCallGroup {
     pub expanded: bool,
 }
 
+/// What a left-click on a message row should do. Resolved from the message
+/// under the cursor so a click on an expandable block toggles just that block
+/// (mirroring Ctrl+O, but scoped to one message) while plain text rows keep
+/// the highlight-select behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickAction {
+    /// Toggle the message's grouped tool-call `expanded` flag.
+    ToggleToolGroup,
+    /// Toggle the message's reasoning-`details` `expanded` flag.
+    ToggleDetails,
+    /// Not an expandable block — fall back to highlight-select.
+    Select,
+}
+
 /// Display message for UI rendering
 #[derive(Debug, Clone)]
 pub struct DisplayMessage {
@@ -374,6 +388,21 @@ pub struct DisplayMessage {
     pub expanded: bool,
     /// Grouped tool calls (for role == "tool_group")
     pub tool_group: Option<ToolCallGroup>,
+}
+
+impl DisplayMessage {
+    /// Classify what a left-click on this message should do. A tool group takes
+    /// precedence over reasoning details (a message carries at most one in
+    /// practice); anything else falls through to highlight-select.
+    pub fn click_action(&self) -> ClickAction {
+        if self.tool_group.is_some() {
+            ClickAction::ToggleToolGroup
+        } else if self.details.is_some() {
+            ClickAction::ToggleDetails
+        } else {
+            ClickAction::Select
+        }
+    }
 }
 
 impl From<Message> for DisplayMessage {
