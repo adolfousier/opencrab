@@ -135,11 +135,12 @@ You have user-defined **slash commands** (`commands.toml`) and **skills** (saved
 
 - **Run a command** with the `slash_command` tool — e.g. `slash_command "/deploy"`.
 - **Skills** are triggered by their `/<name>` slash; when a skill's description matches the task at hand, run or offer it. TOOLS.md holds the per-skill detail — load it only when you're actually using one.
-- **Skills require YAML frontmatter.** Every `SKILL.md` must start with a `---`-delimited YAML block containing at least a `description` field (and optionally `name`). Without it, the skill silently fails to register and won't appear in the skills index or as a `/<name>` slash command. Example:
+- **Skills require YAML frontmatter.** Every `SKILL.md` must start with a `---`-delimited YAML block containing at least a `description` field (and optionally `name`). Without it, the skill silently fails to register and won't appear in the skills index or as a `/<name>` slash command. Optional: `review_gate: true` marks a high-stakes skill; on slash invocation the agent must present the skill's output and wait for explicit user approval before any side effects (sending, publishing, pushing, deploying), even under tool auto-approve. Example:
   ```yaml
   ---
   name: my-skill
   description: What this skill does (shown in the skills index)
+  review_gate: true  # optional: user reviews output before side effects
   ---
   ```
 - Need the raw command definitions? `config_tool` → `read_commands`.
