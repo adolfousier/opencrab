@@ -172,7 +172,7 @@ https://github.com/user-attachments/assets/7f45c5f8-acdf-48d5-b6a4-0e4811a9ee23
 ### AI & Providers
 | Feature | Description |
 |---------|-------------|
-| **Multi-Provider** | **Xiaomi MiMo**, Anthropic Claude, OpenAI, GitHub Copilot (uses your Copilot subscription), OpenRouter (400+ models), MiniMax, Google Gemini, z.ai GLM (General API + Coding API), Claude CLI, OpenCode CLI, Codex CLI (uses your ChatGPT/Codex subscription), Qwen Native (free OAuth with multi-account rotation), Qwen Code CLI (1k free req/day), and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly. Custom provider dialog: paste-by-default for API keys, Enter-to-load live models, typed-not-in-list models accepted and merged. Each session remembers its provider + model and restores it on switch |
+| **Multi-Provider** | **Xiaomi MiMo**, Anthropic Claude, OpenAI, GitHub Copilot (uses your Copilot subscription), OpenRouter (400+ models), MiniMax, Google Gemini, z.ai GLM (General API + Coding API), Moonshot Kimi (API plan + Coding plan), Claude CLI, OpenCode CLI, Codex CLI (uses your ChatGPT/Codex subscription), Qwen Native (free OAuth with multi-account rotation), Qwen Code CLI (1k free req/day), and any OpenAI-compatible API (Ollama, LM Studio, LocalAI). Model lists fetched live from provider APIs — new models available instantly. Custom provider dialog: paste-by-default for API keys, Enter-to-load live models, typed-not-in-list models accepted and merged. Each session remembers its provider + model and restores it on switch |
 | **Fallback Providers** | Configure a chain of fallback providers — if the primary fails, each fallback is tried in sequence automatically. Any configured provider can be a fallback. Config: `[providers.fallback] providers = ["openrouter", "anthropic"]` |
 | **Per-Provider Vision** | Set `vision_model` per provider — the LLM calls `analyze_image` as a tool, which uses the vision model on the same provider API to describe images. The chat model stays the same and gets vision capability via tool call. Gemini vision takes priority when configured. Auto-configured for known providers (e.g. MiniMax) on first run |
 | **Prompt Caching** | Caches the stable context prefix (system prompt, brain files, earlier turns) on every caching-capable provider — Anthropic native (default), OpenAI/OpenRouter (`cache_enabled`), Qwen/Alibaba (zero-config auto), Xiaomi (server-side). Averaging ~87% cache efficiency in real use; watch it live in the Cache Efficiency card of `/usage`. Big reason a larger context window stays affordable |
@@ -700,6 +700,7 @@ The CLI `migrate` command currently supports OpenClaw and Hermes. For everything
 | [Google Gemini](#google-gemini) | API key | Gemini 2.5 Flash, 2.0, 1.5 Pro | ✅ | ✅ | 1M+ context, vision, image generation |
 | [MiniMax](#minimax) | API key | M2.7, M2.5, M2.1, Text-01 | ✅ | ✅ | Competitive pricing, auto-configured vision |
 | [z.ai GLM](#zai-glm) | API key | GLM-4.5 through GLM-5 Turbo | ✅ | ✅ | General API + Coding API endpoints |
+| [Moonshot Kimi](#moonshot-kimi) | API key | K3, kimi-for-coding | ✅ | ✅ | API plan + Coding plan (Kimi subscription) endpoints |
 | [Claude CLI](#claude-code-cli) | CLI auth | Via `claude` binary | ✅ | ✅ | Uses your Claude Code subscription |
 | [OpenCode CLI](#opencode-cli) | None | Free models (Mimo, etc.) | ✅ | ✅ | Free — no API key or subscription needed |
 | [Codex CLI](#codex-cli) | CLI auth | GPT-5.5, 5.4, 5.4-mini, 5.3-codex | ✅ | ✅ | Uses your ChatGPT/Codex subscription |
@@ -841,6 +842,33 @@ z.ai GLM (Zhipu AI) offers two endpoint types selectable during onboarding or vi
 Both use the same API key and model names. The endpoint type can be toggled in the onboarding wizard or `/models` dialog.
 
 **Features:** Streaming, tools, OpenAI-compatible API, live model list from `/models` endpoint
+
+### Moonshot Kimi
+
+**Models:** `k3`, `kimi-for-coding`, `kimi-for-coding-highspeed` — fetched live from the API
+
+**Setup** — add your key to `keys.toml`:
+
+```toml
+[providers.moonshot]
+api_key = "your-api-key"
+```
+
+Enable and choose the plan in `config.toml`:
+```toml
+[providers.moonshot]
+enabled = true
+default_model = "k3"
+endpoint_type = "api"  # "api" (API plan) or "coding" (Coding plan)
+```
+
+Moonshot offers two endpoint types selectable during onboarding or via `/models`:
+- **API plan** (`api`) — pay-as-you-go chat completions at `api.moonshot.ai/v1`, key from [platform.moonshot.ai](https://platform.moonshot.ai)
+- **Coding plan** (`coding`) — Kimi token subscription at `api.kimi.com/coding/v1`, key from [kimi.com](https://www.kimi.com)
+
+A user-set `base_url` always wins over the plan default. Kimi's `reasoning_content` (thinking) is supported on both endpoints.
+
+**Features:** Streaming, tools, OpenAI-compatible API, live model list, reasoning content
 
 ### OpenCode CLI
 
@@ -1038,7 +1066,7 @@ default_model = "moonshotai/kimi-k2.5"
 api_key = "nvapi-..."
 ```
 
-**Provider priority:** Claude CLI > OpenCode CLI > Codex CLI > OpenCode > Qwen > Anthropic > OpenAI > GitHub Copilot > Gemini > OpenRouter > MiniMax > z.ai GLM > Ollama > Custom. The first provider with `enabled = true` is used on new sessions. Each provider has its own API key in `keys.toml` — no sharing or confusion.
+**Provider priority:** Claude CLI > OpenCode CLI > Codex CLI > OpenCode > Qwen > Anthropic > OpenAI > GitHub Copilot > Gemini > OpenRouter > MiniMax > z.ai GLM > Moonshot Kimi > Ollama > Custom. The first provider with `enabled = true` is used on new sessions. Each provider has its own API key in `keys.toml` — no sharing or confusion.
 
 **Per-session provider:** Each session remembers which provider and model it was using. Switch to Claude in one session, Kimi in another — when you `/sessions` switch between them, the provider restores automatically. No need to `/models` every time. New sessions inherit the current provider.
 
