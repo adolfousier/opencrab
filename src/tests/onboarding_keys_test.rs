@@ -18,7 +18,7 @@ fn test_provider_count_matches() {
     assert_eq!(PROVIDERS[4].name, "OpenRouter");
     assert_eq!(PROVIDERS[5].name, "Minimax");
     assert_eq!(PROVIDERS[6].name, "z.ai GLM");
-    assert_eq!(PROVIDERS[7].name, "Moonshot Kimi");
+    assert_eq!(PROVIDERS[7].name, "Moonshot AI");
     assert_eq!(PROVIDERS[8].name, "Claude CLI");
     assert_eq!(PROVIDERS[9].name, "OpenCode CLI");
     assert_eq!(PROVIDERS[10].name, "Codex CLI");

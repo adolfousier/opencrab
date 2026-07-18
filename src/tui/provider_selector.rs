@@ -46,7 +46,7 @@ pub struct ProviderSelectorState {
     pub models_fetching: bool,
     /// z.ai GLM endpoint type: 0=API, 1=Coding
     pub zhipu_endpoint_type: usize,
-    /// Moonshot Kimi endpoint type: 0=API plan, 1=Coding (token) plan
+    /// Moonshot AI endpoint type: 0=API plan, 1=Coding (token) plan
     pub moonshot_endpoint_type: usize,
     /// Xiaomi MiMo endpoint type: 0=API, 1=Token Plan
     pub xiaomi_endpoint_type: usize,

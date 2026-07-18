@@ -1003,7 +1003,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             lines.push(Line::from(""));
         }
 
-        // Moonshot Kimi plan toggle (api vs coding) — BEFORE API key
+        // Moonshot AI plan toggle (api vs coding) — BEFORE API key
         if wizard.ps.provider_id() == "moonshot" {
             let et_focused = wizard.auth_field == AuthField::MoonshotEndpointType;
             let api_marker = if wizard.ps.moonshot_endpoint_type == 0 {

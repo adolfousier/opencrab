@@ -541,7 +541,7 @@ impl OnboardingWizard {
                         // Xiaomi: endpoint type first, then API key
                         self.auth_field = AuthField::XiaomiEndpointType;
                     } else if self.ps.provider_id() == "moonshot" {
-                        // Moonshot Kimi: plan picker first, then API key
+                        // Moonshot AI: plan picker first, then API key
                         self.auth_field = AuthField::MoonshotEndpointType;
                     } else {
                         self.auth_field = AuthField::ApiKey;

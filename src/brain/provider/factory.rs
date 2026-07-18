@@ -198,7 +198,7 @@ static REGISTRATIONS: LazyLock<Vec<ProviderRegistration>> = LazyLock::new(|| {
             config_field: |c| c.providers.zhipu.as_ref(),
         },
         ProviderRegistration {
-            display_name: "Moonshot Kimi",
+            display_name: "Moonshot AI",
             session_id: "moonshot",
             aliases: &["kimi", "moonshotai"],
             is_enabled: |c| c.providers.moonshot.as_ref().is_some_and(|p| p.enabled),
@@ -271,7 +271,7 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "OpenRouter",
     "Minimax",
     "z.ai GLM",
-    "Moonshot Kimi",
+    "Moonshot AI",
     "Ollama",
     "Custom",
 ];
@@ -1470,7 +1470,7 @@ fn try_create_moonshot(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     };
 
     let Some(api_key) = &moonshot_config.api_key else {
-        tracing::warn!("Moonshot Kimi enabled but API key missing — check keys.toml");
+        tracing::warn!("Moonshot AI enabled but API key missing — check keys.toml");
         return Ok(None);
     };
 
@@ -1490,7 +1490,7 @@ fn try_create_moonshot(config: &Config) -> Result<Option<Arc<dyn Provider>>> {
     };
 
     tracing::info!(
-        "Using Moonshot Kimi at: {} (endpoint_type: {:?})",
+        "Using Moonshot AI at: {} (endpoint_type: {:?})",
         base_url,
         moonshot_config.endpoint_type
     );

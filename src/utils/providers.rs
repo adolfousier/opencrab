@@ -118,7 +118,7 @@ pub const KNOWN_PROVIDERS: &[ProviderMeta] = &[
     },
     ProviderMeta {
         id: "moonshot",
-        display_name: "Moonshot Kimi",
+        display_name: "Moonshot AI",
         config_section: "providers.moonshot",
         needs_api_key: true,
     },

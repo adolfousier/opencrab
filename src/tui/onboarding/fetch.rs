@@ -549,7 +549,7 @@ pub async fn fetch_provider_models(
             return merge_minimax_baseline(api_models, user_models);
         }
         "moonshot" => {
-            // Moonshot Kimi — /v1/models on api.moonshot.ai (API plan,
+            // Moonshot AI — /v1/models on api.moonshot.ai (API plan,
             // pay-per-token) or api.kimi.com/coding/v1 (Coding plan, token
             // subscription). Use passed endpoint_type (from wizard state),
             // fall back to config, then default "api".

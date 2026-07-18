@@ -199,7 +199,7 @@ pub const PROVIDERS: &[ProviderInfo] = &[
     },
     ProviderInfo {
         id: "moonshot",
-        name: "Moonshot Kimi",
+        name: "Moonshot AI",
         models: &[], // Fetched from API
         key_label: "API Key",
         help_lines: &[

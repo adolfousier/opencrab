@@ -1443,7 +1443,7 @@ impl ProviderConfigs {
             ("qwen", "Qwen", true, self.qwen.as_ref()),
             ("minimax", "Minimax", true, self.minimax.as_ref()),
             ("zhipu", "z.ai GLM", true, self.zhipu.as_ref()),
-            ("moonshot", "Moonshot Kimi", true, self.moonshot.as_ref()),
+            ("moonshot", "Moonshot AI", true, self.moonshot.as_ref()),
             ("openrouter", "OpenRouter", true, self.openrouter.as_ref()),
             ("anthropic", "Anthropic", true, self.anthropic.as_ref()),
             ("openai", "OpenAI", true, self.openai.as_ref()),
