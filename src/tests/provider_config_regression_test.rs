@@ -373,3 +373,28 @@ fn save_provider_disables_all_known_sections() {
          (registry-driven), not a hardcoded section list"
     );
 }
+
+#[test]
+fn config_for_resolves_moonshot() {
+    // #611: config_for had no moonshot arm, so it fell through to the `custom:`
+    // branch and returned None — the /models dialog's detect_existing_key then
+    // always showed an empty key even when the key was present in config.
+    use crate::config::{ProviderConfig, ProviderConfigs};
+    use crate::utils::providers::config_for;
+    let providers = ProviderConfigs {
+        moonshot: Some(ProviderConfig {
+            api_key: Some("sk-kimi".to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    // Direct id plus the aliases find_provider_meta accepts.
+    for name in ["moonshot", "kimi", "moonshotai"] {
+        let cfg = config_for(&providers, name);
+        assert!(
+            cfg.is_some(),
+            "config_for('{name}') must resolve the moonshot slot"
+        );
+        assert_eq!(cfg.unwrap().api_key.as_deref(), Some("sk-kimi"));
+    }
+}

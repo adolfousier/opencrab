@@ -203,6 +203,7 @@ pub fn config_for<'a>(providers: &'a ProviderConfigs, name: &str) -> Option<&'a 
         Some("gemini") => providers.gemini.as_ref(),
         Some("openrouter") => providers.openrouter.as_ref(),
         Some("minimax") => providers.minimax.as_ref(),
+        Some("moonshot") => providers.moonshot.as_ref(),
         Some("zhipu") => providers.zhipu.as_ref(),
         Some("xiaomi") => providers.xiaomi.as_ref(),
         Some("claude-cli") => providers.claude_cli.as_ref(),
