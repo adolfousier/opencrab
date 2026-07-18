@@ -48,6 +48,10 @@ pub struct ProviderSelectorState {
     pub zhipu_endpoint_type: usize,
     /// Moonshot AI endpoint type: 0=API plan, 1=Coding (token) plan
     pub moonshot_endpoint_type: usize,
+    /// Kimi Coding-plan tier index into `kimi_plan::PLAN_TIERS`
+    /// (0=moderato, 1=allegretto, 2=allegro, 3=vivace). Only used when
+    /// `moonshot_endpoint_type == 1` (coding plan).
+    pub moonshot_plan: usize,
     /// Xiaomi MiMo endpoint type: 0=API, 1=Token Plan
     pub xiaomi_endpoint_type: usize,
     /// Base URL for custom providers
@@ -367,6 +371,15 @@ impl ProviderSelectorState {
                 Some("coding") => 1,
                 _ => 0,
             };
+            self.moonshot_plan = moonshot
+                .plan
+                .as_deref()
+                .and_then(|p| {
+                    crate::brain::provider::kimi_plan::PLAN_TIERS
+                        .iter()
+                        .position(|t| t.eq_ignore_ascii_case(p.trim()))
+                })
+                .unwrap_or(0);
         }
         if self.selected_provider == CUSTOM_PROVIDER_IDX {
             self.custom_name.clear();

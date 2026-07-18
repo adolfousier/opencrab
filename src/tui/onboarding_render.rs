@@ -1042,6 +1042,42 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 ),
             ]));
             lines.push(Line::from(""));
+
+            // Coding plan carries a subscription tier that sets the context
+            // window (256K on moderato, up to 1M on allegretto and above).
+            if wizard.ps.moonshot_endpoint_type == 1 {
+                let tier_focused = wizard.auth_field == AuthField::MoonshotPlan;
+                lines.push(Line::from(Span::styled(
+                    "  Plan tier (sets context window):",
+                    Style::default().fg(if tier_focused {
+                        BRAND_BLUE
+                    } else {
+                        Color::Gray
+                    }),
+                )));
+                let mut tier_spans: Vec<Span> = Vec::new();
+                for (i, tier) in crate::brain::provider::kimi_plan::PLAN_TIERS
+                    .iter()
+                    .enumerate()
+                {
+                    let marker = if wizard.ps.moonshot_plan == i {
+                        "[*]"
+                    } else {
+                        "[ ]"
+                    };
+                    let window = if *tier == "moderato" { "256K" } else { "1M" };
+                    tier_spans.push(Span::styled(
+                        format!("    {} {} ({})  ", marker, tier, window),
+                        Style::default().fg(if tier_focused && wizard.ps.moonshot_plan == i {
+                            Color::White
+                        } else {
+                            Color::Gray
+                        }),
+                    ));
+                }
+                lines.push(Line::from(tier_spans));
+                lines.push(Line::from(""));
+            }
         }
 
         // CLI providers have no API key — skip the field

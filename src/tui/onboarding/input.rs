@@ -927,11 +927,34 @@ impl OnboardingWizard {
                     self.ps.moonshot_endpoint_type = 1 - self.ps.moonshot_endpoint_type;
                 }
                 KeyCode::Enter | KeyCode::Tab => {
-                    // Plan selected → now enter API key
-                    self.auth_field = AuthField::ApiKey;
+                    // Coding plan → pick the subscription tier next; API plan
+                    // has no tier, so go straight to the API key.
+                    if self.ps.moonshot_endpoint_type == 1 {
+                        self.auth_field = AuthField::MoonshotPlan;
+                    } else {
+                        self.auth_field = AuthField::ApiKey;
+                    }
                 }
                 KeyCode::BackTab => {
                     self.auth_field = AuthField::Provider;
+                }
+                _ => {}
+            },
+            AuthField::MoonshotPlan => match event.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    let n = crate::brain::provider::kimi_plan::PLAN_TIERS.len();
+                    self.ps.moonshot_plan = (self.ps.moonshot_plan + n - 1) % n;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let n = crate::brain::provider::kimi_plan::PLAN_TIERS.len();
+                    self.ps.moonshot_plan = (self.ps.moonshot_plan + 1) % n;
+                }
+                KeyCode::Enter | KeyCode::Tab => {
+                    // Tier selected → now enter API key
+                    self.auth_field = AuthField::ApiKey;
+                }
+                KeyCode::BackTab => {
+                    self.auth_field = AuthField::MoonshotEndpointType;
                 }
                 _ => {}
             },

@@ -1850,6 +1850,14 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint_type: Option<String>,
 
+    /// Kimi Code subscription-plan tier (`moderato`, `allegretto`, `allegro`,
+    /// `vivace`). Only meaningful for a provider pointed at the Kimi Coding
+    /// endpoint. When set and `context_window` is unset, the tier derives the
+    /// auto-compaction context window (256K on moderato, up to 1M on
+    /// allegretto and above); an explicit `context_window` always wins.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+
     /// TTS voice name (e.g. "echo") — only used by TTS providers
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<String>,

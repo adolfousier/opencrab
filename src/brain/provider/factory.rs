@@ -1613,6 +1613,15 @@ fn configure_openai_compatible(
     if let Some(cw) = config.context_window {
         tracing::info!("Context window configured: {} tokens", cw);
         provider = provider.with_context_window(cw);
+    } else if let Some(plan) = &config.plan
+        // The pay-per-token API plan has no tier; only coding-plan (or a
+        // custom Kimi) provider derives its window from the subscription tier.
+        && config.endpoint_type.as_deref() != Some("api")
+        && let Some(cw) =
+            super::kimi_plan::context_window_for_plan(plan, config.default_model.as_deref())
+    {
+        tracing::info!("Kimi plan '{}' derives context window: {} tokens", plan, cw);
+        provider = provider.with_context_window(cw);
     }
     if !config.models.is_empty() {
         tracing::debug!(

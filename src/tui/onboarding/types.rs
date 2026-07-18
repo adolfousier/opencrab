@@ -542,6 +542,7 @@ pub enum AuthField {
     ZhipuEndpointType,
     XiaomiEndpointType,
     MoonshotEndpointType,
+    MoonshotPlan,
 }
 
 /// Which field is focused in DiscordSetup step

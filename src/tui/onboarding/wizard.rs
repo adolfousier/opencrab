@@ -621,6 +621,15 @@ impl OnboardingWizard {
                 } else {
                     0
                 };
+                wizard.ps.moonshot_plan = p
+                    .plan
+                    .as_deref()
+                    .and_then(|plan| {
+                        crate::brain::provider::kimi_plan::PLAN_TIERS
+                            .iter()
+                            .position(|t| t.eq_ignore_ascii_case(plan.trim()))
+                    })
+                    .unwrap_or(0);
                 if let Some(model) = &p.default_model {
                     wizard.ps.custom_model = model.clone();
                 }

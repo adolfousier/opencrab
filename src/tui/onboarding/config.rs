@@ -474,6 +474,15 @@ impl OnboardingWizard {
                         "api"
                     };
                     try_write!(write_errors, section, "endpoint_type", endpoint_type);
+                    // Coding plan carries a subscription tier that sets the
+                    // context-window budget; the API plan has none.
+                    if self.ps.moonshot_endpoint_type == 1 {
+                        let tier = crate::brain::provider::kimi_plan::PLAN_TIERS
+                            .get(self.ps.moonshot_plan)
+                            .copied()
+                            .unwrap_or("moderato");
+                        try_write!(write_errors, section, "plan", tier);
+                    }
                 }
                 "" => {
                     if !self.ps.base_url.is_empty() {
