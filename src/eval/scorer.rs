@@ -111,34 +111,45 @@ impl<'a> ProviderJudge<'a> {
     }
 }
 
+/// Ask a provider one binary question about an artifact and parse its reply.
+/// Shared by [`ProviderJudge`] (borrowed) and the live panel (owned `Arc`).
+/// A provider error is a NO (fact unverified), never a silent pass.
+pub async fn judge_via_provider(
+    provider: &dyn Provider,
+    model: &str,
+    question: &str,
+    artifact: &str,
+) -> BinaryVerdict {
+    let prompt = format!("ARTIFACT:\n{artifact}\n\nQUESTION: {question}");
+    let request = LLMRequest::new(model.to_string(), vec![Message::user(prompt)])
+        .with_system(BINEVAL_JUDGE_SYSTEM);
+    match provider.complete(request).await {
+        Ok(resp) => {
+            let text = resp
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    crate::brain::provider::ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            BinaryVerdict {
+                yes: parse_verdict(&text),
+                explanation: Some(text),
+            }
+        }
+        Err(e) => BinaryVerdict {
+            yes: false,
+            explanation: Some(format!("judge error: {e}")),
+        },
+    }
+}
+
 #[async_trait]
 impl Judge for ProviderJudge<'_> {
     async fn judge(&self, question: &str, artifact: &str) -> BinaryVerdict {
-        let prompt = format!("ARTIFACT:\n{artifact}\n\nQUESTION: {question}");
-        let request = LLMRequest::new(self.model.clone(), vec![Message::user(prompt)])
-            .with_system(BINEVAL_JUDGE_SYSTEM);
-        match self.provider.complete(request).await {
-            Ok(resp) => {
-                let text = resp
-                    .content
-                    .iter()
-                    .filter_map(|b| match b {
-                        crate::brain::provider::ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                BinaryVerdict {
-                    yes: parse_verdict(&text),
-                    explanation: Some(text),
-                }
-            }
-            // A judge failure is a NO (fact unverified), never a silent pass.
-            Err(e) => BinaryVerdict {
-                yes: false,
-                explanation: Some(format!("judge error: {e}")),
-            },
-        }
+        judge_via_provider(self.provider, &self.model, question, artifact).await
     }
 }
 

@@ -8,7 +8,9 @@
 pub mod baseline;
 pub mod before_after;
 pub mod compaction;
+pub mod live;
 pub mod manifest;
+pub mod panel;
 pub mod recall;
 pub mod replay;
 pub mod scorer;

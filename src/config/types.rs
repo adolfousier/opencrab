@@ -884,6 +884,15 @@ pub struct AgentConfig {
     #[serde(default)]
     pub self_improvement_model: Option<String>,
 
+    /// Ordered chain of provider names used for LIVE evaluations (the offline
+    /// eval harness ignores this). Each name must match a configured provider;
+    /// each judge uses that provider's own `default_model`. The chain serves as
+    /// both a judge panel (independent verdicts, majority vote) and a resilience
+    /// chain (a failing provider falls through to the next). Empty = live evals
+    /// off. Example: `eval_providers = ["anthropic", "openrouter", "zhipu"]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub eval_providers: Vec<String>,
+
     /// Default provider for main chat sessions. When set, new sessions use this
     /// provider instead of inheriting from the most recent session or falling back
     /// to the config priority list. When changed at runtime, existing sessions
@@ -981,6 +990,7 @@ impl Default for AgentConfig {
             auto_update: default_auto_update(),
             self_improvement_provider: None,
             self_improvement_model: None,
+            eval_providers: Vec::new(),
             default_provider: None,
             default_model: None,
             silent_compaction: false,
