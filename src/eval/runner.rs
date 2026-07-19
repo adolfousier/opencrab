@@ -19,6 +19,9 @@ use super::scorer::Scorecard;
 pub struct VarianceReport {
     pub k: usize,
     pub mean: f64,
+    /// Median — robust to a single catastrophic outlier, so it reflects the
+    /// TYPICAL run where `mean` is skewed by a rare crater.
+    pub median: f64,
     pub min: f64,
     pub max: f64,
     /// Population standard deviation.
@@ -32,6 +35,7 @@ impl VarianceReport {
             return Self {
                 k: 0,
                 mean: 0.0,
+                median: 0.0,
                 min: 0.0,
                 max: 0.0,
                 stddev: 0.0,
@@ -42,19 +46,37 @@ impl VarianceReport {
         let min = scores.iter().copied().fold(f64::INFINITY, f64::min);
         let max = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let variance = scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / k as f64;
+        let mut sorted = scores.to_vec();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median = if k % 2 == 1 {
+            sorted[k / 2]
+        } else {
+            (sorted[k / 2 - 1] + sorted[k / 2]) / 2.0
+        };
         Self {
             k,
             mean,
+            median,
             min,
             max,
             stddev: variance.sqrt(),
         }
     }
 
+    /// Fraction of runs scoring at or below `threshold` — the catastrophic
+    /// failure rate, distinct from the average quality.
+    pub fn failure_rate(scores: &[f64], threshold: f64) -> f64 {
+        if scores.is_empty() {
+            return 0.0;
+        }
+        let bad = scores.iter().filter(|&&s| s <= threshold).count();
+        bad as f64 / scores.len() as f64
+    }
+
     pub fn render(&self) -> String {
         format!(
-            "{} runs: mean={:.3} min={:.3} max={:.3} sd={:.3}",
-            self.k, self.mean, self.min, self.max, self.stddev
+            "{} runs: mean={:.3} median={:.3} min={:.3} max={:.3} sd={:.3}",
+            self.k, self.mean, self.median, self.min, self.max, self.stddev
         )
     }
 }

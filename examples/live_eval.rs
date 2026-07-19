@@ -57,8 +57,14 @@ async fn main() {
     );
 
     // Repeat each eval K times — a single live run is noise (the producer is
-    // non-deterministic), so we report the mean/variance of the overall scores.
+    // non-deterministic), so we report mean AND median (robust to a lone crater)
+    // plus the catastrophic failure rate, and dump outlier artifacts for
+    // inspection rather than averaging them silently into the score.
     const K: usize = 5;
+    // A run whose panel score falls to or below this is a catastrophic failure,
+    // reported separately from the typical-quality median.
+    const CATASTROPHIC: f64 = 0.5;
+    let outlier_path = opencrabs::config::opencrabs_home().join("eval_outliers.md");
 
     // 1. Compaction fidelity.
     let ds = CompactionDataset::seed();
@@ -76,11 +82,13 @@ async fn main() {
             "  run {i}: {} chars  keyword={k:.2}  panel={p:.2}",
             summary.len()
         );
+        if p <= CATASTROPHIC {
+            save_outlier(&outlier_path, &ds.name, i, p, &summary);
+        }
         kw.push(k);
         pn.push(p);
     }
-    println!("  keyword {}", VarianceReport::from_scores(&kw).render());
-    println!("  panel   {}", VarianceReport::from_scores(&pn).render());
+    report("compaction", &kw, &pn, CATASTROPHIC);
 
     // 2. Capability self-awareness — produced UNDER the real system brain.
     let sc = SelfAwarenessScenario::seed();
@@ -96,9 +104,52 @@ async fn main() {
             "  run {i}: {} chars  keyword={k:.2}  panel={p:.2}",
             response.len()
         );
+        if p <= CATASTROPHIC {
+            save_outlier(&outlier_path, &sc.name, i, p, &response);
+        }
         kw.push(k);
         pn.push(p);
     }
-    println!("  keyword {}", VarianceReport::from_scores(&kw).render());
-    println!("  panel   {}", VarianceReport::from_scores(&pn).render());
+    report("self-awareness", &kw, &pn, CATASTROPHIC);
+
+    println!(
+        "\nOutlier artifacts (if any) appended to {}",
+        outlier_path.display()
+    );
+}
+
+/// Print the keyword + panel variance, plus the panel failure rate — so
+/// typical quality (median) and reliability (failure rate) read separately.
+fn report(name: &str, keyword: &[f64], panel: &[f64], threshold: f64) {
+    println!(
+        "  keyword {}",
+        VarianceReport::from_scores(keyword).render()
+    );
+    println!("  panel   {}", VarianceReport::from_scores(panel).render());
+    println!(
+        "  panel failure rate (<= {threshold:.2}): {:.0}%   [{name}]",
+        VarianceReport::failure_rate(panel, threshold) * 100.0
+    );
+}
+
+/// Append a cratered run's artifact so we can read WHY it failed instead of
+/// guessing (genuine terse output vs a length cap, etc.).
+fn save_outlier(path: &std::path::Path, dataset: &str, run: usize, score: f64, artifact: &str) {
+    let entry = format!(
+        "\n## {dataset} — run {run} — panel {score:.2} — {} chars\n\n{artifact}\n",
+        artifact.len()
+    );
+    use std::io::Write;
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(entry.as_bytes()) {
+                eprintln!("failed to write outlier artifact: {e}");
+            }
+        }
+        Err(e) => eprintln!("failed to open outlier file {}: {e}", path.display()),
+    }
 }

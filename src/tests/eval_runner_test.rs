@@ -81,3 +81,34 @@ fn outcome_with_no_prior_baseline_holds() {
     assert!(outcome.holds());
     assert_eq!(outcome.current.overall, 1.0);
 }
+
+// ── median + failure rate (#642) ────────────────────────────────
+
+#[test]
+fn median_ignores_a_single_outlier() {
+    // Four perfect runs, one catastrophic: mean is dragged to 0.8 but the
+    // TYPICAL run is 1.0 — median must report that.
+    let r = VarianceReport::from_scores(&[1.0, 1.0, 1.0, 1.0, 0.0]);
+    assert!((r.mean - 0.8).abs() < 1e-9);
+    assert_eq!(r.median, 1.0);
+    assert!(r.render().contains("median=1.000"));
+}
+
+#[test]
+fn median_even_count_averages_the_middle_two() {
+    let r = VarianceReport::from_scores(&[0.0, 1.0, 1.0, 1.0]);
+    // sorted: 0,1,1,1 -> middle two (1,1) -> 1.0
+    assert_eq!(r.median, 1.0);
+    let r2 = VarianceReport::from_scores(&[0.2, 0.4, 0.6, 0.8]);
+    assert!((r2.median - 0.5).abs() < 1e-9);
+}
+
+#[test]
+fn failure_rate_counts_runs_at_or_below_threshold() {
+    // One catastrophic run out of five.
+    assert!((VarianceReport::failure_rate(&[1.0, 1.0, 1.0, 1.0, 0.0], 0.0) - 0.2).abs() < 1e-9);
+    // Nothing below threshold.
+    assert_eq!(VarianceReport::failure_rate(&[1.0, 0.8, 0.9], 0.5), 0.0);
+    // Empty is zero, not a divide-by-zero.
+    assert_eq!(VarianceReport::failure_rate(&[], 0.5), 0.0);
+}
