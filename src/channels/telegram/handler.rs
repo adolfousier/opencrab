@@ -3635,8 +3635,11 @@ pub(crate) async fn handle_message(
     // would leave the button off for good (#571).
     super::flow_chrome::refresh_sections(&streaming, &agent, session_id).await;
     refresh_flow(&bot, msg.chat.id, &streaming).await;
-    // Settle the persistent plan card too (#580): final checklist state + the
-    // Approve/Discard keyboard (gated to turn end on the card).
+    // Settle the persistent plan card (#580, #621): remove the old card first
+    // so refresh_plan_card posts a fresh one at the bottom. This re-stick keeps
+    // the card at the latest position instead of editing a buried message far
+    // up in history. The keyboard and (in Editing) the folded prose ride the
+    // fresh message.
     {
         let plan_kb = {
             streaming
@@ -3645,6 +3648,7 @@ pub(crate) async fn handle_message(
                 .sections
                 .plan_kb
         };
+        super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id).await;
         super::plan_card::refresh_plan_card(
             &bot,
             msg.chat.id,

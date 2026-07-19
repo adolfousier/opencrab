@@ -696,26 +696,54 @@ fn rich_edit_429_retries_rich_never_falls_back_to_html() {
 fn plan_card_renders_title_and_checklist_or_none() {
     // The persistent plan card (#580) renders the plan title + checklist, or
     // None when there is no plan content (the caller removes the card then).
+    // The prose parameter (#621) folds the design prose into the card in
+    // Editing state; these tests pass None since they cover title/checklist.
     use crate::channels::telegram::plan_card::render_plan_card_html;
 
-    assert_eq!(render_plan_card_html(None, None), None);
-    assert_eq!(render_plan_card_html(Some("   "), None), None);
+    assert_eq!(render_plan_card_html(None, None, None), None);
+    assert_eq!(render_plan_card_html(Some("   "), None, None), None);
 
-    let title_only = render_plan_card_html(Some("Audit changes"), None).unwrap();
+    let title_only = render_plan_card_html(Some("Audit changes"), None, None).unwrap();
     assert!(title_only.contains("📋") && title_only.contains("Audit changes"));
 
     let rows = vec!["☑ Task one".to_string(), "☐ Task two".to_string()];
-    let full = render_plan_card_html(Some("Audit changes"), Some(&rows)).unwrap();
+    let full = render_plan_card_html(Some("Audit changes"), Some(&rows), None).unwrap();
     assert!(full.contains("Audit changes"));
     assert!(full.contains("☑ Task one") && full.contains("☐ Task two"));
 
     // Checklist without a title still renders.
-    let no_title = render_plan_card_html(None, Some(&rows)).unwrap();
+    let no_title = render_plan_card_html(None, Some(&rows), None).unwrap();
     assert!(no_title.contains("☑ Task one"));
 
     // HTML in a title is escaped, not injected.
-    let escaped = render_plan_card_html(Some("a <b> & c"), None).unwrap();
+    let escaped = render_plan_card_html(Some("a <b> & c"), None, None).unwrap();
     assert!(escaped.contains("&lt;b&gt;") && escaped.contains("&amp;"));
+}
+
+#[test]
+fn plan_card_folds_prose_when_no_checklist() {
+    // #621: in Editing state (no tasks yet) the design prose folds into the
+    // card as an expandable blockquote. Once tasks exist (Active) the
+    // checklist takes over and the prose drops off.
+    use crate::channels::telegram::plan_card::render_plan_card_html;
+
+    let with_prose = render_plan_card_html(
+        Some("Design plan"),
+        None,
+        Some("## Context\n\nThe problem is X.\n\n## Steps\n\n1. Do A\n2. Do B"),
+    )
+    .unwrap();
+    assert!(with_prose.contains("Design plan"));
+    assert!(with_prose.contains("blockquote"));
+    assert!(with_prose.contains("Do A"));
+
+    // Active state: checklist wins, prose is suppressed.
+    let rows = vec!["☑ Task one".to_string()];
+    let active =
+        render_plan_card_html(Some("Design plan"), Some(&rows), Some("Should not appear")).unwrap();
+    assert!(active.contains("Task one"));
+    assert!(!active.contains("blockquote"));
+    assert!(!active.contains("Should not appear"));
 }
 
 #[test]
