@@ -346,6 +346,7 @@ pub mod voice_openai_compatible_test;
 pub mod voice_voicebox_test;
 //pub mod streaming_test;
 pub mod kimi_plan_test;
+pub mod kimi_reasoning_map_test;
 pub mod merge_provider_keys_test;
 pub mod mission_control_activity_service_test;
 pub mod mission_control_dedup_detail_test;

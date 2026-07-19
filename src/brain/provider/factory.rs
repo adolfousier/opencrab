@@ -1623,6 +1623,10 @@ fn configure_openai_compatible(
         tracing::info!("Kimi plan '{}' derives context window: {} tokens", plan, cw);
         provider = provider.with_context_window(cw);
     }
+    if let Some(reasoning) = &config.reasoning_effort {
+        tracing::info!("Kimi reasoning setting configured: {}", reasoning);
+        provider = provider.with_reasoning(reasoning.clone());
+    }
     if !config.models.is_empty() {
         tracing::debug!(
             "Loaded {} configured models for provider",

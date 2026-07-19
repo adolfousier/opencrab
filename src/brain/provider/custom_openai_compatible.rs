@@ -2183,6 +2183,9 @@ pub struct OpenAIProvider {
     cache_enabled: bool,
     /// OpenRouter cache TTL in seconds (1-86400, default 300).
     cache_ttl: Option<u32>,
+    /// Kimi reasoning setting (e.g. `max`, `on`, `off`). Applied to each
+    /// request when the active model accepts it; see `kimi_reasoning`.
+    reasoning_setting: Option<String>,
     /// Buffer of `(attempt, max, reason)` retry notices recorded during the
     /// most recent stream/complete call. Drained by the agent service via
     /// `take_retry_notices()` to surface "⏳ Retry N/M" to the user. Shared
@@ -2257,6 +2260,7 @@ impl OpenAIProvider {
             retry_config_override: None,
             cache_enabled: false,
             cache_ttl: None,
+            reasoning_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -2291,6 +2295,7 @@ impl OpenAIProvider {
             retry_config_override: None,
             cache_enabled: false,
             cache_ttl: None,
+            reasoning_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -2325,6 +2330,7 @@ impl OpenAIProvider {
             retry_config_override: None,
             cache_enabled: false,
             cache_ttl: None,
+            reasoning_setting: None,
             retry_notices: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -2358,6 +2364,13 @@ impl OpenAIProvider {
     /// Set custom default model (useful for local LLMs with specific model names)
     pub fn with_default_model(mut self, model: String) -> Self {
         self.custom_default_model = Some(model);
+        self
+    }
+
+    /// Set the Kimi reasoning setting (e.g. `max`, `on`, `off`). Applied per
+    /// request only when the active model accepts it; see `kimi_reasoning`.
+    pub fn with_reasoning(mut self, setting: String) -> Self {
+        self.reasoning_setting = Some(setting);
         self
     }
 
@@ -2792,6 +2805,15 @@ impl OpenAIProvider {
             None
         };
 
+        // Kimi reasoning controls: apply the provider's configured setting when
+        // the active model accepts it. An invalid value is skipped here (the
+        // config default is a no-op); `/reason` surfaces the error instead.
+        let (reasoning_effort, thinking) = self
+            .reasoning_setting
+            .as_deref()
+            .map(|s| super::kimi_reasoning::resolve_fields(&request.model, s))
+            .unwrap_or((None, None));
+
         OpenAIRequest {
             model: request.model,
             messages,
@@ -2803,6 +2825,8 @@ impl OpenAIProvider {
             tools,
             tool_choice,
             include_reasoning,
+            reasoning_effort,
+            thinking,
         }
     }
 
@@ -4567,6 +4591,13 @@ pub(crate) struct OpenAIRequest {
     /// OpenRouter: request reasoning/thinking tokens in the response.
     #[serde(skip_serializing_if = "Option::is_none")]
     include_reasoning: Option<bool>,
+    /// Kimi K3 reasoning effort (only `max` today). Set from the provider's
+    /// reasoning setting when the model accepts it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+    /// Kimi K2.x thinking toggle: `{ "type": "enabled" | "disabled" }`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<serde_json::Value>,
 }
 
 impl OpenAIRequest {

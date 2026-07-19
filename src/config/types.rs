@@ -1858,6 +1858,12 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
 
+    /// Kimi reasoning control (e.g. `max` for K3, `on`/`off` for K2.x).
+    /// Applied to each request only when the active model accepts it
+    /// (see `kimi_reasoning`); an inapplicable value is a no-op.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+
     /// TTS voice name (e.g. "echo") — only used by TTS providers
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<String>,
