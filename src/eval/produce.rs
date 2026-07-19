@@ -41,17 +41,42 @@ fn response_text(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
+/// Send a single user prompt to a live provider and return its text. When
+/// `system` is set (e.g. the real OpenCrabs system brain), it is attached so
+/// the model answers with its actual runtime context, not a bare prompt. A
+/// provider error returns a marked failure string, never a silent empty.
+pub async fn produce_response(
+    provider: &dyn Provider,
+    model: &str,
+    prompt: &str,
+    system: Option<&str>,
+) -> String {
+    let mut request = LLMRequest::new(model.to_string(), vec![Message::user(prompt.to_string())]);
+    if let Some(sys) = system {
+        request = request.with_system(sys);
+    }
+    match provider.complete(request).await {
+        Ok(resp) => response_text(&resp.content),
+        Err(e) => format!("[produce failed: {e}]"),
+    }
+}
+
 /// Ask a live provider to compact a conversation into a continuation document.
-/// A provider error returns a marked failure string (never a silent empty), so
-/// the grader scores it as full fact loss rather than a spurious pass.
+/// When `system` is set it is attached (e.g. the real system brain). A provider
+/// error returns a marked failure string (never a silent empty), so the grader
+/// scores it as full fact loss rather than a spurious pass.
 pub async fn produce_compaction_summary(
     provider: &dyn Provider,
     model: &str,
     conversation: &[Message],
+    system: Option<&str>,
 ) -> String {
     let mut messages = conversation.to_vec();
     messages.push(Message::user(CONTINUATION_INSTRUCTION.to_string()));
-    let request = LLMRequest::new(model.to_string(), messages);
+    let mut request = LLMRequest::new(model.to_string(), messages);
+    if let Some(sys) = system {
+        request = request.with_system(sys);
+    }
     match provider.complete(request).await {
         Ok(resp) => response_text(&resp.content),
         Err(e) => format!("[compaction failed: {e}]"),
@@ -65,7 +90,9 @@ pub async fn run_compaction_eval(
     producer_model: &str,
     judge: &dyn Judge,
     dataset: &CompactionDataset,
+    system: Option<&str>,
 ) -> Scorecard {
-    let summary = produce_compaction_summary(producer, producer_model, &dataset.messages()).await;
+    let summary =
+        produce_compaction_summary(producer, producer_model, &dataset.messages(), system).await;
     dataset.judge_scorecard(judge, &summary).await
 }
