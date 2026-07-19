@@ -811,6 +811,9 @@ pub(crate) fn compiled_features() -> Vec<&'static str> {
     if cfg!(feature = "profiling") {
         out.push("profiling");
     }
+    if cfg!(feature = "eval") {
+        out.push("eval");
+    }
     out
 }
 
