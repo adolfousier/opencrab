@@ -721,29 +721,40 @@ fn plan_card_renders_title_and_checklist_or_none() {
 }
 
 #[test]
-fn plan_card_folds_prose_when_no_checklist() {
-    // #621: in Editing state (no tasks yet) the design prose folds into the
-    // card as an expandable blockquote. Once tasks exist (Active) the
-    // checklist takes over and the prose drops off.
+fn plan_card_renders_per_heading_prose() {
+    // #621: the card folds the design prose as per-heading expandable
+    // blockquotes with bold headings, the same format chrome_classic uses
+    // (ADR 0005 Decision 3), in the locked order title → prose → checklist.
+    use crate::channels::telegram::flow_chrome::ProseSection;
     use crate::channels::telegram::plan_card::render_plan_card_html;
 
-    let with_prose = render_plan_card_html(
-        Some("Design plan"),
-        None,
-        Some("## Context\n\nThe problem is X.\n\n## Steps\n\n1. Do A\n2. Do B"),
-    )
-    .unwrap();
-    assert!(with_prose.contains("Design plan"));
-    assert!(with_prose.contains("blockquote"));
-    assert!(with_prose.contains("Do A"));
+    let sections = [
+        ProseSection {
+            heading: Some("Context".to_string()),
+            body: "The problem is X.".to_string(),
+        },
+        ProseSection {
+            heading: Some("Implementation steps".to_string()),
+            body: "1. Do A\n2. Do B".to_string(),
+        },
+    ];
 
-    // Active state: checklist wins, prose is suppressed.
+    let with_prose = render_plan_card_html(Some("Design plan"), None, Some(&sections)).unwrap();
+    assert!(with_prose.contains("Design plan"));
+    assert!(with_prose.contains("<blockquote expandable><b>Context</b>"));
+    assert!(with_prose.contains("<blockquote expandable><b>Implementation steps</b>"));
+    assert!(with_prose.contains("The problem is X."));
+
+    // Prose rides alongside the checklist in Active too (no state gate),
+    // always before the rows.
     let rows = vec!["☑ Task one".to_string()];
-    let active =
-        render_plan_card_html(Some("Design plan"), Some(&rows), Some("Should not appear")).unwrap();
-    assert!(active.contains("Task one"));
-    assert!(!active.contains("blockquote"));
-    assert!(!active.contains("Should not appear"));
+    let with_both =
+        render_plan_card_html(Some("Design plan"), Some(&rows), Some(&sections)).unwrap();
+    assert!(with_both.contains("Task one"));
+    assert!(with_both.contains("<blockquote expandable><b>Context</b>"));
+    let prose_pos = with_both.find("Context").unwrap();
+    let checklist_pos = with_both.find("Task one").unwrap();
+    assert!(prose_pos < checklist_pos);
 }
 
 #[test]

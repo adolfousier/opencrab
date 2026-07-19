@@ -5,7 +5,9 @@
 //! there is exactly one card at a time rather than one checklist per turn.
 
 use super::TelegramState;
-use super::flow_chrome::{PlanKb, load_plan_prose, load_plan_sections};
+use super::flow_chrome::{
+    PlanKb, ProseSection, load_plan_prose, load_plan_sections, prose_body_lines,
+};
 use super::handler::escape_html;
 use super::send::message_in_thread;
 use std::sync::Arc;
@@ -13,31 +15,52 @@ use teloxide::prelude::*;
 use teloxide::types::{ParseMode, ThreadId};
 use uuid::Uuid;
 
+/// Total character budget for prose bodies on the card. The card also
+/// carries the title, checklist rows, and keyboard inside Telegram's
+/// 4096-char message cap, so prose gets a bounded share; sections past
+/// the budget are dropped (the full prose is one tap away via /show-plan).
+const CARD_PROSE_BUDGET: usize = 2400;
+
 /// Render the card body, or `None` when the session has no plan content (no
 /// title and no checklist) — the caller removes the card in that case.
 pub(crate) fn render_plan_card_html(
     title: Option<&str>,
     checklist: Option<&[String]>,
-    prose: Option<&str>,
+    prose: Option<&[ProseSection]>,
 ) -> Option<String> {
     let mut out = String::new();
     if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
-        out.push_str(&format!("<b>📋 {}</b>", escape_html(t)));
+        out.push_str(&format!("📋 <b>{}</b>", escape_html(t)));
     }
-    // Fold the design prose into the card (#621) when there is no checklist
-    // yet (Editing, before the seed): the card is the single surface carrying
-    // title + prose + keyboard, so the reply stays clean and nothing splits
-    // across messages. Once tasks exist (Active) the checklist is the live
-    // view and the prose drops off the card.
-    if checklist.is_none()
-        && let Some(p) = prose.map(str::trim).filter(|p| !p.is_empty())
-    {
-        if !out.is_empty() {
-            out.push_str("\n\n");
+    // Fold the design prose into the card (#621) using the same per-heading
+    // expandable format as the flow chrome (ADR 0005 Decision 3): every
+    // section is its own collapsed <blockquote expandable> with a bold
+    // heading, so the card stays compact and each section expands on tap.
+    // Locked order: title, prose expandables, checklist rows. The body
+    // lines come from prose_body_lines and are already Telegram HTML
+    // (escaped + inline-formatted), so they are inserted raw — exactly
+    // like FlowSections::chrome_classic renders them.
+    if let Some(sections) = prose.filter(|s| !s.is_empty()) {
+        let mut budget = CARD_PROSE_BUDGET;
+        for sec in sections {
+            if budget == 0 {
+                break;
+            }
+            let full = prose_body_lines(&sec.body).join("\n");
+            let body = crate::utils::truncate_str(&full, budget);
+            budget = budget.saturating_sub(body.len());
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            match &sec.heading {
+                Some(h) => out.push_str(&format!(
+                    "<blockquote expandable><b>{}</b>\n{}</blockquote>",
+                    escape_html(h),
+                    body
+                )),
+                None => out.push_str(body),
+            }
         }
-        out.push_str("<blockquote expandable>");
-        out.push_str(&escape_html(p));
-        out.push_str("</blockquote>");
     }
     if let Some(rows) = checklist {
         for row in rows {
@@ -61,32 +84,12 @@ pub(crate) async fn refresh_plan_card(
     plan_kb: PlanKb,
 ) {
     let (title, checklist) = load_plan_sections(session_id).await;
-    // Load the design prose for the card when there are no tasks yet (Editing).
-    // The flow message already loads this via load_plan_prose; here we flatten
-    // the per-heading sections into a single preview string for the card's
-    // expandable blockquote. The full .md stays accessible via /show-plan.
-    let prose = if checklist.is_none() {
-        load_plan_prose(session_id).await.map(|sections| {
-            let mut out = String::new();
-            for sec in &sections {
-                if let Some(ref h) = sec.heading {
-                    if !out.is_empty() {
-                        out.push_str("\n\n");
-                    }
-                    out.push_str(h);
-                }
-                if !sec.body.trim().is_empty() {
-                    if !out.is_empty() {
-                        out.push('\n');
-                    }
-                    out.push_str(&sec.body);
-                }
-            }
-            crate::utils::truncate_str(&out, 2800).to_string()
-        })
-    } else {
-        None
-    };
+    // Fold the design prose into the card (#621): the same per-heading
+    // sections the flow message renders via chrome_classic (ADR 0005
+    // Decision 3), in both Editing and Active states. The card is the
+    // single surface carrying title + prose expandables + checklist +
+    // keyboard. The full .md stays accessible via /show-plan.
+    let prose = load_plan_prose(session_id).await;
     let Some(html) =
         render_plan_card_html(title.as_deref(), checklist.as_deref(), prose.as_deref())
     else {

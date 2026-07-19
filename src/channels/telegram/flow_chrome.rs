@@ -115,7 +115,7 @@ pub(crate) fn split_plan_prose(md: &str) -> Vec<ProseSection> {
 /// bullets, inline markdown elsewhere. Blank source lines come through as
 /// empty strings so the classic join keeps paragraph breaks; the rich path
 /// drops them (each line is already its own `<p>` block).
-fn prose_body_lines(body: &str) -> Vec<String> {
+pub(crate) fn prose_body_lines(body: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut in_fence = false;
     for line in body.lines() {
