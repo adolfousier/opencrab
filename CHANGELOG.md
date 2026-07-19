@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.70] - 2026-07-19
+
+18 commits since v0.3.69. 57 files changed, +1310 / -128 lines.
+
+### ✨ Features
+
+- `822d7ef8` **Kimi reasoning-effort config**: per-model reasoning-effort field, validated against the model's allowed set
+- `6295f8e8` **Kimi plan-tier context window**: API plan vs Coding plan drives the context window automatically
+- `fb89940e` **Skills review_gate**: frontmatter declaration for high-stakes skills that require user approval before side effects
+- `17cb7dae` **Plan discard autonomy gate**: agent-initiated plan discard now requires plan autonomy, user-initiated discard always allowed
+- `3eb6ab7d` **Plan yolo scope**: design-track refusal scoped to /plan slash origin, not every yolo session
+
+### 🔧 Fixes
+
+- `90add3ca` **MiniMax live model fetch**: fetch models from /v1/models endpoint instead of hardcoded list
+- `3d805011` **Kimi context_window persist**: derived context_window saved to config on plan pick
+- `584f14ca` **Moonshot config_for()**: session slot resolves the moonshot provider correctly
+- `6d640783` **Moonshot keys.toml merge**: provider key merged from keys.toml into the active config
+- `9d85ca5f` **Compaction context window**: honor the provider's configured window without a manual swap
+- `cd77d138` **Phantom detector language-agnostic**: accents and non-ASCII no longer disable strict detection
+- `457f646a` **RSI proposals prune**: already-handled entries removed from pending proposal files
+- `4ef3af52` **Mission-control Flakiest panel**: windowed so fixed tools age out of the view
+- `d1abefc7` **Phantom leading-imminence**: catch work announcements like '... Now downloading X'
+
+### 📖 Documentation
+
+- `604f4226` Document skill review_gate and the yolo design-gate caveat
+- `6c34134f` Amend yolo Editing rule, document review gates
+
+### 🧹 Miscellaneous
+
+- `268140c9` perf(lazy-tools): tool_search activates on use, not all 8 matches (#604)
+- `50004329` perf(lazy-tools): LRU-bound the per-session active tool set (#603)
+
+### 📊 Stats
+
+- 18 commits since v0.3.69
+- 57 files changed, +1310 / -128 lines
+- 5017 tests (5012 passed, 0 failed, 29 ignored)
+
 ## [0.3.69] - 2026-07-18
 
 19 commits since v0.3.68. 74 files changed, +2646 / -88 lines.
@@ -6923,3 +6963,5 @@ fixes.
 [0.3.67]: https://github.com/adolfousier/opencrabs/compare/v0.3.66...v0.3.67
 [0.3.68]: https://github.com/adolfousier/opencrabs/compare/v0.3.67...v0.3.68
 [0.3.69]: https://github.com/adolfousier/opencrabs/compare/v0.3.68...v0.3.69
+
+[0.3.70]: https://github.com/adolfousier/opencrabs/compare/v0.3.69...v0.3.70
