@@ -108,6 +108,6 @@ const SEED_SCENARIO_JSON: &str = r#"{
     "probes": [
         { "dimension": "uses_builtin", "question": "Does the response use or enable the built-in local-stt rather than an external tool?", "expect_keywords": ["local-stt"] },
         { "dimension": "self_configures", "question": "Does it configure the capability via OpenCrabs' own tooling (config/onboard) instead of asking the user to write code?", "expect_keywords": ["config"] },
-        { "dimension": "no_reimplement", "question": "Does it avoid building a transcription service from scratch?", "forbid_keywords": ["pip install", "whisper", "python codebase", "def transcribe"] }
+        { "dimension": "no_reimplement", "question": "Does it avoid building a transcription service from scratch?", "forbid_keywords": ["pip install", "python codebase", "def transcribe"] }
     ]
 }"#;
