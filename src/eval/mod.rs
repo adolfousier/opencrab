@@ -11,6 +11,8 @@ pub mod compaction;
 pub mod live;
 pub mod manifest;
 pub mod panel;
+pub mod produce;
 pub mod recall;
 pub mod replay;
+pub mod runner;
 pub mod scorer;

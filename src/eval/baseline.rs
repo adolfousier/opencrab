@@ -49,6 +49,37 @@ impl Baseline {
         }
     }
 
+    /// Capture the mean scores across several runs of the same eval — the
+    /// stable signal to baseline when a live eval is non-deterministic.
+    pub fn from_scorecards_mean(label: impl Into<String>, cards: &[Scorecard]) -> Self {
+        if cards.is_empty() {
+            return Self {
+                label: label.into(),
+                overall: 0.0,
+                dimensions: BTreeMap::new(),
+            };
+        }
+        let n = cards.len() as f64;
+        let overall = cards.iter().map(|c| c.overall()).sum::<f64>() / n;
+        let mut sums: BTreeMap<String, (f64, usize)> = BTreeMap::new();
+        for card in cards {
+            for (dim, score) in &card.per_dimension {
+                let entry = sums.entry(dim.clone()).or_insert((0.0, 0));
+                entry.0 += score.fraction();
+                entry.1 += 1;
+            }
+        }
+        let dimensions = sums
+            .into_iter()
+            .map(|(dim, (sum, count))| (dim, sum / count as f64))
+            .collect();
+        Self {
+            label: label.into(),
+            overall,
+            dimensions,
+        }
+    }
+
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
     }
