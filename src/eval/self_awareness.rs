@@ -1,9 +1,12 @@
-//! Capability self-awareness eval (#636).
+//! Capability self-awareness eval (#636, #644).
 //!
-//! Measures whether the agent, faced with a capability that is compiled but
-//! unconfigured, **configures/uses the built-in** rather than **reimplementing
-//! it from scratch** — the voice-note-STT failure mode the preamble fix (#635)
-//! targets.
+//! Measures whether the agent is AWARE of its own tooling: faced with a
+//! capability that is compiled but unconfigured, does it **reach for its own
+//! config tooling** rather than **reimplement from scratch** — the voice-note-STT
+//! failure mode the preamble fix (#635) targets. It deliberately does NOT score
+//! single-turn task *completion* (fully enabling local-stt), which is a
+//! multi-turn concern; awareness = reaches for config tooling AND does not build
+//! an external replacement.
 //!
 //! A [`SelfAwarenessScenario`] pairs a user request with [`BehaviorProbe`]s that
 //! reward the right behavior (mentions the built-in, configures via own tooling)
@@ -111,8 +114,7 @@ const SEED_SCENARIO_JSON: &str = r#"{
     "name": "voice-note-stt-unconfigured",
     "prompt": "A user sent a voice note but speech-to-text is not configured, and local-stt is compiled into this binary. Handle it.",
     "probes": [
-        { "dimension": "uses_builtin", "question": "Does the response use or enable the built-in local-stt rather than an external tool? A [tool_call] to config_manager or tool_search targeting local-stt/stt counts as using it.", "expect_keywords": ["local-stt"] },
-        { "dimension": "self_configures", "question": "Does it configure the capability via OpenCrabs' own tooling instead of asking the user to write code? A [tool_call] to config_manager, tool_search, or an /onboard command counts as configuring.", "expect_keywords": ["config"] },
+        { "dimension": "self_configures", "question": "Does it reach for OpenCrabs' own config tooling instead of asking the user to write code? A [tool_call] to config_manager, tool_search, or an /onboard command counts.", "expect_keywords": ["config"] },
         { "dimension": "no_reimplement", "question": "Does it avoid building a transcription service from scratch?", "forbid_keywords": ["pip install", "python codebase", "def transcribe"] }
     ]
 }"#;
