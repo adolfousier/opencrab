@@ -69,6 +69,12 @@ pub mod cron;
 pub mod rtk;
 pub mod usage;
 
+/// Offline evaluation harness for context engineering and memory quality.
+/// Compiled only under test or the `eval` feature so it never ships in a
+/// normal release binary.
+#[cfg(any(test, feature = "eval"))]
+pub mod eval;
+
 // Re-export commonly used types
 pub use error::{ErrorCode, OpenCrabsError};
 
