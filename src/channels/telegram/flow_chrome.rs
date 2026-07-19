@@ -164,7 +164,7 @@ impl GoalSection {
     /// Bold section prefix with the Decision 10 icon: `✅` only for a
     /// completed goal on a settled render, `🎯` everywhere else. The `Goal:`
     /// word never changes.
-    fn prefix(&self, settled: bool) -> String {
+    pub(crate) fn prefix(&self, settled: bool) -> String {
         let icon = if self.completed && settled {
             "✅"
         } else {

@@ -248,7 +248,7 @@ pub(crate) async fn resume_session(
                             st.lock().unwrap_or_else(|e| e.into_inner()).sections.plan_kb
                         };
                         super::plan_card::refresh_plan_card(
-                            &bot, chat_id, thread_id, &tg, sid, plan_kb,
+                            &bot, chat_id, thread_id, &tg, &agent, sid, plan_kb,
                         )
                         .await;
 
@@ -591,6 +591,7 @@ pub(crate) async fn resume_session(
         chat_id,
         thread_id,
         &telegram_state,
+        &agent,
         session_id,
         plan_kb,
     )

@@ -700,23 +700,23 @@ fn plan_card_renders_title_and_checklist_or_none() {
     // Editing state; these tests pass None since they cover title/checklist.
     use crate::channels::telegram::plan_card::render_plan_card_html;
 
-    assert_eq!(render_plan_card_html(None, None, None), None);
-    assert_eq!(render_plan_card_html(Some("   "), None, None), None);
+    assert_eq!(render_plan_card_html(None, None, None, None), None);
+    assert_eq!(render_plan_card_html(Some("   "), None, None, None), None);
 
-    let title_only = render_plan_card_html(Some("Audit changes"), None, None).unwrap();
+    let title_only = render_plan_card_html(Some("Audit changes"), None, None, None).unwrap();
     assert!(title_only.contains("📋") && title_only.contains("Audit changes"));
 
     let rows = vec!["☑ Task one".to_string(), "☐ Task two".to_string()];
-    let full = render_plan_card_html(Some("Audit changes"), Some(&rows), None).unwrap();
+    let full = render_plan_card_html(Some("Audit changes"), Some(&rows), None, None).unwrap();
     assert!(full.contains("Audit changes"));
     assert!(full.contains("☑ Task one") && full.contains("☐ Task two"));
 
     // Checklist without a title still renders.
-    let no_title = render_plan_card_html(None, Some(&rows), None).unwrap();
+    let no_title = render_plan_card_html(None, Some(&rows), None, None).unwrap();
     assert!(no_title.contains("☑ Task one"));
 
     // HTML in a title is escaped, not injected.
-    let escaped = render_plan_card_html(Some("a <b> & c"), None, None).unwrap();
+    let escaped = render_plan_card_html(Some("a <b> & c"), None, None, None).unwrap();
     assert!(escaped.contains("&lt;b&gt;") && escaped.contains("&amp;"));
 }
 
@@ -739,7 +739,8 @@ fn plan_card_renders_per_heading_prose() {
         },
     ];
 
-    let with_prose = render_plan_card_html(Some("Design plan"), None, Some(&sections)).unwrap();
+    let with_prose =
+        render_plan_card_html(Some("Design plan"), None, Some(&sections), None).unwrap();
     assert!(with_prose.contains("Design plan"));
     assert!(with_prose.contains("<blockquote expandable><b>Context</b>"));
     assert!(with_prose.contains("<blockquote expandable><b>Implementation steps</b>"));
@@ -749,12 +750,57 @@ fn plan_card_renders_per_heading_prose() {
     // always before the rows.
     let rows = vec!["☑ Task one".to_string()];
     let with_both =
-        render_plan_card_html(Some("Design plan"), Some(&rows), Some(&sections)).unwrap();
+        render_plan_card_html(Some("Design plan"), Some(&rows), Some(&sections), None).unwrap();
     assert!(with_both.contains("Task one"));
     assert!(with_both.contains("<blockquote expandable><b>Context</b>"));
     let prose_pos = with_both.find("Context").unwrap();
     let checklist_pos = with_both.find("Task one").unwrap();
     assert!(prose_pos < checklist_pos);
+}
+
+#[test]
+fn plan_card_renders_goal_after_checklist() {
+    use crate::channels::telegram::flow_chrome::GoalSection;
+    use crate::channels::telegram::plan_card::render_plan_card_html;
+
+    let rows = vec!["☐ Task one".to_string(), "☐ Task two".to_string()];
+
+    // Active goal: 🎯 prefix, own collapsed expandable, after the checklist
+    // (ADR 0005 Decisions 3 + 10).
+    let active = GoalSection {
+        text: "Ship v0.3.68 without regressions".to_string(),
+        completed: false,
+    };
+    let html =
+        render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&active)).unwrap();
+    assert!(html.contains("<blockquote expandable><b>🎯 Goal:</b>"));
+    assert!(html.contains("Ship v0.3.68 without regressions"));
+    let checklist_pos = html.find("Task two").unwrap();
+    let goal_pos = html.find("🎯 Goal:").unwrap();
+    assert!(checklist_pos < goal_pos);
+
+    // Completed goal on the settled card swaps the icon to ✅ (Decision 10).
+    let done = GoalSection {
+        text: "Ship v0.3.68 without regressions".to_string(),
+        completed: true,
+    };
+    let html_done =
+        render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&done)).unwrap();
+    assert!(html_done.contains("<blockquote expandable><b>✅ Goal:</b>"));
+
+    // Goal text is HTML-escaped inside the expandable.
+    let evil = GoalSection {
+        text: "a <b> & c".to_string(),
+        completed: false,
+    };
+    let html_evil =
+        render_plan_card_html(Some("Design plan"), Some(&rows), None, Some(&evil)).unwrap();
+    assert!(html_evil.contains("a &lt;b&gt; &amp; c"));
+    assert!(!html_evil.contains("a <b> & c"));
+
+    // No goal: nothing renders, same as before.
+    let no_goal = render_plan_card_html(Some("Design plan"), Some(&rows), None, None).unwrap();
+    assert!(!no_goal.contains("Goal:"));
 }
 
 #[test]

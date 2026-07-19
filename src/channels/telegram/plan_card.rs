@@ -6,10 +6,12 @@
 
 use super::TelegramState;
 use super::flow_chrome::{
-    PlanKb, ProseSection, load_plan_prose, load_plan_sections, prose_body_lines,
+    GoalSection, PlanKb, ProseSection, load_goal_section, load_plan_prose, load_plan_sections,
+    prose_body_lines,
 };
 use super::handler::escape_html;
 use super::send::message_in_thread;
+use crate::brain::agent::AgentService;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{ParseMode, ThreadId};
@@ -21,12 +23,18 @@ use uuid::Uuid;
 /// the budget are dropped (the full prose is one tap away via /show-plan).
 const CARD_PROSE_BUDGET: usize = 2400;
 
+/// Goal text budget (chars) on one card. The goal renders as a collapsed
+/// expandable (ADR 0005 Decision 12), so the cap only trims the expanded
+/// body, never the visible chrome.
+const GOAL_TEXT_CAP: usize = 600;
+
 /// Render the card body, or `None` when the session has no plan content (no
 /// title and no checklist) — the caller removes the card in that case.
 pub(crate) fn render_plan_card_html(
     title: Option<&str>,
     checklist: Option<&[String]>,
     prose: Option<&[ProseSection]>,
+    goal: Option<&GoalSection>,
 ) -> Option<String> {
     let mut out = String::new();
     if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
@@ -70,6 +78,29 @@ pub(crate) fn render_plan_card_html(
             out.push_str(&escape_html(row));
         }
     }
+    // Goal section last in the locked order (ADR 0005 Decision 3: title,
+    // prose expandables, checklist rows, goal), rendered as its own collapsed
+    // <blockquote expandable> with the Decision 10 prefix — the card is
+    // always a settled render, so a completed goal shows ✅ and an active
+    // one 🎯. A blank line separates it from prose/checklist above, exactly
+    // like FlowSections::chrome_classic.
+    if let Some(g) = goal {
+        let text = g.text.trim();
+        if !text.is_empty() {
+            let has_prose = prose.is_some_and(|p| !p.is_empty());
+            if !out.is_empty() {
+                out.push('\n');
+                if checklist.is_some() || has_prose {
+                    out.push('\n');
+                }
+            }
+            out.push_str(&format!(
+                "<blockquote expandable>{} {}</blockquote>",
+                g.prefix(true),
+                escape_html(crate::utils::truncate_str(text, GOAL_TEXT_CAP))
+            ));
+        }
+    }
     (!out.is_empty()).then_some(out)
 }
 
@@ -80,6 +111,7 @@ pub(crate) async fn refresh_plan_card(
     chat: ChatId,
     thread_id: Option<ThreadId>,
     state: &Arc<TelegramState>,
+    agent: &AgentService,
     session_id: Uuid,
     plan_kb: PlanKb,
 ) {
@@ -88,11 +120,24 @@ pub(crate) async fn refresh_plan_card(
     // sections the flow message renders via chrome_classic (ADR 0005
     // Decision 3), in both Editing and Active states. The card is the
     // single surface carrying title + prose expandables + checklist +
-    // keyboard. The full .md stays accessible via /show-plan.
+    // goal + keyboard. The full .md stays accessible via /show-plan.
     let prose = load_plan_prose(session_id).await;
-    let Some(html) =
-        render_plan_card_html(title.as_deref(), checklist.as_deref(), prose.as_deref())
-    else {
+    // Goal chrome (ADR 0005 Decision 10) rides the card only once the plan
+    // is Active — "never set while the plan is Editing". Covers goals from
+    // /goal, goal_manage, and acceptance criteria auto-pushed on task start.
+    let goal = if checklist.is_some() {
+        load_goal_section(agent, session_id)
+            .await
+            .map(|(text, completed)| GoalSection { text, completed })
+    } else {
+        None
+    };
+    let Some(html) = render_plan_card_html(
+        title.as_deref(),
+        checklist.as_deref(),
+        prose.as_deref(),
+        goal.as_ref(),
+    ) else {
         remove_plan_card(bot, chat, state, session_id).await;
         return;
     };
