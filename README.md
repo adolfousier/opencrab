@@ -3839,6 +3839,34 @@ cargo clippy -- -D warnings
 | `local-stt` | Local speech-to-text via rwhisper (candle-based, pure Rust) |
 | `local-tts` | Local text-to-speech via Piper (requires `python3` + `python3-venv` at runtime) |
 | `profiling` | Enable pprof flamegraph profiling (Unix only) |
+| `eval` | Offline + live evaluation harness (compiled automatically under `cfg(test)`; never in a release binary) |
+
+### Evaluation Harness
+
+OpenCrabs ships an **offline-first evaluation harness** (`src/eval/`) that measures how well it does two things that usually break silently: **context engineering** (does the right context survive compaction?) and **memory** (does recall surface the right things?). The whole module is gated behind `cfg(test)` / the `eval` feature, so it never ships in a release binary.
+
+Scoring uses **BinEval-style decomposition** (arXiv 2506.27226): instead of one holistic grade, each check is a set of atomic yes/no questions answered independently and aggregated into per-dimension and overall scores — more interpretable and lower variance.
+
+**Offline (deterministic, CI-able):**
+
+| Piece | What it checks |
+|-------|----------------|
+| Fixture replay provider | drives the real agent loop from scripted responses — no network |
+| Context manifest | what actually went into a built request (brain files, tool schemas, token split) |
+| Compaction fidelity | whether pending tasks / prefs / file edits / errors survive a summary (keyword survival + judge) |
+| Recall metrics | precision@k, recall@k, MRR, nDCG@k over ranked results |
+| Regression baseline | flags any score that drops beyond tolerance vs a stored baseline |
+| RSI before/after | an improvement is accepted only if it helps the target **and** does not regress a control task |
+
+**Live (on-demand, never in CI):** set a chain of providers and each judges with its own default model —
+
+```toml
+[agent]
+# Ordered chain of provider names; each judge uses that provider's own default_model.
+eval_providers = ["anthropic", "openrouter", "zhipu"]
+```
+
+The chain becomes a **majority-vote judge panel** (variance reduction + cross-model debiasing; a failing provider falls through to the next). A live run produces a real artifact (e.g. an actual compaction summary), the panel grades it, and the run is repeated K times to report mean/variance and baseline drift. Live evals hit real endpoints and cost money, so they run only on demand when `eval_providers` is set — they are never part of the CI gate.
 
 ### Performance
 
