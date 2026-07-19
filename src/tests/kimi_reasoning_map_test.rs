@@ -1,8 +1,25 @@
 //! Tests for Kimi reasoning-control mapping, validated per model (#613).
 
 use crate::brain::provider::kimi_reasoning::{
-    ReasoningError, ReasoningPatch, patch_fields, resolve, resolve_fields,
+    ReasoningError, ReasoningPatch, patch_fields, resolve, resolve_fields, streams_reasoning_inline,
 };
+
+#[test]
+fn coding_endpoint_streams_reasoning_inline() {
+    // Kimi Code endpoint inlines reasoning as content — must be detected.
+    assert!(streams_reasoning_inline(Some(
+        "https://api.kimi.com/coding/v1/chat/completions"
+    )));
+    // Moonshot API endpoint separates reasoning — must NOT match.
+    assert!(!streams_reasoning_inline(Some(
+        "https://api.moonshot.ai/v1/chat/completions"
+    )));
+    // Other providers and hardcoded-endpoint providers never match.
+    assert!(!streams_reasoning_inline(Some(
+        "https://openrouter.ai/api/v1/chat/completions"
+    )));
+    assert!(!streams_reasoning_inline(None));
+}
 
 #[test]
 fn k3_accepts_only_max() {

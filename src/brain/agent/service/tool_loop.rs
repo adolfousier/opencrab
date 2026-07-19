@@ -3639,13 +3639,31 @@ impl AgentService {
                     if !iteration_text.is_empty()
                         && let Some(ref cb) = progress_callback
                     {
-                        cb(
-                            session_id,
+                        // Same Kimi-coding inline-reasoning reroute as the
+                        // pre-tool site (#616): this mid-turn text is reasoning,
+                        // not a chat message, on that endpoint.
+                        let reasoning_inline =
+                            crate::brain::provider::kimi_reasoning::streams_reasoning_inline(
+                                self.provider_for_session(session_id).base_url(),
+                            );
+                        let event = if reasoning_inline {
+                            let combined = match reasoning_text.as_deref() {
+                                Some(r) if !r.trim().is_empty() => {
+                                    format!("{r}\n{iteration_text}")
+                                }
+                                _ => iteration_text.clone(),
+                            };
+                            ProgressEvent::IntermediateText {
+                                text: String::new(),
+                                reasoning: Some(combined),
+                            }
+                        } else {
                             ProgressEvent::IntermediateText {
                                 text: iteration_text,
                                 reasoning: reasoning_text,
-                            },
-                        );
+                            }
+                        };
+                        cb(session_id, event);
                     }
                     // Emit QueuedUserMessage — always here, never in stream_complete
                     if let Some(ref cb) = progress_callback {
@@ -4503,17 +4521,38 @@ impl AgentService {
             if (!iteration_text.is_empty() || has_reasoning_to_persist)
                 && let Some(ref cb) = progress_callback
             {
-                cb(
-                    session_id,
+                // Kimi Code endpoint streams reasoning inline as content with no
+                // reasoning_content field (#616). This is PRE-tool text (the
+                // turn continues), so on that endpoint it is reasoning, not a
+                // chat message — route it to the reasoning channel instead of
+                // relaying it as standalone Telegram walls. The final answer is
+                // emitted on turn completion elsewhere and is untouched.
+                let reasoning_inline =
+                    crate::brain::provider::kimi_reasoning::streams_reasoning_inline(
+                        self.provider_for_session(session_id).base_url(),
+                    );
+                let event = if reasoning_inline && !iteration_text.is_empty() {
+                    let combined = match reasoning_text.as_deref() {
+                        Some(r) if !r.trim().is_empty() => {
+                            format!("{r}\n{iteration_text}")
+                        }
+                        _ => iteration_text.clone(),
+                    };
                     ProgressEvent::IntermediateText {
-                        text: iteration_text,
+                        text: String::new(),
+                        reasoning: Some(combined),
+                    }
+                } else {
+                    ProgressEvent::IntermediateText {
+                        text: iteration_text.clone(),
                         // Clone: reasoning_text is still needed downstream to
                         // seed the assistant message's ContentBlock::Thinking
                         // so follow-up turns (notably kimi/Moonshot) have the
                         // required `reasoning_content` to echo back.
                         reasoning: reasoning_text.clone(),
-                    },
-                );
+                    }
+                };
+                cb(session_id, event);
             }
 
             // Detect tool loops: hash the full input for every tool.

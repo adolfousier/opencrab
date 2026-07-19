@@ -14,6 +14,20 @@
 //! cannot take that value — so a config default can silently skip an
 //! inapplicable value while `/reason` can surface a clear message.
 
+/// True when the endpoint streams its reasoning inline as ordinary `content`
+/// with no `reasoning_content` field and no delimiter tags — so the reasoning
+/// cannot be separated at the stream layer and must be classified structurally.
+///
+/// This is the Kimi Code endpoint (`api.kimi.com/coding/v1`): K3 always thinks
+/// with Preserved Thinking and emits the whole chain as content. The Moonshot
+/// API endpoint (`api.moonshot.ai`) separates reasoning properly and is not
+/// matched here.
+pub fn streams_reasoning_inline(base_url: Option<&str>) -> bool {
+    base_url
+        .map(|u| u.to_ascii_lowercase().contains("kimi.com/coding"))
+        .unwrap_or(false)
+}
+
 /// The concrete change to apply to an outgoing request body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReasoningPatch {
