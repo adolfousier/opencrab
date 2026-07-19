@@ -455,7 +455,7 @@ fn test_supports_model_fetch() {
         ("github", true),
         ("gemini", true),
         ("openrouter", true),
-        ("minimax", false),
+        ("minimax", true), // api.minimax.io/v1/models is live
         ("zhipu", true),
         ("claude-cli", true),
         ("opencode-cli", true),

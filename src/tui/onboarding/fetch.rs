@@ -255,25 +255,57 @@ pub async fn fetch_provider_models(
         ];
     }
 
-    // Handle Minimax specially - no /models API, must use config
+    // MiniMax: fetch models live from {base_url}/models (api.minimax.io/v1
+    // by default), merge with config models. Falls back to the binary's
+    // baseline list when the request fails so the picker is never empty.
     if provider_id == "minimax" {
-        // MiniMax has no `/v1/models` endpoint — the binary's baseline
-        // list is the source of truth for "models we know exist", and
-        // the user's `config.toml` `[providers.minimax].models` is a
-        // CACHED snapshot (possibly stale from an earlier install,
-        // missing newer releases like MiniMax-M3).
-        //
-        // Additive merge: start from the baseline, append any custom
-        // entries the user added that aren't in baseline. This means:
-        //   - users on an old `models = [...]` line still see M3 the
-        //     moment they upgrade (no manual edit needed)
-        //   - users who manually added `MiniMax-Text-01` or a private
-        //     variant keep that entry too — never overwrite their
-        //     additions
-        //   - new releases the binary ships always land at the top of
-        //     the picker so first-highlight points at the current
-        //     model
-        return merge_minimax_baseline(minimax_baseline_models(), user_minimax_models());
+        let base_url = crate::config::Config::load()
+            .ok()
+            .and_then(|c| c.providers.minimax.clone())
+            .and_then(|p| p.base_url)
+            .unwrap_or_else(|| "https://api.minimax.io/v1".to_string());
+        let models_url = format!("{}/models", base_url.trim_end_matches('/'));
+
+        let client = reqwest::Client::new();
+        let mut req = client.get(&models_url);
+        if let Some(key) = api_key
+            && !key.is_empty()
+        {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
+
+        let api_models: Vec<String> = match req.send().await {
+            Ok(resp) if resp.status().is_success() => match resp.json::<ModelsResponse>().await {
+                Ok(body) => {
+                    let mut entries = body.data;
+                    entries.sort_by_key(|e| std::cmp::Reverse(e.created));
+                    entries.into_iter().map(|m| m.id).collect()
+                }
+                Err(e) => {
+                    tracing::warn!("[fetch_provider_models] minimax parse error: {}", e);
+                    Vec::new()
+                }
+            },
+            Ok(resp) => {
+                tracing::warn!(
+                    "[fetch_provider_models] minimax /models HTTP {}",
+                    resp.status()
+                );
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::warn!("[fetch_provider_models] minimax request failed: {}", e);
+                Vec::new()
+            }
+        };
+
+        let user_models = user_minimax_models();
+        if api_models.is_empty() {
+            // Live fetch failed — fall back to the binary baseline so
+            // users on stale configs still see current releases.
+            return merge_minimax_baseline(minimax_baseline_models(), user_models);
+        }
+        return merge_minimax_baseline(api_models, user_models);
     }
 
     // Xiaomi MiMo: fetch models live from /v1/models, merge with config models.
@@ -693,16 +725,20 @@ pub async fn fetch_provider_models(
     }
 }
 
-/// Binary's known MiniMax models. Newest first so the picker
-/// highlights the current model. Update this when MiniMax ships new
-/// releases — the additive merge will reach users on older configs
-/// without them needing to touch `models = [...]` in config.toml.
+/// Binary's known MiniMax models, used as fallback when the live
+/// /models fetch fails. Newest first so the picker highlights the
+/// current model. Live fetch is the primary source — this only
+/// covers offline / unreachable-API scenarios.
 fn minimax_baseline_models() -> Vec<String> {
     vec![
         "MiniMax-M3".to_string(),
         "MiniMax-M2.7".to_string(),
+        "MiniMax-M2.7-highspeed".to_string(),
         "MiniMax-M2.5".to_string(),
+        "MiniMax-M2.5-highspeed".to_string(),
         "MiniMax-M2.1".to_string(),
+        "MiniMax-M2.1-highspeed".to_string(),
+        "MiniMax-M2".to_string(),
     ]
 }
 

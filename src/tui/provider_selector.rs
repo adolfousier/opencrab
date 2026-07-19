@@ -159,6 +159,7 @@ impl ProviderSelectorState {
                 | "xiaomi"
                 | "zhipu"
                 | "moonshot"
+                | "minimax"
                 | "opencode-cli"
                 | "codex-cli"
                 | "command-code-cli"
