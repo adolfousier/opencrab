@@ -345,6 +345,7 @@ pub mod tts_fallback_chain_test;
 pub mod voice_openai_compatible_test;
 pub mod voice_voicebox_test;
 //pub mod streaming_test;
+pub mod eval_manifest_test;
 pub mod eval_replay_provider_test;
 pub mod kimi_plan_test;
 pub mod kimi_reasoning_map_test;
