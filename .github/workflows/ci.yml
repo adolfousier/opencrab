@@ -10,8 +10,8 @@ name: CI
 #     (see its `if:`) so a normal commit only pays for lint + Linux test
 #     + audit (~5-8 min, cached, cancellable). This replaces the old
 #     opt-out `[skip ci]`-on-every-commit toil with sensible defaults.
-#   - workflow_dispatch: run the full matrix on demand (e.g. to verify
-#     Windows/macOS before cutting a release tag).
+#   - workflow_dispatch: run the build matrix on demand (e.g. to verify
+#     macOS before cutting a release tag; Windows is validated by release.yml).
 # CI deliberately does NOT run on tags — the release workflow owns tags
 # and trusts the commit already passed CI on its way to main. That also
 # kills the old double-build where ci.yml and release.yml both compiled
@@ -75,21 +75,26 @@ jobs:
         run: cargo clippy --locked --lib --bins --tests --all-features -- -D warnings
 
   # ── Stage 2: Build verification (parallel, gated on lint + audit) ────────
-  # Cross-platform BUILD on Windows + macOS confirms target compatibility
-  # without running tests there (tests run on Linux only — see `test`
-  # below). Why: Windows runners are 3-5x slower than Linux for cargo,
-  # and most of our test surface is platform-independent. ZeroClaw uses
-  # the same pattern. If a Windows/macOS-specific test ever regresses
-  # we can promote it via the matrix.
+  # Cross-platform BUILD on macOS confirms target compatibility without
+  # running tests there (tests run on Linux only — see `test` below).
+  # Windows is not built here (#627) — it chronically hit the 40m cap and
+  # release.yml already validates it at tag time. Most of our test surface
+  # is platform-independent; if a macOS-specific test ever regresses we can
+  # promote it via the matrix.
   build:
     name: Build (${{ matrix.target }})
     needs: [lint, audit]
-    # Cross-platform build verification is the expensive job (Windows is
-    # 3-5x slower). Run it where it pays off — on PRs (gate contributions)
-    # and on-demand (workflow_dispatch, e.g. before a release tag) — but
-    # NOT on every routine push to main. Direct main pushes still get
-    # lint + Linux test + audit. Any platform regression that slips
-    # through is caught by release.yml's build-release matrix at tag time.
+    # Cross-platform build verification. Runs where it pays off — on PRs
+    # (gate contributions) and on-demand (workflow_dispatch, e.g. before a
+    # release tag) — but NOT on every routine push to main. Direct main
+    # pushes still get lint + Linux test + audit.
+    #
+    # Windows is intentionally NOT built here (#627): it builds --all-features
+    # with rust-cache skipped (always cold), so it chronically hit the 40m cap
+    # and blocked otherwise-green PRs. It is build-only (no tests) and
+    # release.yml's build-release matrix already builds + validates Windows
+    # before any tag is published, so a platform regression cannot reach a
+    # release unnoticed.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -97,13 +102,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            # release.yml uses --all-features on Windows too (line 147),
-            # so the local-stt/local-tts crate chain DOES build on
-            # windows-msvc. Mirror that here to catch any platform
-            # regression before release time.
-            features: --all-features
           - os: macos-latest
             target: aarch64-apple-darwin
             features: --all-features
@@ -116,37 +114,19 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      # rust-cache deliberately skipped on Windows — ZeroClaw confirmed
-      # the cache rarely pays off there and sometimes flakes the runner.
       - uses: swatinem/rust-cache@v2
-        if: runner.os != 'Windows'
         with:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install CMake (Windows)
-        if: runner.os == 'Windows'
-        uses: lukka/get-cmake@latest
-
-      - name: Install NASM (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/setup-nasm@v1
-
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        env:
-          AWS_LC_SYS_CMAKE_BUILDER: "1"
-        run: cargo build --locked --profile ci --target ${{ matrix.target }} ${{ matrix.features }}
-
       - name: Build (macOS)
-        if: runner.os == 'macOS'
         env:
           CFLAGS: -march=armv8-a+crypto
           CXXFLAGS: -march=armv8-a+crypto
         run: cargo build --locked --profile ci --target ${{ matrix.target }} ${{ matrix.features }}
 
   # ── Stage 3: Test on Linux (gated on lint + audit, parallel with build) ──
-  # Tests run on Linux only — Windows/macOS get build verification via
+  # Tests run on Linux only — macOS gets build verification via
   # the `build` job above. ZeroClaw uses the same split because the
   # cross-platform matrix triples wall-clock for little extra coverage
   # on this codebase (most tests are platform-independent).
