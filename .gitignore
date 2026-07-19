@@ -83,6 +83,5 @@ src/plans/
 *.backup
 commands.md
 cc-research.md
-examples/
 # modum linter local baseline (regenerable; not used by CI)
 .modum-baseline.json
