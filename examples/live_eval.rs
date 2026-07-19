@@ -100,14 +100,29 @@ async fn main() {
     for i in 0..K {
         let response =
             produce_response(producer.as_ref(), &producer_model, &sc.prompt, sys, &tools).await;
+        let kw_card = sc.keyword_scorecard(&response);
         let (k, p) = (
-            sc.keyword_scorecard(&response).overall(),
+            kw_card.overall(),
             sc.judge_scorecard(&panel, &response).await.overall(),
         );
         println!(
             "  run {i}: {} chars  keyword={k:.2}  panel={p:.2}",
             response.len()
         );
+        if i == 0 {
+            println!(
+                "    run0 head: {}",
+                &response[..response.len().min(280)].replace('\n', " ")
+            );
+            for (q, v) in &kw_card.results {
+                println!(
+                    "      keyword [{}] {} — {}",
+                    if v.yes { "PASS" } else { "FAIL" },
+                    q.dimension,
+                    v.explanation.as_deref().unwrap_or("")
+                );
+            }
+        }
         if p <= CATASTROPHIC {
             save_outlier(&outlier_path, &sc.name, i, p, &response);
         }
