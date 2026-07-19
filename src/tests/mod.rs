@@ -356,6 +356,7 @@ pub mod eval_recall_test;
 pub mod eval_replay_provider_test;
 pub mod eval_runner_test;
 pub mod eval_scorer_test;
+pub mod eval_self_awareness_test;
 pub mod kimi_plan_test;
 pub mod kimi_reasoning_map_test;
 pub mod merge_provider_keys_test;

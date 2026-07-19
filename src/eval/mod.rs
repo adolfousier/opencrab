@@ -16,3 +16,4 @@ pub mod recall;
 pub mod replay;
 pub mod runner;
 pub mod scorer;
+pub mod self_awareness;
