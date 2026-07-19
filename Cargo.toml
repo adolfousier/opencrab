@@ -197,6 +197,9 @@ default = ["telegram", "whatsapp", "discord", "slack", "trello", "local-stt", "l
 profiling = []
 # RTK (Rust Token Killer) integration - filters bash command outputs to save 60-90% tokens
 rtk = []
+# Offline evaluation harness (context engineering + memory evals). Compiled
+# under `cfg(test)` automatically; enable this feature for a standalone eval run.
+eval = []
 telegram = ["teloxide"]
 trello = []
 whatsapp = ["whatsapp-rust", "whatsapp-rust-tokio-transport", "whatsapp-rust-ureq-http-client", "wacore", "wacore-binary", "waproto", "dep:qrcode", "dep:rmp-serde"]
