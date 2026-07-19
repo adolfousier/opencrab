@@ -5,7 +5,10 @@
 //! exercised reproducibly, with no network, clock, or randomness. This is the
 //! foundation the context and memory evals build on (umbrella issue #618).
 
+pub mod baseline;
+pub mod before_after;
 pub mod compaction;
 pub mod manifest;
+pub mod recall;
 pub mod replay;
 pub mod scorer;
