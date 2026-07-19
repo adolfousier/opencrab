@@ -12,7 +12,7 @@
 //! self-contained here so the production compaction path is untouched; sharing
 //! the exact prompt is a possible later refinement.
 
-use crate::brain::provider::{ContentBlock, LLMRequest, Message, Provider};
+use crate::brain::provider::{ContentBlock, LLMRequest, Message, Provider, Tool};
 
 use super::compaction::CompactionDataset;
 use super::scorer::{Judge, Scorecard};
@@ -29,6 +29,48 @@ pub const CONTINUATION_INSTRUCTION: &str = "The conversation must be compacted n
      ## Pending tasks — everything not yet done.\n\
      Preserve exact identifiers (file paths, error codes, commands) verbatim.";
 
+/// A representative tool set for behavioral evals — the config tooling a
+/// self-aware agent should reach for (config_manager, tool_search,
+/// load_brain_file) plus the generic tools a reimplementing agent would misuse
+/// (bash, write_file). Descriptions mirror the real tools so the model behaves
+/// as it would at runtime. Not the full registry — just enough to discriminate
+/// "configure the built-in" from "build a replacement".
+pub fn eval_tool_set() -> Vec<Tool> {
+    let tool = |name: &str, description: &str, schema: serde_json::Value| Tool {
+        name: name.to_string(),
+        description: description.to_string(),
+        input_schema: schema,
+    };
+    vec![
+        tool(
+            "config_manager",
+            "Read or write OpenCrabs configuration (config.toml): enable and configure providers, \
+             compiled features, channels, STT/TTS, and models.",
+            serde_json::json!({"type":"object","properties":{"operation":{"type":"string"},"section":{"type":"string"},"key":{"type":"string"},"value":{"type":"string"}}}),
+        ),
+        tool(
+            "tool_search",
+            "Discover available tools by task description; returns matching tool schemas to activate.",
+            serde_json::json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
+        ),
+        tool(
+            "load_brain_file",
+            "Load an OpenCrabs brain file (TOOLS.md, CODE.md, SECURITY.md, ...) for guidance.",
+            serde_json::json!({"type":"object","properties":{"name":{"type":"string"}}}),
+        ),
+        tool(
+            "bash",
+            "Run a shell command.",
+            serde_json::json!({"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}),
+        ),
+        tool(
+            "write_file",
+            "Create a new file with the given content.",
+            serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}}}),
+        ),
+    ]
+}
+
 /// Extract the concatenated text of a provider response.
 fn response_text(blocks: &[ContentBlock]) -> String {
     blocks
@@ -41,22 +83,49 @@ fn response_text(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
-/// Send a single user prompt to a live provider and return its text. When
-/// `system` is set (e.g. the real OpenCrabs system brain), it is attached so
-/// the model answers with its actual runtime context, not a bare prompt. A
+/// Render a response for grading, including any TOOL CALLS the model made. A
+/// tool-calling agent takes action by calling tools, not narrating — so the
+/// grader must see the calls (e.g. `[tool_call] config_manager {…}`), or a
+/// correct "call config_manager to enable local-stt" looks like an empty stub.
+fn render_response(blocks: &[ContentBlock]) -> String {
+    let mut out = String::new();
+    for b in blocks {
+        match b {
+            ContentBlock::Text { text } if !text.trim().is_empty() => {
+                out.push_str(text);
+                out.push('\n');
+            }
+            ContentBlock::ToolUse { name, input, .. } => {
+                out.push_str(&format!("[tool_call] {name} {input}\n"));
+            }
+            _ => {}
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Send a single user prompt to a live provider and return its rendered
+/// response (text + any tool calls). When `tools` is non-empty the model may
+/// call them — the whole point for a tool-calling agent — and the calls are
+/// folded into the returned string so the grader sees the action taken. When
+/// `system` is set (e.g. the real OpenCrabs system brain) it is attached. A
 /// provider error returns a marked failure string, never a silent empty.
 pub async fn produce_response(
     provider: &dyn Provider,
     model: &str,
     prompt: &str,
     system: Option<&str>,
+    tools: &[Tool],
 ) -> String {
     let mut request = LLMRequest::new(model.to_string(), vec![Message::user(prompt.to_string())]);
     if let Some(sys) = system {
         request = request.with_system(sys);
     }
+    if !tools.is_empty() {
+        request = request.with_tools(tools.to_vec());
+    }
     match provider.complete(request).await {
-        Ok(resp) => response_text(&resp.content),
+        Ok(resp) => render_response(&resp.content),
         Err(e) => format!("[produce failed: {e}]"),
     }
 }

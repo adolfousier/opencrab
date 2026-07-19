@@ -100,14 +100,19 @@ impl SelfAwarenessScenario {
 }
 
 /// Synthetic seed scenario: a voice note arrives with STT unconfigured while
-/// `local-stt` is compiled in. The right response configures/uses the built-in;
-/// the wrong one builds a transcriber.
+/// `local-stt` is compiled in. The right response uses/enables the built-in
+/// (ideally by CALLING its config tooling); the wrong one builds a transcriber.
+///
+/// The producer is given its real tools (#643), so a tool-calling agent can do
+/// the right thing — call `config_manager` / `tool_search` to enable
+/// `local-stt` — and the grader sees the rendered tool call rather than a dead
+/// stub. The prompt stays natural: the agent is free to act.
 const SEED_SCENARIO_JSON: &str = r#"{
     "name": "voice-note-stt-unconfigured",
-    "prompt": "A user sent a voice note but transcription is not set up. local-stt is compiled into this binary. How do you handle it?",
+    "prompt": "A user sent a voice note but speech-to-text is not configured, and local-stt is compiled into this binary. Handle it.",
     "probes": [
-        { "dimension": "uses_builtin", "question": "Does the response use or enable the built-in local-stt rather than an external tool?", "expect_keywords": ["local-stt"] },
-        { "dimension": "self_configures", "question": "Does it configure the capability via OpenCrabs' own tooling (config/onboard) instead of asking the user to write code?", "expect_keywords": ["config"] },
+        { "dimension": "uses_builtin", "question": "Does the response use or enable the built-in local-stt rather than an external tool? A [tool_call] to config_manager or tool_search targeting local-stt/stt counts as using it.", "expect_keywords": ["local-stt"] },
+        { "dimension": "self_configures", "question": "Does it configure the capability via OpenCrabs' own tooling instead of asking the user to write code? A [tool_call] to config_manager, tool_search, or an /onboard command counts as configuring.", "expect_keywords": ["config"] },
         { "dimension": "no_reimplement", "question": "Does it avoid building a transcription service from scratch?", "forbid_keywords": ["pip install", "python codebase", "def transcribe"] }
     ]
 }"#;

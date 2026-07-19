@@ -14,7 +14,7 @@ use opencrabs::config::Config;
 use opencrabs::eval::compaction::CompactionDataset;
 use opencrabs::eval::live::resolve_eval_providers;
 use opencrabs::eval::panel::panel_from_providers;
-use opencrabs::eval::produce::{produce_compaction_summary, produce_response};
+use opencrabs::eval::produce::{eval_tool_set, produce_compaction_summary, produce_response};
 use opencrabs::eval::runner::VarianceReport;
 use opencrabs::eval::self_awareness::SelfAwarenessScenario;
 
@@ -92,10 +92,14 @@ async fn main() {
 
     // 2. Capability self-awareness — produced UNDER the real system brain.
     let sc = SelfAwarenessScenario::seed();
+    // Give the producer its real tools so it can DO the right thing — call
+    // config_manager / tool_search to enable local-stt — instead of narrating.
+    let tools = eval_tool_set();
     println!("\n== Capability self-awareness ({}), {K} runs ==", sc.name);
     let (mut kw, mut pn) = (Vec::new(), Vec::new());
     for i in 0..K {
-        let response = produce_response(producer.as_ref(), &producer_model, &sc.prompt, sys).await;
+        let response =
+            produce_response(producer.as_ref(), &producer_model, &sc.prompt, sys, &tools).await;
         let (k, p) = (
             sc.keyword_scorecard(&response).overall(),
             sc.judge_scorecard(&panel, &response).await.overall(),
