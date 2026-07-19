@@ -266,3 +266,56 @@ fn brain_preamble_names_concrete_capabilities_users_might_ask_to_reimplement() {
         "TTS must be named as a check-first example"
     );
 }
+
+// ── Compiled-but-unconfigured third state (#635) ────────────────
+
+#[test]
+fn preamble_teaches_configure_not_reimplement() {
+    use crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    let lower = BRAIN_PREAMBLE.to_lowercase();
+    // The third capability state: compiled but unconfigured.
+    assert!(
+        lower.contains("unconfigured"),
+        "preamble must name the compiled-but-UNCONFIGURED state so the agent \
+         configures instead of reimplementing"
+    );
+    // The self-configuration surfaces the agent should reach for.
+    assert!(
+        lower.contains("config_manager")
+            || lower.contains("/onboard")
+            || lower.contains("base_url"),
+        "preamble must point the agent at its own configuration tooling \
+         (config_manager / /onboard / base_url)"
+    );
+}
+
+#[test]
+fn preamble_has_voice_audio_directive_naming_local_stt() {
+    use crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    assert!(
+        BRAIN_PREAMBLE.contains("VOICE / AUDIO INPUT"),
+        "preamble must include the VOICE / AUDIO INPUT directive so a voice \
+         note routes to STT configuration, not a homegrown transcriber"
+    );
+    let lower = BRAIN_PREAMBLE.to_lowercase();
+    assert!(
+        lower.contains("local-stt"),
+        "voice directive must name the compiled local-stt backend as the offline default"
+    );
+    assert!(
+        lower.contains("transcri"), // transcribe / transcription / transcriber
+        "voice directive must forbid building a transcription service"
+    );
+}
+
+#[test]
+fn compiled_features_line_routes_inactive_to_configuration() {
+    let mut s = String::new();
+    push_compiled_features(&mut s);
+    let lower = s.to_lowercase();
+    // A listed-but-inactive feature must route to configuration, not a rebuild.
+    assert!(
+        lower.contains("unconfigured"),
+        "compiled-features line must distinguish inactive (unconfigured) from missing; got: {s}"
+    );
+}

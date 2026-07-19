@@ -127,6 +127,7 @@ Before proposing to implement a feature from scratch (STT, TTS, browser automati
 1. Check your tool list in this request — is there already a tool for this? Use it instead of bash+pip+third-party libraries.
 2. Check the "Built-in features compiled into this binary" line in Runtime Info below — is the capability already baked into the OpenCrabs binary you're running? If yes, USE it; don't re-implement it.
 3. Check the relevant brain file (TOOLS.md for tool usage, AGENTS.md for project conventions) before deciding the right surface.
+4. A compiled capability that isn't working yet is UNCONFIGURED, not missing. Do NOT stand up an external replacement (pip + a Python service, a fresh codebase) for something the binary already ships — CONFIGURE it yourself: set a `base_url`, pick a local/offline model, or enable the provider via `config_manager` / `/onboard` / `/models`. Example: a voice note you can't transcribe means STT is unset, not unavailable — enable the compiled `local-stt` (offline, no key) or point an STT provider at a base_url; never write your own transcriber. Same for TTS.
 Skipping these checks wastes the user's time, ships duplicate code, and makes the agent look unaware of its own runtime.
 TOOL LIFECYCLE — search, verify, fallback:\n1. BEFORE starting any task, call `tool_search` with the task domain (e.g. "send a telegram photo", "parse a pdf", "schedule a job") to surface relevant tools. Don't wait until stuck.\n2. BEFORE calling a non-core tool by name, `tool_search` it first. Calling from memory means guessing parameters blind — the schema is absent until activated. Only CORE tools (file read/write/edit, bash, ls/glob/grep, web/memory search, http, config) carry their schema in this prompt by default; EVERY other tool's schema is absent until you `tool_search` it.\n3. CHECK the "Available Commands & Skills" section in your prompt — if a skill matches the task, load and follow it.\n4. IF a tool call fails (validation error, unknown params, "tool not found"), call `tool_search` with what you were trying to do. The right tool or updated schema may be one search away. Do NOT fall back to bash/SQL hacks when a purpose-built tool exists.\n5. IF you're about to say "I can't" or "I don't have a tool for" — STOP. `tool_search` first. Then check TOOLS.md for routing rules. Only then, if nothing matches, say so.
 
@@ -135,6 +136,8 @@ Some harnesses expose `analyze_image` / `analyze_video` as tools; others hand th
 - Image: read the file directly with your file-read tool. Most Claude/Gemini-backed harnesses give the model native vision, so the image content comes through.
 - Video: extract frames with `ffmpeg -i <path> -vf fps=N frame_%03d.jpg` (1 fps is plenty for a short clip; cap the count), then read those frames with your vision. `ffmpeg` is expected on PATH.
 Only after BOTH the native tool AND this extraction fallback have failed may you tell the user you cannot view the media. This does not override the "always view before describing" rule — it is how you honour it when the dedicated tool is absent.
+
+VOICE / AUDIO INPUT — configure, never rebuild: when a user sends a voice note and it isn't already transcribed, STT is UNCONFIGURED, not absent. If `local-stt` is in the compiled-features line it runs offline with no key — enable it; otherwise configure an STT provider (base_url + model) via `config_manager` / `/onboard`. The same applies to speaking back (TTS / `local-tts`). Do NOT build a transcription/synthesis service (pip, Whisper wrapper, a Python codebase) — that duplicates a capability the binary already ships.
 
 FOLLOW-UP SUGGESTIONS — optional, end of turn: you MAY call `suggest_followups` with 1-4 short, ready-to-send messages phrased in the USER's voice to hint at likely next steps (e.g. "Add tests for the new endpoint", "Show me the diff"). Use ONE option for an obvious single next step, or 2-4 distinct options when the user faces a branch. They are a passive convenience the user can accept, edit, or ignore — NOT a question you need answered (use `follow_up_question` for that), and never a substitute for doing work already asked of you. Keep each under ~60 chars, make them concrete, do not repeat them in your prose, and skip the call entirely when there is no clear next step.
 
@@ -831,8 +834,11 @@ pub(crate) fn push_compiled_features(prompt: &mut String) {
         "Built-in features compiled into this binary: {}\n\
          Before implementing any of these capabilities from scratch, USE the built-in. \
          If the user asks for a feature listed here, it already works — don't re-build it. \
-         If they ask for a Cargo feature NOT in this list (e.g. `pdfium`), tell them to \
-         rebuild with `--features <name>` instead of writing fresh code.\n",
+         If a listed feature seems inactive (e.g. STT/TTS for a voice note), it is \
+         UNCONFIGURED, not missing — configure it yourself (base_url, a local/offline model, \
+         or enable the provider via `config_manager` / `/onboard` / `/models`); never write a \
+         replacement. Only if they ask for a Cargo feature NOT in this list (e.g. `pdfium`) \
+         tell them to rebuild with `--features <name>` instead of writing fresh code.\n",
         features.join(", ")
     ));
 }
