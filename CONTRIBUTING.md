@@ -193,16 +193,38 @@ If you find an existing inline `#[cfg(test)] mod tests` while working on a file,
 
 ```
 src/
-├── brain/           # AI agent core
-│   ├── agent/       # Agent orchestration, tool loop, context management
-│   ├── provider/    # LLM provider implementations (Anthropic, OpenAI, etc.)
-│   └── tools/       # Built-in tools (bash, edit, browser, etc.)
-├── channels/        # Communication channels (Telegram, Discord, Slack, WhatsApp)
-├── config/          # Configuration management
-├── database/        # SQLite database layer
-├── memory/          # Long-term memory (FTS5 + vector search)
-├── tui/             # Terminal UI (ratatui)
-└── utils/           # Shared utilities
+├── main.rs              # Binary entry point
+├── lib.rs               # Crate root
+├── app/                 # Application lifecycle / startup
+├── brain/               # AI agent core
+│   ├── agent/           # Agent orchestration, tool loop, context management
+│   ├── provider/        # LLM providers (Anthropic, OpenAI-compatible, Copilot, custom)
+│   ├── tools/           # Built-in tools (bash, edit, browser, memory_search, etc.)
+│   ├── goal/            # Autonomous goal-completion loop
+│   └── mission_control/ # Data services behind the Mission Control TUI panels
+├── channels/            # Messaging + voice (Telegram, WhatsApp, Discord, Slack, Trello, voice)
+├── a2a/                 # Agent-to-Agent protocol (agent card, JSON-RPC task API, HTTP gateway)
+├── cli/                 # Command-line interface (Clap)
+├── config/              # Configuration (config.toml + keys.toml)
+├── cron/                # Cron scheduler — polls cron_jobs and runs due jobs
+├── db/                  # SQLite database layer (SQLx)
+├── error/               # Error types (OpenCrabsError, ErrorCode)
+├── eval/                # Offline evaluation harness (context/memory quality; feature-gated)
+├── logging/             # Conditional logging system
+├── memory/              # Long-term memory (FTS5 + vector search via qmd)
+├── migrations/          # SQLite migrations
+├── rtk/                 # Rust Token Killer — compresses bash output to save context tokens
+├── services/            # Business logic (Session, Message, File, Plan)
+├── tui/                 # Terminal UI (ratatui)
+├── usage/               # Usage analytics dashboard
+├── utils/               # Shared utilities
+├── tests/               # All tests, one *_test.rs per module (see TESTING.md)
+├── benches/             # Criterion benchmarks
+├── assets/              # Icons, screenshots, visual assets
+├── scripts/             # Build and setup scripts
+├── docker/              # Dockerfile + compose.yml
+├── evals/               # Eval datasets / fixtures
+└── docs/                # Documentation templates + reference/ architecture docs
 ```
 
 ## Coding Standards

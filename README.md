@@ -3758,6 +3758,8 @@ opencrabs/
 │   │   ├── agent/        # Agent service + context management
 │   │   ├── provider/     # Provider implementations (Anthropic, GitHub Copilot, OpenAI-Compatible: OpenRouter, Minimax, z.ai GLM, Custom)
 │   │   ├── tools/        # Tool system (read, write, bash, glob, grep, memory_search, etc.)
+│   │   ├── goal/         # Autonomous goal-completion loop
+│   │   ├── mission_control/ # Data services behind the Mission Control TUI panels
 │   │   ├── tokenizer.rs  # Token counting (tiktoken-based)
 │   │   ├── prompt_builder.rs  # BrainLoader — assembles system brain from workspace files
 │   │   ├── commands.rs   # CommandLoader — user-defined slash commands (TOML)
@@ -3770,9 +3772,13 @@ opencrabs/
 │   │   ├── slack/        # Slack bot via Socket Mode (agent, handler)
 │   │   ├── trello/       # Trello board poller (agent, client, handler, models)
 │   │   └── voice/        # STT (Groq Whisper / whisper.cpp) + TTS (OpenAI / Piper)
+│   ├── a2a/              # Agent-to-Agent protocol (agent card, JSON-RPC task API, HTTP gateway)
 │   ├── cli/              # Command-line interface (Clap)
 │   ├── config/           # Configuration (config.toml + keys.toml)
 │   ├── db/               # Database layer (SQLx + SQLite)
+│   ├── cron/             # Cron scheduler — polls cron_jobs and runs due jobs
+│   ├── rtk/              # Rust Token Killer — compresses bash output to save context tokens
+│   ├── eval/             # Offline evaluation harness (context/memory quality; feature-gated)
 │   ├── services/         # Business logic (Session, Message, File, Plan)
 │   ├── memory/           # Memory search (FTS5 + vector embeddings via qmd)
 │   ├── tui/              # Terminal UI (Ratatui)
@@ -3782,14 +3788,17 @@ opencrabs/
 │   │   ├── app.rs        # App state + event handling
 │   │   ├── render.rs     # Main render dispatch
 │   │   └── runner.rs     # TUI event loop
+│   ├── usage/            # Usage analytics dashboard
 │   ├── utils/            # Utilities (retry, etc.)
 │   ├── migrations/       # SQLite migrations
-│   ├── tests/            # 5,071 tests (see TESTING.md)
+│   ├── tests/            # Tests, one *_test.rs per module (see TESTING.md)
 │   ├── benches/          # Criterion benchmarks
 │   ├── assets/           # Icons, screenshots, visual assets
 │   ├── scripts/          # Build and setup scripts
+│   ├── docker/           # Dockerfile + compose.yml
+│   ├── evals/            # Eval datasets / fixtures
 │   └── docs/             # Documentation templates
-    └── reference/        # Architecture docs, provider guide, brain constitution
+│       └── reference/    # Architecture docs, provider guide, brain constitution
 ├── Cargo.toml
 ├── config.toml.example
 ├── keys.toml.example
