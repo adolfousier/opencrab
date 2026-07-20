@@ -480,33 +480,23 @@ impl TelegramState {
             .remove(&session_id);
     }
 
-    /// Store a cancel token for a session (before starting agent call).
-    /// If a token already exists for this session, cancel it first to abort the
-    /// previous in-flight agent call — this prevents concurrent agent calls from
-    /// piling up on the same session and becoming uncancellable.
+    /// Store a cancel token for a session (before starting an agent call).
+    ///
+    /// Overwrites any prior token WITHOUT cancelling it (#652). The old code
+    /// cancelled the previous token here "to prevent concurrent calls piling
+    /// up", but that predates the atomic `try_begin_turn` gate (#501) which is
+    /// now the single source of truth for one-turn-per-session. With that gate
+    /// in place the cancel here is redundant and harmful: a near-simultaneous
+    /// resend that reached this point would hard-cancel the user's genuinely
+    /// in-flight turn, dropping the running request instead of queuing it
+    /// (`is_turn_active` couldn't tell an old live turn apart from the new
+    /// turn's own just-set guard, so it "cancelled in-flight" on routine
+    /// resends). A completed turn leaves a stale, non-cancelled token
+    /// (`remove_cancel_token` only reaps cancelled ones); overwriting it is
+    /// enough. Genuine cancellation (/stop, provider swap) goes through
+    /// `cancel_session`, not here.
     pub async fn store_cancel_token(&self, session_id: Uuid, token: CancellationToken) {
-        let mut tokens = self.cancel_tokens.lock().await;
-        if let Some(old) = tokens.remove(&session_id) {
-            // A completed turn's token stays in the map (remove_cancel_token
-            // keeps non-cancelled tokens), so most entries found here are
-            // stale leftovers of turns that finished normally. Only a turn
-            // that is still ACTIVE is a genuine mid-flight kill worth a
-            // warning (#439: the stale-token warn made a routine next
-            // message look like the running task had been cancelled).
-            if self.is_turn_active(session_id) {
-                tracing::warn!(
-                    "Telegram: cancelling previous in-flight agent call for session {}",
-                    session_id
-                );
-            } else {
-                tracing::debug!(
-                    "Telegram: clearing stale cancel token of a completed turn for session {}",
-                    session_id
-                );
-            }
-            old.cancel();
-        }
-        tokens.insert(session_id, token);
+        self.cancel_tokens.lock().await.insert(session_id, token);
     }
 
     /// Cancel and remove the token for a session. Returns true if a token existed.

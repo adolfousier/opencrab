@@ -195,6 +195,8 @@ pub mod services_project_test;
 pub mod services_session_test;
 pub mod systemd_unit_test;
 #[cfg(feature = "telegram")]
+pub mod telegram_cancel_token_no_drop_test;
+#[cfg(feature = "telegram")]
 pub mod telegram_md_to_html_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_mentions_other_bot_test;
