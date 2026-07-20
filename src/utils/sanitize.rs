@@ -733,6 +733,47 @@ pub fn redact_secrets(text: &str) -> String {
 ///   response.
 ///
 /// Use this on any text sent to Telegram, HTTP webhooks, or other external channels.
+/// Move persisted `<!-- reasoning -->…<!-- /reasoning -->` blocks out of a
+/// stored assistant body. Returns the body with those spans removed and the
+/// concatenated reasoning text (`None` when there was none).
+///
+/// `preserve_thinking` models (Qwen Model Studio / DashScope, Moonshot kimi)
+/// require the reasoning returned as the separate `reasoning_content` field and
+/// reject it inside `content` (#654). [`strip_llm_artifacts`] only removes the
+/// marker tags via `strip_html_comments`, so the reasoning text otherwise
+/// survives as plain content on reload — feeding the model its own reasoning as
+/// content and making it spill fresh chain-of-thought into the answer. Hoisting
+/// it into the message `thinking` column lets `from_db_messages` rehydrate it as
+/// a leading `ContentBlock::Thinking`.
+pub fn hoist_reasoning_blocks(content: &str) -> (String, Option<String>) {
+    static REASONING_BLOCK_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?s)<!-- reasoning -->(.*?)<!-- /reasoning -->").unwrap());
+    static MULTI_BLANK: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
+
+    if !content.contains("<!-- reasoning -->") {
+        return (content.to_string(), None);
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    for cap in REASONING_BLOCK_RE.captures_iter(content) {
+        if let Some(inner) = cap.get(1) {
+            let trimmed = inner.as_str().trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+        }
+    }
+
+    let cleaned = REASONING_BLOCK_RE.replace_all(content, "");
+    let cleaned = MULTI_BLANK.replace_all(cleaned.trim(), "\n\n").to_string();
+    let reasoning = if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    };
+    (cleaned, reasoning)
+}
+
 pub fn strip_llm_artifacts(text: &str) -> String {
     use crate::brain::agent::service::AgentService;
 

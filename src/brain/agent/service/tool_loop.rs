@@ -679,7 +679,35 @@ impl AgentService {
         // CLI providers MUST keep markers — their DB content drives session
         // resume/replay and the CLI subprocess never sees this content.
         if !is_cli_provider {
+            // preserve_thinking models (Qwen Model Studio / DashScope, Moonshot
+            // kimi) require reasoning returned as the separate `reasoning_content`
+            // field and reject it inside `content` (#654). `strip_llm_artifacts`
+            // removes only the marker tags, leaving the reasoning text in content
+            // and feeding it back as content — which makes the model spill fresh
+            // chain-of-thought into its answer. For those models, hoist the
+            // reasoning into the in-memory `thinking` column first so
+            // `from_db_messages` rehydrates it as a leading `ContentBlock::Thinking`
+            // and the encoder emits it as `reasoning_content` instead.
+            let preserve_thinking =
+                crate::brain::provider::custom_openai_compatible::preserves_thinking(
+                    self.provider_for_session(session_id).base_url(),
+                    &model_name,
+                );
             for msg in db_messages.iter_mut() {
+                if preserve_thinking && msg.role == "assistant" {
+                    let (cleaned, reasoning) =
+                        crate::utils::sanitize::hoist_reasoning_blocks(&msg.content);
+                    if let Some(reasoning) = reasoning {
+                        msg.content = cleaned;
+                        match msg.thinking.as_mut() {
+                            Some(existing) if !existing.trim().is_empty() => {
+                                existing.push_str("\n\n");
+                                existing.push_str(&reasoning);
+                            }
+                            _ => msg.thinking = Some(reasoning),
+                        }
+                    }
+                }
                 if msg.content.contains("<!--") {
                     msg.content = crate::utils::sanitize::strip_llm_artifacts(&msg.content);
                 }

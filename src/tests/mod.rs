@@ -307,6 +307,7 @@ pub mod provider_sync_test;
 pub mod qr_render_test;
 pub mod queued_message_test;
 pub mod qwen_detect_test;
+pub mod qwen_preserve_thinking_test;
 pub mod qwen_tool_extractor_test;
 pub mod qwen_tool_marker_strip_test;
 pub mod react_marker_test;

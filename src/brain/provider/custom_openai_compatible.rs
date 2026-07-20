@@ -4817,6 +4817,20 @@ pub(crate) fn needs_reasoning_content_for(base_url: &str, model: &str) -> bool {
     url.contains("moonshot") || (url.contains("opencode.ai") && model.contains("kimi"))
 }
 
+/// True when the base_url/model pair round-trips reasoning as a separate
+/// `reasoning_content` field and must never carry it inside `content`.
+///
+/// Covers Moonshot / opencode kimi (via [`needs_reasoning_content_for`]) and
+/// the Qwen family — Model Studio / DashScope custom endpoints and the built-in
+/// Qwen provider — whose `preserve_thinking` contract requires the full
+/// reasoning returned as `reasoning_content`; concatenating it into `content`
+/// is unsupported and makes the model leak chain-of-thought (#654).
+pub(crate) fn preserves_thinking(base_url: Option<&str>, model: &str) -> bool {
+    let url = base_url.unwrap_or("");
+    needs_reasoning_content_for(url, model)
+        || crate::brain::provider::qwen::looks_like_qwen_target(url, model)
+}
+
 /// Walk a proxy's nested error envelope to find the real upstream error.
 /// Returns (message, error_type) after stripping the passthrough wrapper.
 /// The `provider_name` (if present) is prepended so operators can tell
