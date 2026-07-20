@@ -115,7 +115,7 @@ The first design-track `plan init` creates `.md` and `.json`, writes the title, 
 
 ### Track A — Plan mode (`mode=design`)
 
-The design track is for work the user wants to review before execution. Entry is `/plan`, a plan-keyword soft-nudge, or `init` with no tasks. While **post-init** Editing, the agent writes only the session `.md` and **all bash is denied**, using the light template below. In **pre-init**, project file writes are denied but exploratory bash remains allowed until `plan init` (see Editing write policy). When the user Approves, the session becomes Active and a synthetic implement turn reads `## Implementation steps`, emits one `add_tasks`, then starts task 1 immediately. There is no second gate on the checklist after Approve. Status UI shows checklist progress; archive and clear plan chrome when the checklist finishes.
+The design track is for work the user wants to review before execution. Entry is `/plan`, a plan-keyword soft-nudge, or `init` with no tasks. While **post-init** Editing, the agent writes only the session `.md` and **bash requires explicit approval** (RequireApproval, overrides auto-approve), using the light template below. In **pre-init**, project file writes are denied but exploratory bash remains allowed until `plan init` (see Editing write policy). When the user Approves, the session becomes Active and a synthetic implement turn reads `## Implementation steps`, emits one `add_tasks`, then starts task 1 immediately. There is no second gate on the checklist after Approve. Status UI shows checklist progress; archive and clear plan chrome when the checklist finishes.
 
 ### Session plan `.md` format (locked — light template B)
 
@@ -257,9 +257,22 @@ While a turn is in progress, `/execute` and Approve are forbidden. `/plan` and `
 
 **Pre-init (locked — grill 2026-07-12):** durable flag on, no session `.md` yet. Deny **project file writes** (write/edit/hashline and similar mutators outside the eventual session plan path). **Allow exploratory bash** (and reads/search) so the agent can investigate before `plan init`. Allow `plan init`. Deny checklist ops other than `init`, spawn/team mutators that write the project, channel sends, and browser mutators — same spirit as post-init except bash stays available for exploration. There is no session `.md` to write yet.
 
-**Post-init Editing (locked):** allow reads and search, `follow_up_question`, and write or edit **only** to the session `.md`. Deny other project writes, **all bash**, spawn and team, channel sends, browser mutators, checklist ops other than those allowed in Editing, and import. The Track A line “all bash denied while Editing” applies to **post-init** only.
+**Post-init Editing (locked, amended #649):** allow reads and search, `follow_up_question`, and write or edit **only** to the session `.md`. Deny other project writes, spawn and team, channel sends, browser mutators, checklist ops other than those allowed in Editing, and import. **Bash goes to approval** (GateDecision::RequireApproval): the user can explicitly confirm a read-only command (e.g. `git log`) to inform the design, but auto-approve is overridden for the Editing window. Exploration is iterative post-init too, not just pre-init (#649).
 
 **Active:** freeze the live `.md` against generic write tools.
+
+### Exploration gate amendment (#649, 2026-07-20)
+
+The original gate premise ("exploration happened before plan init") was wrong. Exploration is iterative post-init too: you discover mid-draft that you need to read a config, check git history, or get an independent review. The freeze is on **mutation, not tool identity**.
+
+**Principles (locked):**
+
+1. **Freeze writes, permit reads.** During Editing, nothing writes the project until the user approves. Reads, search, and approved bash stay available.
+2. **Shared classifier, independent decisions.** `classify::is_destructive()` / `is_read_only()` (in `src/brain/tools/classify.rs`) is the single source of truth for what counts as a side effect. Both the approval policy (`requires_approval` in `trait.rs`) and the plan gate call it. Each layer makes its own decision on top. Future slot for an LLM judge (e.g. `bash ls` = read-only) without touching either decision layer.
+3. **Three-state gate.** `check_plan_gate` returns `GateDecision::Allow | Deny(reason) | RequireApproval(reason)`. RequireApproval overrides auto-approve for the Editing window: the registry returns `ApprovalRequired` regardless of the session's `auto_approve` setting.
+4. **Editing is interactive-only.** The discriminator is `question_callback`: wired for interactive channels (TUI/Telegram), `None` for cron and a2a. When `None`, design `init` refuses. Editing in cron/a2a is unenforceable: cron installs an auto-approve rubber stamp, so an approval-based freeze is a no-op there.
+5. **Subagents inherit the freeze.** A child spawned while the parent is Editing gets a read-only registry (`restrict_registry_to_read_only`): mutating tools are stripped at spawn time. The child can read, search, and analyze to inform the design, but cannot write the project or mint a non-restricted grandchild.
+6. **Name list is a supplement, not the axis.** `EDITING_DENIED_NAMES` catches tools whose capabilities don't express the full restriction (e.g. channel sends with `Network` only, `close_agent` with empty caps). Tools caught by capability checks (`spawn_agent` with `SystemModification`) don't need name-list entries.
 
 ---
 
@@ -486,9 +499,9 @@ Done when header-only `open_flow` / `refresh_flow` works with empty entries; no 
 
 Introduce state types, paths, legacy load migration, write-path status table, durable `pre_init_editing` API, tool-loop write/bash gate, Active `.md` freeze, and a compaction-reminder stub. Channel slash wiring stays in Phase 6.
 
-OC Dev sequencing advice stands: prefer two PRs when practical. Phase 3a covers enum, legacy load map, `pre_init_editing` API, compaction stub, and path helpers. Phase 3b covers the tool-loop write/bash gate, Active `.md` freeze, and dedicated gate tests so legitimate writes still succeed while bash is hard-denied in Editing. Do not merge 3b without that isolated coverage — it is the highest-risk surface.
+OC Dev sequencing advice stands: prefer two PRs when practical. Phase 3a covers enum, legacy load map, `pre_init_editing` API, compaction stub, and path helpers. Phase 3b covers the tool-loop write/bash gate, Active `.md` freeze, and dedicated gate tests so legitimate writes still succeed while bash requires approval in Editing (RequireApproval, #649). Do not merge 3b without that isolated coverage — it is the highest-risk surface.
 
-Introduce Editing, Active, and NoPlan in [src/tui/plan.rs](src/tui/plan.rs). NoPlan means no plan artifacts and no durable pre-init flag. Persist `pre_init_editing` on the minimal JSON sidecar (survives restart; not on `AgentContext`). TUI mirrors for UI. Add path helpers for `.md`, `.json`, and archive. Wire the tool-loop gate so **pre-init** denies project file writes but allows exploratory bash and `plan init`; **post-init Editing** allows writes only to the session `.md` and hard-denies all bash; Active freezes the `.md` against generic write tools.
+Introduce Editing, Active, and NoPlan in [src/tui/plan.rs](src/tui/plan.rs). NoPlan means no plan artifacts and no durable pre-init flag. Persist `pre_init_editing` on the minimal JSON sidecar (survives restart; not on `AgentContext`). TUI mirrors for UI. Add path helpers for `.md`, `.json`, and archive. Wire the tool-loop gate so **pre-init** denies project file writes but allows exploratory bash and `plan init`; **post-init Editing** allows writes only to the session `.md` and sends bash to approval (RequireApproval, #649); Active freezes the `.md` against generic write tools.
 
 On load, map legacy status strings and silently archive Completed. New writes use canonical `"Editing"` / `"Active"`. Preserve `approved_at` on the struct. For the dormant SQLite parser, apply the same map or complete migrate-or-retire in Phase 5 docs/cleanup. Stop injecting Active-only `format_plan_reminder` / `plan start` recovery when pre-init is set or JSON maps to Editing — a minimal Phase 3 branch until Phase 7’s full rewrite.
 
@@ -542,7 +555,7 @@ Phase 1: shared `utils::prompt_analyzer`; live-ops plan hints without create/fin
 
 Phase 2: merge pre-flow into flow without `status_msg_id`; header-only open works; ctx on flow only; final answer clean; resume on the same path; title / goal / checklist from live JSON; section builder extensible; flow-chrome docs/CHANGELOG.
 
-Phase 3: Editing gate — bash denied post-init; only session `.md` writable; Active freezes `.md`; durable `pre_init` API under test (slash wiring is Phase 6); legacy JSON statuses load; Completed silent archive.
+Phase 3: Editing gate — bash requires approval post-init (RequireApproval, #649); only session `.md` writable; Active freezes `.md`; durable `pre_init` API under test (slash wiring is Phase 6); legacy JSON statuses load; Completed silent archive.
 
 Phase 4: `.md` edits sync to JSON `description`; mirror events fire; Editing cannot persist a checklist; template documented in plan-json-spec.
 
