@@ -194,6 +194,8 @@ pub mod services_message_test;
 pub mod services_project_test;
 pub mod services_session_test;
 pub mod systemd_unit_test;
+#[cfg(feature = "telegram")]
+pub mod telegram_mentions_other_bot_test;
 pub mod tools_md_regression_test;
 // Unix-only: drives Config::load via a temp HOME override. On Windows
 // `dirs::home_dir()` uses the Win32 `SHGetKnownFolderPath` API rather

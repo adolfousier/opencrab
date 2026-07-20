@@ -87,6 +87,27 @@ pub(crate) fn normalize_identity(s: &str) -> String {
         .collect()
 }
 
+/// True when `text` explicitly @-mentions a bot OTHER than us.
+///
+/// Telegram bot usernames must end in `bot`, so an `@name` ending in `bot`
+/// that is not our username means the message is addressed to a different bot.
+/// When someone replies to our message but tags another bot by name, that
+/// explicit tag is the real addressee — even a reply-to-us should defer to it,
+/// so we don't answer a request meant for `@someone_else_bot`. If we are ALSO
+/// tagged, the caller's own-mention check wins and this never suppresses.
+pub(crate) fn mentions_other_bot(text: &str, our_username: Option<&str>) -> bool {
+    let ours = our_username.map(|u| u.trim_start_matches('@').to_ascii_lowercase());
+    text.split('@').skip(1).any(|seg| {
+        let name: String = seg
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        let lname = name.to_ascii_lowercase();
+        // Telegram bot usernames are >= 5 chars and end in "bot".
+        lname.len() >= 5 && lname.ends_with("bot") && ours.as_ref() != Some(&lname)
+    })
+}
+
 /// Whether a sender's display name or username collapses to the same normalized
 /// form as the owner's — i.e. the sender is mimicking the owner. Cross-checks
 /// name-against-username both ways. Blank values never match.
@@ -860,10 +881,19 @@ pub(crate) async fn handle_message(
                         .is_some_and(|u| bot_uid.is_some_and(|bid| u.id.0 as i64 == bid))
                 });
 
+                // A reply to our message that explicitly tags a DIFFERENT bot is
+                // addressed to that bot — the tag redirects it, so we defer
+                // (#648). We only respond on a reply-to-us when no other bot is
+                // named; being tagged ourselves (mentioned_by_username) always
+                // wins below.
+                let tags_other_bot = mentions_other_bot(text_content, bot_username.as_deref());
+                let addressed_to_us = mentioned_by_username || (replied_to_bot && !tags_other_bot);
+
                 tracing::info!(
-                    "Telegram: group mention check — mentioned={}, replied_to_bot={}, bot_username={:?}",
+                    "Telegram: group mention check — mentioned={}, replied_to_bot={}, tags_other_bot={}, bot_username={:?}",
                     mentioned_by_username,
                     replied_to_bot,
+                    tags_other_bot,
                     bot_username,
                 );
 
@@ -871,7 +901,7 @@ pub(crate) async fn handle_message(
                 // mention-only mode: it is not a human asking for the bot, and
                 // letting it through invites bot-to-bot loops (#447). Treat a
                 // bot sender exactly like an un-directed message — store, stop.
-                if user.is_bot || (!mentioned_by_username && !replied_to_bot) {
+                if user.is_bot || !addressed_to_us {
                     if user.is_bot {
                         tracing::info!(
                             "Telegram: mention from bot @{} suppressed in mention-only mode (#447)",
@@ -932,18 +962,25 @@ pub(crate) async fn handle_message(
                             .is_some_and(|u| bot_uid.is_some_and(|bid| u.id.0 as i64 == bid))
                     });
 
+                    // Reply-to-us that tags a different bot is addressed to that
+                    // bot, not us (#648).
+                    let tags_other_bot = mentions_other_bot(text_content, bot_username.as_deref());
+                    let addressed_to_us =
+                        mentioned_by_username || (replied_to_bot && !tags_other_bot);
+
                     tracing::info!(
-                        "Telegram: respond_to=auto, {} senders in \"{}\" — mention-only (mentioned={}, replied_to_bot={})",
+                        "Telegram: respond_to=auto, {} senders in \"{}\" — mention-only (mentioned={}, replied_to_bot={}, tags_other_bot={})",
                         active_sender_count,
                         chat_title,
                         mentioned_by_username,
                         replied_to_bot,
+                        tags_other_bot,
                     );
 
                     // Same bot-sender suppression as mention-only mode (#447):
                     // once the chat is in mention-required territory, a mention
                     // from another bot must not trigger a response.
-                    if user.is_bot || (!mentioned_by_username && !replied_to_bot) {
+                    if user.is_bot || !addressed_to_us {
                         if user.is_bot {
                             tracing::info!(
                                 "Telegram: auto mention-only — mention from bot @{} suppressed (#447)",
