@@ -1768,11 +1768,10 @@ impl App {
                         };
                         if should_fetch {
                             let provider_idx = wizard.ps.selected_provider;
-                            let api_key = if wizard.ps.api_key_input.is_empty() {
-                                None
-                            } else {
-                                Some(wizard.ps.api_key_input.clone())
-                            };
+                            // Real key: typed, else saved from config; never the
+                            // EXISTING_KEY_SENTINEL placeholder that 401'd custom
+                            // providers whose key lives in keys.toml (#656).
+                            let api_key = wizard.ps.effective_api_key();
                             let base_url =
                                 if wizard.ps.is_custom() && !wizard.ps.base_url.is_empty() {
                                     Some(wizard.ps.base_url.clone())

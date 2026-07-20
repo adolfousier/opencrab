@@ -433,6 +433,20 @@ impl ProviderSelectorState {
         .filter(|k| !k.is_empty())
     }
 
+    /// The API key to use for a live call (model fetch, save, etc.): a freshly
+    /// typed key when the user entered one, otherwise the saved key from config.
+    /// Never returns the [`EXISTING_KEY_SENTINEL`] placeholder — sending that as
+    /// a bearer token is what 401'd custom providers whose real key lives in
+    /// keys.toml (e.g. Model Studio). `None` means no key is available (a keyless
+    /// local endpoint), so the caller sends no auth.
+    pub fn effective_api_key(&self) -> Option<String> {
+        let typed = self.api_key_input.trim();
+        if !typed.is_empty() && typed != EXISTING_KEY_SENTINEL {
+            return Some(typed.to_string());
+        }
+        self.load_api_key_from_config()
+    }
+
     /// Resolve the effective API key: user-typed key if present, else config key.
     pub fn resolve_api_key(&self) -> Option<String> {
         if !self.api_key_input.is_empty() && self.api_key_input != EXISTING_KEY_SENTINEL {

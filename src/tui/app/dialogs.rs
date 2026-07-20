@@ -232,48 +232,11 @@ impl App {
                 }
                 WizardAction::FetchModels => {
                     let provider_idx = wizard.ps.selected_provider;
-                    // Resolve API key from config (keys.toml) or raw input
-                    let api_key = if wizard.ps.has_existing_key_sentinel() {
-                        let provider_name = super::onboarding::PROVIDERS
-                            [provider_idx.min(super::onboarding::PROVIDERS.len() - 1)]
-                        .name;
-                        let loaded = crate::config::Config::load().ok();
-                        match provider_name {
-                            "Anthropic" => loaded
-                                .as_ref()
-                                .and_then(|c| c.providers.anthropic.as_ref())
-                                .and_then(|p| p.api_key.clone()),
-                            "OpenAI" => loaded
-                                .as_ref()
-                                .and_then(|c| c.providers.openai.as_ref())
-                                .and_then(|p| p.api_key.clone()),
-                            "Google Gemini" => loaded
-                                .as_ref()
-                                .and_then(|c| c.providers.gemini.as_ref())
-                                .and_then(|p| p.api_key.clone()),
-                            "OpenRouter" => loaded
-                                .as_ref()
-                                .and_then(|c| c.providers.openrouter.as_ref())
-                                .and_then(|p| p.api_key.clone()),
-                            "Minimax" => loaded
-                                .as_ref()
-                                .and_then(|c| c.providers.minimax.as_ref())
-                                .and_then(|p| p.api_key.clone()),
-                            "z.ai GLM" => loaded
-                                .as_ref()
-                                .and_then(|c| c.providers.zhipu.as_ref())
-                                .and_then(|p| p.api_key.clone()),
-                            "GitHub Copilot" => loaded
-                                .as_ref()
-                                .and_then(|c| c.providers.github.as_ref())
-                                .and_then(|p| p.api_key.clone()),
-                            _ => None,
-                        }
-                    } else if !wizard.ps.api_key_input.is_empty() {
-                        Some(wizard.ps.api_key_input.clone())
-                    } else {
-                        None
-                    };
+                    // Resolve the real API key: a freshly typed one, else the
+                    // saved key from config (keys.toml) for ANY provider,
+                    // including custom. Never the EXISTING_KEY_SENTINEL, which
+                    // 401'd custom endpoints like Model Studio (#656).
+                    let api_key = wizard.ps.effective_api_key();
                     wizard.ps.models_fetching = true;
 
                     // Capture custom base_url so custom providers can hit <base_url>/v1/models
