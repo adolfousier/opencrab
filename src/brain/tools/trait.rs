@@ -195,6 +195,63 @@ pub enum ToolCapability {
     PlanManagement,
 }
 
+/// MCP-style behavioral risk annotations for a tool.
+///
+/// Mirrors the Model Context Protocol's tool annotations: four orthogonal
+/// axes describing a tool's behavior, not a flat capability taxonomy.
+/// Defaults are deliberately pessimistic (assume the worst until a tool
+/// declares otherwise), matching MCP: an unannotated tool is treated as
+/// environment-modifying, destructive, non-idempotent, and open-world.
+///
+/// These hints are the source of truth for the risk decisions in
+/// `classify.rs`. Because our tools are first-party (we author them), the
+/// hints are trusted contracts the gate and approval policy can enforce,
+/// not merely advisory UX hints as in MCP's untrusted-server model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolHints {
+    /// Tool does not modify its environment. Default: `false`.
+    pub read_only: bool,
+    /// If it modifies, may perform destructive (vs additive) updates.
+    /// Only meaningful when `read_only == false`. Default: `true`.
+    pub destructive: bool,
+    /// Safe to call repeatedly with the same args (no extra effect).
+    /// Only meaningful when `read_only == false`. Default: `false`.
+    pub idempotent: bool,
+    /// Interacts with an open world of external entities vs a closed
+    /// domain. Default: `true`.
+    pub open_world: bool,
+}
+
+impl Default for ToolHints {
+    fn default() -> Self {
+        // Pessimistic / fail-safe defaults, matching MCP.
+        Self {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        }
+    }
+}
+
+impl ToolHints {
+    /// Bridge: derive hints from a legacy [`ToolCapability`] set.
+    ///
+    /// Used by the default [`Tool::hints`] implementation so existing
+    /// tools keep their current behavior while migrating to explicit
+    /// hints. The destructive trio maps to `!read_only && destructive`;
+    /// `Network` maps to `open_world`.
+    pub fn from_capabilities(capabilities: &[ToolCapability]) -> Self {
+        let destructive = super::classify::is_destructive(capabilities);
+        Self {
+            read_only: !destructive,
+            destructive,
+            idempotent: false,
+            open_world: capabilities.contains(&ToolCapability::Network),
+        }
+    }
+}
+
 /// Tool trait - defines an executable tool
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -210,9 +267,18 @@ pub trait Tool: Send + Sync {
     /// Get the tool's capabilities
     fn capabilities(&self) -> Vec<ToolCapability>;
 
+    /// Get the tool's MCP-style behavioral risk hints.
+    ///
+    /// Defaults to deriving from [`Tool::capabilities`]; override per-tool
+    /// for precision (e.g. mark a channel send as `destructive` +
+    /// `open_world`, or a pure read as `read_only` + `idempotent`).
+    fn hints(&self) -> ToolHints {
+        ToolHints::from_capabilities(&self.capabilities())
+    }
+
     /// Check if the tool requires approval before execution
     fn requires_approval(&self) -> bool {
-        super::classify::is_destructive(&self.capabilities())
+        super::classify::is_destructive_hints(&self.hints())
     }
 
     /// Check if this specific invocation requires approval.
