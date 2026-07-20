@@ -1,28 +1,34 @@
-//! Plan-mode write/bash gate: the tool-loop enforcement of the Editing
+//! Plan-mode tool gate: the tool-loop enforcement of the Editing
 //! write policy and the Active `.md` freeze.
 //!
-//! Checked on every tool execution (registry choke point). All capability
-//! checks go through the shared `classify::is_destructive()` helper. The
-//! rules are asymmetric by design:
+//! Checked on every tool execution (registry choke point). The gate is
+//! driven entirely by the MCP-style [`ToolHints`] risk axes: a tool's
+//! `read_only` flag is the sole signal. There are no name lists; the
+//! hint model is the single source of truth.
 //!
-//! - **Pre-init Editing** (durable flag, no session `.md` yet): deny
-//!   all destructive tools (anything `is_destructive` flags) and the
-//!   name-based deny list. Reads and search stay available so the agent
-//!   can investigate before committing to a design doc. `plan` (for
-//!   `init`) stays available.
-//! - **Post-init Editing** (`.md` + `.json`): allow reads, search,
-//!   `follow_up_question`, and writes ONLY to the session `.md`. All
-//!   other destructive tools go to `RequireApproval` (overrides
-//!   auto-approve for the Editing window). Name-based deny list tools
-//!   are hard-denied.
-//! - **Active**: freeze the live design `.md` against generic write
-//!   tools; everything else follows the normal approval policy.
+//! - **Pre-init Editing** (durable flag, no session `.md` yet):
+//!   read-only tools pass; mutators (`read_only = false`) go to
+//!   `RequireApproval` so the user can confirm any side effect during
+//!   design.
+//! - **Post-init Editing** (`.md` + `.json`): read-only tools pass;
+//!   writes to the session `.md` pass (the design doc is editable);
+//!   all other mutators go to `RequireApproval`.
+//! - **Active**: the seed window (between Approve and first `start`)
+//!   hard-denies mutators; otherwise the live design `.md` is frozen
+//!   against write tools and everything else follows normal approval.
 //! - **NoPlan**: no gate.
+//!
+//! Approval prompts fire only under the `/ask` policy (via
+//! `requires_approval`) or user-initiated `/plan` Editing (via this
+//! gate's `RequireApproval`). Under yolo (`auto_approve = true`),
+//! `requires_approval` never prompts; this gate's `RequireApproval`
+//! only fires during Editing, which is entered only when the user hits
+//! `/plan` themselves (the interactive `question_callback` discriminator).
 //!
 //! Denials return deterministic, instructive strings so the model can
 //! navigate to the allowed alternative instead of flailing.
 
-use super::r#trait::ToolCapability;
+use super::r#trait::ToolHints;
 use crate::utils::plan_files::{self, PlanModeState};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -33,8 +39,8 @@ use uuid::Uuid;
 /// The gate is a filter that runs before the normal approval policy.
 /// It can allow a call through, hard-deny it, or force an approval
 /// prompt regardless of the session's auto-approve setting (used for
-/// bash during post-init Editing, where the call is not outright
-/// forbidden but must be explicitly confirmed).
+/// mutators during Editing, where the call is not outright forbidden
+/// but must be explicitly confirmed).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum GateDecision {
     /// Call proceeds under the normal approval policy.
@@ -63,38 +69,6 @@ impl GateDecision {
     }
 }
 
-/// Tools always allowed while Editing (either sub-state): the plan tool
-/// itself (operation-level rules live inside it), the question tool, and
-/// the full agent-tool family. Subagents spawned during Editing inherit a
-/// read-only registry (see `restrict_registry_to_read_only`), so the whole
-/// family is safe: spawn, send_input, close, resume, wait.
-const EDITING_ALLOWED: &[&str] = &[
-    "plan",
-    "follow_up_question",
-    "spawn_agent",
-    "send_input",
-    "close_agent",
-    "resume_agent",
-    "wait_agent",
-];
-
-/// Names denied while Editing regardless of capability flags: channel
-/// sends and browser mutators. Read-shaped browser tools (navigate,
-/// content, screenshot, find, wait) stay available for exploration.
-/// Agent tools are NOT here: they are in `EDITING_ALLOWED` because the
-/// read-only subagent filter already ensures spawned agents can only read.
-pub(crate) const EDITING_DENIED_NAMES: &[&str] = &[
-    "telegram_send",
-    "discord_send",
-    "slack_send",
-    "whatsapp_send",
-    "trello_send",
-    "a2a_send",
-    "browser_click",
-    "browser_type",
-    "browser_eval",
-];
-
 /// Check a tool call against the session's plan-mode state.
 ///
 /// Returns a [`GateDecision`]: `Allow` (proceed under normal approval
@@ -103,43 +77,34 @@ pub(crate) const EDITING_DENIED_NAMES: &[&str] = &[
 pub(crate) async fn check_plan_gate(
     session_id: Uuid,
     tool_name: &str,
-    capabilities: &[ToolCapability],
+    hints: &ToolHints,
     input: &Value,
 ) -> GateDecision {
     let state = plan_files::plan_mode_state(session_id).await;
-    let has = |cap: ToolCapability| capabilities.contains(&cap);
 
     match state {
         PlanModeState::NoPlan => GateDecision::Allow,
 
         PlanModeState::Active => {
-            // Seed tool policy (locked): between user Approve and a
-            // successful `start`, the design-track session may only read
-            // and call the plan tool (add_tasks, start). Project writes,
-            // bash, spawn, sends, and system mutators stay blocked so a
-            // wandering seed turn cannot start editing the project before
-            // the checklist exists.
+            // Seed window (locked): between user Approve and a successful
+            // `start`, the design-track session may only read and call the
+            // plan tool. Mutators stay blocked so a wandering seed turn
+            // cannot start editing the project before the checklist exists.
             if crate::utils::plan_mode::in_seed_window(session_id).await {
-                if EDITING_ALLOWED.contains(&tool_name) {
+                if hints.read_only {
                     return GateDecision::Allow;
                 }
-                let mutator = super::classify::is_destructive(capabilities)
-                    || EDITING_DENIED_NAMES.contains(&tool_name);
-                if mutator {
-                    return GateDecision::Deny(format!(
-                        "Plan gate: '{tool_name}' is blocked until the approved plan's \
-                         checklist is seeded. Call `plan` add_tasks with the steps from \
-                         the session .md, then `plan` start; project work begins after \
-                         start succeeds."
-                    ));
-                }
-                return GateDecision::Allow;
+                return GateDecision::Deny(format!(
+                    "Plan gate: '{tool_name}' is blocked until the approved plan's \
+                     checklist is seeded. Call `plan` add_tasks with the steps from \
+                     the session .md, then `plan` start; project work begins after \
+                     start succeeds."
+                ));
             }
             // Freeze the live design .md against generic write tools; the
             // checklist executes through the plan tool, not by rewriting
             // the approved design.
-            if has(ToolCapability::WriteFiles) && write_targets_session_md(session_id, input).await
-            {
+            if !hints.read_only && write_targets_session_md(session_id, input).await {
                 GateDecision::Deny(
                     "Plan gate: the session plan .md is frozen while the checklist is \
                      Active. Execute tasks with the plan tool (start/complete); the \
@@ -152,47 +117,28 @@ pub(crate) async fn check_plan_gate(
         }
 
         PlanModeState::PreInitEditing => {
-            if EDITING_ALLOWED.contains(&tool_name) {
+            if hints.read_only {
                 return GateDecision::Allow;
             }
-            if EDITING_DENIED_NAMES.contains(&tool_name) {
-                return GateDecision::Deny(format!(
-                    "Plan gate: '{tool_name}' is blocked while the session is in Plan \
-                     mode (pre-init Editing). Explore with reads and search, then call \
-                     plan init to create the design document."
-                ));
-            }
-            if super::classify::is_destructive(capabilities) {
-                return GateDecision::RequireApproval(format!(
-                    "Plan gate: '{tool_name}' has side effects. The session is in Plan \
-                     mode (pre-init Editing). Approve to allow this action during design."
-                ));
-            }
-            GateDecision::Allow
+            GateDecision::RequireApproval(format!(
+                "Plan gate: '{tool_name}' has side effects. The session is in Plan \
+                 mode (pre-init Editing). Approve to allow this action during design."
+            ))
         }
 
         PlanModeState::PostInitEditing => {
-            if EDITING_ALLOWED.contains(&tool_name) {
+            if hints.read_only {
                 return GateDecision::Allow;
             }
-            if EDITING_DENIED_NAMES.contains(&tool_name) {
-                return GateDecision::Deny(format!(
-                    "Plan gate: '{tool_name}' is blocked while the plan is being \
-                     designed (Editing). Refine the session plan .md and wait for \
-                     the user to approve the plan."
-                ));
+            // The design doc itself stays editable during Editing.
+            if write_targets_session_md(session_id, input).await {
+                return GateDecision::Allow;
             }
-            if super::classify::is_destructive(capabilities) {
-                if write_targets_session_md(session_id, input).await {
-                    return GateDecision::Allow;
-                }
-                return GateDecision::RequireApproval(format!(
-                    "Plan gate: '{tool_name}' has side effects and requires approval \
-                     while the plan is being designed (Editing). Refine the session \
-                     plan .md; project work begins after the user approves the plan."
-                ));
-            }
-            GateDecision::Allow
+            GateDecision::RequireApproval(format!(
+                "Plan gate: '{tool_name}' has side effects and requires approval \
+                 while the plan is being designed (Editing). Refine the session \
+                 plan .md; project work begins after the user approves the plan."
+            ))
         }
     }
 }
@@ -232,30 +178,24 @@ fn paths_match(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Strip every write, shell, system-modifying, and Editing-denied tool from
-/// `registry`, leaving a read-only surface (#649).
+/// Strip every non-read-only tool from `registry`, leaving a read-only
+/// surface (#649).
 ///
 /// A subagent spawned while the parent session is in Plan-mode Editing must
 /// not be a hole in the write-freeze: it runs under a fresh child session
 /// that resolves to `NoPlan`, so [`check_plan_gate`] would not gate it. Rather
 /// than thread the parent's Editing state through the child's every tool call,
-/// we remove the mutating tools from the child registry outright — the child
+/// we remove the mutating tools from the child registry outright. The child
 /// can read, search, and analyze to inform or review the design, but cannot
-/// write the project, run bash, or spawn further agents (which would let it
-/// escape the freeze transitively). Removing the shell/system tools also drops
-/// `spawn_agent` itself (it carries `SystemModification`), so a read-only child
-/// cannot mint a non-restricted grandchild.
+/// write the project, run bash, send to channels, or spawn further agents
+/// (which would let it escape the freeze transitively).
 ///
-/// Mirrors the post-init Editing deny set (`ToolCapability::WriteFiles` /
-/// `ExecuteShell` / `SystemModification` plus [`EDITING_DENIED_NAMES`]) so the
-/// spawn-time filter and the per-call gate can never drift.
+/// Driven by the MCP `read_only` hint, so the spawn-time filter and the
+/// per-call gate can never drift.
 pub(crate) fn restrict_registry_to_read_only(registry: &super::ToolRegistry) {
     for name in registry.list_tools() {
-        let denied_by_name = EDITING_DENIED_NAMES.contains(&name.as_str());
-        let denied_by_cap = registry
-            .get(&name)
-            .is_some_and(|t| super::classify::is_destructive(&t.capabilities()));
-        if denied_by_name || denied_by_cap {
+        let dominated = registry.get(&name).is_some_and(|t| !t.hints().read_only);
+        if dominated {
             registry.unregister(&name);
         }
     }

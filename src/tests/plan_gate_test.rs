@@ -1,41 +1,45 @@
-//! Dedicated coverage for the plan-mode write/bash gate
-//! (`brain::tools::plan_gate`), the highest-risk surface of the plan
-//! lifecycle engine. Verifies, per state:
+//! Dedicated coverage for the plan-mode tool gate
+//! (`brain::tools::plan_gate`), driven by MCP-style [`ToolHints`].
+//! Verifies, per state:
 //!
-//! - pre-init Editing denies project writes but allows exploratory bash
-//!   and the plan tool
-//! - post-init Editing sends bash to approval (RequireApproval), allows
-//!   writes ONLY to the session `.md`, and denies other writes
-//! - Active freezes the `.md` against generic write tools
+//! - pre-init Editing allows read-only tools, sends mutators to
+//!   RequireApproval
+//! - post-init Editing sends mutators to RequireApproval, allows
+//!   writes ONLY to the session `.md`
+//! - Active freezes the `.md` against generic write tools; the seed
+//!   window hard-denies mutators
 //! - NoPlan gates nothing
+//!
+//! The gate is pure: `hints.read_only` is the sole signal. No name
+//! lists, no capability branching.
 
 use crate::brain::tools::plan_gate::{GateDecision, check_plan_gate};
-use crate::brain::tools::r#trait::ToolCapability;
+use crate::brain::tools::r#trait::ToolHints;
 use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
 use crate::utils::plan_files::{create_design_md, plan_md_path, save_plan, set_pre_init_editing};
 use serde_json::json;
 use uuid::Uuid;
 
-const WRITE: &[ToolCapability] = &[
-    ToolCapability::ReadFiles,
-    ToolCapability::WriteFiles,
-    ToolCapability::SystemModification,
-];
-const BASH: &[ToolCapability] = &[
-    ToolCapability::ExecuteShell,
-    ToolCapability::SystemModification,
-    ToolCapability::Network,
-];
-const CODE_EXEC: &[ToolCapability] = &[
-    ToolCapability::ExecuteShell,
-    ToolCapability::SystemModification,
-    ToolCapability::WriteFiles,
-];
-const READ: &[ToolCapability] = &[ToolCapability::ReadFiles];
-const NETWORK: &[ToolCapability] = &[ToolCapability::Network];
-const SYSTEM: &[ToolCapability] = &[ToolCapability::SystemModification];
-const PLAN: &[ToolCapability] = &[ToolCapability::PlanManagement];
+/// Read-only hint (read_file, grep, web_search, plan, etc.).
+fn ro() -> ToolHints {
+    ToolHints {
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+    }
+}
+
+/// Mutator hint (bash, edit_file, telegram_send, spawn_agent, etc.).
+fn mut_tool() -> ToolHints {
+    ToolHints {
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: true,
+    }
+}
 
 async fn in_temp_home<F, T>(f: F) -> T
 where
@@ -72,14 +76,14 @@ async fn make_active(sid: Uuid, with_md: bool) {
 async fn no_plan_gates_nothing() {
     in_temp_home(async {
         let sid = Uuid::new_v4();
-        for (name, caps) in [
-            ("edit_file", WRITE),
-            ("bash", BASH),
-            ("telegram_send", NETWORK),
-            ("spawn_agent", SYSTEM),
+        for (name, hints) in [
+            ("edit_file", &mut_tool()),
+            ("bash", &mut_tool()),
+            ("telegram_send", &mut_tool()),
+            ("spawn_agent", &mut_tool()),
         ] {
             assert!(
-                check_plan_gate(sid, name, caps, &json!({}))
+                check_plan_gate(sid, name, hints, &json!({}))
                     .await
                     .is_allowed(),
                 "{name} must pass with no plan"
@@ -90,23 +94,34 @@ async fn no_plan_gates_nothing() {
 }
 
 #[tokio::test]
-async fn pre_init_denies_writes_allows_bash_and_plan() {
+async fn pre_init_gates_mutators_allows_reads_and_plan() {
     in_temp_home(async {
         let sid = Uuid::new_v4();
         set_pre_init_editing(sid).await.unwrap();
 
-        // Project writes are denied: there is nothing approvable to write.
-        let deny = check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/x.rs"})).await;
-        assert!(
-            deny.needs_approval(),
-            "project write must require approval pre-init"
-        );
+        // Mutators go to RequireApproval in pre-init Editing.
+        for (name, hints) in [
+            ("edit_file", &mut_tool()),
+            ("bash", &mut_tool()),
+            ("execute_code", &mut_tool()),
+            ("telegram_send", &mut_tool()),
+            ("browser_click", &mut_tool()),
+            ("spawn_agent", &mut_tool()),
+            ("evolve", &mut_tool()),
+        ] {
+            assert!(
+                check_plan_gate(sid, name, hints, &json!({}))
+                    .await
+                    .needs_approval(),
+                "{name} must require approval pre-init"
+            );
+        }
 
-        // Brain-file writes are writes too.
+        // Brain-file writes are mutators too.
         let deny = check_plan_gate(
             sid,
             "write_opencrabs_file",
-            &[ToolCapability::WriteFiles],
+            &mut_tool(),
             &json!({"path": "MEMORY.md"}),
         )
         .await;
@@ -115,87 +130,48 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
             "opencrabs write must require approval pre-init"
         );
 
-        // Destructive tools (bash, code execution) are denied pre-init.
-        // Shell reclassification is deferred; for now is_destructive gates all.
-        assert!(
-            check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
-                .await
-                .needs_approval()
-        );
-        assert!(
-            check_plan_gate(sid, "execute_code", CODE_EXEC, &json!({}))
-                .await
-                .needs_approval()
-        );
-
-        // Reads, search, and the plan tool flow through.
-        assert!(
-            check_plan_gate(sid, "read_file", READ, &json!({}))
-                .await
-                .is_allowed()
-        );
-        assert!(
-            check_plan_gate(sid, "web_search", NETWORK, &json!({}))
-                .await
-                .is_allowed()
-        );
-        assert!(
-            check_plan_gate(sid, "plan", PLAN, &json!({"operation": "init"}))
-                .await
-                .is_allowed()
-        );
-
-        // Sends and browser mutators are blocked by name.
-        for name in ["telegram_send", "browser_click"] {
+        // Read-only tools flow through.
+        for (name, hints) in [("read_file", &ro()), ("web_search", &ro()), ("plan", &ro())] {
             assert!(
-                check_plan_gate(sid, name, NETWORK, &json!({}))
+                check_plan_gate(sid, name, hints, &json!({}))
                     .await
-                    .is_denied(),
-                "{name} must be denied pre-init"
+                    .is_allowed(),
+                "{name} must be allowed pre-init"
             );
         }
-        // Agent tools are allowed: the read-only subagent filter
-        // (restrict_registry_to_read_only) strips mutators from the
-        // spawned agent's registry, so the whole family is safe.
-        assert!(
-            check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({}))
-                .await
-                .is_allowed(),
-            "spawn_agent must be allowed pre-init (read-only filter handles safety)"
-        );
-        assert!(
-            check_plan_gate(sid, "evolve", SYSTEM, &json!({}))
-                .await
-                .needs_approval()
-        );
     })
     .await;
 }
 
 #[tokio::test]
-async fn post_init_denies_bash_and_gates_writes_to_md() {
+async fn post_init_gates_mutators_to_md_only() {
     in_temp_home(async {
         let sid = Uuid::new_v4();
         make_post_init_editing(sid).await;
         let md = plan_md_path(sid).await;
 
-        // Bash goes to approval (RequireApproval), not hard deny.
-        assert!(
-            check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
-                .await
-                .needs_approval()
-        );
-        assert!(
-            check_plan_gate(sid, "execute_code", CODE_EXEC, &json!({}))
-                .await
-                .needs_approval()
-        );
+        // Mutators go to approval (RequireApproval), not hard deny.
+        for (name, hints) in [
+            ("bash", &mut_tool()),
+            ("execute_code", &mut_tool()),
+            ("slack_send", &mut_tool()),
+            ("browser_eval", &mut_tool()),
+            ("resume_agent", &mut_tool()),
+            ("cron_manage", &mut_tool()),
+        ] {
+            assert!(
+                check_plan_gate(sid, name, hints, &json!({}))
+                    .await
+                    .needs_approval(),
+                "{name} must require approval post-init"
+            );
+        }
 
-        // The session .md is the ONLY writable file.
+        // The session .md is the only writable file for a mutator.
         let ok = check_plan_gate(
             sid,
             "write_file",
-            WRITE,
+            &mut_tool(),
             &json!({"path": md.to_string_lossy()}),
         )
         .await;
@@ -206,19 +182,19 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
             check_plan_gate(
                 sid,
                 "edit_file",
-                WRITE,
+                &mut_tool(),
                 &json!({"path": md.to_string_lossy()})
             )
             .await
             .is_allowed()
         );
 
-        // Project writes go to approval (RequireApproval).
+        // Project writes go to approval.
         assert!(
             check_plan_gate(
                 sid,
                 "edit_file",
-                WRITE,
+                &mut_tool(),
                 &json!({"path": "/tmp/project/main.rs"})
             )
             .await
@@ -230,63 +206,34 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
             check_plan_gate(
                 sid,
                 "write_opencrabs_file",
-                &[ToolCapability::WriteFiles],
+                &mut_tool(),
                 &json!({"path": "MEMORY.md"})
             )
             .await
             .needs_approval()
         );
 
-        // A write tool with no recognizable target goes to approval.
+        // A mutator with no recognizable target goes to approval.
         assert!(
-            check_plan_gate(sid, "generate_document", WRITE, &json!({}))
+            check_plan_gate(sid, "generate_document", &mut_tool(), &json!({}))
                 .await
                 .needs_approval()
         );
 
-        // Reads, search, plan, and follow_up_question flow through.
-        assert!(
-            check_plan_gate(sid, "read_file", READ, &json!({}))
-                .await
-                .is_allowed()
-        );
-        assert!(
-            check_plan_gate(sid, "grep", READ, &json!({}))
-                .await
-                .is_allowed()
-        );
-        assert!(
-            check_plan_gate(sid, "plan", PLAN, &json!({"operation": "init"}))
-                .await
-                .is_allowed()
-        );
-        assert!(
-            check_plan_gate(sid, "follow_up_question", &[], &json!({}))
-                .await
-                .is_allowed()
-        );
-
-        // Sends, browser mutators, spawn, and system tools are blocked.
-        assert!(
-            check_plan_gate(sid, "slack_send", NETWORK, &json!({}))
-                .await
-                .is_denied()
-        );
-        assert!(
-            check_plan_gate(sid, "browser_eval", NETWORK, &json!({}))
-                .await
-                .is_denied()
-        );
-        assert!(
-            check_plan_gate(sid, "resume_agent", SYSTEM, &json!({}))
-                .await
-                .is_allowed()
-        );
-        assert!(
-            check_plan_gate(sid, "cron_manage", SYSTEM, &json!({}))
-                .await
-                .needs_approval()
-        );
+        // Read-only tools flow through.
+        for (name, hints) in [
+            ("read_file", &ro()),
+            ("grep", &ro()),
+            ("plan", &ro()),
+            ("follow_up_question", &ro()),
+        ] {
+            assert!(
+                check_plan_gate(sid, name, hints, &json!({}))
+                    .await
+                    .is_allowed(),
+                "{name} must be allowed post-init"
+            );
+        }
     })
     .await;
 }
@@ -303,7 +250,7 @@ async fn active_freezes_md_only() {
             check_plan_gate(
                 sid,
                 "edit_file",
-                WRITE,
+                &mut_tool(),
                 &json!({"path": md.to_string_lossy()})
             )
             .await
@@ -316,24 +263,24 @@ async fn active_freezes_md_only() {
             check_plan_gate(
                 sid,
                 "edit_file",
-                WRITE,
+                &mut_tool(),
                 &json!({"path": "/tmp/project/main.rs"})
             )
             .await
             .is_allowed()
         );
         assert!(
-            check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
+            check_plan_gate(sid, "bash", &mut_tool(), &json!({"command": "ls"}))
                 .await
                 .is_allowed()
         );
         assert!(
-            check_plan_gate(sid, "telegram_send", NETWORK, &json!({}))
+            check_plan_gate(sid, "telegram_send", &mut_tool(), &json!({}))
                 .await
                 .is_allowed()
         );
         assert!(
-            check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({}))
+            check_plan_gate(sid, "spawn_agent", &mut_tool(), &json!({}))
                 .await
                 .is_allowed()
         );
@@ -351,14 +298,14 @@ async fn active_checklist_without_md_gates_nothing_on_writes() {
             check_plan_gate(
                 sid,
                 "edit_file",
-                WRITE,
+                &mut_tool(),
                 &json!({"path": "/tmp/project/main.rs"})
             )
             .await
             .is_allowed()
         );
         assert!(
-            check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
+            check_plan_gate(sid, "bash", &mut_tool(), &json!({"command": "ls"}))
                 .await
                 .is_allowed()
         );
@@ -370,7 +317,7 @@ async fn active_checklist_without_md_gates_nothing_on_writes() {
 async fn seed_window_blocks_mutators_allows_plan_and_reads() {
     in_temp_home(async {
         // Approved design plan whose checklist has not started yet (empty
-        // tasks): only reads and the plan tool flow through.
+        // tasks): only read-only tools and the plan tool flow through.
         let sid = Uuid::new_v4();
         let mut plan = PlanDocument::new(sid, "Seeding".to_string());
         plan.status = PlanStatus::Active;
@@ -378,29 +325,36 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
         create_design_md(sid, "Seeding").await.unwrap();
 
         assert!(
-            check_plan_gate(sid, "plan", PLAN, &json!({"operation": "add_tasks"}))
+            check_plan_gate(sid, "plan", &ro(), &json!({"operation": "add_tasks"}))
                 .await
                 .is_allowed()
         );
         assert!(
-            check_plan_gate(sid, "read_file", READ, &json!({}))
+            check_plan_gate(sid, "read_file", &ro(), &json!({}))
                 .await
                 .is_allowed()
         );
+        // Mutators are hard-denied in the seed window.
         assert!(
-            check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
+            check_plan_gate(sid, "bash", &mut_tool(), &json!({"command": "ls"}))
                 .await
                 .is_denied()
         );
         assert!(
-            check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/p/main.rs"}))
-                .await
-                .is_denied()
+            check_plan_gate(
+                sid,
+                "edit_file",
+                &mut_tool(),
+                &json!({"path": "/tmp/p/main.rs"})
+            )
+            .await
+            .is_denied()
         );
         assert!(
-            check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({}))
+            check_plan_gate(sid, "spawn_agent", &mut_tool(), &json!({}))
                 .await
-                .is_allowed()
+                .is_denied(),
+            "spawn must be blocked in seed window (mutator)"
         );
 
         // Partial seed (tasks added, none started) stays blocked too.
@@ -413,7 +367,7 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
         ));
         save_plan(&plan).await.unwrap();
         assert!(
-            check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
+            check_plan_gate(sid, "bash", &mut_tool(), &json!({"command": "ls"}))
                 .await
                 .is_denied()
         );
@@ -424,14 +378,19 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
         plan.tasks[0].start();
         save_plan(&plan).await.unwrap();
         assert!(
-            check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
+            check_plan_gate(sid, "bash", &mut_tool(), &json!({"command": "ls"}))
                 .await
                 .is_allowed()
         );
         assert!(
-            check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/p/main.rs"}))
-                .await
-                .is_allowed()
+            check_plan_gate(
+                sid,
+                "edit_file",
+                &mut_tool(),
+                &json!({"path": "/tmp/p/main.rs"})
+            )
+            .await
+            .is_allowed()
         );
     })
     .await;
@@ -439,13 +398,13 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
 
 // ── restrict_registry_to_read_only (#649) ───────────────────────────────
 // A subagent spawned while the parent is Editing must be read-only. The
-// filter strips mutating tools from the child registry (child runs under a
-// fresh NoPlan session the per-call gate would not catch), keeping only
-// read/search/network tools so it can inform or review the design.
+// filter strips non-read-only tools from the child registry via the MCP
+// `read_only` hint (child runs under a fresh NoPlan session the per-call
+// gate would not catch), keeping only read/search/network tools.
 
 struct CapTool {
     name: &'static str,
-    caps: Vec<ToolCapability>,
+    caps: Vec<crate::brain::tools::r#trait::ToolCapability>,
 }
 
 #[async_trait::async_trait]
@@ -459,7 +418,7 @@ impl crate::brain::tools::Tool for CapTool {
     fn input_schema(&self) -> serde_json::Value {
         json!({ "type": "object" })
     }
-    fn capabilities(&self) -> Vec<ToolCapability> {
+    fn capabilities(&self) -> Vec<crate::brain::tools::r#trait::ToolCapability> {
         self.caps.clone()
     }
     async fn execute(
@@ -475,10 +434,11 @@ impl crate::brain::tools::Tool for CapTool {
 fn read_only_filter_strips_mutators_keeps_reads() {
     use crate::brain::tools::ToolRegistry;
     use crate::brain::tools::plan_gate::restrict_registry_to_read_only;
+    use crate::brain::tools::r#trait::ToolCapability;
     use std::sync::Arc;
 
     let registry = ToolRegistry::new();
-    // Read-only surface — must survive.
+    // Read-only surface (no destructive caps) must survive.
     registry.register(Arc::new(CapTool {
         name: "read_file",
         caps: vec![ToolCapability::ReadFiles],
@@ -495,7 +455,7 @@ fn read_only_filter_strips_mutators_keeps_reads() {
         name: "follow_up_question",
         caps: vec![],
     }));
-    // Mutators — must be stripped by capability.
+    // Mutators (destructive trio) must be stripped by the read_only hint.
     registry.register(Arc::new(CapTool {
         name: "edit_file",
         caps: vec![ToolCapability::WriteFiles],
@@ -507,13 +467,6 @@ fn read_only_filter_strips_mutators_keeps_reads() {
     registry.register(Arc::new(CapTool {
         name: "spawn_agent",
         caps: vec![ToolCapability::SystemModification],
-    }));
-    // Denied by name even though a Network cap alone would not catch it —
-    // proves the name list and capability check are OR'd (no drift with the
-    // per-call gate's deny set).
-    registry.register(Arc::new(CapTool {
-        name: "telegram_send",
-        caps: vec![ToolCapability::Network],
     }));
 
     restrict_registry_to_read_only(&registry);
@@ -533,9 +486,5 @@ fn read_only_filter_strips_mutators_keeps_reads() {
     assert!(
         !registry.has_tool("spawn_agent"),
         "spawn must be stripped so no non-restricted grandchild can be minted"
-    );
-    assert!(
-        !registry.has_tool("telegram_send"),
-        "denied-by-name tools must be stripped"
     );
 }

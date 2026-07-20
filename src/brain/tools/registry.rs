@@ -317,13 +317,8 @@ impl ToolRegistry {
         // are deterministically refused with an instructive reason. Checked
         // after validation so the model's params are sane, before approval
         // so the user is never prompted for a call that cannot run.
-        match super::plan_gate::check_plan_gate(
-            context.session_id,
-            name,
-            &tool.capabilities(),
-            &input,
-        )
-        .await
+        match super::plan_gate::check_plan_gate(context.session_id, name, &tool.hints(), &input)
+            .await
         {
             super::plan_gate::GateDecision::Allow => { /* proceed */ }
             super::plan_gate::GateDecision::Deny(reason) => {
