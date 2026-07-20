@@ -9,7 +9,7 @@
 //! - Active freezes the `.md` against generic write tools
 //! - NoPlan gates nothing
 
-use crate::brain::tools::plan_gate::{check_plan_gate, GateDecision};
+use crate::brain::tools::plan_gate::{GateDecision, check_plan_gate};
 use crate::brain::tools::r#trait::ToolCapability;
 use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
@@ -79,7 +79,9 @@ async fn no_plan_gates_nothing() {
             ("spawn_agent", SYSTEM),
         ] {
             assert!(
-                check_plan_gate(sid, name, caps, &json!({})).await.is_allowed(),
+                check_plan_gate(sid, name, caps, &json!({}))
+                    .await
+                    .is_allowed(),
                 "{name} must pass with no plan"
             );
         }
@@ -95,7 +97,10 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
 
         // Project writes are denied: there is nothing approvable to write.
         let deny = check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/x.rs"})).await;
-        assert!(deny.is_denied(), "project write must be denied pre-init");
+        assert!(
+            deny.needs_approval(),
+            "project write must require approval pre-init"
+        );
 
         // Brain-file writes are writes too.
         let deny = check_plan_gate(
@@ -105,19 +110,22 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
             &json!({"path": "MEMORY.md"}),
         )
         .await;
-        assert!(deny.is_denied(), "opencrabs write must be denied pre-init");
+        assert!(
+            deny.needs_approval(),
+            "opencrabs write must require approval pre-init"
+        );
 
         // Destructive tools (bash, code execution) are denied pre-init.
         // Shell reclassification is deferred; for now is_destructive gates all.
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_denied()
+                .needs_approval()
         );
         assert!(
             check_plan_gate(sid, "execute_code", CODE_EXEC, &json!({}))
                 .await
-                .is_denied()
+                .needs_approval()
         );
 
         // Reads, search, and the plan tool flow through.
@@ -158,7 +166,7 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
         assert!(
             check_plan_gate(sid, "evolve", SYSTEM, &json!({}))
                 .await
-                .is_denied()
+                .needs_approval()
         );
     })
     .await;

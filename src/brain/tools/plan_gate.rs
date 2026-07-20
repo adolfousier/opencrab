@@ -163,11 +163,9 @@ pub(crate) async fn check_plan_gate(
                 ));
             }
             if super::classify::is_destructive(capabilities) {
-                return GateDecision::Deny(format!(
-                    "Plan gate: '{tool_name}' has side effects and is blocked while the \
-                     session is in Plan mode (pre-init Editing). Explore with reads and \
-                     search, then call plan init; '{tool_name}' becomes relevant only \
-                     after the plan is approved."
+                return GateDecision::RequireApproval(format!(
+                    "Plan gate: '{tool_name}' has side effects. The session is in Plan \
+                     mode (pre-init Editing). Approve to allow this action during design."
                 ));
             }
             GateDecision::Allow
