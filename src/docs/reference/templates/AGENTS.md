@@ -62,7 +62,16 @@ Compaction triggers automatically at 80% context usage. The system generates a c
 1. **Open the issue/PR FIRST** with initial findings: what's broken, how to reproduce, root cause analysis, and fix plan. Use `gh issue create` (smaller) or `gh pr create --draft` (larger).
 2. **Fix the code**, run clippy + tests, commit atomically (one logical change = one commit, not one commit per feature).
 3. **Comment on the issue/PR** with the fix details: commit hash, root cause, what changed, regression tests added, files modified.
-4. **Close** with `gh issue close <number> --reason completed` or merge the PR.
+4. **Before you comment on, update, or close it, re-read the issue/PR AND every comment on it** (`gh issue view <n> --comments` / `gh pr view <n> --comments`). Others may have added repro details, context, scope changes, or direct requests since it was opened — reflect and address them; never act on stale context.
+5. **Close** with `gh issue close <number> --reason completed` or merge the PR.
+
+### Check current context before you change anything (Hard Rule)
+Read the current state before you modify it — everywhere, not just issues/PRs:
+- **Issues/PRs:** re-read the issue/PR and its comments before commenting, updating, or closing (step 4 above).
+- **Git / commits:** `git fetch`, `git log`, and `git status` before committing, amending, or pushing — someone else may have moved `main` or added commits since you last looked.
+- **Code:** re-read the current file before editing it; don't edit from a remembered snapshot.
+
+Acting on a stale snapshot is how you clobber others' work, duplicate a fix, or close on outdated information.
 
 ### When `gh` CLI is NOT authenticated:
 - Tell the user to report it manually with enough detail to copy-paste into a GitHub issue (title, description, root cause, affected files).
