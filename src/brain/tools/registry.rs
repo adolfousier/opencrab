@@ -317,7 +317,7 @@ impl ToolRegistry {
         // are deterministically refused with an instructive reason. Checked
         // after validation so the model's params are sane, before approval
         // so the user is never prompted for a call that cannot run.
-        if let Some(reason) = super::plan_gate::check_plan_gate(
+        match super::plan_gate::check_plan_gate(
             context.session_id,
             name,
             &tool.capabilities(),
@@ -325,8 +325,19 @@ impl ToolRegistry {
         )
         .await
         {
-            tracing::info!("Plan gate denied tool '{}': session is plan-gated", name);
-            return Ok(ToolResult::error(reason));
+            super::plan_gate::GateDecision::Allow => { /* proceed */ }
+            super::plan_gate::GateDecision::Deny(reason) => {
+                tracing::info!("Plan gate denied tool '{}': session is plan-gated", name);
+                return Ok(ToolResult::error(reason));
+            }
+            super::plan_gate::GateDecision::RequireApproval(reason) => {
+                tracing::info!(
+                    "Plan gate requires approval for tool '{}': {}",
+                    name,
+                    reason
+                );
+                return Err(ToolError::ApprovalRequired(reason));
+            }
         }
 
         // Check if approval is required

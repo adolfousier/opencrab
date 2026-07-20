@@ -25,6 +25,41 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Three-state decision from the plan-mode gate.
+///
+/// The gate is a filter that runs before the normal approval policy.
+/// It can allow a call through, hard-deny it, or force an approval
+/// prompt regardless of the session's auto-approve setting (used for
+/// bash during post-init Editing, where the call is not outright
+/// forbidden but must be explicitly confirmed).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum GateDecision {
+    /// Call proceeds under the normal approval policy.
+    Allow,
+    /// Call is hard-denied; the reason is returned to the model as the
+    /// tool result.
+    Deny(String),
+    /// Call proceeds but REQUIRES user approval even under auto-approve
+    /// (overrides yolo for the Editing window). The reason is shown in
+    /// the approval prompt.
+    RequireApproval(String),
+}
+
+#[allow(dead_code)]
+impl GateDecision {
+    pub(crate) fn is_allowed(&self) -> bool {
+        matches!(self, GateDecision::Allow)
+    }
+
+    pub(crate) fn is_denied(&self) -> bool {
+        matches!(self, GateDecision::Deny(_))
+    }
+
+    pub(crate) fn needs_approval(&self) -> bool {
+        matches!(self, GateDecision::RequireApproval(_))
+    }
+}
+
 /// Tools always allowed while Editing (either sub-state): the plan tool
 /// itself (operation-level rules live inside it) and the question tool.
 const EDITING_ALLOWED: &[&str] = &["plan", "follow_up_question"];
@@ -49,20 +84,22 @@ pub(crate) const EDITING_DENIED_NAMES: &[&str] = &[
     "resume_agent",
 ];
 
-/// Check a tool call against the session's plan-mode state. `None` means
-/// the call proceeds (normal approval policy applies); `Some(reason)` is
-/// a deterministic denial the model receives as the tool result.
+/// Check a tool call against the session's plan-mode state.
+///
+/// Returns a [`GateDecision`]: `Allow` (proceed under normal approval
+/// policy), `Deny(reason)` (hard block), or `RequireApproval(reason)`
+/// (proceed but force an approval prompt even under auto-approve).
 pub(crate) async fn check_plan_gate(
     session_id: Uuid,
     tool_name: &str,
     capabilities: &[ToolCapability],
     input: &Value,
-) -> Option<String> {
+) -> GateDecision {
     let state = plan_files::plan_mode_state(session_id).await;
     let has = |cap: ToolCapability| capabilities.contains(&cap);
 
     match state {
-        PlanModeState::NoPlan => None,
+        PlanModeState::NoPlan => GateDecision::Allow,
 
         PlanModeState::Active => {
             // Seed tool policy (locked): between user Approve and a
@@ -73,42 +110,42 @@ pub(crate) async fn check_plan_gate(
             // the checklist exists.
             if crate::utils::plan_mode::in_seed_window(session_id).await {
                 if EDITING_ALLOWED.contains(&tool_name) {
-                    return None;
+                    return GateDecision::Allow;
                 }
                 let mutator = super::classify::is_destructive(capabilities)
                     || EDITING_DENIED_NAMES.contains(&tool_name);
                 if mutator {
-                    return Some(format!(
+                    return GateDecision::Deny(format!(
                         "Plan gate: '{tool_name}' is blocked until the approved plan's \
                          checklist is seeded. Call `plan` add_tasks with the steps from \
                          the session .md, then `plan` start; project work begins after \
                          start succeeds."
                     ));
                 }
-                return None;
+                return GateDecision::Allow;
             }
             // Freeze the live design .md against generic write tools; the
             // checklist executes through the plan tool, not by rewriting
             // the approved design.
             if has(ToolCapability::WriteFiles) && write_targets_session_md(session_id, input).await
             {
-                Some(
+                GateDecision::Deny(
                     "Plan gate: the session plan .md is frozen while the checklist is \
                      Active. Execute tasks with the plan tool (start/complete); the \
                      design document is no longer editable."
                         .to_string(),
                 )
             } else {
-                None
+                GateDecision::Allow
             }
         }
 
         PlanModeState::PreInitEditing => {
             if EDITING_ALLOWED.contains(&tool_name) {
-                return None;
+                return GateDecision::Allow;
             }
             if EDITING_DENIED_NAMES.contains(&tool_name) {
-                return Some(format!(
+                return GateDecision::Deny(format!(
                     "Plan gate: '{tool_name}' is blocked while the session is in Plan \
                      mode (pre-init Editing). Explore with reads, search, and bash, \
                      then call plan init to create the design document."
@@ -117,10 +154,10 @@ pub(crate) async fn check_plan_gate(
             // Exploratory bash (and code execution) is explicitly allowed
             // pre-init, so the agent can investigate before `plan init`.
             if has(ToolCapability::ExecuteShell) {
-                return None;
+                return GateDecision::Allow;
             }
             if has(ToolCapability::WriteFiles) {
-                return Some(format!(
+                return GateDecision::Deny(format!(
                     "Plan gate: project file writes are blocked while the session is \
                      in Plan mode (pre-init Editing): there is no plan document yet. \
                      Explore with reads, search, and bash, then call plan init; \
@@ -128,44 +165,47 @@ pub(crate) async fn check_plan_gate(
                 ));
             }
             if has(ToolCapability::SystemModification) {
-                return Some(format!(
+                return GateDecision::Deny(format!(
                     "Plan gate: '{tool_name}' modifies system state and is blocked \
                      while the session is in Plan mode (pre-init Editing). Explore, \
                      then call plan init."
                 ));
             }
-            None
+            GateDecision::Allow
         }
 
         PlanModeState::PostInitEditing => {
             if EDITING_ALLOWED.contains(&tool_name) {
-                return None;
+                return GateDecision::Allow;
             }
             if EDITING_DENIED_NAMES.contains(&tool_name) {
-                return Some(format!(
+                return GateDecision::Deny(format!(
                     "Plan gate: '{tool_name}' is blocked while the plan is being \
                      designed (Editing). Refine the session plan .md and wait for \
                      the user to approve the plan."
                 ));
             }
-            // All bash is denied post-init: the design phase writes prose,
-            // not commands. (ExecuteShell first: code_exec carries
-            // WriteFiles too and must not fall into the .md-write branch.)
+            // Bash during post-init Editing goes to approval, not hard
+            // deny: the design phase writes prose, not commands, but an
+            // interactive user may explicitly confirm a read-only command
+            // (e.g. `git log`) to inform the design. RequireApproval
+            // overrides auto-approve for the Editing window.
+            // (ExecuteShell first: code_exec carries WriteFiles too and
+            // must not fall into the .md-write branch.)
             if has(ToolCapability::ExecuteShell) {
-                return Some(
-                    "Plan gate: bash is blocked while the plan is being designed \
-                     (Editing). Exploration happened before plan init; now refine \
-                     the session plan .md and wait for user approval. Execution \
-                     starts after the plan is approved."
+                return GateDecision::RequireApproval(
+                    "Plan gate: bash requires approval while the plan is being \
+                     designed (Editing). Exploration happened before plan init; \
+                     confirm this command is needed for the design."
                         .to_string(),
                 );
             }
             if has(ToolCapability::WriteFiles) {
                 if write_targets_session_md(session_id, input).await {
-                    return None;
+                    return GateDecision::Allow;
                 }
                 let md = plan_files::plan_md_path(session_id).await;
-                return Some(format!(
+                return GateDecision::Deny(format!(
                     "Plan gate: while the plan is being designed (Editing), the ONLY \
                      writable file is the session plan document at {}. Write the \
                      design there; project files become editable after the user \
@@ -174,13 +214,13 @@ pub(crate) async fn check_plan_gate(
                 ));
             }
             if has(ToolCapability::SystemModification) {
-                return Some(format!(
+                return GateDecision::Deny(format!(
                     "Plan gate: '{tool_name}' modifies system state and is blocked \
                      while the plan is being designed (Editing). Refine the session \
                      plan .md and wait for user approval."
                 ));
             }
-            None
+            GateDecision::Allow
         }
     }
 }

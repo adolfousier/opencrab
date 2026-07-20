@@ -4,12 +4,12 @@
 //!
 //! - pre-init Editing denies project writes but allows exploratory bash
 //!   and the plan tool
-//! - post-init Editing hard-denies all bash, allows writes ONLY to the
-//!   session `.md`, and denies other `~/.opencrabs` writes
+//! - post-init Editing sends bash to approval (RequireApproval), allows
+//!   writes ONLY to the session `.md`, and denies other writes
 //! - Active freezes the `.md` against generic write tools
 //! - NoPlan gates nothing
 
-use crate::brain::tools::plan_gate::check_plan_gate;
+use crate::brain::tools::plan_gate::{check_plan_gate, GateDecision};
 use crate::brain::tools::r#trait::ToolCapability;
 use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
@@ -79,7 +79,7 @@ async fn no_plan_gates_nothing() {
             ("spawn_agent", SYSTEM),
         ] {
             assert!(
-                check_plan_gate(sid, name, caps, &json!({})).await.is_none(),
+                check_plan_gate(sid, name, caps, &json!({})).await.is_allowed(),
                 "{name} must pass with no plan"
             );
         }
@@ -95,7 +95,7 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
 
         // Project writes are denied: there is nothing approvable to write.
         let deny = check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/x.rs"})).await;
-        assert!(deny.is_some(), "project write must be denied pre-init");
+        assert!(deny.is_denied(), "project write must be denied pre-init");
 
         // Brain-file writes are writes too.
         let deny = check_plan_gate(
@@ -105,35 +105,35 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
             &json!({"path": "MEMORY.md"}),
         )
         .await;
-        assert!(deny.is_some(), "opencrabs write must be denied pre-init");
+        assert!(deny.is_denied(), "opencrabs write must be denied pre-init");
 
         // Exploratory bash and code execution stay available.
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "execute_code", CODE_EXEC, &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
 
         // Reads, search, and the plan tool flow through.
         assert!(
             check_plan_gate(sid, "read_file", READ, &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "web_search", NETWORK, &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "plan", PLAN, &json!({"operation": "init"}))
                 .await
-                .is_none()
+                .is_allowed()
         );
 
         // Sends, browser mutators, spawn, and system tools are blocked.
@@ -141,14 +141,14 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
             assert!(
                 check_plan_gate(sid, name, NETWORK, &json!({}))
                     .await
-                    .is_some(),
+                    .is_denied(),
                 "{name} must be denied pre-init"
             );
         }
         assert!(
             check_plan_gate(sid, "evolve", SYSTEM, &json!({}))
                 .await
-                .is_some()
+                .is_denied()
         );
     })
     .await;
@@ -161,16 +161,16 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
         make_post_init_editing(sid).await;
         let md = plan_md_path(sid).await;
 
-        // All bash is hard-denied, including write-capable code execution.
+        // Bash goes to approval (RequireApproval), not hard deny.
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_some()
+                .needs_approval()
         );
         assert!(
             check_plan_gate(sid, "execute_code", CODE_EXEC, &json!({}))
                 .await
-                .is_some()
+                .needs_approval()
         );
 
         // The session .md is the ONLY writable file.
@@ -181,7 +181,7 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
             &json!({"path": md.to_string_lossy()}),
         )
         .await;
-        assert!(ok.is_none(), "session .md write must pass, got: {ok:?}");
+        assert!(ok.is_allowed(), "session .md write must pass, got: {ok:?}");
 
         // edit_file on the .md passes too (path key is shared).
         assert!(
@@ -192,7 +192,7 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
                 &json!({"path": md.to_string_lossy()})
             )
             .await
-            .is_none()
+            .is_allowed()
         );
 
         // Project writes fail.
@@ -204,7 +204,7 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
                 &json!({"path": "/tmp/project/main.rs"})
             )
             .await
-            .is_some()
+            .is_denied()
         );
 
         // Other ~/.opencrabs writes fail (relative write_opencrabs_file
@@ -217,58 +217,58 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
                 &json!({"path": "MEMORY.md"})
             )
             .await
-            .is_some()
+            .is_denied()
         );
 
         // A write tool with no recognizable target is denied (safe default).
         assert!(
             check_plan_gate(sid, "generate_document", WRITE, &json!({}))
                 .await
-                .is_some()
+                .is_denied()
         );
 
         // Reads, search, plan, and follow_up_question flow through.
         assert!(
             check_plan_gate(sid, "read_file", READ, &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "grep", READ, &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "plan", PLAN, &json!({"operation": "init"}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "follow_up_question", &[], &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
 
         // Sends, browser mutators, spawn, and system tools are blocked.
         assert!(
             check_plan_gate(sid, "slack_send", NETWORK, &json!({}))
                 .await
-                .is_some()
+                .is_denied()
         );
         assert!(
             check_plan_gate(sid, "browser_eval", NETWORK, &json!({}))
                 .await
-                .is_some()
+                .is_denied()
         );
         assert!(
             check_plan_gate(sid, "resume_agent", SYSTEM, &json!({}))
                 .await
-                .is_some()
+                .is_denied()
         );
         assert!(
             check_plan_gate(sid, "cron_manage", SYSTEM, &json!({}))
                 .await
-                .is_some()
+                .is_denied()
         );
     })
     .await;
@@ -290,7 +290,7 @@ async fn active_freezes_md_only() {
                 &json!({"path": md.to_string_lossy()})
             )
             .await
-            .is_some(),
+            .is_denied(),
             "Active .md write must be frozen"
         );
 
@@ -303,22 +303,22 @@ async fn active_freezes_md_only() {
                 &json!({"path": "/tmp/project/main.rs"})
             )
             .await
-            .is_none()
+            .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "telegram_send", NETWORK, &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
     })
     .await;
@@ -338,12 +338,12 @@ async fn active_checklist_without_md_gates_nothing_on_writes() {
                 &json!({"path": "/tmp/project/main.rs"})
             )
             .await
-            .is_none()
+            .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_none()
+                .is_allowed()
         );
     })
     .await;
@@ -363,27 +363,27 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
         assert!(
             check_plan_gate(sid, "plan", PLAN, &json!({"operation": "add_tasks"}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "read_file", READ, &json!({}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_some()
+                .is_denied()
         );
         assert!(
             check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/p/main.rs"}))
                 .await
-                .is_some()
+                .is_denied()
         );
         assert!(
             check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({}))
                 .await
-                .is_some()
+                .is_denied()
         );
 
         // Partial seed (tasks added, none started) stays blocked too.
@@ -398,7 +398,7 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_some()
+                .is_denied()
         );
 
         // Once a task starts, the seed window closes and normal Active
@@ -409,12 +409,12 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_none()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "edit_file", WRITE, &json!({"path": "/tmp/p/main.rs"}))
                 .await
-                .is_none()
+                .is_allowed()
         );
     })
     .await;
