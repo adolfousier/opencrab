@@ -4,8 +4,29 @@
 //! No compiled-in fallback — if the file is missing or broken, an error is returned.
 //! Users can edit the file live — changes take effect on next `/usage` open.
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::sync::LazyLock;
+
+/// Minimum matched-substring length for a fuzzy family match, so a tiny
+/// coincidental overlap can't price a model against an unrelated family.
+const MIN_MATCH_OVERLAP: usize = 3;
+
+/// Remove version tokens (digit runs with `.`/`_` separators) from a model or
+/// prefix and collapse leftover separators, so a new release inherits the
+/// last-known price of its family/tier (#655): `qwen3.8-max-preview` ->
+/// `qwen-max-preview`, `claude-opus-4-9` -> `claude-opus`, `gpt-5.3` -> `gpt`.
+fn strip_version_tokens(s: &str) -> String {
+    static VER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+(?:[._]\d+)*").unwrap());
+    static SEP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[-._]{2,}").unwrap());
+    let no_ver = VER.replace_all(s, "");
+    let collapsed = SEP.replace_all(&no_ver, "-");
+    collapsed
+        .trim_matches(|c| c == '-' || c == '.' || c == '_')
+        .to_string()
+}
 
 /// A single model pricing entry.
 /// `prefix` is matched as a substring of the model name (case-insensitive).
@@ -56,70 +77,118 @@ impl PricingConfig {
         cache_creation_tokens: u32,
         cache_read_tokens: u32,
     ) -> f64 {
-        let m = model.to_lowercase();
-        for block in self.providers.values() {
-            for entry in &block.entries {
-                if m.contains(&entry.prefix.to_lowercase()) {
-                    let input = (input_tokens as f64 / 1_000_000.0) * entry.input_per_m;
-                    let output = (output_tokens as f64 / 1_000_000.0) * entry.output_per_m;
-                    let cache_write_rate =
-                        entry.cache_write_per_m.unwrap_or(entry.input_per_m * 1.25);
-                    let cache_read_rate = entry.cache_read_per_m.unwrap_or(entry.input_per_m * 0.1);
-                    let cache_write =
-                        (cache_creation_tokens as f64 / 1_000_000.0) * cache_write_rate;
-                    let cache_read = (cache_read_tokens as f64 / 1_000_000.0) * cache_read_rate;
-                    return input + output + cache_write + cache_read;
-                }
+        match self.resolve_entry(model) {
+            Some(entry) => {
+                let input = (input_tokens as f64 / 1_000_000.0) * entry.input_per_m;
+                let output = (output_tokens as f64 / 1_000_000.0) * entry.output_per_m;
+                let cache_write_rate = entry.cache_write_per_m.unwrap_or(entry.input_per_m * 1.25);
+                let cache_read_rate = entry.cache_read_per_m.unwrap_or(entry.input_per_m * 0.1);
+                let cache_write = (cache_creation_tokens as f64 / 1_000_000.0) * cache_write_rate;
+                let cache_read = (cache_read_tokens as f64 / 1_000_000.0) * cache_read_rate;
+                input + output + cache_write + cache_read
             }
+            None => 0.0,
         }
-        0.0
     }
 
     /// Estimate cost from a combined token count using an 80/20 input/output split.
-    /// Returns None if model is unknown.
+    /// Returns None only for an unrecognizable model family (see [`resolve_entry`]).
     pub fn estimate_cost(&self, model: &str, token_count: i64) -> Option<f64> {
-        let m = model.to_lowercase();
-
-        // Try direct match first
-        if let Some(cost) = self.try_match(&m, token_count) {
-            return Some(cost);
-        }
-
-        // If no match, try prepending common provider prefixes
-        // (normalized names like "opus-4-6" need "claude-" to match TOML entries)
-        let prefixes = [
-            "claude-",
-            "gpt-",
-            "gemini-",
-            "deepseek-",
-            "llama-",
-            "qwen",
-            "kimi-",
-            "zhipu-",
-            "glm-",
-        ];
-        for p in &prefixes {
-            let prefixed = format!("{}{}", p, m);
-            if let Some(cost) = self.try_match(&prefixed, token_count) {
-                return Some(cost);
-            }
-        }
-
-        None
+        self.resolve_entry(model).map(|entry| {
+            let input = (token_count as f64 * 0.80 / 1_000_000.0) * entry.input_per_m;
+            let output = (token_count as f64 * 0.20 / 1_000_000.0) * entry.output_per_m;
+            input + output
+        })
     }
 
-    /// Internal helper: try to match a model string against all pricing entries.
-    fn try_match(&self, model_lower: &str, token_count: i64) -> Option<f64> {
-        for block in self.providers.values() {
-            for entry in &block.entries {
-                if model_lower.contains(&entry.prefix.to_lowercase()) {
-                    let input = (token_count as f64 * 0.80 / 1_000_000.0) * entry.input_per_m;
-                    let output = (token_count as f64 * 0.20 / 1_000_000.0) * entry.output_per_m;
-                    return Some(input + output);
-                }
-            }
+    /// Resolve the best pricing entry for a model, never dropping a recognizable
+    /// family to no-match (#655). Three tiers, most specific first: an exact
+    /// substring match; then a version-agnostic tier match, so a new release
+    /// inherits the last-known price of its tier (`qwen3.8-max-preview` takes the
+    /// qwen-max-preview rate, `claude-opus-4-9` the opus rate) while keeping
+    /// max-vs-plus apart; then a family-root fallback to that family's flagship
+    /// (most expensive) entry. Returns `None` only when no known family shares
+    /// the model's root.
+    fn resolve_entry(&self, model: &str) -> Option<&PricingEntry> {
+        let m = model.to_lowercase();
+        if let Some(e) = self.best_substring_match(&m, false) {
+            return Some(e);
         }
-        None
+        if let Some(e) = self.best_substring_match(&m, true) {
+            return Some(e);
+        }
+        self.family_flagship(&strip_version_tokens(&m))
+    }
+
+    /// Best entry matching `model`, both sides version-stripped when
+    /// `versionless`. Matches in either direction: the model carrying the prefix
+    /// (`claude-opus-4-9` contains `claude-opus-4`), or the prefix carrying a
+    /// vendor-stripped short model name (`claude-opus-4` contains `opus-4`).
+    /// Longest overlap wins (most specific); ties break to the higher input rate
+    /// (family flagship). Overlaps under [`MIN_MATCH_OVERLAP`] are ignored.
+    fn best_substring_match(&self, model: &str, versionless: bool) -> Option<&PricingEntry> {
+        let m = if versionless {
+            strip_version_tokens(model)
+        } else {
+            model.to_string()
+        };
+        if m.is_empty() {
+            return None;
+        }
+        self.providers
+            .values()
+            .flat_map(|b| b.entries.iter())
+            .filter_map(|e| {
+                let prefix = e.prefix.to_lowercase();
+                let key = if versionless {
+                    strip_version_tokens(&prefix)
+                } else {
+                    prefix
+                };
+                if key.is_empty() {
+                    return None;
+                }
+                let overlap = if m.contains(&key) {
+                    key.len()
+                } else if key.contains(&m) {
+                    m.len()
+                } else {
+                    return None;
+                };
+                (overlap >= MIN_MATCH_OVERLAP).then_some((overlap, e))
+            })
+            .max_by(|(la, ea), (lb, eb)| {
+                la.cmp(lb).then(
+                    ea.input_per_m
+                        .partial_cmp(&eb.input_per_m)
+                        .unwrap_or(Ordering::Equal),
+                )
+            })
+            .map(|(_, e)| e)
+    }
+
+    /// Flagship (most expensive) entry whose version-stripped prefix shares its
+    /// first token with `model_base`. The last-resort "never $0" price for a new
+    /// tier in a known family (e.g. an unforeseen `qwen-*` variant).
+    fn family_flagship(&self, model_base: &str) -> Option<&PricingEntry> {
+        let root = model_base.split(['-', '.']).next().unwrap_or("");
+        if root.len() < 3 {
+            return None;
+        }
+        self.providers
+            .values()
+            .flat_map(|b| b.entries.iter())
+            .filter(|e| {
+                strip_version_tokens(&e.prefix.to_lowercase())
+                    .split(['-', '.'])
+                    .next()
+                    .is_some_and(|t| t == root)
+            })
+            .max_by(|a, b| {
+                a.input_per_m
+                    .partial_cmp(&b.input_per_m)
+                    .unwrap_or(Ordering::Equal)
+            })
     }
 
     /// Load from ~/.opencrabs/usage_pricing.toml.
