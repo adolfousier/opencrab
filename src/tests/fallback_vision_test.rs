@@ -217,6 +217,7 @@ mod fallback_runtime {
             model: "mock-model".into(),
             messages: vec![],
             system: None,
+            system_suffix: None,
             max_tokens: None,
             temperature: None,
             tools: None,

@@ -249,8 +249,8 @@ impl GeminiProvider {
             body["cachedContent"] = serde_json::Value::String(name.clone());
         }
 
-        // System instruction
-        if let Some(ref system) = request.system {
+        // System instruction (full: stable brain + runtime suffix)
+        if let Some(system) = request.system_full() {
             body["systemInstruction"] = serde_json::json!({
                 "parts": [{"text": system}]
             });
@@ -465,10 +465,10 @@ impl Provider for GeminiProvider {
         );
 
         // Create cachedContent on first request if system prompt exists
-        if let (Some(system), Some(tools)) = (&request.system, &request.tools)
+        if let (Some(system), Some(tools)) = (request.system_full(), request.tools.as_ref())
             && !tools.is_empty()
         {
-            let _ = self.ensure_cached_content(system, tools).await;
+            let _ = self.ensure_cached_content(&system, tools).await;
         }
 
         let body = self.build_gemini_request(&request);
@@ -526,10 +526,10 @@ impl Provider for GeminiProvider {
         );
 
         // Create cachedContent on first request if system prompt exists
-        if let (Some(system), Some(tools)) = (&request.system, &request.tools)
+        if let (Some(system), Some(tools)) = (request.system_full(), request.tools.as_ref())
             && !tools.is_empty()
         {
-            let _ = self.ensure_cached_content(system, tools).await;
+            let _ = self.ensure_cached_content(&system, tools).await;
         }
 
         let body = self.build_gemini_request(&request);

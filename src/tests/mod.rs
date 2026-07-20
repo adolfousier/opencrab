@@ -294,6 +294,7 @@ pub mod project_file_slug_test;
 pub mod project_skills_test;
 pub mod project_test;
 pub mod prompt_analyzer_test;
+pub mod prompt_cache_split_test;
 pub mod prompt_cache_stability_test;
 pub mod prompt_compiled_features_test;
 pub mod prompt_inline_edit_directive_test;

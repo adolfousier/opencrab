@@ -2592,11 +2592,32 @@ impl OpenAIProvider {
             tracing::warn!("NO SYSTEM BRAIN in request!");
         }
 
-        // Add system message if present
-        if let Some(system) = request.system {
+        // Add system message if present. For a caching (qwen / DashScope) target
+        // with a runtime suffix, send a 2-part array [stable, suffix] so
+        // qwen_body_transform can cache_control ONLY the stable brain part —
+        // keeping the cached prefix byte-stable across sessions. Other providers
+        // get the concatenated string, byte-identical to the pre-split prompt
+        // (#658).
+        if let Some(stable) = request.system {
+            let suffix = request.system_suffix.filter(|x| !x.trim().is_empty());
+            let content = match suffix {
+                Some(suffix)
+                    if crate::brain::provider::qwen::looks_like_qwen_target(
+                        &self.base_url,
+                        &request.model,
+                    ) =>
+                {
+                    serde_json::json!([
+                        { "type": "text", "text": stable },
+                        { "type": "text", "text": suffix },
+                    ])
+                }
+                Some(suffix) => serde_json::Value::String(format!("{stable}\n\n{suffix}")),
+                None => serde_json::Value::String(stable),
+            };
             messages.push(OpenAIMessage {
                 role: "system".to_string(),
-                content: Some(serde_json::Value::String(system)),
+                content: Some(content),
                 tool_calls: None,
                 tool_call_id: None,
                 reasoning_content: None,

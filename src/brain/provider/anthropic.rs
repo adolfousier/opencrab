@@ -126,13 +126,25 @@ impl AnthropicProvider {
             cache_type: "ephemeral".to_string(),
         };
 
-        // Convert system to cacheable blocks
+        // Convert system to cacheable blocks: the stable brain carries
+        // cache_control (cached prefix); the volatile runtime suffix rides as a
+        // second block AFTER it with no cache_control, so per-session runtime
+        // info can't invalidate the cached brain across sessions (#658).
+        let suffix = request.system_suffix.filter(|x| !x.trim().is_empty());
         let system = request.system.map(|s| {
-            AnthropicSystem::Blocks(vec![AnthropicSystemBlock {
+            let mut blocks = vec![AnthropicSystemBlock {
                 block_type: "text".to_string(),
                 text: s,
                 cache_control: Some(cache.clone()),
-            }])
+            }];
+            if let Some(suffix) = suffix {
+                blocks.push(AnthropicSystemBlock {
+                    block_type: "text".to_string(),
+                    text: suffix,
+                    cache_control: None,
+                });
+            }
+            AnthropicSystem::Blocks(blocks)
         });
 
         // Convert tools with cache_control on the last tool

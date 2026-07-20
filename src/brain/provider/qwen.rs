@@ -167,6 +167,22 @@ fn add_cache_control_to_content(content: &serde_json::Value) -> serde_json::Valu
     serde_json::Value::Array(arr)
 }
 
+/// Cache-control the FIRST content part instead of the last. Used for a system
+/// message split into `[stable_brain, runtime_suffix]` so the breakpoint sits
+/// after the byte-stable brain and the volatile suffix stays uncached (#658).
+fn add_cache_control_to_first_part(content: &serde_json::Value) -> serde_json::Value {
+    let mut arr = normalize_content_to_array(content);
+    if let Some(first) = arr.first_mut()
+        && let Some(obj) = first.as_object_mut()
+    {
+        obj.insert(
+            "cache_control".to_string(),
+            serde_json::json!({ "type": "ephemeral" }),
+        );
+    }
+    serde_json::Value::Array(arr)
+}
+
 /// Rewrite a serialized OpenAI chat-completions body into the exact dialect
 /// that qwen-cli's `DashScopeOpenAICompatibleProvider.buildRequest` emits.
 ///
@@ -210,10 +226,17 @@ pub fn qwen_body_transform(mut body: serde_json::Value) -> serde_json::Value {
                     Some(c) if !c.is_null() => c.clone(),
                     _ => continue,
                 };
-                msg_obj.insert(
-                    "content".to_string(),
-                    add_cache_control_to_content(&content),
-                );
+                // A system message split into [stable_brain, runtime_suffix]
+                // caches on the FIRST part so the volatile suffix stays outside
+                // the breakpoint (#658); everything else caches the last part.
+                let is_split_system = Some(i) == system_idx
+                    && content.as_array().map(|a| a.len() >= 2).unwrap_or(false);
+                let new_content = if is_split_system {
+                    add_cache_control_to_first_part(&content)
+                } else {
+                    add_cache_control_to_content(&content)
+                };
+                msg_obj.insert("content".to_string(), new_content);
             }
         }
     }

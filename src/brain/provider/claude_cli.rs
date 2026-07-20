@@ -225,10 +225,10 @@ impl ClaudeCliProvider {
     fn build_prompt(request: &LLMRequest) -> String {
         let mut parts = Vec::new();
 
-        if let Some(ref system) = request.system
+        if let Some(system) = request.system_full()
             && !system.is_empty()
         {
-            parts.push(system.clone());
+            parts.push(system);
         }
 
         for msg in &request.messages {

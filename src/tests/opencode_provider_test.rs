@@ -606,6 +606,7 @@ async fn e2e_opencode_multi_turn() {
             },
         ],
         system: Some("You are a helpful assistant with good memory.".to_string()),
+        system_suffix: None,
         ..LLMRequest::new("opencode/gpt-5-nano", vec![])
     };
 

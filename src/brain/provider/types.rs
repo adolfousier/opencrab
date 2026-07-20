@@ -99,9 +99,17 @@ pub struct LLMRequest {
     pub model: String,
     /// Conversation messages
     pub messages: Vec<Message>,
-    /// System brain content (if supported)
+    /// System brain content (if supported). The STABLE, cacheable prefix —
+    /// providers stamp cache_control on it, so it stays byte-stable across
+    /// sessions. Volatile per-session lines live in `system_suffix` (#658).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
+    /// Uncached tail: the per-session Runtime Info block (model / provider /
+    /// working dir / date) split out of the brain so it can't poison the cached
+    /// prefix. Cache-capable providers place it after the cache breakpoint;
+    /// others concatenate it via [`LLMRequest::system_full`] (#658).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_suffix: Option<String>,
     /// Available tools
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
@@ -132,6 +140,7 @@ impl LLMRequest {
             model: model.into(),
             messages,
             system: None,
+            system_suffix: None,
             tools: None,
             temperature: None,
             max_tokens: None,
@@ -142,9 +151,29 @@ impl LLMRequest {
         }
     }
 
-    /// Set system brain content
+    /// The full system prompt: stable brain plus the uncached runtime suffix.
+    /// Providers that don't do prefix caching use this so the model still sees
+    /// the runtime info; it is byte-identical to the pre-split single-string
+    /// system prompt (#658).
+    pub fn system_full(&self) -> Option<String> {
+        match (&self.system, &self.system_suffix) {
+            (Some(s), Some(suffix)) if !suffix.trim().is_empty() => {
+                Some(format!("{s}\n\n{suffix}"))
+            }
+            (Some(s), _) => Some(s.clone()),
+            (None, Some(suffix)) if !suffix.trim().is_empty() => Some(suffix.clone()),
+            (None, _) => None,
+        }
+    }
+
+    /// Set system brain content. Splits the Runtime Info block out of the brain
+    /// into `system_suffix` so the large stable prefix caches across sessions
+    /// while the per-session runtime lines stay uncached (#658). A system string
+    /// without a Runtime Info block is stored verbatim as `system`.
     pub fn with_system(mut self, system: impl Into<String>) -> Self {
-        self.system = Some(system.into());
+        let (stable, suffix) = crate::brain::prompt_builder::split_runtime_suffix(&system.into());
+        self.system = Some(stable);
+        self.system_suffix = suffix;
         self
     }
 

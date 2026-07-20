@@ -334,7 +334,8 @@ impl BrainLoader {
 
         // 7. Runtime info
         if let Some(info) = runtime_info {
-            prompt.push_str("--- Runtime Info ---\n");
+            prompt.push_str(RUNTIME_INFO_HEADER);
+            prompt.push('\n');
             if let Some(ref model) = info.model {
                 prompt.push_str(&format!("Model: {}\n", model));
             }
@@ -551,7 +552,8 @@ impl BrainLoader {
 
         // 4. Runtime info
         if let Some(info) = runtime_info {
-            prompt.push_str("--- Runtime Info ---\n");
+            prompt.push_str(RUNTIME_INFO_HEADER);
+            prompt.push('\n');
             if let Some(ref model) = info.model {
                 prompt.push_str(&format!("Model: {}\n", model));
             }
@@ -702,6 +704,43 @@ impl BrainLoader {
         let display = crate::brain::tools::error::collapse_home(&root);
         prompt.push_str(&crate::brain::directives::render(&display, &files));
     }
+}
+
+/// Header that opens the Runtime Info block in a rendered brain. Shared by the
+/// render sites and by [`split_runtime_suffix`] so the prompt-cache split can't
+/// drift from what's actually rendered (#658).
+pub const RUNTIME_INFO_HEADER: &str = "--- Runtime Info ---";
+
+/// Split a rendered system brain into its byte-stable cacheable prefix and the
+/// volatile Runtime Info block (model / provider / working directory / date).
+///
+/// Returns `(stable_prefix, Some(runtime_block))` when the block is present,
+/// else `(brain, None)`. The block runs from [`RUNTIME_INFO_HEADER`] to the
+/// first blank line after it (it has no internal blank lines). Cutting it out
+/// and re-appending it as the uncached suffix keeps the large brain identical
+/// across sessions so the provider prompt cache reuses it, while the per-session
+/// runtime lines ride uncached at the end (#658).
+pub fn split_runtime_suffix(brain: &str) -> (String, Option<String>) {
+    let Some(start) = brain.find(RUNTIME_INFO_HEADER) else {
+        return (brain.to_string(), None);
+    };
+    let end = brain[start..]
+        .find("\n\n")
+        .map(|i| start + i + 2)
+        .unwrap_or(brain.len());
+    let block = brain[start..end].trim_end().to_string();
+    if block.is_empty() {
+        return (brain.to_string(), None);
+    }
+    let mut stable = brain[..start].trim_end().to_string();
+    let tail = brain[end..].trim();
+    if !tail.is_empty() {
+        if !stable.is_empty() {
+            stable.push_str("\n\n");
+        }
+        stable.push_str(tail);
+    }
+    (stable, Some(block))
 }
 
 /// Runtime information injected into the system brain.
