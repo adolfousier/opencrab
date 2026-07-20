@@ -61,13 +61,25 @@ impl GateDecision {
 }
 
 /// Tools always allowed while Editing (either sub-state): the plan tool
-/// itself (operation-level rules live inside it) and the question tool.
-const EDITING_ALLOWED: &[&str] = &["plan", "follow_up_question"];
+/// itself (operation-level rules live inside it), the question tool, and
+/// the full agent-tool family. Subagents spawned during Editing inherit a
+/// read-only registry (see `restrict_registry_to_read_only`), so the whole
+/// family is safe: spawn, send_input, close, resume, wait.
+const EDITING_ALLOWED: &[&str] = &[
+    "plan",
+    "follow_up_question",
+    "spawn_agent",
+    "send_input",
+    "close_agent",
+    "resume_agent",
+    "wait_agent",
+];
 
 /// Names denied while Editing regardless of capability flags: channel
-/// sends, browser mutators, and agent spawn/team mutators. Read-shaped
-/// browser tools (navigate, content, screenshot, find, wait) stay
-/// available for exploration in pre-init.
+/// sends and browser mutators. Read-shaped browser tools (navigate,
+/// content, screenshot, find, wait) stay available for exploration.
+/// Agent tools are NOT here: they are in `EDITING_ALLOWED` because the
+/// read-only subagent filter already ensures spawned agents can only read.
 pub(crate) const EDITING_DENIED_NAMES: &[&str] = &[
     "telegram_send",
     "discord_send",
@@ -78,9 +90,6 @@ pub(crate) const EDITING_DENIED_NAMES: &[&str] = &[
     "browser_click",
     "browser_type",
     "browser_eval",
-    "send_input",
-    "close_agent",
-    "resume_agent",
 ];
 
 /// Check a tool call against the session's plan-mode state.

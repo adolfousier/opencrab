@@ -145,12 +145,14 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
                 "{name} must be denied pre-init"
             );
         }
-        // spawn_agent is denied by capability (SystemModification), not name.
+        // Agent tools are allowed: the read-only subagent filter
+        // (restrict_registry_to_read_only) strips mutators from the
+        // spawned agent's registry, so the whole family is safe.
         assert!(
             check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({}))
                 .await
-                .is_denied(),
-            "spawn_agent must be denied pre-init via SystemModification cap"
+                .is_allowed(),
+            "spawn_agent must be allowed pre-init (read-only filter handles safety)"
         );
         assert!(
             check_plan_gate(sid, "evolve", SYSTEM, &json!({}))
@@ -270,7 +272,7 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
         assert!(
             check_plan_gate(sid, "resume_agent", SYSTEM, &json!({}))
                 .await
-                .is_denied()
+                .is_allowed()
         );
         assert!(
             check_plan_gate(sid, "cron_manage", SYSTEM, &json!({}))
@@ -390,7 +392,7 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
         assert!(
             check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({}))
                 .await
-                .is_denied()
+                .is_allowed()
         );
 
         // Partial seed (tasks added, none started) stays blocked too.
