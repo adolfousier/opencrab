@@ -107,16 +107,17 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
         .await;
         assert!(deny.is_denied(), "opencrabs write must be denied pre-init");
 
-        // Exploratory bash and code execution stay available.
+        // Destructive tools (bash, code execution) are denied pre-init.
+        // Shell reclassification is deferred; for now is_destructive gates all.
         assert!(
             check_plan_gate(sid, "bash", BASH, &json!({"command": "ls"}))
                 .await
-                .is_allowed()
+                .is_denied()
         );
         assert!(
             check_plan_gate(sid, "execute_code", CODE_EXEC, &json!({}))
                 .await
-                .is_allowed()
+                .is_denied()
         );
 
         // Reads, search, and the plan tool flow through.
@@ -204,7 +205,7 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
             .is_allowed()
         );
 
-        // Project writes fail.
+        // Project writes go to approval (RequireApproval).
         assert!(
             check_plan_gate(
                 sid,
@@ -213,11 +214,10 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
                 &json!({"path": "/tmp/project/main.rs"})
             )
             .await
-            .is_denied()
+            .needs_approval()
         );
 
-        // Other ~/.opencrabs writes fail (relative write_opencrabs_file
-        // path resolves under home and is not the .md).
+        // Other ~/.opencrabs writes go to approval too.
         assert!(
             check_plan_gate(
                 sid,
@@ -226,14 +226,14 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
                 &json!({"path": "MEMORY.md"})
             )
             .await
-            .is_denied()
+            .needs_approval()
         );
 
-        // A write tool with no recognizable target is denied (safe default).
+        // A write tool with no recognizable target goes to approval.
         assert!(
             check_plan_gate(sid, "generate_document", WRITE, &json!({}))
                 .await
-                .is_denied()
+                .needs_approval()
         );
 
         // Reads, search, plan, and follow_up_question flow through.
@@ -277,7 +277,7 @@ async fn post_init_denies_bash_and_gates_writes_to_md() {
         assert!(
             check_plan_gate(sid, "cron_manage", SYSTEM, &json!({}))
                 .await
-                .is_denied()
+                .needs_approval()
         );
     })
     .await;

@@ -1,17 +1,20 @@
 //! Plan-mode write/bash gate: the tool-loop enforcement of the Editing
 //! write policy and the Active `.md` freeze.
 //!
-//! Checked on every tool execution (registry choke point). The rules are
-//! asymmetric by design:
+//! Checked on every tool execution (registry choke point). All capability
+//! checks go through the shared `classify::is_destructive()` helper. The
+//! rules are asymmetric by design:
 //!
 //! - **Pre-init Editing** (durable flag, no session `.md` yet): deny
-//!   project file writes but ALLOW exploratory bash and reads/search so
-//!   the agent can investigate before committing to a design doc. `plan`
-//!   (for `init`) stays available.
+//!   all destructive tools (anything `is_destructive` flags) and the
+//!   name-based deny list. Reads and search stay available so the agent
+//!   can investigate before committing to a design doc. `plan` (for
+//!   `init`) stays available.
 //! - **Post-init Editing** (`.md` + `.json`): allow reads, search,
-//!   `follow_up_question`, and writes ONLY to the session `.md`. Deny all
-//!   bash, other project writes, system modification, channel sends,
-//!   browser mutators, and agent spawn/team mutators.
+//!   `follow_up_question`, and writes ONLY to the session `.md`. All
+//!   other destructive tools go to `RequireApproval` (overrides
+//!   auto-approve for the Editing window). Name-based deny list tools
+//!   are hard-denied.
 //! - **Active**: freeze the live design `.md` against generic write
 //!   tools; everything else follows the normal approval policy.
 //! - **NoPlan**: no gate.
@@ -155,28 +158,16 @@ pub(crate) async fn check_plan_gate(
             if EDITING_DENIED_NAMES.contains(&tool_name) {
                 return GateDecision::Deny(format!(
                     "Plan gate: '{tool_name}' is blocked while the session is in Plan \
-                     mode (pre-init Editing). Explore with reads, search, and bash, \
-                     then call plan init to create the design document."
+                     mode (pre-init Editing). Explore with reads and search, then call \
+                     plan init to create the design document."
                 ));
             }
-            // Exploratory bash (and code execution) is explicitly allowed
-            // pre-init, so the agent can investigate before `plan init`.
-            if has(ToolCapability::ExecuteShell) {
-                return GateDecision::Allow;
-            }
-            if has(ToolCapability::WriteFiles) {
+            if super::classify::is_destructive(capabilities) {
                 return GateDecision::Deny(format!(
-                    "Plan gate: project file writes are blocked while the session is \
-                     in Plan mode (pre-init Editing): there is no plan document yet. \
-                     Explore with reads, search, and bash, then call plan init; \
-                     '{tool_name}' becomes relevant only after the plan is approved."
-                ));
-            }
-            if has(ToolCapability::SystemModification) {
-                return GateDecision::Deny(format!(
-                    "Plan gate: '{tool_name}' modifies system state and is blocked \
-                     while the session is in Plan mode (pre-init Editing). Explore, \
-                     then call plan init."
+                    "Plan gate: '{tool_name}' has side effects and is blocked while the \
+                     session is in Plan mode (pre-init Editing). Explore with reads and \
+                     search, then call plan init; '{tool_name}' becomes relevant only \
+                     after the plan is approved."
                 ));
             }
             GateDecision::Allow
@@ -193,39 +184,14 @@ pub(crate) async fn check_plan_gate(
                      the user to approve the plan."
                 ));
             }
-            // Bash during post-init Editing goes to approval, not hard
-            // deny: the design phase writes prose, not commands, but an
-            // interactive user may explicitly confirm a read-only command
-            // (e.g. `git log`) to inform the design. RequireApproval
-            // overrides auto-approve for the Editing window.
-            // (ExecuteShell first: code_exec carries WriteFiles too and
-            // must not fall into the .md-write branch.)
-            if has(ToolCapability::ExecuteShell) {
-                return GateDecision::RequireApproval(
-                    "Plan gate: bash requires approval while the plan is being \
-                     designed (Editing). Exploration happened before plan init; \
-                     confirm this command is needed for the design."
-                        .to_string(),
-                );
-            }
-            if has(ToolCapability::WriteFiles) {
+            if super::classify::is_destructive(capabilities) {
                 if write_targets_session_md(session_id, input).await {
                     return GateDecision::Allow;
                 }
-                let md = plan_files::plan_md_path(session_id).await;
-                return GateDecision::Deny(format!(
-                    "Plan gate: while the plan is being designed (Editing), the ONLY \
-                     writable file is the session plan document at {}. Write the \
-                     design there; project files become editable after the user \
-                     approves the plan.",
-                    md.display()
-                ));
-            }
-            if has(ToolCapability::SystemModification) {
-                return GateDecision::Deny(format!(
-                    "Plan gate: '{tool_name}' modifies system state and is blocked \
+                return GateDecision::RequireApproval(format!(
+                    "Plan gate: '{tool_name}' has side effects and requires approval \
                      while the plan is being designed (Editing). Refine the session \
-                     plan .md and wait for user approval."
+                     plan .md; project work begins after the user approves the plan."
                 ));
             }
             GateDecision::Allow
