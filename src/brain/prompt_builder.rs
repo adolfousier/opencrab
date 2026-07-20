@@ -306,7 +306,7 @@ impl BrainLoader {
     /// 3. SECURITY.md — security policies
     /// 4. MEMORY.md — long-term context
     /// 5. BOOT/HEARTBEAT — startup config
-    /// 6. Runtime info — model, provider, working directory, OS, timestamp
+    /// 6. Runtime info — model, provider, working directory, OS, current date
     /// 7. Commands & skills awareness index
     /// 8. SOUL.md — personality, tone
     /// 9. AGENTS.md — workspace governance + hard rules + brain-file routing (LAST)
@@ -351,9 +351,16 @@ impl BrainLoader {
                 env!("CARGO_PKG_VERSION")
             ));
             prompt.push_str(&format!("OS: {}\n", std::env::consts::OS));
+            // Date granularity only — NOT a per-second timestamp. This line is
+            // inside the cached system prefix (providers stamp cache_control on
+            // the whole system message), so a value that changed every second
+            // invalidated the prompt cache on every request and forced a full
+            // context re-prefill (#657). Date keeps the ambient "what day is it"
+            // signal the model uses while leaving the prefix byte-stable across
+            // turns and same-model sessions so cache-read can hit.
             prompt.push_str(&format!(
-                "Timestamp: {}\n",
-                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                "Current date: {} (UTC)\n",
+                chrono::Utc::now().format("%Y-%m-%d")
             ));
             prompt.push('\n');
         }
@@ -561,9 +568,16 @@ impl BrainLoader {
                 env!("CARGO_PKG_VERSION")
             ));
             prompt.push_str(&format!("OS: {}\n", std::env::consts::OS));
+            // Date granularity only — NOT a per-second timestamp. This line is
+            // inside the cached system prefix (providers stamp cache_control on
+            // the whole system message), so a value that changed every second
+            // invalidated the prompt cache on every request and forced a full
+            // context re-prefill (#657). Date keeps the ambient "what day is it"
+            // signal the model uses while leaving the prefix byte-stable across
+            // turns and same-model sessions so cache-read can hit.
             prompt.push_str(&format!(
-                "Timestamp: {}\n",
-                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                "Current date: {} (UTC)\n",
+                chrono::Utc::now().format("%Y-%m-%d")
             ));
             push_known_paths(&mut prompt);
             push_compiled_features(&mut prompt);
