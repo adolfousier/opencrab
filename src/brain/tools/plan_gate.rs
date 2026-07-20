@@ -33,7 +33,7 @@ const EDITING_ALLOWED: &[&str] = &["plan", "follow_up_question"];
 /// sends, browser mutators, and agent spawn/team mutators. Read-shaped
 /// browser tools (navigate, content, screenshot, find, wait) stay
 /// available for exploration in pre-init.
-const EDITING_DENIED_NAMES: &[&str] = &[
+pub(crate) const EDITING_DENIED_NAMES: &[&str] = &[
     "telegram_send",
     "discord_send",
     "slack_send",
@@ -219,5 +219,37 @@ fn paths_match(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(ca), Ok(cb)) => ca == cb,
         _ => a == b,
+    }
+}
+
+/// Strip every write, shell, system-modifying, and Editing-denied tool from
+/// `registry`, leaving a read-only surface (#649).
+///
+/// A subagent spawned while the parent session is in Plan-mode Editing must
+/// not be a hole in the write-freeze: it runs under a fresh child session
+/// that resolves to `NoPlan`, so [`check_plan_gate`] would not gate it. Rather
+/// than thread the parent's Editing state through the child's every tool call,
+/// we remove the mutating tools from the child registry outright — the child
+/// can read, search, and analyze to inform or review the design, but cannot
+/// write the project, run bash, or spawn further agents (which would let it
+/// escape the freeze transitively). Removing the shell/system tools also drops
+/// `spawn_agent` itself (it carries `SystemModification`), so a read-only child
+/// cannot mint a non-restricted grandchild.
+///
+/// Mirrors the post-init Editing deny set (`ToolCapability::WriteFiles` /
+/// `ExecuteShell` / `SystemModification` plus [`EDITING_DENIED_NAMES`]) so the
+/// spawn-time filter and the per-call gate can never drift.
+pub(crate) fn restrict_registry_to_read_only(registry: &super::ToolRegistry) {
+    for name in registry.list_tools() {
+        let denied_by_name = EDITING_DENIED_NAMES.contains(&name.as_str());
+        let denied_by_cap = registry.get(&name).is_some_and(|t| {
+            let caps = t.capabilities();
+            caps.contains(&ToolCapability::WriteFiles)
+                || caps.contains(&ToolCapability::ExecuteShell)
+                || caps.contains(&ToolCapability::SystemModification)
+        });
+        if denied_by_name || denied_by_cap {
+            registry.unregister(&name);
+        }
     }
 }

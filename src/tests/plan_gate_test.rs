@@ -419,3 +419,106 @@ async fn seed_window_blocks_mutators_allows_plan_and_reads() {
     })
     .await;
 }
+
+// ── restrict_registry_to_read_only (#649) ───────────────────────────────
+// A subagent spawned while the parent is Editing must be read-only. The
+// filter strips mutating tools from the child registry (child runs under a
+// fresh NoPlan session the per-call gate would not catch), keeping only
+// read/search/network tools so it can inform or review the design.
+
+struct CapTool {
+    name: &'static str,
+    caps: Vec<ToolCapability>,
+}
+
+#[async_trait::async_trait]
+impl crate::brain::tools::Tool for CapTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "cap test tool"
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({ "type": "object" })
+    }
+    fn capabilities(&self) -> Vec<ToolCapability> {
+        self.caps.clone()
+    }
+    async fn execute(
+        &self,
+        _input: serde_json::Value,
+        _ctx: &crate::brain::tools::ToolExecutionContext,
+    ) -> crate::brain::tools::error::Result<crate::brain::tools::ToolResult> {
+        Ok(crate::brain::tools::ToolResult::success("ok".to_string()))
+    }
+}
+
+#[test]
+fn read_only_filter_strips_mutators_keeps_reads() {
+    use crate::brain::tools::ToolRegistry;
+    use crate::brain::tools::plan_gate::restrict_registry_to_read_only;
+    use std::sync::Arc;
+
+    let registry = ToolRegistry::new();
+    // Read-only surface — must survive.
+    registry.register(Arc::new(CapTool {
+        name: "read_file",
+        caps: vec![ToolCapability::ReadFiles],
+    }));
+    registry.register(Arc::new(CapTool {
+        name: "grep",
+        caps: vec![ToolCapability::ReadFiles],
+    }));
+    registry.register(Arc::new(CapTool {
+        name: "http_request",
+        caps: vec![ToolCapability::Network],
+    }));
+    registry.register(Arc::new(CapTool {
+        name: "follow_up_question",
+        caps: vec![],
+    }));
+    // Mutators — must be stripped by capability.
+    registry.register(Arc::new(CapTool {
+        name: "edit_file",
+        caps: vec![ToolCapability::WriteFiles],
+    }));
+    registry.register(Arc::new(CapTool {
+        name: "bash",
+        caps: vec![ToolCapability::ExecuteShell],
+    }));
+    registry.register(Arc::new(CapTool {
+        name: "spawn_agent",
+        caps: vec![ToolCapability::SystemModification],
+    }));
+    // Denied by name even though a Network cap alone would not catch it —
+    // proves the name list and capability check are OR'd (no drift with the
+    // per-call gate's deny set).
+    registry.register(Arc::new(CapTool {
+        name: "telegram_send",
+        caps: vec![ToolCapability::Network],
+    }));
+
+    restrict_registry_to_read_only(&registry);
+
+    assert!(registry.has_tool("read_file"), "reads must survive");
+    assert!(registry.has_tool("grep"), "search must survive");
+    assert!(
+        registry.has_tool("http_request"),
+        "network read must survive"
+    );
+    assert!(
+        registry.has_tool("follow_up_question"),
+        "the question tool must survive"
+    );
+    assert!(!registry.has_tool("edit_file"), "writes must be stripped");
+    assert!(!registry.has_tool("bash"), "bash must be stripped");
+    assert!(
+        !registry.has_tool("spawn_agent"),
+        "spawn must be stripped so no non-restricted grandchild can be minted"
+    );
+    assert!(
+        !registry.has_tool("telegram_send"),
+        "denied-by-name tools must be stripped"
+    );
+}
