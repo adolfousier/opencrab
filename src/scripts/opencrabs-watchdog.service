@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenCrabs watchdog — restart chat if it dies
+
+[Service]
+Type=oneshot
+ExecStart=%h/.opencrabs/scripts/watchdog.sh
+Environment=OPENCRABS_TMUX_SESSION=opencrabs
+Environment=OPENCRABS_TMUX_PANE=0.0
+Environment=OPENCRABS_WARN_SECONDS=30
