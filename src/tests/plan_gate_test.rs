@@ -136,8 +136,8 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
                 .is_allowed()
         );
 
-        // Sends, browser mutators, spawn, and system tools are blocked.
-        for name in ["telegram_send", "browser_click", "spawn_agent"] {
+        // Sends and browser mutators are blocked by name.
+        for name in ["telegram_send", "browser_click"] {
             assert!(
                 check_plan_gate(sid, name, NETWORK, &json!({}))
                     .await
@@ -145,6 +145,13 @@ async fn pre_init_denies_writes_allows_bash_and_plan() {
                 "{name} must be denied pre-init"
             );
         }
+        // spawn_agent is denied by capability (SystemModification), not name.
+        assert!(
+            check_plan_gate(sid, "spawn_agent", SYSTEM, &json!({}))
+                .await
+                .is_denied(),
+            "spawn_agent must be denied pre-init via SystemModification cap"
+        );
         assert!(
             check_plan_gate(sid, "evolve", SYSTEM, &json!({}))
                 .await

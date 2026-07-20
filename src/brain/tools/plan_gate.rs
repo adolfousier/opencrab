@@ -78,7 +78,6 @@ pub(crate) const EDITING_DENIED_NAMES: &[&str] = &[
     "browser_click",
     "browser_type",
     "browser_eval",
-    "spawn_agent",
     "send_input",
     "close_agent",
     "resume_agent",
