@@ -212,16 +212,7 @@ pub trait Tool: Send + Sync {
 
     /// Check if the tool requires approval before execution
     fn requires_approval(&self) -> bool {
-        // By default, dangerous tools require approval
-        let dangerous_capabilities = [
-            ToolCapability::WriteFiles,
-            ToolCapability::ExecuteShell,
-            ToolCapability::SystemModification,
-        ];
-
-        self.capabilities()
-            .iter()
-            .any(|cap| dangerous_capabilities.contains(cap))
+        super::classify::is_destructive(&self.capabilities())
     }
 
     /// Check if this specific invocation requires approval.

@@ -75,9 +75,7 @@ pub(crate) async fn check_plan_gate(
                 if EDITING_ALLOWED.contains(&tool_name) {
                     return None;
                 }
-                let mutator = has(ToolCapability::WriteFiles)
-                    || has(ToolCapability::ExecuteShell)
-                    || has(ToolCapability::SystemModification)
+                let mutator = super::classify::is_destructive(capabilities)
                     || EDITING_DENIED_NAMES.contains(&tool_name);
                 if mutator {
                     return Some(format!(
@@ -242,12 +240,9 @@ fn paths_match(a: &Path, b: &Path) -> bool {
 pub(crate) fn restrict_registry_to_read_only(registry: &super::ToolRegistry) {
     for name in registry.list_tools() {
         let denied_by_name = EDITING_DENIED_NAMES.contains(&name.as_str());
-        let denied_by_cap = registry.get(&name).is_some_and(|t| {
-            let caps = t.capabilities();
-            caps.contains(&ToolCapability::WriteFiles)
-                || caps.contains(&ToolCapability::ExecuteShell)
-                || caps.contains(&ToolCapability::SystemModification)
-        });
+        let denied_by_cap = registry
+            .get(&name)
+            .is_some_and(|t| super::classify::is_destructive(&t.capabilities()));
         if denied_by_name || denied_by_cap {
             registry.unregister(&name);
         }
