@@ -7,39 +7,96 @@
 
 use crate::config::Config;
 
-/// Convert simple markdown (`*bold*`, `` `code` ``) to Telegram HTML.
+/// Convert simple markdown to Telegram HTML: `**bold**`/`*bold*`, `` `code` ``,
+/// and ```` ```fenced``` ```` code blocks.
+///
+/// CRITICAL: HTML-escape all text content (including inside code/bold) so a
+/// literal `<...>` placeholder — e.g. `/rename <new title>` in /help — never
+/// reaches Telegram as a tag. Unescaped, Telegram's HTML parser rejected the
+/// whole message ("Unsupported start tag 'new'") and the reply silently
+/// vanished. Only the tags we emit are real HTML.
+///
+/// Handles BOTH `**double**` and `*single*` asterisk bold (#650): the old
+/// single-only pass turned `**ask**` into `<b></b>ask<b></b>` — an empty bold
+/// pair around each `**` — which Telegram rejected, dropping the whole message
+/// to plain text with the raw tags showing.
 pub(crate) fn md_to_html(s: &str) -> String {
-    // Replace `code` with <code>code</code>, then *bold* with <b>bold</b>.
-    // CRITICAL: HTML-escape all text content (including inside code/bold) so a
-    // literal `<...>` placeholder — e.g. `/rename <new title>` in /help — never
-    // reaches Telegram as a tag. Unescaped, Telegram's HTML parser rejected the
-    // whole message ("Unsupported start tag 'new'") and the reply silently
-    // vanished. Only the <code>/<b> tags we emit are real HTML.
     fn esc(s: &str) -> String {
         s.replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;")
     }
-    let mut out = String::with_capacity(s.len());
+    let mut out = String::with_capacity(s.len() + 16);
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '`' {
-            let code: String = chars.by_ref().take_while(|&ch| ch != '`').collect();
-            out.push_str("<code>");
-            out.push_str(&esc(&code));
-            out.push_str("</code>");
-        } else if c == '*' {
-            let bold: String = chars.by_ref().take_while(|&ch| ch != '*').collect();
-            out.push_str("<b>");
-            out.push_str(&esc(&bold));
-            out.push_str("</b>");
-        } else {
-            match c {
-                '&' => out.push_str("&amp;"),
-                '<' => out.push_str("&lt;"),
-                '>' => out.push_str("&gt;"),
-                _ => out.push(c),
+        match c {
+            '`' if chars.peek() == Some(&'`') => {
+                chars.next(); // second backtick
+                if chars.peek() == Some(&'`') {
+                    // Fenced ``` block: drop the optional language on the fence
+                    // line, then collect until the closing ```.
+                    chars.next(); // third backtick
+                    for ch in chars.by_ref() {
+                        if ch == '\n' {
+                            break;
+                        }
+                    }
+                    let mut code = String::new();
+                    while let Some(ch) = chars.next() {
+                        if ch == '`' && chars.peek() == Some(&'`') {
+                            chars.next();
+                            if chars.peek() == Some(&'`') {
+                                chars.next();
+                                break;
+                            }
+                            code.push_str("``");
+                        } else {
+                            code.push(ch);
+                        }
+                    }
+                    out.push_str("<pre><code>");
+                    out.push_str(&esc(code.trim_end_matches('\n')));
+                    out.push_str("</code></pre>");
+                } else {
+                    // Two backticks with nothing between — empty inline code.
+                    out.push_str("<code></code>");
+                }
             }
+            '`' => {
+                let code: String = chars.by_ref().take_while(|&ch| ch != '`').collect();
+                out.push_str("<code>");
+                out.push_str(&esc(&code));
+                out.push_str("</code>");
+            }
+            '*' => {
+                // **bold** (double) or *bold* (single).
+                let double = chars.peek() == Some(&'*');
+                if double {
+                    chars.next();
+                }
+                let mut bold = String::new();
+                while let Some(ch) = chars.next() {
+                    if ch == '*' {
+                        if !double {
+                            break;
+                        }
+                        if chars.peek() == Some(&'*') {
+                            chars.next();
+                            break;
+                        }
+                        bold.push('*'); // lone `*` inside a `**` span → literal
+                    } else {
+                        bold.push(ch);
+                    }
+                }
+                out.push_str("<b>");
+                out.push_str(&esc(&bold));
+                out.push_str("</b>");
+            }
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
         }
     }
     out
