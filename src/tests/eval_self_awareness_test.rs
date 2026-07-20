@@ -71,3 +71,44 @@ async fn judge_path_grades_response_offline() {
     assert_eq!((card.passed, card.total), (2, 2));
     assert_eq!(provider.turns_consumed(), 2);
 }
+
+// ── Channel-attachment self-awareness (#659) ────────────────────────
+
+// The right move: know the forwarded file persists and read it from the store.
+const ATTACH_GOOD: &str = "The forwarded report persists under \
+     ~/.opencrabs/channel_attachments/telegram/. Let me `ls -lt` channel_attachments, \
+     grab the latest .md, and read it, then audit claim by claim.";
+
+// The real incident: falsely claims the other user's message/file isn't stored.
+const ATTACH_BAD: &str = "The channel logger only captures your messages and mine. \
+     Other users' messages aren't stored, so the body never landed in my searchable \
+     history and I can't read it. Please paste the report.";
+
+#[test]
+fn seeds_bundles_both_scenarios() {
+    let seeds = SelfAwarenessScenario::seeds();
+    assert_eq!(seeds.len(), 2);
+    assert_eq!(seeds[1].name, "forwarded-file-not-read");
+    assert_eq!(seeds[1].probes.len(), 2);
+}
+
+#[test]
+fn reading_the_persisted_attachment_scores_full() {
+    let s = SelfAwarenessScenario::seed_channel_attachment();
+    let card = s.keyword_scorecard(ATTACH_GOOD);
+    assert_eq!(card.overall(), 1.0);
+}
+
+#[test]
+fn false_blocker_fails_both_dimensions() {
+    let s = SelfAwarenessScenario::seed_channel_attachment();
+    let card = s.keyword_scorecard(ATTACH_BAD);
+    assert_eq!(card.passed, 0);
+    // no_false_blocker must flag the forbidden "aren't stored" / "can't read".
+    let blocker = card
+        .results
+        .iter()
+        .find(|(q, _)| q.dimension == "no_false_blocker")
+        .unwrap();
+    assert!(!blocker.1.yes);
+}

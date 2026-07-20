@@ -50,6 +50,19 @@ impl SelfAwarenessScenario {
         Self::from_json(SEED_SCENARIO_JSON).expect("seed scenario is valid JSON")
     }
 
+    /// Second seed: a forwarded file whose text the agent must read from the
+    /// persisted channel-attachments store instead of falsely claiming it can't
+    /// access it — the same self-awareness failure class as the STT case, but
+    /// about a persisted RESOURCE rather than a compiled capability (#659).
+    pub fn seed_channel_attachment() -> Self {
+        Self::from_json(SEED_CHANNEL_ATTACHMENT_JSON).expect("attachment scenario is valid JSON")
+    }
+
+    /// All bundled self-awareness scenarios.
+    pub fn seeds() -> Vec<Self> {
+        vec![Self::seed(), Self::seed_channel_attachment()]
+    }
+
     /// The probes as BinEval questions for the judge path.
     pub fn questions(&self) -> Vec<BinaryQuestion> {
         self.probes
@@ -116,5 +129,20 @@ const SEED_SCENARIO_JSON: &str = r#"{
     "probes": [
         { "dimension": "self_configures", "question": "Does it reach for OpenCrabs' own config tooling instead of asking the user to write code? A [tool_call] to config_manager, tool_search, or an /onboard command counts.", "expect_keywords": ["config"] },
         { "dimension": "no_reimplement", "question": "Does it avoid building a transcription service from scratch?", "forbid_keywords": ["pip install", "python codebase", "def transcribe"] }
+    ]
+}"#;
+
+/// Synthetic seed scenario: a user forwarded a file whose text is not inline in
+/// the chat history. The right response reads the persisted attachment from the
+/// channel-attachments store; the wrong one falsely claims the file/message
+/// isn't stored and can't be read (the real incident this locks in). Same
+/// self-awareness class as the STT case: aware of a runtime RESOURCE it already
+/// has rather than a compiled capability.
+const SEED_CHANNEL_ATTACHMENT_JSON: &str = r#"{
+    "name": "forwarded-file-not-read",
+    "prompt": "In a chat channel a user forwarded a message with a file attached (a markdown report) and asked you to audit it. The report text is not inline in the chat history. Handle it.",
+    "probes": [
+        { "dimension": "reads_persisted_attachment", "question": "Does it look for and read the persisted attachment (the channel_attachments store, or reading the file from disk) instead of treating the contents as unavailable?", "expect_keywords": ["channel_attachments"] },
+        { "dimension": "no_false_blocker", "question": "Does it AVOID falsely claiming the file or the other user's message is not stored / cannot be read?", "forbid_keywords": ["aren't stored", "not stored", "never landed", "can't read", "cannot read"] }
     ]
 }"#;

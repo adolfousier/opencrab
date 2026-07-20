@@ -91,45 +91,53 @@ async fn main() {
     report("compaction", &kw, &pn, CATASTROPHIC);
 
     // 2. Capability self-awareness — produced UNDER the real system brain.
-    let sc = SelfAwarenessScenario::seed();
     // Give the producer its real tools so it can DO the right thing — call
-    // config_manager / tool_search to enable local-stt — instead of narrating.
+    // config_manager / tool_search, or read the persisted attachment — instead
+    // of narrating. Both bundled scenarios (STT-unconfigured, forwarded-file)
+    // run so a regression in either is visible.
     let tools = eval_tool_set();
-    println!("\n== Capability self-awareness ({}), {K} runs ==", sc.name);
-    let (mut kw, mut pn) = (Vec::new(), Vec::new());
-    for i in 0..K {
-        let response =
-            produce_response(producer.as_ref(), &producer_model, &sc.prompt, sys, &tools).await;
-        let kw_card = sc.keyword_scorecard(&response);
-        let (k, p) = (
-            kw_card.overall(),
-            sc.judge_scorecard(&panel, &response).await.overall(),
-        );
-        println!(
-            "  run {i}: {} chars  keyword={k:.2}  panel={p:.2}",
-            response.len()
-        );
-        if i == 0 {
-            println!(
-                "    run0 head: {}",
-                &response[..response.len().min(280)].replace('\n', " ")
+    for sc in SelfAwarenessScenario::seeds() {
+        println!("\n== Capability self-awareness ({}), {K} runs ==", sc.name);
+        let (mut kw, mut pn) = (Vec::new(), Vec::new());
+        for i in 0..K {
+            let response =
+                produce_response(producer.as_ref(), &producer_model, &sc.prompt, sys, &tools).await;
+            let kw_card = sc.keyword_scorecard(&response);
+            let (k, p) = (
+                kw_card.overall(),
+                sc.judge_scorecard(&panel, &response).await.overall(),
             );
-            for (q, v) in &kw_card.results {
+            println!(
+                "  run {i}: {} chars  keyword={k:.2}  panel={p:.2}",
+                response.len()
+            );
+            if i == 0 {
                 println!(
-                    "      keyword [{}] {} — {}",
-                    if v.yes { "PASS" } else { "FAIL" },
-                    q.dimension,
-                    v.explanation.as_deref().unwrap_or("")
+                    "    run0 head: {}",
+                    &response[..response.len().min(280)].replace('\n', " ")
                 );
+                for (q, v) in &kw_card.results {
+                    println!(
+                        "      keyword [{}] {} — {}",
+                        if v.yes { "PASS" } else { "FAIL" },
+                        q.dimension,
+                        v.explanation.as_deref().unwrap_or("")
+                    );
+                }
             }
+            if p <= CATASTROPHIC {
+                save_outlier(&outlier_path, &sc.name, i, p, &response);
+            }
+            kw.push(k);
+            pn.push(p);
         }
-        if p <= CATASTROPHIC {
-            save_outlier(&outlier_path, &sc.name, i, p, &response);
-        }
-        kw.push(k);
-        pn.push(p);
+        report(
+            &format!("self-awareness:{}", sc.name),
+            &kw,
+            &pn,
+            CATASTROPHIC,
+        );
     }
-    report("self-awareness", &kw, &pn, CATASTROPHIC);
 
     println!(
         "\nOutlier artifacts (if any) appended to {}",
