@@ -5,7 +5,7 @@
 //! Always prefer this tool over http_request — credentials are handled securely.
 
 use super::error::Result;
-use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
+use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult};
 use crate::channels::slack::SlackState;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -161,6 +161,15 @@ impl Tool for SlackSendTool {
 
     fn capabilities(&self) -> Vec<ToolCapability> {
         vec![ToolCapability::Network]
+    }
+
+    fn hints(&self) -> ToolHints {
+        ToolHints {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        }
     }
 
     async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {

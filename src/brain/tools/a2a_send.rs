@@ -4,7 +4,7 @@
 //! Supports discovery, message/send, tasks/get, and tasks/cancel.
 
 use super::error::Result;
-use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
+use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -68,6 +68,15 @@ impl Tool for A2aSendTool {
 
     fn capabilities(&self) -> Vec<ToolCapability> {
         vec![ToolCapability::Network]
+    }
+
+    fn hints(&self) -> ToolHints {
+        ToolHints {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        }
     }
 
     fn requires_approval(&self) -> bool {

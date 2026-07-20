@@ -4,7 +4,7 @@
 //! Uses the shared `TrelloState` to build a client from stored credentials.
 
 use super::error::Result;
-use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
+use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult};
 use crate::channels::trello::TrelloState;
 use crate::channels::trello::client::TrelloClient;
 use async_trait::async_trait;
@@ -140,6 +140,15 @@ impl Tool for TrelloSendTool {
 
     fn capabilities(&self) -> Vec<ToolCapability> {
         vec![ToolCapability::Network]
+    }
+
+    fn hints(&self) -> ToolHints {
+        ToolHints {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        }
     }
 
     async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {

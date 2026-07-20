@@ -2,7 +2,9 @@
 
 use super::manager::BrowserManager;
 use crate::brain::tools::error::Result;
-use crate::brain::tools::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
+use crate::brain::tools::r#trait::{
+    Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult,
+};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
@@ -46,6 +48,15 @@ impl Tool for BrowserClickTool {
 
     fn capabilities(&self) -> Vec<ToolCapability> {
         vec![ToolCapability::Network]
+    }
+
+    fn hints(&self) -> ToolHints {
+        ToolHints {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        }
     }
 
     fn requires_approval(&self) -> bool {

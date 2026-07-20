@@ -6,7 +6,7 @@
 //! are handled securely.
 
 use super::error::Result;
-use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
+use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolHints, ToolResult};
 use crate::channels::telegram::TelegramState;
 use crate::channels::telegram::intermediates::send_retrying_rate_limit;
 use async_trait::async_trait;
@@ -325,6 +325,15 @@ impl Tool for TelegramSendTool {
 
     fn capabilities(&self) -> Vec<ToolCapability> {
         vec![ToolCapability::Network]
+    }
+
+    fn hints(&self) -> ToolHints {
+        ToolHints {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        }
     }
 
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
