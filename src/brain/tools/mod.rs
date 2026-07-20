@@ -5,10 +5,10 @@
 
 pub mod brain_file_safety;
 pub mod catalog;
+pub(crate) mod classify;
 pub mod error;
 pub mod registry;
 pub(crate) mod r#trait;
-pub(crate) mod classify;
 
 pub mod fuzzy;
 pub mod tool_name_heal;
