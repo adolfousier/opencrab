@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `#666` **GitHub skill**: built-in `/github` skill for full `gh` CLI control — issues, PRs, code reviews, repo management, with auth detection, rate limiting, and templates
 
+## [0.3.72] - 2026-07-21
+
+3 commits since v0.3.71. 14 files changed, +426 / -138 lines.
+
+### 🔧 Fixes
+
+- `e98962b0` **Telegram table rendering**: restore rich table rendering by skipping only the doomed native-blocks attempt instead of the whole rich branch, so tables no longer render as bare markup (#679)
+- `e4553003` **Self-heal phantom detection**: catch zero-tool turns that claim high-stakes side-effects (ship/push/tag/release), so a fabricated completion report with no tool calls is flagged instead of shipped (#680)
+- `a29cdd8f` **Preamble audit**: profile-resolve the channel_attachments path via opencrabs_home(), restore the full date+time in Runtime Info (uncached suffix), and lock the runtime-suffix cache-split boundary (#681)
+
+### 📊 Stats
+
+- 3 commits since v0.3.71
+- 14 files changed, +426 / -138 lines
+- 5162 tests (5162 passed, 0 failed, 29 ignored)
+
 ## [0.3.71] - 2026-07-19
 
 73 commits since v0.3.70. 124 files changed, +8424 / -2108 lines.
@@ -7063,3 +7079,4 @@ fixes.
 
 [0.3.70]: https://github.com/adolfousier/opencrabs/compare/v0.3.69...v0.3.70
 [0.3.71]: https://github.com/adolfousier/opencrabs/compare/v0.3.70...v0.3.71
+[0.3.72]: https://github.com/adolfousier/opencrabs/compare/v0.3.71...v0.3.72
