@@ -9,6 +9,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `#666` **GitHub skill**: built-in `/github` skill for full `gh` CLI control — issues, PRs, code reviews, repo management, with auth detection, rate limiting, and templates
 
+## [0.3.71] - 2026-07-19
+
+73 commits since v0.3.70. 124 files changed, +8424 / -2108 lines.
+
+### ✨ Features
+
+- `1f5a272e` **Tmux watchdog**: pane-only kill, 30s warning, auto-reattach
+- `d7d1bb0a` **Eval self-awareness scenarios**: tool-set + environment self-awareness, lazy and non-lazy (#672)
+- `3692cf8c` **Built-in /github skill**: full gh CLI control for issues, PRs, code reviews, repo management
+- `d862bb8c` **Config-driven debug_logs**: toggle with hot-reload on top of --debug (#678)
+- `93d1e856` **Plan-gate three-state**: GateDecision with bash going to approval in post-init Editing (#649)
+- `c53e2d1e` **Plan-gate read-only filter**: registry filter for subagents spawned in Editing (#649)
+- `72eec599` **Configure-not-reimplement**: preamble directive to configure compiled-but-unconfigured capabilities (#635)
+- `f66409e9` **Secret redaction scope**: scope to global/group/dm + /redact command (#677)
+- `3c45e41a` **Telegram plan card re-stick**: re-stick plan card and fold prose into it (#621)
+- `9c7668cb` **Telegram plan card goal**: render goal section on the plan card (#621)
+- `d3b2ce78` **MCP hints overrides**: add overrides for sends and browser mutators
+- `e52c7c1d` **MCP-style ToolHints**: introduce risk model for tool classification
+- `041c49cf` **Usage price fallback**: fall back to last-known price for unknown models (#655)
+
+### 🔧 Fixes
+
+- `2f1acf08` **Browser screenshot loop**: hard auto-break (#664)
+- `96ee9309` **Bash grep-no-match**: stop counting as failure (#663)
+- `a42a4df3` **Headless brain build**: build_system_brain now surfaces compiled features + paths (#671)
+- `d6c38230` **Github skill templates**: populate empty templates directory with bug/PR templates
+- `ab3fe5d4` **Kimi reasoning leak**: stop coding endpoint leaking inline reasoning as chat messages (#616)
+- `2ac2cc7a` **Onboarding custom fetch**: send the real saved key on custom model fetch (#656)
+- `bc303675` **Onboarding model ID**: let users type a model ID not in the fetched list (#676)
+- `b76eb1b4` **Phantom Indonesian detection**: expand with full regex coverage
+- `9ec202af` **Channel attachments**: know they persist; don't fake a blocker (#659)
+- `f459a05c` **MiniMax reasoning leak**: send reasoning_split=true to prevent reasoning leak
+- `03b6c3d2` **Qwen reasoning**: round-trip as reasoning_content, not content (#654)
+- `e4bca047` **Redact command**: advertise /redact in the Telegram command menu and command reference
+- `d6eccd0c` **Github skill templates**: remove orphaned templates/ dir
+- `2d91beaf` **Telegram md_to_html**: harden for **double** bold and fenced code (#650)
+- `3f206ffc` **Telegram bot defer**: defer when a reply tags a different bot (#648)
+- `438a3c6d` **Telegram rapid resend**: stop dropping in-flight turns (#652)
+- `cedce669` **Telegram card prose**: render as per-heading expandables (#621)
+- `fe5f8d27` **Telegram tables**: retire native rich-blocks (#651)
+- `807d5e32` **CORE_TOOLS drift**: correct name drift dropping core tools in lazy mode (#669)
+- `d67cfca0` **Tools inventory**: adds team tools + brave_search, drops stale provider_vision (#670)
+- `9ebfccd9` **TUI /help dialog**: document channel commands and /stop
+
+### 📖 Documentation
+
+- `4c4d3620` Refresh test counts + fully regenerate TESTING.md table (#634)
+- `5e23ecbd` Refresh outdated project structure in README and CONTRIBUTING
+- `73448d5e` Check current context (issue/PR + comments, git, code) before changing
+- `f060ede9` Amend umbrella ADR for #649 exploration gate
+- `fe402865` Explain provider fallback + /models syntax so the agent stops guessing (#674, #675)
+- `2425284e` Document the context/memory evaluation harness (#633)
+- `b2f89835` Document /redact, scoped redaction, and debug_logs config in README
+
+### 🧹 Miscellaneous
+
+- `231243a6` Add retry logic and timeout guards to cron list queries (#665)
+- `a4f9519e` chore: stop gitignoring examples/ (#641)
+- `827f7e3e` ci: drop the Windows build from the PR gate (#627)
+- `645e5291` eval: capability self-awareness dimension (configure-not-reimplement) (#636)
+- `7cf4e41e` eval: self-awareness measures tool-awareness, drop the completion probe (#644)
+- `8f02653a` eval: register the eval feature in compiled_features (#618)
+- `c1850e35` eval: drop the false-positive whisper keyword from the self-awareness probe (#638)
+- `cda8303c` eval: give the self-awareness producer its tools; judge the action, not prose (#643)
+- `6d82a26b` eval(live-L0,L1): eval_providers config + resolver + majority-vote judge panel (#629, #630)
+- `340b8943` eval(live-L2,L3): live artifact producers + on-demand runner with variance & baseline drift (#631, #632)
+- `7596835e` eval(live): report median + failure-rate and save outlier artifacts (#642)
+- `b2d8d2f4` eval(live): actually track the on-demand runner + K=5 variance (#637, #640)
+- `cc46a340` eval(live): per-probe + artifact-head diagnostics for run 0 (#643)
+- `f7fd002b` eval(live): on-demand runner under the real system brain (#637)
+- `98d53674` eval(phase0): context-manifest trace hook (#620)
+- `b5df93be` eval(phase0): offline fixture-driven replay provider (#619)
+- `fe2684dc` eval(phase1): compaction-fidelity harness + BinEval scorer (#621, #622)
+- `7a3e29ab` eval(phase2-4): recall metrics, regression baseline, RSI before/after (#623, #624, #625)
+- `a8f18655` perf(brain): date-granular runtime timestamp so the prompt cache can hit (#657)
+- `8d726fda` perf(cache): cache the stable brain independently of runtime info (#658)
+- `77142794` plan_gate: simplify to single is_destructive check per state
+- `7d4c597d` plan-gate: unify pre-init and post-init destructive treatment
+- `a936f69a` plan-gate: allow full agent-tool family during Editing
+- `8a3d9c1c` preamble: require stating the concrete configuration action, not just that the built-in exists (#639)
+- `d1978800` refactor(plan-gate): remove spawn_agent from EDITING_DENIED_NAMES (#649)
+- `3cd46541` refactor(telegram): move TelegramState out of mod.rs into state.rs
+- `2a50bcd3` refactor(tools): drive plan gate off MCP hints, delete both name lists
+- `ba538b68` refactor(tools): extract shared is_destructive/is_read_only classifier (#649)
+- `122b7ac6` style: keep push_home_anchor doc with its fn; drop redundant ref in live_eval (#671, #672)
+- `726dd684` style(tools): sort classify module declaration into alphabetical order
+- `a873b2a6` test: fix stale tests left behind by #652 and drop dead import
+- `9263b6fc` test(cache): guard lazy-tools content stays in cached prefix, runtime in suffix (#662)
+
+### 📊 Stats
+
+- 73 commits since v0.3.70
+- 124 files changed, +8424 / -2108 lines
+- 5155 tests (5155 passed, 0 failed, 29 ignored)
+
 ## [0.3.70] - 2026-07-19
 
 18 commits since v0.3.69. 57 files changed, +1310 / -128 lines.
@@ -6967,3 +7062,4 @@ fixes.
 [0.3.69]: https://github.com/adolfousier/opencrabs/compare/v0.3.68...v0.3.69
 
 [0.3.70]: https://github.com/adolfousier/opencrabs/compare/v0.3.69...v0.3.70
+[0.3.71]: https://github.com/adolfousier/opencrabs/compare/v0.3.70...v0.3.71
