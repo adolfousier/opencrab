@@ -85,11 +85,64 @@ const ATTACH_BAD: &str = "The channel logger only captures your messages and min
      history and I can't read it. Please paste the report.";
 
 #[test]
-fn seeds_bundles_both_scenarios() {
+fn seeds_bundles_all_scenarios() {
     let seeds = SelfAwarenessScenario::seeds();
-    assert_eq!(seeds.len(), 2);
-    assert_eq!(seeds[1].name, "forwarded-file-not-read");
-    assert_eq!(seeds[1].probes.len(), 2);
+    assert_eq!(seeds.len(), 4);
+    let names: Vec<String> = seeds.iter().map(|s| s.name.clone()).collect();
+    for expected in [
+        "voice-note-stt-unconfigured",
+        "forwarded-file-not-read",
+        "tool-set-awareness-lazy",
+        "environment-awareness",
+    ] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "missing scenario `{expected}`"
+        );
+    }
+}
+
+// ── Tool-set awareness (#672) ───────────────────────────────────────
+
+const TOOLSET_GOOD: &str = "In lazy mode the browser tool schemas aren't loaded yet, so let me \
+     tool_search for the browser navigate/click tools, activate them, then open the page and \
+     click the button.";
+const TOOLSET_BAD: &str =
+    "I can't control a browser — I don't have a tool for that. You'll need to do it manually.";
+
+#[test]
+fn tool_set_reaching_for_tool_scores_full() {
+    let s = SelfAwarenessScenario::seed_tool_set();
+    assert_eq!(s.keyword_scorecard(TOOLSET_GOOD).overall(), 1.0);
+}
+
+#[test]
+fn tool_set_false_absence_fails() {
+    let s = SelfAwarenessScenario::seed_tool_set();
+    let card = s.keyword_scorecard(TOOLSET_BAD);
+    assert_eq!(card.passed, 0);
+}
+
+// ── Environment awareness (#672) ────────────────────────────────────
+
+const ENV_GOOD: &str = "You're running model qwen3.8-max-preview via modelstudio, OpenCrabs \
+     version v0.3.70, on macos.";
+const ENV_BAD: &str = "As an AI, I don't know which model or version I'm running.";
+
+#[test]
+fn environment_answer_scores_full() {
+    let s = SelfAwarenessScenario::seed_environment();
+    assert_eq!(s.keyword_scorecard(ENV_GOOD).overall(), 1.0);
+}
+
+#[test]
+fn environment_capability_denial_fails() {
+    let s = SelfAwarenessScenario::seed_environment();
+    let card = s.keyword_scorecard(ENV_BAD);
+    // The generic "as an AI I don't know" denial trips no_capability_denial.
+    // (states_runtime_facts is a weak on-topic keyword that "which model"
+    // incidentally satisfies; the live semantic judge handles that nuance.)
+    assert_eq!(card.per_dimension["no_capability_denial"].passed, 0);
 }
 
 #[test]

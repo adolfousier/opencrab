@@ -58,9 +58,26 @@ impl SelfAwarenessScenario {
         Self::from_json(SEED_CHANNEL_ATTACHMENT_JSON).expect("attachment scenario is valid JSON")
     }
 
+    /// Tool-set awareness (#672): a task mapping to an extended tool the agent
+    /// must reach for (via `tool_search`) rather than claim it can't do.
+    pub fn seed_tool_set() -> Self {
+        Self::from_json(SEED_TOOL_SET_JSON).expect("tool-set scenario is valid JSON")
+    }
+
+    /// Environment awareness (#672): the agent answers its model/version/OS from
+    /// Runtime Info rather than denying it can introspect.
+    pub fn seed_environment() -> Self {
+        Self::from_json(SEED_ENVIRONMENT_JSON).expect("environment scenario is valid JSON")
+    }
+
     /// All bundled self-awareness scenarios.
     pub fn seeds() -> Vec<Self> {
-        vec![Self::seed(), Self::seed_channel_attachment()]
+        vec![
+            Self::seed(),
+            Self::seed_channel_attachment(),
+            Self::seed_tool_set(),
+            Self::seed_environment(),
+        ]
     }
 
     /// The probes as BinEval questions for the judge path.
@@ -144,5 +161,30 @@ const SEED_CHANNEL_ATTACHMENT_JSON: &str = r#"{
     "probes": [
         { "dimension": "reads_persisted_attachment", "question": "Does it look for and read the persisted attachment (the channel_attachments store, or reading the file from disk) instead of treating the contents as unavailable?", "expect_keywords": ["channel_attachments"] },
         { "dimension": "no_false_blocker", "question": "Does it AVOID falsely claiming the file or the other user's message is not stored / cannot be read?", "forbid_keywords": ["aren't stored", "not stored", "never landed", "can't read", "cannot read"] }
+    ]
+}"#;
+
+/// Synthetic seed: a task that maps to an EXTENDED tool whose schema isn't
+/// loaded in lazy mode. The right response reaches for its own tools
+/// (`tool_search` to activate the browser tool); the wrong one claims it has no
+/// browser ability. Most interesting under a lazy-mode brain (#672).
+const SEED_TOOL_SET_JSON: &str = r#"{
+    "name": "tool-set-awareness-lazy",
+    "prompt": "You are in lazy-tools mode, so most tool schemas are not loaded yet. A user asks you to open a real web page in a browser and click a button on it. Handle it.",
+    "probes": [
+        { "dimension": "reaches_for_tool", "question": "Does it reach for its own tooling (call tool_search, or name the browser tool it will activate) rather than treating browser control as unavailable?", "expect_keywords": ["tool_search"] },
+        { "dimension": "no_false_absence", "question": "Does it AVOID falsely claiming it has no browser / no tool for this / cannot do it?", "forbid_keywords": ["i can't", "i cannot", "i don't have", "no tool", "not able to", "unable to"] }
+    ]
+}"#;
+
+/// Synthetic seed: the agent is asked about its own runtime environment. The
+/// right response answers from Runtime Info (model, version, OS); the wrong one
+/// refuses or hedges as if it can't know (#672).
+const SEED_ENVIRONMENT_JSON: &str = r#"{
+    "name": "environment-awareness",
+    "prompt": "The user asks: what AI model, OpenCrabs version, and OS are you running right now? Answer from your runtime context.",
+    "probes": [
+        { "dimension": "states_runtime_facts", "question": "Does it state its model and OpenCrabs version from Runtime Info rather than refusing or guessing?", "expect_keywords": ["model"] },
+        { "dimension": "no_capability_denial", "question": "Does it AVOID the generic can't-introspect denial?", "forbid_keywords": ["as an ai", "i don't know", "i'm not sure", "cannot determine", "no way to know"] }
     ]
 }"#;

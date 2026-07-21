@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use opencrabs::brain::prompt_builder::{BrainLoader, RuntimeInfo};
 use opencrabs::brain::provider::Provider;
+use opencrabs::brain::tools::catalog::tool_access_prompt;
 use opencrabs::config::Config;
 use opencrabs::eval::compaction::CompactionDataset;
 use opencrabs::eval::live::resolve_eval_providers;
@@ -93,50 +94,68 @@ async fn main() {
     // 2. Capability self-awareness — produced UNDER the real system brain.
     // Give the producer its real tools so it can DO the right thing — call
     // config_manager / tool_search, or read the persisted attachment — instead
-    // of narrating. Both bundled scenarios (STT-unconfigured, forwarded-file)
-    // run so a regression in either is visible.
+    // of narrating. Every scenario runs under BOTH tool modes: non-lazy (the
+    // plain brain, all schemas) and lazy (the brain with the tool_access roster
+    // appended, as live_system_brain does when lazy_tools is on), so a
+    // mode-specific gap — tool-set awareness especially — is visible (#672).
     let tools = eval_tool_set();
-    for sc in SelfAwarenessScenario::seeds() {
-        println!("\n== Capability self-awareness ({}), {K} runs ==", sc.name);
-        let (mut kw, mut pn) = (Vec::new(), Vec::new());
-        for i in 0..K {
-            let response =
-                produce_response(producer.as_ref(), &producer_model, &sc.prompt, sys, &tools).await;
-            let kw_card = sc.keyword_scorecard(&response);
-            let (k, p) = (
-                kw_card.overall(),
-                sc.judge_scorecard(&panel, &response).await.overall(),
-            );
-            println!(
-                "  run {i}: {} chars  keyword={k:.2}  panel={p:.2}",
-                response.len()
-            );
-            if i == 0 {
-                println!(
-                    "    run0 head: {}",
-                    &response[..response.len().min(280)].replace('\n', " ")
+    let lazy_brain = format!("{system_brain}{}", tool_access_prompt());
+    let modes: [(&str, Option<&str>); 2] = [("non-lazy", sys), ("lazy", Some(lazy_brain.as_str()))];
+    for (mode, brain) in modes {
+        for sc in SelfAwarenessScenario::seeds() {
+            println!("\n== Self-awareness [{mode}] ({}), {K} runs ==", sc.name);
+            let (mut kw, mut pn) = (Vec::new(), Vec::new());
+            for i in 0..K {
+                let response = produce_response(
+                    producer.as_ref(),
+                    &producer_model,
+                    &sc.prompt,
+                    brain,
+                    &tools,
+                )
+                .await;
+                let kw_card = sc.keyword_scorecard(&response);
+                let (k, p) = (
+                    kw_card.overall(),
+                    sc.judge_scorecard(&panel, &response).await.overall(),
                 );
-                for (q, v) in &kw_card.results {
+                println!(
+                    "  run {i}: {} chars  keyword={k:.2}  panel={p:.2}",
+                    response.len()
+                );
+                if i == 0 {
                     println!(
-                        "      keyword [{}] {} — {}",
-                        if v.yes { "PASS" } else { "FAIL" },
-                        q.dimension,
-                        v.explanation.as_deref().unwrap_or("")
+                        "    run0 head: {}",
+                        &response[..response.len().min(280)].replace('\n', " ")
+                    );
+                    for (q, v) in &kw_card.results {
+                        println!(
+                            "      keyword [{}] {} — {}",
+                            if v.yes { "PASS" } else { "FAIL" },
+                            q.dimension,
+                            v.explanation.as_deref().unwrap_or("")
+                        );
+                    }
+                }
+                if p <= CATASTROPHIC {
+                    save_outlier(
+                        &outlier_path,
+                        &format!("{mode}:{}", sc.name),
+                        i,
+                        p,
+                        &response,
                     );
                 }
+                kw.push(k);
+                pn.push(p);
             }
-            if p <= CATASTROPHIC {
-                save_outlier(&outlier_path, &sc.name, i, p, &response);
-            }
-            kw.push(k);
-            pn.push(p);
+            report(
+                &format!("self-awareness:{mode}:{}", sc.name),
+                &kw,
+                &pn,
+                CATASTROPHIC,
+            );
         }
-        report(
-            &format!("self-awareness:{}", sc.name),
-            &kw,
-            &pn,
-            CATASTROPHIC,
-        );
     }
 
     println!(
