@@ -297,6 +297,61 @@ pub(crate) fn frame_group_history(history_lines: &str, count: usize) -> String {
     )
 }
 
+/// Build the channel-history record for a group message so it can be persisted
+/// regardless of ACL / mention status (#685). Text-only (no attachment
+/// download), so it is cheap enough to run for messages we will NOT respond to.
+/// Returns `None` when there is no text/caption to store (an empty record is
+/// useless for history or reply-recovery). Pure + returns the record so it is
+/// unit-testable without a DB.
+pub(crate) fn build_group_history_record(
+    msg: &Message,
+    user: &teloxide::types::User,
+) -> Option<DbChannelMessage> {
+    let content = msg.text().or(msg.caption()).unwrap_or("").to_string();
+    if content.is_empty() {
+        return None;
+    }
+    let thread_id = msg.thread_id.map(|t| t.0.to_string());
+    let topic_name = msg
+        .forum_topic_created()
+        .map(|t| t.name.clone())
+        .or_else(|| {
+            msg.reply_to_message()
+                .and_then(|r| r.forum_topic_created())
+                .map(|t| t.name.clone())
+        });
+    Some(
+        DbChannelMessage::new(
+            "telegram".into(),
+            msg.chat.id.0.to_string(),
+            msg.chat.title().map(str::to_string),
+            user.id.0.to_string(),
+            user.first_name.clone(),
+            content,
+            "text".into(),
+            Some(msg.id.0.to_string()),
+        )
+        .with_thread(thread_id, topic_name),
+    )
+}
+
+/// Persist a group message to channel history regardless of whether the bot is
+/// mentioned or the sender is allowlisted (#685), so reply-recovery and context
+/// work for EVERY message shared in the group — not only ones we respond to.
+/// Persisting is separate from responding; the caller's response gating is
+/// unchanged. Best-effort: a store failure is logged, never fatal.
+async fn persist_group_message(
+    repo: &ChannelMessageRepository,
+    msg: &Message,
+    user: &teloxide::types::User,
+) {
+    if let Some(cm) = build_group_history_record(msg, user)
+        && let Err(e) = repo.insert(&cm).await
+    {
+        tracing::warn!("Telegram: failed to persist group message to history (#685): {e}");
+    }
+}
+
 pub(crate) async fn fire_reaction(bot: &Bot, chat_id: ChatId, msg_id: MessageId, emoji: &str) {
     let reaction = teloxide::types::ReactionType::Emoji {
         emoji: map_to_allowed_reaction(emoji),
@@ -619,6 +674,13 @@ pub(crate) async fn handle_message(
     if !acl_passed {
         let is_group = !is_dm;
         if is_group {
+            // Persist EVERY group message to channel history FIRST (#685), before
+            // any drop — even from non-allowlisted senders and other bots we will
+            // never respond to. Without this, a message the user later replies to
+            // (e.g. a peer bot's post) was never stored, so reply-recovery and
+            // group-history context had nothing to surface. Persisting is separate
+            // from responding: the drops below are unchanged.
+            persist_group_message(&channel_msg_repo, &msg, user).await;
             // Silently drop messages from other bots — sending "not authorized"
             // to bots is meaningless spam (they can't ask for access).
             if user.is_bot {

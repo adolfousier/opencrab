@@ -60,10 +60,7 @@ pub(crate) fn register_config_dependent_tools(
 
     // Re-register web_search with engine references so it fans out to
     // DDG + Exa (+ Brave) in parallel instead of DDG-only.
-    registry.register(Arc::new(WebSearchTool::new(
-        Some(exa_tool),
-        brave_tool,
-    )));
+    registry.register(Arc::new(WebSearchTool::new(Some(exa_tool), brave_tool)));
 
     // Image generation — active provider override or the global Gemini config.
     if let Some(tool) = GenerateImageTool::from_config(config) {

@@ -1018,7 +1018,9 @@ mod agent_type {
         reg.register(Arc::new(crate::brain::tools::glob::GlobTool));
         reg.register(Arc::new(crate::brain::tools::grep::GrepTool));
         reg.register(Arc::new(crate::brain::tools::ls::LsTool));
-        reg.register(Arc::new(crate::brain::tools::web_search::WebSearchTool::default()));
+        reg.register(Arc::new(
+            crate::brain::tools::web_search::WebSearchTool::default(),
+        ));
         reg
     }
 

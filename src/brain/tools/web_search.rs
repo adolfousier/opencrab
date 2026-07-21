@@ -32,10 +32,7 @@ pub struct WebSearchTool {
 impl WebSearchTool {
     /// Create a unified search tool with optional engine references.
     /// When both are `None`, behaves as DDG-only (backward compat).
-    pub fn new(
-        exa: Option<Arc<ExaSearchTool>>,
-        brave: Option<Arc<BraveSearchTool>>,
-    ) -> Self {
+    pub fn new(exa: Option<Arc<ExaSearchTool>>, brave: Option<Arc<BraveSearchTool>>) -> Self {
         Self { exa, brave }
     }
 
@@ -60,8 +57,7 @@ impl WebSearchTool {
                 // deploys. Short-circuit instead of burning UA rotations.
                 Ok(response) if response.status().as_u16() == 202 => {
                     return Ok(ToolResult::error(
-                        "DuckDuckGo returned a bot-detection challenge (HTTP 202)."
-                            .to_string(),
+                        "DuckDuckGo returned a bot-detection challenge (HTTP 202).".to_string(),
                     ));
                 }
                 Ok(response) if response.status().is_success() => {
