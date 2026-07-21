@@ -204,6 +204,92 @@ pub fn mentions_registered_tool(text: &str, tool_names: &[String]) -> bool {
     false
 }
 
+/// High-stakes side-effect categories whose truthful use REQUIRES a tool call:
+/// a git push/tag, a release, a version bump, a CHANGELOG/file write, an
+/// external post. Each inner slice is ONE category; matching any of its phrases
+/// counts that category once. Phrases are completion-shaped ("pushed to origin",
+/// "created and pushed"), NOT intent ("let me push") — intent is already caught
+/// by the forward-looking detectors.
+///
+/// Unlike the prose/lead-in detectors this scans the FULL lowercased text, so a
+/// claim buried in a markdown table cell (the exact shape that slipped a
+/// fabricated "shipped" scoreboard past every other check, #680) is still seen.
+const SIDE_EFFECT_CATEGORIES: &[&[&str]] = &[
+    // Ship / release
+    &[
+        "shipped",
+        "released",
+        "release complete",
+        "release is shipped",
+        "release was completed",
+        "release is done",
+    ],
+    // Git push
+    &[
+        "pushed to origin",
+        "pushed to remote",
+        "tag pushed",
+        "pushed (",
+        "push status",
+        "git push",
+    ],
+    // Tag
+    &[
+        "tag created",
+        "created and pushed",
+        "tagged v",
+        "tag `v",
+        "created` and pushed",
+    ],
+    // Version bump
+    &[
+        "bumped to",
+        "version bump",
+        "version bumped",
+        "cargo.toml bumped",
+        "bumped cargo",
+    ],
+    // CHANGELOG / release-notes write
+    &[
+        "changelog updated",
+        "changelog entry",
+        "entry inserted",
+        "new entry inserted",
+    ],
+    // External post / publish
+    &[
+        "posts appended",
+        "posts appended to",
+        "release posts",
+        "published to",
+        "posted to",
+    ],
+];
+
+/// Number of DISTINCT high-stakes side-effect categories the text claims.
+/// Counting distinct categories (not raw phrase hits) means one repeated word
+/// can't inflate the score, but a release scoreboard (ship + push + tag + bump
+/// + changelog + post) scores high.
+pub fn count_unbacked_side_effect_claims(text: &str) -> usize {
+    let lower = text.to_lowercase();
+    SIDE_EFFECT_CATEGORIES
+        .iter()
+        .filter(|category| category.iter().any(|phrase| lower.contains(phrase)))
+        .count()
+}
+
+/// Verification-by-construction phantom tell (#680): a turn that ran ZERO tool
+/// calls yet claims 2+ distinct high-stakes side-effects is fabricating a
+/// completion report — those actions (push, tag, release, version bump, file
+/// write, external post) cannot happen without a tool call, so with none
+/// executed the claims are false by construction. The caller gates this on
+/// `tool_calls_completed_this_turn == 0`, so a real release turn (which DID run
+/// git/bash tools) is never flagged. The 2+ threshold keeps a lone "I pushed it
+/// earlier" from tripping while catching the multi-claim scoreboard shape.
+pub fn claims_unbacked_side_effects(text: &str) -> bool {
+    count_unbacked_side_effect_claims(text) >= 2
+}
+
 /// Count line-start intent phrases — `Let me <verb>`, `I'll <verb>`,
 /// `Let's <verb>`, or `Now let me / Now I'll <verb>`. A high count in a
 /// single iteration's text means the model is spinning in place: emitting

@@ -530,6 +530,7 @@ action_verbs = [
     "rebased",
     "tagged",
     "released",
+    "shipped",
     "published",
     "synced",
     "rolled back",

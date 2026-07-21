@@ -3886,7 +3886,15 @@ impl AgentService {
                             && super::phantom::mentions_registered_tool(
                                 &iteration_text,
                                 &phantom_tool_names,
-                            )))
+                            ))
+                        // Verify-by-construction (#680): a zero-tool turn that
+                        // claims 2+ high-stakes side-effects (ship / push / tag /
+                        // version bump / changelog write / post) is fabricating —
+                        // those cannot happen without a tool call. Scans full text
+                        // incl. table cells, so a "shipped" scoreboard TABLE (which
+                        // slipped every prose-shaped detector) is caught.
+                        || (tool_calls_completed_this_turn == 0
+                            && super::phantom::claims_unbacked_side_effects(&iteration_text)))
                 {
                     phantom_retries_used += 1;
                     tracing::warn!(
