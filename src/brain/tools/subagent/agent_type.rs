@@ -101,7 +101,7 @@ impl AgentType {
                 "web_search",
                 "exa_search",
                 "brave_search",
-                "http_client",
+                "http_request",
             ]),
         }
     }

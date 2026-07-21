@@ -55,13 +55,13 @@ pub const CORE_TOOLS: &[&str] = &[
     "exa_search",
     "memory_search",
     // Workflow / orchestration
-    "context",
+    "session_context",
     "plan",
-    "http_client",
+    "http_request",
     // Loaders + system basics
     "load_brain_file",
     "write_opencrabs_file",
-    "config_tool",
+    "config_manager",
     "slash_command",
     "rename_session",
     "follow_up_question",
