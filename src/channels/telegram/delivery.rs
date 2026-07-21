@@ -426,79 +426,86 @@ pub(crate) async fn deliver_final_response(
                 // to the HTML chunking path below, so the streaming path is
                 // never regressed. Plain prose skips rich entirely so Telegram's
                 // parser never reinterprets incidental characters.
-                // #651: retire native rich-blocks for TABLES — Telegram's
-                // InputRichBlock rejects our table shape (cells/size schema
-                // mismatch), so a table always 400s the block send and burns a
-                // round-trip before falling back. Skip the native path entirely
-                // when a table is present; `display_html` below renders it as a
-                // clean aligned monospace grid (and handles fences + bold
-                // correctly too, so mixed table+fence messages come out right).
-                let delivered_rich = super::rich::should_send_native_rich(&text_only)
-                    && !super::rich::contains_table(&text_only)
-                    && {
-                        let rich_md = text_only.clone();
-                        // Send a FRESH rich message rather than editing the streamed
-                        // placeholder into rich. Editing a normal message into a rich
-                        // one glitches the client render — overlap during the
-                        // transition, and a stale pre-edit (HTML) version after a
-                        // refresh / chat switch. A fresh sendRichMessage renders clean.
-                        //
-                        // Delete the placeholder FIRST so the fresh rich message is
-                        // the LAST thing added to the chat — deleting it AFTER the
-                        // send pulls the content up and leaves the view mid-chat
-                        // instead of scrolling to the bottom on completion. `.take()`
-                        // clears the id so the HTML fallback below sends a fresh
-                        // message (not an edit of a deleted one) if the rich send fails.
-                        if let Some(mid) = streaming_msg_id.take() {
-                            let _ = bot.delete_message(chat_id, mid).await;
-                        }
-                        // Native BLOCKS first (#476 path B): the block value is
-                        // sent as-is, so code fences and tables both render
-                        // natively with no server-side markdown parser to mangle
-                        // fences into <code> artifacts. On ANY rejection fall back
-                        // to the markdown rich send (tables good, fences mangle),
-                        // then to HTML below — so worst case is exactly today's
-                        // behavior, never a regression.
-                        let block_src = text_only.clone();
-                        let blocks = super::rich::markdown_to_rich_blocks(&block_src);
-                        let via_blocks = super::rich::api::send_rich_blocks_id(
+                // #679: for TABLE messages, skip only the doomed native-BLOCKS
+                // attempt — Telegram's InputRichBlock rejects our header/rows/align
+                // shape (its schema wants cells/size), so a table always 400s the
+                // block send and wastes a round-trip. But the rich-MARKDOWN send
+                // renders tables correctly, so route tables straight to it instead
+                // of skipping the whole rich branch (which #651 did, sending tables
+                // to the HTML path where they showed as bare markup). Non-table
+                // rich content still tries blocks first (clean fences) then falls
+                // back to markdown.
+                let delivered_rich = super::rich::should_send_native_rich(&text_only) && {
+                    let rich_md = text_only.clone();
+                    // Send a FRESH rich message rather than editing the streamed
+                    // placeholder into rich. Editing a normal message into a rich
+                    // one glitches the client render — overlap during the
+                    // transition, and a stale pre-edit (HTML) version after a
+                    // refresh / chat switch. A fresh sendRichMessage renders clean.
+                    //
+                    // Delete the placeholder FIRST so the fresh rich message is
+                    // the LAST thing added to the chat — deleting it AFTER the
+                    // send pulls the content up and leaves the view mid-chat
+                    // instead of scrolling to the bottom on completion. `.take()`
+                    // clears the id so the HTML fallback below sends a fresh
+                    // message (not an edit of a deleted one) if the rich send fails.
+                    if let Some(mid) = streaming_msg_id.take() {
+                        let _ = bot.delete_message(chat_id, mid).await;
+                    }
+                    // Native BLOCKS first (#476 path B) for NON-table content: the
+                    // block value is sent as-is, so code fences render natively with
+                    // no server-side parser to mangle them into <code> artifacts. A
+                    // table would only 400 here (schema mismatch), so skip blocks
+                    // entirely when one is present and let the markdown send below
+                    // render it. On any block rejection we also fall through to
+                    // markdown, so worst case is exactly the rich-markdown render.
+                    let block_id = if super::rich::contains_table(&text_only) {
+                        None
+                    } else {
+                        let blocks = super::rich::markdown_to_rich_blocks(&text_only);
+                        match super::rich::api::send_rich_blocks_id(
                             bot.token(),
                             chat_id.0,
                             thread_id,
                             &blocks,
                         )
-                        .await;
-                        match via_blocks {
-                            Ok(id) => {
-                                sent_reply_id = Some(id);
-                                true
-                            }
+                        .await
+                        {
+                            Ok(id) => Some(id),
                             Err(be) => {
                                 tracing::warn!(
                                     "Telegram: rich blocks delivery failed ({be}), trying markdown"
                                 );
-                                match super::rich::api::send_rich_markdown_id(
-                                    bot.token(),
-                                    chat_id.0,
-                                    thread_id,
-                                    &rich_md,
-                                )
-                                .await
-                                {
-                                    Ok(id) => {
-                                        sent_reply_id = Some(id);
-                                        true
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Telegram: rich delivery failed, using HTML: {e}"
-                                        );
-                                        false
-                                    }
-                                }
+                                None
                             }
                         }
                     };
+
+                    if let Some(id) = block_id {
+                        sent_reply_id = Some(id);
+                        true
+                    } else {
+                        // Rich MARKDOWN: renders tables correctly (only fences
+                        // mangle, which is why non-table content prefers blocks).
+                        match super::rich::api::send_rich_markdown_id(
+                            bot.token(),
+                            chat_id.0,
+                            thread_id,
+                            &rich_md,
+                        )
+                        .await
+                        {
+                            Ok(id) => {
+                                sent_reply_id = Some(id);
+                                true
+                            }
+                            Err(e) => {
+                                tracing::warn!("Telegram: rich delivery failed, using HTML: {e}");
+                                false
+                            }
+                        }
+                    }
+                };
 
                 if !delivered_rich {
                     let chunks: Vec<String> = split_message(&display_html, 4096)

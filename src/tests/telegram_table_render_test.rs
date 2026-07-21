@@ -1,5 +1,10 @@
-//! Tests that tables are routed off the broken native rich-blocks path (#651)
-//! and render cleanly through the monospace-HTML converter instead.
+//! Tests for table delivery routing (#651, #679).
+//!
+//! #679: a table message skips only the doomed native rich-BLOCKS attempt
+//! (Telegram's InputRichBlock 400s our table shape) and is sent via rich
+//! MARKDOWN, which renders tables correctly. The monospace-HTML converter is
+//! the final fallback if the rich send fails; these tests cover both the
+//! `contains_table` routing signal and that the HTML fallback renders cleanly.
 
 use crate::channels::telegram::handler::markdown_to_telegram_html;
 use crate::channels::telegram::rich::contains_table;
@@ -14,9 +19,10 @@ needs_approval = a && b;
 ```";
 
 #[test]
-fn table_is_detected_so_the_native_path_is_skipped() {
-    // delivery.rs gates the native rich-blocks send on `!contains_table`; if
-    // this is true, the message goes to the clean monospace-HTML path.
+fn table_is_detected_so_the_blocks_attempt_is_skipped() {
+    // delivery.rs skips the native rich-BLOCKS send when `contains_table` is
+    // true (blocks 400 on tables) and routes to the rich-markdown send instead,
+    // which renders tables. Plain prose is not detected as a table.
     assert!(contains_table(TABLE_AND_FENCE));
     assert!(!contains_table("no table here\njust prose"));
 }
