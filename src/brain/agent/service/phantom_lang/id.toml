@@ -5,24 +5,111 @@
 # scan checks every loaded language's phrases at once, so these fire
 # regardless of detection. Phrases are multi-word to keep cross-language
 # collision risk low. All lower-case; matched against lowercased text.
+#
+# Expanded 2026-07-21 (#667): added full regex coverage, completion claims,
+# and reasoning-leak phrases to match en.toml's structure.
 
 intent_phrases = [
+    # Colloquial Jakarta register (gue/aku)
     "sekarang gue ",
     "sekarang aku ",
     "sekarang saya ",
     "biar gue ",
     "biar aku ",
+    "biar saya ",
     "gue akan ",
     "aku akan ",
     "saya akan ",
     "akan gue ",
+    "akan aku ",
+    "akan saya ",
     "gue load ",
     "gue jalankan ",
     "gue jalanin ",
     "gue push ",
     "gue commit ",
+    "gue cek ",
+    "gue baca ",
+    "gue lihat ",
+    "gue periksa ",
+    "gue update ",
+    "gue fix ",
+    "gue bikin ",
+    "gue buat ",
+    "gue hapus ",
+    "gue ganti ",
+    "gue tambah ",
+    "gue kurang ",
+    "gue ubah ",
     "mari kita jalankan",
+    "mari kita cek",
+    "mari kita lihat",
+    "mari kita periksa",
+    "mari kita update",
+    "mari kita fix",
+    "mari kita buat",
+    "mari kita baca",
     "coba gue ",
+    "coba aku ",
+    "coba saya ",
+    # Formal register (saya/kita)
+    "saya akan cek",
+    "saya akan periksa",
+    "saya akan lihat",
+    "saya akan baca",
+    "saya akan update",
+    "saya akan fix",
+    "saya akan buat",
+    "saya akan bikin",
+    "saya akan hapus",
+    "saya akan ganti",
+    "saya akan tambah",
+    "saya akan ubah",
+    "saya akan jalankan",
+    "saya akan push",
+    "saya akan commit",
+    "saya perlu cek",
+    "saya perlu periksa",
+    "saya perlu lihat",
+    "saya perlu baca",
+    "saya perlu update",
+    "saya perlu fix",
+    "saya perlu buat",
+    "saya perlu jalankan",
+    "saya harus cek",
+    "saya harus periksa",
+    "saya harus update",
+    "saya harus fix",
+    "saya harus buat",
+    "saya harus jalankan",
+    # "let me" equivalents
+    "biar saya cek",
+    "biar saya periksa",
+    "biar saya lihat",
+    "biar saya baca",
+    "biar saya update",
+    "biar saya fix",
+    "biar saya buat",
+    "biar saya jalankan",
+    "biar saya push",
+    "biar saya commit",
+    # "now" equivalents
+    "sekarang cek ",
+    "sekarang periksa ",
+    "sekarang lihat ",
+    "sekarang baca ",
+    "sekarang update ",
+    "sekarang fix ",
+    "sekarang buat ",
+    "sekarang jalankan ",
+    "sekarang push ",
+    "sekarang commit ",
+    "sekarang menambah",
+    "sekarang mengubah",
+    "sekarang menghapus",
+    "sekarang membuat",
+    "sekarang memperbaiki",
+    "sekarang memperbarui",
 ]
 
 action_verbs = [
@@ -32,4 +119,68 @@ action_verbs = [
     "diperbaiki",
     "dibuat",
     "dihapus",
+    "diganti",
+    "ditambah",
+    "diubah",
+    "dikirim",
+    "di-commit",
+    "di-push",
+    "di-deploy",
+    "di-merge",
+    "di-install",
+    "diunduh",
+    "diunggah",
+    "disimpan",
+    "diselesaikan",
 ]
+
+completion_claims = [
+    "sudah diperbarui",
+    "sudah diperbaiki",
+    "sudah dibuat",
+    "sudah dihapus",
+    "sudah diganti",
+    "sudah ditambah",
+    "sudah diubah",
+    "sudah dikirim",
+    "sudah di-commit",
+    "sudah di-push",
+    "sudah di-deploy",
+    "sudah selesai",
+    "sudah selesai semua",
+    "semua sudah diperbarui",
+    "semua sudah diperbaiki",
+    "file sudah diperbarui",
+    "kode sudah diperbaiki",
+    "perubahan sudah diterapkan",
+    "saya sudah memperbarui",
+    "saya sudah memperbaiki",
+    "saya sudah membuat",
+    "saya sudah menghapus",
+    "saya sudah commit",
+    "saya sudah push",
+]
+
+# Regex patterns — Indonesian uses Latin script, so patterns mirror en.toml
+# structure but with Indonesian intent phrases.
+
+line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|oke|baik|siap|okeh)\\s*,?\\s+)?(?:sekarang\\s+)?(?:biar\\s+(?:gue|aku|saya)|gue|aku|saya\\s+akan|saya\\s+perlu|saya\\s+harus|mari\\s+kita|coba\\s+(?:gue|aku|saya))\\s+\\w"
+
+work_announcement_re = "(?i)^[\\s\\-*•>]*(?:(?:ok|oke|baik|siap|okeh)[,.!:]?\\s+)?(?:sekarang\\s+|biar\\s+(?:gue|aku|saya)\\s+)?(?:sedang\\s+)?(?:menjalankan|mengecek|memeriksa|membaca|membuat|memperbarui|memperbaiki|menghapus|mengganti|menambah|mengubah|mengirim|meng-commit|meng-push|meng-deploy|meng-install|mengunduh|mengunggah|menyimpan|menyelesaikan|menganalisis|menginvestigasi|mengumpulkan|mengambil|mengunduh)\\b[^.!?:\\n]{0,60}?(?:\\s+(?:sekarang|saat\\s+ini)(?:[.!…,:]+|\\s*$)|\\.{3}|…|:\\s*$)"
+
+gerund_re = "(?im)(?:^|[.!?]\\s+)\\s*(?:sekarang\\s+)?(?:sedang\\s+)?(?:menjalankan|mengecek|memeriksa|membaca|membuat|memperbarui|memperbaiki|menghapus|mengganti|menambah|mengubah|mengirim|meng-commit|meng-push|meng-deploy|meng-install|mengunduh|mengunggah|menyimpan|menyelesaikan|menganalisis|menginvestigasi|mengumpulkan|mengambil)\\b"
+
+trailing_colon_re = "(?im)(?:^|\\n)\\s*(?:biar\\s+(?:gue|aku|saya)|saya\\s+akan|sekarang\\s+(?:biar\\s+(?:gue|aku|saya)\\s+)?|mari\\s+kita)\\s+\\w[^:\\n]{0,80}:\\s*$"
+
+now_imperative_re = "(?m)^[\\s\\-*]*(?:sekarang\\s+(?:biar\\s+(?:gue|aku|saya)\\s+)?|biar\\s+(?:gue|aku|saya)\\s+)\\w"
+
+numbered_steps_re = "(?m)^\\s*\\d+\\.\\s+(?:perbarui|perbaiki|buat|hapus|ganti|tambah|ubah|cek|periksa|baca|jalankan|push|commit|deploy|install)"
+
+past_tense_standalone_re = "(?m)^[\\s\\-*]*(?:sudah\\s+)?(?:diperbarui|diperbaiki|dibuat|dihapus|diganti|ditambah|diubah|dikirim|di-commit|di-push|di-deploy|di-merge|di-install|diunduh|diunggah|disimpan|diselesaikan)[.!]"
+
+path_re = "(?:^|[\\s`(])(?:\\./)?[a-zA-Z_][\\w\\-]*/[\\w\\-/]*\\.\\w{1,6}(?:[\\s`),:;]|$)"
+
+ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|json|md)(?:[\\s`),:;]|$)"
+
+backtick_code_re = "`[a-zA-Z_]\\w+`"
+
