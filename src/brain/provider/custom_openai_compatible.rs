@@ -2835,6 +2835,14 @@ impl OpenAIProvider {
             .map(|s| super::kimi_reasoning::resolve_fields(&request.model, s))
             .unwrap_or((None, None));
 
+        // MiniMax M3: send reasoning_split=true so reasoning goes to
+        // reasoning_content field instead of being embedded in content
+        // as <think> tags. Prevents reasoning leak into visible output (#667).
+        let is_minimax = self.base_url.to_lowercase().contains("minimax")
+            || request.model.to_lowercase().contains("minimax")
+            || request.model.to_lowercase().contains("mimo");
+        let reasoning_split = if is_minimax { Some(true) } else { None };
+
         OpenAIRequest {
             model: request.model,
             messages,
@@ -2848,6 +2856,7 @@ impl OpenAIProvider {
             include_reasoning,
             reasoning_effort,
             thinking,
+            reasoning_split,
         }
     }
 
@@ -4619,6 +4628,11 @@ pub(crate) struct OpenAIRequest {
     /// Kimi K2.x thinking toggle: `{ "type": "enabled" | "disabled" }`.
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<serde_json::Value>,
+    /// MiniMax M3: when true, reasoning goes to `reasoning_content` field
+    /// instead of being embedded in `content` as `<think>` tags. Prevents
+    /// reasoning from leaking into visible output (#667).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_split: Option<bool>,
 }
 
 impl OpenAIRequest {
