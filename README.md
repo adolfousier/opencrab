@@ -371,7 +371,7 @@ silence_group_start = true       # Silently ignore /start from non-allowed users
 
 Every channel has a `bot_owner` field (`[channels.telegram]`, `[channels.discord]`, `[channels.slack]`, `[channels.whatsapp]`, `[channels.trello]`). It names the user ID(s) (phone for WhatsApp) treated as the bot owner. On first-run setup the owner is seeded automatically from the first entry in your allow list (`allowed_users`, or `allowed_phones` for WhatsApp), and existing configs are migrated on load. Set `bot_owner` explicitly to pin the owner instead of relying on list order.
 
-The owner gets access that other allowlisted users do not. All channel commands except `/new` are owner-only: `/compact`, `/doctor`, `/evolve`, `/help`, `/models`, `/rtk`, `/sessions`, `/stop`, `/usage`, `/profiles`, `/goal`, `/mission-control`, `/rename`, `/cd`, `/respond_to`. `/new` stays open for session recovery (bugged/hallucinated sessions). Non-owners who try get a short "owner only" notice.
+The owner gets access that other allowlisted users do not. All channel commands except `/new` are owner-only: `/compact`, `/doctor`, `/evolve`, `/help`, `/models`, `/rtk`, `/sessions`, `/stop`, `/usage`, `/profiles`, `/goal`, `/mission-control`, `/rename`, `/cd`, `/respond_to`, `/redact`. `/new` stays open for session recovery (bugged/hallucinated sessions). Non-owners who try get a short "owner only" notice.
 
 **Deny-by-default access model:** if neither `allowed_users` nor `bot_owner` is configured, the bot refuses all interactions — unconfigured installs are locked down by default. Set at least one to unlock access. This prevents open-mode footguns on fresh deployments.
 
@@ -1765,6 +1765,16 @@ fallback_chain = ["openai_compatible", "openai", "local"]
 
 OpenCrabs automatically redacts API keys and tokens from all outputs — conversation history, TUI display, tool approval dialogs, and external channel delivery (Telegram, Discord, Slack, WhatsApp). Secrets never persist to the database or appear in logs.
 
+### Scoped Redaction (global / group / dm)
+
+Channel output redaction is scope-aware. The global `[agent] redact_sensitive_data` is the master default; two optional per-scope overrides refine it:
+
+- **Global** — the master default, applied everywhere unless a scope overrides it.
+- **Group/channel chats** — follow the global default (redaction matters most here — other people can see the messages). Override with `redact_group`.
+- **Direct messages** — default to NOT redacting, since a DM is owner-private. Override with `redact_dm`.
+
+Flip any scope live from a chat with the owner-only `/redact` command — `/redact <global|group|dm> <on|off>` (bare `/redact` shows the current scopes). Changes persist to `config.toml` and hot-reload. Note: the user-message-to-database write is always redacted regardless of scope, so secrets never land in the DB.
+
 ### How It Works
 
 **Three layers of defense:**
@@ -1985,7 +1995,10 @@ approval_policy = "auto-always"  # auto-always (default) | auto-session | ask
 max_concurrent = 4               # tools per turn that may run in parallel (auto-approved batches only; 1 = fully sequential)
 # The working directory is per-session, not a config key: each session keeps its own
 # (set with /cd, or inherited from the launch cwd) so isolated sessions never collide.
-redact_sensitive_data = true     # redact IPs, tokens, passwords from tool output (set false for sysadmin work)
+redact_sensitive_data = true     # global default: redact IPs, tokens, passwords from tool output (set false for sysadmin work)
+# redact_group = true            # optional per-scope override for group/channel chats (unset = follow the global default). Set live with /redact group on|off
+# redact_dm = false              # optional per-scope override for direct messages (unset = OFF: a DM is owner-private, secrets shown). Set live with /redact dm on|off
+debug_logs = false               # enable debug file logging from config, on top of the --debug flag; hot-reloads on change (flip with the agent or by editing this)
 default_provider = "xiaomi"      # main chat default provider (new sessions inherit, existing pick up on resume)
 default_model = "mimo-v2.5-pro"  # main chat default model
 
