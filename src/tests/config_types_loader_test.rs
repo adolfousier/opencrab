@@ -175,6 +175,20 @@ fn test_agent_config_default() {
     let agent = AgentConfig::default();
     assert_eq!(agent.approval_policy, "auto-always");
     assert_eq!(agent.max_concurrent, 4);
+    // #678: debug_logs defaults OFF; enabling is opt-in (flag or config).
+    assert!(!agent.debug_logs);
+}
+
+#[test]
+fn test_agent_config_debug_logs_toml() {
+    // #678: a non-technical user (or the agent) flips this in config.toml.
+    let on: Config = toml::from_str("[agent]\ndebug_logs = true\n").unwrap();
+    assert!(on.agent.debug_logs);
+    let off: Config = toml::from_str("[agent]\ndebug_logs = false\n").unwrap();
+    assert!(!off.agent.debug_logs);
+    // Absent → default OFF (old configs stay valid).
+    let absent: Config = toml::from_str("[agent]\nmax_concurrent = 2\n").unwrap();
+    assert!(!absent.agent.debug_logs);
 }
 
 #[test]

@@ -444,6 +444,12 @@ pub async fn run() -> Result<()> {
     // Seed the in-memory mirror so Config::current() readers never touch disk.
     Config::set_current(config.clone());
 
+    // Apply the config-level debug_logs toggle on top of the --debug flag now
+    // that the profile is resolved and config is loaded (#678). Lets a
+    // non-technical user (or the agent, on request) enable file logging by
+    // editing config.toml; the ConfigWatcher re-applies live changes.
+    crate::logging::apply_debug_logs(cli.debug, config.agent.debug_logs);
+
     // Auto-generate config.toml if API keys exist in env but no config file yet.
     // This prevents the onboarding wizard from triggering when .env is already set up.
     let config_path = Config::system_config_path();

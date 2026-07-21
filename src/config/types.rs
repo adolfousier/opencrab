@@ -956,6 +956,14 @@ pub struct AgentConfig {
     /// `/redact dm on|off`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redact_dm: Option<bool>,
+
+    /// Enable debug file logging from config, on top of the `--debug` CLI flag
+    /// (#678). Lets non-technical users (or the agent, on request) turn detailed
+    /// file logs on/off by editing config.toml; the change hot-reloads without a
+    /// restart. Always serialized as `false` so it is discoverable and flippable.
+    /// Effective state is `--debug || debug_logs` — the flag always wins.
+    #[serde(default = "default_debug_logs")]
+    pub debug_logs: bool,
 }
 
 impl AgentConfig {
@@ -978,6 +986,10 @@ fn default_lazy_tools() -> bool {
 
 fn default_redact_sensitive_data() -> bool {
     true
+}
+
+fn default_debug_logs() -> bool {
+    false
 }
 
 fn default_approval_policy() -> String {
@@ -1024,6 +1036,7 @@ impl Default for AgentConfig {
             redact_sensitive_data: default_redact_sensitive_data(),
             redact_group: None,
             redact_dm: None,
+            debug_logs: default_debug_logs(),
         }
     }
 }

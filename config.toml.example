@@ -389,6 +389,12 @@ profile_id = ""
 # work where seeing IPs, tokens, and passwords is necessary.
 # redact_sensitive_data = false
 
+# Enable debug file logging from config, on top of the `--debug` CLI flag.
+# Lets you (or the agent, on request) turn detailed logs in ~/.opencrabs/logs/
+# on or off by flipping this to true/false. The change hot-reloads with no
+# restart. Effective state is `--debug OR debug_logs`, so the flag always wins.
+debug_logs = false
+
 [image.generation]
 enabled = false
 model = "gemini-3.1-flash-image-preview"   # Gemini image-gen model ("Nano Banana")

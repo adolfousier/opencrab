@@ -3,9 +3,63 @@
 //! Provides configurable logging with conditional file output for debug mode.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::Level;
 use tracing_subscriber::fmt::time::FormatTime;
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
+
+/// Runtime gate for debug file logging (#678). The file layer is always
+/// attached to the subscriber but only writes while this is `true`; the
+/// per-event filter (`debug_logs_enabled`) reads it, so flipping it turns file
+/// logging on/off live without re-initializing the subscriber (which tracing
+/// forbids). Seeded from the launch-time `--debug` state and re-applied on
+/// every config hot-reload.
+static DEBUG_LOGS_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Whether `--debug`/`-d` was passed on the command line. The flag always wins:
+/// a config edit that sets `debug_logs = false` must never silence an operator
+/// who explicitly launched with `-d`. Effective state is `forced || config`.
+static DEBUG_FORCED_BY_FLAG: AtomicBool = AtomicBool::new(false);
+
+/// Resolve the effective debug-logging state: the `--debug` flag OR the config
+/// `agent.debug_logs` toggle. Pure so it can be unit-tested without touching the
+/// process-global subscriber state.
+pub fn effective_debug_logs(forced_by_flag: bool, config_enabled: bool) -> bool {
+    forced_by_flag || config_enabled
+}
+
+/// Whether debug file logging is currently on. Read per-event by the file
+/// layer's gate filter.
+pub fn debug_logs_enabled() -> bool {
+    DEBUG_LOGS_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Flip the runtime gate, logging the transition only when it actually changes
+/// so a no-op reload stays quiet.
+fn set_debug_logs(enabled: bool) {
+    let previous = DEBUG_LOGS_ENABLED.swap(enabled, Ordering::Relaxed);
+    if previous != enabled {
+        tracing::info!(
+            "🔧 debug_logs {} via config",
+            if enabled { "ENABLED" } else { "DISABLED" }
+        );
+    }
+}
+
+/// Apply the effective debug-logging state from the launch-time flag and the
+/// config toggle, recording the flag so later hot-reloads keep honoring it.
+/// Called once at startup after config loads.
+pub fn apply_debug_logs(forced_by_flag: bool, config_enabled: bool) {
+    DEBUG_FORCED_BY_FLAG.store(forced_by_flag, Ordering::Relaxed);
+    set_debug_logs(effective_debug_logs(forced_by_flag, config_enabled));
+}
+
+/// Re-apply the effective state from a hot-reloaded config, preserving the
+/// launch-time `--debug` flag. Called from the config-watcher callback.
+pub fn apply_debug_logs_from_config(config_enabled: bool) {
+    let forced = DEBUG_FORCED_BY_FLAG.load(Ordering::Relaxed);
+    set_debug_logs(effective_debug_logs(forced, config_enabled));
+}
 
 /// Local-time formatter using chrono — matches the system timezone.
 struct LocalTime;
@@ -134,17 +188,43 @@ impl LoggerGuard {
 pub(crate) struct ResilientFileWriter {
     log_dir: PathBuf,
     prefix: String,
-    appender: std::sync::Mutex<tracing_appender::rolling::RollingFileAppender>,
+    // Built lazily on the first actual write, NOT at construction. The file
+    // layer is always attached but runtime-gated by `debug_logs_enabled()`
+    // (#678): when the gate is off, no event reaches `make_writer`, so a
+    // disabled process never creates an empty log directory or file. The
+    // appender is only materialized once debug logging is genuinely turned on.
+    appender: std::sync::Mutex<Option<tracing_appender::rolling::RollingFileAppender>>,
 }
 
 impl ResilientFileWriter {
     pub(crate) fn new(log_dir: PathBuf, prefix: String) -> Self {
-        let appender = tracing_appender::rolling::daily(&log_dir, &prefix);
         Self {
             log_dir,
             prefix,
-            appender: std::sync::Mutex::new(appender),
+            appender: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Create the log directory (+ a `.gitignore` covering all runtime files)
+    /// and open the daily rolling appender. Called on the first write and on
+    /// self-heal after a write failure.
+    fn build(log_dir: &PathBuf, prefix: &str) -> tracing_appender::rolling::RollingFileAppender {
+        // Best-effort dir + gitignore. Failures here surface as write errors
+        // below (which self-heal), so ignore the Result rather than panic.
+        if std::fs::create_dir_all(log_dir).is_ok() {
+            let gitignore_path = log_dir
+                .parent()
+                .unwrap_or(log_dir.as_path())
+                .join(".gitignore");
+            if !gitignore_path.exists() {
+                std::fs::write(
+                    &gitignore_path,
+                    "# Ignore all OpenCrabs runtime files\n*\n!.gitignore\n",
+                )
+                .ok();
+            }
+        }
+        tracing_appender::rolling::daily(log_dir, prefix)
     }
 }
 
@@ -160,73 +240,72 @@ impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for ResilientFileWriter
 
 pub(crate) struct ResilientFileGuard<'a> {
     parent: &'a ResilientFileWriter,
-    appender: std::sync::MutexGuard<'a, tracing_appender::rolling::RollingFileAppender>,
+    appender: std::sync::MutexGuard<'a, Option<tracing_appender::rolling::RollingFileAppender>>,
 }
 
 impl std::io::Write for ResilientFileGuard<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let result = self.appender.write(buf);
+        // Lazily open the appender on the first write (see `ResilientFileWriter`).
+        if self.appender.is_none() {
+            *self.appender = Some(ResilientFileWriter::build(
+                &self.parent.log_dir,
+                &self.parent.prefix,
+            ));
+        }
+        let appender = self
+            .appender
+            .as_mut()
+            .expect("appender was just materialized");
+        let result = appender.write(buf);
         if result.is_err() {
             // Self-heal: rebuild the appender so the next event reopens the file
             // instead of every subsequent write hitting the same dead handle.
-            *self.appender =
-                tracing_appender::rolling::daily(&self.parent.log_dir, &self.parent.prefix);
+            *self.appender = Some(ResilientFileWriter::build(
+                &self.parent.log_dir,
+                &self.parent.prefix,
+            ));
         }
         result
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.appender.flush()
+        match self.appender.as_mut() {
+            Some(appender) => appender.flush(),
+            None => Ok(()),
+        }
     }
 }
 
-/// Initialize the logging system
+/// Initialize the logging system.
 ///
 /// Returns a guard that must be kept alive for the duration of the program.
-/// When the guard is dropped, logs are flushed.
 ///
-/// # Arguments
-/// * `config` - Logging configuration
-///
-/// # Behavior
-/// - **Debug mode OFF**: No log files created, minimal console output
-/// - **Debug mode ON**: Creates log files in `.opencrabs/logs/`, detailed logging
+/// # Behavior (#678)
+/// A single subscriber is installed once (tracing forbids re-init), carrying two
+/// layers whose on/off state is controlled at runtime rather than baked in:
+/// - **File layer** — daily rolling files in `~/.opencrabs/logs/`, gated per
+///   event by [`debug_logs_enabled`]. The gate is seeded here from
+///   `config.debug_mode` (the effective `--debug` state) and can later be
+///   flipped by config hot-reload via [`apply_debug_logs_from_config`]. While
+///   the gate is off, no event reaches the (lazy) writer, so no log files are
+///   created — matching the old "no `-d`, no files" behavior.
+/// - **Console layer** — minimal warnings, to stderr for non-TUI callers or to
+///   `sink` for the TUI (avoids corrupting the terminal UI).
 pub fn init_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::error::Error>> {
-    if config.debug_mode {
-        // Debug mode: Create log files in .opencrabs/logs/
-        init_debug_logging(config)
-    } else {
-        // Normal mode: Minimal logging, no files
-        init_minimal_logging(config)
-    }
-}
+    use tracing_subscriber::filter::filter_fn;
+    use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
-/// Initialize debug logging with file output
-fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::error::Error>> {
-    // Create log directory
-    std::fs::create_dir_all(&config.log_dir)?;
+    // Seed the runtime gate + the forced-by-flag marker from the launch-time
+    // debug mode. run() re-applies the config toggle on top once config loads.
+    DEBUG_LOGS_ENABLED.store(config.debug_mode, Ordering::Relaxed);
+    DEBUG_FORCED_BY_FLAG.store(config.debug_mode, Ordering::Relaxed);
 
-    // Create gitignore file in .opencrabs to ignore logs
-    let opencrabs_dir = config.log_dir.parent().unwrap_or(&config.log_dir);
-    let gitignore_path = opencrabs_dir.join(".gitignore");
-    if !gitignore_path.exists() {
-        std::fs::write(
-            &gitignore_path,
-            "# Ignore all OpenCrabs runtime files\n*\n!.gitignore\n",
-        )
-        .ok();
-    }
-
-    // Set up the daily rolling file writer, written SYNCHRONOUSLY and
-    // self-healing — see `ResilientFileWriter` for the full rationale (#190).
-    // In short: no `non_blocking` worker thread to silently die and drop every
-    // event, and a write failure rebuilds the appender so the next event
-    // reopens the file instead of the log freezing forever.
-    let file_appender = ResilientFileWriter::new(config.log_dir.clone(), config.log_prefix.clone());
-
-    // Build environment filter
-    let env_filter = EnvFilter::from_default_env()
-        .add_directive(config.log_level.into())
+    // File layer: DEBUG detail plus the third-party noise directives. Level is
+    // fixed at DEBUG (not `config.log_level`) so the file captures full detail
+    // whenever the gate is ON, including when a hot-reload enables it from a
+    // process that launched without `-d`.
+    let file_env = EnvFilter::from_default_env()
+        .add_directive(Level::DEBUG.into())
         .add_directive("rusqlite=warn".parse()?)
         .add_directive("hyper=warn".parse()?)
         .add_directive("h2=warn".parse()?)
@@ -243,56 +322,49 @@ fn init_debug_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::err
         .add_directive("Client=warn".parse()?)
         .add_directive("UnifiedSession=warn".parse()?);
 
-    // Initialize subscriber with file logging
+    // Self-healing synchronous daily rolling writer — see `ResilientFileWriter`
+    // for the #190 rationale; now lazy so a disabled gate creates no files.
+    let file_appender = ResilientFileWriter::new(config.log_dir.clone(), config.log_prefix.clone());
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_appender)
+        .with_timer(LocalTime)
+        .with_ansi(false) // No colors in log files
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_line_number(true)
+        .with_file(true)
+        .with_filter(file_env)
+        // Runtime on/off gate. Re-evaluated per event so config hot-reload takes
+        // effect immediately; keep it as the outer filter so `make_writer` (and
+        // thus lazy file creation) never fires while debug logging is off.
+        .with_filter(filter_fn(|_meta| debug_logs_enabled()));
+
+    // Console layer: minimal, WARN + opencrabs=info. stderr for non-TUI, sink
+    // for the TUI so log lines never corrupt the on-screen interface.
+    let console_env = EnvFilter::from_default_env()
+        .add_directive(Level::WARN.into())
+        .add_directive("opencrabs=info".parse()?);
+    let console_writer: BoxMakeWriter = if config.console_output {
+        BoxMakeWriter::new(std::io::stderr)
+    } else {
+        BoxMakeWriter::new(std::io::sink)
+    };
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_writer(console_writer)
+        .with_timer(LocalTime)
+        .with_ansi(config.console_output)
+        .with_target(false)
+        .compact()
+        .with_filter(console_env);
+
     tracing_subscriber::registry()
-        .with(env_filter)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(file_appender)
-                .with_timer(LocalTime)
-                .with_ansi(false) // No colors in log files
-                .with_target(true)
-                .with_thread_ids(true)
-                .with_line_number(true)
-                .with_file(true),
-        )
+        .with(file_layer)
+        .with(console_layer)
         .init();
 
-    // Log startup information
-    tracing::info!("🚀 OpenCrabs debug mode enabled");
-    tracing::info!("📁 Log directory: {}", config.log_dir.display());
-    tracing::info!("📊 Log level: {:?}", config.log_level);
-    tracing::debug!("Debug logging initialized successfully");
-
-    Ok(LoggerGuard::empty())
-}
-
-/// Initialize minimal logging (no file output)
-fn init_minimal_logging(config: LogConfig) -> Result<LoggerGuard, Box<dyn std::error::Error>> {
-    // Build environment filter - minimal logging
-    let env_filter = EnvFilter::from_default_env()
-        .add_directive(Level::WARN.into()) // Only warnings and errors
-        .add_directive("opencrabs=info".parse()?); // INFO for opencrabs itself
-
-    if config.console_output {
-        // Console output for non-TUI modes
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr)
-                    .with_timer(LocalTime)
-                    .with_ansi(true)
-                    .with_target(false)
-                    .compact(),
-            )
-            .init();
-    } else {
-        // Silent mode for TUI (no output to avoid interference)
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::sink))
-            .init();
+    if debug_logs_enabled() {
+        tracing::info!("🚀 OpenCrabs debug logging enabled");
+        tracing::info!("📁 Log directory: {}", config.log_dir.display());
     }
 
     Ok(LoggerGuard::empty())

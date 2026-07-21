@@ -1297,6 +1297,13 @@ async fn cmd_chat_inner(
             }));
         }
 
+        // Debug logging toggle (#678) — apply agent.debug_logs live, preserving
+        // the launch-time --debug flag. Lets a non-technical user (or the agent)
+        // flip file logging on/off by editing config.toml with no restart.
+        callbacks.push(Arc::new(move |cfg: crate::config::Config| {
+            crate::logging::apply_debug_logs_from_config(cfg.agent.debug_logs);
+        }));
+
         // Channel lifecycle — spawn/stop channels when enabled flag changes
         {
             let channel_mgr = channel_manager.clone();

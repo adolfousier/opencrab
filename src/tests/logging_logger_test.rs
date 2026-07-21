@@ -30,6 +30,22 @@ fn test_log_config_builder() {
 }
 
 #[test]
+fn effective_debug_logs_is_flag_or_config() {
+    // #678: the --debug flag OR the config toggle enables debug file logging.
+    // The flag always wins, so a config `false` can never silence `-d`.
+    assert!(!effective_debug_logs(false, false), "neither → off");
+    assert!(
+        effective_debug_logs(false, true),
+        "config alone enables it (non-technical user case)"
+    );
+    assert!(
+        effective_debug_logs(true, false),
+        "flag alone enables it even with config off"
+    );
+    assert!(effective_debug_logs(true, true), "both → on");
+}
+
+#[test]
 fn test_log_dir_in_home_opencrabs_folder() {
     let config = LogConfig::default();
     let log_dir_str = config.log_dir.to_string_lossy();
