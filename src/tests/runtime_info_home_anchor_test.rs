@@ -148,3 +148,25 @@ fn both_render_paths_include_the_binary_version() {
         "build_core_brain (lean prompt) must surface the version too (#183)"
     );
 }
+
+/// build_system_brain (headless CLI path) used to omit compiled features that
+/// build_core_brain rendered, so headless agents couldn't tell which Cargo
+/// features are in the binary. Both builds share `push_runtime_info` now (#671).
+#[test]
+fn both_render_paths_surface_compiled_features() {
+    use crate::brain::prompt_builder::compiled_features;
+    if compiled_features().is_empty() {
+        return; // nothing compiled in (e.g. --no-default-features) — nothing to assert
+    }
+    let (_dir, loader) = loader();
+    let info = runtime_info_with_collapsed_wd();
+    for brain in [
+        loader.build_system_brain(Some(&info)),
+        loader.build_core_brain(Some(&info)),
+    ] {
+        assert!(
+            brain.contains("Built-in features compiled into this binary"),
+            "both brain builds must surface compiled features (#671)"
+        );
+    }
+}

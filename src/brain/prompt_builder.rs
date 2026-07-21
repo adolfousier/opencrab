@@ -332,41 +332,8 @@ impl BrainLoader {
             }
         }
 
-        // 7. Runtime info
-        if let Some(info) = runtime_info {
-            prompt.push_str(RUNTIME_INFO_HEADER);
-            prompt.push('\n');
-            if let Some(ref model) = info.model {
-                prompt.push_str(&format!("Model: {}\n", model));
-            }
-            if let Some(ref provider) = info.provider {
-                prompt.push_str(&format!("Provider: {}\n", provider));
-            }
-            if let Some(ref wd) = info.working_directory {
-                prompt.push_str(&format!("Working directory: {}\n", wd));
-                push_home_anchor_and_expansion_rule(&mut prompt);
-            }
-            // The running binary's version, baked in at compile time. Without
-            // this line the agent has no ground truth and hallucinates its
-            // version when asked (issue #183) — /doctor was only a workaround.
-            prompt.push_str(&format!(
-                "OpenCrabs version: v{}\n",
-                env!("CARGO_PKG_VERSION")
-            ));
-            prompt.push_str(&format!("OS: {}\n", std::env::consts::OS));
-            // Date granularity only — NOT a per-second timestamp. This line is
-            // inside the cached system prefix (providers stamp cache_control on
-            // the whole system message), so a value that changed every second
-            // invalidated the prompt cache on every request and forced a full
-            // context re-prefill (#657). Date keeps the ambient "what day is it"
-            // signal the model uses while leaving the prefix byte-stable across
-            // turns and same-model sessions so cache-read can hit.
-            prompt.push_str(&format!(
-                "Current date: {} (UTC)\n",
-                chrono::Utc::now().format("%Y-%m-%d")
-            ));
-            prompt.push('\n');
-        }
+        // 7. Runtime info (shared with build_core_brain; #671)
+        push_runtime_info(&mut prompt, runtime_info);
 
         // 7.5 Project directive files — scan the working directory for directive
         // files (AGENTS.md, CLAUDE.md, .cursorrules, etc.) and list them so the
@@ -550,43 +517,8 @@ impl BrainLoader {
         // runtime-added slash commands / skills (see push_commands_and_skills).
         self.push_commands_and_skills(&mut prompt);
 
-        // 4. Runtime info
-        if let Some(info) = runtime_info {
-            prompt.push_str(RUNTIME_INFO_HEADER);
-            prompt.push('\n');
-            if let Some(ref model) = info.model {
-                prompt.push_str(&format!("Model: {}\n", model));
-            }
-            if let Some(ref provider) = info.provider {
-                prompt.push_str(&format!("Provider: {}\n", provider));
-            }
-            if let Some(ref wd) = info.working_directory {
-                prompt.push_str(&format!("Working directory: {}\n", wd));
-                push_home_anchor_and_expansion_rule(&mut prompt);
-            }
-            // The running binary's version, baked in at compile time — gives
-            // the agent ground truth so it stops hallucinating its version
-            // when asked directly (issue #183; /doctor was only a workaround).
-            prompt.push_str(&format!(
-                "OpenCrabs version: v{}\n",
-                env!("CARGO_PKG_VERSION")
-            ));
-            prompt.push_str(&format!("OS: {}\n", std::env::consts::OS));
-            // Date granularity only — NOT a per-second timestamp. This line is
-            // inside the cached system prefix (providers stamp cache_control on
-            // the whole system message), so a value that changed every second
-            // invalidated the prompt cache on every request and forced a full
-            // context re-prefill (#657). Date keeps the ambient "what day is it"
-            // signal the model uses while leaving the prefix byte-stable across
-            // turns and same-model sessions so cache-read can hit.
-            prompt.push_str(&format!(
-                "Current date: {} (UTC)\n",
-                chrono::Utc::now().format("%Y-%m-%d")
-            ));
-            push_known_paths(&mut prompt);
-            push_compiled_features(&mut prompt);
-            prompt.push('\n');
-        }
+        // 4. Runtime info (shared with build_system_brain; #671)
+        push_runtime_info(&mut prompt, runtime_info);
 
         // 5. SOUL.md — personality, tone. Injected near the end so personality
         //    sits close to the model's generation point, but BEFORE AGENTS.md
@@ -810,6 +742,47 @@ pub fn override_runtime_model_provider(brain: &str, model: &str, provider: &str)
 ///    it ever needs to expand it (defense in depth).
 /// 2. Tell the model not to expand it itself — the shell handles `~`,
 ///    so passing `~/foo` to bash always works.
+/// Render the Runtime Info block: model / provider / working directory (+ home
+/// anchor), OpenCrabs version, OS, current date, known paths, and compiled
+/// features. Shared by both `build_system_brain` and `build_core_brain` so they
+/// can't drift and BOTH surface compiled features + known paths — the headless
+/// `build_system_brain` path used to omit them (#671). This block is the
+/// volatile suffix `split_runtime_suffix` pulls out of the cached prefix (#658),
+/// so per-session values here don't invalidate the cached brain.
+fn push_runtime_info(prompt: &mut String, runtime_info: Option<&RuntimeInfo>) {
+    let Some(info) = runtime_info else {
+        return;
+    };
+    prompt.push_str(RUNTIME_INFO_HEADER);
+    prompt.push('\n');
+    if let Some(ref model) = info.model {
+        prompt.push_str(&format!("Model: {}\n", model));
+    }
+    if let Some(ref provider) = info.provider {
+        prompt.push_str(&format!("Provider: {}\n", provider));
+    }
+    if let Some(ref wd) = info.working_directory {
+        prompt.push_str(&format!("Working directory: {}\n", wd));
+        push_home_anchor_and_expansion_rule(prompt);
+    }
+    // Compile-time version so the agent has ground truth for "what version are
+    // you?" instead of hallucinating (#183).
+    prompt.push_str(&format!(
+        "OpenCrabs version: v{}\n",
+        env!("CARGO_PKG_VERSION")
+    ));
+    prompt.push_str(&format!("OS: {}\n", std::env::consts::OS));
+    // Date granularity only — a per-second value would change the cached prefix
+    // every request (#657).
+    prompt.push_str(&format!(
+        "Current date: {} (UTC)\n",
+        chrono::Utc::now().format("%Y-%m-%d")
+    ));
+    push_known_paths(prompt);
+    push_compiled_features(prompt);
+    prompt.push('\n');
+}
+
 fn push_home_anchor_and_expansion_rule(prompt: &mut String) {
     if let Some(home) = dirs::home_dir().and_then(|p| p.to_str().map(String::from)) {
         prompt.push_str(&format!(
