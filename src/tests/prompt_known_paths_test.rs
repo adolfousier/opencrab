@@ -86,6 +86,19 @@ fn paths_section_mentions_plan_files() {
 }
 
 #[test]
+fn paths_section_lists_channel_attachments() {
+    // #681: the channel-attachments store is a real, profile-resolved path the
+    // agent must read from — it belongs in Known paths (profile-anchored on
+    // {home}) instead of being hardcoded to the default ~/.opencrabs/ root in
+    // the CHANNEL ATTACHMENTS directive.
+    let out = rendered();
+    assert!(
+        out.contains("Channel attachments") && out.contains("channel_attachments/<platform>/"),
+        "must surface the profile-resolved channel_attachments path; got: {out}"
+    );
+}
+
+#[test]
 fn paths_section_is_short() {
     // Sentinel: keep this section tight. The whole point is the
     // agent reads it once and remembers — bloating it with every
@@ -93,7 +106,7 @@ fn paths_section_is_short() {
     let out = rendered();
     let lines = out.lines().count();
     assert!(
-        lines <= 14,
+        lines <= 15,
         "Known paths section should stay compact; got {lines} lines"
     );
 }

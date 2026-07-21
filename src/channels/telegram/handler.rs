@@ -719,12 +719,10 @@ pub(crate) async fn handle_message(
                 // If file data provided, write to disk and store path in content
                 let content = if let Some((bytes, filename)) = file_data {
                     // Per-platform subdir so the durable store isn't one flat
-                    // dump; name-leading so the file is findable (#513).
-                    let attachments_dir = dirs::home_dir()
-                        .unwrap_or_else(|| std::path::PathBuf::from("."))
-                        .join(".opencrabs")
-                        .join("channel_attachments")
-                        .join("telegram");
+                    // dump; name-leading so the file is findable (#513). Root is
+                    // profile-resolved via `channel_attachments_dir` (#681) so a
+                    // named-profile instance stores under its own home.
+                    let attachments_dir = super::media::channel_attachments_dir().join("telegram");
                     if let Err(e) = std::fs::create_dir_all(&attachments_dir) {
                         tracing::warn!("Failed to create attachments dir: {e}");
                         text

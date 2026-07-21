@@ -3,8 +3,23 @@
 //! collision-safety (#513).
 
 use crate::channels::telegram::media::{
-    attachment_tmp_name, migrate_flat_attachments_in, sanitize_filename_component,
+    attachment_tmp_name, channel_attachments_dir, migrate_flat_attachments_in,
+    sanitize_filename_component,
 };
+
+#[test]
+fn attachments_dir_is_profile_resolved_via_opencrabs_home() {
+    // #681: the store must be anchored on opencrabs_home() (profile-aware), not
+    // a hardcoded ~/.opencrabs/ root, so a named-profile instance writes under
+    // its own home and matches what push_known_paths tells the agent.
+    let dir = channel_attachments_dir();
+    assert_eq!(
+        dir,
+        crate::config::opencrabs_home().join("channel_attachments"),
+        "attachments dir must route through opencrabs_home()"
+    );
+    assert!(dir.ends_with("channel_attachments"));
+}
 
 #[test]
 fn document_name_leads_with_original_stem() {

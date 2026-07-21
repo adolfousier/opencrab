@@ -111,17 +111,24 @@ pub(crate) fn attachment_tmp_name(
     format!("{stem}-{chat_id}-{ts}.{ext}")
 }
 
+/// Root of the durable channel-attachment store, profile-resolved via
+/// `opencrabs_home()` so a named-profile instance stores under its OWN home
+/// (`~/.opencrabs/profiles/<name>/channel_attachments/`) rather than the shared
+/// default root — matching every other runtime path (config, logs, plans) and
+/// what `push_known_paths` tells the agent (#681). Single source of truth: the
+/// writer, the migration, and the prompt must all resolve the store the same
+/// way, so they all route through here.
+pub(crate) fn channel_attachments_dir() -> std::path::PathBuf {
+    crate::config::opencrabs_home().join("channel_attachments")
+}
+
 /// One-time cleanup: sweep files sitting flat in `channel_attachments/` into
 /// the per-platform `channel_attachments/telegram/` subdir. Everything stored
 /// before per-platform subdirs existed came from Telegram, so a loose file is
-/// a pre-subdir Telegram attachment (#513). Uses the same non-profile-aware
-/// base as the store (`~/.opencrabs/channel_attachments`), so it targets the
-/// exact dir new files are written to.
+/// a pre-subdir Telegram attachment (#513). Uses [`channel_attachments_dir`] so
+/// it targets the exact (profile-resolved) dir new files are written to.
 pub(crate) fn migrate_flat_channel_attachments() {
-    let base = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".opencrabs")
-        .join("channel_attachments");
+    let base = channel_attachments_dir();
     let moved = migrate_flat_attachments_in(&base, "telegram");
     if moved > 0 {
         tracing::info!("channel_attachments: migrated {moved} flat file(s) → telegram/");

@@ -139,7 +139,7 @@ Only after BOTH the native tool AND this extraction fallback have failed may you
 
 VOICE / AUDIO INPUT — configure, never rebuild: when a user sends a voice note and it isn't already transcribed, STT is UNCONFIGURED, not absent. If `local-stt` is in the compiled-features line it runs offline with no key — enable it; otherwise configure an STT provider (base_url + model) via `config_manager` / `/onboard`. The same applies to speaking back (TTS / `local-tts`). Do NOT build a transcription/synthesis service (pip, Whisper wrapper, a Python codebase) — that duplicates a capability the binary already ships.
 
-CHANNEL ATTACHMENTS — every forwarded/uploaded file persists on disk, so read it: any file sent OR forwarded in a chat channel (document, `.md`, `.pdf`, `.txt`, audio, image — from ANY member of the chat, not only you) is saved to `~/.opencrabs/channel_attachments/<platform>/` and stays there for the session. The channel log stores text messages, but attachments live on the filesystem regardless of who sent them, so the sender not being logged does NOT mean the file is gone. Therefore NEVER tell a user their file "isn't stored", "never landed", or that you "can't read" a forwarded report — that is false and makes you look unaware of your own runtime. When you need an attached file's contents and it isn't already inline in the message, list the store (`ls -lt ~/.opencrabs/channel_attachments/<platform>/`), pick the most recent matching file, and read it. Only after listing the store and genuinely finding nothing may you ask the user to resend.
+CHANNEL ATTACHMENTS — every forwarded/uploaded file persists on disk, so read it: any file sent OR forwarded in a chat channel (document, `.md`, `.pdf`, `.txt`, audio, image — from ANY member of the chat, not only you) is saved to the "Channel attachments" path in the Known paths block below (`<home>/channel_attachments/<platform>/`, profile-resolved — use that exact path, never assume the default `~/.opencrabs/` root) and stays there for the session. The channel log stores text messages, but attachments live on the filesystem regardless of who sent them, so the sender not being logged does NOT mean the file is gone. Therefore NEVER tell a user their file "isn't stored", "never landed", or that you "can't read" a forwarded report — that is false and makes you look unaware of your own runtime. When you need an attached file's contents and it isn't already inline in the message, list the store (`ls -lt` on that Channel attachments path), pick the most recent matching file, and read it. Only after listing the store and genuinely finding nothing may you ask the user to resend.
 
 PROVIDER FALLBACK — know how failover actually works, don't invent it: your active provider/model is fixed per session (shown in Runtime Info). When a provider's request keeps failing, the system RETRIES it a few times; only after those retries are exhausted does it fall to the NEXT provider in the `[fallback]` chain configured in `config.toml`, and that fallback then becomes STICKY for the session (it does not silently switch back). If a user asks why the model changed, explain THIS — retries exhausted, fell to the configured fallback, now sticky — never claim "the primary switched" on its own. If no `[fallback]` chain is configured there is NO automatic failover: a failing provider just errors. In that case, suggest the user add a `[fallback]` chain (a list of configured provider names) in `config.toml` so requests fail over instead of dying.
 
@@ -648,14 +648,20 @@ impl BrainLoader {
 pub const RUNTIME_INFO_HEADER: &str = "--- Runtime Info ---";
 
 /// Split a rendered system brain into its byte-stable cacheable prefix and the
-/// volatile Runtime Info block (model / provider / working directory / date).
+/// volatile Runtime Info suffix.
 ///
 /// Returns `(stable_prefix, Some(runtime_block))` when the block is present,
-/// else `(brain, None)`. The block runs from [`RUNTIME_INFO_HEADER`] to the
-/// first blank line after it (it has no internal blank lines). Cutting it out
-/// and re-appending it as the uncached suffix keeps the large brain identical
-/// across sessions so the provider prompt cache reuses it, while the per-session
-/// runtime lines ride uncached at the end (#658).
+/// else `(brain, None)`. The suffix runs from [`RUNTIME_INFO_HEADER`] to the
+/// FIRST blank line after it — which, by construction of [`push_runtime_info`],
+/// falls right after the `Current date & time` line (the volatile PER-SESSION
+/// lines: model / provider / working directory / home / date-time). The blank
+/// line is emitted by `push_known_paths`'s leading newline, so everything from
+/// `Known paths` onward — the profile home and compiled features, which are
+/// per-INSTANCE constant, not per-session — stays in the CACHED prefix. That is
+/// the intended split: only genuinely per-session lines ride uncached (#658),
+/// while per-instance constants keep caching. The boundary is locked by a
+/// regression test (#681); do NOT add a per-session value to `push_known_paths`
+/// without moving it above this cut, or it will silently break the cache.
 pub fn split_runtime_suffix(brain: &str) -> (String, Option<String>) {
     let Some(start) = brain.find(RUNTIME_INFO_HEADER) else {
         return (brain.to_string(), None);
@@ -760,11 +766,13 @@ fn push_runtime_info(prompt: &mut String, runtime_info: Option<&RuntimeInfo>) {
         env!("CARGO_PKG_VERSION")
     ));
     prompt.push_str(&format!("OS: {}\n", std::env::consts::OS));
-    // Date granularity only — a per-second value would change the cached prefix
-    // every request (#657).
+    // Full timestamp (date AND time). #657 dropped time-of-day to keep the
+    // cached prefix stable, but #658 moved this whole block into the UNCACHED
+    // runtime suffix, so a per-second value no longer invalidates the cache —
+    // restore time-of-day awareness (#681).
     prompt.push_str(&format!(
-        "Current date: {} (UTC)\n",
-        chrono::Utc::now().format("%Y-%m-%d")
+        "Current date & time: {} UTC\n",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")
     ));
     push_known_paths(prompt);
     push_compiled_features(prompt);
@@ -918,6 +926,8 @@ pub(crate) fn push_known_paths(prompt: &mut String) {
          - Brain files: {home}/{{SOUL,USER,AGENTS,TOOLS,MEMORY,CODE}}.md\n\
          - Plans: {home}/agents/session/.opencrabs_plan_<session-id>.json\n\
          - Projects: {home}/projects/<slug>/files/ (persistent per-project artifacts)\n\
+         - Channel attachments: {home}/channel_attachments/<platform>/ (files sent or \
+         forwarded in a chat channel persist here for the session)\n\
          Which PROFILE am I? The profile note above states it; manage profiles with \
          `opencrabs profile list` or relaunch with `-p <name>`. \
          What PROJECT is this session? Your working directory (Runtime Info above) is the \
