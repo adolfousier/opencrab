@@ -296,6 +296,30 @@ fn test_handle_key_api_key_typing() {
 }
 
 #[test]
+fn custom_model_step_types_jk_into_filter_and_commits_unlisted_id() {
+    // #676: with a fetched list, the custom-model step used j/k for vim-nav,
+    // which stole those letters so a model ID containing j or k (e.g. kimi-k2)
+    // could not be typed. Arrows navigate; every char (incl. k) filters, and an
+    // unlisted typed name commits as the custom model on Enter.
+    let mut wizard = clean_wizard();
+    wizard.step = OnboardingStep::ProviderAuth;
+    wizard.auth_field = AuthField::CustomModel;
+    wizard.ps.models = vec!["qwen-plus".to_string(), "qwen-max".to_string()];
+    wizard.ps.model_filter.clear();
+
+    for c in "kimi-k2".chars() {
+        wizard.handle_key(key(KeyCode::Char(c)));
+    }
+    // 'k' must land in the filter, not navigate.
+    assert_eq!(wizard.ps.model_filter, "kimi-k2");
+
+    // No fetched model matches -> Enter commits the typed id as the custom model.
+    wizard.handle_key(key(KeyCode::Enter));
+    assert_eq!(wizard.ps.custom_model, "kimi-k2");
+    assert!(wizard.ps.models.iter().any(|m| m == "kimi-k2"));
+}
+
+#[test]
 fn test_handle_key_provider_auth_field_flow() {
     let mut wizard = clean_wizard();
     wizard.step = OnboardingStep::ProviderAuth;

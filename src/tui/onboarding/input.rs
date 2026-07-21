@@ -796,24 +796,14 @@ impl OnboardingWizard {
                         _ => {}
                     }
                 } else {
-                    // Models fetched — list picker
+                    // Models fetched — filterable list picker. Navigate with the
+                    // ARROW keys only (matching AuthField::Model); every character
+                    // — including `j`/`k` — types into the filter, so a model ID
+                    // that isn't in the fetched list (and may contain j/k, e.g.
+                    // `kimi-k2`) can be typed and committed as a custom model on
+                    // Enter (#676). The old j/k vim-nav stole those letters and
+                    // made such IDs impossible to enter.
                     match event.code {
-                        KeyCode::Char('k') => {
-                            self.ps.selected_model = self.ps.selected_model.saturating_sub(1);
-                        }
-                        KeyCode::Char('j') => {
-                            let filter = self.ps.model_filter.to_lowercase();
-                            let count = self
-                                .ps
-                                .models
-                                .iter()
-                                .filter(|m| m.to_lowercase().contains(&filter))
-                                .count();
-                            if count > 0 {
-                                self.ps.selected_model =
-                                    (self.ps.selected_model + 1).min(count - 1);
-                            }
-                        }
                         KeyCode::Char(c) => {
                             self.ps.model_filter.push(c);
                             self.ps.selected_model = 0;
