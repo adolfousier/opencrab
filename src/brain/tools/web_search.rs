@@ -122,11 +122,31 @@ impl Tool for WebSearchTool {
                 .map_err(|e| ToolError::Execution(format!("Failed to create HTTP client: {e}")))?;
 
             match client.get(&url).send().await {
+                // DDG bot-detection challenge: HTTP 202 is their
+                // protocol-level "you're blocked" signal. Stable across
+                // deploys. Short-circuit instead of burning UA rotations.
+                Ok(response) if response.status().as_u16() == 202 => {
+                    return Ok(ToolResult::error(
+                        "DuckDuckGo returned a bot-detection challenge (HTTP 202). \
+                         Try exa_search or brave_search instead."
+                            .to_string(),
+                    ));
+                }
                 Ok(response) if response.status().is_success() => {
                     let html = response.text().await.map_err(|e| {
                         ToolError::Execution(format!("Failed to read response: {e}"))
                     })?;
                     let results = parse_lite_results(&html, input.max_results);
+                    // Zero results + form present = challenge page, not a
+                    // genuine empty result. Structural check, no reliance on
+                    // internal JS filenames DDG can rename at any time.
+                    if results.is_empty() && html.contains("<form") {
+                        return Ok(ToolResult::error(
+                            "DuckDuckGo returned a captcha/challenge page instead of \
+                             results. Try exa_search or brave_search instead."
+                                .to_string(),
+                        ));
+                    }
                     return Ok(ToolResult::success(format_results(&input.query, &results)));
                 }
                 Ok(response) => {
