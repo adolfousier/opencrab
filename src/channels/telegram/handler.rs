@@ -268,6 +268,35 @@ fn forward_origin_label(msg: &Message) -> Option<String> {
     })
 }
 
+/// The current-speaker label prepended to a group message's agent input (#682).
+/// Names WHO to reply to and states that the history lines above belong to OTHER
+/// people, so the model never addresses the current sender by a name that only
+/// appears in the injected recent-group-history (the bug: the owner was called
+/// "Adi" because a different member named Adi was in the history). `role` is
+/// "owner" or "user"; `handle` is `" (@name)"` or empty.
+pub(crate) fn group_current_sender_label(
+    chat_title: &str,
+    name: &str,
+    handle: &str,
+    role: &str,
+) -> String {
+    format!(
+        "[Telegram group \"{chat_title}\" — the message below is from {name}{handle} ({role}). \
+         Reply to {name}. Any names in the history above belong to OTHER people; never address \
+         {name} by a name that appears only in that history.]"
+    )
+}
+
+/// Frame the recent-group-history block (#682). Marks the lines as prior context
+/// from VARIOUS senders, so the model answers the trailing current message
+/// rather than replying to a history sender.
+pub(crate) fn frame_group_history(history_lines: &str, count: usize) -> String {
+    format!(
+        "[Recent group history ({count} messages) — prior context from various senders, NOT the \
+         person you are replying to now:\n{history_lines}\n--- end history ---]"
+    )
+}
+
 pub(crate) async fn fire_reaction(bot: &Bot, chat_id: ChatId, msg_id: MessageId, emoji: &str) {
     let reaction = teloxide::types::ReactionType::Emoji {
         emoji: map_to_allowed_reaction(emoji),
@@ -2744,11 +2773,12 @@ pub(crate) async fn handle_message(
             }
         } else {
             // Always include group context — even for the owner — so the agent
-            // knows it's in a group and who is speaking.
+            // knows it's in a group and who is speaking. The label names the
+            // current sender AND flags history names as other people (#682).
+            let role = if is_owner { "owner" } else { "user" };
             format!(
-                "[Telegram group \"{}\" — {} from {name}{handle}]\n{text}",
-                chat_title,
-                if is_owner { "owner" } else { "user" },
+                "{}\n{text}",
+                group_current_sender_label(chat_title, &name, &handle, role)
             )
         }
     };
@@ -2794,9 +2824,8 @@ pub(crate) async fn handle_message(
                     })
                     .collect();
                 format!(
-                    "[Recent group history ({} messages):\n{}\n--- end history ---]\n{}",
-                    history.len(),
-                    history.join("\n"),
+                    "{}\n{}",
+                    frame_group_history(&history.join("\n"), history.len()),
                     agent_input
                 )
             }
