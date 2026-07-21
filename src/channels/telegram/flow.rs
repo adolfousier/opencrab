@@ -57,6 +57,9 @@ pub(crate) enum FlowEntry {
 }
 
 pub(crate) struct StreamingState {
+    /// Whether this session's chat is a DM (owner-private). Drives scope-aware
+    /// redaction: secrets show in DMs, scrub in group/channel chats (#677).
+    pub(crate) is_dm: bool,
     /// Response/thinking message (always at bottom)
     pub(crate) msg_id: Option<MessageId>,
     /// Reasoning/thinking text — streamed live, cleared before tool calls or response

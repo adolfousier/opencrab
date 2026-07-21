@@ -944,6 +944,32 @@ pub struct AgentConfig {
     /// in logs but won't redact them from display.
     #[serde(default = "default_redact_sensitive_data")]
     pub redact_sensitive_data: bool,
+
+    /// Per-scope redaction override for GROUP/channel chats (#677). `None`
+    /// follows `redact_sensitive_data` (the global default). Set via
+    /// `/redact group on|off`. Redaction matters most here — others can see it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redact_group: Option<bool>,
+
+    /// Per-scope redaction override for DIRECT messages (#677). `None` resolves
+    /// to OFF — a DM is owner-private, so secrets are SHOWN by default. Set via
+    /// `/redact dm on|off`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redact_dm: Option<bool>,
+}
+
+impl AgentConfig {
+    /// Resolve whether to redact for the current scope (#677). DMs are
+    /// owner-private and default to NOT redacting; group/channel chats default
+    /// to the global `redact_sensitive_data`. An explicit per-scope override
+    /// (set via `/redact`) always wins.
+    pub fn redact_for(&self, is_dm: bool) -> bool {
+        if is_dm {
+            self.redact_dm.unwrap_or(false)
+        } else {
+            self.redact_group.unwrap_or(self.redact_sensitive_data)
+        }
+    }
 }
 
 fn default_lazy_tools() -> bool {
@@ -996,6 +1022,8 @@ impl Default for AgentConfig {
             silent_compaction: false,
             lazy_tools: default_lazy_tools(),
             redact_sensitive_data: default_redact_sensitive_data(),
+            redact_group: None,
+            redact_dm: None,
         }
     }
 }

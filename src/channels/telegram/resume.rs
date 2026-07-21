@@ -55,6 +55,8 @@ pub(crate) async fn resume_session(
 
     // ── Streaming setup ────────────────────────────────────────────────────
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
+        // Telegram: positive chat id = private/DM, negative = group (#677).
+        is_dm: chat_id.0 > 0,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: Vec::new(),

@@ -57,7 +57,7 @@ impl StreamingState {
     pub(crate) fn render(&self) -> String {
         if !self.response.is_empty() {
             let resp = crate::utils::sanitize::strip_llm_artifacts(&self.response);
-            redact_secrets(&resp)
+            crate::utils::redact_secrets_scoped(&resp, self.is_dm)
         } else {
             String::new()
         }
@@ -2944,6 +2944,7 @@ pub(crate) async fn handle_message(
 
     // ── Streaming setup ───────────────────────────────────────────────────────
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
+        is_dm,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: Vec::new(),
@@ -3113,7 +3114,7 @@ pub(crate) async fn handle_message(
                                     // fire <<react:>> now so a mid-turn reaction
                                     // acknowledges the user immediately (#261).
                                     let text = crate::utils::sanitize::strip_llm_artifacts(text);
-                                    let text = redact_secrets(&text);
+                                    let text = crate::utils::redact_secrets_scoped(&text, is_dm);
                                     let (text, _img_paths) =
                                         crate::utils::extract_img_markers(&text);
                                     let (text, react_emoji) =

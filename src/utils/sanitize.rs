@@ -512,11 +512,29 @@ static QWEN_TOOL_MARKER_RE: Lazy<Regex> =
 ///
 /// Preserves the prefix so the user can see *what kind* of key was redacted.
 pub fn redact_secrets(text: &str) -> String {
-    // Skip redaction if disabled via config
     if !is_redaction_enabled() {
         return text.to_string();
     }
+    redact_secrets_core(text)
+}
 
+/// Scope-aware redaction (#677): decide whether to redact from the DM/group
+/// scope resolver ([`crate::config::AgentConfig::redact_for`]) rather than the
+/// global flag — so a DM shows secrets to the owner while group/channel chats
+/// scrub them. Defaults to redacting if config can't be loaded.
+pub fn redact_secrets_scoped(text: &str, is_dm: bool) -> String {
+    let should = crate::config::Config::load()
+        .map(|c| c.agent.redact_for(is_dm))
+        .unwrap_or(true);
+    if !should {
+        return text.to_string();
+    }
+    redact_secrets_core(text)
+}
+
+/// The secret-scrubbing core, with NO config check — gated by
+/// [`redact_secrets`] (global flag) or [`redact_secrets_scoped`] (scope).
+fn redact_secrets_core(text: &str) -> String {
     let mut result = text.to_string();
 
     // 1. Redact known key prefixes — keep prefix, replace rest with [REDACTED]

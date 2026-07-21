@@ -241,6 +241,8 @@ pub enum ChannelCommand {
     Profiles(ProfilesResponse),
     /// `/respond_to [all|mention|auto]` — show/switch auto-mention mode (#244)
     RespondTo(String),
+    /// `/redact [global|group|dm] [on|off]` — show/switch scoped redaction (#677)
+    Redact(String),
     /// `/plan` — enter durable pre-init Plan mode (reply text)
     PlanMode(String),
     /// `/plan <query>` — enter pre-init Plan mode AND dispatch the trailing
@@ -568,6 +570,16 @@ pub async fn handle_command(
                 ChannelCommand::RespondTo(handle_respond_to(arg, chat_id).await)
             }
         }
+        cmd if cmd == "/redact" || cmd.starts_with("/redact ") => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand(
+                    "🔒 `/redact` is restricted to the bot owner.".to_string(),
+                )
+            } else {
+                let arg = cmd.strip_prefix("/redact").unwrap_or("").trim();
+                ChannelCommand::Redact(handle_redact(arg).await)
+            }
+        }
         // `/goal` works on every surface. The TUI intercepts it in
         // handle_slash_command; here we mirror that so Telegram/Discord/
         // WhatsApp/Slack users hit the same behaviour. A bare `/goal` is
@@ -673,6 +685,7 @@ pub async fn handle_command(
         | ChannelCommand::NotACommand
         | ChannelCommand::UnknownCommand(_) => None,
         ChannelCommand::RespondTo(body) => Some(body.clone()),
+        ChannelCommand::Redact(body) => Some(body.clone()),
         ChannelCommand::PlanMode(body) | ChannelCommand::ShowPlan(body) => Some(body.clone()),
         // Handled (and persisted) by the channel handler: busy check +
         // seed dispatch / cancel + cleanup happen there.
@@ -830,6 +843,10 @@ pub(crate) fn format_help() -> String {
         ("/models", "Switch AI model"),
         ("/plan", "Enter Plan mode (design a plan for approval)"),
         ("/profiles", "Manage profiles (create, switch, migrate)"),
+        (
+            "/redact",
+            "Show/switch scoped secret redaction (`/redact <global|group|dm> <on|off>`)",
+        ),
         ("/rename", "Rename current session (`/rename <new title>`)"),
         (
             "/respond_to",
@@ -2077,6 +2094,7 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
         ChannelCommand::UnknownCommand(msg) => Some(msg.to_string()),
         ChannelCommand::ModelSwitched(msg) => Some(msg.to_string()),
         ChannelCommand::RespondTo(body) => Some(body.clone()),
+        ChannelCommand::Redact(body) => Some(body.clone()),
         ChannelCommand::PlanMode(body) | ChannelCommand::ShowPlan(body) => Some(body.clone()),
         _ => None,
     }
@@ -2089,6 +2107,68 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
 /// persisted per-group under `[channels.telegram.groups.<chat_id>]`.
 /// When `None` (command issued from a DM), it falls back to the channel-level
 /// `[channels.telegram]` setting.
+/// `/redact [global|group|dm] [on|off]` — show or set scoped secret redaction
+/// (#677). Owner-only (gated at the call site). Bare shows current scopes;
+/// `<scope> <on|off>` persists to `agent.redact_*` in config.toml.
+pub(crate) async fn handle_redact(arg: &str) -> String {
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(e) => return format!("❌ Failed to load config: {}", e),
+    };
+    let a = arg.trim();
+    if a.is_empty() {
+        let onoff = |b: bool| if b { "on" } else { "off" };
+        let group = config
+            .agent
+            .redact_group
+            .map(|b| onoff(b).to_string())
+            .unwrap_or_else(|| {
+                format!(
+                    "follows global ({})",
+                    onoff(config.agent.redact_sensitive_data)
+                )
+            });
+        let dm = config
+            .agent
+            .redact_dm
+            .map(|b| onoff(b).to_string())
+            .unwrap_or_else(|| "off (default)".to_string());
+        return format!(
+            "🔒 Redaction scopes:\n\
+             • 🌍 global: {}\n\
+             • 👥 group: {}\n\
+             • 📩 dm: {}\n\n\
+             Usage: `/redact <global|group|dm> <on|off>`\n\
+             Secrets are scrubbed in shared group chats and shown in your DMs by default.",
+            onoff(config.agent.redact_sensitive_data),
+            group,
+            dm
+        );
+    }
+    let mut parts = a.split_whitespace();
+    let scope = parts.next().unwrap_or("").to_lowercase();
+    let state = parts.next().unwrap_or("").to_lowercase();
+    let on = match state.as_str() {
+        "on" | "true" | "yes" | "enable" | "enabled" => true,
+        "off" | "false" | "no" | "disable" | "disabled" => false,
+        _ => return "⚠️ Usage: `/redact <global|group|dm> <on|off>`".to_string(),
+    };
+    let (key, label) = match scope.as_str() {
+        "global" => ("redact_sensitive_data", "🌍 global"),
+        "group" => ("redact_group", "👥 group"),
+        "dm" => ("redact_dm", "📩 dm"),
+        _ => return "⚠️ Scope must be one of: `global`, `group`, `dm`.".to_string(),
+    };
+    match Config::write_key("agent", key, if on { "true" } else { "false" }) {
+        Ok(()) => format!(
+            "✅ Redaction for {} set to **{}**.",
+            label,
+            if on { "on" } else { "off" }
+        ),
+        Err(e) => format!("❌ Failed to save config: {}", e),
+    }
+}
+
 pub(crate) async fn handle_respond_to(arg: &str, chat_id: Option<&str>) -> String {
     use crate::config::RespondTo;
 

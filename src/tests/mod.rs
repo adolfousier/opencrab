@@ -239,6 +239,7 @@ pub mod rate_limiter_test;
 pub mod read_media_redirect_test;
 pub mod rebuild_notify_test;
 pub mod recent_paths_test;
+pub mod redact_scope_test;
 pub mod sanitize_code_edit_block_test;
 pub mod sanitize_redaction_test;
 pub mod tool_description_redaction_test;
