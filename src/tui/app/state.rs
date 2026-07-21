@@ -151,6 +151,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Compact context now",
     },
     SlashCommand {
+        name: "/stop",
+        description: "Abort the running turn (same as Esc x2)",
+    },
+    SlashCommand {
         name: "/plan",
         description: "Enter Plan mode (design a plan for approval)",
     },
@@ -249,6 +253,27 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/profiles",
         description: "Manage OpenCrabs profiles (list, create, switch, migrate)",
+    },
+];
+
+/// Commands handled only by the chat channels (Telegram / Discord / Slack), not
+/// by the TUI slash dispatcher. They are documented in the `/help` dialog under
+/// a CHANNEL COMMANDS heading but deliberately kept OUT of [`SLASH_COMMANDS`] so
+/// they never appear in the TUI autocomplete (typing them here would just fall
+/// through to "unknown command"). `/respond_to` in particular is per-chat and
+/// needs a chat context the TUI does not have.
+pub const CHANNEL_COMMANDS: &[SlashCommand] = &[
+    SlashCommand {
+        name: "/respond_to",
+        description: "Show/switch auto-mention mode (/respond_to <all|mention|auto>)",
+    },
+    SlashCommand {
+        name: "/redact",
+        description: "Show/switch scoped secret redaction (/redact <global|group|dm> <on|off>)",
+    },
+    SlashCommand {
+        name: "/rename",
+        description: "Rename the current session (/rename <new title>)",
     },
 ];
 

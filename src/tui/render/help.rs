@@ -84,6 +84,15 @@ pub(super) fn render_help(f: &mut Frame, app: &App, area: Rect) {
         left.push(kv(cmd.name, cmd.description, cyan));
     }
 
+    // Channel-only commands (Telegram/Discord/Slack). Documented here so they
+    // are discoverable, but kept out of the TUI autocomplete since the TUI
+    // slash dispatcher does not handle them.
+    left.push(Line::from(""));
+    left.push(section_header("CHANNEL COMMANDS (Telegram/Discord/Slack)"));
+    for cmd in crate::tui::app::CHANNEL_COMMANDS {
+        left.push(kv(cmd.name, cmd.description, cyan));
+    }
+
     // Skills section — collect owned data first so borrows outlive the lines
     let all_skills = crate::brain::skills::load_all_skills();
     let skill_data: Vec<(String, String)> = all_skills
