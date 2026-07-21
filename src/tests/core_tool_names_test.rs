@@ -9,7 +9,7 @@
 //! can't come back.
 
 use crate::brain::tools::Tool;
-use crate::brain::tools::catalog::{CORE_TOOLS, is_core};
+use crate::brain::tools::catalog::{CORE_TOOLS, EXTENDED_TOOL_INVENTORY, is_core};
 use crate::brain::tools::config_tool::ConfigTool;
 use crate::brain::tools::context::ContextTool;
 use crate::brain::tools::http::HttpClientTool;
@@ -23,6 +23,32 @@ fn previously_drifted_core_tools_resolve_to_their_real_names() {
         );
         assert!(is_core(name), "is_core(`{name}`) must be true");
     }
+}
+
+#[test]
+fn extended_inventory_lists_team_and_brave_and_drops_stale_provider_vision() {
+    // #670: the lazy-mode roster was missing the team tools and brave_search,
+    // and carried a stale `provider_vision` (the real name is analyze_image,
+    // which is core).
+    let names: Vec<&str> = EXTENDED_TOOL_INVENTORY
+        .iter()
+        .flat_map(|(_, names)| names.iter().copied())
+        .collect();
+    for t in [
+        "team_create",
+        "team_delete",
+        "team_broadcast",
+        "brave_search",
+    ] {
+        assert!(
+            names.contains(&t),
+            "extended inventory missing `{t}` (#670)"
+        );
+    }
+    assert!(
+        !names.contains(&"provider_vision"),
+        "stale `provider_vision` still in the inventory (#670)"
+    );
 }
 
 #[test]
