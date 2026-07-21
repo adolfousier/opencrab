@@ -726,22 +726,6 @@ pub fn override_runtime_model_provider(brain: &str, model: &str, provider: &str)
     out
 }
 
-/// Append the home-anchor + tilde-expansion rule directly under the
-/// `Working directory:` line.
-///
-/// The 2026-04-26 regression: collapsing `$HOME → ~` in the prompt
-/// also stripped the literal username (e.g. `adolfousierstudio`) the
-/// model used to parrot back when constructing absolute paths. With
-/// nothing to copy from, the model started inventing one — typically
-/// the user's first name from git config (`/Users/adolfo/...`),
-/// breaking every shell command that needed an absolute path.
-///
-/// The fix is two short lines:
-///
-/// 1. Anchor `~` to the literal home so the model has ground truth if
-///    it ever needs to expand it (defense in depth).
-/// 2. Tell the model not to expand it itself — the shell handles `~`,
-///    so passing `~/foo` to bash always works.
 /// Render the Runtime Info block: model / provider / working directory (+ home
 /// anchor), OpenCrabs version, OS, current date, known paths, and compiled
 /// features. Shared by both `build_system_brain` and `build_core_brain` so they
@@ -783,6 +767,22 @@ fn push_runtime_info(prompt: &mut String, runtime_info: Option<&RuntimeInfo>) {
     prompt.push('\n');
 }
 
+/// Append the home-anchor + tilde-expansion rule directly under the
+/// `Working directory:` line.
+///
+/// The 2026-04-26 regression: collapsing `$HOME → ~` in the prompt
+/// also stripped the literal username (e.g. `adolfousierstudio`) the
+/// model used to parrot back when constructing absolute paths. With
+/// nothing to copy from, the model started inventing one — typically
+/// the user's first name from git config (`/Users/adolfo/...`),
+/// breaking every shell command that needed an absolute path.
+///
+/// The fix is two short lines:
+///
+/// 1. Anchor `~` to the literal home so the model has ground truth if
+///    it ever needs to expand it (defense in depth).
+/// 2. Tell the model not to expand it itself — the shell handles `~`,
+///    so passing `~/foo` to bash always works.
 fn push_home_anchor_and_expansion_rule(prompt: &mut String) {
     if let Some(home) = dirs::home_dir().and_then(|p| p.to_str().map(String::from)) {
         prompt.push_str(&format!(

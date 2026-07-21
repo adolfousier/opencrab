@@ -126,7 +126,7 @@ async fn main() {
                 if i == 0 {
                     println!(
                         "    run0 head: {}",
-                        &response[..response.len().min(280)].replace('\n', " ")
+                        response[..response.len().min(280)].replace('\n', " ")
                     );
                     for (q, v) in &kw_card.results {
                         println!(
