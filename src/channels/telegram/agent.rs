@@ -1566,6 +1566,7 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
         BotCommand::new("evolve", "Check for updates"),
         BotCommand::new("rtk", "Show RTK token savings statistics"),
         BotCommand::new("respond_to", "Show/switch auto-mention mode"),
+        BotCommand::new("redact", "Show/switch scoped secret redaction"),
         BotCommand::new("plan", "Enter Plan mode (design a plan for approval)"),
         BotCommand::new("show_plan", "Show the current plan state"),
         BotCommand::new(
