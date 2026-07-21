@@ -66,52 +66,76 @@ impl CronJobRepository {
     }
 
     pub async fn list_all(&self) -> Result<Vec<CronJob>> {
-        self.pool
-            .get()
-            .await
-            .context("Failed to get connection")?
-            .interact(|conn| -> anyhow::Result<Vec<CronJob>> {
-                let mut stmt = conn.prepare_cached("SELECT * FROM cron_jobs ORDER BY name")?;
-                let rows = stmt.query_map([], |row| {
-                    // Capture the id BEFORE from_row so a decode failure
-                    // points at a specific job rather than the anonymous
-                    // "row 0/0" rusqlite produces by default. Useful for
-                    // the 2026-05-17 class of bug where one bad row
-                    // silently empties an entire list query.
-                    let id: String = row.get::<_, String>("id").unwrap_or_default();
-                    CronJob::from_row(row).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            0,
-                            rusqlite::types::Type::Text,
-                            format!("cron_jobs row id={id}: {e}").into(),
-                        )
-                    })
-                })?;
-                let mut out = Vec::new();
-                for row in rows {
-                    out.push(row.context("cron_jobs row decode failed")?);
-                }
-                Ok(out)
-            })
-            .await
-            .map_err(interact_err)?
-            .context("Failed to list cron jobs")
-    }
+        // Retry once after 100ms if the query fails (handles brief DB contention
+        // from scheduler updates). Timeout after 5s to prevent hangs (#665).
+        let query = || async {
+            self.pool
+                .get()
+                .await
+                .context("Failed to get connection")?
+                .interact(|conn| -> anyhow::Result<Vec<CronJob>> {
+                    let mut stmt = conn.prepare_cached("SELECT * FROM cron_jobs ORDER BY name")?;
+                    let rows = stmt.query_map([], |row| {
+                        // Capture the id BEFORE from_row so a decode failure
+                        // points at a specific job rather than the anonymous
+                        // "row 0/0" rusqlite produces by default. Useful for
+                        // the 2026-05-17 class of bug where one bad row
+                        // silently empties an entire list query.
+                        let id: String = row.get::<_, String>("id").unwrap_or_default();
+                        CronJob::from_row(row).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                format!("cron_jobs row id={id}: {e}").into(),
+                            )
+                        })
+                    })?;
+                    let mut out = Vec::new();
+                    for row in rows {
+                        out.push(row.context("cron_jobs row decode failed")?);
+                    }
+                    Ok(out)
+                })
+                .await
+                .map_err(interact_err)?
+                .context("Failed to list cron jobs")
+        };
 
+        match tokio::time::timeout(std::time::Duration::from_secs(5), query()).await {
+            Ok(result) => result,
+            Err(_) => {
+                // Timeout — retry once after 100ms backoff
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                query().await
+            }
+        }
+    }
     pub async fn list_enabled(&self) -> Result<Vec<CronJob>> {
-        self.pool
-            .get()
-            .await
-            .context("Failed to get connection")?
-            .interact(|conn| {
-                let mut stmt =
-                    conn.prepare_cached("SELECT * FROM cron_jobs WHERE enabled = 1 ORDER BY name")?;
-                let rows = stmt.query_map([], CronJob::from_row)?;
-                rows.collect::<std::result::Result<Vec<_>, _>>()
-            })
-            .await
-            .map_err(interact_err)?
-            .context("Failed to list enabled cron jobs")
+        // Same retry/timeout pattern as list_all (#665)
+        let query = || async {
+            self.pool
+                .get()
+                .await
+                .context("Failed to get connection")?
+                .interact(|conn| {
+                    let mut stmt = conn.prepare_cached(
+                        "SELECT * FROM cron_jobs WHERE enabled = 1 ORDER BY name",
+                    )?;
+                    let rows = stmt.query_map([], CronJob::from_row)?;
+                    rows.collect::<std::result::Result<Vec<_>, _>>()
+                })
+                .await
+                .map_err(interact_err)?
+                .context("Failed to list enabled cron jobs")
+        };
+
+        match tokio::time::timeout(std::time::Duration::from_secs(5), query()).await {
+            Ok(result) => result,
+            Err(_) => {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                query().await
+            }
+        }
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<CronJob>> {
