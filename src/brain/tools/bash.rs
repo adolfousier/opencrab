@@ -580,7 +580,16 @@ impl Tool for BashTool {
             result_text = "(no output)".to_string();
         }
 
-        let success = output.status.success();
+        // grep/rg exit 1 with nothing on stderr means "no line matched" — a
+        // successful search with zero results, not a command failure (real
+        // errors surface as exit 2+ and/or stderr output). Treating that as a
+        // failure inflated the bash failure rate with search noise (#663).
+        let search_no_match = is_search_no_match(&input.command, exit_code, &stderr);
+        let success = output.status.success() || search_no_match;
+
+        if search_no_match && result_text == "(no output)" {
+            result_text = "(no matches found)".to_string();
+        }
 
         // Record the outcome so a follow-up call with the exact same
         // command can be short-circuited by Layer 3 instead of re-running.
@@ -612,6 +621,23 @@ impl Tool for BashTool {
             .with_metadata("exit_code".to_string(), exit_code.to_string())
             .with_metadata("working_dir".to_string(), working_dir.display().to_string()))
     }
+}
+
+/// Whether a non-zero bash exit is a benign "search found no matches" rather
+/// than a real failure. `grep`/`rg` exit 1 (with nothing on stderr) when no
+/// line matches; that is a successful search with zero results, not an error
+/// (exit 2+ / stderr output is a genuine error). Counting these as failures
+/// inflated the bash failure rate with noise (#663).
+fn is_search_no_match(command: &str, exit_code: i32, stderr: &str) -> bool {
+    if exit_code != 1 || !stderr.trim().is_empty() {
+        return false;
+    }
+    // Check each pipe / chain segment's leading command token.
+    command.split(['|', ';', '&']).any(|segment| {
+        let seg = segment.trim();
+        let first = seg.split_whitespace().next().unwrap_or("");
+        matches!(first, "grep" | "egrep" | "fgrep" | "rg") || seg.starts_with("git grep")
+    })
 }
 
 /// Hard blocklist check for dangerous commands.
@@ -1186,5 +1212,74 @@ impl SshAskpass {
 
     fn script_path(&self) -> &std::path::Path {
         self.script_file.path()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grep_no_match_is_success() {
+        // grep exit 1 + empty stderr = no matches found (successful empty search)
+        assert!(is_search_no_match("grep foo file.txt", 1, ""));
+        assert!(is_search_no_match("grep -r 'pattern' /path", 1, "   \n  "));
+    }
+
+    #[test]
+    fn grep_real_error_is_failure() {
+        // grep exit 2 + stderr = real error (bad regex, missing file, etc.)
+        assert!(!is_search_no_match(
+            "grep foo file.txt",
+            2,
+            "grep: file.txt: No such file or directory"
+        ));
+        assert!(!is_search_no_match(
+            "grep [invalid",
+            1,
+            "grep: invalid regex"
+        ));
+    }
+
+    #[test]
+    fn non_grep_exit_1_is_failure() {
+        // Non-grep commands exit 1 = real failure
+        assert!(!is_search_no_match("ls /nonexistent", 1, ""));
+        assert!(!is_search_no_match("cat missing.txt", 1, ""));
+    }
+
+    #[test]
+    fn piped_grep_no_match_is_success() {
+        // Piped grep with no matches
+        assert!(is_search_no_match("cat file.txt | grep foo", 1, ""));
+        assert!(is_search_no_match("echo bar | grep baz", 1, ""));
+    }
+
+    #[test]
+    fn git_grep_no_match_is_success() {
+        // git grep with no matches
+        assert!(is_search_no_match("git grep 'nonexistent'", 1, ""));
+        assert!(is_search_no_match("git grep -i pattern", 1, ""));
+    }
+
+    #[test]
+    fn rg_no_match_is_success() {
+        // ripgrep with no matches
+        assert!(is_search_no_match("rg 'pattern'", 1, ""));
+        assert!(is_search_no_match("rg --type rust foo", 1, ""));
+    }
+
+    #[test]
+    fn egrep_fgrep_no_match_is_success() {
+        // Extended/fixed grep variants
+        assert!(is_search_no_match("egrep 'pattern'", 1, ""));
+        assert!(is_search_no_match("fgrep 'literal'", 1, ""));
+    }
+
+    #[test]
+    fn grep_as_argument_not_command() {
+        // grep as an argument, not the command
+        assert!(!is_search_no_match("echo grep", 1, ""));
+        assert!(!is_search_no_match("cat file | wc -l", 1, ""));
     }
 }
