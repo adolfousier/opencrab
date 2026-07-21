@@ -23,7 +23,11 @@ async fn cancel_token_store_and_retrieve() {
 }
 
 #[tokio::test]
-async fn cancel_token_new_message_cancels_previous() {
+async fn cancel_token_new_message_does_not_cancel_previous() {
+    // #652: storing a new token must NOT cancel the in-flight one. The old
+    // cancel-on-store hard-killed a running turn on a near-simultaneous resend.
+    // try_begin_turn (#501) is the concurrency gate now; cancellation only
+    // happens through cancel_session.
     let state = TelegramState::new();
     let session_id = Uuid::new_v4();
     let old_token = CancellationToken::new();
@@ -34,11 +38,11 @@ async fn cancel_token_new_message_cancels_previous() {
     state
         .store_cancel_token(session_id, new_token.clone())
         .await;
-    assert!(old_token.is_cancelled(), "old token should be cancelled");
     assert!(
-        !new_token.is_cancelled(),
-        "new token should still be active"
+        !old_token.is_cancelled(),
+        "storing a new token must not cancel the previous one (#652)"
     );
+    assert!(!new_token.is_cancelled());
 }
 
 #[tokio::test]
@@ -96,7 +100,9 @@ async fn cancel_token_different_sessions_independent() {
 }
 
 #[tokio::test]
-async fn cancel_token_rapid_replacement() {
+async fn cancel_token_rapid_replacement_never_cancels() {
+    // #652: rapid re-stores just overwrite the map entry; store_cancel_token
+    // never cancels, so every token stays active.
     let state = TelegramState::new();
     let session_id = Uuid::new_v4();
     let mut tokens = Vec::new();
@@ -105,11 +111,12 @@ async fn cancel_token_rapid_replacement() {
         state.store_cancel_token(session_id, t.clone()).await;
         tokens.push(t);
     }
-    // All but the last should be cancelled
-    for t in &tokens[..9] {
-        assert!(t.is_cancelled());
+    for t in &tokens {
+        assert!(
+            !t.is_cancelled(),
+            "store_cancel_token must never cancel a token (#652)"
+        );
     }
-    assert!(!tokens[9].is_cancelled());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,9 +250,17 @@ async fn cancel_token_concurrent_store_and_cancel() {
         .into_iter()
         .map(|r| r.unwrap())
         .collect();
-    // At most one should still be active
+    // #652: concurrent stores race to own the map slot but must never cancel a
+    // token — none are cancelled by storing.
     let active_count = tokens.iter().filter(|t| !t.is_cancelled()).count();
-    assert_eq!(active_count, 1, "exactly one token should survive");
+    assert_eq!(active_count, 20, "store must never cancel any token (#652)");
+    // cancel_session then cancels exactly the one still in the map.
+    assert!(state.cancel_session(session_id).await);
+    let cancelled = tokens.iter().filter(|t| t.is_cancelled()).count();
+    assert_eq!(
+        cancelled, 1,
+        "cancel_session cancels exactly the surviving token"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

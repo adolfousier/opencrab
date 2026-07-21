@@ -13,7 +13,7 @@
 //! The gate is pure: `hints.read_only` is the sole signal. No name
 //! lists, no capability branching.
 
-use crate::brain::tools::plan_gate::{GateDecision, check_plan_gate};
+use crate::brain::tools::plan_gate::check_plan_gate;
 use crate::brain::tools::r#trait::ToolHints;
 use crate::config::profile::{home_for_profile, with_profile_home_async};
 use crate::tui::plan::{PlanDocument, PlanStatus, PlanTask, TaskType};
