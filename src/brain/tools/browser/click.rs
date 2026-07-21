@@ -115,6 +115,10 @@ impl Tool for BrowserClickTool {
                                     std::time::Duration::from_secs(3),
                                 )
                                 .await;
+                            // Reset consecutive-identical screenshot counter — click is a page change
+                            self.manager
+                                .reset_identical_screenshot_count(context.session_id)
+                                .await;
                             let mut tr = ToolResult::success(format!("Clicked: {selector}"));
                             self.manager
                                 .attach_screenshot(context.session_id, &mut tr)
@@ -163,6 +167,10 @@ impl Tool for BrowserClickTool {
                                 .wait_for_network_almost_idle_with_timeout(
                                     std::time::Duration::from_secs(3),
                                 )
+                                .await;
+                            // Reset consecutive-identical screenshot counter — click is a page change
+                            self.manager
+                                .reset_identical_screenshot_count(context.session_id)
                                 .await;
                             let mut tr = ToolResult::success(format!("Clicked: {selector}"));
                             self.manager
@@ -214,6 +222,11 @@ impl Tool for BrowserClickTool {
         if let Err(e) = element.click().await {
             return Ok(ToolResult::error(format!("Click failed: {e}")));
         }
+
+        // Reset consecutive-identical screenshot counter — click is a page change
+        self.manager
+            .reset_identical_screenshot_count(context.session_id)
+            .await;
 
         // Wait for the page to settle after click — navigation, AJAX,
         // hydration. `wait_for_network_almost_idle_with_timeout` resolves

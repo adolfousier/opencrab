@@ -119,9 +119,25 @@ impl Tool for BrowserScreenshotTool {
         // Only applies to full-page screenshots: an element screenshot can
         // legitimately repeat for different selectors against a stable
         // page, so we don't dedupe those.
+        //
+        // After 3 consecutive identical captures, force-break with a hard
+        // error to stop the screenshot loop entirely (#664).
         if selector.is_none() {
             let hash = BrowserManager::hash_screenshot_bytes(&bytes);
             if Some(hash) == self.manager.last_screenshot_hash(context.session_id).await {
+                let count = self
+                    .manager
+                    .increment_identical_screenshot_count(context.session_id)
+                    .await;
+                if count >= 3 {
+                    return Ok(ToolResult::error(format!(
+                        "Screenshot loop detected: {count} consecutive identical captures. \
+                         The page has not changed. STOP screenshotting and take a different \
+                         action: `browser_click` something, `browser_type` into a field, \
+                         `browser_navigate` to a new URL, or report the current state and \
+                         end the task. Do NOT screenshot again until the page changes."
+                    )));
+                }
                 return Ok(ToolResult::error(
                     "Page is identical to your last screenshot. The previous action \
                      (or no action) produced no visible change. Do not screenshot again — \
@@ -133,6 +149,9 @@ impl Tool for BrowserScreenshotTool {
             }
             self.manager
                 .set_last_screenshot_hash(context.session_id, hash)
+                .await;
+            self.manager
+                .reset_identical_screenshot_count(context.session_id)
                 .await;
         }
 

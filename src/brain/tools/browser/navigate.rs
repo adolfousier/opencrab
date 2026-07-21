@@ -130,6 +130,12 @@ impl Tool for BrowserNavigateTool {
             return Ok(ToolResult::error(format!("Navigation failed: {e}")));
         }
 
+        // Reset the consecutive-identical screenshot counter — navigation
+        // is a page change, so any prior identical-capture streak is broken.
+        self.manager
+            .reset_identical_screenshot_count(context.session_id)
+            .await;
+
         // Wait for the navigation to settle. `wait_for_navigation()` only
         // resolves on the CDP `load` event, which fires before paint and
         // before any JS hydration completes — screenshots and clicks issued

@@ -137,6 +137,10 @@ impl Tool for BrowserTypeTool {
             .unwrap_or_else(|| "focused element".into());
         match outcome.as_str() {
             "ok" => {
+                // Reset consecutive-identical screenshot counter — typing is a page change
+                self.manager
+                    .reset_identical_screenshot_count(context.session_id)
+                    .await;
                 let mut result = ToolResult::success(format!("Typed into {target}"));
                 // Auto-screenshot: give the model vision after typing.
                 self.manager

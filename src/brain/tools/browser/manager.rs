@@ -33,6 +33,11 @@ struct ManagerInner {
     /// successful screenshot; never explicitly invalidated — when the
     /// page genuinely changes the new bytes will hash differently.
     last_screenshot_hash: HashMap<uuid::Uuid, u64>,
+    /// Per-session counter of consecutive identical screenshots. Increments
+    /// when the hash matches the previous capture; resets on any page change
+    /// (navigate, click, type, scroll). After 3 identical captures, forces
+    /// a hard break to stop the screenshot loop (#664).
+    consecutive_identical_screenshots: HashMap<uuid::Uuid, u32>,
 }
 
 /// Best-effort cleanup when the last `BrowserManager` clone (and
@@ -116,6 +121,7 @@ impl BrowserManager {
                 handler_handle: None,
                 headless,
                 last_screenshot_hash: HashMap::new(),
+                consecutive_identical_screenshots: HashMap::new(),
             })),
             config: Arc::new(config),
         }
@@ -572,6 +578,40 @@ impl BrowserManager {
             .await
             .last_screenshot_hash
             .insert(session_id, hash);
+    }
+
+    /// Increment the consecutive-identical screenshot counter for a session.
+    /// Returns the new count. Used to detect and break screenshot loops (#664).
+    pub async fn increment_identical_screenshot_count(&self, session_id: uuid::Uuid) -> u32 {
+        let mut inner = self.inner.lock().await;
+        let count = inner
+            .consecutive_identical_screenshots
+            .entry(session_id)
+            .or_insert(0);
+        *count += 1;
+        *count
+    }
+
+    /// Reset the consecutive-identical screenshot counter for a session.
+    /// Called on any page change (navigate, click, type, scroll) to clear
+    /// the loop detection state.
+    pub async fn reset_identical_screenshot_count(&self, session_id: uuid::Uuid) {
+        self.inner
+            .lock()
+            .await
+            .consecutive_identical_screenshots
+            .remove(&session_id);
+    }
+
+    /// Get the current consecutive-identical screenshot count for a session.
+    pub async fn identical_screenshot_count(&self, session_id: uuid::Uuid) -> u32 {
+        self.inner
+            .lock()
+            .await
+            .consecutive_identical_screenshots
+            .get(&session_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Shut down the browser entirely.
