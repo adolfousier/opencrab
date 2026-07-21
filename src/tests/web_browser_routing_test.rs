@@ -88,7 +88,8 @@ fn browser_navigate_description_warns_against_research_misuse() {
 
 #[test]
 fn web_search_description_positions_as_default() {
-    let desc = WebSearchTool.description();
+    let tool = WebSearchTool::default();
+    let desc = tool.description();
     assert!(
         desc.contains("DEFAULT") || desc.contains("default"),
         "web_search must announce itself as the default research tool: {desc}"

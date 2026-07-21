@@ -47,7 +47,7 @@ pub(crate) fn register_core_agent_tools(
     tool_registry.register(Arc::new(GlobTool));
     tool_registry.register(Arc::new(GrepTool));
     // Phase 2: Advanced features
-    tool_registry.register(Arc::new(WebSearchTool));
+    tool_registry.register(Arc::new(WebSearchTool::default()));
     tool_registry.register(Arc::new(CodeExecTool));
     tool_registry.register(Arc::new(NotebookEditTool));
     tool_registry.register(Arc::new(DocParserTool));

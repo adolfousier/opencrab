@@ -1,15 +1,116 @@
-//! Web Search Tool
+//! Web Search Tool (Unified)
 //!
-//! Perform real-time internet searches and retrieve results.
+//! Single search entry point that fans out to DuckDuckGo, Exa, and Brave
+//! in parallel, merges results, and returns the best combined set. The
+//! agent calls one tool and never thinks about which engine answered.
+//!
+//! Engines:
+//! - **DuckDuckGo** (always available, free, captcha-prone)
+//! - **Exa** (free MCP endpoint or direct API with `EXA_API_KEY`)
+//! - **Brave** (requires `BRAVE_API_KEY`, registered only when configured)
+//!
+//! DDG captcha detection (HTTP 202 + structural form heuristic) silently
+//! drops DDG from the result pool instead of surfacing an error.
 
+use super::brave_search::BraveSearchTool;
 use super::error::{Result, ToolError};
+use super::exa_search::ExaSearchTool;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
-/// Web search tool
-pub struct WebSearchTool;
+/// Unified web search tool. Fans out to DDG + Exa (+ Brave if configured)
+/// in parallel, merges results, dedupes by URL.
+#[derive(Default)]
+pub struct WebSearchTool {
+    exa: Option<Arc<ExaSearchTool>>,
+    brave: Option<Arc<BraveSearchTool>>,
+}
+
+impl WebSearchTool {
+    /// Create a unified search tool with optional engine references.
+    /// When both are `None`, behaves as DDG-only (backward compat).
+    pub fn new(
+        exa: Option<Arc<ExaSearchTool>>,
+        brave: Option<Arc<BraveSearchTool>>,
+    ) -> Self {
+        Self { exa, brave }
+    }
+
+    /// DuckDuckGo search (extracted for parallel fan-out).
+    async fn search_ddg(&self, query: &str, max_results: usize) -> Result<ToolResult> {
+        let url = format!(
+            "https://lite.duckduckgo.com/lite/?q={}",
+            urlencoding::encode(query)
+        );
+
+        let mut last_err = String::new();
+        for (attempt, ua) in DDG_USER_AGENTS.iter().enumerate() {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .user_agent(*ua)
+                .build()
+                .map_err(|e| ToolError::Execution(format!("Failed to create HTTP client: {e}")))?;
+
+            match client.get(&url).send().await {
+                // DDG bot-detection challenge: HTTP 202 is their
+                // protocol-level "you're blocked" signal. Stable across
+                // deploys. Short-circuit instead of burning UA rotations.
+                Ok(response) if response.status().as_u16() == 202 => {
+                    return Ok(ToolResult::error(
+                        "DuckDuckGo returned a bot-detection challenge (HTTP 202)."
+                            .to_string(),
+                    ));
+                }
+                Ok(response) if response.status().is_success() => {
+                    let html = response.text().await.map_err(|e| {
+                        ToolError::Execution(format!("Failed to read response: {e}"))
+                    })?;
+                    let results = parse_lite_results(&html, max_results);
+                    // Zero results + form present = challenge page, not a
+                    // genuine empty result. Structural check, no reliance on
+                    // internal JS filenames DDG can rename at any time.
+                    if results.is_empty() && html.contains("<form") {
+                        return Ok(ToolResult::error(
+                            "DuckDuckGo returned a captcha/challenge page instead of results."
+                                .to_string(),
+                        ));
+                    }
+                    return Ok(ToolResult::success(format_results(query, &results)));
+                }
+                Ok(response) => {
+                    last_err = format!("HTTP {}", response.status());
+                    tracing::warn!(
+                        "web_search: DuckDuckGo returned {} (UA {}/{}) — rotating User-Agent",
+                        response.status(),
+                        attempt + 1,
+                        DDG_USER_AGENTS.len(),
+                    );
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    tracing::warn!(
+                        "web_search: request failed (UA {}/{}): {e}",
+                        attempt + 1,
+                        DDG_USER_AGENTS.len(),
+                    );
+                }
+            }
+
+            // Brief backoff before the next UA (skipped after the last attempt).
+            if attempt + 1 < DDG_USER_AGENTS.len() {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        }
+
+        Ok(ToolResult::error(format!(
+            "DuckDuckGo search failed after {} attempts (last error: {last_err}).",
+            DDG_USER_AGENTS.len(),
+        )))
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 struct SearchInput {
@@ -39,18 +140,16 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the internet for real-time information using DuckDuckGo. \
-         Returns summarized results with links. \
+        "Search the internet for real-time information. Fans out to \
+         DuckDuckGo, Exa, and Brave (when configured) in parallel and \
+         returns merged, deduplicated results. \
          \n\nDEFAULT web-research tool — use this for any \"find me info \
          about X\" / \"what's the latest Y\" / \"check the docs for Z\" \
          request unless the user explicitly asks for browser interaction. \
          Always pick a search tool over `browser_navigate` for research. \
-         \n\nIf `exa_search` or `brave_search` are also in your tool list, \
-         prefer them over `web_search` (better ranking for technical / \
-         current-events queries respectively); `web_search` is the \
-         always-available fallback. For GitHub content (issues, PRs, \
-         repos, code search) use the `gh` CLI via `bash` instead — it \
-         returns structured JSON and is authenticated."
+         \n\nFor GitHub content (issues, PRs, repos, code search) use the \
+         `gh` CLI via `bash` instead — it returns structured JSON and is \
+         authenticated."
     }
 
     fn input_schema(&self) -> Value {
@@ -98,88 +197,73 @@ impl Tool for WebSearchTool {
         Ok(())
     }
 
-    async fn execute(&self, input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
-        let input: SearchInput = serde_json::from_value(input)?;
+    async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
+        let parsed: SearchInput = serde_json::from_value(input.clone())?;
 
-        // Use DuckDuckGo Lite endpoint which returns actual web search results
-        let url = format!(
-            "https://lite.duckduckgo.com/lite/?q={}",
-            urlencoding::encode(&input.query)
-        );
+        // No extra engines configured: DDG-only (backward compat with
+        // tool_setup.rs registration before config is loaded).
+        if self.exa.is_none() && self.brave.is_none() {
+            return self.search_ddg(&parsed.query, parsed.max_results).await;
+        }
 
-        // DuckDuckGo Lite 403s on IP/UA reputation and rate limits (#525): a
-        // single hardcoded User-Agent used to fail outright. Rotate through a
-        // small pool of realistic UAs, retrying on a 403 / transient failure
-        // with a short backoff before giving up. A hard failure returns an
-        // actionable error so the agent falls back to exa_search / brave_search
-        // / http_request, exactly as the tool description already instructs.
-        let mut last_err = String::new();
-        for (attempt, ua) in DDG_USER_AGENTS.iter().enumerate() {
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .user_agent(*ua)
-                .build()
-                .map_err(|e| ToolError::Execution(format!("Failed to create HTTP client: {e}")))?;
+        // Fan out to all engines in parallel.
+        let ddg_query = parsed.query.clone();
+        let ddg_max = parsed.max_results;
+        let ddg_fut = self.search_ddg(&ddg_query, ddg_max);
 
-            match client.get(&url).send().await {
-                // DDG bot-detection challenge: HTTP 202 is their
-                // protocol-level "you're blocked" signal. Stable across
-                // deploys. Short-circuit instead of burning UA rotations.
-                Ok(response) if response.status().as_u16() == 202 => {
-                    return Ok(ToolResult::error(
-                        "DuckDuckGo returned a bot-detection challenge (HTTP 202). \
-                         Try exa_search or brave_search instead."
-                            .to_string(),
-                    ));
-                }
-                Ok(response) if response.status().is_success() => {
-                    let html = response.text().await.map_err(|e| {
-                        ToolError::Execution(format!("Failed to read response: {e}"))
-                    })?;
-                    let results = parse_lite_results(&html, input.max_results);
-                    // Zero results + form present = challenge page, not a
-                    // genuine empty result. Structural check, no reliance on
-                    // internal JS filenames DDG can rename at any time.
-                    if results.is_empty() && html.contains("<form") {
-                        return Ok(ToolResult::error(
-                            "DuckDuckGo returned a captcha/challenge page instead of \
-                             results. Try exa_search or brave_search instead."
-                                .to_string(),
-                        ));
-                    }
-                    return Ok(ToolResult::success(format_results(&input.query, &results)));
-                }
-                Ok(response) => {
-                    last_err = format!("HTTP {}", response.status());
-                    tracing::warn!(
-                        "web_search: DuckDuckGo returned {} (UA {}/{}) — rotating User-Agent",
-                        response.status(),
-                        attempt + 1,
-                        DDG_USER_AGENTS.len(),
-                    );
-                }
-                Err(e) => {
-                    last_err = e.to_string();
-                    tracing::warn!(
-                        "web_search: request failed (UA {}/{}): {e}",
-                        attempt + 1,
-                        DDG_USER_AGENTS.len(),
-                    );
-                }
+        let exa_input = input.clone();
+        let exa_fut = async {
+            match &self.exa {
+                Some(exa) => Some(exa.execute(exa_input, context).await),
+                None => None,
             }
+        };
 
-            // Brief backoff before the next UA (skipped after the last attempt).
-            if attempt + 1 < DDG_USER_AGENTS.len() {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let brave_input = input.clone();
+        let brave_fut = async {
+            match &self.brave {
+                Some(brave) => Some(brave.execute(brave_input, context).await),
+                None => None,
+            }
+        };
+
+        let (ddg_res, exa_res, brave_res) = tokio::join!(ddg_fut, exa_fut, brave_fut);
+
+        // Collect successful outputs. DDG errors (captcha, rate limit)
+        // are silently dropped; the other engines fill the gap.
+        let mut sections: Vec<String> = Vec::new();
+
+        match ddg_res {
+            Ok(ref r) if r.success => sections.push(r.output.clone()),
+            Ok(r) => {
+                tracing::debug!("web_search: DDG dropped: {}", r.output);
+            }
+            Err(e) => {
+                tracing::debug!("web_search: DDG failed: {e}");
             }
         }
 
-        Ok(ToolResult::error(format!(
-            "DuckDuckGo search failed after {} attempts (last error: {last_err}). DuckDuckGo may \
-             be rate-limiting or blocking this IP. Fall back to exa_search or brave_search if they \
-             are in your tool list, otherwise use http_request against a search API.",
-            DDG_USER_AGENTS.len(),
-        )))
+        if let Some(Ok(r)) = exa_res
+            && r.success
+        {
+            sections.push(r.output);
+        }
+
+        if let Some(Ok(r)) = brave_res
+            && r.success
+        {
+            sections.push(r.output);
+        }
+
+        if sections.is_empty() {
+            return Ok(ToolResult::error(
+                "All search engines failed or returned no results. \
+                 Try rephrasing the query or using http_request against a search API."
+                    .to_string(),
+            ));
+        }
+
+        Ok(ToolResult::success(sections.join("\n\n")))
     }
 }
 

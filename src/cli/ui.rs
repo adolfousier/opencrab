@@ -27,6 +27,7 @@ pub(crate) fn register_config_dependent_tools(
         exa_search::ExaSearchTool,
         generate_image::GenerateImageTool,
         provider_vision::{ProviderVisionTool, VisionSetupHintTool},
+        web_search::WebSearchTool,
     };
 
     // EXA: always available (free via MCP; direct API when a key is set).
@@ -37,10 +38,11 @@ pub(crate) fn register_config_dependent_tools(
         .and_then(|ws| ws.exa.as_ref())
         .and_then(|p| p.api_key.clone())
         .filter(|k| !k.is_empty());
-    registry.register(Arc::new(ExaSearchTool::new(exa_key)));
+    let exa_tool = Arc::new(ExaSearchTool::new(exa_key));
+    registry.register(exa_tool.clone());
 
     // Brave: requires `enabled = true` AND a non-empty key.
-    if let Some(brave_cfg) = config
+    let brave_tool = if let Some(brave_cfg) = config
         .providers
         .web_search
         .as_ref()
@@ -48,10 +50,20 @@ pub(crate) fn register_config_dependent_tools(
         && brave_cfg.enabled
         && let Some(brave_key) = brave_cfg.api_key.clone().filter(|k| !k.is_empty())
     {
-        registry.register(Arc::new(BraveSearchTool::new(brave_key)));
+        let bt = Arc::new(BraveSearchTool::new(brave_key));
+        registry.register(bt.clone());
+        Some(bt)
     } else {
         registry.unregister("brave_search");
-    }
+        None
+    };
+
+    // Re-register web_search with engine references so it fans out to
+    // DDG + Exa (+ Brave) in parallel instead of DDG-only.
+    registry.register(Arc::new(WebSearchTool::new(
+        Some(exa_tool),
+        brave_tool,
+    )));
 
     // Image generation — active provider override or the global Gemini config.
     if let Some(tool) = GenerateImageTool::from_config(config) {
