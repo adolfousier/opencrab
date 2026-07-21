@@ -73,6 +73,10 @@ const BUILTIN_SKILLS: &[(&str, &str)] = &[
         "dynamic-tools",
         include_str!("../docs/reference/templates/skills/dynamic-tools/SKILL.md"),
     ),
+    (
+        "github",
+        include_str!("../docs/reference/templates/skills/github/SKILL.md"),
+    ),
 ];
 
 /// Where this skill came from. Used by the TUI to badge built-ins

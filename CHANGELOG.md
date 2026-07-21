@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `#666` **GitHub skill**: built-in `/github` skill for full `gh` CLI control — issues, PRs, code reviews, repo management, with auth detection, rate limiting, and templates
+
 ## [0.3.70] - 2026-07-19
 
 18 commits since v0.3.69. 57 files changed, +1310 / -128 lines.
