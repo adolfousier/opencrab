@@ -27,6 +27,63 @@ pub(crate) fn is_mimo_model(model: &str) -> bool {
     model.to_ascii_lowercase().contains("mimo")
 }
 
+/// The system nudge injected when a model produced a reasoning-only turn (#692
+/// follow-up). CRITICAL: when `no_tools_yet` (no tool has executed this turn),
+/// the model reasoned but never acted, so it most likely still needs to CALL a
+/// tool — the nudge must ENCOURAGE the structured tool call, never suppress it.
+/// The old text ("tool results above are sufficient — do not call more tools")
+/// sabotaged exactly that and left the agent narrating with no way to act. Only
+/// once a tool HAS run do we steer toward "write the answer from the results".
+pub(crate) fn empty_reasoning_nudge(no_tools_yet: bool, attempt: u32) -> &'static str {
+    if no_tools_yet {
+        match attempt {
+            1 => {
+                "[System: Your last turn produced only internal reasoning — no tool call and no \
+                  reply. If you need to DO something (read a file, run a command, check git, fetch \
+                  data), CALL the correct tool NOW through the structured tool-call API — do NOT \
+                  describe the tool in text, that does nothing. If you already have everything you \
+                  need, write the answer as plain text instead. Pick one and act on this turn.]"
+            }
+            2 => {
+                "[System: Again only reasoning — no action. Decide NOW: either call the tool you \
+                  need via the structured tool-call API (not text, not JSON in your message), or \
+                  write the final answer as plain text. Do exactly one of them this turn.]"
+            }
+            _ => {
+                "[System: Still no tool call and no reply after reasoning. Invoke the required \
+                  tool through the structured API now, or write the answer. Another reasoning-only \
+                  turn will switch the conversation to a fallback provider automatically.]"
+            }
+        }
+    } else {
+        match attempt {
+            1 => {
+                "[System: Your previous turn produced only internal reasoning and no visible \
+                  reply. The tool results above are sufficient — write the answer now as plain \
+                  text (tables, prose, or whatever the user asked for). Do not re-reason; only \
+                  call another tool if you genuinely still need more data.]"
+            }
+            2 => {
+                "[System: Second nudge — you again produced only reasoning. Output the answer as \
+                  plain text on this turn using the tool results you already have.]"
+            }
+            3 => {
+                "[System: Third nudge. Stop reasoning. Reply now in plain prose, one or two short \
+                  paragraphs, from the results above. No <thinking>, no internal monologue.]"
+            }
+            4 => {
+                "[System: Fourth nudge — final warning before fallback. Emit a visible text reply \
+                  NOW. If you produce another reasoning-only turn the conversation will switch to \
+                  a different provider automatically.]"
+            }
+            _ => {
+                "[System: Fifth and last nudge. Reply in plain text on this turn or the system \
+                  will hand the conversation to a fallback provider on the next turn.]"
+            }
+        }
+    }
+}
+
 /// Assistant message for the empty-reasoning nudge (#692): a preserve_thinking
 /// model produced a reasoning-only turn (reasoning_content, no visible answer),
 /// and we are about to nudge it for the answer. The reasoning MUST be echoed

@@ -8,8 +8,35 @@
 //! 200s runaway loop. The stub now carries the reasoning as a leading Thinking
 //! block (encoded back as reasoning_content).
 
-use crate::brain::agent::service::helpers::assistant_reasoning_stub;
+use crate::brain::agent::service::helpers::{assistant_reasoning_stub, empty_reasoning_nudge};
 use crate::brain::provider::{ContentBlock, Role};
+
+#[test]
+fn no_tools_yet_nudge_encourages_a_tool_call_never_suppresses_it() {
+    // #692 follow-up: when no tool has run this turn, the nudge must push the
+    // model to CALL the tool it needs — never tell it to avoid tools (which left
+    // qwen3.8-max-preview narrating with no way to act).
+    for attempt in 1..=5 {
+        let n = empty_reasoning_nudge(true, attempt).to_lowercase();
+        assert!(
+            n.contains("tool"),
+            "no-tools nudge must reference calling a tool (attempt {attempt}): {n}"
+        );
+        assert!(
+            !n.contains("do not call more tools")
+                && !n.contains("no tool calls")
+                && !n.contains("tool results above are sufficient"),
+            "no-tools nudge must NOT suppress tool calls (attempt {attempt}): {n}"
+        );
+    }
+}
+
+#[test]
+fn tools_ran_nudge_steers_to_writing_the_answer() {
+    // Once a tool HAS run, steering toward the answer is correct.
+    let n = empty_reasoning_nudge(false, 1).to_lowercase();
+    assert!(n.contains("tool results above are sufficient") || n.contains("write the answer"));
+}
 
 #[test]
 fn stub_carries_reasoning_as_thinking_block() {

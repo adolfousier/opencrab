@@ -4095,36 +4095,14 @@ impl AgentService {
                         // model can't keep replying with more silent
                         // thinking. The last two attempts are explicit
                         // commands to stop reasoning entirely.
-                        let nudge = match attempt {
-                            1 => {
-                                "[System: Your previous turn produced only internal reasoning \
-                                  and no visible reply. The tool results above are sufficient — \
-                                  write the answer now as plain text (tables, prose, or whatever \
-                                  the user asked for). Do not re-reason, do not call more tools \
-                                  unless strictly necessary.]"
-                            }
-                            2 => {
-                                "[System: Second nudge — you again produced only reasoning. \
-                                  Output the answer as plain text on this turn. No reasoning \
-                                  block. No tool calls. Just the answer the user asked for.]"
-                            }
-                            3 => {
-                                "[System: Third nudge. Stop reasoning. Reply now in plain \
-                                  prose, one or two short paragraphs. No <thinking>, no \
-                                  reasoning_content, no internal monologue.]"
-                            }
-                            4 => {
-                                "[System: Fourth nudge — final warning before fallback. \
-                                  Emit a visible text reply NOW. If you produce another \
-                                  reasoning-only turn the conversation will switch to a \
-                                  different provider automatically.]"
-                            }
-                            _ => {
-                                "[System: Fifth and last nudge. Reply in plain text on this \
-                                  turn or the system will hand the conversation to a fallback \
-                                  provider on the next turn.]"
-                            }
-                        };
+                        // When no tool has executed this turn the model reasoned
+                        // but never acted, so it most likely still needs to CALL a
+                        // tool — the nudge must encourage the structured tool call,
+                        // not suppress it (the old "tool results above are
+                        // sufficient — do not call more tools" text sabotaged the
+                        // very tool call the agent needed and left it narrating).
+                        let no_tools_yet = tool_calls_completed_this_turn == 0;
+                        let nudge = super::helpers::empty_reasoning_nudge(no_tools_yet, attempt);
                         // Preserve the reasoning on the assistant turn as a
                         // Thinking block (encoded back as reasoning_content), so
                         // preserve_thinking models — qwen3.8-max-preview: thinking
