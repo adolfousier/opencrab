@@ -32,14 +32,26 @@ fn is_cowork_session_false() {
 
 #[test]
 fn build_deep_link_format() {
+    // #709: the link requests admin rights inline so the bot joins promoted.
     let link = build_cowork_deep_link("mybot", "abc123");
-    assert_eq!(link, "https://t.me/mybot?startgroup=cowork_abc123");
+    assert_eq!(
+        link,
+        "https://t.me/mybot?startgroup=cowork_abc123&admin=invite_users+delete_messages+pin_messages+manage_chat"
+    );
+}
+
+#[test]
+fn build_deep_link_requests_invite_users() {
+    // create_chat_invite_link needs can_invite_users; it must be in the request.
+    let link = build_cowork_deep_link("mybot", "abc123");
+    let (_, admin) = link.split_once("&admin=").expect("admin param present");
+    assert!(admin.split('+').any(|r| r == "invite_users"));
 }
 
 #[test]
 fn build_deep_link_with_bot_suffix() {
     let link = build_cowork_deep_link("team_crab_bot", "xyz");
-    assert_eq!(link, "https://t.me/team_crab_bot?startgroup=cowork_xyz");
+    assert!(link.starts_with("https://t.me/team_crab_bot?startgroup=cowork_xyz&admin="));
 }
 
 #[test]

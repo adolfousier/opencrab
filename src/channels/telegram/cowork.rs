@@ -66,12 +66,23 @@ pub fn parse_startgroup_param(param: &str) -> Option<&str> {
     }
 }
 
-/// Build a Telegram deep link that opens the "create group with bot" UI.
-/// Format: `https://t.me/{bot_username}?startgroup=cowork_{session_id}`
+/// Admin rights requested inline in the cowork deep link (#709). Telegram
+/// pre-checks these in the Add-to-Group UI so the bot is added already-promoted:
+/// no manual promotion step. `invite_users` is what `create_chat_invite_link`
+/// needs; being an admin also lets the bot read every message regardless of
+/// privacy mode, plus light moderation. Space-separated per Telegram's format.
+const COWORK_ADMIN_RIGHTS: &str = "invite_users delete_messages pin_messages manage_chat";
+
+/// Build a Telegram deep link that opens the "create group with bot" UI, with
+/// admin rights requested inline so the bot joins already-promoted (#709).
+/// Format: `https://t.me/{bot}?startgroup=cowork_{id}&admin=<rights+list>`
 pub fn build_cowork_deep_link(bot_username: &str, session_id: &str) -> String {
     format!(
-        "https://t.me/{}?startgroup={}{}",
-        bot_username, COWORK_PREFIX, session_id
+        "https://t.me/{}?startgroup={}{}&admin={}",
+        bot_username,
+        COWORK_PREFIX,
+        session_id,
+        COWORK_ADMIN_RIGHTS.replace(' ', "+")
     )
 }
 
