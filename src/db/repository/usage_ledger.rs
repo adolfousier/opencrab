@@ -28,6 +28,15 @@ pub(crate) fn normalize_model_name(model: &str) -> String {
     // Lowercase everything for consistent matching and display
     let lower = stripped.to_lowercase();
 
+    // Strip a "-@botname" / "@botname" attribution suffix that leaked into the
+    // model name (multi-bot usage tagging), so the same model is not split into
+    // separate ledger rows — e.g. `qwen3.8-max-preview-@adicrabs_bot` collapses
+    // to `qwen3.8-max-preview` (#697). A model identity never carries a handle.
+    let lower = match lower.split_once('@') {
+        Some((before, _)) => before.trim_end_matches('-').to_string(),
+        None => lower,
+    };
+
     // Strip common suffixes before matching: :free, -free, -thinking
     let base = lower
         .strip_suffix(":free")
@@ -216,8 +225,16 @@ impl UsageLedgerRepository {
                          LOWER(CASE WHEN model LIKE '%/%' \
                            THEN SUBSTR(model, INSTR(model, '/') + 1) \
                            ELSE model \
-                         END) AS m1 \
+                         END) AS m0 \
                        FROM usage_ledger WHERE model != '' \
+                     ), \
+                     debotted AS ( \
+                       SELECT *, \
+                         CASE WHEN m0 LIKE '%@%' \
+                           THEN RTRIM(SUBSTR(m0, 1, INSTR(m0, '@') - 1), '-') \
+                           ELSE m0 \
+                         END AS m1 \
+                       FROM stripped \
                      ), \
                      cleaned AS ( \
                        SELECT *, \
@@ -227,7 +244,7 @@ impl UsageLedgerRepository {
                            WHEN m1 LIKE '%-thinking' THEN SUBSTR(m1, 1, LENGTH(m1) - 9) \
                            ELSE m1 \
                          END AS m2 \
-                       FROM stripped \
+                       FROM debotted \
                      ), \
                      prefixed AS ( \
                        SELECT *, \

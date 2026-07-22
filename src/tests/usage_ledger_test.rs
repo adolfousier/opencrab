@@ -81,6 +81,18 @@ async fn test_stats_by_model_merges_claude_prefix() {
 
 #[test]
 fn test_normalize_model_name() {
+    // #697: a leaked "-@botname" attribution suffix is stripped so the same
+    // model does not split into duplicate /usage rows.
+    assert_eq!(
+        normalize_model_name("qwen3.8-max-preview-@adicrabs_bot"),
+        "qwen3.8-max-preview"
+    );
+    assert_eq!(
+        normalize_model_name("qwen3.8-max-preview"),
+        "qwen3.8-max-preview"
+    );
+    assert_eq!(normalize_model_name("opus@somebot"), "opus-4-6");
+
     // Claude normalization
     assert_eq!(normalize_model_name("claude-opus-4-6"), "opus-4-6");
     assert_eq!(normalize_model_name("claude-sonnet-4-6"), "sonnet-4-6");
