@@ -353,12 +353,20 @@ fn split_title_area(area: Rect) -> (Rect, Rect) {
 }
 
 /// Render the app name header used on Sessions, Help, and Settings screens.
+/// Carries the running build version on the same line so users can see which
+/// version they're on at a glance (#696).
 fn render_app_title(f: &mut Frame, area: Rect) {
-    let para = Paragraph::new(vec![Line::from(Span::styled(
-        " 🦀 OpenCrabs AI Agent",
-        Style::default()
-            .fg(Color::Rgb(120, 120, 120))
-            .add_modifier(Modifier::BOLD),
-    ))]);
+    let para = Paragraph::new(vec![Line::from(vec![
+        Span::styled(
+            " 🦀 OpenCrabs AI Agent",
+            Style::default()
+                .fg(Color::Rgb(120, 120, 120))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])]);
     f.render_widget(para, area);
 }

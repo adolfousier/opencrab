@@ -869,7 +869,8 @@ pub(crate) fn format_help() -> String {
     // path still renders it readably. `\n\n` around blocks so the markdown
     // parser keeps the table separate from the heading and trailer.
     let mut out = format!(
-        "# 📖 Available Commands\n\n{}",
+        "# 📖 Available Commands\n\nOpenCrabs v{}\n\n{}",
+        env!("CARGO_PKG_VERSION"),
         md_table(&["Command", "Description"], &rows)
     );
 
@@ -1064,7 +1065,10 @@ async fn format_usage(
     // Joined with blank lines so the rich renderer parses them as separate
     // blocks — headings become bold, tables become phone-friendly grids /
     // key-value lists. Authored once; renders well under rich or legacy mode.
-    let mut blocks: Vec<String> = vec!["# 📊 Usage Dashboard".to_string()];
+    let mut blocks: Vec<String> = vec![format!(
+        "# 📊 Usage Dashboard\n\nOpenCrabs v{}",
+        env!("CARGO_PKG_VERSION")
+    )];
 
     // ── Current session ──────────────────────────────────────────────
     let current_model = agent.provider_model();

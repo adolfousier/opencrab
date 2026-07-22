@@ -34,6 +34,17 @@ fn format_number_millions() {
 // ── format_help ───────────────────────────────────────────────────────
 
 #[test]
+fn format_help_shows_the_running_version() {
+    // #696: the channel /help must surface the build version so users on any
+    // channel can see which version they're on.
+    let help = format_help();
+    assert!(
+        help.contains(&format!("OpenCrabs v{}", env!("CARGO_PKG_VERSION"))),
+        "help must show the running version: {help}"
+    );
+}
+
+#[test]
 fn format_help_contains_all_commands() {
     let help = format_help();
     for cmd in [
