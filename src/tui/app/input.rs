@@ -6,6 +6,21 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+/// After a double-escape abort, decide whether to pull the just-sent query back
+/// into the input and drop it from the transcript (#698). True only when the
+/// agent produced NOTHING this turn — no visible text, no reasoning, no tool
+/// activity, no intermediate — i.e. the user cancelled before any reply, so the
+/// unanswered query should not linger (and would otherwise duplicate on resend).
+/// When the agent DID produce output, everything on screen survives the cancel.
+pub(crate) fn should_restore_cancelled_query(
+    has_visible_text: bool,
+    has_visible_reasoning: bool,
+    had_tool_activity: bool,
+    had_intermediate: bool,
+) -> bool {
+    !has_visible_text && !has_visible_reasoning && !had_tool_activity && !had_intermediate
+}
+
 /// Detect whether a character is likely part of a mouse tracking CSI sequence
 /// that crossterm failed to parse (e.g. `[<35;116;77M` arriving as individual
 /// chars after ESC was consumed as KeyCode::Esc).
@@ -1452,6 +1467,10 @@ impl App {
                         // and the whole group vanishes from view — only
                         // reappearing on session reload from DB. Commit it to
                         // `self.messages` so the history stays stable across cancel.
+                        let had_tool_activity = self
+                            .active_tool_group
+                            .as_ref()
+                            .is_some_and(|g| !g.calls.is_empty());
                         if let Some(group) = self.active_tool_group.take()
                             && !group.calls.is_empty()
                         {
@@ -1512,6 +1531,43 @@ impl App {
                                 expanded: false,
                                 tool_group: None,
                             });
+                        }
+                        // Cancelled before the agent produced ANYTHING: pull the
+                        // just-sent query back into the input (editable, ready to
+                        // resend) and remove it from the transcript + DB, so an
+                        // unanswered query doesn't linger and duplicate on resend
+                        // (#698). Only when the input is empty (don't clobber a
+                        // new draft) and the trailing message is that user query.
+                        if should_restore_cancelled_query(
+                            has_visible_text,
+                            has_visible_reasoning,
+                            had_tool_activity,
+                            self.intermediate_text_received,
+                        ) && self.input_buffer.trim().is_empty()
+                            && self.messages.last().is_some_and(|m| m.role == "user")
+                        {
+                            if let Some(m) = self.messages.pop() {
+                                self.input_buffer = m.content;
+                                self.cursor_position = self.input_buffer.len();
+                            }
+                            if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
+                                let repo = crate::db::repository::MessageRepository::new(
+                                    self.session_service.pool(),
+                                );
+                                match repo.get_last_message(sid).await {
+                                    Ok(Some(last)) if last.role == "user" => {
+                                        if let Err(e) = repo.delete(last.id).await {
+                                            tracing::warn!(
+                                                "Cancel-restore: failed to delete unanswered user message: {e}"
+                                            );
+                                        }
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => tracing::warn!(
+                                        "Cancel-restore: failed to read last message: {e}"
+                                    ),
+                                }
+                            }
                         }
                         self.streaming_render_cache = None;
                         self.cancel_token = None;
