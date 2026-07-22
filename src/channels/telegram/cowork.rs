@@ -140,6 +140,20 @@ pub async fn is_cowork_group(chat_id: i64, state: &TelegramState) -> bool {
     state.is_cowork_group(chat_id).await
 }
 
+/// Persist `[channels.telegram.groups.<chat_id>].open = true` (#718). This is the
+/// owner-initiated opt-in that /cowork performs: every member of the group is
+/// then allowed (and auto-registered on join / on /start), and it stays open
+/// until the owner changes it. Goes through the guarded `write_key`, so it can
+/// never corrupt config.toml.
+pub fn set_group_open(chat_id: i64) -> Result<(), String> {
+    Config::write_key(
+        &format!("channels.telegram.groups.{}", chat_id),
+        "open",
+        "true",
+    )
+    .map_err(|e| format!("Failed to open group {chat_id}: {e}"))
+}
+
 /// Handle the /cowork command in DM. Immediately shows the "Add to Group" button.
 pub async fn handle_cowork_command(
     bot: &Bot,

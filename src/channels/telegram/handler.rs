@@ -560,14 +560,39 @@ pub(crate) async fn handle_message(
                 }
 
                 // When the joining bot is US, announce ourselves in the group so
-                // members know we're here and how to onboard (#707). The per-group
-                // ACL is opt-in via /start, so the welcome nudges exactly that.
+                // members know we're here and how to onboard (#707).
                 if telegram_state.bot_user_id().await == Some(uid as i64) {
-                    let mut welcome =
-                        "🦀 BOOM. Look who just crawled in. OpenCrabs is in the building.\n\n\
-                        New fellas: smash /start and I'll get you on the crew. Then just \
-                        @mention me and let's cook. 🔥"
-                            .to_string();
+                    // If the user who added us has a pending /cowork session, this
+                    // is the owner-initiated cowork open (#718): mark the group
+                    // open=true (persisted) so every member is allowed, and clear
+                    // the session. `user_id` is the adder (msg.from).
+                    let cowork_join = telegram_state.get_cowork_state(user_id).await.is_some();
+                    if cowork_join {
+                        if let Some(state) = telegram_state.get_cowork_state(user_id).await {
+                            let _ = telegram_state
+                                .take_cowork_by_session(&state.session_id)
+                                .await;
+                        }
+                        match super::cowork::set_group_open(chat_id) {
+                            Ok(()) => tracing::info!(
+                                "[cowork] Opened group {} via /cowork (added by {})",
+                                chat_id,
+                                user_id
+                            ),
+                            Err(e) => {
+                                tracing::warn!("[cowork] Failed to open group {chat_id}: {e}")
+                            }
+                        }
+                    }
+                    let opener = if cowork_join {
+                        "\n\nThis is a cowork group — everyone here can @mention me and chat."
+                    } else {
+                        "\n\nNew fellas: smash /start and I'll get you on the crew."
+                    };
+                    let mut welcome = format!(
+                        "🦀 BOOM. Look who just crawled in. OpenCrabs is in the building.{opener} \
+                         Then just @mention me and let's cook. 🔥"
+                    );
                     // The cowork deep link requests admin, so we usually land
                     // promoted (#709). Only nudge for promotion when we actually
                     // aren't admin (added manually without rights).
@@ -1880,17 +1905,40 @@ pub(crate) async fn handle_message(
         );
     }
 
-    // ── Cowork command handling (DM only) ─────────────────────────────
-    if is_dm && text == "/cowork" {
-        super::cowork::handle_cowork_command(
-            &bot,
-            &msg,
-            &telegram_state,
-            user_id,
-            msg.chat.id.0,
-            thread_id,
-        )
-        .await?;
+    // ── Cowork command handling ───────────────────────────────────────
+    if text == "/cowork" {
+        if is_dm {
+            super::cowork::handle_cowork_command(
+                &bot,
+                &msg,
+                &telegram_state,
+                user_id,
+                msg.chat.id.0,
+                thread_id,
+            )
+            .await?;
+            return Ok(());
+        }
+        // In a group: the owner opens THIS group (#718) — covers a group the bot
+        // was already added to. Owner-only; non-owners are ignored.
+        if cfg.channels.telegram.is_owner(&user_id.to_string()) {
+            let reply = match super::cowork::set_group_open(msg.chat.id.0) {
+                Ok(()) => {
+                    tracing::info!(
+                        "[cowork] Owner {} opened group {} via /cowork",
+                        user_id,
+                        msg.chat.id.0
+                    );
+                    "🦀 Cowork on. This group is open now — everyone here can @mention me and chat."
+                        .to_string()
+                }
+                Err(e) => {
+                    tracing::warn!("Telegram: /cowork open group {} failed: {e}", msg.chat.id.0);
+                    "🦀 Couldn't open the group just now. Try /cowork again in a sec.".to_string()
+                }
+            };
+            message_in_thread(&bot, msg.chat.id, thread_id, reply).await?;
+        }
         return Ok(());
     }
 
