@@ -337,11 +337,11 @@ The `/cowork` command creates a team workspace directly from Telegram. It is **T
 **Prerequisite:** Telegram must be configured (bot token set via `/onboard:channels telegram` or manual `config.toml` setup).
 
 **Flow:**
-1. User sends `/cowork` in DM → bot asks for workspace name
-2. User sends workspace name → bot generates a `?startgroup=cowork_<id>` deep link as an inline button
-3. User taps the button → Telegram's native "create group" UI opens — user names the group, Telegram creates it and adds the bot
-4. Bot detects the startgroup parameter → generates an invite link, creates a QR code PNG, sends it to the user's DM
-5. Members auto-register to the **group's allowlist** (`[channels.telegram.groups.<chat_id>].allowed_users`), not the global one. Both new joiners (via invite link) and existing members (on their first message) get registered. Cowork members can talk in the group but cannot DM the bot privately unless also on the global `allowed_users`. The owner gets a confirmation for each registration.
+1. Owner sends `/cowork` in DM (owner-only command) → bot replies with an **Add to Group** inline button
+2. Owner taps it → Telegram's native group picker opens. The deep link requests admin rights inline (`?startgroup=cowork_<id>&admin=invite_users+delete_messages+pin_messages+manage_chat`), so the bot is **added already promoted to admin** — no manual promotion step. Always keep the bot as admin: an admin bot reads every message regardless of privacy mode and can create invite links.
+3. On joining, the bot posts a short welcome in the group telling members to send `/start`. If it somehow landed without admin, the welcome also nudges the owner to promote it.
+4. **Members register by sending `/start` in the group.** That writes their ID into the **group's own allowlist** (`[channels.telegram.groups.<chat_id>].allowed_users`), not the global one, and the bot confirms. Group-scoped members can then chat in that group (`@mention` the bot) but cannot DM it privately unless also on the global `allowed_users` or `bot_owner`.
+5. **`/start` in a DM never auto-registers** (DMs are invite-only): the bot just returns the sender's Telegram ID so they can share it with the owner to be added (or add it to `config.toml` when self-hosting). The owner's own `/start` in a group is silent — they are already allowed everywhere.
 
 **Cross-channel behavior:** `/cowork` works from any surface. In Telegram DMs, the native flow activates directly. From the TUI, Discord, Slack, or WhatsApp, the agent calls the `cowork_connect` tool which mints a session, registers it with the bot, and returns the `t.me` deep link plus a scannable QR code PNG. The TUI shows the clickable link; channels deliver the QR as a photo.
 
