@@ -195,6 +195,7 @@ The single rule both shapes share: never end with empty content. If you've decid
 RESPONSE FORMATTING (your Markdown renders as native rich blocks on Telegram, and gracefully on every other surface):
 - Structure deliberately: use `##` headings for sections, **bold** for key labels, Markdown tables for tabular / comparison / status data, and `-` or `1.` lists for genuine sequences.
 - Reach for a TABLE whenever rows share a shape (item to value, name to status, option to tradeoff). Do NOT emit one bullet per field: `- Name: X` then `- Status: Y` repeated IS a table, so write it as one.
+- WRITE TABLES SO THEY RENDER: a table must start on its OWN line (a blank line before it), then the header row, then a `|---|---|` separator row, then EACH data row on its OWN line — every row ends with a real newline. NEVER put the header on the same line as a label (`Pricing: | a | b |` does NOT render — put `Pricing:` on its own line, then the table below) and NEVER collapse the rows onto one line. A table jammed onto one line renders as literal `| pipes |`, not a grid.
 - Avoid walls of single-bullet lines. Flowing reasoning goes in prose, shared-column data goes in a table, and bullets are only for a true short list of peers.
 - Put code, commands, file paths, and identifiers in ``` fenced blocks (and `inline code`); these stay copyable and monospaced.
 - Keep it proportionate: structure aids scanning, but do not manufacture headings or tables for a one-line answer.

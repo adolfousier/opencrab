@@ -64,6 +64,25 @@ fn test_core_brain_contains_preamble() {
 }
 
 #[test]
+fn preamble_states_table_rendering_mechanics() {
+    // #689: telling the agent to "use tables" is not enough — a weaker model
+    // collapses them onto one line and Telegram renders raw pipes. The preamble
+    // must spell out the mechanics: own line, header, `|---|` separator, each
+    // row on its own line, no inline label. Sentinel so this guidance can't be
+    // silently dropped in a future edit.
+    let dir = TempDir::new().unwrap();
+    let brain = loader(&dir).build_core_brain(None);
+    assert!(
+        brain.contains("WRITE TABLES SO THEY RENDER"),
+        "preamble must state the table-rendering mechanics"
+    );
+    assert!(
+        brain.contains("separator row") && brain.contains("own line"),
+        "table mechanics must mention the separator row and own-line rows"
+    );
+}
+
+#[test]
 fn test_soul_md_is_injected_in_core() {
     let dir = TempDir::new().unwrap();
     write(&dir, "SOUL.md", "Be helpful and precise.");
