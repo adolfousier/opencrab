@@ -151,7 +151,12 @@ impl Tool for AnalyzeVideoTool {
         context: &ToolExecutionContext,
     ) -> super::error::Result<ToolResult> {
         let video_path = match input["video"].as_str() {
-            Some(s) if !s.is_empty() => s.to_string(),
+            // Resolve the path (expand ~, join relative to the working dir) up
+            // front so every downstream read uses the real path (#720). The
+            // prompt renders paths tilde-collapsed, so the model passes ~/….
+            Some(s) if !s.is_empty() => super::error::resolve_tool_path(s, &context.working_dir())
+                .to_string_lossy()
+                .to_string(),
             _ => {
                 return Ok(ToolResult::error(
                     "Missing required parameter: video".to_string(),

@@ -94,7 +94,7 @@ impl Tool for ProviderVisionTool {
     async fn execute(
         &self,
         input: Value,
-        _context: &ToolExecutionContext,
+        context: &ToolExecutionContext,
     ) -> super::error::Result<ToolResult> {
         let image_src = match input["image"].as_str() {
             Some(s) if !s.is_empty() => s.to_string(),
@@ -114,14 +114,20 @@ impl Tool for ProviderVisionTool {
         let image_url = if image_src.starts_with("http://") || image_src.starts_with("https://") {
             image_src.clone()
         } else {
-            // Local file — read and base64 encode
-            let bytes = tokio::fs::read(&image_src).await.map_err(|e| {
+            // Local file — resolve the path (expand ~, join relative to the
+            // working dir) BEFORE reading (#720). The system prompt renders paths
+            // tilde-collapsed, so the model passes ~/…; reading it raw fails on a
+            // literal ~ dir. analyze_image already did this; the provider-vision
+            // path (which runs before the Gemini fallback) had missed it.
+            let resolved = super::error::resolve_tool_path(&image_src, &context.working_dir());
+            let resolved_str = resolved.to_string_lossy().to_string();
+            let bytes = tokio::fs::read(&resolved).await.map_err(|e| {
                 super::error::ToolError::Execution(format!(
                     "Failed to read image file '{}': {}",
-                    image_src, e
+                    resolved_str, e
                 ))
             })?;
-            let mime = detect_mime_type(&image_src);
+            let mime = detect_mime_type(&resolved_str);
             let b64 = base64_encode(&bytes);
             format!("data:{};base64,{}", mime, b64)
         };
@@ -157,7 +163,7 @@ impl Tool for ProviderVisionTool {
         }
         self.fallback_or(
             &input,
-            _context,
+            context,
             ToolResult::error(format!(
                 "All provider vision candidates failed: {last_failure}"
             )),
