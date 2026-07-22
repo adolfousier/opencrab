@@ -86,3 +86,51 @@ async fn stats_by_tool_filters_legacy_empty_rows() {
     );
     assert_eq!(stats[0].tool_name, "bash");
 }
+
+// #687: garbage tool names from phantom tool calls must be rejected.
+#[tokio::test]
+async fn record_skips_garbage_tool_name_with_xml_fragment() {
+    let db = make_db().await;
+    let repo = ToolExecutionRepository::new(db.pool().clone());
+    let garbage = "i_apologize... i'll_call_write_opencrabs_file...";
+    repo.record("id-garbage", "msg-1", "sess-1", garbage, "error")
+        .await
+        .expect("garbage record returns Ok, just skips the insert");
+    let stats = repo.stats_by_tool(None).await.unwrap();
+    assert!(stats.is_empty(), "garbage tool_name must not land in DB");
+}
+
+#[tokio::test]
+async fn record_skips_tool_name_with_uppercase() {
+    let db = make_db().await;
+    let repo = ToolExecutionRepository::new(db.pool().clone());
+    repo.record("id-upper", "msg-1", "sess-1", "Bash", "error")
+        .await
+        .unwrap();
+    let stats = repo.stats_by_tool(None).await.unwrap();
+    assert!(stats.is_empty(), "uppercase tool_name must be rejected");
+}
+
+#[tokio::test]
+async fn record_skips_overlong_tool_name() {
+    let db = make_db().await;
+    let repo = ToolExecutionRepository::new(db.pool().clone());
+    let long_name = "a".repeat(65);
+    repo.record("id-long", "msg-1", "sess-1", &long_name, "error")
+        .await
+        .unwrap();
+    let stats = repo.stats_by_tool(None).await.unwrap();
+    assert!(stats.is_empty(), "tool_name >64 chars must be rejected");
+}
+
+#[tokio::test]
+async fn record_accepts_tool_name_with_digits_and_underscores() {
+    let db = make_db().await;
+    let repo = ToolExecutionRepository::new(db.pool().clone());
+    repo.record("id-ok", "msg-1", "sess-1", "web_search_v2", "success")
+        .await
+        .unwrap();
+    let stats = repo.stats_by_tool(None).await.unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].tool_name, "web_search_v2");
+}

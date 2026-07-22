@@ -5094,8 +5094,12 @@ impl AgentService {
                                                 Some(&err_msg),
                                             );
                                         }
-                                        // Record tool execution for usage dashboard
-                                        if let Some(pool) = crate::db::global_pool() {
+                                        // Record tool execution for usage dashboard.
+                                        // #687: skip pre-execution misses (unknown tool /
+                                        // bad args) so garbage names don't pollute stats.
+                                        if !e.is_pre_execution_miss()
+                                            && let Some(pool) = crate::db::global_pool()
+                                        {
                                             let tool_repo =
                                                 crate::db::repository::ToolExecutionRepository::new(
                                                     pool.clone(),
@@ -5310,8 +5314,12 @@ impl AgentService {
                                 Some(&err_msg),
                             );
                         }
-                        // Record tool execution for usage dashboard
-                        if let Some(pool) = crate::db::global_pool() {
+                        // Record tool execution for usage dashboard.
+                        // #687: skip pre-execution misses (unknown tool /
+                        // bad args) so garbage names don't pollute stats.
+                        if !e.is_pre_execution_miss()
+                            && let Some(pool) = crate::db::global_pool()
+                        {
                             let tool_repo =
                                 crate::db::repository::ToolExecutionRepository::new(pool.clone());
                             let exec_id = uuid::Uuid::new_v4().to_string();

@@ -241,7 +241,12 @@ impl super::AgentService {
                     if o.success { None } else { Some(&o.content) },
                 );
             }
-            if let Some(pool) = crate::db::global_pool() {
+            // Record tool execution for usage dashboard.
+            // #687: skip pre-execution misses (unknown tool / bad args)
+            // so garbage names don't pollute stats.
+            if !o.pre_execution_miss
+                && let Some(pool) = crate::db::global_pool()
+            {
                 let tool_repo = crate::db::repository::ToolExecutionRepository::new(pool.clone());
                 let exec_id = Uuid::new_v4().to_string();
                 let mid = assistant_msg_id.to_string();

@@ -61,6 +61,23 @@ impl ToolExecutionRepository {
             );
             return Ok(());
         }
+        // Defense-in-depth: reject garbage tool names that leak from
+        // phantom tool calls (reasoning text + stray XML/JSON fragments).
+        // Valid tool names are lowercase alphanumeric + underscores, ≤64 chars.
+        if tool_name.len() > 64
+            || !tool_name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        {
+            tracing::warn!(
+                "ToolRepo::record skipped: invalid tool_name {:?} (id={}, message_id={}, status={})",
+                &tool_name[..tool_name.len().min(80)],
+                id,
+                message_id,
+                status
+            );
+            return Ok(());
+        }
         let id = id.to_string();
         let message_id = message_id.to_string();
         let session_id = session_id.to_string();
