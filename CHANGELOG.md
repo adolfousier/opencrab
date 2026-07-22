@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- `#666` **GitHub skill**: built-in `/github` skill for full `gh` CLI control — issues, PRs, code reviews, repo management, with auth detection, rate limiting, and templates
+## [0.3.73] - 2026-07-22
+
+15 commits since v0.3.72. 33 files changed, +1427 / -706 lines.
+
+### ✨ Features
+
+- `699acb0d` **Unified parallel web search**: web_search, exa_search, and brave_search now fan out in parallel under a single web_search tool
+
+### 🔧 Fixes
+
+- `a415a560` **Stable stream stop_reason**: default stop_reason to EndTurn on the stream terminal chunk so text turns stop instead of retrying forever (#694)
+- `b333be54` **printpdf security bump**: bump printpdf to 0.11.3 to resolve lopdf RUSTSEC-2026-0187
+- `c6691bf4` **Tool-aware reasoning nudge**: empty-reasoning nudge no longer suppresses tool calls (#692)
+- `b98b1cd1` **Disable cache split**: reverted the #658 2-part array cache split that broke tool-calling (#693)
+- `406deecc` **Preserve reasoning on nudge**: preserve_thinking models stop re-reasoning on the empty-reasoning nudge (#692)
+- `80774491` **reasoning_effort for custom providers**: send reasoning_effort for non-Kimi custom providers (qwen/modelstudio) (#691)
+- `45545e84` **Re-expand collapsed tables**: inline tables re-expanded so they render on Telegram (#690)
+- `0318a4c0` **Table-rendering preamble**: spell out table-rendering mechanics so Telegram renders them (#689)
+- `e0ff7234` **Cleaner auto-title input**: strip channel preamble from the title prompt input (#688)
+- `dd7eab97` **Skip pre-execution misses**: don't record tool_executions for pre-execution misses (#687)
+- `6707a5b1` **Decode peer-bot messages**: decode rich_message content from peer bots into readable text (#686)
+- `e90ea38e` **Full group history capture**: persist every group message to history, even from non-allowlisted senders and bots (#685)
+- `cdb79b10` **DDG captcha detection**: detect DuckDuckGo captcha via HTTP 202 + structural form check
+- `0b07b97b` **Correct group speaker**: stop the agent addressing a group-history sender as the current speaker (#682)
+
+### 📊 Stats
+
+- 15 commits since v0.3.72
+- 33 files changed, +1427 / -706 lines
+- 5200 tests (5200 passed, 0 failed, 29 ignored)
 
 ## [0.3.72] - 2026-07-21
 
@@ -7080,3 +7109,4 @@ fixes.
 [0.3.70]: https://github.com/adolfousier/opencrabs/compare/v0.3.69...v0.3.70
 [0.3.71]: https://github.com/adolfousier/opencrabs/compare/v0.3.70...v0.3.71
 [0.3.72]: https://github.com/adolfousier/opencrabs/compare/v0.3.71...v0.3.72
+[0.3.73]: https://github.com/adolfousier/opencrabs/compare/v0.3.72...v0.3.73
