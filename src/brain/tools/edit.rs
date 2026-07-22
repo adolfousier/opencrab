@@ -330,6 +330,13 @@ impl Tool for EditTool {
             }
         };
 
+        // Never let a raw edit corrupt the OpenCrabs config.toml/keys.toml (#713):
+        // a broken write there takes down all API keys and the bot token. Deny it,
+        // tell the agent why, and leave the file untouched.
+        if let Err(msg) = crate::config::guard::deny_if_would_break(&path, &new_content) {
+            return Err(ToolError::InvalidInput(msg));
+        }
+
         // Write modified content
         fs::write(&path, &new_content)
             .await

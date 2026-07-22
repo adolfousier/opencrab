@@ -154,6 +154,13 @@ impl Tool for WriteTool {
             )));
         }
 
+        // Never let a raw write corrupt the OpenCrabs config.toml/keys.toml (#713):
+        // a broken write there takes down all API keys and the bot token. Deny it,
+        // tell the agent why, and leave the file untouched.
+        if let Err(msg) = crate::config::guard::deny_if_would_break(&path, &input.content) {
+            return Ok(ToolResult::error(msg));
+        }
+
         // Write the file
         fs::write(&path, &input.content)
             .await
