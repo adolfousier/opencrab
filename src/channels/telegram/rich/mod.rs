@@ -22,6 +22,7 @@ pub(crate) mod render_json;
 mod table;
 
 pub(crate) use parse::parse_markdown;
+pub(crate) use table::reflow_collapsed_tables;
 
 /// Whether `text` is better served by the AST renderer than the legacy
 /// line-based converter: it contains a GitHub-flavored table or a task-list

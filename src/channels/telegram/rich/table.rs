@@ -6,6 +6,65 @@
 
 use super::ast::{Align, Inline, Table};
 use super::inline::parse_inlines;
+use regex::Regex;
+use std::sync::LazyLock;
+
+/// A row/header/separator boundary in a table the model collapsed onto one line:
+/// the trailing `|` of one row meets the leading `|` of the next, giving an
+/// empty gap between two pipes (`| |` or `||`). Matched non-greedily on a single
+/// line (never crosses a real newline).
+static COLLAPSED_ROW_BOUNDARY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\|[ \t]*\|").expect("collapsed-table boundary regex"));
+
+/// Re-expand a table the model collapsed onto ONE line — header, separator, and
+/// rows jammed together with no row-newlines — into a proper multi-line table so
+/// [`try_parse`] can detect it and Telegram renders a grid instead of raw pipes
+/// (#690). A line is treated as collapsed only when it carries BOTH a dash-only
+/// separator cell AND ordinary content cells, a combination a well-formed
+/// multi-line table never has on a single line — so prose, a lone separator row,
+/// and already-expanded tables are left untouched. Idempotent.
+pub(crate) fn reflow_collapsed_tables(text: &str) -> String {
+    if !text.contains('|') {
+        return text.to_string();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if is_collapsed_table_line(line) {
+            out.push(
+                COLLAPSED_ROW_BOUNDARY
+                    .replace_all(line, "|\n|")
+                    .into_owned(),
+            );
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    out.join("\n")
+}
+
+/// Whether a single line is a collapsed table: it has a dash-only separator cell
+/// (`----`) AND at least one content cell on the same line. A proper multi-line
+/// table has the separator alone on its own line, so this never fires on one.
+fn is_collapsed_table_line(line: &str) -> bool {
+    let mut has_dash = false;
+    let mut has_content = false;
+    for cell in line.split('|') {
+        let c = cell.trim();
+        if c.is_empty() {
+            continue;
+        }
+        let core = c.trim_start_matches(':').trim_end_matches(':');
+        if core.len() >= 2 && core.chars().all(|ch| ch == '-') {
+            has_dash = true;
+        } else {
+            has_content = true;
+        }
+        if has_dash && has_content {
+            return true;
+        }
+    }
+    false
+}
 
 /// If a table begins at `lines[start]` (a pipe row immediately followed by a
 /// separator row), parse it and return the table plus the index just past it.

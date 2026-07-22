@@ -159,6 +159,12 @@ pub(crate) fn strip_html_tags(html: &str) -> String {
 /// `prefers_rich_render`. The legacy plan detector below handles
 /// old-format text that doesn't trigger rich detection.
 pub(crate) fn markdown_to_telegram_html(text: &str) -> String {
+    // Re-expand a table the model collapsed onto one line (#690) so it is
+    // detected below and rendered as a grid instead of raw pipes. Idempotent, so
+    // callers that already reflowed (delivery) are unaffected; this catches the
+    // other render paths (intermediates, resume).
+    let reflowed = super::rich::reflow_collapsed_tables(text);
+    let text = reflowed.as_str();
     // Messages containing a GitHub-flavored table or a task-list are rendered
     // through the rich AST: tables come out as aligned monospace grids (instead
     // of raw `| pipes |`) and task items as ☐/☑ (instead of literal `- [ ]`).

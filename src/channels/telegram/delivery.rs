@@ -399,6 +399,13 @@ pub(crate) async fn deliver_final_response(
                 text_only
             };
 
+            // #690: re-expand any table the model collapsed onto one line so it
+            // renders (native rich or <pre> grid) instead of raw pipes. Applied
+            // once here before the rich-vs-HTML branching, so both the
+            // should_send_native_rich detection below and the HTML render see the
+            // reflowed table. Idempotent on well-formed tables.
+            let text_only = super::rich::reflow_collapsed_tables(&text_only);
+
             // Deliver final response — prefer editing the streaming message in-place
             // to avoid the delete+send race that causes duplicates.
             let html = markdown_to_telegram_html(&text_only);

@@ -487,6 +487,7 @@ pub mod telegram_pre_tool_rolling_test;
 pub mod telegram_quote_reply_test;
 pub mod telegram_reaction_prompt_test;
 pub mod telegram_reaction_queue_test;
+pub mod telegram_reflow_collapsed_table_test;
 pub mod telegram_rich_json_test;
 pub mod telegram_rich_parse_test;
 pub mod telegram_rich_test;
