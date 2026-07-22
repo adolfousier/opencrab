@@ -3,9 +3,11 @@
 //! Lets the agent surface OPTIONAL next-step suggestions the user may accept or
 //! ignore. Unlike `follow_up_question` this is non-blocking: it fires a
 //! `ProgressEvent::SuggestedFollowups` and returns immediately without awaiting
-//! any answer. The TUI renders one option as gray ghost text in the input (Tab
-//! fills it) and several as a small pick-list; accepting fills the input as
-//! editable text and never auto-submits, so the user can edit it before sending.
+//! any answer. Each surface renders the options as its own INTERACTIVE UI —
+//! tap-to-send buttons under the reply on chat channels (Telegram/Discord/…), a
+//! pick-list or gray ghost-text accept in the TUI. The rendering is the tool's
+//! job; the model must NOT write the suggestions as plain text in its reply, or
+//! they land as dead text with no button to tap.
 //!
 //! Intended for "here's a likely next thing you might ask" — a convenience, not
 //! a question. If the agent genuinely cannot proceed without a choice, it should
@@ -37,15 +39,18 @@ impl Tool for SuggestFollowupsTool {
 
     fn description(&self) -> &str {
         "Optionally surface 1-4 short follow-up messages the user might send next. \
-         Non-blocking: the suggestions appear in the input area (one as gray ghost \
-         text to accept with Tab, several as a pick-list) and the user may accept, \
-         edit, or ignore them. Call this at the END of a turn when there is an \
-         obvious next step (1 option) or a small set of distinct next directions \
-         (2-4 options). Each option must be a complete, ready-to-send user message \
-         phrased in the user's voice (e.g. \"Add tests for the new endpoint\", not \
-         \"I could add tests\"). Keep each under ~60 chars. Do NOT use this to ask a \
-         question you need answered to proceed (use follow_up_question), and do not \
-         repeat the options in your prose."
+         Non-blocking and CHANNEL-AGNOSTIC: each surface renders the options as \
+         interactive UI — tap-to-send buttons under your reply on chat channels \
+         (Telegram/Discord/…), a pick-list or gray ghost-text accept in the TUI — \
+         and the user may accept, edit, or ignore them. You MUST call the tool to \
+         make the options interactive: writing them as plain text in your reply \
+         leaves dead text with no button to tap. Call this at the END of a turn \
+         when there is an obvious next step (1 option) or a small set of distinct \
+         next directions (2-4 options). Each option must be a complete, \
+         ready-to-send user message phrased in the user's voice (e.g. \"Add tests \
+         for the new endpoint\", not \"I could add tests\"). Keep each under ~60 \
+         chars. Do NOT use this to ask a question you need answered to proceed (use \
+         follow_up_question), and do not also repeat the options in your prose."
     }
 
     fn input_schema(&self) -> Value {
@@ -57,7 +62,7 @@ impl Tool for SuggestFollowupsTool {
                     "items": { "type": "string" },
                     "minItems": 1,
                     "maxItems": MAX_SUGGESTIONS,
-                    "description": "1 to 4 distinct, ready-to-send follow-up messages in the user's voice. One option shows as ghost text (Tab to fill); several show as a pick-list."
+                    "description": "1 to 4 distinct, ready-to-send follow-up messages in the user's voice. Rendered as interactive UI on every surface (tap-to-send buttons on chat channels; ghost-text/pick-list in the TUI) — never as plain text."
                 }
             },
             "required": ["options"]
