@@ -3716,20 +3716,27 @@ impl Provider for OpenAIProvider {
                                         }));
                                         events.push(Ok(StreamEvent::ContentBlockStop { index: tool_index }));
                                     }
-                                    // If we still have a pending stop_reason (no usage-only chunk
-                                    // arrived), emit MessageDelta with fallback usage now.
-                                    if let Some(stop_reason) = st.pending_stop_reason.take() {
-                                        tracing::info!("[STREAM_USAGE] Final usage (fallback on DONE): input={}, output=0", total_input_tokens);
-                                        events.push(Ok(StreamEvent::MessageDelta {
-                                            delta: crate::brain::provider::types::MessageDelta {
-                                                stop_reason: Some(stop_reason),
-                                                stop_sequence: None,
-                                            },
-                                            usage: crate::brain::provider::types::TokenUsage {
-                                                input_tokens: total_input_tokens as u32,
-                                                output_tokens: 0, ..Default::default() },
-                                        }));
-                                    }
+                                    // A stream that reached `[DONE]` is COMPLETE. Emit the final
+                                    // MessageDelta with a stop_reason — defaulting to EndTurn when
+                                    // no finish_reason chunk set one (#694). qwen3.8-max-preview
+                                    // ends some text turns without a parseable finish_reason, so
+                                    // stop_reason stayed None and the tool loop treated a finished
+                                    // response as unfinished → retried the SAME turn forever ("kept
+                                    // thinking", response already complete on screen, uncancellable).
+                                    let stop_reason = st
+                                        .pending_stop_reason
+                                        .take()
+                                        .unwrap_or(crate::brain::provider::types::StopReason::EndTurn);
+                                    tracing::info!("[STREAM_USAGE] Final usage (fallback on DONE): input={}, output=0, stop_reason={:?}", total_input_tokens, stop_reason);
+                                    events.push(Ok(StreamEvent::MessageDelta {
+                                        delta: crate::brain::provider::types::MessageDelta {
+                                            stop_reason: Some(stop_reason),
+                                            stop_sequence: None,
+                                        },
+                                        usage: crate::brain::provider::types::TokenUsage {
+                                            input_tokens: total_input_tokens as u32,
+                                            output_tokens: 0, ..Default::default() },
+                                    }));
                                     events.push(Ok(StreamEvent::MessageStop));
                                     continue;
                                 }
@@ -4393,7 +4400,15 @@ impl Provider for OpenAIProvider {
                                                     );
                                                     events.push(Ok(StreamEvent::MessageDelta {
                                                         delta: crate::brain::provider::types::MessageDelta {
-                                                            stop_reason: st.pending_stop_reason.take(),
+                                                            // The usage-only chunk is the provider's
+                                                            // FINAL chunk — the turn is complete.
+                                                            // Default to EndTurn when no finish_reason
+                                                            // set a stop_reason, so a finished turn
+                                                            // terminates instead of retrying forever
+                                                            // (qwen3.8-max-preview, #694).
+                                                            stop_reason: Some(st.pending_stop_reason.take().unwrap_or(
+                                                                crate::brain::provider::types::StopReason::EndTurn,
+                                                            )),
                                                             stop_sequence: None,
                                                         },
                                                         usage: crate::brain::provider::types::TokenUsage {
