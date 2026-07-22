@@ -2928,6 +2928,15 @@ opencrabs logs clean     # Clean old logs
 opencrabs logs clean -d 3  # Clean logs older than 3 days
 ```
 
+**Config toggle (`debug_logs`):** You can also enable debug file logging from `config.toml` without the CLI flag:
+
+```toml
+[agent]
+debug_logs = true
+```
+
+The flag and config toggle are ORed: if `--debug` is set, logging stays on regardless of the config value (a config edit cannot silence an operator who launched with the flag). If only the config toggle is set, flipping it back to `false` turns logging off immediately, no restart needed. The `DEBUG_LOGS_LOCATION` env var overrides the default log directory (`~/.opencrabs/logs/`).
+
 **When debug mode (`-d`) is enabled:**
 - Log files created in `~/.opencrabs/logs/`
 - DEBUG level with thread IDs, file names, line numbers
