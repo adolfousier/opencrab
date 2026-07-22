@@ -2611,6 +2611,14 @@ default_provider = "xiaomi"          # main chat default provider
 default_model = "mimo-v2.5-pro"      # main chat default model
 ```
 
+**Force a provider's default onto every session** — by default a new default applies to **new sessions only**; existing and live sessions keep their own provider + model (so split panes, channels, and parallel provider tests aren't clobbered). To instead enforce one provider's pair as the global default across **all** non-archived sessions, set `force_default = true` on that provider's section. On config reload — and only when that section is the active default provider — its `default_model` pair is pushed to every non-archived session (archived sessions and sessions already on the pair are left untouched; the pushed pair is exactly the section's configured default, nothing invented).
+
+```toml
+[providers.xiaomi]
+default_model = "mimo-v2.5-pro"
+force_default = true                 # push this pair to ALL sessions on reload, not just new ones
+```
+
 **Self-Improvement Provider and Model** — run RSI cycles on a dedicated provider+model pair, separate from your interactive chat. Set both under `[agent]` in `config.toml`; the model is paired with the provider exactly like `subagent_provider`/`subagent_model`. When `self_improvement_provider` is unset, RSI inherits your active provider; when `self_improvement_model` is unset, it uses that provider's default model.
 
 ```toml

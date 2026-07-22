@@ -33,6 +33,12 @@ models = ["mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-
 context_window = 1000000  # compaction budget (auto-compacts at 65%/90%); default 200000; works on any provider
 vision_model = "mimo-v2.5-pro"  # MiMo v2.5 is multimodal — analyze_image uses it natively (falls back to Gemini if image.vision is set)
 # enable_thinking = false  # uncomment to disable the model's reasoning output
+# force_default = true  # ENFORCE this provider's default pair on EVERY session.
+#   By default a new default applies to NEW sessions only — existing/live
+#   sessions keep their own provider+model. Set force_default = true on the
+#   provider you want as the global default, and on config reload its
+#   default_model pair is pushed to every non-archived session (only when this
+#   section is the active default provider). Off/absent = new-sessions-only.
 
 # ========================================
 # Ollama Provider (Local + Cloud)
