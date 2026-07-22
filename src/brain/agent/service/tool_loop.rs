@@ -499,6 +499,17 @@ impl AgentService {
         )
         .await;
         let session_provider = self.provider_for_session(session_id);
+        // Did the turn START on the session's OWN saved provider (#705)? If the
+        // saved provider is set and doesn't match the resolved one, the turn is
+        // running on the wrong provider (a #704 restore gap) — an involuntary
+        // remap that `complete_response` must NOT persist over the saved pair. A
+        // session with no saved provider counts as matched (it captures its
+        // first pair legitimately); a real fallback starts matched and diverges
+        // later, so it stays `true` and persists via ProviderSwitched.
+        let started_on_session_provider = super::helpers::provider_matches_session(
+            session.provider_name.as_deref(),
+            session_provider.name(),
+        );
         let resolved_model = model
             .or_else(|| session.model.clone())
             .unwrap_or_else(|| session_provider.default_model().to_string());
@@ -930,6 +941,7 @@ impl AgentService {
                         cost: 0.0,
                         model: model_name,
                         provider_name: self.provider_name_for_session(session_id),
+                        started_on_session_provider,
                     });
                 }
                 Err(e) => {
@@ -962,6 +974,7 @@ impl AgentService {
                         cost: 0.0,
                         model: model_name,
                         provider_name: self.provider_name_for_session(session_id),
+                        started_on_session_provider,
                     });
                 }
             }
@@ -5793,6 +5806,7 @@ impl AgentService {
             cost,
             model: response.model,
             provider_name: self.provider_name_for_session(session_id),
+            started_on_session_provider,
         })
     }
 }

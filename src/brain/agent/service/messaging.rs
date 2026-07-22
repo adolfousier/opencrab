@@ -102,6 +102,10 @@ impl AgentService {
             cost,
             model: response.model,
             provider_name: self.provider_name_for_session(session_id),
+            // This simple send path is not the restart-remap vector (#705); it
+            // resolves the session provider directly, so it always counts as
+            // started-on-session-provider.
+            started_on_session_provider: true,
         })
     }
 

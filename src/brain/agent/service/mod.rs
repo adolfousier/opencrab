@@ -22,7 +22,7 @@ mod types;
 
 pub use builder::{AgentService, BrainRebuild};
 pub use gaslighting::{is_gaslighting_preamble, strip_gaslighting_preamble};
-pub use helpers::detect_text_repetition;
+pub use helpers::{detect_text_repetition, provider_matches_session};
 pub use phantom::{
     claims_unbacked_side_effects, count_intent_line_starts, count_unbacked_side_effect_claims,
     has_forward_intent_post_success, has_investigative_intent, has_phantom_tool_intent,

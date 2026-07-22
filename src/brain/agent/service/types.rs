@@ -257,6 +257,16 @@ pub struct AgentResponse {
     /// cross-provider routing on the next turn (e.g. dialagram/glm-5.1
     /// where glm-5.1 belongs to zhipu's catalogue).
     pub provider_name: String,
+
+    /// Whether this turn STARTED on the session's own saved provider (#705).
+    /// `false` means the turn ran on a provider that did not match the session's
+    /// saved `provider_name` — an involuntary remap, not a user pick or a real
+    /// fallback. Callers that persist the {provider, model} pair back to the
+    /// session row MUST skip the write when this is `false`, or a wrong pair
+    /// silently overwrites the session's saved choice and survives restarts. A
+    /// genuine fallback starts matched (`true`) and diverges later, and is
+    /// persisted by the ProviderSwitched handler.
+    pub started_on_session_provider: bool,
 }
 
 /// Streaming response from the agent

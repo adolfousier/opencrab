@@ -1463,3 +1463,14 @@ pub fn detect_text_repetition(window: &str, min_match: usize) -> bool {
         false
     }
 }
+
+/// #705: did the turn START on the session's OWN saved provider?
+///
+/// A session with no saved provider counts as matched — it legitimately
+/// captures its first pair. Otherwise the resolved (active) provider must equal
+/// the saved one. `false` means the turn ran on the wrong provider (a #704
+/// restore gap): an involuntary remap whose {provider, model} pair must NOT be
+/// persisted over the session's saved choice.
+pub fn provider_matches_session(saved_provider: Option<&str>, active_provider: &str) -> bool {
+    saved_provider.is_none_or(|saved| saved == active_provider)
+}

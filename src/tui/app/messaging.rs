@@ -2698,6 +2698,11 @@ impl App {
         let session_for_bg = self.current_session.clone();
         let response_model = response.model.clone();
         let response_provider = response.provider_name.clone();
+        // Only a turn that STARTED on the session's own provider may rewrite the
+        // saved pair (#705). A turn that started on the wrong provider (a #704
+        // restore gap) carries an involuntarily-remapped pair that must never
+        // overwrite the session's saved choice — that was the silent-switch bug.
+        let response_started_on_session_provider = response.started_on_session_provider;
         let plan_path = self.plan_file_path.clone();
 
         tokio::spawn(async move {
@@ -2716,7 +2721,18 @@ impl App {
             if let Some(mut session) = session_for_bg {
                 let pair_changed = session.model.as_deref() != Some(response_model.as_str())
                     || session.provider_name.as_deref() != Some(response_provider.as_str());
-                if pair_changed {
+                // A changed pair from a turn that started on the WRONG provider
+                // is an involuntary remap (#705) — skip it so the session's
+                // saved choice survives. Genuine fallbacks start matched and are
+                // persisted here (and by the ProviderSwitched handler).
+                if pair_changed && !response_started_on_session_provider {
+                    tracing::warn!(
+                        "Skipping provider/model persist for session {}: turn ran on '{}' \
+                         which is not the session's saved provider (involuntary remap, #705)",
+                        session.id,
+                        response_provider
+                    );
+                } else if pair_changed {
                     session.model = Some(response_model);
                     session.provider_name = Some(response_provider);
                     if let Err(e) = session_service.update_session(&session).await {
