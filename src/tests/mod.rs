@@ -349,6 +349,7 @@ mod xiaomi_config_default_test;
 mod xiaomi_keyed_provider_regression_test;
 mod xiaomi_onboarding_test;
 //pub mod plan_mode_integration_test;
+pub mod session_provider_restore_test;
 pub mod session_working_dir_isolation_test;
 pub mod session_working_dir_test;
 pub mod slack_blocks_test;

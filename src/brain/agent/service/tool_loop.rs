@@ -487,6 +487,17 @@ impl AgentService {
         // successful fallback's model — otherwise subsequent tool-loop
         // iterations in the same turn rebuild requests with the primary
         // model name pointed at the fallback provider → 400 unknown model.
+        // A session must run on ITS OWN saved provider, not the global default
+        // (#704). After a restart `session_providers` is empty, so without this
+        // restore a resume/channel/not-yet-switched turn would fall to the
+        // global default and `guard_cross_provider_model_leak` would silently
+        // remap the model — a switch the user never made.
+        self.ensure_session_provider_restored(
+            session_id,
+            session.provider_name.as_deref(),
+            session.model.as_deref(),
+        )
+        .await;
         let session_provider = self.provider_for_session(session_id);
         let resolved_model = model
             .or_else(|| session.model.clone())

@@ -824,6 +824,67 @@ impl AgentService {
             .clone()
     }
 
+    /// Restore a session's saved provider into `session_providers` before a
+    /// turn runs, so the turn never falls back to the GLOBAL default (#704).
+    ///
+    /// After a restart the in-memory `session_providers` map is empty, so
+    /// `provider_for_session` returns the global default for every session that
+    /// hasn't been explicitly restored yet (resume path, channel turns, and any
+    /// session not yet switched-to in the TUI). A turn on the wrong provider
+    /// then trips `guard_cross_provider_model_leak`, which silently remaps the
+    /// saved model to the wrong provider's default — a switch the user never
+    /// made. Creating and registering the saved provider up front closes that
+    /// gap for ALL entry points. No-op when the session already has an entry,
+    /// has no saved provider, or its saved provider is already the global
+    /// default (nothing to restore).
+    pub async fn ensure_session_provider_restored(
+        &self,
+        session_id: Uuid,
+        saved_provider: Option<&str>,
+        saved_model: Option<&str>,
+    ) {
+        let Some(saved) = saved_provider else {
+            return;
+        };
+        if self
+            .session_providers
+            .read()
+            .map(|m| m.contains_key(&session_id))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        if saved == self.provider_name() {
+            return;
+        }
+        let config = match crate::config::Config::load() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not load config to restore provider '{saved}' for session {session_id}: {e}"
+                );
+                return;
+            }
+        };
+        match crate::brain::provider::create_provider_by_name(&config, saved).await {
+            Ok(provider) => {
+                let model = saved_model
+                    .map(str::to_string)
+                    .unwrap_or_else(|| provider.default_model().to_string());
+                self.swap_provider_for_session(session_id, provider, model);
+                tracing::info!(
+                    "Restored saved provider '{saved}' for session {session_id} before turn (#704)"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Could not restore saved provider '{saved}' for session {session_id}: {e} — \
+                     turn will use the current provider"
+                );
+            }
+        }
+    }
+
     /// Assign a provider specifically to `session_id`. Subsequent agent
     /// turns for that session use this provider; other sessions and the
     /// global default are untouched. Called by `/models` dialog on model
