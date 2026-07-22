@@ -902,10 +902,25 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
 
+        // Defense in depth (#714): never write a config.toml that won't load.
+        let serialized = doc.to_string();
+        if let Err(e) =
+            crate::config::guard::parses(crate::config::guard::ProtectedFile::Config, &serialized)
+        {
+            tracing::error!(
+                target: "config_guard",
+                "Denied config.toml write [{section}].{key}: would break parsing: {e}"
+            );
+            anyhow::bail!(
+                "config write denied: setting [{section}].{key} would make config.toml invalid \
+                 ({e}). The file was NOT changed."
+            );
+        }
+
         // Back up before overwriting
         Self::backup_config(&path, 7);
 
-        fs::write(&path, doc.to_string())?;
+        fs::write(&path, serialized)?;
         tracing::info!("Wrote config key [{section}].{key}");
         Ok(())
     }
@@ -948,9 +963,25 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
 
+        // Defense in depth (#714): never write a keys.toml that won't load — a
+        // broken secrets file loses every API key and the bot token.
+        let serialized = doc.to_string();
+        if let Err(e) =
+            crate::config::guard::parses(crate::config::guard::ProtectedFile::Keys, &serialized)
+        {
+            tracing::error!(
+                target: "config_guard",
+                "Denied keys.toml write [{section}].{key}: would break parsing: {e}"
+            );
+            anyhow::bail!(
+                "keys write denied: setting [{section}].{key} would make keys.toml invalid ({e}). \
+                 The file was NOT changed."
+            );
+        }
+
         Self::backup_config(&path, 7);
 
-        fs::write(&path, doc.to_string())?;
+        fs::write(&path, serialized)?;
         tracing::info!("Wrote keys.toml key [{section}].{key}");
         Ok(())
     }
@@ -1178,8 +1209,22 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        // Defense in depth (#714): never write a config.toml that won't load.
+        let serialized = doc.to_string();
+        if let Err(e) =
+            crate::config::guard::parses(crate::config::guard::ProtectedFile::Config, &serialized)
+        {
+            tracing::error!(
+                target: "config_guard",
+                "Denied config.toml array write [{section}].{key}: would break parsing: {e}"
+            );
+            anyhow::bail!(
+                "config write denied: setting [{section}].{key} would make config.toml invalid \
+                 ({e}). The file was NOT changed."
+            );
+        }
         Self::backup_config(&path, 7);
-        fs::write(&path, doc.to_string())?;
+        fs::write(&path, serialized)?;
         tracing::info!(
             "Wrote config array [{section}].{key} ({} items)",
             values.len()
