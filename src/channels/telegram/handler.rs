@@ -523,6 +523,24 @@ pub(crate) async fn handle_message(
                     )
                     .await;
                 }
+
+                // When the joining bot is US, announce ourselves in the group so
+                // members know we're here and how to onboard (#707). The per-group
+                // ACL is opt-in via /start, so the welcome nudges exactly that.
+                if telegram_state.bot_user_id().await == Some(uid as i64) {
+                    let welcome = "🦀 Look who just crawled in. I'M IN, let's build.\n\n\
+                        👉 New crew: hit /start and I'll lock your ID into this group so you \
+                        can @mention me anytime.\n\
+                        (Tip: make me an admin and flip off privacy mode via @BotFather so I \
+                        catch every message, not just mentions.)";
+                    let _ = crate::channels::telegram::send::message_in_thread(
+                        &bot,
+                        teloxide::types::ChatId(chat_id),
+                        None,
+                        welcome.to_string(),
+                    )
+                    .await;
+                }
             }
 
             // Auto-register non-bot members in cowork groups (group-scoped ACL)
