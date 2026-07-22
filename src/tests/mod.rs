@@ -163,6 +163,7 @@ pub mod doc_gen_docx_test;
 pub mod doc_gen_pdf_test;
 pub mod doc_gen_pptx_test;
 pub mod doc_gen_xlsx_test;
+pub mod empty_reasoning_stub_test;
 pub mod git_branch_test;
 pub mod glob_tool_test;
 pub mod goal_command_test;

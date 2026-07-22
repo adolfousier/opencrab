@@ -27,6 +27,27 @@ pub(crate) fn is_mimo_model(model: &str) -> bool {
     model.to_ascii_lowercase().contains("mimo")
 }
 
+/// Assistant message for the empty-reasoning nudge (#692): a preserve_thinking
+/// model produced a reasoning-only turn (reasoning_content, no visible answer),
+/// and we are about to nudge it for the answer. The reasoning MUST be echoed
+/// back — qwen3.8-max-preview keeps thinking always on and requires the COMPLETE
+/// reasoning_content in history — so carry it as a leading `Thinking` block (the
+/// encoder emits it as `reasoning_content`). Dropping it (an empty message) makes
+/// the model re-reason from scratch on every nudge, i.e. the 200s runaway loop.
+/// Empty only when there is genuinely no reasoning to preserve.
+pub(crate) fn assistant_reasoning_stub(reasoning: Option<&str>) -> Message {
+    match reasoning {
+        Some(r) if !r.trim().is_empty() => Message {
+            role: crate::brain::provider::Role::Assistant,
+            content: vec![ContentBlock::Thinking {
+                thinking: r.to_string(),
+                signature: None,
+            }],
+        },
+        _ => Message::assistant(String::new()),
+    }
+}
+
 /// Reduce a CLI text block to its `<<react:…>>` directive when clearing the
 /// displayable text after an IntermediateText flush (#547). The displayable
 /// text was already delivered as an intermediate message, so it is dropped to

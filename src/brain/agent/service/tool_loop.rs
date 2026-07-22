@@ -4125,11 +4125,18 @@ impl AgentService {
                                   provider on the next turn.]"
                             }
                         };
-                        // Preserve the reasoning on the (empty) assistant
-                        // turn, then inject a sharpening user nudge so
-                        // the next iteration has to produce the actual
-                        // answer.
-                        context.add_message(Message::assistant(String::new()));
+                        // Preserve the reasoning on the assistant turn as a
+                        // Thinking block (encoded back as reasoning_content), so
+                        // preserve_thinking models — qwen3.8-max-preview: thinking
+                        // is always on and the COMPLETE reasoning_content MUST be
+                        // echoed back — build on it instead of re-reasoning from
+                        // scratch on every nudge. Dropping it (an empty assistant
+                        // message) made qwen re-derive ~20k tokens per nudge, up to
+                        // 5 nudges, i.e. the 200s runaway reasoning loop (#692).
+                        // Empty only when there is genuinely no reasoning to keep.
+                        context.add_message(super::helpers::assistant_reasoning_stub(
+                            reasoning_text.as_deref(),
+                        ));
                         context.add_message(Message::user(nudge.to_string()));
                         continue;
                     }
