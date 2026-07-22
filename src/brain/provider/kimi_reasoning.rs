@@ -57,6 +57,14 @@ enum Family {
     K26,
 }
 
+/// Whether `model` is a Kimi family this module's reasoning controls apply to.
+/// Non-Kimi custom-provider models (e.g. DashScope qwen) get a generic
+/// `reasoning_effort` pass-through instead of this family-specific resolution
+/// (#691), so a configured effort like `xhigh` is actually sent.
+pub fn is_kimi_model(model: &str) -> bool {
+    classify(model).is_some()
+}
+
 fn classify(model: &str) -> Option<Family> {
     let m = model.to_ascii_lowercase();
     // Order matters: k2.7 aliases before the generic k2.6 check.

@@ -263,3 +263,62 @@ fn encoder_passes_thinking_through_for_non_kimi_providers_too() {
     let asst = &body["messages"].as_array().unwrap()[1];
     assert_eq!(asst["reasoning_content"].as_str(), Some("actual reasoning"));
 }
+
+// ─── reasoning_effort pass-through for non-Kimi custom providers (#691) ──────
+
+fn modelstudio_provider() -> OpenAIProvider {
+    OpenAIProvider::with_base_url(
+        "test-key".to_string(),
+        "https://ws-x.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1".to_string(),
+    )
+    .with_name("modelstudio")
+    .with_reasoning("xhigh".to_string())
+}
+
+#[test]
+fn qwen_passes_configured_reasoning_effort_through() {
+    // #691: a non-Kimi custom-provider model must SEND the configured
+    // reasoning_effort verbatim, not silently drop it (the qwen/modelstudio bug).
+    let provider = modelstudio_provider();
+    let req = LLMRequest::new(
+        "qwen3.8-max-preview".to_string(),
+        vec![Message::user("hi".to_string())],
+    );
+    let body = serde_json::to_value(provider.to_openai_request(req)).unwrap();
+    assert_eq!(body["reasoning_effort"].as_str(), Some("xhigh"));
+}
+
+#[test]
+fn provider_without_reasoning_setting_sends_none() {
+    let provider = OpenAIProvider::with_base_url("k".into(), "https://x/v1".into()).with_name("x");
+    let req = LLMRequest::new(
+        "qwen3.8-max-preview".to_string(),
+        vec![Message::user("hi".to_string())],
+    );
+    let body = serde_json::to_value(provider.to_openai_request(req)).unwrap();
+    assert!(body.get("reasoning_effort").is_none_or(|v| v.is_null()));
+}
+
+#[test]
+fn kimi_k3_still_routes_through_family_resolver_as_effort() {
+    let provider = opencode_kimi_provider().with_reasoning("max".to_string());
+    let req = LLMRequest::new("kimi-k3".to_string(), vec![Message::user("hi".to_string())]);
+    let body = serde_json::to_value(provider.to_openai_request(req)).unwrap();
+    assert_eq!(body["reasoning_effort"].as_str(), Some("max"));
+}
+
+#[test]
+fn kimi_on_maps_to_thinking_not_effort_passthrough() {
+    // The generic pass-through must NOT capture Kimi's on/off — K2.6 "on" is a
+    // thinking toggle, so reasoning_effort must stay absent (never "on").
+    let provider = opencode_kimi_provider().with_reasoning("on".to_string());
+    let req = LLMRequest::new(
+        "kimi-k2.6".to_string(),
+        vec![Message::user("hi".to_string())],
+    );
+    let body = serde_json::to_value(provider.to_openai_request(req)).unwrap();
+    assert!(
+        body.get("reasoning_effort").is_none_or(|v| v.is_null()),
+        "kimi on/off must not leak into reasoning_effort: {body}"
+    );
+}

@@ -2826,14 +2826,19 @@ impl OpenAIProvider {
             None
         };
 
-        // Kimi reasoning controls: apply the provider's configured setting when
-        // the active model accepts it. An invalid value is skipped here (the
-        // config default is a no-op); `/reason` surfaces the error instead.
-        let (reasoning_effort, thinking) = self
-            .reasoning_setting
-            .as_deref()
-            .map(|s| super::kimi_reasoning::resolve_fields(&request.model, s))
-            .unwrap_or((None, None));
+        // Reasoning controls from the provider's configured `reasoning_effort`.
+        // For a Kimi family, use the family-specific resolver (effort for K3,
+        // thinking on/off for K2.x; an invalid value is a no-op there). For ANY
+        // OTHER custom-provider model, pass the configured value straight through
+        // as the request's `reasoning_effort` field — otherwise it was silently
+        // dropped and e.g. modelstudio/DashScope qwen never got `xhigh` (#691).
+        let (reasoning_effort, thinking) = match self.reasoning_setting.as_deref() {
+            None => (None, None),
+            Some(s) if super::kimi_reasoning::is_kimi_model(&request.model) => {
+                super::kimi_reasoning::resolve_fields(&request.model, s)
+            }
+            Some(s) => (Some(s.to_string()), None),
+        };
 
         // MiniMax M3: send reasoning_split=true so reasoning goes to
         // reasoning_content field instead of being embedded in content
