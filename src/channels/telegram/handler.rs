@@ -453,25 +453,48 @@ pub(crate) async fn handle_message(
         }
 
         let is_group = !matches!(msg.chat.kind, ChatKind::Private { .. });
-        if is_group && cfg.channels.telegram.silence_group_start {
-            // In groups, silently ignore /start from non-allowed users
-            let allowed: HashSet<i64> = cfg
-                .channels
-                .telegram
-                .allowed_users
-                .iter()
-                .filter_map(|s| s.parse().ok())
-                .collect();
-            if !allowed.is_empty() && !allowed.contains(&user_id) {
-                tracing::info!(
-                    "Telegram: silent /start from non-allowed user {} ({}) in group",
-                    user_id,
-                    user.first_name
-                );
-                return Ok(());
-            }
+
+        // In a group, /start is the ONE-TAP onboarding: register the sender into
+        // this group's own allowlist (channels.telegram.groups.<chat_id>.
+        // allowed_users) and confirm. No config.toml editing, no global-allowlist
+        // lecture, and never for the owner who is already allowed everywhere
+        // (#708).
+        if is_group {
+            let reply = if cfg.channels.telegram.is_owner(&user_id.to_string()) {
+                "🦀 You're the boss, already locked in everywhere. @mention me and let's build."
+                    .to_string()
+            } else {
+                match super::cowork::auto_register_to_group(user_id, msg.chat.id.0) {
+                    Ok(true) => {
+                        "🦀 Boom, you're on the crew for this group. @mention me and let's go."
+                            .to_string()
+                    }
+                    Ok(false) => {
+                        "🦀 You're already locked in here. @mention me and let's build.".to_string()
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Telegram: /start group register failed for user {} in chat {}: {e}",
+                            user_id,
+                            msg.chat.id.0
+                        );
+                        "🦀 Something jammed registering you. Try /start again in a sec."
+                            .to_string()
+                    }
+                }
+            };
+            message_in_thread(&bot, msg.chat.id, thread_id, reply).await?;
+            tracing::info!(
+                "Telegram: /start register in group chat {} from user {} ({})",
+                msg.chat.id.0,
+                user_id,
+                user.first_name
+            );
+            return Ok(());
         }
 
+        // DM /start: self-host onboarding — show the user their own id so the
+        // owner can seed the global allowlist on first setup.
         let reply = format!(
             "OpenCrabs Telegram Bot\n\nYour user ID: {}\n\nAdd this ID to your config.toml under [channels.telegram] allowed_users to get started.",
             user_id
