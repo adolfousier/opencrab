@@ -339,9 +339,9 @@ The `/cowork` command creates a team workspace directly from Telegram. It is **T
 **Flow:**
 1. Owner sends `/cowork` in DM (owner-only command) → bot replies with an **Add to Group** inline button
 2. Owner taps it → Telegram's native group picker opens. The deep link requests admin rights inline (`?startgroup=cowork_<id>&admin=invite_users+delete_messages+pin_messages+manage_chat`), so the bot is **added already promoted to admin** — no manual promotion step. Always keep the bot as admin: an admin bot reads every message regardless of privacy mode and can create invite links.
-3. On joining, the bot posts a short welcome in the group telling members to send `/start`. If it somehow landed without admin, the welcome also nudges the owner to promote it.
-4. **Members register by sending `/start` in the group.** That writes their ID into the **group's own allowlist** (`[channels.telegram.groups.<chat_id>].allowed_users`), not the global one, and the bot confirms. Group-scoped members can then chat in that group (`@mention` the bot) but cannot DM it privately unless also on the global `allowed_users` or `bot_owner`.
-5. **`/start` in a DM never auto-registers** (DMs are invite-only): the bot just returns the sender's Telegram ID so they can share it with the owner to be added (or add it to `config.toml` when self-hosting). The owner's own `/start` in a group is silent — they are already allowed everywhere.
+3. On joining via cowork, the bot sets that group's `open = true` (persisted) so **every member is allowed** — existing and new, no per-user step — and posts a short welcome. If it somehow landed without admin, the welcome also nudges the owner to promote it.
+4. **Members are auto-registered in an open group:** joining members are added to the group's own allowlist (`[channels.telegram.groups.<chat_id>].allowed_users`) on join, and anyone who was already in the group before the bot can send `/start` to be tracked. This is group-scoped only — members can chat in that group (`@mention` the bot) but cannot DM it privately unless also on the global `allowed_users` or `bot_owner`. Already in the group and want to open it without re-adding the bot? Send `/cowork` inside the group (owner-only).
+5. **`/start` in a DM never auto-registers** (DMs are invite-only): the bot just returns the sender's Telegram ID so they can share it with the owner to be added (or add it to `config.toml` when self-hosting). `/start` in a non-open group likewise returns the ID and points the user to ask the owner to run `/cowork`. The owner's own `/start` in a group is silent — they are already allowed everywhere.
 
 **Cross-channel behavior:** `/cowork` works from any surface. In Telegram DMs, the native flow activates directly. From the TUI, Discord, Slack, or WhatsApp, the agent calls the `cowork_connect` tool which mints a session, registers it with the bot, and returns the `t.me` deep link plus a scannable QR code PNG. The TUI shows the clickable link; channels deliver the QR as a photo.
 
@@ -355,7 +355,7 @@ When `allowed_users` is configured, the bot enforces a strict allowlist on all i
 **In groups:**
 - Non-allowed users get **silently dropped** (no reply, no processing) for normal messages.
 - If the user explicitly **@mentions** or **replies to** the bot, they get the "not authorized" reply — so they know they need to be added.
-- `/start` from non-allowed users is silently ignored when `silence_group_start = true` (default). Set to `false` to show the user ID reply in groups.
+- `/start` in an **open** group (`open = true`, see [Per-group access control](#per-group-access-control-per-chat-acl)) registers the sender into that group's allowlist and confirms. In a non-open group it returns the sender's ID and tells them to ask the owner to run `/cowork` or add them — it never silently self-adds. The owner's `/start` (which Telegram auto-fires when the bot is added) is silent.
 
 This prevents the bot from spamming "not authorized" in active groups where most members aren't on the allowlist. The bot only engages with non-allowed users when they explicitly reach out.
 
@@ -388,6 +388,7 @@ Telegram groups can have their own member list, so a user can be allowed in **on
 - `allowed_users` (channel level) — **admins**: may DM the bot and act in any chat.
 - `bot_owner` — the **owner**: always allowed everywhere.
 - `[channels.telegram.groups.<chat_id>].allowed_users` — allowed in **that group only**. These users are refused in DMs unless they are also an admin or the owner, which closes the "DM the bot privately to escape group oversight" bypass.
+- `[channels.telegram.groups.<chat_id>].open` — **per-group blanket allow** (default `false`). When `true`, *any* member of that group passes the group ACL without being individually listed, and joining members / members who `/start` are auto-registered into `allowed_users` so there's a visible roster. DMs and every other group stay locked. This is the ONLY switch that relaxes group access — it is **per-group, never global**, and defaults off so the bot is secure by default. There is no global `open`.
 
 DMs are gated to admins + owner. If neither `allowed_users` nor `bot_owner` is set, the bot refuses all interactions (deny-by-default). Set at least one to unlock access. Each group can also override `respond_to` just for itself.
 
@@ -399,11 +400,12 @@ respond_to = "mention"                   # global default
 [channels.telegram.groups.-1001234567890]
 allowed_users = ["222", "333"]           # allowed in this group only, never via DM
 respond_to = "all"                       # per-group override of the global respond_to
+open = true                              # any member of THIS group is allowed (blanket, per-group)
 ```
 
 `respond_to` accepts `all`, `mention`, `dm_only`, or `auto` (reply to all while there is at most one active sender, then switch to mention-only once a second unique sender appears).
 
-The `/cowork` command uses per-group ACL automatically: when you create a cowork workspace, all members register into the group's `allowed_users` only, not the global list. This means coworkers can chat with the bot in their group but get no private DM access, which is the whole point of group-scoped oversight.
+**`/cowork` opens a group.** Running `/cowork` (owner-only) is the explicit, owner-initiated action that sets that group's `open = true` (persisted, until you change it): either by adding the bot to a group via the cowork deep link, or by sending `/cowork` inside a group the bot is already in. Once open, every member (existing and new) is allowed and tracked in the group's `allowed_users` — no per-user `/start` needed — while DM access stays closed. Auto-registration only happens in open groups; a group you never `/cowork` (or set `open = true` on) stays secure by default and admits no one automatically.
 
 #### Voice and file pickup in groups
 
