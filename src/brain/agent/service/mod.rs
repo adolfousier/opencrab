@@ -26,8 +26,8 @@ pub use helpers::detect_text_repetition;
 pub use phantom::{
     claims_unbacked_side_effects, count_intent_line_starts, count_unbacked_side_effect_claims,
     has_forward_intent_post_success, has_investigative_intent, has_phantom_tool_intent,
-    has_phantom_tool_intent_no_tools, is_analysis_intent, is_stuck_in_intent_loop,
-    looks_truncated_mid_sentence,
+    has_phantom_tool_intent_no_tools, is_analysis_intent, is_bare_completion_only,
+    is_delivery_intent, is_stuck_in_intent_loop, looks_truncated_mid_sentence,
 };
 pub use types::{
     AgentResponse, AgentStreamResponse, ApprovalCallback, ChannelSessionEvent,

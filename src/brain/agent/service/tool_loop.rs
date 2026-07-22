@@ -3904,7 +3904,20 @@ impl AgentService {
                         // incl. table cells, so a "shipped" scoreboard TABLE (which
                         // slipped every prose-shaped detector) is caught.
                         || (tool_calls_completed_this_turn == 0
-                            && super::phantom::claims_unbacked_side_effects(&iteration_text)))
+                            && super::phantom::claims_unbacked_side_effects(&iteration_text))
+                        // Bare-completion phantom (#680 follow-up): a zero-tool
+                        // turn answering a delivery request ("build/create/write
+                        // X") with a content-free completion word ("Done.",
+                        // "Ready.") produced no artifact and ran no tool — the
+                        // claim is empty. The 5-byte "Done." slips every other
+                        // detector's length floor, so match it explicitly. Gated
+                        // on the request being a delivery intent so a legitimate
+                        // cross-turn ack ("did you commit? — Done.") is untouched.
+                        || (tool_calls_completed_this_turn == 0
+                            && super::phantom::is_bare_completion_only(&iteration_text)
+                            && super::phantom::is_delivery_intent(
+                                display_text_override.as_deref().unwrap_or(&user_message),
+                            )))
                 {
                     phantom_retries_used += 1;
                     tracing::warn!(

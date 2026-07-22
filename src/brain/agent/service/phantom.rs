@@ -647,6 +647,115 @@ pub fn is_analysis_intent(text: &str) -> bool {
     ANALYSIS_VERBS.iter().any(|v| leading_word(v))
 }
 
+/// Bare terminal completion tokens. A response that is ONLY one of these
+/// (after stripping directives, emoji, and punctuation) is a content-free
+/// completion ack: fine as a TRUE terminal after real tool work, but a phantom
+/// when the turn ran zero tools and the user asked for a deliverable.
+const BARE_COMPLETION_PHRASES: &[&str] = &[
+    "done",
+    "all done",
+    "ready",
+    "all ready",
+    "ready to go",
+    "good to go",
+    "finished",
+    "all finished",
+    "complete",
+    "completed",
+    "task complete",
+    "task completed",
+    "all set",
+    "all good",
+    "taken care of",
+    "handled",
+    "sorted",
+    "there you go",
+    "here you go",
+];
+
+/// Is `text` nothing but a bare completion word/phrase — no deliverable, no
+/// substantive body?
+///
+/// Strips inline directives, then requires the whole remaining message
+/// (lowercased, emoji/punctuation flattened to spaces, whitespace collapsed)
+/// to equal one of `BARE_COMPLETION_PHRASES`. A code fence disqualifies it
+/// outright (that carries the deliverable), as does any real length — a genuine
+/// confirmation with specifics ("Committed as 7256f6…") is longer than any bare
+/// ack. #680 follow-up: a lone "Done." is 5 bytes and slips every other
+/// detector's 20/40-byte floor, so it needs an explicit, floor-free check.
+pub fn is_bare_completion_only(text: &str) -> bool {
+    let cleaned = strip_inline_directives(text);
+    if cleaned.contains("```") {
+        return false;
+    }
+    let trimmed = cleaned.trim();
+    if trimmed.chars().count() > 48 {
+        return false;
+    }
+    let normalized: String = trimmed
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    BARE_COMPLETION_PHRASES.contains(&normalized.as_str())
+}
+
+/// Did the user ask the model to PRODUCE an artifact — build/create/write/
+/// generate code, a script, a component, a document?
+///
+/// Mirror of `is_analysis_intent`, used to gate the bare-completion phantom
+/// check: a delivery request answered by a content-free "Done." with zero tool
+/// calls produced nothing. Interrogative openers ("did you build it?") are
+/// questions ABOUT work, not requests to produce it, so they never count — that
+/// guard keeps a legitimate cross-turn ack from being flagged. English-only for
+/// now, like `is_analysis_intent`.
+pub fn is_delivery_intent(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    // Drop a leading channel/context bracket ("[channel: telegram …]") so the
+    // request itself is what we scan, not the wrapper.
+    let body = lower.trim_start();
+    let body = if body.starts_with('[') {
+        body.split_once(']')
+            .map(|x| x.1)
+            .unwrap_or(body)
+            .trim_start()
+    } else {
+        body
+    };
+    const QUESTION_OPENERS: &[&str] = &[
+        "did ", "do ", "does ", "is ", "are ", "was ", "were ", "have ", "has ", "had ", "can ",
+        "could ", "will ", "would ", "should ", "what ", "where ", "when ", "why ", "how ",
+        "which ", "who ",
+    ];
+    if QUESTION_OPENERS.iter().any(|q| body.starts_with(q)) {
+        return false;
+    }
+    // Build requests span multiple lines; scan the whole request but cap the
+    // window so a long pasted blob can't dominate this hot path.
+    let head: String = body.chars().take(1000).collect();
+    let leading_word = |w: &str| -> bool {
+        let needle = format!(" {w} ");
+        head.starts_with(&format!("{w} ")) || head.contains(&needle)
+    };
+    const DELIVERY_VERBS: &[&str] = &[
+        "create",
+        "build",
+        "generate",
+        "write",
+        "implement",
+        "produce",
+        "make",
+        "draft",
+        "compose",
+        "design",
+        "provide",
+    ];
+    DELIVERY_VERBS.iter().any(|v| leading_word(v))
+}
+
 /// Heuristic: does `text` look like it was truncated mid-sentence?
 pub fn looks_truncated_mid_sentence(text: &str) -> bool {
     let trimmed = text.trim_end();

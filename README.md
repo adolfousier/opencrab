@@ -458,7 +458,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | **Natural Language Commands** | Tell OpenCrabs to create slash commands — it writes them to `commands.toml` autonomously via the `config_manager` tool |
 | **Live Settings** | Agent can read/write `config.toml` at runtime; Settings TUI screen (press `S`) shows current config; approval policy persists across restarts. Default: auto-approve (use `/approve` to change) |
 | **Web Search** | DuckDuckGo (built-in, no key needed) + EXA AI (neural, free via MCP) by default; Brave Search optional (key in `keys.toml`) |
-| **Debug Logging** | `--debug` flag enables file logging; `DEBUG_LOGS_LOCATION` env var for custom log directory |
+| **Debug Logging** | `--debug` flag or `debug_logs = true` in config enables file logging; config toggle hot-reloads live without restart; `DEBUG_LOGS_LOCATION` env var for custom log directory |
 | **Agent-to-Agent (A2A)** | HTTP gateway implementing A2A Protocol RC v1.0 — peer-to-peer agent communication via JSON-RPC 2.0. Supports `message/send`, `message/stream` (SSE), `tasks/get`, `tasks/cancel`. Built-in `a2a_send` tool lets the agent proactively call remote A2A agents. Optional Bearer token auth. Includes multi-agent debate (Bee Colony) with confidence-weighted consensus. Task persistence across restarts |
 | **Profiles** | Run multiple isolated instances from the same installation. Each profile gets its own config, keys, memory, sessions, and database. Create with `opencrabs profile create <name>`, switch with `-p <name>`. Migrate config between profiles with `profile migrate`. Export/import for sharing. Token-lock isolation prevents two profiles from using the same bot credential |
 
@@ -494,6 +494,21 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | `opencrabs version` | Print version and exit |
 
 Global flags: `--debug` (enable file logging), `--config <path>` (custom config file), `--profile <name>` / `-p <name>` (run as a named profile).
+
+### Debug Logging
+
+OpenCrabs writes structured debug logs to files when debug logging is active. Two ways to turn it on:
+
+| Method | How | Can be turned off? |
+|--------|-----|--------------------|
+| CLI flag | Launch with `--debug` | No, stays on for the process lifetime |
+| Config toggle | Set `debug_logs = true` under `[agent]` in `config.toml` | Yes, flip back to `false` and it hot-reloads live |
+
+**Precedence:** the two are ORed. If `--debug` is set, debug logging stays on regardless of the config value. A config edit setting `debug_logs = false` cannot silence an operator who launched with the flag. If only the config toggle is set, flipping it back to `false` turns logging off immediately, no restart needed.
+
+**Where logs land:** `~/.opencrabs/logs/` by default. Override the directory with the `DEBUG_LOGS_LOCATION` env var.
+
+**Hot-reload:** edit `debug_logs` in `config.toml` (or ask the agent to flip it via `config_manager`) and the change takes effect on the next event. No restart required.
 
 ### Brain Files — One File, One Job
 
