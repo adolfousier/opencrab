@@ -110,10 +110,24 @@ pub fn save_last_good_config() {
             tracing::debug!("Failed to save last-good config: {e}");
         }
     }
-    if keys_path_src.exists()
-        && let Err(e) = fs::copy(&keys_path_src, &keys_good)
-    {
-        tracing::debug!("Failed to save last-good keys: {e}");
+    if keys_path_src.exists() {
+        // NEVER snapshot keys that don't parse (#712). A raw copy of a broken
+        // keys.toml poisons keys.last_good.toml, so recovery fails exactly when
+        // it's needed — every API key and the bot token become unloadable. This
+        // mirrors the config.toml guard above, which keys.toml was missing.
+        match fs::read_to_string(&keys_path_src) {
+            Ok(content) => {
+                if let Err(e) = crate::config::guard::parses(
+                    crate::config::guard::ProtectedFile::Keys,
+                    &content,
+                ) {
+                    tracing::warn!("Refusing last-good snapshot: keys.toml does not parse: {e}");
+                } else if let Err(e) = fs::copy(&keys_path_src, &keys_good) {
+                    tracing::debug!("Failed to save last-good keys: {e}");
+                }
+            }
+            Err(e) => tracing::debug!("Failed to read keys.toml for last-good snapshot: {e}"),
+        }
     }
 }
 

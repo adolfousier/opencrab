@@ -4,6 +4,7 @@
 
 pub mod crabrace;
 mod current;
+pub mod guard;
 pub mod health;
 pub mod owner;
 pub mod profile;
