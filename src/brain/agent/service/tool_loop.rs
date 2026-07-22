@@ -1007,18 +1007,21 @@ impl AgentService {
             context.add_message(Message::user(cont_text));
         }
 
-        // Create tool execution context
+        // Create tool execution context. The working directory is per-session
+        // (#703): resolve THIS session's own handle so a `cd` here mutates only
+        // this session's cwd, and a concurrent session's `cd` can never move it.
+        let session_cwd = self.working_dir_handle_for_session(session_id);
         let mut tool_context = ToolExecutionContext::new(session_id)
             .with_auto_approve(self.auto_approve_tools)
             .with_working_directory(
-                self.working_directory
+                session_cwd
                     .read()
-                    .expect("working_directory lock poisoned")
+                    .expect("session working_directory lock poisoned")
                     .clone(),
             );
         tool_context.sudo_callback = self.sudo_callback.clone();
         tool_context.ssh_callback = self.ssh_callback.clone();
-        tool_context.shared_working_directory = Some(Arc::clone(&self.working_directory));
+        tool_context.shared_working_directory = Some(Arc::clone(&session_cwd));
         tool_context.service_context = Some(self.context.clone());
         tool_context.question_callback = question_callback.clone();
         tool_context.progress_callback = progress_callback.clone();
@@ -1363,8 +1366,11 @@ impl AgentService {
             // Build LLM request with tools if available
             let mut request = LLMRequest::new(model_name.clone(), context.messages.clone())
                 .with_max_tokens(self.max_tokens);
-            request.working_directory =
-                Some(self.get_working_directory().to_string_lossy().to_string());
+            request.working_directory = Some(
+                self.get_working_directory_for_session(session_id)
+                    .to_string_lossy()
+                    .to_string(),
+            );
             request.session_id = Some(session_id);
 
             if let Some(system) = &context.system_brain {
@@ -1588,8 +1594,11 @@ impl AgentService {
                     let mut retry_req =
                         LLMRequest::new(model_name.clone(), context.messages.clone())
                             .with_max_tokens(self.max_tokens);
-                    retry_req.working_directory =
-                        Some(self.get_working_directory().to_string_lossy().to_string());
+                    retry_req.working_directory = Some(
+                        self.get_working_directory_for_session(session_id)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
                     retry_req.session_id = Some(session_id);
                     if let Some(system) = &context.system_brain {
                         retry_req = retry_req.with_system(system.clone());
@@ -1801,8 +1810,11 @@ impl AgentService {
                         let mut fb_req =
                             LLMRequest::new(fb_model.clone(), context.messages.clone())
                                 .with_max_tokens(self.max_tokens);
-                        fb_req.working_directory =
-                            Some(self.get_working_directory().to_string_lossy().to_string());
+                        fb_req.working_directory = Some(
+                            self.get_working_directory_for_session(session_id)
+                                .to_string_lossy()
+                                .to_string(),
+                        );
                         fb_req.session_id = Some(session_id);
                         if let Some(system) = &context.system_brain {
                             fb_req = fb_req.with_system(system.clone());
@@ -1998,8 +2010,11 @@ impl AgentService {
                         let mut retry_req =
                             LLMRequest::new(model_name.clone(), context.messages.clone())
                                 .with_max_tokens(self.max_tokens);
-                        retry_req.working_directory =
-                            Some(self.get_working_directory().to_string_lossy().to_string());
+                        retry_req.working_directory = Some(
+                            self.get_working_directory_for_session(session_id)
+                                .to_string_lossy()
+                                .to_string(),
+                        );
                         retry_req.session_id = Some(session_id);
                         if let Some(system) = &context.system_brain {
                             retry_req = retry_req.with_system(system.clone());
@@ -2152,8 +2167,11 @@ impl AgentService {
                             let mut fb_req =
                                 LLMRequest::new(fb_model.clone(), context.messages.clone())
                                     .with_max_tokens(self.max_tokens);
-                            fb_req.working_directory =
-                                Some(self.get_working_directory().to_string_lossy().to_string());
+                            fb_req.working_directory = Some(
+                                self.get_working_directory_for_session(session_id)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            );
                             fb_req.session_id = Some(session_id);
                             if let Some(system) = &context.system_brain {
                                 fb_req = fb_req.with_system(system.clone());
@@ -2337,8 +2355,11 @@ impl AgentService {
                         let mut retry_req =
                             LLMRequest::new(model_name.clone(), context.messages.clone())
                                 .with_max_tokens(self.max_tokens);
-                        retry_req.working_directory =
-                            Some(self.get_working_directory().to_string_lossy().to_string());
+                        retry_req.working_directory = Some(
+                            self.get_working_directory_for_session(session_id)
+                                .to_string_lossy()
+                                .to_string(),
+                        );
                         retry_req.session_id = Some(session_id);
                         if let Some(system) = &context.system_brain {
                             retry_req = retry_req.with_system(system.clone());
@@ -2440,8 +2461,11 @@ impl AgentService {
                             let mut fb_req =
                                 LLMRequest::new(fb_model.clone(), context.messages.clone())
                                     .with_max_tokens(self.max_tokens);
-                            fb_req.working_directory =
-                                Some(self.get_working_directory().to_string_lossy().to_string());
+                            fb_req.working_directory = Some(
+                                self.get_working_directory_for_session(session_id)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            );
                             fb_req.session_id = Some(session_id);
                             if let Some(system) = &context.system_brain {
                                 fb_req = fb_req.with_system(system.clone());
@@ -2633,8 +2657,11 @@ impl AgentService {
                         let mut fb_req =
                             LLMRequest::new(fb_model.clone(), context.messages.clone())
                                 .with_max_tokens(self.max_tokens);
-                        fb_req.working_directory =
-                            Some(self.get_working_directory().to_string_lossy().to_string());
+                        fb_req.working_directory = Some(
+                            self.get_working_directory_for_session(session_id)
+                                .to_string_lossy()
+                                .to_string(),
+                        );
                         fb_req.session_id = Some(session_id);
                         if let Some(system) = &context.system_brain {
                             fb_req = fb_req.with_system(system.clone());
@@ -4189,8 +4216,11 @@ impl AgentService {
                             let mut fb_req =
                                 LLMRequest::new(fb_model.clone(), context.messages.clone())
                                     .with_max_tokens(self.max_tokens);
-                            fb_req.working_directory =
-                                Some(self.get_working_directory().to_string_lossy().to_string());
+                            fb_req.working_directory = Some(
+                                self.get_working_directory_for_session(session_id)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            );
                             fb_req.session_id = Some(session_id);
                             if let Some(system) = &context.system_brain {
                                 fb_req = fb_req.with_system(system.clone());

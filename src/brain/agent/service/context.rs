@@ -127,7 +127,7 @@ impl AgentService {
         // turns instead of hallucinating directory layouts. Filtered
         // against the live messages so we don't double-list paths the
         // agent just touched in this same session.
-        let working_directory = self.get_working_directory();
+        let working_directory = self.get_working_directory_for_session(session_id);
         let recent_paths = self.recent_paths_for_dir(&working_directory).await;
         let augmented_system = Self::augment_system_with_recent_paths(
             context.system_brain,
@@ -316,7 +316,7 @@ impl AgentService {
             context.usage_percentage(),
             model_name.to_string(),
             self.max_tokens,
-            self.get_working_directory(),
+            self.get_working_directory_for_session(session_id),
             self.auto_approve_tools,
             cancel,
         )

@@ -988,7 +988,10 @@ async fn cmd_chat_inner(
                         {
                             let p = std::path::PathBuf::from(dir_str);
                             if p.is_dir() {
-                                agent.set_working_directory(p);
+                                // Per-session (#703): seed the resumed session's
+                                // own handle so a concurrent resume with a
+                                // different wd can't clobber it via the global.
+                                agent.set_working_directory_for_session(session_id, p);
                             }
                         }
                         let agent = agent.clone();

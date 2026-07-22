@@ -740,6 +740,41 @@ pub fn override_runtime_model_provider(brain: &str, model: &str, provider: &str)
     out
 }
 
+/// Rewrite the `Working directory:` line inside the `--- Runtime Info ---`
+/// section with the session's own cwd (#703).
+///
+/// The brain renders from a single global cwd, but the working directory is
+/// per-session: two sessions can run concurrently in different directories.
+/// Without this, a background session's `cd` leaks into the foreground session's
+/// prompt (Runtime Info tells the model the wrong directory, relative paths
+/// resolve there). Mirrors `override_runtime_model_provider`: only the Runtime
+/// Info section is touched, no-op when the section or line is absent. `wd` must
+/// already be tilde-collapsed (via `collapse_home`), matching how the line is
+/// rendered, so this stays inside the uncached per-session suffix and never
+/// invalidates the cached prefix.
+pub fn override_runtime_working_directory(brain: &str, wd: &str) -> String {
+    const MARKER: &str = "--- Runtime Info ---";
+    if !brain.contains(MARKER) {
+        return brain.to_string();
+    }
+    let mut out = String::with_capacity(brain.len());
+    let mut in_section = false;
+    for line in brain.split_inclusive('\n') {
+        let trimmed = line.trim_end();
+        if trimmed == MARKER {
+            in_section = true;
+        } else if in_section && trimmed.starts_with("--- ") {
+            in_section = false;
+        }
+        if in_section && trimmed.starts_with("Working directory: ") {
+            out.push_str(&format!("Working directory: {}\n", wd));
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 /// Render the Runtime Info block: model / provider / working directory (+ home
 /// anchor), OpenCrabs version, OS, current date, known paths, and compiled
 /// features. Shared by both `build_system_brain` and `build_core_brain` so they

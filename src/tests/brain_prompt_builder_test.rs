@@ -470,3 +470,26 @@ fn test_override_runtime_model_provider_noop_without_section() {
     let out = override_runtime_model_provider(brain, "m", "p");
     assert_eq!(out, brain);
 }
+
+#[test]
+fn test_override_runtime_working_directory_rewrites_only_runtime_info() {
+    // #703: the working-dir line is per-session and must be patchable without
+    // touching a `Working directory:` string elsewhere in the brain.
+    let brain = "--- NOTES.md ---\nWorking directory: ~/keep-me\n\n--- Runtime Info ---\nModel: m\nProvider: p\nWorking directory: ~/srv/animation/ff7_remotion\nHome: ~\n\n--- SOUL.md ---\n";
+    let out = override_runtime_working_directory(brain, "~/srv/rs/opencrabs");
+    assert!(out.contains("Working directory: ~/srv/rs/opencrabs\n"));
+    assert!(!out.contains("ff7_remotion"));
+    // Lines outside the Runtime Info section are untouched.
+    assert!(out.contains("Working directory: ~/keep-me"));
+    // Sibling Runtime Info lines are untouched.
+    assert!(out.contains("Model: m\n"));
+    assert!(out.contains("Provider: p\n"));
+    assert!(out.contains("Home: ~\n"));
+}
+
+#[test]
+fn test_override_runtime_working_directory_noop_without_section() {
+    let brain = "--- SOUL.md ---\nWorking directory: ~/untouched\n";
+    let out = override_runtime_working_directory(brain, "~/other");
+    assert_eq!(out, brain);
+}

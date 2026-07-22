@@ -1227,18 +1227,26 @@ impl App {
             // Update App working directory
             self.working_directory = canonical.clone();
 
-            // Update AgentService working directory (runtime)
-            self.agent_service.set_working_directory(canonical.clone());
+            // Update AgentService working directory (runtime). Per-session (#703)
+            // so `/cd` in this pane never moves another session's cwd.
+            if let Some(ref session) = self.current_session {
+                self.agent_service
+                    .set_working_directory_for_session(session.id, canonical.clone());
+            } else {
+                self.agent_service.set_working_directory(canonical.clone());
+            }
 
             // Persist to session DB — that's the source of truth for per-session WD.
-            if let Some(ref session) = self.current_session {
-                let _ = self
+            if let Some(ref session) = self.current_session
+                && let Err(e) = self
                     .session_service
                     .update_session_working_directory(
                         session.id,
                         Some(canonical.to_string_lossy().to_string()),
                     )
-                    .await;
+                    .await
+            {
+                tracing::warn!("failed to persist session working directory: {e}");
             }
 
             self.push_system_message(format!(

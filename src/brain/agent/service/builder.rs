@@ -296,8 +296,20 @@ pub struct AgentService {
     /// channels (future) to an approval card.
     pub(super) ssh_callback: Option<SshPasswordCallback>,
 
-    /// Working directory for tool execution (shared, mutable at runtime via /cd or agent NLP)
+    /// Global working directory. Retained as the SEED for per-session handles
+    /// and a fallback for callers without a session id; per-session isolation
+    /// lives in `session_working_dirs` so a background session's `cd` cannot
+    /// contaminate the foreground session's prompt or tools (#703).
     pub(super) working_directory: Arc<std::sync::RwLock<std::path::PathBuf>>,
+
+    /// Per-session working directory isolation (#703). Every session that runs
+    /// a turn gets its own `Arc<RwLock<PathBuf>>`, seeded from `working_directory`
+    /// on first use. Tool execution, the Runtime Info prompt line, recent-paths,
+    /// and the request cwd all resolve THIS session's handle — so two sessions in
+    /// different directories can run concurrently without leaking each other's
+    /// cwd. Mirrors the `session_providers` per-session pattern.
+    pub(super) session_working_dirs:
+        std::sync::RwLock<HashMap<Uuid, Arc<std::sync::RwLock<std::path::PathBuf>>>>,
 
     /// Brain path (~/.opencrabs/) for loading brain files
     pub(super) brain_path: Option<std::path::PathBuf>,
@@ -346,6 +358,7 @@ impl AgentService {
             message_queue_callback: None,
             sudo_callback: None,
             ssh_callback: None,
+            session_working_dirs: std::sync::RwLock::new(HashMap::new()),
             working_directory: Arc::new(std::sync::RwLock::new(
                 std::env::current_dir().unwrap_or_default(),
             )),
@@ -532,11 +545,16 @@ impl AgentService {
         let brain = self.live_system_brain()?;
         let model = self.provider_model_for_session(session_id);
         let provider = self.provider_name_for_session(session_id);
-        Some(
-            crate::brain::prompt_builder::override_runtime_model_provider(
-                &brain, &model, &provider,
-            ),
-        )
+        let brain = crate::brain::prompt_builder::override_runtime_model_provider(
+            &brain, &model, &provider,
+        );
+        // Working directory is per-session (#703): the brain rendered from the
+        // global cwd, so patch the line to THIS session's own directory or a
+        // background session's `cd` leaks into this prompt.
+        let wd = crate::brain::tools::error::collapse_home(
+            &self.get_working_directory_for_session(session_id),
+        );
+        Some(crate::brain::prompt_builder::override_runtime_working_directory(&brain, &wd))
     }
 
     /// Set maximum tool iterations
@@ -622,6 +640,59 @@ impl AgentService {
     /// Get a shared handle to the working directory (for tools that need to mutate it)
     pub fn shared_working_directory(&self) -> Arc<std::sync::RwLock<std::path::PathBuf>> {
         Arc::clone(&self.working_directory)
+    }
+
+    /// The per-session working-directory handle (#703), creating it lazily on
+    /// first use seeded from the global `working_directory`. Every session gets
+    /// its OWN `Arc`, so a `cd` in one session's tool loop mutates only that
+    /// session's cwd — never the global, never another session's. Tool
+    /// execution, the Runtime Info prompt line, and recent-paths all resolve
+    /// through this so concurrent sessions in different directories stay
+    /// isolated.
+    pub fn working_dir_handle_for_session(
+        &self,
+        session_id: Uuid,
+    ) -> Arc<std::sync::RwLock<std::path::PathBuf>> {
+        if let Some(handle) = self
+            .session_working_dirs
+            .read()
+            .expect("session_working_dirs lock poisoned")
+            .get(&session_id)
+        {
+            return Arc::clone(handle);
+        }
+        let seed = self.get_working_directory();
+        let mut map = self
+            .session_working_dirs
+            .write()
+            .expect("session_working_dirs lock poisoned");
+        // Re-check under the write lock: another turn may have inserted it
+        // between our read miss and acquiring the write lock.
+        Arc::clone(
+            map.entry(session_id)
+                .or_insert_with(|| Arc::new(std::sync::RwLock::new(seed))),
+        )
+    }
+
+    /// Current working directory for a specific session (#703). Falls back to
+    /// the global value for a session that has not run a turn yet.
+    pub fn get_working_directory_for_session(&self, session_id: Uuid) -> std::path::PathBuf {
+        self.working_dir_handle_for_session(session_id)
+            .read()
+            .expect("session working_directory lock poisoned")
+            .clone()
+    }
+
+    /// Set a session's working directory (#703). Called from a session switch,
+    /// `/cd`, or resume. Also updates the global so brand-new sessions seed from
+    /// the most recent foreground directory, but background sessions are never
+    /// affected because they hold their own handle.
+    pub fn set_working_directory_for_session(&self, session_id: Uuid, path: std::path::PathBuf) {
+        *self
+            .working_dir_handle_for_session(session_id)
+            .write()
+            .expect("session working_directory lock poisoned") = path.clone();
+        self.set_working_directory(path);
     }
 
     /// Set the brain path (~/.opencrabs/)

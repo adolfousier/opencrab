@@ -173,17 +173,22 @@ impl App {
         // shortcut skipped the sync exactly when the agent sat on ANOTHER
         // session's directory that happened to differ from the TUI's — the
         // footer said one repo while the prompt and tools ran in another.
+        // Seed the newly focused session's OWN cwd handle (#703) so the prompt
+        // and tools resolve THIS session's directory, not whatever the global
+        // last held. `set_working_directory_for_session` also refreshes the
+        // global seed for brand-new sessions.
         if let Some(ref dir_str) = session.working_directory {
             let path = std::path::PathBuf::from(dir_str);
             if path.is_dir() {
                 self.working_directory = path.clone();
-                self.agent_service.set_working_directory(path);
+                self.agent_service
+                    .set_working_directory_for_session(session.id, path);
             }
         } else {
-            // No persisted wd: pin the agent to the TUI-tracked directory so
+            // No persisted wd: pin this session to the TUI-tracked directory so
             // the previous session's wd can never leak into this one (#460).
             self.agent_service
-                .set_working_directory(self.working_directory.clone());
+                .set_working_directory_for_session(session.id, self.working_directory.clone());
         }
 
         self.current_session = Some(session.clone());
@@ -2484,10 +2489,17 @@ impl App {
         }
         self.is_processing = false;
         self.processing_started_at = None;
-        // A tool-driven cd during the turn changes the agent's shared wd
+        // A tool-driven cd during the turn changes the agent's per-session wd
         // without touching the TUI-tracked path; resync here so the footer
-        // shows where the agent actually is (#460).
-        let agent_wd = self.agent_service.get_working_directory();
+        // shows where the agent actually is (#460). Read THIS session's handle
+        // (#703), not the global, so a background session's cd never moves the
+        // footer.
+        let agent_wd = match self.current_session {
+            Some(ref session) => self
+                .agent_service
+                .get_working_directory_for_session(session.id),
+            None => self.agent_service.get_working_directory(),
+        };
         if agent_wd != self.working_directory {
             tracing::info!(
                 "TUI: working directory changed during turn: {} → {}",
