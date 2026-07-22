@@ -166,7 +166,7 @@ scraper = "0.27.0"
 htmd = "0.5.4"
 rust_xlsxwriter = "0.96.0"
 docx-rs = "0.4.20"
-printpdf = { version = "0.9.1", features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+printpdf = { version = "0.11.3", features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 
 [dev-dependencies]
 rstest = "0.25"
