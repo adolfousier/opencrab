@@ -40,20 +40,20 @@ fn split_is_noop_without_runtime_block() {
 // ── with_system / system_full ───────────────────────────────────────
 
 #[test]
-fn with_system_splits_and_system_full_reconstitutes_at_end() {
+fn with_system_keeps_whole_system_no_split() {
+    // #693: the #658 cache split is DISABLED — with_system stores the WHOLE
+    // system as one string (Runtime Info in its original place) and sets no
+    // suffix, so every provider sends a single-string system the model reliably
+    // calls tools with. The array-shaped 2-part system broke tool-calling.
     let req = LLMRequest::new("m", vec![]).with_system(BRAIN);
-    assert!(!req.system.as_ref().unwrap().contains("Runtime Info"));
-    assert!(req.system_suffix.as_ref().unwrap().contains("Current date"));
-
-    let full = req.system_full().unwrap();
-    // Runtime Info is now AFTER SOUL and AGENTS (option a).
-    let soul = full.find("SOUL").unwrap();
-    let agents = full.find("AGENTS").unwrap();
-    let runtime = full.find("Runtime Info").unwrap();
+    assert_eq!(req.system.as_deref(), Some(BRAIN));
     assert!(
-        soul < agents && agents < runtime,
-        "runtime info must be re-appended last"
+        req.system_suffix.is_none(),
+        "no runtime suffix — split is off"
     );
+    assert!(req.system.as_ref().unwrap().contains("Runtime Info"));
+    // system_full is the same single string.
+    assert_eq!(req.system_full().as_deref(), Some(BRAIN));
 }
 
 #[test]
@@ -103,7 +103,11 @@ fn qwen_provider() -> OpenAIProvider {
 }
 
 #[test]
-fn qwen_request_encodes_split_system_as_two_parts() {
+fn qwen_request_encodes_system_as_single_string() {
+    // #693: split disabled — to_openai_request emits the qwen system as a single
+    // STRING (not a 2-part array). qwen_body_transform later stamps cache_control
+    // as a 1-element array (the pre-#658 shape), but the encoder itself must not
+    // produce an array-shaped system, which is what broke tool-calling.
     let req = LLMRequest::new("qwen3.8-max-preview", vec![Message::user("hi")]).with_system(BRAIN);
     let encoded = qwen_provider().to_openai_request(req);
     let val = serde_json::to_value(&encoded).unwrap();
@@ -113,12 +117,13 @@ fn qwen_request_encodes_split_system_as_two_parts() {
         .iter()
         .find(|m| m["role"] == "system")
         .expect("system message");
-    let parts = sys["content"]
-        .as_array()
-        .expect("qwen system content is a 2-part array");
-    assert_eq!(parts.len(), 2);
-    assert!(parts[0]["text"].as_str().unwrap().contains("SOUL.md")); // stable
-    assert!(parts[1]["text"].as_str().unwrap().contains("Runtime Info")); // suffix
+    assert!(
+        sys["content"].is_string(),
+        "qwen system content must be a single string, not an array: {}",
+        sys["content"]
+    );
+    let s = sys["content"].as_str().unwrap();
+    assert!(s.contains("SOUL.md") && s.contains("Runtime Info"));
 }
 
 #[test]

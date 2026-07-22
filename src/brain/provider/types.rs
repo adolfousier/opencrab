@@ -166,14 +166,20 @@ impl LLMRequest {
         }
     }
 
-    /// Set system brain content. Splits the Runtime Info block out of the brain
-    /// into `system_suffix` so the large stable prefix caches across sessions
-    /// while the per-session runtime lines stay uncached (#658). A system string
-    /// without a Runtime Info block is stored verbatim as `system`.
+    /// Set system brain content as a SINGLE string.
+    ///
+    /// The #658 cache split (pulling the Runtime Info block into `system_suffix`
+    /// so the stable prefix caches) is DISABLED: it made providers send a 2-part
+    /// (array) system message, and OpenAI-compatible endpoints — qwen Model
+    /// Studio, modelscope, zhipu, and the other fallbacks — mishandle an
+    /// array-shaped system prompt and stop emitting tool calls, so the agent
+    /// narrated endlessly and never acted (#693). Sending the whole system as one
+    /// string restores the request shape the model reliably called tools with.
+    /// The prompt-cache hit is sacrificed for a working agent. `system_suffix`
+    /// stays `None` so every provider takes its single-string path.
     pub fn with_system(mut self, system: impl Into<String>) -> Self {
-        let (stable, suffix) = crate::brain::prompt_builder::split_runtime_suffix(&system.into());
-        self.system = Some(stable);
-        self.system_suffix = suffix;
+        self.system = Some(system.into());
+        self.system_suffix = None;
         self
     }
 
