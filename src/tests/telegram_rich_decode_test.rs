@@ -237,3 +237,55 @@ fn malformed_known_key_returns_none_not_panic() {
     let raw = json!({"unique_gift": {"gift": {}}});
     assert!(decode_rich_content(&raw).is_none());
 }
+
+// ── rich_message (sendRichMessage, Bot API 10.1) — #686 ──────────────────────
+
+#[test]
+fn rich_message_html_decodes_to_plain_text() {
+    // Peer OpenCrabs bots post via sendRichMessage `{html}`; teloxide leaves
+    // text() empty, so this must recover readable content, tags stripped and
+    // entities decoded.
+    let raw = json!({
+        "message_id": 10,
+        "rich_message": { "html": "<b>Quick data point</b> on phantom &amp; tool calls" }
+    });
+    let out = decode_rich_content(&raw).expect("rich_message html decodes");
+    assert_eq!(out, "Quick data point on phantom & tool calls");
+}
+
+#[test]
+fn rich_message_blocks_decodes_to_text() {
+    // The blocks input mode (our render_json AST): one line per top-level block,
+    // inline text (incl. nested bold) concatenated within a block.
+    let raw = json!({
+        "message_id": 11,
+        "rich_message": { "blocks": [
+            { "type": "heading", "level": 2, "content": [{"type": "text", "text": "Release"}] },
+            { "type": "paragraph", "content": [
+                {"type": "text", "text": "Body "},
+                {"type": "bold", "content": [{"type": "text", "text": "here"}]}
+            ]}
+        ]}
+    });
+    let out = decode_rich_content(&raw).expect("rich_message blocks decode");
+    assert_eq!(out, "Release\nBody here");
+}
+
+#[test]
+fn rich_message_with_caption_appends_caption() {
+    let raw = json!({
+        "message_id": 12,
+        "caption": "see thread",
+        "rich_message": { "html": "the data" }
+    });
+    let out = decode_rich_content(&raw).expect("decodes");
+    assert!(out.contains("the data") && out.contains("Caption: see thread"));
+}
+
+#[test]
+fn empty_rich_message_falls_through_to_none() {
+    // No html and no blocks (or empty ones) -> None, so the caller's raw-JSON
+    // safety net still applies rather than an empty string.
+    assert!(decode_rich_content(&json!({"rich_message": {}})).is_none());
+    assert!(decode_rich_content(&json!({"rich_message": {"blocks": []}})).is_none());
+}

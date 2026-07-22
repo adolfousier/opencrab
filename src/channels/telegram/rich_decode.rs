@@ -41,6 +41,8 @@ pub(crate) fn decode_rich_content(raw: &Value) -> Option<String> {
         decode_users_shared(v)
     } else if let Some(v) = raw.get("chat_shared") {
         decode_chat_shared(v)
+    } else if let Some(v) = raw.get("rich_message") {
+        decode_rich_message(v)
     } else {
         None
     }?;
@@ -48,6 +50,88 @@ pub(crate) fn decode_rich_content(raw: &Value) -> Option<String> {
         Some(c) if !c.trim().is_empty() => format!("{decoded}\nCaption: {c}"),
         _ => decoded,
     })
+}
+
+/// Decode a `rich_message` payload (`sendRichMessage`, Bot API 10.1) into
+/// readable text (#686). Peer OpenCrabs bots post via this, and teloxide leaves
+/// `text()`/`caption()` empty, so without this the content is lost or dumped as
+/// raw JSON. Two input modes, mirroring how we SEND: `{"html": "..."}` (markdown
+/// input mode) and `{"blocks": [...]}` (our `render_json` block AST). Returns
+/// `None` when neither carries text.
+fn decode_rich_message(v: &Value) -> Option<String> {
+    if let Some(html) = v.get("html").and_then(Value::as_str) {
+        let text = html_to_readable_text(html);
+        if !text.trim().is_empty() {
+            return Some(text);
+        }
+    }
+    if let Some(blocks) = v.get("blocks").and_then(Value::as_array) {
+        let text = collect_blocks_text(blocks);
+        if !text.trim().is_empty() {
+            return Some(text);
+        }
+    }
+    None
+}
+
+/// Strip HTML tags and decode the handful of entities Telegram's HTML mode
+/// uses, yielding plain readable text. Not a general HTML parser — the input is
+/// our own restricted rich-message HTML.
+fn html_to_readable_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .trim()
+        .to_string()
+}
+
+/// Extract readable text from a `render_json` block array: one line per
+/// top-level block, inline text concatenated within a block. Empty blocks
+/// (e.g. dividers with no text) are dropped.
+fn collect_blocks_text(blocks: &[Value]) -> String {
+    blocks
+        .iter()
+        .map(|b| {
+            let mut s = String::new();
+            gather_leaf_text(b, &mut s);
+            s
+        })
+        .filter(|s| !s.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Recursively gather `text` leaves from a block/inline value, walking the
+/// `content` / `blocks` / `items` / `rows` / `cells` nesting the `render_json`
+/// AST uses. Generic on purpose so a new block or inline variant still
+/// contributes its text rather than silently dropping.
+fn gather_leaf_text(v: &Value, out: &mut String) {
+    match v {
+        Value::Object(map) => {
+            if let Some(t) = map.get("text").and_then(Value::as_str) {
+                out.push_str(t);
+            }
+            for key in ["content", "blocks", "items", "rows", "cells"] {
+                if let Some(child) = map.get(key) {
+                    gather_leaf_text(child, out);
+                }
+            }
+        }
+        Value::Array(arr) => arr.iter().for_each(|it| gather_leaf_text(it, out)),
+        _ => {}
+    }
 }
 
 /// Checklist (Bot API 9.1): title plus one `[x]`/`[ ]` line per task. A task
