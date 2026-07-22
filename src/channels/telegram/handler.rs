@@ -460,30 +460,25 @@ pub(crate) async fn handle_message(
         // lecture, and never for the owner who is already allowed everywhere
         // (#708).
         if is_group {
-            let reply = if cfg.channels.telegram.is_owner(&user_id.to_string()) {
-                "🦀 You're the boss, already locked in everywhere. @mention me and let's build."
-                    .to_string()
-            } else {
-                match super::cowork::auto_register_to_group(user_id, msg.chat.id.0) {
-                    Ok(true) => {
-                        "🦀 Boom, you're on the crew for this group. @mention me and let's go."
-                            .to_string()
-                    }
-                    Ok(false) => {
-                        "🦀 You're already locked in here. @mention me and let's build.".to_string()
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Telegram: /start group register failed for user {} in chat {}: {e}",
-                            user_id,
-                            msg.chat.id.0
-                        );
-                        "🦀 Something jammed registering you. Try /start again in a sec."
-                            .to_string()
-                    }
+            // The owner is already allowed everywhere and knows how this works;
+            // Telegram auto-fires /start from them when the bot is added, so a
+            // reply would just be noise. Onboarding copy is for NEW members.
+            if cfg.channels.telegram.is_owner(&user_id.to_string()) {
+                return Ok(());
+            }
+            let reply = match super::cowork::auto_register_to_group(user_id, msg.chat.id.0) {
+                Ok(true) => "🦀 You're on the crew. @mention me anytime and let's cook. 🔥",
+                Ok(false) => "🦀 Already got you on the roster. @mention me and let's go.",
+                Err(e) => {
+                    tracing::warn!(
+                        "Telegram: /start group register failed for user {} in chat {}: {e}",
+                        user_id,
+                        msg.chat.id.0
+                    );
+                    "🦀 Ugh, that didn't stick. Hit /start again in a sec."
                 }
             };
-            message_in_thread(&bot, msg.chat.id, thread_id, reply).await?;
+            message_in_thread(&bot, msg.chat.id, thread_id, reply.to_string()).await?;
             tracing::info!(
                 "Telegram: /start register in group chat {} from user {} ({})",
                 msg.chat.id.0,
@@ -493,10 +488,11 @@ pub(crate) async fn handle_message(
             return Ok(());
         }
 
-        // DM /start: self-host onboarding — show the user their own id so the
-        // owner can seed the global allowlist on first setup.
+        // DM /start NEVER auto-registers (#708): DM access is invite-only. Return
+        // the sender's own id so they can share it with the bot owner (or, if they
+        // run the bot themselves, add it to config.toml).
         let reply = format!(
-            "OpenCrabs Telegram Bot\n\nYour user ID: {}\n\nAdd this ID to your config.toml under [channels.telegram] allowed_users to get started.",
+            "🦀 Your Telegram ID: {}\n\nDMs are invite-only. Share this ID with the bot owner so they can add you.\n(Running this bot yourself? Add it under [channels.telegram] allowed_users in config.toml.)",
             user_id
         );
         message_in_thread(&bot, msg.chat.id, thread_id, reply).await?;
@@ -551,16 +547,32 @@ pub(crate) async fn handle_message(
                 // members know we're here and how to onboard (#707). The per-group
                 // ACL is opt-in via /start, so the welcome nudges exactly that.
                 if telegram_state.bot_user_id().await == Some(uid as i64) {
-                    let welcome = "🦀 Look who just crawled in. I'M IN, let's build.\n\n\
-                        👉 New crew: hit /start and I'll lock your ID into this group so you \
-                        can @mention me anytime.\n\
-                        (Tip: make me an admin and flip off privacy mode via @BotFather so I \
-                        catch every message, not just mentions.)";
+                    let mut welcome =
+                        "🦀 BOOM. Look who just crawled in. OpenCrabs is in the building.\n\n\
+                        New fellas: smash /start and I'll get you on the crew. Then just \
+                        @mention me and let's cook. 🔥"
+                            .to_string();
+                    // The cowork deep link requests admin, so we usually land
+                    // promoted (#709). Only nudge for promotion when we actually
+                    // aren't admin (added manually without rights).
+                    let is_admin = matches!(
+                        bot.get_chat_member(teloxide::types::ChatId(chat_id), member.id)
+                            .await
+                            .map(|m| m.status()),
+                        Ok(teloxide::types::ChatMemberStatus::Administrator)
+                            | Ok(teloxide::types::ChatMemberStatus::Owner)
+                    );
+                    if !is_admin {
+                        welcome.push_str(
+                            "\n\n(Bump me to admin so I hear the whole room, not just the \
+                            shout-outs.)",
+                        );
+                    }
                     let _ = crate::channels::telegram::send::message_in_thread(
                         &bot,
                         teloxide::types::ChatId(chat_id),
                         None,
-                        welcome.to_string(),
+                        welcome,
                     )
                     .await;
                 }
