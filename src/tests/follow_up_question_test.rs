@@ -83,7 +83,11 @@ async fn degrades_without_question_callback() {
 
     // #716: instead of a hard error, the tool succeeds and hands back the
     // question as plain text for the agent to relay in its reply.
-    assert!(result.success, "should degrade, not error: {:?}", result.error);
+    assert!(
+        result.success,
+        "should degrade, not error: {:?}",
+        result.error
+    );
     assert!(result.output.contains("Pick one"));
     assert!(result.output.contains("1. a"));
     assert!(result.output.contains("2. b"));

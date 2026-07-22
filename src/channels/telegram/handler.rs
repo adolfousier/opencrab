@@ -454,16 +454,32 @@ pub(crate) async fn handle_message(
 
         let is_group = !matches!(msg.chat.kind, ChatKind::Private { .. });
 
-        // In a group, /start is the ONE-TAP onboarding: register the sender into
-        // this group's own allowlist (channels.telegram.groups.<chat_id>.
-        // allowed_users) and confirm. No config.toml editing, no global-allowlist
-        // lecture, and never for the owner who is already allowed everywhere
-        // (#708).
+        // In a group, /start self-registration is gated to OPEN groups (#717):
+        // only a group the owner explicitly opened (via /cowork or open=true) auto-
+        // adds members. Secure by default everywhere else.
         if is_group {
             // The owner is already allowed everywhere and knows how this works;
             // Telegram auto-fires /start from them when the bot is added, so a
             // reply would just be noise. Onboarding copy is for NEW members.
             if cfg.channels.telegram.is_owner(&user_id.to_string()) {
+                return Ok(());
+            }
+            let group_open = cfg
+                .channels
+                .telegram
+                .groups
+                .get(&msg.chat.id.0.to_string())
+                .map(|g| g.open)
+                .unwrap_or(false);
+            if !group_open {
+                // Not an open group: never self-register (secure by default).
+                // Hand back the id so the owner can add them or open the group.
+                let reply = format!(
+                    "🦀 Your Telegram ID: {}\n\nThis group isn't open yet. Ask the owner to run \
+                     /cowork here, or to add your ID.",
+                    user_id
+                );
+                message_in_thread(&bot, msg.chat.id, thread_id, reply).await?;
                 return Ok(());
             }
             let reply = match super::cowork::auto_register_to_group(user_id, msg.chat.id.0) {
@@ -480,7 +496,7 @@ pub(crate) async fn handle_message(
             };
             message_in_thread(&bot, msg.chat.id, thread_id, reply.to_string()).await?;
             tracing::info!(
-                "Telegram: /start register in group chat {} from user {} ({})",
+                "Telegram: /start register in open group chat {} from user {} ({})",
                 msg.chat.id.0,
                 user_id,
                 user.first_name
@@ -578,13 +594,19 @@ pub(crate) async fn handle_message(
                 }
             }
 
-            // Auto-register any non-bot member who joins a group the bot is in,
-            // into THAT group's allowlist (group-scoped ACL, never DM). The old
-            // `is_cowork_group` gate depended on a flag set only by the
-            // `/start cowork_<id>` handoff, which Telegram doesn't deliver, so
-            // joiners were silently never registered. Adding the bot to a group is
-            // an intentional act; members who join after should just work.
-            if !is_bot {
+            // Auto-register a joining member into the group's allowlist ONLY when
+            // the owner has opened the group (open=true via /cowork or config,
+            // #717). Secure by default: in a non-open group a joiner is not
+            // auto-added. open=true already allows every member; the allowlist
+            // entry just keeps a visible roster of who's in.
+            let group_open = cfg
+                .channels
+                .telegram
+                .groups
+                .get(&chat_id.to_string())
+                .map(|g| g.open)
+                .unwrap_or(false);
+            if !is_bot && group_open {
                 match super::cowork::auto_register_to_group(uid as i64, chat_id) {
                     Ok(true) => {
                         tracing::info!(
