@@ -578,8 +578,13 @@ pub(crate) async fn handle_message(
                 }
             }
 
-            // Auto-register non-bot members in cowork groups (group-scoped ACL)
-            if !is_bot && super::cowork::is_cowork_group(chat_id, &telegram_state).await {
+            // Auto-register any non-bot member who joins a group the bot is in,
+            // into THAT group's allowlist (group-scoped ACL, never DM). The old
+            // `is_cowork_group` gate depended on a flag set only by the
+            // `/start cowork_<id>` handoff, which Telegram doesn't deliver, so
+            // joiners were silently never registered. Adding the bot to a group is
+            // an intentional act; members who join after should just work.
+            if !is_bot {
                 match super::cowork::auto_register_to_group(uid as i64, chat_id) {
                     Ok(true) => {
                         tracing::info!(
