@@ -361,8 +361,8 @@ impl AgentService {
         // Effective question callback: per-call override wins over the
         // service-level fallback. Channels with native button surfaces
         // pass their own callback per message; everyone else passes
-        // None and the `follow_up_question` tool returns a graceful
-        // "no interactive surface" error.
+        // None and the `follow_up_question` tool degrades gracefully,
+        // returning the question as plain text to relay (#716).
         let question_callback: Option<QuestionCallback> =
             override_question_callback.or_else(|| self.question_callback.clone());
 

@@ -1,9 +1,11 @@
 //! Tests for the `follow_up_question` tool: callback invocation,
-//! validation (empty options, oversize, duplicates), and the
-//! no-callback graceful error.
+//! validation (empty options, oversize, duplicates), and graceful
+//! degradation to plain text when no interactive callback is present.
 
 use crate::brain::agent::{FollowUpQuestionInfo, QuestionCallback};
-use crate::brain::tools::follow_up_question::{FollowUpQuestionTool, MAX_OPTIONS};
+use crate::brain::tools::follow_up_question::{
+    FollowUpQuestionTool, MAX_OPTIONS, render_plaintext_question,
+};
 use crate::brain::tools::{Tool, ToolExecutionContext};
 use serde_json::json;
 use std::sync::Arc;
@@ -64,9 +66,9 @@ async fn invokes_callback_exactly_once() {
 }
 
 #[tokio::test]
-async fn errors_without_question_callback() {
+async fn degrades_without_question_callback() {
     let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
-    // No callback installed.
+    // No callback installed (cron/webhook/A2A surface).
 
     let result = FollowUpQuestionTool
         .execute(
@@ -79,12 +81,22 @@ async fn errors_without_question_callback() {
         .await
         .expect("execute");
 
-    assert!(!result.success);
-    let err = result.error.unwrap_or_default();
-    assert!(
-        err.contains("does not support follow_up_question"),
-        "error should explain the channel has no surface, got: {err}"
-    );
+    // #716: instead of a hard error, the tool succeeds and hands back the
+    // question as plain text for the agent to relay in its reply.
+    assert!(result.success, "should degrade, not error: {:?}", result.error);
+    assert!(result.output.contains("Pick one"));
+    assert!(result.output.contains("1. a"));
+    assert!(result.output.contains("2. b"));
+    assert!(result.output.to_lowercase().contains("plain text"));
+}
+
+#[test]
+fn plaintext_render_numbers_options() {
+    let out = render_plaintext_question("Which environment?", &["dev".into(), "prod".into()]);
+    assert!(out.contains("Which environment?"));
+    assert!(out.contains("1. dev"));
+    assert!(out.contains("2. prod"));
+    assert!(!out.ends_with('\n'), "trailing newline should be trimmed");
 }
 
 #[tokio::test]

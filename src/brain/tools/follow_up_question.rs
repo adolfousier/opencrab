@@ -124,11 +124,13 @@ impl Tool for FollowUpQuestionTool {
         let cb = match context.question_callback.as_ref() {
             Some(c) => c.clone(),
             None => {
-                return Ok(ToolResult::error(
-                    "This channel does not support follow_up_question (no interactive surface). \
-                     Ask the question in plain text instead."
-                        .into(),
-                ));
+                // No interactive surface (cron, webhook, A2A): degrade gracefully
+                // (#716) instead of hard-erroring. Hand the agent the question as
+                // plain text so it relays it in its reply and doesn't burn the
+                // call on an error it then has to work around every time.
+                return Ok(ToolResult::success(render_plaintext_question(
+                    question, &options,
+                )));
             }
         };
 
@@ -146,4 +148,20 @@ impl Tool for FollowUpQuestionTool {
             ))),
         }
     }
+}
+
+/// Render a question + numbered options as plain text for surfaces with no
+/// interactive callback (cron, webhook, A2A). The agent relays this in its reply
+/// instead of the tool hard-erroring (#716). Extracted for direct testing.
+pub(crate) fn render_plaintext_question(question: &str, options: &[String]) -> String {
+    let mut out = String::from(
+        "No interactive buttons on this surface. Ask the user this question in plain text and \
+         wait for their reply:\n\n",
+    );
+    out.push_str(question);
+    out.push('\n');
+    for (i, opt) in options.iter().enumerate() {
+        out.push_str(&format!("{}. {}\n", i + 1, opt));
+    }
+    out.trim_end().to_string()
 }
