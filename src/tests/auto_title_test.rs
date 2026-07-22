@@ -210,3 +210,79 @@ mod extract_channel_prefix {
         assert_eq!(AgentService::extract_channel_prefix(""), "");
     }
 }
+
+mod strip_channel_preamble {
+    use super::*;
+
+    #[test]
+    fn plain_message_unchanged() {
+        assert_eq!(
+            AgentService::strip_channel_preamble("Fix the login bug"),
+            "Fix the login bug"
+        );
+    }
+
+    #[test]
+    fn strips_single_channel_block() {
+        let input = "[Channel: Telegram (chat_id: -100123) — auto-delivery]\n\nFix the login bug";
+        assert_eq!(
+            AgentService::strip_channel_preamble(input),
+            "Fix the login bug"
+        );
+    }
+
+    #[test]
+    fn strips_multiple_preamble_blocks() {
+        let input = "[Channel: Telegram (chat_id: -100123) — auto-delivery]\n\n\
+                      [Reaction directive: use <<react:EMOJI>>]\n\n\
+                      [Recent group history (5 messages):\n[13:57] User: hello\n— end history —]\n\n\
+                      Fix the login bug";
+        assert_eq!(
+            AgentService::strip_channel_preamble(input),
+            "Fix the login bug"
+        );
+    }
+
+    #[test]
+    fn handles_nested_brackets_in_history() {
+        // Group history lines contain [HH:MM] timestamps inside the outer block
+        let input =
+            "[Recent group history:\n[13:57] Alice: hi\n[14:02] Bob: hey\n— end —]\n\nDeploy now";
+        assert_eq!(AgentService::strip_channel_preamble(input), "Deploy now");
+    }
+
+    #[test]
+    fn preserves_user_bracket_text_after_preamble() {
+        let input = "[Channel: Telegram]\n\n[BUG] Fix the crash";
+        assert_eq!(
+            AgentService::strip_channel_preamble(input),
+            "[BUG] Fix the crash"
+        );
+    }
+
+    #[test]
+    fn unmatched_bracket_stops_stripping() {
+        let input = "[unclosed block\nFix the bug";
+        assert_eq!(
+            AgentService::strip_channel_preamble(input),
+            "[unclosed block\nFix the bug"
+        );
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(AgentService::strip_channel_preamble(""), "");
+    }
+
+    #[test]
+    fn only_preamble_returns_empty() {
+        let input = "[Channel: Telegram]\n\n[Reaction directive: stuff]";
+        assert_eq!(AgentService::strip_channel_preamble(input), "");
+    }
+
+    #[test]
+    fn trims_leading_whitespace_after_strip() {
+        let input = "[Channel: Telegram]\n\n\n   Fix the bug";
+        assert_eq!(AgentService::strip_channel_preamble(input), "Fix the bug");
+    }
+}

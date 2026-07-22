@@ -334,6 +334,60 @@ impl AgentService {
         String::new()
     }
 
+    /// Strip injected channel preamble blocks from message text before it
+    /// reaches the title-generation prompt. Channels prepend `[Channel: …]`,
+    /// `[Reaction directive: …]`, `[Recent group history …]`, and similar
+    /// bracket-delimited blocks for LLM context; the title LLM should only
+    /// see the actual user text. Only strips leading blocks whose opening
+    /// matches a known preamble prefix, so user text like `[BUG] Fix crash`
+    /// is preserved. Handles nested brackets and multi-line spans. #688
+    pub(crate) fn strip_channel_preamble(input: &str) -> String {
+        /// Known preamble block prefixes injected by channel handlers.
+        const PREAMBLE_PREFIXES: &[&str] = &[
+            "[Channel:",
+            "[Reaction directive:",
+            "[Recent group history",
+            "[Telegram group",
+            "[Telegram DM",
+            "[Discord",
+            "[Slack",
+            "[WhatsApp",
+            "[Trello",
+            "[System:",
+        ];
+
+        let mut s = input.trim_start();
+        loop {
+            // Only strip blocks that match a known preamble prefix.
+            if !PREAMBLE_PREFIXES.iter().any(|p| s.starts_with(p)) {
+                break;
+            }
+            // Walk to the matching closing bracket, tracking depth so
+            // nested brackets (e.g. group-history lines like "[13:57]")
+            // don't terminate the block early.
+            let mut depth = 0i32;
+            let mut end: Option<usize> = None;
+            for (i, ch) in s.char_indices() {
+                match ch {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(i + ch.len_utf8());
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            match end {
+                Some(pos) => s = s[pos..].trim_start(),
+                None => break, // unmatched bracket, stop stripping
+            }
+        }
+        s.to_string()
+    }
+
     /// Post-process an LLM-generated auto-title: trim whitespace, strip
     /// surrounding quotes, and cap at 60 characters.
     pub(crate) fn clean_auto_title(raw: &str) -> String {

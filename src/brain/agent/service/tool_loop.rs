@@ -542,7 +542,17 @@ impl AgentService {
         {
             let title_provider = self.provider_for_session(session_id);
             let title_model = model_name.clone();
-            let title_msg = user_message.chars().take(500).collect::<String>();
+            // Use the clean display text for title generation when available.
+            // Channels inject preamble blocks ([Channel: …], [Reaction
+            // directive: …], [Recent group history …]) into user_message for
+            // LLM context, but the title LLM should only see the actual user
+            // text. display_text_override is already the clean message;
+            // strip_channel_preamble is defense-in-depth for the fallback. #688
+            let title_source = display_text_override
+                .as_deref()
+                .map(Self::strip_channel_preamble)
+                .unwrap_or_else(|| Self::strip_channel_preamble(&user_message));
+            let title_msg = title_source.chars().take(500).collect::<String>();
             let session_svc = SessionService::new(self.context.clone());
             // Capture the channel BEFORE spawn so the new title can fan
             // out to the TUI/footer the moment it lands in DB. Without
