@@ -2624,15 +2624,18 @@ impl OpenAIProvider {
             });
         }
 
-        // Moonshot kimi (direct and via opencode.ai/zen/go) requires a
-        // `reasoning_content` field on every assistant tool_call message
-        // when thinking mode is on upstream. Detect kimi-via-opencode-or-
-        // moonshot base URLs and inject an empty string when we don't have
-        // a real Thinking block to ship — otherwise Moonshot 400s with
-        // "thinking is enabled but reasoning_content is missing in
-        // assistant tool call message at index N". Other providers ignore
-        // unknown fields.
-        let needs_reasoning_content = needs_reasoning_content_for(&self.base_url, &request.model);
+        // preserve_thinking providers (Moonshot kimi AND qwen Model Studio /
+        // DashScope) require a `reasoning_content` field on every assistant
+        // tool_call message when thinking is on upstream, else they 400 with
+        // "thinking is enabled but reasoning_content is missing in assistant
+        // tool call message at index N". When we have no real Thinking block to
+        // ship (a legacy DB row, or a turn that yielded no reasoning) inject a
+        // placeholder so the request still validates. This MUST match the
+        // resume-side hoisting gate (`preserves_thinking`) — using the
+        // Moonshot-only `needs_reasoning_content_for` here left qwen unprotected
+        // and 400ing on any reasoning-less assistant tool_call message (#725).
+        // Real reasoning is always preferred; the placeholder is only a fallback.
+        let needs_reasoning_content = preserves_thinking(Some(&self.base_url), &request.model);
 
         // Add conversation messages
         for msg in request.messages {
