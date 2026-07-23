@@ -15,6 +15,18 @@ use tokio::sync::Mutex;
 
 use crate::config::BrowserConfig as ConfigBrowserConfig;
 
+/// Result of closing a browser page (#739). Lets `browser_close` report the
+/// truth instead of treating a failed close as "nothing to close".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseOutcome {
+    /// A tab was open and the CDP close confirmed.
+    Closed,
+    /// No tab was open for this name — idempotent no-op.
+    NothingOpen,
+    /// A tab was open but the CDP close did not confirm (may already be gone).
+    Failed,
+}
+
 /// Shared browser manager. Clone-safe via inner `Arc`.
 #[derive(Clone)]
 pub struct BrowserManager {
@@ -511,36 +523,44 @@ impl BrowserManager {
         Some(("image/png".to_string(), b64))
     }
 
-    /// Close a named page session.
+    /// Close a named page session and report a validated outcome (#739).
     ///
     /// Removes the Page handle from the HashMap AND issues
     /// `Target.closeTarget` over CDP so the actual Chrome tab closes —
     /// dropping the Arc-wrapped Page alone may not trigger the close on
-    /// chromiumoxide's side. Returns true if a session by that name
-    /// existed; the CDP close itself is best-effort and logged on
-    /// failure (the tab may have already been closed externally).
-    pub async fn close_page(&self, name: &str) -> bool {
+    /// chromiumoxide's side. The handle is dropped from the map either way, so
+    /// the next automation gets a fresh page even if the OS tab lingered —
+    /// keeping transitions between many browser tasks smooth. Unlike the old
+    /// bool (which returned true whenever an entry existed, hiding failures),
+    /// this distinguishes closed / nothing-open / failed so `browser_close`
+    /// can tell the agent the truth.
+    pub async fn close_page(&self, name: &str) -> CloseOutcome {
         // Take the page out of the HashMap while holding the lock briefly.
         let removed = {
             let mut inner = self.inner.lock().await;
             inner.pages.remove(name)
         };
-        match removed {
-            Some(page) => {
-                if let Err(e) = page.close().await {
-                    tracing::warn!(
-                        "browser: CDP close_target failed for page '{name}' \
-                         (tab may already be closed externally): {e}"
-                    );
-                }
-                true
+        let Some(page) = removed else {
+            return CloseOutcome::NothingOpen;
+        };
+        match page.close().await {
+            Ok(_) => CloseOutcome::Closed,
+            Err(e) => {
+                // The tab may already have been closed externally (still a
+                // clean state for us), or the CDP call genuinely failed. Either
+                // way our handle is gone; report Failed so the caller does not
+                // claim a confirmed close.
+                tracing::warn!(
+                    "browser: CDP close_target failed for page '{name}' \
+                     (tab may already be closed externally): {e}"
+                );
+                CloseOutcome::Failed
             }
-            None => false,
         }
     }
 
-    /// Close the page for a given agent session.
-    pub async fn close_page_for_session(&self, session_id: uuid::Uuid) -> bool {
+    /// Close the page for a given agent session (#739).
+    pub async fn close_page_for_session(&self, session_id: uuid::Uuid) -> CloseOutcome {
         self.close_page(&Self::page_name_for_session(session_id))
             .await
     }

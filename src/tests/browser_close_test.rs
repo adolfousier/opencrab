@@ -13,7 +13,7 @@
 
 #![cfg(feature = "browser")]
 
-use crate::brain::tools::browser::{BrowserCloseTool, BrowserManager};
+use crate::brain::tools::browser::{BrowserCloseTool, BrowserManager, CloseOutcome};
 use crate::brain::tools::{Tool, ToolExecutionContext};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -75,25 +75,27 @@ async fn dispatch_with_no_session_returns_idempotent_success() {
 }
 
 #[tokio::test]
-async fn close_page_for_unknown_name_returns_false() {
-    // Lower-level invariant — `close_page` returns false when the
-    // name isn't in the HashMap so callers can distinguish
-    // "actually closed something" from "no-op".
+async fn close_page_for_unknown_name_returns_nothing_open() {
+    // Lower-level invariant — `close_page` reports NothingOpen when the
+    // name isn't in the HashMap so callers can distinguish "actually
+    // closed something" from "no-op" from "failed" (#739).
     let mgr = BrowserManager::new(Default::default());
-    let closed = mgr.close_page("session-does-not-exist").await;
-    assert!(
-        !closed,
-        "close_page must return false for unknown session names"
+    let outcome = mgr.close_page("session-does-not-exist").await;
+    assert_eq!(
+        outcome,
+        CloseOutcome::NothingOpen,
+        "close_page must report NothingOpen for unknown session names"
     );
 }
 
 #[tokio::test]
-async fn close_page_for_unknown_session_uuid_returns_false() {
-    // Same invariant via the session-keyed wrapper.
+async fn close_page_for_unknown_session_uuid_returns_nothing_open() {
+    // Same invariant via the session-keyed wrapper (#739).
     let mgr = BrowserManager::new(Default::default());
-    let closed = mgr.close_page_for_session(Uuid::new_v4()).await;
-    assert!(
-        !closed,
-        "close_page_for_session must return false when no page is open"
+    let outcome = mgr.close_page_for_session(Uuid::new_v4()).await;
+    assert_eq!(
+        outcome,
+        CloseOutcome::NothingOpen,
+        "close_page_for_session must report NothingOpen when no page is open"
     );
 }

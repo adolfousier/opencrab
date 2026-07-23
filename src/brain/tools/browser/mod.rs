@@ -27,7 +27,7 @@ pub(crate) use eval::cap_eval_output;
 // (src/tests/browser_find_test.rs).
 #[cfg(test)]
 pub(crate) use find::build_find_js;
-pub use manager::BrowserManager;
+pub use manager::{BrowserManager, CloseOutcome};
 pub use navigate::BrowserNavigateTool;
 pub use screenshot::BrowserScreenshotTool;
 pub use type_text::BrowserTypeTool;

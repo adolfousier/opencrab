@@ -59,8 +59,12 @@ async fn test_list_pages_empty() {
 
 #[tokio::test]
 async fn test_close_nonexistent() {
+    use crate::brain::tools::browser::CloseOutcome;
     let mgr = BrowserManager::new(Default::default());
-    assert!(!mgr.close_page("nonexistent").await);
+    assert_eq!(
+        mgr.close_page("nonexistent").await,
+        CloseOutcome::NothingOpen
+    );
 }
 
 #[test]

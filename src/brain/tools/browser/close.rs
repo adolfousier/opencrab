@@ -53,20 +53,27 @@ impl Tool for BrowserCloseTool {
     }
 
     async fn execute(&self, _input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
-        let closed = self
+        use super::manager::CloseOutcome;
+        match self
             .manager
             .close_page_for_session(context.session_id)
-            .await;
-        if closed {
-            Ok(ToolResult::success(
+            .await
+        {
+            CloseOutcome::Closed => Ok(ToolResult::success(
                 "Browser tab closed for this session.".to_string(),
-            ))
-        } else {
-            // Idempotent: returning success when there was nothing to
-            // close avoids the agent thinking it failed and retrying.
-            Ok(ToolResult::success(
+            )),
+            // Idempotent: nothing to close is a clean success, not an error, so
+            // the agent doesn't retry.
+            CloseOutcome::NothingOpen => Ok(ToolResult::success(
                 "No browser tab was open for this session — nothing to close.".to_string(),
-            ))
+            )),
+            // The handle was dropped so the next automation gets a fresh tab,
+            // but the CDP close was not confirmed — report it truthfully (#739).
+            CloseOutcome::Failed => Ok(ToolResult::success(
+                "Browser tab detached for this session; the OS tab may linger (close not \
+                 confirmed). The next browser action will open a fresh tab."
+                    .to_string(),
+            )),
         }
     }
 }
