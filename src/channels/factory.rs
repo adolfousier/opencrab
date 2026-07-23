@@ -101,6 +101,18 @@ impl ChannelFactory {
         &self,
         message_queue_callback: Option<crate::brain::agent::MessageQueueCallback>,
     ) -> Arc<AgentService> {
+        self.create_agent_service_full(message_queue_callback, None)
+            .await
+    }
+
+    /// Like [`create_agent_service_with_queue`](Self::create_agent_service_with_queue)
+    /// but also wires the background-task enqueue producer (#722) so a channel can
+    /// resume a session when a detached long command finishes.
+    pub async fn create_agent_service_full(
+        &self,
+        message_queue_callback: Option<crate::brain::agent::MessageQueueCallback>,
+        message_enqueue_callback: Option<crate::brain::agent::service::MessageEnqueueCallback>,
+    ) -> Arc<AgentService> {
         let config = self.config_rx.borrow().clone();
         let mut builder =
             AgentService::new(self.provider.clone(), self.service_context.clone(), &config)
@@ -129,6 +141,10 @@ impl ChannelFactory {
 
         if message_queue_callback.is_some() {
             builder = builder.with_message_queue_callback(message_queue_callback);
+        }
+
+        if message_enqueue_callback.is_some() {
+            builder = builder.with_message_enqueue_callback(message_enqueue_callback);
         }
 
         Arc::new(builder)

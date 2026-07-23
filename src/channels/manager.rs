@@ -144,10 +144,27 @@ impl ChannelManager {
                     // Wire the reaction queue so a mid-turn reaction is injected
                     // into the running loop (#302 Stage 2).
                     let reaction_cb = self.telegram_state.reaction_queue_callback();
+                    // Background-task resume producer (#722): filled with a weak
+                    // ref to the agent after it's built (can't capture it at
+                    // creation), so a finished detached command resumes the chat.
+                    let agent_holder: std::sync::Arc<
+                        std::sync::Mutex<
+                            Option<std::sync::Weak<crate::brain::agent::AgentService>>,
+                        >,
+                    > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                    let enqueue_cb = crate::channels::telegram::resume::build_enqueue_callback(
+                        self.telegram_state.clone(),
+                        agent_holder.clone(),
+                    );
+                    let tg_agent_service = self
+                        .channel_factory
+                        .create_agent_service_full(Some(reaction_cb), Some(enqueue_cb))
+                        .await;
+                    if let Ok(mut h) = agent_holder.lock() {
+                        *h = Some(std::sync::Arc::downgrade(&tg_agent_service));
+                    }
                     let agent = crate::channels::telegram::TelegramAgent::new(
-                        self.channel_factory
-                            .create_agent_service_with_queue(Some(reaction_cb))
-                            .await,
+                        tg_agent_service,
                         self.channel_factory.service_context(),
                         self.channel_factory.shared_session_id(),
                         self.telegram_state.clone(),

@@ -19,6 +19,54 @@ use teloxide::types::{MessageId, ParseMode};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+/// Build the background-task enqueue producer for Telegram (#722).
+///
+/// When a detached long command finishes, this resumes the session by delivering
+/// a turn to its chat via `resume_session` (full streaming pipeline). The agent
+/// handle can't be captured at service-creation time (it's being built), so a
+/// weak holder filled afterwards breaks the cycle; on call we upgrade it.
+pub(crate) fn build_enqueue_callback(
+    state: Arc<TelegramState>,
+    agent_holder: Arc<std::sync::Mutex<Option<std::sync::Weak<AgentService>>>>,
+) -> crate::brain::agent::service::MessageEnqueueCallback {
+    Arc::new(move |session_id, msg| {
+        let state = state.clone();
+        let agent_holder = agent_holder.clone();
+        tokio::spawn(async move {
+            let Some(chat_id) = state.session_chat(session_id).await else {
+                tracing::warn!("[bg-resume] telegram: no chat for session {session_id}; dropping");
+                return;
+            };
+            let Some(bot) = state.bot().await else {
+                tracing::warn!("[bg-resume] telegram: bot not available; dropping resume");
+                return;
+            };
+            let Some(agent) = agent_holder
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().and_then(|w| w.upgrade()))
+            else {
+                tracing::warn!("[bg-resume] telegram: agent gone; dropping resume");
+                return;
+            };
+            let thread_id = super::send::latest_thread_id_for_chat(chat_id).await;
+            if let Err(e) = resume_session(
+                bot,
+                teloxide::types::ChatId(chat_id),
+                thread_id,
+                session_id,
+                msg.context_text,
+                agent,
+                state,
+            )
+            .await
+            {
+                tracing::warn!("[bg-resume] telegram resume_session failed: {e}");
+            }
+        });
+    })
+}
+
 /// Resume an interrupted session with full streaming (typing, tool messages, edit loop).
 /// Called from ui.rs on startup when pending Telegram requests are detected.
 pub(crate) async fn resume_session(
