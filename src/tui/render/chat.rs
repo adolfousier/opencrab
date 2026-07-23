@@ -56,18 +56,15 @@ pub(crate) fn anchored_scroll_offset(
     )
 }
 
-/// Live-turn spinner suffix (#741). Pure so it can be tested directly.
+/// Live-turn spinner suffix. Pure so it can be tested directly.
 ///
 /// `turn_tokens` is the whole turn's streamed output (reasoning + completion
 /// text across every tool iteration), so it is labeled "this turn" — it is NOT
 /// the size of the current thought, and pairing the bare number with
-/// "is thinking..." made it read that way. `ctx` is (used, max) context tokens
-/// when known, rendered as the same `ctx: X/Y Z%` footer the Telegram flow uses.
-pub(crate) fn format_turn_spinner_meta(
-    elapsed_secs: u64,
-    turn_tokens: u32,
-    ctx: Option<(u32, u32)>,
-) -> Option<String> {
+/// "is thinking..." made it read that way (#741). The ctx budget is
+/// deliberately NOT shown here: it already lives in the footer under the input,
+/// so repeating it on the spinner was redundant (#744).
+pub(crate) fn format_turn_spinner_meta(elapsed_secs: u64, turn_tokens: u32) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if elapsed_secs > 0 {
         parts.push(format!("{elapsed_secs}s"));
@@ -75,17 +72,7 @@ pub(crate) fn format_turn_spinner_meta(
     if turn_tokens > 0 {
         parts.push(format!("{turn_tokens} tok this turn"));
     }
-    if let Some((used, max)) = ctx {
-        parts.push(crate::utils::string::format_ctx_footer(used, max, None));
-    }
     (!parts.is_empty()).then(|| format!(" ({})", parts.join(" · ")))
-}
-
-/// The `(used, max)` context pair for [`format_turn_spinner_meta`], or `None`
-/// until the first real token count lands.
-fn spinner_ctx(app: &App) -> Option<(u32, u32)> {
-    app.last_input_tokens
-        .map(|used| (used, app.context_max_tokens))
 }
 
 /// Render the chat messages
@@ -625,9 +612,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(Color::Rgb(215, 100, 20)),
             ),
         ];
-        if let Some(meta) =
-            format_turn_spinner_meta(elapsed, app.streaming_output_tokens, spinner_ctx(app))
-        {
+        if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
             spans.push(Span::styled(meta, Style::default().fg(Color::DarkGray)));
         }
         lines.push(Line::from(spans));
@@ -686,9 +671,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(Color::Rgb(215, 100, 20)),
             ),
         ];
-        if let Some(meta) =
-            format_turn_spinner_meta(elapsed, app.streaming_output_tokens, spinner_ctx(app))
-        {
+        if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
             header_spans.push(Span::styled(meta, Style::default().fg(Color::DarkGray)));
         }
         lines.push(Line::from(header_spans));
@@ -722,9 +705,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(Color::Rgb(215, 100, 20)),
             ),
         ];
-        if let Some(meta) =
-            format_turn_spinner_meta(elapsed, app.streaming_output_tokens, spinner_ctx(app))
-        {
+        if let Some(meta) = format_turn_spinner_meta(elapsed, app.streaming_output_tokens) {
             spans.push(Span::styled(
                 meta,
                 Style::default().fg(Color::Rgb(100, 100, 100)),

@@ -44,28 +44,32 @@ fn row_below_line_top_saturates_without_panic() {
     assert!(!auto);
 }
 
-// ── format_turn_spinner_meta (#741) ─────────────────────────────
+// ── format_turn_spinner_meta (#741, #744) ───────────────────────
 
 #[test]
-fn spinner_meta_labels_turn_total_and_shows_ctx() {
-    let m = format_turn_spinner_meta(8, 31872, Some((95_000, 200_000))).unwrap();
+fn spinner_meta_labels_turn_total() {
+    let m = format_turn_spinner_meta(8, 31872).unwrap();
     assert!(m.contains("8s"), "{m}");
     assert!(
         m.contains("31872 tok this turn"),
         "counter must read as a turn total, not a single thought: {m}"
     );
-    assert!(m.contains("ctx:"), "ctx budget must be shown: {m}");
     assert!(m.starts_with(" (") && m.ends_with(')'), "{m}");
 }
 
 #[test]
 fn spinner_meta_is_none_when_nothing_to_show() {
-    assert!(format_turn_spinner_meta(0, 0, None).is_none());
+    assert!(format_turn_spinner_meta(0, 0).is_none());
 }
 
 #[test]
-fn spinner_meta_tokens_without_ctx() {
-    let m = format_turn_spinner_meta(3, 120, None).unwrap();
+fn spinner_meta_never_shows_ctx() {
+    // ctx already lives in the footer under the input — the spinner must not
+    // duplicate it (#744).
+    let m = format_turn_spinner_meta(3, 120).unwrap();
     assert!(m.contains("3s") && m.contains("120 tok this turn"), "{m}");
-    assert!(!m.contains("ctx:"), "no ctx when unknown: {m}");
+    assert!(
+        !m.contains("ctx"),
+        "spinner must not repeat the ctx budget: {m}"
+    );
 }
