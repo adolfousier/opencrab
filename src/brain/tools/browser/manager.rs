@@ -245,9 +245,13 @@ impl BrowserManager {
         tracing::info!("Launching {mode} {browser_name} via CDP (binary: {browser_path_for_log})");
 
         let mut builder = BrowserConfig::builder();
-        builder = builder.no_sandbox().window_size(1280, 720);
+        // 1080p viewport (was 1280x720): the smaller window left pages half-cut
+        // in the visible view and framed screenshots below the fold (#738).
+        builder = builder.no_sandbox().window_size(1920, 1080);
         if !inner.headless {
-            builder = builder.with_head();
+            // Headed: maximize the OS window so the live view matches the
+            // viewport instead of opening small and clipped (#738).
+            builder = builder.with_head().arg("--start-maximized");
         }
         // Bump launch_timeout from chromey's default 20s to 60s. The
         // 2026-04-22 13:54 failure showed Brave on macOS occasionally
