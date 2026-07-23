@@ -1669,7 +1669,16 @@ impl App {
                         self.input_drag_anchor = None;
                         self.input_drag_current = None;
                     }
-                    self.handle_click_select(row);
+                    // Mouse-DOWN only STARTS a gesture (#726). Do NOT toggle
+                    // expand/select here — that fired the expand before a drag
+                    // could begin, so a click-drag over a collapsible block
+                    // expanded it instead of selecting text to copy. The
+                    // click-vs-drag decision happens on mouse-up: handle_mouse_up
+                    // click-selects (expand) when no drag occurred and
+                    // extracts+copies when a drag did. Reset the drag anchor so
+                    // this gesture starts clean.
+                    self.drag_anchor = None;
+                    self.drag_current = None;
                 }
             }
             TuiEvent::MouseRightClick(_col, row) => {
