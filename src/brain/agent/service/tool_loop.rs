@@ -1127,6 +1127,15 @@ impl AgentService {
         // fallback to a different provider rather than giving up.
         let mut phantom_retries_used: u32 = 0;
         const MAX_PHANTOM_RETRIES: u32 = 5;
+        // How many times the phantom retry budget may ROLL (reset + keep
+        // nudging) before we give up. Previously the roll was unbounded — the
+        // counter reset and re-nudged forever, so a model stuck narrating
+        // instead of calling tools looped until the user hit Stop (#746). After
+        // this many rolls we end the turn with the model's narration as the
+        // answer. Total phantom attempts are bounded at ~MAX_PHANTOM_RETRIES *
+        // (MAX_PHANTOM_ROLLS + 1).
+        let mut phantom_rolls: u32 = 0;
+        const MAX_PHANTOM_ROLLS: u32 = 2;
         // Set to true after we have forced a sticky fallback because
         // phantom retries exhausted. Guarantees we only swap once per
         // turn even if the fallback provider is also phantom-prone.
@@ -4053,47 +4062,96 @@ impl AgentService {
                     continue;
                 }
 
-                // Cap hit and the fast-escalate block above couldn't
-                // swap (no fallback left, or already swapped once).
-                // Reset the counter and keep nudging the active provider
-                // — user presses Stop if they want out.
+                // Cap hit and the fast-escalate block above couldn't swap (no
+                // fallback left, or already swapped once). Roll the budget a
+                // BOUNDED number of times, then give up — a model that keeps
+                // narrating instead of calling tools must not loop forever
+                // (#746).
                 if phantom_eligible
                     && phantom_retries_used >= MAX_PHANTOM_RETRIES
                     && super::phantom::has_phantom_tool_intent_no_tools(&iteration_text)
                 {
+                    if phantom_rolls < MAX_PHANTOM_ROLLS {
+                        phantom_rolls += 1;
+                        tracing::warn!(
+                            "Phantom retry cap rolling ({}/{} rolls, sticky_swapped={}) — \
+                             resetting counter and re-nudging the active provider.",
+                            phantom_rolls,
+                            MAX_PHANTOM_ROLLS,
+                            phantom_sticky_swap_done
+                        );
+                        self.record_provider_feedback(
+                            session_id,
+                            "phantom_retry_rolling",
+                            "self_heal",
+                            Some(&iteration_text.chars().take(300).collect::<String>()),
+                        );
+                        if let Some(ref cb) = progress_callback {
+                            // Wipe the narration we are discarding on this roll,
+                            // same as the per-retry strip (#745), so rolls don't
+                            // pile up on screen.
+                            cb(
+                                session_id,
+                                ProgressEvent::StripStreamedContent {
+                                    bytes: usize::MAX,
+                                    reason: "phantom self-heal roll — narration discarded"
+                                        .to_string(),
+                                },
+                            );
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message:
+                                        "Self-heal retry budget rolled — forcing another retry"
+                                            .to_string(),
+                                },
+                            );
+                        }
+                        phantom_retries_used = 0;
+                        context.add_message(Message::user(
+                            "[System: You have repeatedly described actions without invoking any \
+                             tool. STOP narrating. Pick the correct tool and call it now through the \
+                             structured tool-call API. No JSON, no markdown code blocks, only a real \
+                             tool_use block. If the task is already completed and you've reported the \
+                             results, respond with a short confirmation (e.g., 'Done.', 'Fixed.', \
+                             'Committed.') and stop — do not run additional tool calls to verify work \
+                             you already did.]"
+                                .to_string(),
+                        ));
+                        continue;
+                    }
+                    // Rolls exhausted: give up. The model won't call tools, so
+                    // take its narration as the final answer and END the turn
+                    // instead of looping forever. Commit it (phantom iterations
+                    // stash rather than accumulate) so it survives reload.
                     tracing::warn!(
-                        "Phantom retry cap rolling ({} retries used, sticky_swapped={}) — \
-                         resetting counter and re-nudging the active provider.",
-                        phantom_retries_used,
-                        phantom_sticky_swap_done
-                    );
-                    self.record_provider_feedback(
-                        session_id,
-                        "phantom_retry_rolling",
-                        "self_heal",
-                        Some(&iteration_text.chars().take(300).collect::<String>()),
+                        "Phantom self-heal exhausted after {} rolls — ending turn with the \
+                         narration as the answer.",
+                        phantom_rolls
                     );
                     if let Some(ref cb) = progress_callback {
                         cb(
                             session_id,
                             ProgressEvent::SelfHealingAlert {
-                                message: "Self-heal retry budget rolled — forcing another retry"
+                                message: "Self-heal exhausted — the model kept narrating without \
+                                          calling tools; ending the turn."
                                     .to_string(),
                             },
                         );
                     }
-                    phantom_retries_used = 0;
-                    context.add_message(Message::user(
-                        "[System: You have repeatedly described actions without invoking any \
-                         tool. STOP narrating. Pick the correct tool and call it now through the \
-                         structured tool-call API. No JSON, no markdown code blocks, only a real \
-                         tool_use block. If the task is already completed and you've reported the \
-                         results, respond with a short confirmation (e.g., 'Done.', 'Fixed.', \
-                         'Committed.') and stop — do not run additional tool calls to verify work \
-                         you already did.]"
-                            .to_string(),
-                    ));
-                    continue;
+                    if !iteration_text.is_empty() {
+                        if !accumulated_text.is_empty() {
+                            accumulated_text.push_str("\n\n");
+                        }
+                        accumulated_text.push_str(&iteration_text);
+                        if let Err(e) = message_service
+                            .append_content(assistant_db_msg.id, &iteration_text)
+                            .await
+                        {
+                            tracing::warn!("failed to persist give-up narration: {e}");
+                        }
+                    }
+                    break;
                 }
 
                 // ── Rotation continuation ──────────────────────────────
