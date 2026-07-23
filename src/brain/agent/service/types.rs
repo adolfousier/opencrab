@@ -198,6 +198,13 @@ pub type MessageQueueCallback = Arc<
     dyn Fn(Uuid) -> Pin<Box<dyn Future<Output = Option<QueuedUserMessage>> + Send>> + Send + Sync,
 >;
 
+/// Symmetric producer for the per-session message queue (#722): pushes a
+/// `QueuedUserMessage` into `session_id`'s queue so it is drained at the next
+/// tool-loop iteration boundary (or starts a fresh turn if the session is idle).
+/// Each surface (TUI, channels) provides one that targets its own queue, so a
+/// background-task watcher can resume any session without knowing the surface.
+pub type MessageEnqueueCallback = Arc<dyn Fn(Uuid, QueuedUserMessage) + Send + Sync>;
+
 /// A user message queued for injection between tool rounds, split into what
 /// the LLM sees and what persists. Synthetic steering prefaces and reaction
 /// guidance belong in `context_text` for the live turn ONLY; the DB and the
@@ -217,6 +224,16 @@ impl QueuedUserMessage {
         Self {
             context_text: text.clone(),
             display_text: text,
+        }
+    }
+
+    /// A synthetic system message (#722): the LLM sees `context`, but history
+    /// and the UI show the compact `display` tag so scaffolding never pollutes
+    /// the session transcript.
+    pub fn system(context: String, display: String) -> Self {
+        Self {
+            context_text: context,
+            display_text: display,
         }
     }
 }

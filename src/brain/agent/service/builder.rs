@@ -287,6 +287,11 @@ pub struct AgentService {
     /// Callback for checking queued user messages between tool iterations
     pub(super) message_queue_callback: Option<MessageQueueCallback>,
 
+    /// Symmetric producer for the message queue (#722): lets a background-task
+    /// watcher push a completion into a session's queue so the resume rides the
+    /// same drain path. Set per-surface (TUI / channels).
+    pub(super) message_enqueue_callback: Option<super::types::MessageEnqueueCallback>,
+
     /// Callback for requesting sudo password from user
     pub(super) sudo_callback: Option<SudoCallback>,
 
@@ -356,6 +361,7 @@ impl AgentService {
             question_callback: None,
             progress_callback: None,
             message_queue_callback: None,
+            message_enqueue_callback: None,
             sudo_callback: None,
             ssh_callback: None,
             session_working_dirs: std::sync::RwLock::new(HashMap::new()),
@@ -598,6 +604,41 @@ impl AgentService {
     pub fn with_message_queue_callback(mut self, callback: Option<MessageQueueCallback>) -> Self {
         self.message_queue_callback = callback;
         self
+    }
+
+    /// Set the enqueue callback (#722): the surface's producer that pushes a
+    /// `QueuedUserMessage` into a session's queue, used to resume a session when
+    /// a background task finishes.
+    pub fn with_message_enqueue_callback(
+        mut self,
+        callback: Option<super::types::MessageEnqueueCallback>,
+    ) -> Self {
+        self.message_enqueue_callback = callback;
+        self
+    }
+
+    /// Push a message into `session_id`'s queue via the surface enqueue callback,
+    /// if one is wired (#722). Returns `true` when enqueued. Used by the
+    /// background-task watcher to resume a session on completion; the tool loop
+    /// drains it at the next iteration boundary (or it starts a fresh turn).
+    pub fn enqueue_session_message(
+        &self,
+        session_id: Uuid,
+        message: super::types::QueuedUserMessage,
+    ) -> bool {
+        match self.message_enqueue_callback.as_ref() {
+            Some(cb) => {
+                cb(session_id, message);
+                true
+            }
+            None => {
+                tracing::warn!(
+                    "enqueue_session_message: no enqueue callback wired for this surface; \
+                     dropping resume for session {session_id}"
+                );
+                false
+            }
+        }
     }
 
     /// Set the sudo password callback for interactive sudo prompts
