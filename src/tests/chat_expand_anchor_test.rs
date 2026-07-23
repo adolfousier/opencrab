@@ -3,7 +3,7 @@
 //! turns the anchored message's line position into the from-bottom scroll offset
 //! that pins it.
 
-use crate::tui::render::chat::anchored_scroll_offset;
+use crate::tui::render::chat::{anchored_scroll_offset, format_turn_spinner_meta};
 
 #[test]
 fn header_stays_on_its_row_after_growth() {
@@ -42,4 +42,30 @@ fn row_below_line_top_saturates_without_panic() {
     let (offset, auto) = anchored_scroll_offset(2, 10, 50);
     assert_eq!(offset, 50, "desired top saturates to 0 -> full scroll up");
     assert!(!auto);
+}
+
+// ── format_turn_spinner_meta (#741) ─────────────────────────────
+
+#[test]
+fn spinner_meta_labels_turn_total_and_shows_ctx() {
+    let m = format_turn_spinner_meta(8, 31872, Some((95_000, 200_000))).unwrap();
+    assert!(m.contains("8s"), "{m}");
+    assert!(
+        m.contains("31872 tok this turn"),
+        "counter must read as a turn total, not a single thought: {m}"
+    );
+    assert!(m.contains("ctx:"), "ctx budget must be shown: {m}");
+    assert!(m.starts_with(" (") && m.ends_with(')'), "{m}");
+}
+
+#[test]
+fn spinner_meta_is_none_when_nothing_to_show() {
+    assert!(format_turn_spinner_meta(0, 0, None).is_none());
+}
+
+#[test]
+fn spinner_meta_tokens_without_ctx() {
+    let m = format_turn_spinner_meta(3, 120, None).unwrap();
+    assert!(m.contains("3s") && m.contains("120 tok this turn"), "{m}");
+    assert!(!m.contains("ctx:"), "no ctx when unknown: {m}");
 }
