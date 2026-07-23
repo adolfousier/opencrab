@@ -260,11 +260,31 @@ impl TelegramAgent {
                                 crate::channels::telegram::suggest_followups::FOLLOWUP_PREFIX,
                             ) {
                                 let _ = bot.answer_callback_query(query.id.clone()).await;
-                                if let Some((sid_str, idx_str)) = rest.rsplit_once(':')
-                                    && let Ok(sid) = uuid::Uuid::parse_str(sid_str)
-                                    && let Ok(idx) = idx_str.parse::<usize>()
-                                    && let Some(text) = state.take_pending_followup(sid, idx).await
-                                {
+                                tracing::info!("Telegram followup tap: rest={rest}");
+                                let parsed = rest.rsplit_once(':').and_then(|(s, i)| {
+                                    Some((uuid::Uuid::parse_str(s).ok()?, i.parse::<usize>().ok()?))
+                                });
+                                let taken = match parsed {
+                                    Some((sid, idx)) => {
+                                        let t = state.take_pending_followup(sid, idx).await;
+                                        if t.is_none() {
+                                            tracing::warn!(
+                                                "Telegram followup tap: no pending followup for \
+                                                 session {sid} idx {idx} (stash empty — consumed \
+                                                 or never set)"
+                                            );
+                                        }
+                                        t.map(|text| (sid, text))
+                                    }
+                                    None => {
+                                        tracing::warn!(
+                                            "Telegram followup tap: unparseable callback data \
+                                             '{rest}'"
+                                        );
+                                        None
+                                    }
+                                };
+                                if let Some((sid, text)) = taken {
                                     let (chat_id, thread_id) = query
                                         .message
                                         .as_ref()

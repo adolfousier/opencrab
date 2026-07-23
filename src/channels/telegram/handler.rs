@@ -3162,6 +3162,7 @@ pub(crate) async fn handle_message(
     // ── Streaming setup ───────────────────────────────────────────────────────
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
         is_dm,
+        pending_suggestions: None,
         msg_id: None,
         thinking: String::new(),
         tool_msgs: Vec::new(),
@@ -3510,8 +3511,7 @@ pub(crate) async fn handle_message(
         let st = streaming.clone();
         let bot_typing = bot.clone();
         let chat_typing = msg.chat.id;
-        let tg_followups = telegram_state.clone();
-        Arc::new(move |sid, event| {
+        Arc::new(move |_sid, event| {
             match event {
                 // Auto-compaction produces zero streaming chunks for 10-60s.
                 // The 4s typing pinger upstream stays alive, but fire an
@@ -3645,16 +3645,13 @@ pub(crate) async fn handle_message(
                 // buttons under the response. Non-blocking — spawned like the
                 // other async arms; a tap injects the suggestion as a new turn.
                 ProgressEvent::SuggestedFollowups(options) => {
-                    let bot = bot_typing.clone();
-                    let tg = tg_followups.clone();
-                    let chat = chat_typing;
-                    let tid = thread_id;
-                    tokio::spawn(async move {
-                        super::suggest_followups::render_suggestions(
-                            &bot, &tg, sid, chat, tid, options,
-                        )
-                        .await;
-                    });
+                    // Buffer the options and render AFTER the final delivery so the
+                    // buttons are always the last thing in the chat, and the stash
+                    // is set fresh at turn end (#724 / #723). Only the latest set
+                    // is kept if the tool fires more than once.
+                    if let Ok(mut s) = st.lock() {
+                        s.pending_suggestions = Some(options);
+                    }
                 }
                 _ => {}
             }
@@ -3963,6 +3960,26 @@ pub(crate) async fn handle_message(
                 "Telegram: flushed reaction turn failed for session {session_id}: {e}"
             ),
         }
+    }
+
+    // Render buffered follow-up suggestions LAST (#724): the buttons must be the
+    // final message in the chat, and stashing here at turn end means a tap always
+    // resolves to a live entry — no mid-turn re-entry can clear it first (#723).
+    let suggestions = streaming
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pending_suggestions
+        .take();
+    if let Some(options) = suggestions {
+        super::suggest_followups::render_suggestions(
+            &bot,
+            &telegram_state,
+            session_id,
+            msg.chat.id,
+            thread_id,
+            options,
+        )
+        .await;
     }
 
     Ok(())
