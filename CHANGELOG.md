@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.74] - 2026-07-23
+
+40 commits since v0.3.73. 70 files changed, +2948 / -212 lines.
+
+### ✨ Features
+
+- `d9511856` **Background-task resume plumbing**: symmetric message-enqueue plumbing so a long task can hand its session back when it finishes (#722)
+- `5a347a25` **Background-task manager**: background-task manager plus bash auto-promotion of known-long commands (#722)
+- `5aea1b3f` **Background tasks on the TUI**: a long command runs in the background and resumes the TUI session on completion (#722)
+- `0dfbd4c0` **Background-task preamble**: tell the agent long tasks run in the background and resume the session when done (#722)
+- `30262ae7` **Background tasks on Telegram**: activate background-task resume on Telegram (#722)
+- `bcfd23a3` **3-state reasoning expand**: click/ctrl+o cycles reasoning collapsed to capped to full, capped so it never floods the view (#727, #726)
+- `1204c783` **/cowork opens the group**: /cowork sets the target group open=true and persists it (#718)
+- `37d0adce` **/cowork admin deep link**: the /cowork deep link requests admin rights so the bot joins already-promoted (#709)
+- `604eb2e4` **Group onboarding greeting**: greet the group with an onboarding nudge when the bot joins (#707)
+- `41952b09` **follow_up_question degrades gracefully**: returns the question as plain text on non-interactive surfaces (#716)
+- `f0748daf` **Config edits via config_manager only**: the agent edits config/keys only through config_manager, never raw file edits (#715)
+- `f886bba7` **Verify motion-graphics scenes**: verify every scene before declaring motion-graphics work done (#711)
+- `e3e89d76` **Version in the UI**: show the running version on the TUI header and in channel /help + /usage (#696)
+
+### 🔧 Fixes
+
+- `645e10c5` **Anchor block on expand**: pin the clicked block's header to its screen row so expanding/collapsing grows it in place instead of jumping the viewport (#728)
+- `2ff69c75` **Outbound media dedup**: collapse an identical file+caption re-uploaded to the same chat within a short window so the agent can't send it twice (#721)
+- `9101ff54` **No lingering cancelled query**: drop a cancelled-before-reply query and its empty assistant placeholder as a pair so it doesn't linger in context and duplicate on resend (#730)
+- `d04e60ff` **No perpetual resume**: a completed session no longer resumes on every restart — resume turns are not re-tracked as pending requests (#729)
+- `e694cc00` **Click vs drag on mouse-up**: decide click-vs-drag on mouse-up so a click-drag selects text instead of expanding (#726)
+- `a594ecbe` **qwen reasoning_content safety**: apply the reasoning_content missing-safety to qwen, not just Moonshot (#725)
+- `d96f991d` **Telegram follow-up taps**: render suggest_followups last and fix taps doing nothing (#723, #724)
+- `3e4da206` **Vision tilde paths**: expand ~ in provider_vision and analyze_video paths (#720)
+- `edceeece` **Secure member auto-register**: gate member auto-registration to open=true groups, secure by default (#717)
+- `4819b99a` **Register joining members**: auto-register any member who joins a bot group (#710)
+- `86b8a5a7` **Per-group /start registration**: group /start registers the member per-group instead of the stale config.toml lecture (#708)
+- `8ee8de82` **Group onboarding UX**: refine the group onboarding UX (#707, #708)
+- `fc9c9911` **Re-validate before write**: re-validate config before fs::write in the config_manager write paths (#714)
+- `e5300d23` **Guard config-breaking writes**: deny edit_file/write_file writes that would break config.toml/keys.toml (#713)
+- `1387b97d` **Validate keys before snapshot**: validate keys.toml before saving the last-good snapshot (#712)
+- `b3f7d4d8` **Accurate follow-up description**: make suggest_followups description channel-accurate so the model invokes it instead of writing plain-text suggestions (#706)
+- `66b23a27` **Don't persist involuntary remap**: don't persist an involuntary provider/model remap over a session's saved pair (#705)
+- `5350050b` **Restore session provider**: restore a session's saved provider before its turn so it never runs on the global default (#704)
+- `68f52039` **Per-session working directory**: isolate the working directory per session so it can't leak across concurrent sessions (#703)
+- `8ba3b107` **Catch bare "Done."**: catch bare completion with zero tools on build tasks (#702)
+- `cef2a4f0` **Double-escape returns query**: double-escape before any reply returns the query to input and removes it (#698)
+- `cb60e0c3` **Merge /usage duplicates**: strip -@botname suffix from model names so /usage merges duplicates (#697)
+
+### 📖 Documentation
+
+- `4e957075` document the click/ctrl+o 3-state expand cycle and drag-to-copy (#727, #726)
+- `1b504692` document the per-group open field and the /cowork opens-group model (#719)
+- `defb769b` update the /cowork flow for admin-on-add and /start registration (#707, #708, #709)
+- `5968fae5` document the debug_logs config flag (#701)
+- `ed61adf4` document the force_default provider flag (#699)
+
+### 📊 Stats
+
+- 40 commits since v0.3.73
+- 70 files changed, +2948 / -212 lines
+- 5244 tests (5244 passed, 0 failed, 29 ignored)
+
 ## [0.3.73] - 2026-07-22
 
 15 commits since v0.3.72. 33 files changed, +1427 / -706 lines.
@@ -7110,3 +7169,4 @@ fixes.
 [0.3.71]: https://github.com/adolfousier/opencrabs/compare/v0.3.70...v0.3.71
 [0.3.72]: https://github.com/adolfousier/opencrabs/compare/v0.3.71...v0.3.72
 [0.3.73]: https://github.com/adolfousier/opencrabs/compare/v0.3.72...v0.3.73
+[0.3.74]: https://github.com/adolfousier/opencrabs/compare/v0.3.73...v0.3.74
