@@ -1554,21 +1554,19 @@ impl App {
                                 self.cursor_position = self.input_buffer.len();
                             }
                             if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
+                                // Drop the unanswered query AND its empty assistant
+                                // placeholder as a pair — the placeholder is the
+                                // trailing DB row, so deleting only the last user
+                                // row would miss the query and leave it lingering
+                                // in the next turn's context, duplicating on
+                                // resend (#730).
                                 let repo = crate::db::repository::MessageRepository::new(
                                     self.session_service.pool(),
                                 );
-                                match repo.get_last_message(sid).await {
-                                    Ok(Some(last)) if last.role == "user" => {
-                                        if let Err(e) = repo.delete(last.id).await {
-                                            tracing::warn!(
-                                                "Cancel-restore: failed to delete unanswered user message: {e}"
-                                            );
-                                        }
-                                    }
-                                    Ok(_) => {}
-                                    Err(e) => tracing::warn!(
-                                        "Cancel-restore: failed to read last message: {e}"
-                                    ),
+                                if let Err(e) = repo.delete_trailing_unanswered_pair(sid).await {
+                                    tracing::warn!(
+                                        "Cancel-restore: failed to delete unanswered message pair: {e}"
+                                    );
                                 }
                             }
                         }

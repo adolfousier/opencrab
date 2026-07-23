@@ -268,6 +268,45 @@ impl MessageRepository {
         self.find_by_session(session_id).await
     }
 
+    /// Remove a trailing unanswered user query and its empty assistant
+    /// placeholder as a pair (#730).
+    ///
+    /// A turn persists the user row and an empty assistant placeholder up front,
+    /// then streams content into the placeholder. If the turn is cancelled
+    /// before the agent produces anything, the placeholder stays empty and the
+    /// user query is left unanswered — and because the empty placeholder is now
+    /// the trailing row, a naive "delete the last user row" cleanup misses it,
+    /// so the query survives into the next turn's LLM context and duplicates on
+    /// resend. This drops the pair from the tail so nothing lingers.
+    ///
+    /// Only the freshly-created trailing rows are touched: the last row is
+    /// deleted iff it is an empty/whitespace-only assistant placeholder, and the
+    /// row before it iff it is a user message. A trailing assistant row that
+    /// actually holds a reply is left untouched, so a real answered turn is
+    /// never disturbed. Returns the number of rows deleted (0, 1, or 2).
+    pub async fn delete_trailing_unanswered_pair(&self, session_id: Uuid) -> Result<usize> {
+        let mut deleted = 0;
+
+        // Drop the empty assistant placeholder if it is the trailing row.
+        if let Some(last) = self.get_last_message(session_id).await?
+            && last.role == "assistant"
+            && last.content.trim().is_empty()
+        {
+            self.delete(last.id).await?;
+            deleted += 1;
+        }
+
+        // Now drop the unanswered user query if it is the (new) trailing row.
+        if let Some(last) = self.get_last_message(session_id).await?
+            && last.role == "user"
+        {
+            self.delete(last.id).await?;
+            deleted += 1;
+        }
+
+        Ok(deleted)
+    }
+
     /// Search messages by text content using SQL LIKE.
     /// `session_ids = None` searches all sessions; `Some(&[..])` restricts to the listed ids.
     /// Returns up to `limit` matches, most recent first. Case-insensitive.
