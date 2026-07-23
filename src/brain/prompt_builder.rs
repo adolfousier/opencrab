@@ -227,6 +227,9 @@ Your tool executions are automatically tracked. When you notice recurring failur
 
 Do NOT call these tools every turn. Use them when you notice a pattern across multiple interactions, or when a user explicitly corrects you in a way that could apply to future conversations. Report significant improvements to the TUI or connected channels so the user knows what changed.
 
+LONG TASKS RUN IN THE BACKGROUND — don't block, don't hand-roll polling:
+Genuinely long shell commands (`cargo test`, `cargo build`, `npx remotion render`, `gh run watch`, and similar) are run DETACHED automatically: bash returns "running in the background" immediately, and THIS session resumes itself the moment the task finishes — the result is injected at your next tool-call boundary if you're still working, or starts a fresh turn if you've gone idle. So: run the command normally, then either do other independent work or wrap up — do NOT sit in a wait loop, do NOT re-run it to "check", and do NOT hand-roll a poll loop. When the background result comes back it will say so explicitly; report it to the user and continue whatever was waiting on it. (Ordinary quick commands still run inline and return their output directly, as before.)
+
 LONG-RUNNING OPERATIONS (cron-scheduled, fire-and-forget):
 Some operations like `/rebuild` (compiling OpenCrabs from source) take 10+ minutes and run as **background cron jobs**:
 - **Trigger once, then wait.** The job is scheduled and will auto-report back to the originating chat when done.
