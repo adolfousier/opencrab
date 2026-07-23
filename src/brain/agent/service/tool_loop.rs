@@ -332,19 +332,26 @@ impl AgentService {
         override_question_callback: Option<QuestionCallback>,
         channel: &str,
         channel_chat_id: Option<&str>,
+        track_pending: bool,
     ) -> Result<AgentResponse> {
-        // Track this request for restart recovery
+        // Track this request for restart recovery. Resume turns pass
+        // `track_pending == false`: a resume is a one-shot best-effort recovery,
+        // so it must NOT re-insert its own pending row. Otherwise an interrupted
+        // resume (cancel, crash, another restart) leaves a row that resumes the
+        // same already-done session on every subsequent startup — a perpetual
+        // loop with rows piling up (#729).
         let pending_repo = crate::db::PendingRequestRepository::new(self.context.pool());
         let request_id = Uuid::new_v4();
-        if let Err(e) = pending_repo
-            .insert(
-                request_id,
-                session_id,
-                &user_message,
-                channel,
-                channel_chat_id,
-            )
-            .await
+        if track_pending
+            && let Err(e) = pending_repo
+                .insert(
+                    request_id,
+                    session_id,
+                    &user_message,
+                    channel,
+                    channel_chat_id,
+                )
+                .await
         {
             tracing::warn!("Failed to track pending request: {}", e);
         }
@@ -397,7 +404,8 @@ impl AgentService {
 
         // Request finished — delete the tracking row. Only PROCESSING rows
         // survive (meaning the process crashed/restarted mid-request).
-        if let Err(e) = pending_repo.delete(request_id).await {
+        // Untracked (resume) turns never inserted a row, so nothing to clean up.
+        if track_pending && let Err(e) = pending_repo.delete(request_id).await {
             tracing::warn!("Failed to clean up pending request: {}", e);
         }
 

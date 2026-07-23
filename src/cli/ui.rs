@@ -1113,11 +1113,16 @@ async fn cmd_chat_inner(
                                 any interruption — just pick up seamlessly.]"
                                 .to_string();
                             match agent
-                                .send_message_with_tools_and_mode(
+                                .resume_interrupted_turn(
                                     session_id,
                                     prompt,
                                     None,
                                     Some(token),
+                                    None,
+                                    None,
+                                    None,
+                                    &channel,
+                                    channel_chat_id.as_deref(),
                                 )
                                 .await
                             {

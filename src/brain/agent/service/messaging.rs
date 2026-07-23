@@ -173,6 +173,7 @@ impl AgentService {
             None,
             "tui",
             None,
+            true,
         )
         .await
     }
@@ -212,6 +213,43 @@ impl AgentService {
             override_question_callback,
             channel,
             channel_chat_id,
+            true,
+        )
+        .await
+    }
+
+    /// Resume an interrupted turn WITHOUT re-tracking it as a pending request.
+    ///
+    /// A resume is a one-shot best-effort recovery. If the resume is itself
+    /// interrupted (cancelled by a new message, process killed on another
+    /// restart, or a crash), it must NOT leave a pending row behind — otherwise
+    /// the same already-done session resumes on every subsequent startup and
+    /// rows pile up (#729). Only genuine user-initiated turns are recoverable.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn resume_interrupted_turn(
+        &self,
+        session_id: Uuid,
+        user_message: String,
+        model: Option<String>,
+        cancel_token: Option<CancellationToken>,
+        override_approval_callback: Option<ApprovalCallback>,
+        override_progress_callback: Option<ProgressCallback>,
+        override_question_callback: Option<QuestionCallback>,
+        channel: &str,
+        channel_chat_id: Option<&str>,
+    ) -> Result<AgentResponse> {
+        self.run_tool_loop(
+            session_id,
+            user_message,
+            None,
+            model,
+            cancel_token,
+            override_approval_callback,
+            override_progress_callback,
+            override_question_callback,
+            channel,
+            channel_chat_id,
+            false,
         )
         .await
     }
@@ -252,6 +290,7 @@ impl AgentService {
             override_question_callback,
             channel,
             channel_chat_id,
+            true,
         )
         .await
     }

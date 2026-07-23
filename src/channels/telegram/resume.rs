@@ -516,7 +516,7 @@ pub(crate) async fn resume_session(
         streaming.clone(),
     );
     let result = agent
-        .send_message_with_tools_and_callback(
+        .resume_interrupted_turn(
             session_id,
             prompt,
             None,
