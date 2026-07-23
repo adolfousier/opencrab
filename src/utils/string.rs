@@ -181,3 +181,46 @@ pub fn strip_ctx_footer(text: &str) -> String {
         .trim_end_matches('\n')
         .to_string()
 }
+
+/// A short, human-readable status excerpt of the model's live reasoning (#742).
+///
+/// Walks the reasoning right-to-left, picks the latest non-trivial sentence,
+/// strips a leading "I am / I'm / I will / Let me / Let us", capitalises it, and
+/// caps at 80 chars. Returns `None` for reasoning too short to summarise. Shared
+/// by the Telegram flow header and the TUI thinking spinner so a long thought
+/// reads as one status line instead of a scrolling wall.
+pub fn thinking_excerpt(thinking: &str) -> Option<String> {
+    let trimmed = thinking.trim();
+    if trimmed.len() < 20 {
+        return None;
+    }
+    // Walk sentences right-to-left, pick the latest non-trivial one.
+    let mut sentences: Vec<&str> = trimmed
+        .split(['.', '?', '!', '\n'])
+        .map(str::trim)
+        .filter(|s| s.len() >= 12)
+        .collect();
+    let last = sentences.pop()?;
+    let cleaned = last
+        .strip_prefix("I am ")
+        .or_else(|| last.strip_prefix("I'm "))
+        .or_else(|| last.strip_prefix("I will "))
+        .or_else(|| last.strip_prefix("Let me "))
+        .or_else(|| last.strip_prefix("Let us "))
+        .unwrap_or(last)
+        .trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    // Capitalise the first letter so "assessing X" -> "Assessing X".
+    let mut chars = cleaned.chars();
+    let first = chars.next()?;
+    let rest: String = chars.collect();
+    let pretty = format!("{}{}", first.to_uppercase(), rest);
+    let capped: String = pretty.chars().take(80).collect();
+    Some(if pretty.chars().count() > 80 {
+        format!("{capped}…")
+    } else {
+        capped
+    })
+}

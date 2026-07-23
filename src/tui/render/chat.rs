@@ -642,38 +642,21 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         && app.streaming_response.is_none()
         && let Some(ref reasoning) = app.streaming_reasoning
     {
+        // Show a short latest-sentence excerpt of the live reasoning instead of
+        // a scrolling 12-line window, so a long thought reads as one status line
+        // rather than a wall (#742). The full reasoning stays available on the
+        // finalized message's 3-state expand.
+        let excerpt = crate::utils::string::thinking_excerpt(reasoning)
+            .unwrap_or_else(|| "Thinking…".to_string());
         lines.push(Line::from(vec![
-            Span::styled("  ", Style::default()),
+            Span::styled("  🧠 ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                "Thinking...",
+                excerpt,
                 Style::default()
                     .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC | Modifier::BOLD),
+                    .add_modifier(Modifier::ITALIC),
             ),
         ]));
-        // See comment at the expanded-message reasoning site above.
-        // Cap thinking display to last N lines (rolling window) to avoid
-        // swallowing the entire viewport during long thinking phases.
-        const MAX_THINKING_LINES: usize = 12;
-        let inner_width = content_width.saturating_sub(2);
-        let reasoning_lines = reasoning_to_lines(reasoning, inner_width);
-        let reasoning_style = Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC);
-        let start_idx = reasoning_lines.len().saturating_sub(MAX_THINKING_LINES);
-        if start_idx > 0 {
-            lines.push(Line::from(Span::styled(
-                format!("  ⋯ {} more lines", start_idx),
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-        for rline in reasoning_lines.into_iter().skip(start_idx) {
-            let mut padded_spans = vec![Span::styled("  ", Style::default())];
-            for span in rline.spans {
-                padded_spans.push(Span::styled(span.content.to_string(), reasoning_style));
-            }
-            lines.push(Line::from(padded_spans));
-        }
 
         // Blank line to separate reasoning from status spinner
         lines.push(Line::from(""));

@@ -4335,39 +4335,8 @@ pub(crate) fn format_reply_context(
 /// strip "I am" / "I'm" / "Let me" prefixes that read awkwardly as a
 /// status, and cap at 80 chars so the Telegram message stays compact.
 pub(crate) fn thinking_status_excerpt(thinking: &str) -> Option<String> {
-    let trimmed = thinking.trim();
-    if trimmed.len() < 20 {
-        return None;
-    }
-    // Walk sentences right-to-left, pick the latest non-trivial one.
-    let mut sentences: Vec<&str> = trimmed
-        .split(['.', '?', '!', '\n'])
-        .map(str::trim)
-        .filter(|s| s.len() >= 12)
-        .collect();
-    let last = sentences.pop()?;
-    let cleaned = last
-        .strip_prefix("I am ")
-        .or_else(|| last.strip_prefix("I'm "))
-        .or_else(|| last.strip_prefix("I will "))
-        .or_else(|| last.strip_prefix("Let me "))
-        .or_else(|| last.strip_prefix("Let us "))
-        .unwrap_or(last)
-        .trim();
-    if cleaned.is_empty() {
-        return None;
-    }
-    // Capitalise the first letter so "assessing X" → "Assessing X".
-    let mut chars = cleaned.chars();
-    let first = chars.next()?;
-    let rest: String = chars.collect();
-    let pretty = format!("{}{}", first.to_uppercase(), rest);
-    let capped: String = pretty.chars().take(80).collect();
-    Some(if pretty.chars().count() > 80 {
-        format!("{}…", capped)
-    } else {
-        capped
-    })
+    // Single implementation lives in utils::string so the TUI shares it (#742).
+    crate::utils::string::thinking_excerpt(thinking)
 }
 
 /// Build the `QueuedUserMessage` for a message that landed mid-turn.

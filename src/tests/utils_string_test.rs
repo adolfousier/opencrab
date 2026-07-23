@@ -193,3 +193,27 @@ fn test_format_ctx_footer_with_tps() {
         "ctx: 500/200K 0% | 123 tok/s"
     );
 }
+
+// ── thinking_excerpt (#742) ─────────────────────────────────────
+
+#[test]
+fn thinking_excerpt_returns_none_for_short_reasoning() {
+    assert!(crate::utils::string::thinking_excerpt("hi").is_none());
+    assert!(crate::utils::string::thinking_excerpt("   ").is_none());
+}
+
+#[test]
+fn thinking_excerpt_takes_latest_sentence_stripped_and_capitalized() {
+    let t = "First I looked at the config file. Let me read the template exactly now";
+    let e = crate::utils::string::thinking_excerpt(t).unwrap();
+    // Latest sentence, "Let me " stripped, first letter capitalized.
+    assert_eq!(e, "Read the template exactly now");
+}
+
+#[test]
+fn thinking_excerpt_caps_at_80_chars_with_ellipsis() {
+    let long = format!("Now I am {}", "x".repeat(200));
+    let e = crate::utils::string::thinking_excerpt(&long).unwrap();
+    assert!(e.chars().count() <= 81, "len {}", e.chars().count()); // 80 + ellipsis
+    assert!(e.ends_with('…'));
+}
