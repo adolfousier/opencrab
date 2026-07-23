@@ -941,7 +941,7 @@ pub(crate) async fn cmd_agent_interactive(
         db::Database,
         services::{ServiceContext, SessionService},
     };
-    use std::io::{self, BufRead, Write};
+    use std::io::{self, Write};
 
     let db = Database::connect(&config.database.path).await?;
     db.run_migrations().await?;
@@ -974,10 +974,21 @@ pub(crate) async fn cmd_agent_interactive(
     crate::cli::tool_setup::register_runtime_tools(&tool_registry, config);
 
     let service_context = ServiceContext::new(db.pool().clone());
+    // Background-task resume (#731): a detached long command that finishes pushes
+    // its completion here; the select loop below picks it up and resumes the
+    // session proactively, matching the TUI. The callback just forwards to the
+    // channel — the loop (which owns the agent) runs the resume turn.
+    let (bg_tx, mut bg_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::brain::agent::service::QueuedUserMessage>();
+    let enqueue_cb: crate::brain::agent::service::MessageEnqueueCallback =
+        std::sync::Arc::new(move |_session_id, msg| {
+            let _ = bg_tx.send(msg);
+        });
     let agent_service = AgentService::new(provider.clone(), service_context.clone(), config)
         .await
         .with_tool_registry(tool_registry.clone())
         .with_system_brain(system_brain)
+        .with_message_enqueue_callback(Some(enqueue_cb))
         // --auto-approve runs tools without prompting; otherwise each
         // approval-gated tool prompts on stdin via stdin_approval_callback.
         .with_auto_approve_tools(auto_approve);
@@ -994,38 +1005,24 @@ pub(crate) async fn cmd_agent_interactive(
     );
     println!("Type /exit or Ctrl+D to quit\n");
 
-    let stdin = io::stdin();
-    let mut reader = stdin.lock();
-
-    loop {
-        print!("❯ ");
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        if reader.read_line(&mut input)? == 0 {
-            println!();
-            break;
-        }
-
-        let input = input.trim();
-        if input.is_empty() {
-            continue;
-        }
-        if input == "/exit" || input == "/quit" || input == "/q" {
-            break;
-        }
-
-        // Run the tool loop so the REPL actually executes tools (#492).
+    // Run one turn (a typed line or a background-task completion) and print its
+    // result. Shared by both loop arms so they stay identical.
+    async fn run_cli_turn(
+        agent: &AgentService,
+        session_id: uuid::Uuid,
+        prompt: String,
+        auto_approve: bool,
+    ) {
         // Without --auto-approve, each approval-gated tool prompts on stdin.
         let approval = if auto_approve {
             None
         } else {
             Some(crate::cli::headless_callbacks::stdin_approval_callback())
         };
-        match agent_service
+        match agent
             .send_message_with_tools_and_callback(
-                session.id,
-                input.to_string(),
+                session_id,
+                prompt,
                 None,
                 None,
                 approval,
@@ -1046,6 +1043,51 @@ pub(crate) async fn cmd_agent_interactive(
             }
             Err(e) => {
                 eprintln!("\n  error: {e}\n");
+            }
+        }
+    }
+
+    // A single in-flight stdin read, kept alive across background interrupts so
+    // a resume never spawns a second concurrent reader (which would race the
+    // user's next line). `select!` waits on either that read or a finished
+    // background task (#731).
+    let mut pending_read: Option<tokio::task::JoinHandle<Option<String>>> = None;
+    loop {
+        if pending_read.is_none() {
+            print!("❯ ");
+            io::stdout().flush()?;
+            pending_read = Some(tokio::task::spawn_blocking(|| {
+                let mut input = String::new();
+                match io::stdin().read_line(&mut input) {
+                    Ok(0) => None, // EOF (Ctrl+D)
+                    Ok(_) => Some(input),
+                    Err(_) => None,
+                }
+            }));
+        }
+        let mut read = pending_read.take().expect("pending_read set above");
+
+        tokio::select! {
+            joined = &mut read => {
+                let Some(line) = joined.ok().flatten() else {
+                    println!();
+                    break;
+                };
+                let input = line.trim().to_string();
+                if input.is_empty() {
+                    continue;
+                }
+                if input == "/exit" || input == "/quit" || input == "/q" {
+                    break;
+                }
+                run_cli_turn(&agent_service, session.id, input, auto_approve).await;
+            }
+            Some(msg) = bg_rx.recv() => {
+                // A detached command finished — resume proactively. Put the
+                // in-flight stdin read back so the user's pending line survives.
+                pending_read = Some(read);
+                println!("\n⚙️  background task finished — resuming\n");
+                run_cli_turn(&agent_service, session.id, msg.context_text, auto_approve).await;
             }
         }
     }
