@@ -927,6 +927,20 @@ async fn cmd_chat_inner(
     // trigger real-time TUI refresh when they complete a response.
     channel_factory.set_session_updated_tx(session_updated_tx.clone());
 
+    // Background-task resume producer (#722): when a detached long command
+    // finishes, push the completion into the session as a TuiEvent so the TUI
+    // injects it mid-turn (if the session is processing) or starts a fresh turn
+    // (if idle).
+    let bg_event_sender = app.event_sender();
+    let message_enqueue_callback: crate::brain::agent::service::MessageEnqueueCallback =
+        Arc::new(move |session_id, msg| {
+            let _ = bg_event_sender.send(crate::tui::events::TuiEvent::BackgroundTaskDone {
+                session_id,
+                context_text: msg.context_text,
+                display_text: msg.display_text,
+            });
+        });
+
     let agent_service = Arc::new(
         AgentService::new(provider.clone(), service_context.clone(), config)
             .await
@@ -941,6 +955,7 @@ async fn cmd_chat_inner(
             .with_approval_callback(Some(approval_callback))
             .with_progress_callback(Some(progress_callback))
             .with_message_queue_callback(Some(message_queue_callback))
+            .with_message_enqueue_callback(Some(message_enqueue_callback))
             .with_sudo_callback(Some(sudo_callback))
             .with_ssh_callback(Some(ssh_callback))
             .with_working_directory(working_directory.clone())

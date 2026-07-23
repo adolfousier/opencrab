@@ -262,6 +262,15 @@ pub enum TuiEvent {
         session_id: Uuid,
         cancel_token: CancellationToken,
     },
+
+    /// A background task (#722) finished — resume `session_id`: inject mid-turn
+    /// if it's still processing, else start a fresh turn. `context_text` is what
+    /// the agent sees; `display_text` is the compact tag for history.
+    BackgroundTaskDone {
+        session_id: Uuid,
+        context_text: String,
+        display_text: String,
+    },
 }
 
 /// Sudo password request from the bash tool

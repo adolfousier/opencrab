@@ -2465,6 +2465,65 @@ impl App {
         Ok(())
     }
 
+    /// Resume a session from a finished background task (#722): start a fresh
+    /// turn with the completion injected. `context_text` is what the LLM sees;
+    /// `display_text` persists to history. Uses the service-level callbacks so
+    /// streaming / tools / the final response route to the TUI like any turn.
+    pub(crate) async fn resume_background_turn(
+        &mut self,
+        session_id: Uuid,
+        context_text: String,
+        display_text: String,
+    ) {
+        let token = CancellationToken::new();
+        self.processing_sessions.insert(session_id);
+        if self.is_current_session(session_id) {
+            self.is_processing = true;
+            self.processing_started_at = Some(std::time::Instant::now());
+            self.cancel_token = Some(token.clone());
+        } else {
+            self.session_cancel_tokens.insert(session_id, token.clone());
+        }
+
+        let agent_service = self.agent_service.clone();
+        let event_sender = self.event_sender();
+        tracing::info!(
+            "[background_resume] starting resume turn for session {}",
+            session_id
+        );
+        tokio::spawn(async move {
+            let result = agent_service
+                .send_message_with_tools_and_display(
+                    session_id,
+                    context_text,
+                    Some(display_text),
+                    None,
+                    Some(token),
+                    None,
+                    None,
+                    None,
+                    "tui",
+                    None,
+                )
+                .await;
+            match result {
+                Ok(response) => {
+                    let _ = event_sender.send(TuiEvent::ResponseComplete {
+                        session_id,
+                        response,
+                    });
+                }
+                Err(e) => {
+                    let user_message = crate::brain::agent::format_user_error(&e);
+                    let _ = event_sender.send(TuiEvent::Error {
+                        session_id,
+                        message: user_message,
+                    });
+                }
+            }
+        });
+    }
+
     /// Append a streaming chunk
     pub(crate) fn append_streaming_chunk(&mut self, chunk: String) {
         if let Some(ref mut response) = self.streaming_response {

@@ -2629,6 +2629,25 @@ impl App {
                 }
             }
 
+            TuiEvent::BackgroundTaskDone {
+                session_id,
+                context_text,
+                display_text,
+            } => {
+                // A backgrounded long task finished (#722). If the session is
+                // still processing, inject the result mid-turn via the queue
+                // (drained at the next tool-call boundary). If it's idle, start a
+                // fresh turn with the completion.
+                if self.processing_sessions.contains(&session_id) {
+                    if let Ok(mut q) = self.queued_messages.lock() {
+                        q.entry(session_id).or_default().push(context_text);
+                    }
+                } else {
+                    self.resume_background_turn(session_id, context_text, display_text)
+                        .await;
+                }
+            }
+
             TuiEvent::OnboardingModelsFetched(models) => {
                 if let Some(ref mut wizard) = self.onboarding {
                     wizard.ps.models_fetching = false;
