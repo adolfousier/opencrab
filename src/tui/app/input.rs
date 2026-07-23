@@ -294,6 +294,17 @@ impl App {
         self.chat_line_to_msg.get(line_idx).copied().flatten()
     }
 
+    /// Pin message `idx`'s header to its current screen row so the next render
+    /// keeps it in place when its block expands or collapses (#728). Computed
+    /// from the *current* (pre-toggle) line map, so it captures where the header
+    /// sits right now; `render_chat` restores it there after the height change.
+    fn set_expand_anchor(&mut self, idx: usize) {
+        if let Some(line_top) = self.chat_line_to_msg.iter().position(|m| *m == Some(idx)) {
+            let row = line_top.saturating_sub(self.chat_render_scroll) as u16;
+            self.chat_expand_anchor = Some((idx, row));
+        }
+    }
+
     /// Left-click: select/highlight a message
     pub(crate) fn handle_click_select(&mut self, row: u16) {
         // A fresh click clears any in-flight drag selection.
@@ -305,22 +316,28 @@ impl App {
         // scoped to the one message under the cursor. Live/streaming groups
         // live in active_tool_group and aren't in `messages`; those stay on
         // Ctrl+O. Plain text rows keep the highlight-select behavior.
-        if let Some(idx) = msg_idx
-            && let Some(msg) = self.messages.get_mut(idx)
-        {
-            match msg.click_action() {
-                ClickAction::ToggleToolGroup => {
-                    if let Some(ref mut group) = msg.tool_group {
+        if let Some(idx) = msg_idx {
+            // Resolve the action from an immutable borrow first so we can pin the
+            // scroll anchor (#728) before taking the mutable borrow to toggle.
+            match self.messages.get(idx).map(|m| m.click_action()) {
+                Some(ClickAction::ToggleToolGroup) => {
+                    self.set_expand_anchor(idx);
+                    if let Some(msg) = self.messages.get_mut(idx)
+                        && let Some(ref mut group) = msg.tool_group
+                    {
                         group.expanded = !group.expanded;
                     }
                     return;
                 }
-                ClickAction::ToggleDetails => {
+                Some(ClickAction::ToggleDetails) => {
                     // 3-state cycle: collapsed -> capped -> full -> collapsed (#727).
-                    msg.cycle_details_expand();
+                    self.set_expand_anchor(idx);
+                    if let Some(msg) = self.messages.get_mut(idx) {
+                        msg.cycle_details_expand();
+                    }
                     return;
                 }
-                ClickAction::Select => {}
+                Some(ClickAction::Select) | None => {}
             }
         }
         // Toggle: click same message deselects, click different selects

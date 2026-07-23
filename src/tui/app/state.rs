@@ -744,6 +744,12 @@ pub struct App {
     /// Plain-text snapshot of rendered chat lines (for drag-select text extraction).
     /// Indexed by logical line (matches `chat_line_to_msg` / `chat_render_scroll`).
     pub chat_rendered_lines: Vec<String>,
+    /// Pending scroll anchor for a click/ctrl+o expand-collapse (#728):
+    /// `(message index, screen row where its header sits)`. The next
+    /// `render_chat` pins that message's first line back to that screen row so
+    /// expanding a block grows it in place instead of jumping the viewport.
+    /// Consumed (cleared) on the render that applies it.
+    pub chat_expand_anchor: Option<(usize, u16)>,
 
     /// Drag selection: anchor point in terminal-screen coords (col, row), set on first drag event.
     pub drag_anchor: Option<(u16, u16)>,
@@ -946,6 +952,7 @@ impl App {
             resume_session_id: None,
             render_cache: HashMap::new(),
             chat_line_to_msg: Vec::new(),
+            chat_expand_anchor: None,
             chat_render_scroll: 0,
             chat_area_y: 0,
             chat_area_x: 0,

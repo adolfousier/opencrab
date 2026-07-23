@@ -2,7 +2,7 @@
 //!
 //! Main rendering logic for the terminal interface.
 
-mod chat;
+pub(crate) mod chat;
 mod dialogs;
 
 mod help;

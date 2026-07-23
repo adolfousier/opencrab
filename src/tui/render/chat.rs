@@ -35,6 +35,27 @@ pub(crate) fn reasoning_to_lines(text: &str, max_width: usize) -> Vec<Line<'stat
     result
 }
 
+/// Given the anchored message's first line index (`line_top`) in the freshly
+/// rendered transcript, the screen row its header should stay on (`anchor_row`),
+/// and the maximum from-bottom scroll, return the `(scroll_offset, auto_scroll)`
+/// that pins the header in place across an expand/collapse (#728).
+///
+/// `scroll_offset` is measured from the bottom, so it is derived from the
+/// desired top visible line: `max_scroll - (line_top - anchor_row)`. When the
+/// anchor resolves to the very bottom, `auto_scroll` is re-armed so subsequent
+/// streaming keeps sticking to the bottom.
+pub(crate) fn anchored_scroll_offset(
+    line_top: usize,
+    anchor_row: usize,
+    max_scroll: usize,
+) -> (usize, bool) {
+    let desired_top = line_top.saturating_sub(anchor_row);
+    (
+        max_scroll.saturating_sub(desired_top),
+        desired_top >= max_scroll,
+    )
+}
+
 /// Render the chat messages
 pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
@@ -952,6 +973,22 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // Only 1 row of top padding (Borders::NONE + Padding::new(1,1,1,0)); no border rows
     let visible_height = area.height.saturating_sub(1) as usize;
     let max_scroll = total_lines.saturating_sub(visible_height);
+
+    // Expand/collapse anchor (#728): a click or ctrl+o that grew/shrank a block
+    // pinned its header to the screen row it sat on. Restore it there instead of
+    // letting the fixed-from-bottom offset jump the viewport — the block expands
+    // in place. Overrides the streaming compensation above for this one frame.
+    if let Some((anchor_idx, anchor_row)) = app.chat_expand_anchor.take()
+        && let Some(line_top) = app
+            .chat_line_to_msg
+            .iter()
+            .position(|m| *m == Some(anchor_idx))
+    {
+        let (offset, auto) = anchored_scroll_offset(line_top, anchor_row as usize, max_scroll);
+        app.scroll_offset = offset;
+        // At the very bottom, re-arm auto-scroll so streaming keeps sticking.
+        app.auto_scroll = auto;
+    }
 
     // Cap scroll_offset at max_scroll so it never exceeds the scrollable range.
     // Without this, streaming compensation + mouse coalescing can inflate
