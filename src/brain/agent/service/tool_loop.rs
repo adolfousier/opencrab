@@ -5793,11 +5793,23 @@ impl AgentService {
         // `is_complete` requires non-empty, all-resolved tasks, so Editing and
         // in-progress plans are untouched; `load_plan` is a fast no-op when the
         // session has no live plan.
-        if let Some(finished) = crate::utils::plan_files::load_plan(session_id).await
-            && finished.is_complete()
-            && let Err(e) = crate::utils::plan_files::archive_plan(session_id).await
-        {
-            tracing::warn!("Failed to archive completed plan at turn settle: {e}");
+        if let Some(mut finished) = crate::utils::plan_files::load_plan(session_id).await {
+            // A plan whose only remaining task is the trailing delivery step
+            // never reaches is_complete() on its own — delivering the answer is
+            // what leaves that box unchecked, so the card lingers with 1/N done
+            // (#737). When THIS turn delivered a final response, complete that
+            // trailing task and persist, so the archive below fires.
+            if !final_text.trim().is_empty()
+                && finished.complete_trailing_delivery_task()
+                && let Err(e) = crate::utils::plan_files::save_plan(&finished).await
+            {
+                tracing::warn!("Failed to persist auto-completed trailing plan task: {e}");
+            }
+            if finished.is_complete()
+                && let Err(e) = crate::utils::plan_files::archive_plan(session_id).await
+            {
+                tracing::warn!("Failed to archive completed plan at turn settle: {e}");
+            }
         }
 
         Ok(AgentResponse {

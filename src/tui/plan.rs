@@ -416,6 +416,34 @@ impl PlanDocument {
                 .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
     }
 
+    /// If the plan is finished except for a single trailing `Pending` task,
+    /// complete it (#737). The model tends to leave the last "deliver the
+    /// result" step unchecked precisely because delivering the answer IS that
+    /// step — so the plan never reaches [`is_complete`](Self::is_complete) and
+    /// its card lingers with 1/N unchecked. The caller invokes this only when
+    /// the turn actually delivered a final response.
+    ///
+    /// Conservative: acts ONLY when every task before the last is already
+    /// `Completed`/`Skipped` and the last task is `Pending`. A `Pending` task
+    /// anywhere but the end, or a `Failed`/`Blocked` last task, is a genuine
+    /// gap and is left untouched. Returns whether a task was completed.
+    pub fn complete_trailing_delivery_task(&mut self) -> bool {
+        let Some(last) = self.tasks.len().checked_sub(1) else {
+            return false;
+        };
+        let head_resolved = self.tasks[..last]
+            .iter()
+            .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped));
+        if head_resolved && matches!(self.tasks[last].status, TaskStatus::Pending) {
+            self.tasks[last].complete(Some(
+                "Auto-completed at turn settle: the turn delivered its final response (#737)."
+                    .to_string(),
+            ));
+            return true;
+        }
+        false
+    }
+
     /// Approve the plan: Editing → Active, stamping `approved_at`. Called
     /// on user Approve (or first `/execute`) on the design track — the
     /// plan tool never calls this on `start`.

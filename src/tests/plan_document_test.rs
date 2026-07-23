@@ -201,3 +201,71 @@ fn task_status_serializes() {
     let deser: TaskStatus = serde_json::from_str(&json).unwrap();
     assert_eq!(deser, TaskStatus::Completed);
 }
+
+// ── complete_trailing_delivery_task (#737) ──────────────────────
+
+fn task(order: usize) -> PlanTask {
+    PlanTask::new(
+        order,
+        format!("step {order}"),
+        "d".to_string(),
+        TaskType::Create,
+    )
+}
+
+#[test]
+fn trailing_delivery_completes_when_only_last_is_pending() {
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
+    let mut a = task(1);
+    a.complete(None);
+    let mut b = task(2);
+    b.skip(None);
+    plan.add_task(a);
+    plan.add_task(b);
+    plan.add_task(task(3)); // trailing, still Pending
+    assert!(
+        !plan.is_complete(),
+        "not complete while the last task is pending"
+    );
+    assert!(plan.complete_trailing_delivery_task());
+    assert!(plan.is_complete(), "now archivable");
+}
+
+#[test]
+fn trailing_delivery_ignores_a_pending_task_before_the_last() {
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
+    plan.add_task(task(1)); // Pending, mid-list — a genuine gap
+    let mut last = task(2);
+    last.complete(None);
+    plan.add_task(last);
+    assert!(
+        !plan.complete_trailing_delivery_task(),
+        "a pending task before the last must not be auto-completed"
+    );
+    assert!(!plan.is_complete());
+}
+
+#[test]
+fn trailing_delivery_noop_when_already_complete() {
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
+    let mut a = task(1);
+    a.complete(None);
+    plan.add_task(a);
+    assert!(!plan.complete_trailing_delivery_task(), "nothing pending");
+    assert!(plan.is_complete());
+}
+
+#[test]
+fn trailing_delivery_skips_a_failed_last_task() {
+    let mut plan = PlanDocument::new(Uuid::new_v4(), "P".to_string());
+    let mut a = task(1);
+    a.complete(None);
+    let mut last = task(2);
+    last.fail("broke".to_string());
+    plan.add_task(a);
+    plan.add_task(last);
+    assert!(
+        !plan.complete_trailing_delivery_task(),
+        "a failed last task is a real gap, not a delivery step"
+    );
+}
