@@ -338,8 +338,20 @@ impl ChannelManager {
                         tracing::warn!("ChannelManager: Slack token lock denied — {}", e);
                         return;
                     }
+                    // Background-task resume (#733): a finished detached command
+                    // resumes this session and posts to its Slack channel.
+                    let agent_holder = crate::channels::bg_resume::new_holder();
+                    let enqueue_cb = crate::channels::slack::resume::build_enqueue_callback(
+                        self.slack_state.clone(),
+                        agent_holder.clone(),
+                    );
+                    let sl_agent_service = self
+                        .channel_factory
+                        .create_agent_service_full(None, Some(enqueue_cb))
+                        .await;
+                    crate::channels::bg_resume::fill(&agent_holder, &sl_agent_service);
                     let agent = crate::channels::slack::SlackAgent::new(
-                        self.channel_factory.create_agent_service().await,
+                        sl_agent_service,
                         self.channel_factory.service_context(),
                         self.channel_factory.shared_session_id(),
                         self.slack_state.clone(),
