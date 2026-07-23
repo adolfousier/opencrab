@@ -25,6 +25,7 @@ fn base_msg(role: &str) -> DisplayMessage {
         approve_menu: None,
         details: None,
         expanded: false,
+        expanded_full: false,
         tool_group: None,
     }
 }
@@ -42,6 +43,26 @@ fn with_tool_group(expanded: bool) -> DisplayMessage {
         expanded,
     });
     msg
+}
+
+#[test]
+fn details_cycle_is_collapsed_capped_full_collapsed() {
+    // #727: reasoning cycles through three states on each click / ctrl+o.
+    let mut msg = base_msg("assistant");
+    msg.details = Some("a\nb\nc".to_string());
+    assert!(!msg.expanded && !msg.expanded_full, "starts collapsed");
+
+    msg.cycle_details_expand();
+    assert!(msg.expanded && !msg.expanded_full, "1st -> capped");
+
+    msg.cycle_details_expand();
+    assert!(msg.expanded && msg.expanded_full, "2nd -> full");
+
+    msg.cycle_details_expand();
+    assert!(
+        !msg.expanded && !msg.expanded_full,
+        "3rd -> collapsed (cycle wraps)"
+    );
 }
 
 #[test]

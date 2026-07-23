@@ -190,7 +190,11 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 }
 
                 lines.push(Line::from(""));
-                line_to_msg.resize(lines.len(), None);
+                // Map the stack's lines to THIS group's message (#726) so a click
+                // toggles the block under the cursor (and toggles it back next
+                // click). Mapping them to None made a tool-group click hit an
+                // adjacent message's line instead — expanding a block elsewhere.
+                line_to_msg.resize(lines.len(), Some(msg_idx));
 
                 // Skip all messages in the stack (tool groups + thinking-only assistants)
                 skip_count = lookahead - msg_idx - 1;
@@ -199,7 +203,8 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
 
             render_tool_group(&mut lines, group, false, app.animation_frame, content_width);
             lines.push(Line::from(""));
-            line_to_msg.resize(lines.len(), None);
+            // Map the group's lines to its message so a click toggles it (#726).
+            line_to_msg.resize(lines.len(), Some(msg_idx));
             continue;
         }
 
@@ -392,10 +397,14 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             .is_some_and(|d| !d.trim().is_empty());
         if !is_user && has_reasoning {
             lines.push(Line::from(""));
-            let hint_text = if app.messages[msg_idx].expanded {
-                "  ▾ Thinking (ctrl+o to collapse)"
-            } else {
-                "  ▸ Thinking (ctrl+o to expand)"
+            // 3-state expand cycle for reasoning (#727): collapsed -> capped ->
+            // full -> collapsed, via a click on the block or Ctrl+O.
+            let expanded = app.messages[msg_idx].expanded;
+            let full = app.messages[msg_idx].expanded_full;
+            let hint_text = match (expanded, full) {
+                (false, _) => "  ▸ Thinking (click / ctrl+o to expand)",
+                (true, false) => "  ▾ Thinking (click / ctrl+o for full)",
+                (true, true) => "  ▾ Thinking (click / ctrl+o to collapse)",
             };
             // Thinking label — no visible background
             let hint_span = Span::styled(
@@ -405,9 +414,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                     .add_modifier(Modifier::ITALIC),
             );
             lines.push(Line::from(vec![hint_span]));
-            if app.messages[msg_idx].expanded
-                && let Some(ref details) = app.messages[msg_idx].details
-            {
+            if expanded && let Some(ref details) = app.messages[msg_idx].details {
                 lines.push(Line::from(""));
                 // Reserve the outer 2-space indent in the wrap budget so
                 // reasoning_to_lines produces lines that already fit
@@ -422,12 +429,30 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 let reasoning_style = Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::ITALIC);
-                for line in reasoning_lines {
+                // Capped state: show only the first REASONING_CAP lines so a
+                // 2-page thinking block never floods the viewport (#727). Full
+                // state shows everything.
+                const REASONING_CAP: usize = 10;
+                let total = reasoning_lines.len();
+                let show = if full {
+                    total
+                } else {
+                    total.min(REASONING_CAP)
+                };
+                for line in reasoning_lines.into_iter().take(show) {
                     let mut padded_spans = vec![Span::styled("  ", Style::default())];
                     for span in line.spans {
                         padded_spans.push(Span::styled(span.content.to_string(), reasoning_style));
                     }
                     lines.push(Line::from(padded_spans));
+                }
+                if !full && total > show {
+                    lines.push(Line::from(vec![Span::styled(
+                        format!("  … {} more lines (click / ctrl+o for full)", total - show),
+                        Style::default()
+                            .fg(Color::Rgb(100, 100, 100))
+                            .add_modifier(Modifier::ITALIC),
+                    )]));
                 }
             }
         }

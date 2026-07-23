@@ -409,8 +409,12 @@ pub struct DisplayMessage {
     pub approve_menu: Option<ApproveMenu>,
     /// Collapsible details (tool output, etc.) — shown when expanded
     pub details: Option<String>,
-    /// Whether details are currently expanded
+    /// Whether details are currently expanded (capped OR full)
     pub expanded: bool,
+    /// Whether the expanded reasoning is shown in FULL (uncapped). Only
+    /// meaningful when `expanded` is true (#727): the reasoning expands in a
+    /// 3-state cycle collapsed -> capped -> full -> collapsed.
+    pub expanded_full: bool,
     /// Grouped tool calls (for role == "tool_group")
     pub tool_group: Option<ToolCallGroup>,
 }
@@ -428,6 +432,23 @@ impl DisplayMessage {
             ClickAction::Select
         }
     }
+
+    /// Advance the reasoning details through the 3-state expand cycle (#727):
+    /// collapsed -> capped -> full -> collapsed. Driven by a click on the block
+    /// or Ctrl+O.
+    pub fn cycle_details_expand(&mut self) {
+        match (self.expanded, self.expanded_full) {
+            (false, _) => {
+                self.expanded = true;
+                self.expanded_full = false;
+            }
+            (true, false) => self.expanded_full = true,
+            (true, true) => {
+                self.expanded = false;
+                self.expanded_full = false;
+            }
+        }
+    }
 }
 
 impl From<Message> for DisplayMessage {
@@ -443,6 +464,7 @@ impl From<Message> for DisplayMessage {
             approve_menu: None,
             details: msg.thinking,
             expanded: false,
+            expanded_full: false,
             tool_group: None,
         }
     }
@@ -2112,6 +2134,7 @@ impl App {
                     approve_menu: None,
                     details: None,
                     expanded: false,
+                    expanded_full: false,
                     tool_group: Some(group),
                 };
 
@@ -2201,6 +2224,7 @@ impl App {
                             approve_menu: None,
                             details: reasoning_details.clone(),
                             expanded: false,
+                            expanded_full: false,
                             tool_group: None,
                         });
                         // DB persistence happens in tool_loop's per-iteration
@@ -2235,6 +2259,7 @@ impl App {
                             approve_menu: None,
                             details: Some(reasoning_text),
                             expanded: false,
+                            expanded_full: false,
                             tool_group: None,
                         });
                         if let Some(group) = state.take_active_tool_group() {
@@ -2290,6 +2315,7 @@ impl App {
                             approve_menu: None,
                             details: None,
                             expanded: false,
+                            expanded_full: false,
                             tool_group: Some(group),
                         });
                     }
@@ -2305,6 +2331,7 @@ impl App {
                         approve_menu: None,
                         details: None,
                         expanded: false,
+                        expanded_full: false,
                         tool_group: None,
                     });
                 }
@@ -2426,6 +2453,7 @@ impl App {
                             approve_menu: None,
                             details: None,
                             expanded: false,
+                            expanded_full: false,
                             tool_group: Some(group),
                         });
                     }
@@ -2457,6 +2485,7 @@ impl App {
                         approve_menu: None,
                         details: None,
                         expanded: false,
+                        expanded_full: false,
                         tool_group: None,
                     });
                     self.build_msg_idx = Some(self.messages.len() - 1);
@@ -3494,6 +3523,7 @@ impl App {
                 approve_menu: None,
                 details: None,
                 expanded: false,
+                expanded_full: false,
                 tool_group: Some(group),
             });
         }
@@ -3522,6 +3552,7 @@ impl App {
                 approve_menu: None,
                 details: None,
                 expanded: false,
+                expanded_full: false,
                 tool_group: None,
             });
         }
@@ -3657,6 +3688,7 @@ impl App {
                 approve_menu: None,
                 details: None,
                 expanded: false,
+                expanded_full: false,
                 tool_group: None,
             });
         }
@@ -3684,6 +3716,7 @@ impl App {
             approve_menu: None,
             details: None,
             expanded: false,
+            expanded_full: false,
             tool_group: None,
         });
         // Auto-collapse all tool groups so the approval dialog is immediately visible

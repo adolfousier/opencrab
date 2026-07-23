@@ -316,7 +316,8 @@ impl App {
                     return;
                 }
                 ClickAction::ToggleDetails => {
-                    msg.expanded = !msg.expanded;
+                    // 3-state cycle: collapsed -> capped -> full -> collapsed (#727).
+                    msg.cycle_details_expand();
                     return;
                 }
                 ClickAction::Select => {}
@@ -1490,6 +1491,7 @@ impl App {
                                 approve_menu: None,
                                 details: None,
                                 expanded: false,
+                                expanded_full: false,
                                 tool_group: Some(group),
                             });
                         }
@@ -1529,6 +1531,7 @@ impl App {
                                 approve_menu: None,
                                 details: stash_reasoning,
                                 expanded: false,
+                                expanded_full: false,
                                 tool_group: None,
                             });
                         }
@@ -1733,9 +1736,10 @@ impl App {
                 if let Some(ref mut group) = msg.tool_group {
                     group.expanded = target;
                 }
-                // Also toggle expanded on messages with reasoning details
+                // Reasoning details cycle through the 3-state expand (#727):
+                // collapsed -> capped -> full -> collapsed, matching a click.
                 if msg.details.is_some() {
-                    msg.expanded = target;
+                    msg.cycle_details_expand();
                 }
             }
         } else if keys::is_page_up(&event) {

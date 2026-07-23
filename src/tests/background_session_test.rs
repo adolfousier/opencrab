@@ -203,6 +203,7 @@ fn push_message_routes_to_pending_messages_for_background() {
         approve_menu: None,
         details: None,
         expanded: false,
+        expanded_full: false,
         tool_group: None,
     };
     {
@@ -236,6 +237,7 @@ fn last_message_mut_returns_latest_pending_for_background() {
                 approve_menu: None,
                 details: None,
                 expanded: false,
+                expanded_full: false,
                 tool_group: None,
             });
         }
@@ -271,6 +273,7 @@ fn clear_turn_state_preserves_pending_messages() {
             approve_menu: None,
             details: None,
             expanded: false,
+            expanded_full: false,
             tool_group: None,
         });
         routing.append_streaming_chunk("in flight");

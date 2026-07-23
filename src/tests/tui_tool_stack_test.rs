@@ -30,6 +30,7 @@ fn make_tool_group_msg(num_calls: usize) -> DisplayMessage {
         approve_menu: None,
         details: None,
         expanded: false,
+        expanded_full: false,
         tool_group: Some(ToolCallGroup {
             calls,
             expanded: false,
@@ -50,6 +51,7 @@ fn make_thinking_only_msg() -> DisplayMessage {
         approve_menu: None,
         details: Some("Thinking about the problem...".to_string()),
         expanded: false,
+        expanded_full: false,
         tool_group: None,
     }
 }
@@ -67,6 +69,7 @@ fn make_assistant_msg(text: &str) -> DisplayMessage {
         approve_menu: None,
         details: None,
         expanded: false,
+        expanded_full: false,
         tool_group: None,
     }
 }

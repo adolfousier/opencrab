@@ -496,6 +496,7 @@ impl App {
             approve_menu: None,
             details: None,
             expanded: false,
+            expanded_full: false,
             tool_group: None,
         }
     }
@@ -775,6 +776,7 @@ impl App {
                     }),
                     details: None,
                     expanded: false,
+                    expanded_full: false,
                     tool_group: None,
                 });
                 self.scroll_offset = 0;
@@ -1586,6 +1588,7 @@ impl App {
                         approve_menu: None,
                         details: reasoning,
                         expanded: false,
+                        expanded_full: false,
                         tool_group: None,
                     });
                     first_text = false;
@@ -1603,6 +1606,7 @@ impl App {
                         approve_menu: None,
                         details: Some(r),
                         expanded: false,
+                        expanded_full: false,
                         tool_group: None,
                     });
                     first_text = false;
@@ -1698,6 +1702,7 @@ impl App {
                     approve_menu: None,
                     details: None,
                     expanded: false,
+                    expanded_full: false,
                     tool_group: Some(ToolCallGroup {
                         calls,
                         expanded: false,
@@ -1723,6 +1728,7 @@ impl App {
                     approve_menu: None,
                     details: reasoning,
                     expanded: false,
+                    expanded_full: false,
                     tool_group: None,
                 });
             } else if let Some(r) = reasoning {
@@ -1737,6 +1743,7 @@ impl App {
                     approve_menu: None,
                     details: Some(r),
                     expanded: false,
+                    expanded_full: false,
                     tool_group: None,
                 });
             }
@@ -1755,6 +1762,7 @@ impl App {
                 approve_menu: None,
                 details: None,
                 expanded: false,
+                expanded_full: false,
                 tool_group: None,
             });
         }
@@ -2180,6 +2188,7 @@ impl App {
             approve_menu: None,
             details: None,
             expanded: false,
+            expanded_full: false,
             tool_group: None,
         });
         // Only scroll to bottom if user hasn't scrolled up manually
@@ -2343,6 +2352,7 @@ impl App {
                     approve_menu: None,
                     details: None,
                     expanded: false,
+                    expanded_full: false,
                     tool_group: None,
                 };
                 self.messages.push(user_msg);
@@ -2623,6 +2633,7 @@ impl App {
                 approve_menu: None,
                 details: None,
                 expanded: false,
+                expanded_full: false,
                 tool_group: Some(group),
             });
         }
@@ -2705,6 +2716,7 @@ impl App {
                     approve_menu: None,
                     details: reasoning_details.clone(),
                     expanded: false,
+                    expanded_full: false,
                     tool_group: None,
                 });
             }
@@ -2721,6 +2733,7 @@ impl App {
                 approve_menu: None,
                 details: reasoning_details.clone(),
                 expanded: false,
+                expanded_full: false,
                 tool_group: None,
             };
             self.messages.push(assistant_msg);
