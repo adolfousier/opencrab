@@ -137,6 +137,9 @@ pub struct TelegramState {
     /// to the bottom. Telegram message ids are per-chat monotonic, so a plain
     /// max is a valid "is the block buried" test.
     chat_newest_msg_id: std::sync::Mutex<HashMap<i64, i32>>,
+    /// Dedup of outbound media uploaded via `telegram_send` so an identical
+    /// file+caption isn't delivered twice back-to-back (#721).
+    media_dedup: super::outbound_dedup::MediaSendDedup,
 }
 
 impl Default for TelegramState {
@@ -191,7 +194,23 @@ impl TelegramState {
             pending_reactions: std::sync::Mutex::new(HashMap::new()),
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
             chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
+            media_dedup: super::outbound_dedup::MediaSendDedup::default(),
         }
+    }
+
+    /// Claim an outbound media send, returning `true` if it is fresh and
+    /// `false` if an identical file+caption was sent to this chat within the
+    /// dedup window (#721). Callers skip the actual upload on `false`.
+    pub(crate) fn claim_media_send(
+        &self,
+        action: &str,
+        chat_id: i64,
+        reference: &str,
+        caption: Option<&str>,
+    ) -> bool {
+        let sig =
+            super::outbound_dedup::MediaSendDedup::signature(action, chat_id, reference, caption);
+        self.media_dedup.claim(sig, std::time::Instant::now())
     }
 
     /// Record an incoming message id for a chat, keeping the per-chat maximum

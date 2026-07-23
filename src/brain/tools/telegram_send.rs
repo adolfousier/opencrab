@@ -558,11 +558,27 @@ impl Tool for TelegramSendTool {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let reference = pget!(get_str(&input, "photo_url")).to_string();
-                let file = pget!(resolve_input_file(&reference, "photo_url").await);
                 let caption = input
                     .get("caption")
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
+                // Collapse an identical photo+caption re-sent to the same chat
+                // within the dedup window (#721) — model repeats or post-timeout
+                // retries otherwise land the same media twice back-to-back.
+                if !self.telegram_state.claim_media_send(
+                    "send_photo",
+                    chat_id,
+                    &reference,
+                    caption.as_deref(),
+                ) {
+                    tracing::info!(
+                        "telegram_send: suppressed duplicate send_photo to chat {chat_id} ({reference})"
+                    );
+                    return Ok(ToolResult::success(format!(
+                        "Photo already sent to chat {chat_id} moments ago — skipped the duplicate."
+                    )));
+                }
+                let file = pget!(resolve_input_file(&reference, "photo_url").await);
                 let reply_to = input.get("message_id").and_then(|v| v.as_i64());
                 match send_retrying_rate_limit("telegram_send send_photo", || {
                     let mut req = bot.send_photo(ChatId(chat_id), file.clone());
@@ -588,11 +604,28 @@ impl Tool for TelegramSendTool {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let reference = pget!(get_str(&input, "document_url")).to_string();
-                let file = pget!(resolve_input_file(&reference, "document_url").await);
                 let caption = input
                     .get("caption")
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
+                // Collapse an identical document+caption re-sent to the same
+                // chat within the dedup window (#721) — a large upload that
+                // times out client-side after Telegram already delivered it,
+                // or a model repeat, otherwise lands the same file twice.
+                if !self.telegram_state.claim_media_send(
+                    "send_document",
+                    chat_id,
+                    &reference,
+                    caption.as_deref(),
+                ) {
+                    tracing::info!(
+                        "telegram_send: suppressed duplicate send_document to chat {chat_id} ({reference})"
+                    );
+                    return Ok(ToolResult::success(format!(
+                        "Document already sent to chat {chat_id} moments ago — skipped the duplicate."
+                    )));
+                }
+                let file = pget!(resolve_input_file(&reference, "document_url").await);
                 let reply_to = input.get("message_id").and_then(|v| v.as_i64());
                 match send_retrying_rate_limit("telegram_send send_document", || {
                     let mut req = bot.send_document(ChatId(chat_id), file.clone());

@@ -14,6 +14,7 @@ pub(crate) mod intermediates;
 pub(crate) mod keyboards;
 pub(crate) mod markdown;
 pub(crate) mod media;
+pub(crate) mod outbound_dedup;
 pub(crate) mod plan_card;
 pub(crate) mod raw_updates;
 pub(crate) mod reaction_prompt;

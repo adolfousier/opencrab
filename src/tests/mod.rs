@@ -431,6 +431,7 @@ pub mod subagent_tool_description_test;
 pub mod suggest_followups_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_newest_msg_id_test;
+pub mod telegram_outbound_dedup_test;
 pub mod telegram_raw_update_parse_test;
 pub mod telegram_reaction_map_test;
 pub mod telegram_resume_test;
