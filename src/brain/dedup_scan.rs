@@ -81,8 +81,11 @@ pub(crate) fn is_structural_line(line: &str) -> bool {
     {
         return true;
     }
-    // Table separators
-    if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.contains("---") {
+    // Table rows (header, separator, or data). Each table needs its own rows
+    // to render, and identical header rows like `| Field | Value |` legitimately
+    // recur across unrelated tables — deduping any of them breaks the table
+    // (#736). Previously only separator rows (containing `---`) were skipped.
+    if trimmed.starts_with('|') && trimmed.ends_with('|') {
         return true;
     }
     // Blockquotes with short content
@@ -90,6 +93,40 @@ pub(crate) fn is_structural_line(line: &str) -> bool {
         return true;
     }
     false
+}
+
+/// Lines eligible for dedup in one file: outside fenced code blocks and not
+/// structural markdown, normalized (trimmed) and length-filtered. Returns
+/// `(1-indexed line number, normalized text)`.
+///
+/// Fenced code blocks are excluded because teaching-gate examples show
+/// `❌ WRONG` vs `✅ CORRECT` code side by side, so common lines (`echo "FAIL"`,
+/// `if [ -z "$TOKEN" ]`, `d = tomllib.load(f)`) legitimately repeat — removing
+/// them destroys the before/after contrast (#736). Fence tracking is stateful,
+/// so it lives here rather than in the pure per-line `is_structural_line`.
+pub(crate) fn eligible_dedup_lines(content: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut in_fence = false;
+    for (idx, line) in content.lines().enumerate() {
+        let opener = line.trim_start();
+        // A ``` or ~~~ line toggles the fence; the delimiter itself is skipped.
+        if opener.starts_with("```") || opener.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if is_structural_line(line) {
+            continue;
+        }
+        let normalized = line.trim().to_string();
+        if normalized.len() < MIN_LINE_LEN {
+            continue;
+        }
+        out.push((idx + 1, normalized));
+    }
+    out
 }
 
 /// One cluster of duplicate content found by the scan.
@@ -119,18 +156,11 @@ pub fn scan_brain_files(brain_path: &Path) -> Vec<DuplicateCluster> {
             continue;
         };
 
-        for (line_idx, line) in content.lines().enumerate() {
-            if is_structural_line(line) {
-                continue;
-            }
-            let normalized = line.trim().to_string();
-            if normalized.len() < MIN_LINE_LEN {
-                continue;
-            }
+        for (line_no, normalized) in eligible_dedup_lines(&content) {
             line_occurrences
                 .entry(normalized)
                 .or_default()
-                .push((filename.to_string(), line_idx + 1));
+                .push((filename.to_string(), line_no));
         }
     }
 

@@ -5,8 +5,8 @@
 //! handled, files under min size skipped.
 
 use crate::brain::dedup_scan::{
-    DuplicateCluster, canonical_file_rank, cluster_to_proposals, file_dedup_proposals,
-    generate_dedup_proposals, is_structural_line, scan_brain_files,
+    DuplicateCluster, canonical_file_rank, cluster_to_proposals, eligible_dedup_lines,
+    file_dedup_proposals, generate_dedup_proposals, is_structural_line, scan_brain_files,
 };
 use crate::brain::rsi_proposals::ProposalsStore;
 use std::fs;
@@ -328,6 +328,61 @@ fn test_scan_finds_duplicates_across_files() {
     let dup = &clusters[0];
     assert_eq!(dup.total_count, 2);
     assert_eq!(dup.locations.len(), 2);
+}
+
+#[test]
+fn test_table_header_rows_are_structural() {
+    // #736: identical table header/data rows recur across unrelated tables and
+    // must not be deduped — each table needs its own rows to render.
+    assert!(is_structural_line("| Field | Value |"));
+    assert!(is_structural_line("| --- | --- |"));
+    assert!(is_structural_line("| provider | openai |"));
+    assert!(!is_structural_line(
+        "This is ordinary prose, not a table row, long enough to scan"
+    ));
+}
+
+#[test]
+fn test_fenced_code_lines_excluded_from_dedup() {
+    // #736: teaching gates repeat common code lines across ❌/✅ examples inside
+    // fences. Those repeats must not be flagged, or removing them breaks the gate.
+    let content = "# AGENTS.md\n\n\
+                   Real prose line that is unique and long enough here.\n\n\
+                   ```bash\n\
+                   TOKEN=$(curl -s https://example.test/api)\n\
+                   if [ -z \"$TOKEN\" ]; then echo \"FAIL\"; fi\n\
+                   ```\n\n\
+                   ```bash\n\
+                   TOKEN=$(curl -s https://example.test/api)\n\
+                   if [ -z \"$TOKEN\" ]; then echo \"FAIL\"; fi\n\
+                   ```\n";
+    let lines = eligible_dedup_lines(content);
+    assert!(
+        lines.iter().all(|(_, t)| !t.contains("TOKEN=$(curl")),
+        "fenced code lines must be excluded, got: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|(_, t)| t.contains("Real prose line")),
+        "prose outside fences is still eligible"
+    );
+}
+
+#[test]
+fn test_scan_does_not_flag_repeated_table_headers_or_fenced_code() {
+    let dir = TempDir::new().unwrap();
+    // Two unrelated tables sharing a header, plus a repeated fenced code line.
+    let content = "# AGENTS.md\n\n\
+                   | Field | Value |\n| --- | --- |\n| a | 1 |\n\n\
+                   Some unrelated prose paragraph that stands on its own here.\n\n\
+                   | Field | Value |\n| --- | --- |\n| b | 2 |\n\n\
+                   ```toml\nd = tomllib.load(f)\n```\n\n\
+                   ```toml\nd = tomllib.load(f)\n```\n";
+    write_brain_file(dir.path(), "AGENTS.md", content);
+    let clusters = scan_brain_files(dir.path());
+    assert!(
+        clusters.is_empty(),
+        "repeated table headers and fenced code must not be flagged, got: {clusters:?}"
+    );
 }
 
 #[test]
