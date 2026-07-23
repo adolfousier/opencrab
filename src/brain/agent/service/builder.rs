@@ -292,6 +292,13 @@ pub struct AgentService {
     /// same drain path. Set per-surface (TUI / channels).
     pub(super) message_enqueue_callback: Option<super::types::MessageEnqueueCallback>,
 
+    /// Background-task manager (#722), created when an enqueue callback is wired.
+    /// bash hands long commands here so they run detached and resume the session
+    /// on completion. `None` on surfaces without the enqueue producer, in which
+    /// case bash just runs inline as before.
+    pub(super) background_manager:
+        Option<std::sync::Arc<super::background_tasks::BackgroundTaskManager>>,
+
     /// Callback for requesting sudo password from user
     pub(super) sudo_callback: Option<SudoCallback>,
 
@@ -362,6 +369,7 @@ impl AgentService {
             progress_callback: None,
             message_queue_callback: None,
             message_enqueue_callback: None,
+            background_manager: None,
             sudo_callback: None,
             ssh_callback: None,
             session_working_dirs: std::sync::RwLock::new(HashMap::new()),
@@ -613,8 +621,20 @@ impl AgentService {
         mut self,
         callback: Option<super::types::MessageEnqueueCallback>,
     ) -> Self {
+        // Spin up the background-task manager from the same producer so bash can
+        // resume the session when a long command finishes (#722).
+        self.background_manager = callback
+            .clone()
+            .map(|cb| std::sync::Arc::new(super::background_tasks::BackgroundTaskManager::new(cb)));
         self.message_enqueue_callback = callback;
         self
+    }
+
+    /// The background-task manager, if an enqueue producer was wired (#722).
+    pub fn background_manager(
+        &self,
+    ) -> Option<std::sync::Arc<super::background_tasks::BackgroundTaskManager>> {
+        self.background_manager.clone()
     }
 
     /// Push a message into `session_id`'s queue via the surface enqueue callback,

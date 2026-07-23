@@ -300,6 +300,29 @@ impl Tool for BashTool {
         // Determine timeout: use input override if provided, else context default, cap at 600s
         let effective_timeout = input.timeout_secs.unwrap_or(context.timeout_secs).min(600);
 
+        // Genuinely long tasks (cargo test/build, CI waits, renders) run DETACHED
+        // and resume the session on completion instead of churning toward the 600s
+        // cap (#722). Only when a surface wired the background manager; sudo needs
+        // the inline password flow, so it's excluded. Otherwise fall through and
+        // run inline exactly as before.
+        if let Some(ref mgr) = context.background_manager
+            && !input.command.trim_start().starts_with("sudo ")
+            && crate::brain::agent::service::background_tasks::is_known_long(&input.command)
+        {
+            let label = crate::brain::agent::service::background_tasks::short_label(&input.command);
+            mgr.clone().spawn_command(
+                context.session_id,
+                context.working_directory.clone(),
+                label.clone(),
+                input.command.clone(),
+            );
+            return Ok(ToolResult::success(format!(
+                "Started in the background: {label}\n\nThis is a long-running task, so it is \
+                 running detached. I'll continue this session automatically when it finishes — \
+                 no need to poll or wait. Do other independent work meanwhile if there is any."
+            )));
+        }
+
         // Detect sudo commands and request password via callback
         let is_sudo = input.command.trim_start().starts_with("sudo ");
         let sudo_password = if is_sudo {

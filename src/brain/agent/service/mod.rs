@@ -3,6 +3,7 @@
 //! Core service for managing AI agent conversations, coordinating between
 //! LLM providers, context management, and data persistence.
 
+pub(crate) mod background_tasks;
 mod builder;
 mod compaction;
 pub(crate) mod compaction_prompts;

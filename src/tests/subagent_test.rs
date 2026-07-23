@@ -369,6 +369,7 @@ mod send_input_tool {
             service_context: None,
             question_callback: None,
             progress_callback: None,
+            background_manager: None,
         }
     }
 
@@ -523,6 +524,7 @@ mod close_agent_tool {
             service_context: None,
             question_callback: None,
             progress_callback: None,
+            background_manager: None,
         }
     }
 
@@ -650,6 +652,7 @@ mod wait_agent_tool {
             service_context: None,
             question_callback: None,
             progress_callback: None,
+            background_manager: None,
         }
     }
 
@@ -1269,6 +1272,7 @@ mod team_delete_tool {
             service_context: None,
             question_callback: None,
             progress_callback: None,
+            background_manager: None,
         }
     }
 
@@ -1396,6 +1400,7 @@ mod team_broadcast_tool {
             service_context: None,
             question_callback: None,
             progress_callback: None,
+            background_manager: None,
         }
     }
 

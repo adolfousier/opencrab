@@ -2121,6 +2121,7 @@ pub(crate) async fn cmd_evolve(config: &crate::config::Config, check_only: bool)
         service_context: None,
         question_callback: None,
         progress_callback: None,
+        background_manager: None,
     };
 
     let result = tool.execute(input, &context).await?;

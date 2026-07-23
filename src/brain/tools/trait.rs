@@ -53,6 +53,12 @@ pub struct ToolExecutionContext {
     /// this without awaiting the user. None on surfaces that wire no progress
     /// bridge. Distinct from `question_callback`, which blocks for an answer.
     pub progress_callback: Option<crate::brain::agent::ProgressCallback>,
+
+    /// Background-task manager (#722). When present, bash hands a known-long
+    /// command here to run detached and resume the session on completion. `None`
+    /// on surfaces without the enqueue producer, where bash runs inline.
+    pub background_manager:
+        Option<Arc<crate::brain::agent::service::background_tasks::BackgroundTaskManager>>,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -83,6 +89,7 @@ impl ToolExecutionContext {
             service_context: None,
             question_callback: None,
             progress_callback: None,
+            background_manager: None,
         }
     }
 
