@@ -274,8 +274,20 @@ impl ChannelManager {
                         tracing::warn!("ChannelManager: Discord token lock denied — {}", e);
                         return;
                     }
+                    // Background-task resume (#732): a finished detached command
+                    // resumes this session and replies to its Discord channel.
+                    let agent_holder = crate::channels::bg_resume::new_holder();
+                    let enqueue_cb = crate::channels::discord::resume::build_enqueue_callback(
+                        self.discord_state.clone(),
+                        agent_holder.clone(),
+                    );
+                    let dc_agent_service = self
+                        .channel_factory
+                        .create_agent_service_full(None, Some(enqueue_cb))
+                        .await;
+                    crate::channels::bg_resume::fill(&agent_holder, &dc_agent_service);
                     let agent = crate::channels::discord::DiscordAgent::new(
-                        self.channel_factory.create_agent_service().await,
+                        dc_agent_service,
                         self.channel_factory.service_context(),
                         self.channel_factory.shared_session_id(),
                         self.discord_state.clone(),
