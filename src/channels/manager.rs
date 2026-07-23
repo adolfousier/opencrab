@@ -221,8 +221,20 @@ impl ChannelManager {
         }
         match channel_action(should_run, handle_alive(handles, "whatsapp")) {
             ChannelAction::Start => {
+                // Background-task resume (#734): a finished detached command
+                // resumes this session and replies to its WhatsApp chat.
+                let agent_holder = crate::channels::bg_resume::new_holder();
+                let enqueue_cb = crate::channels::whatsapp::resume::build_enqueue_callback(
+                    self.whatsapp_state.clone(),
+                    agent_holder.clone(),
+                );
+                let wa_agent_service = self
+                    .channel_factory
+                    .create_agent_service_full(None, Some(enqueue_cb))
+                    .await;
+                crate::channels::bg_resume::fill(&agent_holder, &wa_agent_service);
                 let agent = crate::channels::whatsapp::WhatsAppAgent::new(
-                    self.channel_factory.create_agent_service().await,
+                    wa_agent_service,
                     self.channel_factory.service_context(),
                     self.channel_factory.shared_session_id(),
                     self.whatsapp_state.clone(),

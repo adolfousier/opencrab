@@ -6,6 +6,7 @@
 mod agent;
 pub(crate) mod follow_up_question;
 pub(crate) mod handler;
+pub(crate) mod resume;
 pub(crate) mod store;
 
 pub use agent::WhatsAppAgent;
@@ -100,6 +101,10 @@ pub struct WhatsAppState {
     photo_buffer: Mutex<HashMap<String, Vec<(String, Option<String>)>>>,
     /// Photo debounce cancellation tokens: chat_jid → CancellationToken
     pub(crate) photo_debounce: Mutex<HashMap<String, CancellationToken>>,
+    /// session_id → chat JID, so a finished background task can resume the
+    /// originating chat (#731). WhatsApp keeps no other session→target map;
+    /// registered on each handled turn.
+    session_jids: Mutex<HashMap<Uuid, String>>,
 }
 
 impl Default for WhatsAppState {
@@ -131,7 +136,19 @@ impl WhatsAppState {
             first_pair_pending: std::sync::atomic::AtomicBool::new(false),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
+            session_jids: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Map a session to the chat JID it is being handled in, so a finished
+    /// background task can resume that chat (#731). Called on each turn.
+    pub async fn register_session_jid(&self, session_id: Uuid, jid: String) {
+        self.session_jids.lock().await.insert(session_id, jid);
+    }
+
+    /// The chat JID a session was last handled in, if known (#731).
+    pub async fn session_jid(&self, session_id: Uuid) -> Option<String> {
+        self.session_jids.lock().await.get(&session_id).cloned()
     }
 
     /// Register a pending approval for a phone number.

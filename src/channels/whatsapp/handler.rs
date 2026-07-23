@@ -737,6 +737,12 @@ pub(crate) async fn handle_message(
         }
     };
 
+    // Remember which chat this session is handled in, so a finished background
+    // task can resume the right chat (#731).
+    wa_state
+        .register_session_jid(session_id, reply_target.to_string())
+        .await;
+
     // Optional follow-up suggestions (#600): a bare numeric reply selects the
     // matching suggestion — rewrite the turn text to it. Any other message
     // clears the stale set so an old number can't fire later.

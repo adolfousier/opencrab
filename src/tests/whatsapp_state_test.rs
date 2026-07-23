@@ -70,3 +70,30 @@ fn late_subscriber_misses_earlier_messages() {
     let mut rx = state.subscribe_qr();
     assert!(rx.try_recv().is_err());
 }
+
+/// #731: the session→JID map lets a finished background task resume the right
+/// chat. Unknown sessions resolve to None; the latest registration wins.
+#[tokio::test]
+async fn session_jid_registers_and_resolves() {
+    let state = WhatsAppState::new();
+    let sid = uuid::Uuid::new_v4();
+    assert!(
+        state.session_jid(sid).await.is_none(),
+        "an unregistered session has no jid"
+    );
+    state
+        .register_session_jid(sid, "123@s.whatsapp.net".to_string())
+        .await;
+    assert_eq!(
+        state.session_jid(sid).await.as_deref(),
+        Some("123@s.whatsapp.net")
+    );
+    // The chat can move; the latest registration wins.
+    state
+        .register_session_jid(sid, "456@s.whatsapp.net".to_string())
+        .await;
+    assert_eq!(
+        state.session_jid(sid).await.as_deref(),
+        Some("456@s.whatsapp.net")
+    );
+}
