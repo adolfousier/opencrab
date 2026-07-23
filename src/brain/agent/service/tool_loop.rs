@@ -3992,6 +3992,23 @@ impl AgentService {
                         Some(&iteration_text.chars().take(300).collect::<String>()),
                     );
                     if let Some(ref cb) = progress_callback {
+                        // Wipe the phantom narration from the live TUI buffer.
+                        // The iteration is discarded server-side (skipped for DB
+                        // persist), but it was already streamed to the screen and
+                        // would otherwise pile up across every self-heal retry
+                        // (#745). Nothing in a phantom iteration is committed, so
+                        // the whole streamed buffer is discardable — usize::MAX
+                        // drains it all (the TUI clamps to the buffer length).
+                        cb(
+                            session_id,
+                            ProgressEvent::StripStreamedContent {
+                                bytes: usize::MAX,
+                                reason: format!(
+                                    "phantom self-heal narration discarded ({} bytes)",
+                                    iteration_text.len()
+                                ),
+                            },
+                        );
                         cb(
                             session_id,
                             ProgressEvent::SelfHealingAlert {
