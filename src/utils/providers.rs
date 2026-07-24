@@ -311,13 +311,13 @@ pub fn keys_toml_path_hint() -> String {
 pub fn cli_supported_models(name: &str) -> Option<(Vec<String>, &'static str)> {
     use crate::brain::provider::{claude_cli, command_code_cli, opencode_cli};
     match name {
-        "claude-cli" | "claude_cli" => Some((
-            claude_cli::SUPPORTED_MODELS
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-            claude_cli::DEFAULT_MODEL,
-        )),
+        // Discovered from the installed CLI (its --help aliases + the versions
+        // it was seen to resolve), with the built-in const as a floor — so a
+        // model released after build time (Opus 5) shows up without a code
+        // change (#753).
+        "claude-cli" | "claude_cli" => {
+            Some((claude_cli::available_models(), claude_cli::DEFAULT_MODEL))
+        }
         "opencode-cli" | "opencode_cli" => Some((
             opencode_cli::SUPPORTED_MODELS
                 .iter()

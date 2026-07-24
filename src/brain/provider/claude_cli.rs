@@ -120,6 +120,139 @@ pub(crate) const SUPPORTED_MODELS: &[&str] = &[
 /// `default_for_alias("sonnet")` resolution used by `ClaudeCliProvider::new`.
 pub(crate) const DEFAULT_MODEL: &str = "opus-4-8";
 
+/// Words that can appear quoted inside the `--model` help text but are not
+/// model names. Keeps the permissive shape filter from picking up prose.
+const HELP_PARSE_STOPWORDS: &[&str] = &["model", "alias", "name", "latest", "full", "session"];
+
+/// Whether `s` is shaped like a model name/alias (`opus`, `opus-4-8`,
+/// `claude-fable-5`) rather than prose or a sentinel.
+///
+/// Guards BOTH discovery sources: quoted prose from the `--help` text, and
+/// non-model sentinels that can land in the learned-alias cache (a real
+/// `~/.opencrabs/claude_cli_models.json` was found holding
+/// `"sonnet": "<synthetic>"`, which would otherwise be offered as a model in
+/// the `/models` menu).
+fn looks_like_model_name(s: &str) -> bool {
+    s.len() >= 4
+        && s.len() <= 40
+        && s.starts_with(|c: char| c.is_ascii_lowercase())
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+        && !HELP_PARSE_STOPWORDS.contains(&s)
+}
+
+/// Extract the model names the `claude` CLI documents in its `--help` output
+/// (#753). The CLI describes `--model` as "an alias for the latest model (e.g.
+/// 'fable', 'opus', or 'sonnet') or a model's full name (e.g.
+/// 'claude-fable-5')", so the quoted tokens in that option's block are the
+/// live, self-updating source — no hardcoded table to go stale when a new
+/// model ships.
+///
+/// Pure so the parsing is unit tested without spawning the binary. Scans the
+/// `--model` block only, and filters quoted segments by model-name shape, so
+/// the stray apostrophe in "model's" (which shifts naive quote pairing) cannot
+/// leak prose into the list.
+pub(crate) fn parse_models_from_help(help: &str) -> Vec<String> {
+    // Collect the --model option block: its line plus the wrapped continuation
+    // lines, stopping at the next option.
+    let mut block = String::new();
+    let mut in_block = false;
+    for line in help.lines() {
+        let trimmed = line.trim_start();
+        if in_block {
+            // A new option (or a new section header) ends the block.
+            if trimmed.starts_with('-') || (!line.starts_with(' ') && !trimmed.is_empty()) {
+                break;
+            }
+            block.push(' ');
+            block.push_str(trimmed);
+        } else if trimmed.starts_with("--model") {
+            in_block = true;
+            block.push_str(trimmed);
+        }
+    }
+    if block.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for seg in block.split('\'') {
+        let t = seg.trim();
+        if looks_like_model_name(t) && !out.iter().any(|m| m == t) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+/// Cached result of parsing `claude --help` (the subprocess runs at most once
+/// per process). `None` until first attempted; an empty vec records a failed
+/// or unavailable lookup so we don't re-spawn on every menu open.
+static HELP_MODELS: LazyLock<RwLock<Option<Vec<String>>>> = LazyLock::new(|| RwLock::new(None));
+
+/// Ask the installed `claude` binary which models it documents, cached.
+fn help_models() -> Vec<String> {
+    if let Ok(cached) = HELP_MODELS.read()
+        && let Some(ref v) = *cached
+    {
+        return v.clone();
+    }
+    let discovered = resolve_claude_path()
+        .ok()
+        .and_then(|path| std::process::Command::new(path).arg("--help").output().ok())
+        .map(|out| {
+            let text = String::from_utf8_lossy(&out.stdout);
+            parse_models_from_help(&text)
+        })
+        .unwrap_or_default();
+    if let Ok(mut w) = HELP_MODELS.write() {
+        *w = Some(discovered.clone());
+    }
+    discovered
+}
+
+/// The model list to offer for claude-cli, discovered rather than hardcoded
+/// (#753).
+///
+/// Merges three sources, in order, de-duplicated:
+///   1. names the installed CLI documents in `--help` (self-updating aliases),
+///   2. the built-in [`SUPPORTED_MODELS`] floor, so nothing disappears when the
+///      CLI is missing or its help text changes shape,
+///   3. versions [`learned_alias`] observed the CLI actually resolve (e.g.
+///      `opus` → `opus-5`), which is how a brand-new release shows up by name
+///      without any code change.
+///
+/// Only the `--help` parse is cached; the learned versions are re-read each
+/// call so the menu reflects what the CLI has resolved most recently.
+pub(crate) fn available_models() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |m: String| {
+        if !m.is_empty() && !out.iter().any(|x| x == &m) {
+            out.push(m);
+        }
+    };
+    for m in help_models() {
+        push(m);
+    }
+    for m in SUPPORTED_MODELS {
+        push((*m).to_string());
+    }
+    if let Ok(learned) = LEARNED_MODELS.read() {
+        // Shape-filtered: the cache can hold non-model sentinels (`<synthetic>`)
+        // that must never be offered as a selectable model.
+        let mut versions: Vec<String> = learned
+            .values()
+            .filter(|v| looks_like_model_name(v))
+            .cloned()
+            .collect();
+        versions.sort();
+        for v in versions {
+            push(v);
+        }
+    }
+    out
+}
+
 /// Claude CLI provider — talks directly to the `claude` binary.
 #[derive(Clone)]
 pub struct ClaudeCliProvider {
@@ -1248,7 +1381,10 @@ impl Provider for ClaudeCliProvider {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect()
+        // Discovered, not hardcoded (#753) — keeps this in sync with the
+        // /models menu so a newly released model the CLI accepts is never
+        // rejected here as "not in the catalogue".
+        available_models()
     }
 
     fn configured_context_window(&self) -> Option<u32> {
