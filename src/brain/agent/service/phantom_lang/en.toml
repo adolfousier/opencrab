@@ -613,3 +613,46 @@ path_re = "(?:^|[\\s`(])(?:\\./)?[a-zA-Z_][\\w\\-]*/[\\w\\-/]*\\.\\w{1,6}(?:[\\s
 ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|json|md)(?:[\\s`),:;]|$)"
 
 backtick_code_re = "`[a-zA-Z_]\\w+`"
+
+# Image-generation hallucination (#747): a delivery/generation assertion + a
+# visual context word, with no <<IMG:>>/<<VID:>> marker, means a fabricated
+# "here's your image" that ran no tool. Lower-case; matched against lowered text.
+media_delivery_phrases = [
+    "there it is",
+    "here it is",
+    "here you go",
+    "here's the image",
+    "here is the image",
+    "generated it",
+    "i generated",
+    "i've generated",
+    "generated this",
+    "actually generated",
+    "generated the image",
+    "created the image",
+    "edited the image",
+    "the edited image",
+    "the generated image",
+    "restyled",
+    "composited",
+    "delivered the image",
+    "sent the image",
+    "attached the image",
+    "done, here",
+]
+
+media_context_words = [
+    "image",
+    "photo",
+    "picture",
+    "render",
+    "img2img",
+    "restyle",
+    "composite",
+    "background",
+    "brightness",
+    "exposure",
+    "contrast",
+    "seamless",
+    "logo",
+]

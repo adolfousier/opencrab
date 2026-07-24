@@ -290,47 +290,6 @@ pub fn claims_unbacked_side_effects(text: &str) -> bool {
     count_unbacked_side_effect_claims(text) >= 2
 }
 
-/// Assertions that a visual/media result was produced or delivered.
-const MEDIA_DELIVERY_PHRASES: &[&str] = &[
-    "there it is",
-    "here it is",
-    "here you go",
-    "here's the image",
-    "here is the image",
-    "generated it",
-    "i generated",
-    "i've generated",
-    "generated this",
-    "actually generated",
-    "generated the image",
-    "created the image",
-    "edited the image",
-    "the edited image",
-    "the generated image",
-    "restyled",
-    "composited",
-    "delivered the image",
-    "sent the image",
-    "attached the image",
-];
-
-/// Words that mark the claimed result as visual/image work.
-const MEDIA_CONTEXT_WORDS: &[&str] = &[
-    "image",
-    "photo",
-    "picture",
-    "render",
-    "img2img",
-    "restyle",
-    "composite",
-    "background",
-    "brightness",
-    "exposure",
-    "contrast",
-    "seamless",
-    "logo",
-];
-
 /// Image-generation hallucination tell (#747): a turn asserts it produced or
 /// delivered an image/media result but carries no `<<IMG:>>`/`<<VID:>>` marker,
 /// so nothing was actually sent. `generate_image` delivers via those markers,
@@ -339,13 +298,24 @@ const MEDIA_CONTEXT_WORDS: &[&str] = &[
 /// `tool_calls_completed_this_turn == 0`, so a real generation turn (which ran
 /// the tool and emitted a marker) is never flagged. A marker anywhere in the
 /// text short-circuits to `false` — a real deliverable rode along.
+///
+/// Multilingual (like the text/tool-call phantom tells): the delivery phrases
+/// and visual context words come from every `phantom_lang` TOML and are scanned
+/// as a union, so a Spanish/French/Portuguese/Indonesian/Russian narration is
+/// caught too, immune to language mis-detection.
 pub fn claims_unbacked_media_result(text: &str) -> bool {
     if text.contains("<<IMG:") || text.contains("<<VID:") {
         return false;
     }
     let lower = text.to_lowercase();
-    let claims_delivery = MEDIA_DELIVERY_PHRASES.iter().any(|p| lower.contains(p));
-    let is_visual = MEDIA_CONTEXT_WORDS.iter().any(|w| lower.contains(w));
+    let claims_delivery = phantom_lang::all_langs()
+        .iter()
+        .flat_map(|l| l.media_delivery_phrases.iter())
+        .any(|p| lower.contains(p.as_str()));
+    let is_visual = phantom_lang::all_langs()
+        .iter()
+        .flat_map(|l| l.media_context_words.iter())
+        .any(|w| lower.contains(w.as_str()));
     claims_delivery && is_visual
 }
 

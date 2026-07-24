@@ -227,3 +227,33 @@ path_re = "(?:^|[\\s`(])(?:\\./)?[a-zA-Z_][\\w\\-]*/[\\w\\-/]*\\.\\w{1,6}(?:[\\s
 ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|json|md)(?:[\\s`),:;]|$)"
 
 backtick_code_re = "`[a-zA-Z_]\\w+`"
+
+# Alucinação de geração de imagem (#747)
+media_delivery_phrases = [
+    "aqui está",
+    "pronto",
+    "pronto, aqui",
+    "gerei",
+    "eu gerei",
+    "gerei a imagem",
+    "criei a imagem",
+    "editei a imagem",
+    "a imagem gerada",
+    "a imagem editada",
+    "gerado desta vez",
+    "gerada desta vez",
+    "enviei a imagem",
+]
+
+media_context_words = [
+    "imagem",
+    "foto",
+    "fotografia",
+    "render",
+    "fundo",
+    "brilho",
+    "exposição",
+    "contraste",
+    "logo",
+    "logotipo",
+]

@@ -229,3 +229,35 @@ path_re = "(?:^|[\\s`(])(?:\\./)?[a-zA-Z_][\\w\\-]*/[\\w\\-/]*\\.\\w{1,6}(?:[\\s
 ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|json|md)(?:[\\s`),:;]|$)"
 
 backtick_code_re = "`[a-zA-Z_]\\w+`"
+
+# Alucinación de generación de imágenes (#747)
+media_delivery_phrases = [
+    "aquí está",
+    "aquí lo tienes",
+    "aquí tienes",
+    "ya está",
+    "listo, aquí",
+    "lo generé",
+    "he generado",
+    "generé la imagen",
+    "creé la imagen",
+    "edité la imagen",
+    "la imagen editada",
+    "la imagen generada",
+    "generado esta vez",
+    "generada esta vez",
+    "envié la imagen",
+]
+
+media_context_words = [
+    "imagen",
+    "foto",
+    "fotografía",
+    "render",
+    "fondo",
+    "brillo",
+    "exposición",
+    "contraste",
+    "logo",
+    "logotipo",
+]

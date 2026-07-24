@@ -184,3 +184,32 @@ ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|js
 
 backtick_code_re = "`[a-zA-Z_]\\w+`"
 
+
+# Halusinasi pembuatan gambar (#747)
+media_delivery_phrases = [
+    "ini dia",
+    "sudah jadi",
+    "sudah saya buat",
+    "saya generate",
+    "berhasil generate",
+    "sudah di-generate",
+    "sudah digenerate",
+    "hasilnya ini",
+    "sudah dibuat",
+    "sudah diedit",
+    "gambar sudah",
+    "sudah dikirim",
+]
+
+media_context_words = [
+    "gambar",
+    "foto",
+    "citra",
+    "render",
+    "latar",
+    "latar belakang",
+    "kecerahan",
+    "eksposur",
+    "kontras",
+    "logo",
+]

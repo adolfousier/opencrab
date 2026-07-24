@@ -244,3 +244,33 @@ path_re = "(?:^|[\\s`(])(?:\\./)?[a-zA-Z_][\\w\\-]*/[\\w\\-/]*\\.\\w{1,6}(?:[\\s
 ext_re = "(?:^|[\\s`(])[\\w\\-]+\\.(?:rs|py|ts|tsx|js|jsx|go|sh|toml|yaml|yml|json|md)(?:[\\s`),:;]|$)"
 
 backtick_code_re = "`[a-zA-Z_]\\w+`"
+
+# Hallucination de génération d'image (#747)
+media_delivery_phrases = [
+    "voilà",
+    "la voici",
+    "le voici",
+    "c'est fait",
+    "c'est bon, voici",
+    "je l'ai généré",
+    "j'ai généré",
+    "généré l'image",
+    "créé l'image",
+    "édité l'image",
+    "l'image générée",
+    "l'image modifiée",
+    "généré cette fois",
+    "envoyé l'image",
+]
+
+media_context_words = [
+    "image",
+    "photo",
+    "rendu",
+    "arrière-plan",
+    "fond",
+    "luminosité",
+    "exposition",
+    "contraste",
+    "logo",
+]

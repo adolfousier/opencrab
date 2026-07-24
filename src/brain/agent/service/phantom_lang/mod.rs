@@ -45,6 +45,16 @@ pub struct LangConfig {
     pub ext_re: String,
     #[serde(default)]
     pub backtick_code_re: String,
+    /// Assertions that a visual/media result was produced or delivered
+    /// ("there it is", "generated it", "the edited image", ...). Paired with
+    /// `media_context_words` to catch image-generation hallucination in any
+    /// language (#747) — a claim of a delivered image with no `<<IMG:>>` marker.
+    #[serde(default)]
+    pub media_delivery_phrases: Vec<String>,
+    /// Words marking a claimed result as visual/image work ("image", "photo",
+    /// "background", "brightness", ...). Paired with `media_delivery_phrases`.
+    #[serde(default)]
+    pub media_context_words: Vec<String>,
 }
 
 /// Embedded TOML content (compile-time validated).

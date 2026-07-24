@@ -142,3 +142,40 @@ fn image_discussion_without_delivery_claim_is_not_flagged() {
         "To improve the image I would adjust the brightness and exposure contrast."
     ));
 }
+
+#[test]
+fn exact_reported_narration_is_flagged() {
+    // The exact text from the reported Telegram screenshot (#747 follow-up).
+    let t = "Actually generated this time. Seamless background, better brightness/exposure \
+             contrast, natural look preserved. Let me know if this hits the mark or needs \
+             another pass.";
+    assert!(
+        claims_unbacked_media_result(t),
+        "the reported image-generation narration must be caught"
+    );
+}
+
+#[test]
+fn media_hallucination_is_detected_in_other_languages() {
+    // Multilingual, like the text/tool-call phantom tells (phantom_lang TOMLs).
+    // Spanish:
+    assert!(claims_unbacked_media_result(
+        "Aquí está. Fondo sin costuras, mejor brillo y contraste, aspecto natural."
+    ));
+    // Portuguese:
+    assert!(claims_unbacked_media_result(
+        "Gerei a imagem desta vez. Fundo limpo, melhor brilho e contraste."
+    ));
+    // French:
+    assert!(claims_unbacked_media_result(
+        "Voilà. Arrière-plan homogène, meilleure luminosité et contraste."
+    ));
+    // Indonesian:
+    assert!(claims_unbacked_media_result(
+        "Ini dia gambarnya. Latar belakang mulus, kecerahan dan kontras lebih baik."
+    ));
+    // A marker still exonerates in any language.
+    assert!(!claims_unbacked_media_result(
+        "Aquí está la imagen. <<IMG:/tmp/out.png>>"
+    ));
+}
