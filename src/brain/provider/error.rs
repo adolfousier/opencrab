@@ -127,6 +127,13 @@ impl ProviderError {
             {
                 true
             }
+            // A 404 that is NOT a "model not found" is almost always a flaky
+            // provider / proxy dropping a valid endpoint mid-run (transient),
+            // not a permanent client error — retry it (bounded by the retry
+            // budget) instead of bailing the whole run. Genuine model-not-found
+            // 404s are caught by `is_model_unsupported` and route to the
+            // model-mismatch UX, staying permanent (#748).
+            ProviderError::ApiError { status: 404, .. } if !self.is_model_unsupported() => true,
             _ => false,
         }
     }

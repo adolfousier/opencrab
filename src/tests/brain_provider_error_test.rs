@@ -24,6 +24,31 @@ fn test_error_retryable() {
 }
 
 #[test]
+fn flaky_404_is_retryable_but_model_not_found_404_is_not() {
+    // #748: a flaky provider's transient 404 must retry with backoff...
+    let flaky = ProviderError::ApiError {
+        status: 404,
+        message: "Not Found".to_string(),
+        error_type: None,
+    };
+    assert!(
+        flaky.is_retryable(),
+        "a non-model 404 is a transient infra hiccup and must retry"
+    );
+
+    // ...but a genuine model-not-found 404 stays permanent.
+    let model_404 = ProviderError::ApiError {
+        status: 404,
+        message: "The model gpt-x is not found".to_string(),
+        error_type: Some("model_not_found".to_string()),
+    };
+    assert!(
+        !model_404.is_retryable(),
+        "a model-not-found 404 is permanent, not retryable"
+    );
+}
+
+#[test]
 fn test_status_code() {
     let error = ProviderError::ApiError {
         status: 429,
