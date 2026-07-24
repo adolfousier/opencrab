@@ -5883,7 +5883,41 @@ impl AgentService {
 
         // Extract text from the final response only (for TUI display).
         // Intermediate text was already shown in real-time via IntermediateText events.
-        let final_text = Self::extract_text_from_response(&response);
+        let mut final_text = Self::extract_text_from_response(&response);
+
+        // Turn-end phantom verdict (#752): a turn that ran ZERO tools and ends
+        // with a narration promising or claiming action ("On it, filing the
+        // issue... Let me check the repo first", unbacked side effects, or a
+        // fabricated image) did nothing. The per-iteration checks can miss it
+        // when the answer arrives via a recovery path (e.g. the empty-reasoning
+        // fallback produces text AFTER the iteration's phantom check already ran
+        // on empty text), so guard the delivered answer here. Multilingual by
+        // construction — reuses the phantom_lang detectors. Replace the lie with
+        // a truthful message instead of telling the user it was done.
+        if tool_calls_completed_this_turn == 0
+            && !final_text.trim().is_empty()
+            && (super::phantom::has_phantom_tool_intent_no_tools(&final_text)
+                || super::phantom::claims_unbacked_side_effects(&final_text)
+                || super::phantom::claims_unbacked_media_result(&final_text))
+        {
+            tracing::warn!(
+                "Turn-end phantom verdict: 0 tools ran but the answer narrates action — \
+                 replacing with a truthful note (#752). preview={:?}",
+                final_text.chars().take(120).collect::<String>()
+            );
+            if let Some(ref cb) = progress_callback {
+                cb(
+                    session_id,
+                    ProgressEvent::StripStreamedContent {
+                        bytes: usize::MAX,
+                        reason: "turn-end phantom narration discarded".to_string(),
+                    },
+                );
+            }
+            final_text = "I described actions but did not actually execute any tool this turn, \
+                          so nothing was done. Tell me to proceed and I will run the tools."
+                .to_string();
+        }
 
         // The assistant message was already created and updated in real-time.
         // Now update with final token usage.

@@ -192,3 +192,13 @@ fn ordinary_sentences_with_commas_stay_clean() {
         "For the record, pushing to main requires a review."
     ));
 }
+
+#[test]
+fn reported_on_it_filing_narration_is_phantom() {
+    // #752: the exact zero-tool narration that reached the user via the
+    // empty-reasoning fallback path. The turn-end verdict relies on this
+    // detector catching it. "Let me check ..." is a covered intent phrase.
+    assert!(has_phantom_tool_intent_no_tools(
+        "On it. Filing the issue and starting the work now. Let me check the repo first."
+    ));
+}
