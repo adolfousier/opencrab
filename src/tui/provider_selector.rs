@@ -644,7 +644,16 @@ pub fn model_display_label(model_id: &str) -> &str {
         "kimi-k2.5" | "kimi-k2-5" => "Kimi K2.5",
         "glm-5.1" => "GLM 5.1",
         "glm-5-turbo" => "GLM 5 Turbo",
-        "fable" | "fable-5" => "Fable 5",
+        // Bare Claude CLI aliases are a MOVING pointer to the newest release of
+        // that family (the CLI documents them as "an alias for the latest
+        // model"), so they must not be labelled with a fixed version — `fable`
+        // and `fable-5` both rendering "Fable 5" put the same label on two rows
+        // of the picker (#754). Label them as the pointer they are.
+        "fable" => "Fable (latest)",
+        "opus" => "Opus (latest)",
+        "sonnet" => "Sonnet (latest)",
+        "haiku" => "Haiku (latest)",
+        "fable-5" => "Fable 5",
         "opus-4-8" => "Opus 4.8",
         "opus-4-7" => "Opus 4.7",
         "opus-4-6" => "Opus 4.6",
@@ -670,25 +679,39 @@ fn prettify_claude_cli_model(model: &str) -> Option<&'static str> {
         ("Opus", r)
     } else if let Some(r) = model.strip_prefix("sonnet-") {
         ("Sonnet", r)
+    } else if let Some(r) = model.strip_prefix("fable-") {
+        ("Fable", r)
     } else {
         let r = model.strip_prefix("haiku-")?;
         ("Haiku", r)
     };
-    let (major, minor) = rest.split_once('-')?;
-    if major.is_empty()
-        || minor.is_empty()
-        || !major.chars().all(|c| c.is_ascii_digit())
-        || !minor.chars().all(|c| c.is_ascii_digit())
-    {
-        return None;
-    }
+    // Versions come in two shapes: `4-8` (major-minor) and `5` (major only).
+    // Requiring the `-` meant a major-only release rendered as the raw id —
+    // "opus-5" sat un-formatted right below "Opus 4.8" (#754).
+    let version = match rest.split_once('-') {
+        Some((major, minor)) => {
+            if major.is_empty()
+                || minor.is_empty()
+                || !major.chars().all(|c| c.is_ascii_digit())
+                || !minor.chars().all(|c| c.is_ascii_digit())
+            {
+                return None;
+            }
+            format!("{major}.{minor}")
+        }
+        None => {
+            if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            rest.to_string()
+        }
+    };
 
     let mut cache = PRETTIFIED.lock().ok()?;
     if let Some(existing) = cache.get(model) {
         return Some(existing);
     }
-    let pretty: &'static str =
-        Box::leak(format!("{} {}.{}", family, major, minor).into_boxed_str());
+    let pretty: &'static str = Box::leak(format!("{family} {version}").into_boxed_str());
     cache.insert(model.to_string(), pretty);
     Some(pretty)
 }

@@ -182,6 +182,7 @@ pub mod memory_store_test;
 pub mod mimo_tool_call_hint_test;
 pub mod mission_control_command_test;
 pub mod mission_control_report_test;
+pub mod model_display_label_test;
 pub mod new_session_pane_binding_test;
 pub mod pending_request_age_test;
 pub mod pending_resume_no_reinsert_test;
