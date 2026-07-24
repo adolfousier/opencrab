@@ -1117,7 +1117,10 @@ impl AgentService {
         let mut pending_phantom_content: Option<String> = None;
         let mut recent_tool_calls: Vec<String> = Vec::new(); // Track tool calls to detect loops
         let mut stream_retry_count = 0u32; // Track consecutive stream drop retries
-        const MAX_STREAM_RETRIES: u32 = 3; // Retry up to 3 times on dropped streams
+        // Retry up to 5 times on dropped streams / transient provider errors —
+        // flaky providers (e.g. intermittent 404s mid-run) recover with a few
+        // more patient backoff attempts instead of dying the run (#749).
+        const MAX_STREAM_RETRIES: u32 = 5;
         // Phantom-retry budget per turn. Single-shot proved insufficient —
         // when the model is stuck in a "Let me check…" narration loop, one
         // correction nudges it for one iteration and it drifts right back.
@@ -2039,14 +2042,17 @@ impl AgentService {
                     let mut last_err = e;
                     let mut succeeded = None;
 
-                    for attempt in 1..=3 {
-                        tracing::info!("Stream retry attempt {}/3 after: {}", attempt, last_err);
+                    for attempt in 1..=MAX_STREAM_RETRIES {
+                        tracing::info!(
+                            "Stream retry attempt {}/{} after: {}",
+                            attempt,
+                            MAX_STREAM_RETRIES,
+                            last_err
+                        );
 
-                        // Brief backoff: 500ms, 1s, 2s
-                        tokio::time::sleep(tokio::time::Duration::from_millis(
-                            500 * (1 << (attempt - 1)),
-                        ))
-                        .await;
+                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s
+                        let backoff_ms = 500u64 * (1u64 << (attempt - 1));
+                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
 
                         // Rebuild request
                         let mut retry_req =
@@ -2386,13 +2392,17 @@ impl AgentService {
                     let mut last_err = e;
                     let mut succeeded = None;
 
-                    for attempt in 1..=3 {
-                        tracing::info!("5xx retry attempt {}/3 after: {}", attempt, last_err);
+                    for attempt in 1..=MAX_STREAM_RETRIES {
+                        tracing::info!(
+                            "5xx retry attempt {}/{} after: {}",
+                            attempt,
+                            MAX_STREAM_RETRIES,
+                            last_err
+                        );
 
-                        tokio::time::sleep(tokio::time::Duration::from_millis(
-                            500 * (1 << (attempt - 1)),
-                        ))
-                        .await;
+                        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s
+                        let backoff_ms = 500u64 * (1u64 << (attempt - 1));
+                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
 
                         let mut retry_req =
                             LLMRequest::new(model_name.clone(), context.messages.clone())
