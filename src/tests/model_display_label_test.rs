@@ -64,3 +64,33 @@ fn nonsense_versions_are_left_alone() {
     assert_eq!(model_display_label("opus-x"), "opus-x");
     assert_eq!(model_display_label("opus-"), "opus-");
 }
+
+#[test]
+fn picker_orders_aliases_first_then_newest_version_per_family() {
+    // #755: the list came out in merge order, so Opus 5 rendered BELOW Opus 4.8
+    // and above Opus 4.7 — the newest release looking older than its neighbour.
+    let ids = crate::brain::provider::claude_cli::available_models();
+    let pos = |needle: &str| ids.iter().position(|m| m == needle);
+
+    // Bare aliases lead the list.
+    let first_versioned = ids
+        .iter()
+        .position(|m| m.contains('-'))
+        .expect("expected at least one versioned model");
+    for (i, m) in ids.iter().enumerate() {
+        if i < first_versioned {
+            assert!(!m.contains('-'), "alias block contains a version: {m:?}");
+        }
+    }
+
+    // Newest first within a family: 5 outranks 4.8 outranks 4.7 outranks 4.6.
+    if let (Some(o5), Some(o48)) = (pos("opus-5"), pos("opus-4-8")) {
+        assert!(o5 < o48, "opus-5 must sort above opus-4-8: {ids:?}");
+    }
+    if let (Some(o48), Some(o47)) = (pos("opus-4-8"), pos("opus-4-7")) {
+        assert!(o48 < o47, "opus-4-8 must sort above opus-4-7: {ids:?}");
+    }
+    if let (Some(o47), Some(o46)) = (pos("opus-4-7"), pos("opus-4-6")) {
+        assert!(o47 < o46, "opus-4-7 must sort above opus-4-6: {ids:?}");
+    }
+}

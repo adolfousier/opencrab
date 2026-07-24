@@ -242,6 +242,56 @@ fn claude_code_state_models() -> Vec<String> {
     out
 }
 
+/// Split a model id into `(family, version_rest)`; `version_rest` is empty for
+/// a bare alias (`opus` → `("opus", "")`, `opus-4-8` → `("opus", "4-8")`).
+fn split_family(id: &str) -> (&str, &str) {
+    match id.split_once('-') {
+        Some((family, rest)) => (family, rest),
+        None => (id, ""),
+    }
+}
+
+/// Parse a version tail into `(major, minor)`: `"5"` → `(5, 0)`, `"4-8"` →
+/// `(4, 8)`. Non-numeric tails sort last within their family.
+fn parse_version(rest: &str) -> (u32, u32) {
+    if rest.is_empty() {
+        return (0, 0);
+    }
+    match rest.split_once('-') {
+        Some((maj, min)) => (
+            maj.parse().unwrap_or(0),
+            min.split('-').next().unwrap_or("0").parse().unwrap_or(0),
+        ),
+        None => (rest.parse().unwrap_or(0), 0),
+    }
+}
+
+/// Ordering key for the model picker (#755).
+///
+/// Sorts: bare aliases first (they are the moving "latest" pointer and the
+/// safest pick), then versioned models grouped by family with the NEWEST
+/// version first. Without this the list came out in merge order, so `opus-5`
+/// rendered below `opus-4-8` and above `opus-4-7` — the newest release looking
+/// older than its neighbour. Major-only versions compare correctly against
+/// major-minor ones because both parse to a `(major, minor)` pair, so
+/// `5 → (5, 0)` outranks `4.8 → (4, 8)`.
+fn model_sort_key(id: &str) -> (u8, u8, std::cmp::Reverse<(u32, u32)>) {
+    let (family, rest) = split_family(id);
+    let family_rank = match family {
+        "fable" => 0,
+        "opus" => 1,
+        "sonnet" => 2,
+        "haiku" => 3,
+        _ => 4,
+    };
+    let is_versioned = u8::from(!rest.is_empty());
+    (
+        is_versioned,
+        family_rank,
+        std::cmp::Reverse(parse_version(rest)),
+    )
+}
+
 /// Cached result of parsing `claude --help` (the subprocess runs at most once
 /// per process). `None` until first attempted; an empty vec records a failed
 /// or unavailable lookup so we don't re-spawn on every menu open.
@@ -316,6 +366,10 @@ pub(crate) fn available_models() -> Vec<String> {
             push(v);
         }
     }
+    // Merge order is arbitrary (help, then state file, then the const floor),
+    // so order the picker semantically instead: aliases first, then newest
+    // version per family (#755).
+    out.sort_by_key(|m| model_sort_key(m));
     out
 }
 
