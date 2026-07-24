@@ -233,3 +233,23 @@ fn discovery_never_offers_non_model_sentinels() {
         );
     }
 }
+
+#[test]
+fn discovery_normalizes_and_dedupes_spellings() {
+    // The help text advertises a full name ('claude-fable-5') while the CLI
+    // records the short form ('fable-5'). Discovery must collapse them to one
+    // entry and never surface the claude- prefixed or bracketed spelling (#753).
+    let models = crate::brain::provider::claude_cli::available_models();
+    for m in &models {
+        assert!(
+            !m.starts_with("claude-"),
+            "un-normalized id leaked into the menu: {m:?}"
+        );
+        assert!(!m.contains('['), "variant suffix leaked: {m:?}");
+    }
+    let mut sorted = models.clone();
+    sorted.sort();
+    let before = sorted.len();
+    sorted.dedup();
+    assert_eq!(before, sorted.len(), "duplicate models offered: {models:?}");
+}

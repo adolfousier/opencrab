@@ -192,14 +192,14 @@ pub async fn fetch_provider_models(
         data: Vec<ModelEntry>,
     }
 
-    // Claude CLI — no API to query; the models come from the single
-    // SUPPORTED_MODELS source of truth (family aliases + pinnable versions,
-    // including fable) so this list never drifts from the rest of the codebase.
+    // Claude CLI — no /v1/models endpoint, so the list is DISCOVERED from the
+    // installed binary (its `--help` aliases plus the versions it was seen to
+    // resolve), with the built-in const as a floor (#753). Reading the const
+    // directly here made this a third parallel list: a model released after
+    // build time (Opus 5) never showed up in this dialog even after the menu
+    // and provider were switched to discovery.
     if provider_id == "claude-cli" {
-        return crate::brain::provider::claude_cli::SUPPORTED_MODELS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        return crate::brain::provider::claude_cli::available_models();
     }
 
     // OpenCode CLI — fetch models via `opencode models` command

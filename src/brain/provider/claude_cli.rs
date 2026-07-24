@@ -185,6 +185,63 @@ pub(crate) fn parse_models_from_help(help: &str) -> Vec<String> {
     out
 }
 
+/// Normalize a discovered id to OpenCrabs' naming: strip the `claude-` prefix
+/// and any bracketed variant suffix (`claude-fable-5[1m]` → `fable-5`).
+fn normalize_discovered(id: &str) -> String {
+    let s = id.strip_prefix("claude-").unwrap_or(id);
+    let s = s.split('[').next().unwrap_or(s);
+    s.trim().to_ascii_lowercase()
+}
+
+/// Model ids the `claude` CLI itself has recorded on this machine (#753).
+///
+/// Reads Claude Code's own state (`~/.claude.json`) for two shapes:
+///   * `additionalModelOptionsCache[].value` — its model-option catalogue,
+///   * `clientDataCacheSlots.*.model` — models it has actually run.
+///
+/// This is how a brand-new release (e.g. `claude-opus-5`) becomes visible in
+/// the picker without waiting for OpenCrabs to observe a resolution itself.
+/// Strictly best-effort and fail-safe: a missing file, changed schema, or parse
+/// error yields an empty list and the built-in floor still applies. Nothing is
+/// written; the file is only read.
+fn claude_code_state_models() -> Vec<String> {
+    let Some(path) = dirs::home_dir().map(|h| h.join(".claude.json")) else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |raw: &str| {
+        let m = normalize_discovered(raw);
+        if looks_like_model_name(&m) && !out.iter().any(|x| x == &m) {
+            out.push(m);
+        }
+    };
+    if let Some(arr) = json
+        .get("additionalModelOptionsCache")
+        .and_then(|v| v.as_array())
+    {
+        for entry in arr {
+            if let Some(v) = entry.get("value").and_then(|v| v.as_str()) {
+                push(v);
+            }
+        }
+    }
+    if let Some(slots) = json.get("clientDataCacheSlots").and_then(|v| v.as_object()) {
+        for slot in slots.values() {
+            if let Some(v) = slot.get("model").and_then(|v| v.as_str()) {
+                push(v);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// Cached result of parsing `claude --help` (the subprocess runs at most once
 /// per process). `None` until first attempted; an empty vec records a failed
 /// or unavailable lookup so we don't re-spawn on every menu open.
@@ -226,12 +283,21 @@ fn help_models() -> Vec<String> {
 /// call so the menu reflects what the CLI has resolved most recently.
 pub(crate) fn available_models() -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    // Normalize on the way in so the same model discovered under two spellings
+    // (the help example `claude-fable-5` vs the recorded `fable-5`) collapses to
+    // one entry instead of showing twice.
     let mut push = |m: String| {
-        if !m.is_empty() && !out.iter().any(|x| x == &m) {
+        let m = normalize_discovered(&m);
+        if looks_like_model_name(&m) && !out.iter().any(|x| x == &m) {
             out.push(m);
         }
     };
     for m in help_models() {
+        push(m);
+    }
+    // Models the CLI itself records on this machine — this is what surfaces a
+    // brand-new release (opus-5) by name in the picker.
+    for m in claude_code_state_models() {
         push(m);
     }
     for m in SUPPORTED_MODELS {
