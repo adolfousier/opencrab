@@ -2,7 +2,7 @@
 //!
 //! Main chat view and thinking indicator.
 
-use super::super::app::App;
+use super::super::app::{App, DisplayMessage};
 use super::super::markdown::parse_markdown;
 use super::tools::{render_approve_menu, render_inline_approval, render_tool_group};
 use super::utils::wrap_line_with_padding;
@@ -75,6 +75,62 @@ pub(crate) fn format_turn_spinner_meta(elapsed_secs: u64, turn_tokens: u32) -> O
     (!parts.is_empty()).then(|| format!(" ({})", parts.join(" · ")))
 }
 
+/// A run of consecutive tool-call groups found by [`scan_tool_stack`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolStack {
+    /// How many `tool_group` messages are in the run.
+    pub count: usize,
+    /// Total tool calls across every group in the run.
+    pub total_calls: usize,
+    /// Exclusive end index of the run in the message list.
+    pub end: usize,
+}
+
+/// Scan forward from `start` over a run of consecutive tool-call groups.
+///
+/// Thinking-only assistant messages (empty visible text, reasoning in
+/// `details`) sit BETWEEN tool groups during a multi-step turn, so they are
+/// stepped over without breaking the run — otherwise a turn that thinks between
+/// every tool call would never stack. Any other message ends the run.
+///
+/// Extracted from `render_chat` so the grouping is unit-testable on its own
+/// (#743 step 1). The renderer previously inlined this loop, so the only test
+/// coverage was a hand-maintained COPY of the logic in `tui_tool_stack_test`,
+/// which could drift from the real renderer without failing. Pure: no `App`, no
+/// terminal, no side effects.
+///
+/// `start` must index a message that has a `tool_group`; callers only reach
+/// this after that check.
+pub(crate) fn scan_tool_stack(messages: &[DisplayMessage], start: usize) -> ToolStack {
+    let mut count = 0;
+    let mut total_calls = 0;
+    let mut end = start;
+    // The run always begins with the group at `start`.
+    if let Some(g) = messages.get(start).and_then(|m| m.tool_group.as_ref()) {
+        count = 1;
+        total_calls = g.calls.len();
+        end = start + 1;
+    }
+    while end < messages.len() {
+        let m = &messages[end];
+        if let Some(ref g) = m.tool_group {
+            count += 1;
+            total_calls += g.calls.len();
+            end += 1;
+        } else if m.role == "assistant" && m.content.trim().is_empty() && m.details.is_some() {
+            // Thinking-only: step over it, keep the run alive.
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    ToolStack {
+        count,
+        total_calls,
+        end,
+    }
+}
+
 /// Render the chat messages
 pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
@@ -127,29 +183,12 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
 
         // Render tool call groups (finalized) — stack consecutive groups
         if let Some(ref group) = app.messages[msg_idx].tool_group {
-            // Look ahead: count consecutive tool_group messages
-            let mut stack_count = 1;
-            let mut stack_total_calls = group.calls.len();
-            let mut lookahead = msg_idx + 1;
-            while lookahead < app.messages.len() {
-                if app.messages[lookahead].tool_group.is_some() {
-                    stack_count += 1;
-                    stack_total_calls += app.messages[lookahead]
-                        .tool_group
-                        .as_ref()
-                        .map(|g| g.calls.len())
-                        .unwrap_or(0);
-                    lookahead += 1;
-                } else if app.messages[lookahead].role == "assistant"
-                    && app.messages[lookahead].content.trim().is_empty()
-                    && app.messages[lookahead].details.is_some()
-                {
-                    // Skip thinking-only assistant messages (no visible text)
-                    lookahead += 1;
-                } else {
-                    break;
-                }
-            }
+            // Look ahead over the run of consecutive tool groups. The scan is
+            // extracted so it can be unit-tested directly (#743 step 1).
+            let stack = scan_tool_stack(&app.messages, msg_idx);
+            let stack_count = stack.count;
+            let stack_total_calls = stack.total_calls;
+            let lookahead = stack.end;
 
             if stack_count >= 3 {
                 // Stacked: render a single collapsed summary for all groups
