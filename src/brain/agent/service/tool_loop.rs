@@ -4228,16 +4228,41 @@ impl AgentService {
                             },
                         );
                     }
-                    if !iteration_text.is_empty() {
+                    // If the narration is an image-generation hallucination
+                    // ("here's your image" with no <<IMG:>> marker, no tool),
+                    // do NOT deliver the model's false claim — replace it with a
+                    // truthful message so the user is not told a fake image was
+                    // produced (#751). Otherwise deliver the narration as-is.
+                    let give_up_text =
+                        if super::phantom::claims_unbacked_media_result(&iteration_text) {
+                            // Wipe the false narration already streamed to the surface.
+                            if let Some(ref cb) = progress_callback {
+                                cb(
+                                    session_id,
+                                    ProgressEvent::StripStreamedContent {
+                                        bytes: usize::MAX,
+                                        reason: "image-generation hallucination discarded"
+                                            .to_string(),
+                                    },
+                                );
+                            }
+                            "I did not actually generate or edit an image — no image tool ran this \
+                         turn, so there is nothing to show. If you want an image, ask me to \
+                         generate one and I will call the image tool."
+                                .to_string()
+                        } else {
+                            iteration_text.clone()
+                        };
+                    if !give_up_text.is_empty() {
                         if !accumulated_text.is_empty() {
                             accumulated_text.push_str("\n\n");
                         }
-                        accumulated_text.push_str(&iteration_text);
+                        accumulated_text.push_str(&give_up_text);
                         if let Err(e) = message_service
-                            .append_content(assistant_db_msg.id, &iteration_text)
+                            .append_content(assistant_db_msg.id, &give_up_text)
                             .await
                         {
-                            tracing::warn!("failed to persist give-up narration: {e}");
+                            tracing::warn!("failed to persist give-up message: {e}");
                         }
                     }
                     break;
