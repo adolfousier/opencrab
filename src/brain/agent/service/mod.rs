@@ -17,6 +17,7 @@ mod messaging;
 pub(crate) mod parallel_tools;
 pub(crate) mod phantom;
 pub(crate) mod phantom_lang;
+pub(crate) mod repetition;
 pub(crate) mod tool_loop;
 mod truncation;
 mod types;

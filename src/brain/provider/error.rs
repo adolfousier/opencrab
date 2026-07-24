@@ -69,6 +69,17 @@ pub enum ProviderError {
     Internal(String),
 }
 
+/// Whether an error/message text is the provider's server-side repetitive-tool-
+/// call guardrail (#740). Matched loosely so variants across providers
+/// (alibaba/qwen, opencode-go/deepseek) all classify. Lives here (provider
+/// layer) so `is_retryable` and the agent's recovery share one matcher.
+pub fn is_repetitive_tool_guardrail(msg: &str) -> bool {
+    let l = msg.to_lowercase();
+    l.contains("repetitive tool call")
+        || l.contains("identical name and arguments")
+        || (l.contains("repeated") && l.contains("consecutive rounds"))
+}
+
 impl ProviderError {
     /// Check if error is retryable
     pub fn is_retryable(&self) -> bool {
@@ -85,6 +96,16 @@ impl ProviderError {
             // ApiError with its own status, which is handled below — it never
             // reaches here as a StreamError.
             | ProviderError::StreamError(_) => true,
+            // The provider's repetitive-tool-call guardrail (a 500) will 500
+            // again on retry with the same poisoned history — retrying just
+            // burns attempts. Mark it NON-retryable so it surfaces immediately
+            // to the tool loop, which prunes the duplicate rounds and retries
+            // once with a healed history (#740).
+            ProviderError::ApiError { status: 500, message, .. }
+                if is_repetitive_tool_guardrail(message) =>
+            {
+                false
+            }
             ProviderError::ApiError { status, .. } if *status >= 500 => true,
             // A 4xx whose body is an HTML page is an infrastructure / CDN /
             // load-balancer error page, NOT a real JSON API client error.

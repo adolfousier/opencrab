@@ -49,6 +49,32 @@ fn flaky_404_is_retryable_but_model_not_found_404_is_not() {
 }
 
 #[test]
+fn repetitive_tool_guardrail_500_is_not_retryable() {
+    // #740: the repetition guardrail 500 will 500 again on retry with the same
+    // poisoned history — surface it fast so the tool loop can prune and retry.
+    let poison = ProviderError::ApiError {
+        status: 500,
+        message: "Repetitive tool calls detected in the conversation history. The same tool call \
+                  with identical name and arguments has been repeated across multiple consecutive \
+                  rounds."
+            .to_string(),
+        error_type: Some("invalid_request_error".to_string()),
+    };
+    assert!(
+        !poison.is_retryable(),
+        "the repetition guardrail 500 must not be retried in place"
+    );
+
+    // A plain 500 is still retryable.
+    let plain = ProviderError::ApiError {
+        status: 500,
+        message: "Internal Server Error".to_string(),
+        error_type: None,
+    };
+    assert!(plain.is_retryable());
+}
+
+#[test]
 fn test_status_code() {
     let error = ProviderError::ApiError {
         status: 429,

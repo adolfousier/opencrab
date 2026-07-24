@@ -1470,6 +1470,79 @@ impl AgentService {
                     self.reset_primary_failure_streak(session_id);
                     resp
                 }
+                Err(e) if super::repetition::is_repetitive_tool_error(&e.to_string()) => {
+                    // Provider's server-side loop guardrail fired: the history is
+                    // poisoned with repeated identical tool-call/result pairs and
+                    // will 500 forever until pruned, permanently bricking the
+                    // session (#740). Collapse the consecutive duplicate rounds
+                    // and retry once with a healed history so it self-heals
+                    // instead of dying (no more manual DB delete).
+                    let (pruned, removed) =
+                        super::repetition::prune_repetitive_tool_calls(&context.messages);
+                    if removed == 0 {
+                        tracing::warn!(
+                            "Repetitive-tool 500 but no consecutive duplicates to prune — surfacing: {e}"
+                        );
+                        return Err(AgentError::Provider(e));
+                    }
+                    tracing::warn!(
+                        "Repetitive-tool-call poison — pruned {} duplicate messages from context; \
+                         retrying (#740)",
+                        removed
+                    );
+                    self.record_provider_feedback(
+                        session_id,
+                        "repetitive_tool_recovery",
+                        &model_name,
+                        Some(&format!("pruned {removed} duplicate messages")),
+                    );
+                    context.messages = pruned;
+                    if let Some(ref cb) = progress_callback {
+                        cb(
+                            session_id,
+                            ProgressEvent::SelfHealingAlert {
+                                message: format!(
+                                    "Recovered from a repetitive-tool-call loop — pruned {removed} \
+                                     duplicate steps and retried"
+                                ),
+                            },
+                        );
+                    }
+                    let mut retry_req =
+                        LLMRequest::new(model_name.clone(), context.messages.clone())
+                            .with_max_tokens(self.max_tokens);
+                    retry_req.working_directory = Some(
+                        self.get_working_directory_for_session(session_id)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                    retry_req.session_id = Some(session_id);
+                    if let Some(system) = &context.system_brain {
+                        retry_req = retry_req.with_system(system.clone());
+                    }
+                    if self.tool_registry.count() > 0 {
+                        retry_req = retry_req.with_tools(self.tool_schemas_for_session(session_id));
+                    }
+                    self.stream_complete(
+                        session_id,
+                        retry_req,
+                        cancel_token.as_ref(),
+                        progress_callback.as_ref(),
+                        if is_cli_provider {
+                            self.message_queue_callback.as_ref()
+                        } else {
+                            None
+                        },
+                        if is_cli_provider {
+                            Some(&queued_buf)
+                        } else {
+                            None
+                        },
+                        false,
+                    )
+                    .await
+                    .map_err(AgentError::Provider)?
+                }
                 Err(ref e)
                     if e.to_string().contains("prompt is too long")
                         || e.to_string().contains("too many tokens")
@@ -4810,8 +4883,10 @@ impl AgentService {
             // then break if the model ignores the nudge and keeps repeating.
             if !is_modification_tool {
                 const REPEAT_WINDOW: usize = 8;
-                const REPEAT_NUDGE_AT: usize = 5;
-                const REPEAT_BREAK_AT: usize = 7;
+                // Nudge/break earlier so a single turn poisons the history with
+                // far fewer identical rounds before the loop is broken (#740).
+                const REPEAT_NUDGE_AT: usize = 3;
+                const REPEAT_BREAK_AT: usize = 4;
                 // Label the loop by the first tool name in the signature
                 // ("grep:ab,read:cd" → "grep") for the user-facing message.
                 let tool_label = current_call_signature
