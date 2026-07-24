@@ -3986,7 +3986,13 @@ impl AgentService {
                             && super::phantom::is_bare_completion_only(&iteration_text)
                             && super::phantom::is_delivery_intent(
                                 display_text_override.as_deref().unwrap_or(&user_message),
-                            )))
+                            ))
+                        // Image-generation hallucination (#747): a zero-tool turn
+                        // asserting it produced/delivered an image or media result
+                        // but carrying no <<IMG:>>/<<VID:>> marker is fabricating —
+                        // generate_image delivers via those markers.
+                        || (tool_calls_completed_this_turn == 0
+                            && super::phantom::claims_unbacked_media_result(&iteration_text)))
                 {
                     phantom_retries_used += 1;
                     tracing::warn!(

@@ -95,3 +95,50 @@ fn shipped_heading_now_caught_by_lead_in_detector() {
         "a 'shipped' heading should be caught by the lead-in detector"
     );
 }
+
+// ── claims_unbacked_media_result (#747): image-generation hallucination ──────
+
+use crate::brain::agent::service::phantom::claims_unbacked_media_result;
+
+#[test]
+fn media_delivery_claim_without_marker_is_phantom() {
+    // The reported hallucination: claims a delivered edited image, 0 tools, no marker.
+    let t = "There it is. Seamless background, better brightness/exposure contrast, \
+             natural look preserved. Let me know if this hits the mark or needs another pass.";
+    assert!(
+        claims_unbacked_media_result(t),
+        "must flag an image claim with no marker"
+    );
+}
+
+#[test]
+fn media_claim_with_img_marker_is_not_phantom() {
+    // A real generation rode a <<IMG:>> marker — a genuine deliverable, not phantom.
+    let t = "There it is. Seamless background, better contrast. <<IMG:/tmp/out.png>>";
+    assert!(
+        !claims_unbacked_media_result(t),
+        "a marker means a real deliverable"
+    );
+}
+
+#[test]
+fn generated_it_about_an_image_is_phantom() {
+    assert!(claims_unbacked_media_result(
+        "Generated it — the new photo has a cleaner background and better exposure."
+    ));
+}
+
+#[test]
+fn non_visual_delivery_claim_is_not_flagged() {
+    // "here you go" about non-visual work must not trip the media detector.
+    assert!(!claims_unbacked_media_result(
+        "Here you go, the config file is updated and the tests pass."
+    ));
+}
+
+#[test]
+fn image_discussion_without_delivery_claim_is_not_flagged() {
+    assert!(!claims_unbacked_media_result(
+        "To improve the image I would adjust the brightness and exposure contrast."
+    ));
+}
