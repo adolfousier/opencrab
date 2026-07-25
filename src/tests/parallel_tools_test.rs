@@ -67,6 +67,12 @@ async fn service_with_tools() -> AgentService {
     // only apply when parsing config.toml), so set the real default here.
     let mut config = crate::config::Config::default();
     config.agent.max_concurrent = 4;
+    // A gating policy, because the default is `auto-always` and the policy now
+    // resolves into the parallel-eligibility gate (#769). Under an auto policy
+    // nothing needs approval, so an approval-gated tool would correctly stay
+    // parallel-eligible and the "approval poisons the batch" case below would
+    // not be exercised at all.
+    config.agent.approval_policy = "ask".to_string();
     AgentService::new(provider, context, &config)
         .await
         .with_tool_registry(Arc::new(registry))

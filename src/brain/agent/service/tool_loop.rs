@@ -5420,16 +5420,31 @@ impl AgentService {
                             }
                         }
                     } else {
-                        // No approval callback configured, deny execution
+                        // Approval is required, the policy does not grant it, and
+                        // this surface has no way to ask. Reaching here means the
+                        // policy really is a gating one: `auto_approve_tools` is
+                        // resolved from `approval_policy` at construction, so an
+                        // auto policy would have cleared `needs_approval` above.
+                        //
+                        // The old text said only "no approval mechanism
+                        // configured", which read as missing plumbing and sent
+                        // people looking for a wiring bug when the answer was a
+                        // setting (#769). Name the policy and the two ways out.
                         tracing::warn!(
-                            "Tool '{}' requires approval but no approval callback configured",
+                            "Tool '{}' requires approval: policy does not auto-approve and this \
+                             surface has no interactive approval",
                             tool_name
                         );
-                        tool_outputs.push((false, "No approval mechanism configured".to_string()));
+                        let denial = format!(
+                            "Tool '{tool_name}' requires approval. The current \
+                             `agent.approval_policy` does not auto-approve, and this surface has \
+                             no interactive approval available. Set `agent.approval_policy` to \
+                             \"auto-always\", or re-run with `--auto-approve`."
+                        );
+                        tool_outputs.push((false, denial.clone()));
                         tool_results.push(ContentBlock::ToolResult {
                             tool_use_id: tool_id,
-                            content: "Tool requires approval but no approval mechanism configured"
-                                .to_string(),
+                            content: denial,
                             is_error: Some(true),
                         });
                         continue;

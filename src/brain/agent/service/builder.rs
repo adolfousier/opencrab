@@ -358,7 +358,19 @@ impl AgentService {
             max_tool_iterations: 0, // 0 = unlimited (loop detection is the safety net)
             default_system_brain: None,
             brain_rebuild: None,
-            auto_approve_tools: false,
+            // Resolved from config here, ONCE, so every surface inherits the
+            // same answer. It used to default to false and be derived
+            // independently at four call sites; the two CLI ones derived it
+            // from a flag instead, so a config of `auto-always` was ignored on
+            // any path that had no approval callback and every gated tool was
+            // denied with "no approval mechanism configured" (#769).
+            //
+            // Resolving at construction rather than per tool call is
+            // deliberate: the policy check that reads config hits the disk, and
+            // the tool gate runs for every call.
+            auto_approve_tools: crate::utils::approval::policy_auto_approves(
+                &config.agent.approval_policy,
+            ),
             silent_compaction: config.agent.silent_compaction,
             lazy_tools: config.agent.lazy_tools,
             max_concurrent: (config.agent.max_concurrent as usize).max(1),
@@ -382,10 +394,19 @@ impl AgentService {
         }
     }
 
-    /// Create an agent service for tests (uses Config::default()).
+    /// Create an agent service for tests.
     /// Only use in test code where no real user config exists.
+    ///
+    /// Pins `approval_policy` to a gating value rather than taking the default,
+    /// which is `auto-always`. Now that the policy resolves into the tool gate
+    /// (#769), inheriting that default would auto-approve every test service
+    /// and silently stop the approval tests from reaching the machinery they
+    /// exist to cover. Tests that want the grant ask for it explicitly with
+    /// `with_auto_approve_tools(true)`, which is what they already did.
     pub async fn new_for_test(provider: Arc<dyn Provider>, context: ServiceContext) -> Self {
-        Self::new(provider, context, &crate::config::Config::default()).await
+        let mut config = crate::config::Config::default();
+        config.agent.approval_policy = "ask".to_string();
+        Self::new(provider, context, &config).await
     }
 
     /// Test-only: replace the configured fallback chain after
@@ -584,8 +605,24 @@ impl AgentService {
     }
 
     /// Set whether to auto-approve tool execution
+    /// Whether tools run without an interactive approval, after folding the
+    /// config policy together with any explicit caller grant.
+    pub fn auto_approves_tools(&self) -> bool {
+        self.auto_approve_tools
+    }
+
+    /// Grant auto-approval on top of whatever the config policy already allows.
+    ///
+    /// Widens, never narrows. The baseline comes from `approval_policy` in
+    /// [`Self::new`], and a caller passing `false` means "I have nothing to add"
+    /// rather than "revoke the policy" — `--auto-approve` absent on the CLI must
+    /// not cancel a configured `auto-always` (#769). Callers that need approval
+    /// back on change the policy, which is the setting that owns this.
+    ///
+    /// `true` still forces it on for callers with their own grant, such as
+    /// subagents whose spawn the parent already approved.
     pub fn with_auto_approve_tools(mut self, auto_approve: bool) -> Self {
-        self.auto_approve_tools = auto_approve;
+        self.auto_approve_tools |= auto_approve;
         self
     }
 

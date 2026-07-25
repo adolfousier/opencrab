@@ -3,20 +3,37 @@
 //! Centralises the config-level approval policy check and the
 //! "always approve" persistence so every channel behaves identically.
 
+/// Whether `policy` grants tool execution without an interactive approval.
+///
+/// The one place the policy strings are interpreted. Both auto modes are
+/// treated the same here: the difference between them is how long the grant
+/// is meant to last, not whether it applies to a given call.
+///
+/// Pure and cheap, so callers that must not touch the disk (the per-tool gate
+/// in the tool loop) can resolve the policy once and keep it.
+pub fn policy_auto_approves(policy: &str) -> bool {
+    matches!(policy, "auto-always" | "auto-session")
+}
+
 /// Check config-level approval policy.
 /// Returns `Some((true, true))` when the policy auto-approves, `None` otherwise.
+///
+/// Reads config from disk, so it belongs in approval callbacks, which run once
+/// per approval request. It must not be called from the per-tool gate; see
+/// [`policy_auto_approves`].
 pub fn check_approval_policy() -> Option<(bool, bool)> {
     match crate::config::Config::load() {
-        Ok(cfg) => match cfg.agent.approval_policy.as_str() {
-            "auto-always" | "auto-session" => {
+        Ok(cfg) => {
+            if policy_auto_approves(&cfg.agent.approval_policy) {
                 tracing::debug!(
                     "Approval policy is '{}' — auto-approving",
                     cfg.agent.approval_policy
                 );
                 Some((true, true))
+            } else {
+                None
             }
-            _ => None,
-        },
+        }
         Err(e) => {
             tracing::warn!("Failed to load config for approval check: {}", e);
             None
