@@ -1952,7 +1952,13 @@ impl App {
                 && let Some(msgs) = q.remove(&sid)
             {
                 drop(q); // release lock before touching self.input_buffer
-                self.input_buffer = msgs.join("\n");
+                // Restore what the user typed, never the synthetic context a
+                // system entry carries for the model.
+                self.input_buffer = msgs
+                    .into_iter()
+                    .map(|m| m.display_text)
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 self.cursor_position = self.input_buffer.len();
             }
         } else if keys::is_up(&event)

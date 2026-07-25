@@ -236,6 +236,28 @@ impl QueuedUserMessage {
             display_text: display,
         }
     }
+
+    /// Fold a drained queue into one message, joining the two halves
+    /// SEPARATELY.
+    ///
+    /// Joining the queue into a single string and calling [`Self::plain`] on it
+    /// looks equivalent, and is for typed messages where both halves match. It
+    /// is not for a synthetic entry: collapsing there promotes the whole
+    /// context into the display text, which published a background task's
+    /// entire `[System: ...]` block, command and output included, as a user
+    /// turn in the transcript (#765).
+    ///
+    /// `None` for an empty queue, so the caller can skip the injection.
+    pub fn join(msgs: &[Self]) -> Option<Self> {
+        if msgs.is_empty() {
+            return None;
+        }
+        let join_on = |f: fn(&Self) -> &str| msgs.iter().map(f).collect::<Vec<_>>().join("\n");
+        Some(Self {
+            context_text: join_on(|m| m.context_text.as_str()),
+            display_text: join_on(|m| m.display_text.as_str()),
+        })
+    }
 }
 
 /// Response from the agent

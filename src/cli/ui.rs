@@ -649,11 +649,16 @@ async fn cmd_chat_inner(
                 // Drain the entire stack and join with newlines — same
                 // semantics as the prior shared-slot implementation,
                 // which also joined accumulated sends.
-                let joined = std::mem::take(entry).join("\n");
+                //
+                // The two halves are joined SEPARATELY. Collapsing them here
+                // (the old `plain(joined)`) meant a synthetic entry's full
+                // context became its display text, publishing a background
+                // task's whole `[System: ...]` block into the transcript
+                // (#765). A typed message carries the same text in both, so
+                // this is identical for the common case.
+                let drained = std::mem::take(entry);
                 map.remove(&session_id);
-                // TUI-typed follow-ups carry no synthetic framing: what the
-                // user typed is both the context and the persisted text.
-                Some(crate::brain::agent::QueuedUserMessage::plain(joined))
+                crate::brain::agent::QueuedUserMessage::join(&drained)
             })
         });
 

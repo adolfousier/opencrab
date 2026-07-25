@@ -2295,7 +2295,11 @@ impl App {
             if let Some(sid) = self.current_session.as_ref().map(|s| s.id)
                 && let Ok(mut q) = self.queued_messages.lock()
             {
-                q.entry(sid).or_default().push(content);
+                // Typed by the user, so there is no synthetic framing to hide:
+                // context and display are the same words.
+                q.entry(sid)
+                    .or_default()
+                    .push(crate::brain::agent::QueuedUserMessage::plain(content));
             }
             self.cursor_position = self.input_buffer.len();
             return Ok(());

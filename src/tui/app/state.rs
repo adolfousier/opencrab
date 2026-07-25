@@ -684,7 +684,14 @@ pub struct App {
     /// Lock is std::sync (not tokio): held only for HashMap read/write,
     /// never across an `.await`. The `!Send` guard makes "hold across
     /// await" a compile error, not a deadlock at runtime.
-    pub(crate) queued_messages: Arc<std::sync::Mutex<HashMap<Uuid, Vec<String>>>>,
+    /// Per-session queue of messages waiting for the next tool-loop boundary.
+    ///
+    /// Holds `QueuedUserMessage`, not `String`, so synthetic entries keep the
+    /// compact text that persists and displays. A bare string queue forced the
+    /// drain to treat every entry as plain, which published a background
+    /// task's whole `[System: ...]` scaffolding into the transcript (#765).
+    pub(crate) queued_messages:
+        Arc<std::sync::Mutex<HashMap<Uuid, Vec<crate::brain::agent::QueuedUserMessage>>>>,
 
     /// Shared session ID — channels (Telegram, WhatsApp) read this to use the same session
     pub(crate) shared_session_id: Arc<tokio::sync::Mutex<Option<Uuid>>>,
@@ -2704,7 +2711,17 @@ impl App {
                 // fresh turn with the completion.
                 if self.processing_sessions.contains(&session_id) {
                     if let Ok(mut q) = self.queued_messages.lock() {
-                        q.entry(session_id).or_default().push(context_text);
+                        // Synthetic: the model reads the full result, history
+                        // and the transcript get the compact tag. Queuing the
+                        // context alone published the whole `[System: ...]`
+                        // block, command and output included, as a user turn
+                        // (#765).
+                        q.entry(session_id).or_default().push(
+                            crate::brain::agent::QueuedUserMessage::system(
+                                context_text,
+                                display_text,
+                            ),
+                        );
                     }
                 } else {
                     self.resume_background_turn(session_id, context_text, display_text)

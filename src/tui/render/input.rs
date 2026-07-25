@@ -94,7 +94,14 @@ pub(super) fn render_queue(f: &mut Frame, app: &App, area: Rect) -> u16 {
         if msgs.is_empty() {
             return 0;
         }
-        (msgs.len(), msgs.last().cloned().unwrap_or_default())
+        // Preview the compact form: a queued system entry must not spill its
+        // context into the input chrome either.
+        (
+            msgs.len(),
+            msgs.last()
+                .map(|m| m.display_text.clone())
+                .unwrap_or_default(),
+        )
     };
 
     let dim_style = Style::default().fg(Color::Rgb(100, 100, 100));
