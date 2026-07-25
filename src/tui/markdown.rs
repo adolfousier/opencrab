@@ -16,8 +16,21 @@ const TABLE_BORDER: Color = Color::DarkGray;
 const TABLE_HEADER: Color = Color::Rgb(120, 120, 120);
 /// Dim gray used for list bullets, ordered numbers, and the blockquote gutter.
 const LIST_MARKER: Color = Color::Rgb(120, 120, 120);
-/// Link text color (underlined). Distinct from inline-code orange.
+/// Link text color (underlined). Distinct from inline-code amber.
 const LINK_COLOR: Color = Color::Rgb(90, 160, 230);
+/// Inline code (`` `like this` ``).
+///
+/// A muted amber rather than the full-saturation brand orange, and NOT bold.
+/// Inline code appears many times in a single answer, so at brand intensity it
+/// out-shouted the prose it was embedded in and every other accent on screen:
+/// the failure red, the syntax-highlighted block, the cyan language label.
+/// It only has to be identifiable as code, not compete for attention, so this
+/// keeps the warm hue and drops the chroma and the weight.
+///
+/// Deliberately local to markdown rendering and not `palette::ORANGE`: the
+/// brand colour still belongs to titles, spinners and selections, which appear
+/// once each and are supposed to draw the eye.
+const INLINE_CODE: Color = Color::Rgb(184, 128, 74);
 
 /// Fold an emphasis style stack (bold/italic/strikethrough/link) into a single
 /// `Style`. Inner tags `patch` over outer ones so nesting composes (bold inside
@@ -332,9 +345,7 @@ pub fn parse_markdown(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
                 } else {
                     current_line.push(Span::styled(
                         format!("`{code}`"),
-                        Style::default()
-                            .fg(Color::Rgb(215, 100, 20))
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(INLINE_CODE),
                     ));
                 }
             }
