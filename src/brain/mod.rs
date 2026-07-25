@@ -10,6 +10,7 @@ pub mod directives;
 pub mod feedback_policy;
 pub mod filter;
 pub mod goal;
+pub mod hints;
 pub mod mission_control;
 pub mod plans;
 pub mod prompt_builder;

@@ -9,6 +9,7 @@
 
 use super::error::Result;
 use super::registry::ToolRegistry;
+use crate::brain::hints::hints_for_tool;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -107,6 +108,12 @@ impl Tool for ToolSearchTool {
                 def.description,
                 serde_json::to_string(&def.input_schema).unwrap_or_default(),
             ));
+        }
+        // Harness-driven brain file hints: surface relevant notes from
+        // TOOLS.md etc. that match the discovery query. No model action
+        // required — the model just reads them inline.
+        if let Some(hint) = hints_for_tool(query, None).await {
+            out.push_str(&hint);
         }
         Ok(ToolResult::success(out))
     }

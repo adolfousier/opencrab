@@ -102,6 +102,69 @@ pub async fn search(
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
+/// FTS-only search over brain files (SOUL.md, TOOLS.md, AGENTS.md, etc.).
+///
+/// Used by the harness to surface relevant notes into tool error responses
+/// and tool_search results. Skips vector embeddings and hybrid RRF for
+/// minimal latency (sub-millisecond on the FTS5 index).
+///
+/// Returns up to `n` results sorted by BM25 relevance, filtered to the
+/// `brain` collection only.
+pub async fn search_brain(
+    store: &'static Mutex<Store>,
+    query: &str,
+    n: usize,
+) -> Result<Vec<MemoryResult>, String> {
+    let fts_query = sanitize_fts_query(query);
+    if fts_query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let store = store
+            .lock()
+            .map_err(|e| format!("Store lock poisoned: {e}"))?;
+        let home = crate::config::opencrabs_home();
+
+        let fts_results = store
+            .search_fts(&fts_query, n * 3, Some(COLLECTION_BRAIN)) // over-fetch, then trim
+            .map_err(|e| format!("FTS search failed: {e}"))?;
+
+        let mut out: Vec<MemoryResult> = fts_results
+            .iter()
+            .filter(|r| r.doc.collection_name == COLLECTION_BRAIN)
+            .take(n)
+            .map(|r| {
+                let snippet = match store.get_document(&r.doc.collection_name, &r.doc.path) {
+                    Ok(Some(doc)) => {
+                        let body = doc.body.as_deref().unwrap_or("");
+                        extract_snippet(body, &fts_query, 200)
+                    }
+                    _ => r.doc.title.clone(),
+                };
+                MemoryResult {
+                    path: resolve_path(&home, &r.doc.collection_name, &r.doc.path),
+                    snippet,
+                    rank: r.score,
+                }
+            })
+            .collect();
+
+        // Stable order: by rank desc, then by path for determinism.
+        out.sort_by(|a, b| {
+            b.rank
+                .partial_cmp(&a.rank)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        out.truncate(n);
+
+        Ok(out)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
 /// Convert SearchResults to RRF tuple format: (file_path, display_path, title, body).
 fn results_to_tuples(
     store: &Store,
