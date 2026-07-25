@@ -182,14 +182,26 @@ pub fn strip_ctx_footer(text: &str) -> String {
         .to_string()
 }
 
-/// A short, human-readable status excerpt of the model's live reasoning (#742).
+/// A short, human-readable status excerpt of the model's live reasoning (#742),
+/// at the one-line budget the Telegram flow header uses.
+///
+/// The TUI wants more room and calls [`thinking_excerpt_capped`] directly, so
+/// widening it there does not quietly turn every Telegram status edit into a
+/// paragraph (#768).
+pub fn thinking_excerpt(thinking: &str) -> Option<String> {
+    thinking_excerpt_capped(thinking, THINKING_STATUS_CHARS)
+}
+
+/// One-line budget for a chat status line, where the message is edited
+/// repeatedly and length is noise.
+pub const THINKING_STATUS_CHARS: usize = 80;
+
+/// As [`thinking_excerpt`], with the caller choosing how much to keep.
 ///
 /// Walks the reasoning right-to-left, picks the latest non-trivial sentence,
 /// strips a leading "I am / I'm / I will / Let me / Let us", capitalises it, and
-/// caps at 80 chars. Returns `None` for reasoning too short to summarise. Shared
-/// by the Telegram flow header and the TUI thinking spinner so a long thought
-/// reads as one status line instead of a scrolling wall.
-pub fn thinking_excerpt(thinking: &str) -> Option<String> {
+/// caps at `max_chars`. Returns `None` for reasoning too short to summarise.
+pub fn thinking_excerpt_capped(thinking: &str, max_chars: usize) -> Option<String> {
     let trimmed = thinking.trim();
     if trimmed.len() < 20 {
         return None;
@@ -217,10 +229,19 @@ pub fn thinking_excerpt(thinking: &str) -> Option<String> {
     let first = chars.next()?;
     let rest: String = chars.collect();
     let pretty = format!("{}{}", first.to_uppercase(), rest);
-    let capped: String = pretty.chars().take(80).collect();
-    Some(if pretty.chars().count() > 80 {
+    let capped: String = pretty.chars().take(max_chars).collect();
+    Some(if pretty.chars().count() > max_chars {
         format!("{capped}…")
     } else {
         capped
     })
 }
+
+/// How much of the latest reasoning sentence the live summary keeps.
+///
+/// 80 cut a multi-step chain off mid-thought ("… → commit #766 → comment+close
+/// #…"), which is the one moment the line is meant to be useful. 300 is about
+/// three wrapped lines on a normal terminal, and the renderer caps the wrap at
+/// three, so this stays a fixed budget rather than the scrolling window #742
+/// replaced (#768).
+pub const THINKING_EXCERPT_CHARS: usize = 300;

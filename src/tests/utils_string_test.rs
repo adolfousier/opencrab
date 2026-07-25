@@ -211,9 +211,36 @@ fn thinking_excerpt_takes_latest_sentence_stripped_and_capitalized() {
 }
 
 #[test]
-fn thinking_excerpt_caps_at_80_chars_with_ellipsis() {
-    let long = format!("Now I am {}", "x".repeat(200));
-    let e = crate::utils::string::thinking_excerpt(&long).unwrap();
-    assert!(e.chars().count() <= 81, "len {}", e.chars().count()); // 80 + ellipsis
-    assert!(e.ends_with('…'));
+fn thinking_excerpt_caps_at_the_budget_with_ellipsis() {
+    use crate::utils::string::{THINKING_EXCERPT_CHARS, thinking_excerpt_capped};
+    let long = format!("Now I am {}", "x".repeat(600));
+    let e = thinking_excerpt_capped(&long, THINKING_EXCERPT_CHARS).unwrap();
+    assert!(
+        e.chars().count() <= THINKING_EXCERPT_CHARS + 1,
+        "len {}",
+        e.chars().count()
+    ); // budget + ellipsis
+    assert!(e.ends_with('\u{2026}'));
+}
+
+#[test]
+fn thinking_excerpt_keeps_a_multi_step_chain_intact() {
+    // The reported case: 80 chars cut this off mid-thought at the last step,
+    // which is the one moment the line is meant to be useful (#768).
+    let chain = "Right, the plan. #766 tests running in background then wait for them \
+                 then commit #766 then comment and close #766 then move on to #767 and \
+                 finally re-run the full suite before tagging";
+    let e = crate::utils::string::thinking_excerpt_capped(
+        chain,
+        crate::utils::string::THINKING_EXCERPT_CHARS,
+    )
+    .unwrap();
+    assert!(
+        e.contains("re-run the full suite"),
+        "the tail of the chain must survive the cap, got: {e}"
+    );
+    assert!(
+        !e.ends_with('\u{2026}'),
+        "nothing to truncate at 300, got: {e}"
+    );
 }

@@ -351,6 +351,10 @@ pub(crate) fn visible_when_folded(
     }
 }
 
+/// How many wrapped lines the live reasoning summary may occupy (#768). A hard
+/// ceiling, so a long chain truncates instead of growing into a wall.
+pub(crate) const THINKING_EXCERPT_LINES: usize = 3;
+
 /// Whether a turn has working-out that folding would hide.
 ///
 /// Deliberately independent of the turn's CURRENT fold state. The header is
@@ -1071,17 +1075,33 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         // a scrolling 12-line window, so a long thought reads as one status line
         // rather than a wall (#742). The full reasoning stays available on the
         // finalized message's 3-state expand.
-        let excerpt = crate::utils::string::thinking_excerpt(reasoning)
-            .unwrap_or_else(|| "Thinking…".to_string());
-        lines.push(Line::from(vec![
-            Span::styled("  🧠 ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                excerpt,
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC),
-            ),
-        ]));
+        let excerpt = crate::utils::string::thinking_excerpt_capped(
+            reasoning,
+            crate::utils::string::THINKING_EXCERPT_CHARS,
+        )
+        .unwrap_or_else(|| "Thinking…".to_string());
+        // Wrap across at most 3 lines (#768). One line cut a multi-step chain
+        // off mid-thought; the ceiling is what keeps this a status line and not
+        // the scrolling window #742 replaced.
+        let style = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC);
+        let wrapped = wrap_line_with_padding(
+            Line::from(Span::styled(excerpt, style)),
+            content_width.saturating_sub(5),
+            "",
+        );
+        let overflows = wrapped.len() > THINKING_EXCERPT_LINES;
+        for (i, wrapped_line) in wrapped.into_iter().take(THINKING_EXCERPT_LINES).enumerate() {
+            // Continuations align under the first line's text, past the emoji.
+            let prefix = if i == 0 { "  🧠 " } else { "     " };
+            let mut spans = vec![Span::styled(prefix, Style::default().fg(Color::DarkGray))];
+            spans.extend(wrapped_line.spans);
+            if overflows && i == THINKING_EXCERPT_LINES - 1 {
+                spans.push(Span::styled("…", style));
+            }
+            lines.push(Line::from(spans));
+        }
 
         // Blank line to separate reasoning from status spinner
         lines.push(Line::from(""));
