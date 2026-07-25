@@ -80,7 +80,7 @@ fn config_known_top_level_keys_are_accepted() {
     std::fs::write(
         &path,
         r#"
-[crabrace]
+[provider_registry]
 [database]
 [logging]
 [debug]

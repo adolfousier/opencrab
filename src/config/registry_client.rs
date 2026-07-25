@@ -1,21 +1,17 @@
 //! Provider-registry HTTP client.
 //!
-//! Talks to a Crabrace-compatible registry: two GETs and two plain data types.
+//! Two GETs and two plain data types: `GET /providers` returns the registry's
+//! providers and their models, `GET /health` reports whether it is reachable.
 //!
-//! This used to come from the `crabrace` crate, which shipped the registry
-//! SERVER in the same package as its client with no feature gate. Depending on
-//! it for `get_providers` pulled axum, tower, tower-http, config, dotenvy,
-//! prometheus and tracing-subscriber into every build, forced a second reqwest
-//! and a second axum into the tree alongside the ones already there, and
-//! carried RUSTSEC-2024-0437 (protobuf, via prometheus) plus
-//! RUSTSEC-2025-0134 (rustls-pemfile, via reqwest 0.11).
+//! This replaced a third-party crate that shipped the registry SERVER in the
+//! same package as its client with no feature gate, so importing it for these
+//! two calls compiled a whole web stack into every build and carried two
+//! advisories with it. The client was a `reqwest::Client` with three lines of
+//! glue, and `reqwest` is already a direct dependency, so it lives here now.
+//! See the git history for the full accounting.
 //!
-//! The client itself was `reqwest::Client` with three lines of glue, and
-//! `reqwest` is already a direct dependency, so the whole surface is
-//! reproduced here instead.
-//!
-//! The wire format is unchanged: field names, renames and defaults match the
-//! original types exactly, so an existing registry keeps working.
+//! The wire format is unchanged from that crate: field names, renames and
+//! serde defaults match exactly, so an existing registry keeps working.
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};

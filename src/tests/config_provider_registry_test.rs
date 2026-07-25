@@ -1,9 +1,9 @@
-use crate::config::crabrace::*;
+use crate::config::provider_registry::*;
 use tokio;
 
 #[test]
 fn test_default_config() {
-    let config = CrabraceConfig::default();
+    let config = ProviderRegistryConfig::default();
     assert!(config.enabled);
     assert_eq!(config.base_url, "http://localhost:8080");
     assert!(config.auto_update);
@@ -12,16 +12,16 @@ fn test_default_config() {
 
 #[test]
 fn test_create_integration() {
-    let config = CrabraceConfig::default();
-    let integration = CrabraceIntegration::new(config);
+    let config = ProviderRegistryConfig::default();
+    let integration = ProviderRegistry::new(config);
     assert!(integration.is_ok());
 }
 
 #[tokio::test]
 async fn test_health_check() {
-    // This test requires a running Crabrace server
-    let config = CrabraceConfig::default();
-    let integration = CrabraceIntegration::new(config).unwrap();
+    // This test requires a running provider registry server
+    let config = ProviderRegistryConfig::default();
+    let integration = ProviderRegistry::new(config).unwrap();
 
     // Note: This will fail if server is not running
     // In production, handle this gracefully

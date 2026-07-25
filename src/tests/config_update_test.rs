@@ -1,19 +1,19 @@
 use crate::config::Config;
-use crate::config::crabrace::CrabraceConfig;
-use crate::config::crabrace::CrabraceIntegration;
+use crate::config::provider_registry::ProviderRegistry;
+use crate::config::provider_registry::ProviderRegistryConfig;
 use crate::config::update::*;
 
 #[test]
 fn test_should_update_when_disabled() {
-    let crabrace_config = CrabraceConfig {
+    let provider_registry_config = ProviderRegistryConfig {
         enabled: false,
         ..Default::default()
     };
-    let crabrace = CrabraceIntegration::new(crabrace_config.clone()).unwrap();
-    let updater = ProviderUpdater::new(crabrace);
+    let provider_registry = ProviderRegistry::new(provider_registry_config.clone()).unwrap();
+    let updater = ProviderUpdater::new(provider_registry);
 
     let config = Config {
-        crabrace: crabrace_config,
+        provider_registry: provider_registry_config,
         ..Default::default()
     };
 
@@ -22,16 +22,16 @@ fn test_should_update_when_disabled() {
 
 #[test]
 fn test_should_update_when_never_updated() {
-    let crabrace_config = CrabraceConfig {
+    let provider_registry_config = ProviderRegistryConfig {
         enabled: true,
         auto_update: true,
         ..Default::default()
     };
-    let crabrace = CrabraceIntegration::new(crabrace_config.clone()).unwrap();
-    let updater = ProviderUpdater::new(crabrace);
+    let provider_registry = ProviderRegistry::new(provider_registry_config.clone()).unwrap();
+    let updater = ProviderUpdater::new(provider_registry);
 
     let config = Config {
-        crabrace: crabrace_config,
+        provider_registry: provider_registry_config,
         ..Default::default()
     };
 

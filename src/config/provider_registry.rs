@@ -1,18 +1,18 @@
-// Crabrace client integration for OpenCrabs
-// Replaces the planned Catwalk integration with Crabrace
+// provider registry client integration for OpenCrabs
+// Replaces the planned Catwalk integration with provider registry
 
 use super::registry_client::{Provider, RegistryClient};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// Configuration for Crabrace provider registry client
+/// Configuration for provider registry provider registry client
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrabraceConfig {
-    /// Enable Crabrace integration for automatic provider discovery
+pub struct ProviderRegistryConfig {
+    /// Enable provider registry integration for automatic provider discovery
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 
-    /// Base URL of the Crabrace server
+    /// Base URL of the provider registry server
     /// Default: http://localhost:8080
     #[serde(default = "default_base_url")]
     pub base_url: String,
@@ -42,7 +42,7 @@ fn default_update_interval() -> u64 {
     3600 // 1 hour
 }
 
-impl Default for CrabraceConfig {
+impl Default for ProviderRegistryConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
@@ -53,34 +53,34 @@ impl Default for CrabraceConfig {
     }
 }
 
-/// Crabrace client wrapper for OpenCrabs
-pub struct CrabraceIntegration {
+/// provider registry client wrapper for OpenCrabs
+pub struct ProviderRegistry {
     client: RegistryClient,
-    config: CrabraceConfig,
+    config: ProviderRegistryConfig,
 }
 
-impl CrabraceIntegration {
-    /// Create a new Crabrace integration instance
-    pub fn new(config: CrabraceConfig) -> Result<Self> {
+impl ProviderRegistry {
+    /// Create a new provider registry integration instance
+    pub fn new(config: ProviderRegistryConfig) -> Result<Self> {
         let client = RegistryClient::new(&config.base_url);
 
         Ok(Self { client, config })
     }
 
-    /// Fetch all providers from Crabrace registry
+    /// Fetch all providers from provider registry registry
     pub async fn fetch_providers(&self) -> Result<Vec<Provider>> {
         self.client
             .get_providers()
             .await
-            .context("Failed to fetch providers from Crabrace")
+            .context("Failed to fetch providers from provider registry")
     }
 
-    /// Check if Crabrace server is healthy
+    /// Check if provider registry server is healthy
     pub async fn health_check(&self) -> Result<bool> {
         self.client
             .health_check()
             .await
-            .context("Failed to check Crabrace health")
+            .context("Failed to check provider registry health")
     }
 
     /// Get provider by ID
@@ -106,7 +106,7 @@ impl CrabraceIntegration {
     }
 
     /// Get the configuration
-    pub fn config(&self) -> &CrabraceConfig {
+    pub fn config(&self) -> &ProviderRegistryConfig {
         &self.config
     }
 }

@@ -1,7 +1,7 @@
 //! Provider auto-update mechanism
 //!
 //! This module handles automatic updating of LLM provider information
-//! from the Crabrace registry.
+//! from the provider registry registry.
 
 use super::registry_client::Provider;
 use anyhow::{Context, Result};
@@ -9,31 +9,31 @@ use std::time::{Duration, SystemTime};
 use tokio::time;
 use tracing::{debug, info, warn};
 
-use super::crabrace::CrabraceIntegration;
+use super::provider_registry::ProviderRegistry;
 use super::{Config, ProviderConfig};
 
 /// Provider update manager
 pub struct ProviderUpdater {
-    crabrace: CrabraceIntegration,
+    provider_registry: ProviderRegistry,
     last_update: Option<SystemTime>,
 }
 
 impl ProviderUpdater {
     /// Create a new ProviderUpdater
-    pub fn new(crabrace: CrabraceIntegration) -> Self {
+    pub fn new(provider_registry: ProviderRegistry) -> Self {
         Self {
-            crabrace,
+            provider_registry,
             last_update: None,
         }
     }
 
     /// Check if an update is needed based on the update interval
     pub fn should_update(&self, config: &Config) -> bool {
-        if !config.crabrace.enabled || !config.crabrace.auto_update {
+        if !config.provider_registry.enabled || !config.provider_registry.auto_update {
             return false;
         }
 
-        let interval = Duration::from_secs(config.crabrace.update_interval_seconds);
+        let interval = Duration::from_secs(config.provider_registry.update_interval_seconds);
 
         match self.last_update {
             None => true, // Never updated, should update
@@ -48,23 +48,23 @@ impl ProviderUpdater {
 
     /// Perform a provider update
     pub async fn update(&mut self, config: &mut Config) -> Result<UpdateResult> {
-        info!("Starting provider update from Crabrace registry");
+        info!("Starting provider update from provider registry registry");
 
-        // Check Crabrace health first
-        match self.crabrace.health_check().await {
+        // Check provider registry health first
+        match self.provider_registry.health_check().await {
             Ok(healthy) if healthy => {
-                debug!("Crabrace health check passed");
+                debug!("provider registry health check passed");
             }
             Ok(_) => {
-                warn!("Crabrace server is unhealthy, skipping update");
+                warn!("provider registry server is unhealthy, skipping update");
                 return Ok(UpdateResult {
                     success: false,
                     providers_updated: 0,
-                    error: Some("Crabrace server is unhealthy".to_string()),
+                    error: Some("provider registry server is unhealthy".to_string()),
                 });
             }
             Err(e) => {
-                warn!("Failed to connect to Crabrace server: {}", e);
+                warn!("Failed to connect to provider registry server: {}", e);
                 return Ok(UpdateResult {
                     success: false,
                     providers_updated: 0,
@@ -73,14 +73,17 @@ impl ProviderUpdater {
             }
         }
 
-        // Fetch providers from Crabrace
+        // Fetch providers from provider registry
         let providers = self
-            .crabrace
+            .provider_registry
             .fetch_providers()
             .await
-            .context("Failed to fetch providers from Crabrace")?;
+            .context("Failed to fetch providers from provider registry")?;
 
-        info!("Fetched {} providers from Crabrace", providers.len());
+        info!(
+            "Fetched {} providers from provider registry",
+            providers.len()
+        );
 
         // Update config with provider information
         let mut updated_count = 0;
@@ -224,8 +227,8 @@ impl ProviderUpdater {
 
     /// Perform a one-time update (for manual updates)
     pub async fn update_once(config: &mut Config) -> Result<UpdateResult> {
-        let crabrace = CrabraceIntegration::new(config.crabrace.clone())?;
-        let mut updater = Self::new(crabrace);
+        let provider_registry = ProviderRegistry::new(config.provider_registry.clone())?;
+        let mut updater = Self::new(provider_registry);
         updater.update(config).await
     }
 }

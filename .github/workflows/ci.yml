@@ -188,25 +188,20 @@ jobs:
 
       - name: Run cargo audit
         # Ignored advisories (all transitive deps we don't control):
-        #   RUSTSEC-2024-0437  protobuf 2.x via prometheus 0.13.4 → crabrace 0.1.0
-        #     DOS-class (uncontrolled recursion). No upstream fix without a
-        #     major-version bump in the prometheus chain we don't control.
         #   RUSTSEC-2024-0320  yaml-rust — unmaintained (via syntect)
         #   RUSTSEC-2024-0436  paste — unmaintained (via many proc-macro crates)
         #   RUSTSEC-2025-0119  number_prefix — unmaintained (via indicatif)
         #   RUSTSEC-2025-0134  rustls-pemfile — unmaintained (via reqwest)
         #   RUSTSEC-2025-0141  bincode — unmaintained (via kalosm)
-        #   RUSTSEC-2026-0002  lru — unsound IterMut (via crabrace)
+        #   RUSTSEC-2026-0002  lru — unsound IterMut (via kalosm-language-model → rwhisper)
         #   RUSTSEC-2026-0173  proc-macro-error2 — unmaintained (via derive macros)
         #   RUSTSEC-2026-0192  ttf-parser — unmaintained (via syntect → rustybuzz)
-        #   RUSTSEC-2026-0194  quick-xml quadratic runtime (via multiple deps, need >=0.41.0)
-        #   RUSTSEC-2026-0195  quick-xml unbounded allocation (via multiple deps, need >=0.41.0)
         #   RUSTSEC-2026-0187  lopdf stack overflow parsing untrusted PDFs. Our lopdf 0.39
         #                      comes ONLY from printpdf (write-only: we generate PDFs, never
         #                      parse untrusted input through it); the parse path (pdf-extract)
         #                      is on lopdf 0.42, the patched version. Drop this ignore when
         #                      printpdf releases against lopdf >= 0.42.
-        run: cargo audit --ignore RUSTSEC-2024-0437 --ignore RUSTSEC-2024-0320 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0002 --ignore RUSTSEC-2026-0173 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 --ignore RUSTSEC-2026-0187
+        run: cargo audit --ignore RUSTSEC-2024-0320 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0002 --ignore RUSTSEC-2026-0173 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0187
 
   # ── Stage 5: Coverage (on-demand only) ───────────────────────────────────
   # Tarpaulin is the slowest job (~12 min). Running it on every main push

@@ -128,7 +128,7 @@ cargo test --all-features
 | Tests — Command Rich Table | 5 | `src/tests/command_rich_table_test.rs` |
 | Tests — Compaction Prompts | 12 | `src/tests/compaction_prompts_test.rs` |
 | Tests — Compaction | 28 | `src/tests/compaction_test.rs` |
-| Tests — Config Crabrace | 3 | `src/tests/config_crabrace_test.rs` |
+| Tests — Config Provider Registry | 3 | `src/tests/config_provider_registry_test.rs` |
 | Tests — Config Dotted Caps | 6 | `src/tests/config_dotted_caps_test.rs` |
 | Tests — Config Last Good Recovery | 3 | `src/tests/config_last_good_recovery_test.rs` |
 | Tests — Config Owner Seed Migration | 5 | `src/tests/config_owner_seed_migration_test.rs` |

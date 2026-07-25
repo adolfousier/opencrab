@@ -1,6 +1,6 @@
 //! Configuration types, defaults, loading, and validation.
 
-use super::crabrace::CrabraceConfig;
+use super::provider_registry::ProviderRegistryConfig;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -26,9 +26,9 @@ pub static CONFIG_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Crabrace integration configuration
+    /// provider registry integration configuration
     #[serde(default)]
-    pub crabrace: CrabraceConfig,
+    pub provider_registry: ProviderRegistryConfig,
 
     /// Database configuration
     #[serde(default)]
@@ -2017,7 +2017,7 @@ fn default_log_level() -> String {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            crabrace: CrabraceConfig::default(),
+            provider_registry: ProviderRegistryConfig::default(),
             database: DatabaseConfig {
                 path: default_db_path(),
             },

@@ -54,11 +54,9 @@ reqwest = { version = "0.12", features = ["json", "multipart", "native-tls", "st
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }
 
-# Provider registry: the client lives in src/config/registry_client.rs.
-# The `crabrace` crate shipped its SERVER in the same package with no
-# feature gate, so depending on it for two GETs pulled axum, tower,
-# prometheus and a second reqwest into the build, carrying
-# RUSTSEC-2024-0437 and RUSTSEC-2025-0134 with them.
+# Provider registry: the client lives in src/config/registry_client.rs. It was
+# a third-party crate that bundled its own server, pulling a duplicate web
+# stack and two advisories in for two GETs. See git history.
 
 # Error Handling
 anyhow = "1.0"

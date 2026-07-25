@@ -2,12 +2,12 @@
 //!
 //! Handles application configuration loading, validation, and management.
 
-pub mod crabrace;
 mod current;
 pub mod guard;
 pub mod health;
 pub mod owner;
 pub mod profile;
+pub mod provider_registry;
 pub mod registry_client;
 pub mod repair;
 pub mod secrets;
@@ -15,7 +15,7 @@ pub mod startup_checks;
 pub(crate) mod types;
 pub mod update;
 
-pub use crabrace::{CrabraceConfig, CrabraceIntegration};
+pub use provider_registry::{ProviderRegistry, ProviderRegistryConfig};
 pub use registry_client::{Model, Provider, RegistryClient};
 pub use secrets::SecretString;
 pub use types::*;

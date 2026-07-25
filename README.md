@@ -3784,7 +3784,7 @@ Integration Layer (LLM Providers, LSP)
 | Syntax Highlighting | Syntect |
 | Markdown | pulldown-cmark |
 | LSP Client | Tower-LSP |
-| Provider Registry | Crabrace |
+| Provider Registry | Built-in HTTP client |
 | Memory Search | qmd (FTS5 + vector embeddings) |
 | Error Handling | anyhow + thiserror |
 | Logging | tracing + tracing-subscriber |
@@ -4237,7 +4237,6 @@ cargo test
 ## 🙏 Acknowledgments
 
 - **[Claude Code](https://github.com/anthropics/claude-code)** — Inspiration
-- **[Crabrace](https://crates.io/crates/crabrace)** — Provider registry
 - **[Ratatui](https://ratatui.rs/)** — Terminal UI framework
 - **[Anthropic](https://anthropic.com/)** — Claude API
 

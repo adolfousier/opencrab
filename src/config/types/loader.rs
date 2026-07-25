@@ -364,7 +364,7 @@ impl Config {
 
     /// Known top-level sections in config.toml.
     const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
-        "crabrace",
+        "provider_registry",
         "database",
         "logging",
         "debug",
@@ -740,7 +740,7 @@ impl Config {
         // For now, we'll do a simple overlay merge where overlay completely replaces base
         // In the future, we could make this more sophisticated with field-level merging
         Self {
-            crabrace: overlay.crabrace,
+            provider_registry: overlay.provider_registry,
             database: overlay.database,
             logging: overlay.logging,
             debug: overlay.debug,
@@ -783,17 +783,17 @@ impl Config {
             config.debug.profiling = profiling.parse().unwrap_or(false);
         }
 
-        // Crabrace options
-        if let Ok(enabled) = std::env::var("OPENCRABS_CRABRACE_ENABLED") {
-            config.crabrace.enabled = enabled.parse().unwrap_or(true);
+        // provider registry options
+        if let Ok(enabled) = std::env::var("OPENCRABS_PROVIDER_REGISTRY_ENABLED") {
+            config.provider_registry.enabled = enabled.parse().unwrap_or(true);
         }
 
-        if let Ok(base_url) = std::env::var("OPENCRABS_CRABRACE_URL") {
-            config.crabrace.base_url = base_url;
+        if let Ok(base_url) = std::env::var("OPENCRABS_PROVIDER_REGISTRY_URL") {
+            config.provider_registry.base_url = base_url;
         }
 
-        if let Ok(auto_update) = std::env::var("OPENCRABS_CRABRACE_AUTO_UPDATE") {
-            config.crabrace.auto_update = auto_update.parse().unwrap_or(true);
+        if let Ok(auto_update) = std::env::var("OPENCRABS_PROVIDER_REGISTRY_AUTO_UPDATE") {
+            config.provider_registry.auto_update = auto_update.parse().unwrap_or(true);
         }
 
         Ok(config)
@@ -1277,9 +1277,9 @@ impl Config {
             );
         }
 
-        // Validate Crabrace URL if enabled
-        if self.crabrace.enabled && self.crabrace.base_url.is_empty() {
-            anyhow::bail!("Crabrace is enabled but base_url is empty");
+        // Validate provider registry URL if enabled
+        if self.provider_registry.enabled && self.provider_registry.base_url.is_empty() {
+            anyhow::bail!("provider registry is enabled but base_url is empty");
         }
 
         tracing::debug!("Configuration validation passed");
