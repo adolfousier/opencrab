@@ -1517,6 +1517,59 @@ impl App {
         result
     }
 
+    /// Push one row per chronological segment of `region`, preserving the
+    /// think → text → think → text layout the live view showed.
+    ///
+    /// Reload used to emit a SINGLE row per text region, which made a
+    /// tool-less turn collapse into one giant message. That message is then
+    /// the turn's final answer, and the per-turn fold must always show the
+    /// final answer, so a reasoning-heavy turn rendered as a wall after a
+    /// restart even though the live view had folded it away (#764).
+    ///
+    /// The first row emitted keeps the DB message's id, token count and cost;
+    /// later rows get fresh ids because they correspond to no row of their own.
+    fn push_segments(
+        result: &mut Vec<DisplayMessage>,
+        region: &str,
+        id: Uuid,
+        timestamp: chrono::DateTime<chrono::Utc>,
+        token_count: Option<i64>,
+        cost: Option<f64>,
+        first_text: &mut bool,
+    ) {
+        use crate::tui::app::reasoning_split::{Segment, split_segments};
+        for seg in split_segments(region) {
+            let (content, details) = match seg {
+                // A text segment can still carry inline model tags
+                // (`<think>`, `<antThinking>`, `<mm:think>`), which the
+                // persist path never wrapped, so it stays on the old lifter.
+                Segment::Text(t) => {
+                    let (reasoning, clean) = Self::extract_reasoning(&t);
+                    (clean, reasoning)
+                }
+                Segment::Reasoning(r) => (String::new(), Some(r)),
+            };
+            if content.is_empty() && details.is_none() {
+                continue;
+            }
+            result.push(DisplayMessage {
+                id: if *first_text { id } else { Uuid::new_v4() },
+                role: "assistant".to_string(),
+                content,
+                timestamp,
+                token_count: if *first_text { token_count } else { None },
+                cost: if *first_text { cost } else { None },
+                approval: None,
+                approve_menu: None,
+                details,
+                expanded: false,
+                expanded_full: false,
+                tool_group: None,
+            });
+            *first_text = false;
+        }
+    }
+
     fn expand_message(msg: crate::db::models::Message) -> Vec<DisplayMessage> {
         // Compaction markers are stored as a user message containing the full
         // structured summary the LLM uses to recover context. They must stay
@@ -1575,42 +1628,15 @@ impl App {
             // Text before marker
             let text_before = remaining[..marker_start].trim();
             if !text_before.is_empty() {
-                let (reasoning, clean_text) = Self::extract_reasoning(text_before);
-                if !clean_text.is_empty() {
-                    result.push(DisplayMessage {
-                        id: if first_text { id } else { Uuid::new_v4() },
-                        role: "assistant".to_string(),
-                        content: clean_text,
-                        timestamp,
-                        token_count: if first_text { token_count } else { None },
-                        cost: if first_text { cost } else { None },
-                        approval: None,
-                        approve_menu: None,
-                        details: reasoning,
-                        expanded: false,
-                        expanded_full: false,
-                        tool_group: None,
-                    });
-                    first_text = false;
-                } else if let Some(r) = reasoning {
-                    // Reasoning-only block (no visible text) — attach to next text segment
-                    // For now, create a placeholder so reasoning is not lost
-                    result.push(DisplayMessage {
-                        id: if first_text { id } else { Uuid::new_v4() },
-                        role: "assistant".to_string(),
-                        content: String::new(),
-                        timestamp,
-                        token_count: if first_text { token_count } else { None },
-                        cost: if first_text { cost } else { None },
-                        approval: None,
-                        approve_menu: None,
-                        details: Some(r),
-                        expanded: false,
-                        expanded_full: false,
-                        tool_group: None,
-                    });
-                    first_text = false;
-                }
+                Self::push_segments(
+                    &mut result,
+                    text_before,
+                    id,
+                    timestamp,
+                    token_count,
+                    cost,
+                    &mut first_text,
+                );
             }
 
             let marker_len = if is_v2 {
@@ -1715,38 +1741,15 @@ impl App {
         // Any remaining text after the last marker
         let trailing = remaining.trim();
         if !trailing.is_empty() {
-            let (reasoning, clean_text) = Self::extract_reasoning(trailing);
-            if !clean_text.is_empty() {
-                result.push(DisplayMessage {
-                    id: if first_text { id } else { Uuid::new_v4() },
-                    role: "assistant".to_string(),
-                    content: clean_text,
-                    timestamp,
-                    token_count: if first_text { token_count } else { None },
-                    cost: if first_text { cost } else { None },
-                    approval: None,
-                    approve_menu: None,
-                    details: reasoning,
-                    expanded: false,
-                    expanded_full: false,
-                    tool_group: None,
-                });
-            } else if let Some(r) = reasoning {
-                result.push(DisplayMessage {
-                    id: if first_text { id } else { Uuid::new_v4() },
-                    role: "assistant".to_string(),
-                    content: String::new(),
-                    timestamp,
-                    token_count: if first_text { token_count } else { None },
-                    cost: if first_text { cost } else { None },
-                    approval: None,
-                    approve_menu: None,
-                    details: Some(r),
-                    expanded: false,
-                    expanded_full: false,
-                    tool_group: None,
-                });
-            }
+            Self::push_segments(
+                &mut result,
+                trailing,
+                id,
+                timestamp,
+                token_count,
+                cost,
+                &mut first_text,
+            );
         }
 
         if result.is_empty() {

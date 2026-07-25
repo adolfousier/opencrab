@@ -6,6 +6,7 @@ pub(crate) mod input;
 mod messaging;
 pub mod mission_control;
 pub mod profiles_dialog;
+pub(crate) mod reasoning_split;
 pub mod skills_dialog;
 pub(crate) mod state;
 

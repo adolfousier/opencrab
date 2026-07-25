@@ -196,6 +196,7 @@ pub mod profile_pid_lock_test;
 pub mod profile_preempt_test;
 pub mod profiles_dialog_test;
 pub mod provider_matches_session_test;
+pub mod reasoning_split_test;
 pub mod repetition_test;
 pub mod rsi_notification_redaction_test;
 pub mod rsi_pruned_test;
