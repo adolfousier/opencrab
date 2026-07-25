@@ -470,7 +470,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 |---------|-------------|
 | `opencrabs` | Launch interactive TUI (default) |
 | `opencrabs chat` | Launch TUI with optional `--session <id>` to resume, `--onboard` to force wizard |
-| `opencrabs run <prompt>` | Execute a single prompt non-interactively. `--auto-approve` / `--yolo` for unattended. `--format text\|json\|markdown` |
+| `opencrabs run <prompt>` | Execute a single prompt non-interactively. Already unattended under the default `approval_policy`; `--auto-approve` / `--yolo` only when the policy is `ask`. `--format text\|json\|markdown` |
 | `opencrabs agent` | Interactive CLI agent — multi-turn conversation in your terminal, no TUI. `-m <msg>` for single-message mode |
 | `opencrabs status` | System overview: version, provider, channels, database, brain, cron, dynamic tools |
 | `opencrabs doctor` | Full diagnostics: config, provider connectivity, database, brain, channels, CLI tools in PATH |
@@ -2010,6 +2010,9 @@ Full annotated example — the onboarding wizard writes this for you, but you ca
 
 [agent]
 approval_policy = "auto-always"  # auto-always (default) | auto-session | ask
+                                 # Applies to every surface, headless `run` included. `ask` means a
+                                 # run with nothing to prompt on (cron, CI, `run`) refuses gated tools
+                                 # rather than hanging — pass --auto-approve there, or keep an auto policy.
 max_concurrent = 4               # tools per turn that may run in parallel (auto-approved batches only; 1 = fully sequential)
 # The working directory is per-session, not a config key: each session keeps its own
 # (set with /cd, or inherited from the launch cwd) so isolated sessions never collide.
