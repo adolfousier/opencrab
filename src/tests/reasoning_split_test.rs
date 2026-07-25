@@ -123,3 +123,47 @@ fn three_blocks_split_into_three_reasoning_rows() {
         "each unwrapped stretch is its own row, so only the last is the answer"
     );
 }
+
+// ── Which text is the answer (#760 rendering consequence) ───────────────────
+// The model sometimes restates its reasoning through the content channel,
+// where it is persisted unwrapped and reads exactly like an answer. Position
+// is the one exact signal: text the model kept thinking past is not the answer.
+
+use crate::tui::app::reasoning_split::is_intermediate;
+
+#[test]
+fn text_followed_by_more_reasoning_is_not_the_answer() {
+    let segs = vec![
+        reasoning("thought one"),
+        text("restated reasoning that looks like an answer"),
+        reasoning("thought two"),
+        text("the real answer"),
+    ];
+    assert!(is_intermediate(&segs, 1), "more reasoning follows it");
+    assert!(
+        !is_intermediate(&segs, 3),
+        "nothing thinks after it, so it is the answer"
+    );
+}
+
+#[test]
+fn the_only_text_is_the_answer() {
+    let segs = vec![reasoning("thinking"), text("answer")];
+    assert!(!is_intermediate(&segs, 1));
+}
+
+#[test]
+fn without_any_reasoning_every_text_stays_visible() {
+    // A plain turn must not have its content collapsed.
+    let segs = vec![text("first"), text("second")];
+    assert!(!is_intermediate(&segs, 0));
+    assert!(!is_intermediate(&segs, 1));
+}
+
+#[test]
+fn trailing_reasoning_collapses_all_earlier_text() {
+    // A turn that ends mid-thought: no visible answer yet, and none of the
+    // narration should be promoted into one.
+    let segs = vec![text("narration"), reasoning("still thinking")];
+    assert!(is_intermediate(&segs, 0));
+}

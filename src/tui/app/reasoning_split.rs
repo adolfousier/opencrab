@@ -67,3 +67,22 @@ pub(crate) fn split_segments(content: &str) -> Vec<Segment> {
     }
     out
 }
+
+/// Whether the text segment at `i` is intermediate narration rather than the
+/// turn's answer.
+///
+/// A text segment with reasoning after it is one the model kept thinking past,
+/// so it cannot be the answer however much it reads like one. Only text with no
+/// further reasoning behind it stays visible; the rest renders collapsed.
+///
+/// This matters because the model sometimes restates its reasoning through the
+/// content channel, where it is persisted unwrapped and is otherwise
+/// indistinguishable from the answer (#760). Position is the one signal that
+/// stays exact, so it is the one used here: no guessing at which prose looks
+/// like thinking.
+pub(crate) fn is_intermediate(segments: &[Segment], i: usize) -> bool {
+    segments
+        .iter()
+        .rposition(|s| matches!(s, Segment::Reasoning(_)))
+        .is_some_and(|last| i < last)
+}

@@ -1537,17 +1537,33 @@ impl App {
         cost: Option<f64>,
         first_text: &mut bool,
     ) {
-        use crate::tui::app::reasoning_split::{Segment, split_segments};
-        for seg in split_segments(region) {
+        use crate::tui::app::reasoning_split::{Segment, is_intermediate, split_segments};
+        let segments = split_segments(region);
+        for (i, seg) in segments.iter().enumerate() {
             let (content, details) = match seg {
                 // A text segment can still carry inline model tags
                 // (`<think>`, `<antThinking>`, `<mm:think>`), which the
                 // persist path never wrapped, so it stays on the old lifter.
                 Segment::Text(t) => {
-                    let (reasoning, clean) = Self::extract_reasoning(&t);
-                    (clean, reasoning)
+                    let (reasoning, clean) = Self::extract_reasoning(t);
+                    if is_intermediate(&segments, i) {
+                        // Intermediate narration: keep it, collapsed. Merged
+                        // with any inline reasoning it carried so one row holds
+                        // the whole step.
+                        let merged = match reasoning {
+                            Some(r) if !clean.is_empty() => format!("{clean}\n\n{r}"),
+                            Some(r) => r,
+                            None => clean,
+                        };
+                        if merged.trim().is_empty() {
+                            continue;
+                        }
+                        (String::new(), Some(merged))
+                    } else {
+                        (clean, reasoning)
+                    }
                 }
-                Segment::Reasoning(r) => (String::new(), Some(r)),
+                Segment::Reasoning(r) => (String::new(), Some(r.clone())),
             };
             if content.is_empty() && details.is_none() {
                 continue;
