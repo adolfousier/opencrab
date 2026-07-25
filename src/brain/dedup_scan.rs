@@ -449,6 +449,26 @@ pub fn file_dedup_proposals(
     count
 }
 
+/// Event-based cross-file trigger (#765). Fired after a brain-file append
+/// succeeds (RSI `action="apply"` or a manual `write_opencrabs_file`
+/// append). An append may have introduced a line that duplicates content
+/// living in ANOTHER brain file — something the within-file
+/// `filter_duplicate_append` guard cannot see, since it only compares
+/// against the same file. This runs the full report-only cross-file scan
+/// and files any new proposals into the inbox.
+///
+/// Best-effort by design: returns the number of newly filed proposals and
+/// never fails the write. The store dedups by (target_file, duplicate_text)
+/// and `prune_handled` drops already-decided entries, so re-scanning after
+/// every write is idempotent — only genuinely new cross-file duplicates
+/// surface. Proposals stay report-only; a human approves the actual merge,
+/// since cross-file removals change enforcement scope.
+pub fn scan_after_brain_write(brain_path: &Path) -> usize {
+    let store = crate::brain::rsi_proposals::ProposalsStore::new();
+    store.prune_handled();
+    file_dedup_proposals(brain_path, &store)
+}
+
 // Tests live under `src/tests/rsi_brain_dedup_test.rs` per project
 // policy (no inline `#[cfg(test)] mod tests` blocks). Internal helpers
 // like `is_structural_line` and `canonical_file_rank` are `pub(crate)`

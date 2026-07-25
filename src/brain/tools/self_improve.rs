@@ -559,6 +559,21 @@ impl Tool for SelfImproveTool {
                         ))
                     })?;
 
+                // #765 event-based cross-file trigger: the appended improvement
+                // may duplicate content living in another brain file (the
+                // within-file guard above only sees this file). Run the
+                // report-only cross-file scan so it surfaces in the inbox.
+                // Best-effort — never fails the write.
+                {
+                    let brain_dir = crate::config::opencrabs_home();
+                    let filed = crate::brain::dedup_scan::scan_after_brain_write(&brain_dir);
+                    if filed > 0 {
+                        tracing::info!(
+                            "RSI self_improve: cross-file scan filed {filed} dedup proposal(s) after writing {target_file}"
+                        );
+                    }
+                }
+
                 // Log to rsi/improvements.md
                 let entry = format!(
                     "\n## [Applied] {}\n\n**Date:** {}\n**Target:** {}\n**Rationale:** {}\n**Status:** Applied\n",

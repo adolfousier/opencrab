@@ -286,11 +286,28 @@ impl Tool for WriteOpenCrabsFileTool {
                     .open(&full_path)
                 {
                     Ok(mut f) => match f.write_all(effective_content.as_bytes()) {
-                        Ok(()) => Ok(ToolResult::success(format!(
-                            "Appended {} bytes to {}",
-                            effective_content.len(),
-                            full_path.display()
-                        ))),
+                        Ok(()) => {
+                            // #765 event-based cross-file trigger: this append
+                            // may duplicate content that lives in another brain
+                            // file (the within-file guard above only sees this
+                            // file). Run the report-only scan so it surfaces in
+                            // the inbox. Best-effort — never fails the write.
+                            if brain_file_safety::is_protected_path(&full_path) {
+                                let brain_dir = crate::config::opencrabs_home();
+                                let filed =
+                                    crate::brain::dedup_scan::scan_after_brain_write(&brain_dir);
+                                if filed > 0 {
+                                    tracing::info!(
+                                        "write_opencrabs_file: cross-file scan filed {filed} dedup proposal(s) after append to {path_str}"
+                                    );
+                                }
+                            }
+                            Ok(ToolResult::success(format!(
+                                "Appended {} bytes to {}",
+                                effective_content.len(),
+                                full_path.display()
+                            )))
+                        }
                         Err(e) => Ok(ToolResult::error(format!(
                             "Failed to append to {}: {}",
                             path_str, e
