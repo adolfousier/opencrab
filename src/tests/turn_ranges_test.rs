@@ -445,3 +445,74 @@ fn a_thinking_only_row_counts_as_working_out() {
     let fin = final_answer_idx(&msgs, turn);
     assert!(turn_has_hideable(&msgs, turn, fin));
 }
+
+// ── A running turn has no final answer yet ──────────────────────────────────
+// Mid-turn, each fresh intermediate text became the last non-empty assistant
+// row and so got promoted into the one slot the fold must always show. One
+// block of narration stayed exposed while the tool groups and thinking around
+// it folded away.
+
+use crate::tui::render::chat::settled_final_answer_idx;
+
+#[test]
+fn a_running_turn_exempts_nothing_from_folding() {
+    let msgs = vec![
+        msg("user", "do the thing"),
+        tool_group_msg(),
+        msg("assistant", "intermediate narration, not the answer"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    assert_eq!(
+        settled_final_answer_idx(&msgs, turn, true, true),
+        None,
+        "the newest text mid-turn is the latest step, not the reply"
+    );
+}
+
+#[test]
+fn a_settled_turn_keeps_its_answer_visible() {
+    let msgs = vec![
+        msg("user", "do the thing"),
+        tool_group_msg(),
+        msg("assistant", "the answer"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    assert_eq!(settled_final_answer_idx(&msgs, turn, true, false), Some(2));
+}
+
+#[test]
+fn an_earlier_turn_keeps_its_answer_while_a_later_one_runs() {
+    // Only the newest turn can be unsettled; scrollback must not blank out
+    // every previous reply just because a new turn is in flight.
+    let msgs = vec![
+        msg("user", "first"),
+        msg("assistant", "first answer"),
+        msg("user", "second"),
+        msg("assistant", "still working"),
+    ];
+    let turns = turn_ranges(&msgs);
+    assert_eq!(
+        settled_final_answer_idx(&msgs, turns[0], false, true),
+        Some(1),
+        "an older turn is finished by definition"
+    );
+    assert_eq!(settled_final_answer_idx(&msgs, turns[1], true, true), None);
+}
+
+#[test]
+fn everything_folds_while_the_turn_runs() {
+    // The whole point: with no exempt row, every step is behind the header.
+    let msgs = vec![
+        msg("user", "do the thing"),
+        tool_group_msg(),
+        msg("assistant", "narration"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = settled_final_answer_idx(&msgs, turn, true, true);
+    assert!(!visible_when_folded(&msgs, 1, fin), "tool group folds");
+    assert!(!visible_when_folded(&msgs, 2, fin), "narration folds too");
+    assert!(
+        visible_when_folded(&msgs, 0, fin),
+        "the question always stays"
+    );
+}

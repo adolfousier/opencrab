@@ -306,6 +306,32 @@ pub(crate) fn final_answer_idx(messages: &[DisplayMessage], turn: TurnRange) -> 
     })
 }
 
+/// The turn's final answer, but only once the turn has actually finished.
+///
+/// A running turn has not produced its answer yet: its newest text is the
+/// latest STEP. [`final_answer_idx`] cannot tell the difference, since it just
+/// takes the last non-empty assistant row, so mid-turn it kept promoting each
+/// fresh intermediate text into the one slot the fold must always show. The
+/// result was a single block of narration sitting exposed while the tool
+/// groups and thinking on either side of it folded away.
+///
+/// Only the NEWEST turn can be unsettled; every earlier turn is finished by
+/// definition and keeps its answer visible.
+///
+/// Nothing is hidden that the user cannot otherwise see: in-flight text renders
+/// from the streaming buffer, with the reasoning excerpt and spinner beside it.
+pub(crate) fn settled_final_answer_idx(
+    messages: &[DisplayMessage],
+    turn: TurnRange,
+    is_newest: bool,
+    is_processing: bool,
+) -> Option<usize> {
+    if is_newest && is_processing {
+        return None;
+    }
+    final_answer_idx(messages, turn)
+}
+
 /// The one-line preview shown under a folded turn header: the description of
 /// the last tool call the turn made, and whether it succeeded.
 ///
@@ -435,7 +461,12 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         };
         let folded = turn_is_folded(&app.turn_expanded, anchor_id);
         let summary = turn_summary(&app.messages, *t);
-        let final_idx = final_answer_idx(&app.messages, *t);
+        let final_idx = settled_final_answer_idx(
+            &app.messages,
+            *t,
+            newest_start == Some(t.start),
+            app.is_processing,
+        );
 
         let has_hideable = turn_has_hideable(&app.messages, *t, final_idx);
 
