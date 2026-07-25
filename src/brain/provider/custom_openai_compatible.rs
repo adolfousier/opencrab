@@ -2624,19 +2624,6 @@ impl OpenAIProvider {
             });
         }
 
-        // preserve_thinking providers (Moonshot kimi AND qwen Model Studio /
-        // DashScope) require a `reasoning_content` field on every assistant
-        // tool_call message when thinking is on upstream, else they 400 with
-        // "thinking is enabled but reasoning_content is missing in assistant
-        // tool call message at index N". When we have no real Thinking block to
-        // ship (a legacy DB row, or a turn that yielded no reasoning) inject a
-        // placeholder so the request still validates. This MUST match the
-        // resume-side hoisting gate (`preserves_thinking`) — using the
-        // Moonshot-only `needs_reasoning_content_for` here left qwen unprotected
-        // and 400ing on any reasoning-less assistant tool_call message (#725).
-        // Real reasoning is always preferred; the placeholder is only a fallback.
-        let needs_reasoning_content = preserves_thinking(Some(&self.base_url), &request.model);
-
         // Add conversation messages
         for msg in request.messages {
             let role = match msg.role {
@@ -2734,8 +2721,24 @@ impl OpenAIProvider {
                 // single space satisfies the shape check when we truly have
                 // nothing to echo. Non-Moonshot providers see None.
                 let reasoning_content = if !thinking_parts.is_empty() {
+                    // Real reasoning — sent for EVERY provider, gate or not.
+                    // Qwen's contract ("pass back the complete reasoning_content")
+                    // is satisfied here, not by the fallback below.
                     Some(thinking_parts.join("\n"))
-                } else if needs_reasoning_content {
+                } else if needs_reasoning_content_for(&self.base_url, &request.model) {
+                    // Blank-chain fallback, Moonshot ONLY. Moonshot merely
+                    // validates the field is present and non-empty, so a space
+                    // satisfies the shape check.
+                    //
+                    // It must NOT reach qwen. Qwen requires the COMPLETE chain,
+                    // and the `thinking` DB column is currently never written —
+                    // so on qwen this fired for every historical assistant
+                    // tool_call message, handing the model an empty thinking
+                    // chain. Qwen then re-derived its reasoning and, since it
+                    // cannot concatenate reasoning into `content`, spilled it
+                    // into the visible answer: reasoning-only turns, leaked
+                    // thinking, and the same paragraph repeating (#760).
+                    // Omitting is strictly better than blanking.
                     Some(" ".to_string())
                 } else {
                     None
