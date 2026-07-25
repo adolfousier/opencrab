@@ -132,31 +132,12 @@ pub(crate) fn scan_tool_stack(messages: &[DisplayMessage], start: usize) -> Tool
 }
 
 /// One turn's span in the message list: `[start, end)` (#757).
-///
-/// `dead_code` is allowed only while this lands ahead of its consumer: the
-/// per-turn header (#759) and per-turn expand state (#758) render from it. The
-/// attribute comes off with the header — it is not covering an unused API.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TurnRange {
     /// Index of the turn's first message (the user message that opened it).
     pub start: usize,
     /// Exclusive end — the index of the next turn's user message, or the list end.
     pub end: usize,
-}
-
-#[allow(dead_code)]
-impl TurnRange {
-    /// Number of messages in the turn.
-    pub fn len(&self) -> usize {
-        self.end.saturating_sub(self.start)
-    }
-
-    /// Whether the turn spans no messages (never produced by `turn_ranges`,
-    /// but required alongside `len` and cheap to be correct about).
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// Split the message list into turns (#757).
@@ -171,7 +152,6 @@ impl TurnRange {
 /// Messages that precede the first user message — history-paging markers, a
 /// restored transcript's leading rows — form their own leading range so nothing
 /// is dropped. Pure: no `App`, no terminal, no side effects.
-#[allow(dead_code)]
 pub(crate) fn turn_ranges(messages: &[DisplayMessage]) -> Vec<TurnRange> {
     if messages.is_empty() {
         return Vec::new();
@@ -204,6 +184,92 @@ pub(crate) fn turn_of(messages: &[DisplayMessage], msg_idx: usize) -> Option<Tur
         .find(|t| msg_idx >= t.start && msg_idx < t.end)
 }
 
+/// What a turn actually did, for its header line (#759).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct TurnSummary {
+    /// Total tool calls across every group in the turn.
+    pub tool_calls: usize,
+    /// How many of them failed.
+    pub failed: usize,
+    /// Wall time from the turn's first message to its last, in seconds.
+    pub duration_secs: i64,
+    /// Whether the turn produced an error row.
+    pub has_error: bool,
+}
+
+/// Summarise a turn for its header (#759). Pure.
+pub(crate) fn turn_summary(messages: &[DisplayMessage], turn: TurnRange) -> TurnSummary {
+    let slice = &messages[turn.start.min(messages.len())..turn.end.min(messages.len())];
+    let mut s = TurnSummary::default();
+    for m in slice {
+        if let Some(ref g) = m.tool_group {
+            s.tool_calls += g.calls.len();
+            s.failed += g.calls.iter().filter(|c| !c.success).count();
+        }
+        if m.role == "error" {
+            s.has_error = true;
+        }
+    }
+    if let (Some(first), Some(last)) = (slice.first(), slice.last()) {
+        s.duration_secs = (last.timestamp - first.timestamp).num_seconds().max(0);
+    }
+    s
+}
+
+/// Format a turn's header line, or `None` when the turn isn't worth summarising
+/// (#759).
+///
+/// A plain question-and-answer turn ran no tools, so a header would be pure
+/// noise — only turns that actually did work get one. Mirrors the shape of the
+/// Telegram flow header (status • N tool calls • duration); ctx is deliberately
+/// absent because it already lives in the footer under the input (#744).
+pub(crate) fn format_turn_header(summary: TurnSummary) -> Option<String> {
+    if summary.tool_calls == 0 {
+        return None;
+    }
+    let status = if summary.has_error || summary.failed > 0 {
+        "✗"
+    } else {
+        "✓"
+    };
+    let calls = if summary.tool_calls == 1 {
+        "1 tool call".to_string()
+    } else {
+        format!("{} tool calls", summary.tool_calls)
+    };
+    let mut parts = vec![calls];
+    if summary.failed > 0 {
+        parts.push(format!("{} failed", summary.failed));
+    }
+    if summary.duration_secs > 0 {
+        parts.push(humanize_secs(summary.duration_secs));
+    }
+    Some(format!("{status} {}", parts.join(" · ")))
+}
+
+/// `45s` / `1m 30s` / `2h 5m`, matching the Telegram flow's duration style.
+fn humanize_secs(secs: i64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => {
+            let (m, r) = (s / 60, s % 60);
+            if r == 0 {
+                format!("{m}m")
+            } else {
+                format!("{m}m {r}s")
+            }
+        }
+        s => {
+            let (h, m) = (s / 3600, (s % 3600) / 60);
+            if m == 0 {
+                format!("{h}h")
+            } else {
+                format!("{h}h {m}m")
+            }
+        }
+    }
+}
+
 /// Render the chat messages
 pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
@@ -215,12 +281,40 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // Track how many messages to skip (already rendered as part of a stack)
     let mut skip_count: usize = 0;
 
+    // Per-turn header lines (#759), keyed by the message they render above.
+    // Placed on the first row AFTER the user message that opened the turn, so
+    // the summary sits with the assistant's work rather than the question. Only
+    // turns that ran tools get one — a plain Q&A turn would just gain noise.
+    let turn_headers: std::collections::HashMap<usize, String> = turn_ranges(&app.messages)
+        .into_iter()
+        .filter_map(|t| {
+            let header = format_turn_header(turn_summary(&app.messages, t))?;
+            let at = if app.messages.get(t.start).is_some_and(|m| m.role == "user") {
+                t.start + 1
+            } else {
+                t.start
+            };
+            (at < t.end).then_some((at, header))
+        })
+        .collect();
+
     // Iterate by index to allow mutable access to render_cache while reading messages
     for msg_idx in 0..app.messages.len() {
         // Skip messages already rendered as part of a stacked group
         if skip_count > 0 {
             skip_count -= 1;
             continue;
+        }
+
+        // Turn header, above the turn's first non-user row. Mapped to no
+        // message so click/drag routing is untouched (#759); wiring it to a
+        // turn-level toggle is the follow-up.
+        if let Some(header) = turn_headers.get(&msg_idx) {
+            lines.push(Line::from(Span::styled(
+                format!("  {header}"),
+                Style::default().fg(Color::Rgb(100, 100, 100)),
+            )));
+            line_to_msg.resize(lines.len(), None);
         }
 
         let lines_before = lines.len();

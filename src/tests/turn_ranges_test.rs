@@ -54,7 +54,7 @@ fn a_full_turn_spans_user_through_its_whole_reply() {
     let turns = turn_ranges(&msgs);
     assert_eq!(turns.len(), 1);
     assert_eq!((turns[0].start, turns[0].end), (0, 4));
-    assert_eq!(turns[0].len(), 4);
+    assert_eq!(turns[0].end - turns[0].start, 4);
 }
 
 #[test]
@@ -130,4 +130,96 @@ fn turn_of_resolves_any_row_back_to_its_turn() {
     assert_eq!(turn_of(&msgs, 4).map(|t| (t.start, t.end)), Some((3, 5)));
     // Out of range resolves to nothing.
     assert!(turn_of(&msgs, 99).is_none());
+}
+
+// ── per-turn header (#759) ──────────────────────────────────────
+
+use crate::tui::render::chat::{TurnSummary, format_turn_header, turn_summary};
+
+fn tool_group_with(calls: &[bool]) -> DisplayMessage {
+    let mut m = msg("tool_group", "tools");
+    m.tool_group = Some(ToolCallGroup {
+        calls: calls
+            .iter()
+            .map(|ok| ToolCallEntry {
+                description: "did a thing".to_string(),
+                success: *ok,
+                details: None,
+                completed: true,
+                tool_input: serde_json::Value::Null,
+            })
+            .collect(),
+        expanded: false,
+    });
+    m
+}
+
+#[test]
+fn a_turn_with_no_tools_gets_no_header() {
+    // A plain question-and-answer turn must not gain a noise line.
+    let msgs = vec![msg("user", "hi"), msg("assistant", "hello")];
+    let turns = turn_ranges(&msgs);
+    assert_eq!(format_turn_header(turn_summary(&msgs, turns[0])), None);
+}
+
+#[test]
+fn header_counts_tool_calls_across_the_whole_turn() {
+    let msgs = vec![
+        msg("user", "do it"),
+        tool_group_with(&[true, true]),
+        msg("assistant", ""),
+        tool_group_with(&[true]),
+        msg("assistant", "done"),
+    ];
+    let turns = turn_ranges(&msgs);
+    let s = turn_summary(&msgs, turns[0]);
+    assert_eq!(s.tool_calls, 3, "counts across groups in the turn");
+    assert_eq!(s.failed, 0);
+    let h = format_turn_header(s).unwrap();
+    assert!(h.contains("3 tool calls"), "{h}");
+    assert!(h.starts_with('✓'), "{h}");
+}
+
+#[test]
+fn header_marks_failure_when_a_call_failed_or_an_error_row_exists() {
+    let msgs = vec![msg("user", "do it"), tool_group_with(&[true, false])];
+    let s = turn_summary(&msgs, turn_ranges(&msgs)[0]);
+    assert_eq!(s.failed, 1);
+    let h = format_turn_header(s).unwrap();
+    assert!(h.starts_with('✗'), "failed turn must be marked: {h}");
+    assert!(h.contains("1 failed"), "{h}");
+
+    let with_error = vec![
+        msg("user", "do it"),
+        tool_group_with(&[true]),
+        msg("error", "boom"),
+    ];
+    let s2 = turn_summary(&with_error, turn_ranges(&with_error)[0]);
+    assert!(s2.has_error);
+    assert!(format_turn_header(s2).unwrap().starts_with('✗'));
+}
+
+#[test]
+fn header_singularises_one_call_and_omits_zero_duration() {
+    let s = TurnSummary {
+        tool_calls: 1,
+        failed: 0,
+        duration_secs: 0,
+        has_error: false,
+    };
+    assert_eq!(format_turn_header(s).unwrap(), "✓ 1 tool call");
+}
+
+#[test]
+fn header_humanises_duration() {
+    let mk = |secs| TurnSummary {
+        tool_calls: 2,
+        failed: 0,
+        duration_secs: secs,
+        has_error: false,
+    };
+    assert!(format_turn_header(mk(45)).unwrap().ends_with("45s"));
+    assert!(format_turn_header(mk(90)).unwrap().ends_with("1m 30s"));
+    assert!(format_turn_header(mk(120)).unwrap().ends_with("2m"));
+    assert!(format_turn_header(mk(7200)).unwrap().ends_with("2h"));
 }
