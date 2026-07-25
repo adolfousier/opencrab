@@ -343,7 +343,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // The newest turn stays open; older turns fold unless the user clicked.
     let all_turns = turn_ranges(&app.messages);
     // idx → header text, and idx → the turn anchor it toggles.
-    let mut turn_headers: std::collections::HashMap<usize, String> =
+    let mut turn_headers: std::collections::HashMap<usize, (String, &'static str)> =
         std::collections::HashMap::new();
     let mut header_anchor: std::collections::HashMap<usize, Uuid> =
         std::collections::HashMap::new();
@@ -381,7 +381,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 t.start
             };
             if at < t.end {
-                turn_headers.insert(at, format!("{base}{hint}"));
+                turn_headers.insert(at, (base, hint));
                 header_anchor.insert(at, anchor_id);
             }
         }
@@ -399,11 +399,21 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         // Turn header, above the turn's first non-user row. Mapped to no
         // MESSAGE (so line→message routing for click/drag is untouched) but to
         // its turn anchor, so a click on this row folds/unfolds the turn (#758).
-        if let Some(header) = turn_headers.get(&msg_idx) {
-            lines.push(Line::from(Span::styled(
-                format!("  {header}"),
-                Style::default().fg(Color::Rgb(100, 100, 100)),
-            )));
+        if let Some((base, hint)) = turn_headers.get(&msg_idx) {
+            // Same cyan weight the tool-group header carried before folding —
+            // a folded turn must not be LESS visible than the rows it replaced.
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {base}"),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    (*hint).to_string(),
+                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                ),
+            ]));
             line_to_msg.resize(lines.len(), None);
             line_to_turn.resize(lines.len(), None);
             if let (Some(anchor), Some(slot)) =
