@@ -507,10 +507,40 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
         Line::from("")
     };
 
+    // Detached background commands (#762), on the input's TOP border, left.
+    //
+    // These end the turn the moment they spawn, so nothing else on screen says
+    // work is still happening. It used to sit in the status bar, which is where
+    // the eye goes least; here it shares a border with the ctx budget below and
+    // lands in the box the user is already looking at while they wait.
+    let bg_task_title = app
+        .current_session
+        .as_ref()
+        .zip(app.agent_service.background_manager())
+        .and_then(|(session, mgr)| {
+            let tasks: Vec<(String, u64)> = mgr
+                .running_tasks(session.id)
+                .into_iter()
+                .map(|t| (t.label, t.started.elapsed().as_secs()))
+                .collect();
+            super::background::format_background_tasks(&tasks, super::background::LABEL_CHARS)
+        })
+        .map(|text| {
+            Line::from(Span::styled(
+                format!(" ⏳ {text} "),
+                Style::default().fg(Color::Rgb(230, 180, 80)),
+            ))
+            .alignment(Alignment::Left)
+        });
+
     let mut block = Block::default()
         .borders(Borders::TOP | Borders::BOTTOM)
         .title_bottom(context_title)
         .border_style(border_style);
+
+    if let Some(title) = bg_task_title {
+        block = block.title(title);
+    }
 
     if !app.attachments.is_empty() {
         block = block.title(attach_title);
@@ -1055,26 +1085,6 @@ pub(super) fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             format!("{:.0} tok/s", tps),
             Style::default().fg(Color::Rgb(80, 200, 120)),
         ));
-    }
-
-    // Detached background commands (#762). These end the turn immediately, so
-    // without this the footer looks idle while a long build runs and there is
-    // no way to tell waiting from hung.
-    if let Some(session) = app.current_session.as_ref()
-        && let Some(mgr) = app.agent_service.background_manager()
-    {
-        let tasks: Vec<(String, u64)> = mgr
-            .running_tasks(session.id)
-            .into_iter()
-            .map(|t| (t.label, t.started.elapsed().as_secs()))
-            .collect();
-        if let Some(text) = super::background::format_background_tasks(&tasks) {
-            spans.push(Span::styled("  ·  ", Style::default().fg(Color::DarkGray)));
-            spans.push(Span::styled(
-                format!("⏳ {text}"),
-                Style::default().fg(Color::Rgb(230, 180, 80)),
-            ));
-        }
     }
 
     spans.push(Span::styled(sep_text, Style::default().fg(Color::DarkGray)));
