@@ -508,8 +508,10 @@ impl BrainLoader {
                 ));
             }
             if has("TOOLS.md") {
-                prompt
-                    .push_str("- Working with environment-specific tool configs → load TOOLS.md\n");
+                prompt.push_str(
+                    "- Tool routing and rules, skills and commands, server details, cron format, \
+                     voice config, or per-skill notes → load TOOLS.md\n",
+                );
             }
             prompt.push('\n');
 
