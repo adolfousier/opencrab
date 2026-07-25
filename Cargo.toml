@@ -148,8 +148,8 @@ pdf-extract = "0.12"
 # linux-arm64 release build. Bump past 0.9.2 only once that is fixed upstream.
 pdfium-render = { version = "=0.9.1", optional = true }
 zip = "6.0"
-quick-xml = "0.37"
-calamine = "0.26"
+quick-xml = "0.41"
+calamine = "0.36"
 tiktoken-rs = "0.9.1"
 
 # Archive extraction (for /evolve self-update)
@@ -180,9 +180,13 @@ tower = { version = "0.5", features = ["util"] }
 mockito = "1.7"
 
 # Platform-specific dependencies
-[target.'cfg(unix)'.dependencies]
-# Profiling (Unix-only - not supported on Windows)
-pprof = { version = "0.15", features = ["flamegraph", "frame-pointer"], optional = true }
+# `pprof` used to sit here, optional and Unix-only. Nothing ever enabled it:
+# the `profiling` feature is a bare flag read by a `cfg!` check, it never
+# activated the dependency, and no module referenced pprof. It stayed in the
+# lockfile though, dragging inferno 0.11 and with it quick-xml 0.26, which is
+# affected by RUSTSEC-2026-0194 and -0195 (7.5, DoS on malicious XML) with no
+# fixed release reachable from pprof 0.15. Removed rather than pinned: a
+# vulnerable transitive dep for a feature that was never wired up is pure cost.
 
 # macOS: Metal GPU acceleration for local STT (rwhisper/candle)
 [target.'cfg(target_os = "macos")'.dependencies]

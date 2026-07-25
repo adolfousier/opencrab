@@ -10,6 +10,22 @@ use serde_json::Value;
 use std::io::Read;
 use std::path::Path;
 
+/// Decode a text event and resolve its XML entities.
+///
+/// quick-xml 0.41 dropped `BytesText::unescape`, which did both steps in one
+/// call, and split it into `decode` plus the free `escape::unescape`. The
+/// version bump was forced by RUSTSEC-2026-0194 and -0195 (both 7.5, DoS on
+/// malicious XML), so this keeps the three extraction sites reading the way
+/// they did rather than spreading the two-step dance through each of them.
+///
+/// `None` on either a decoding or an entity error, matching the previous
+/// `if let Ok(..)` sites: a document whose text will not decode is skipped
+/// rather than failing the whole extraction.
+fn decoded_text(e: &quick_xml::events::BytesText<'_>) -> Option<String> {
+    let raw = e.decode().ok()?;
+    Some(quick_xml::escape::unescape(&raw).ok()?.into_owned())
+}
+
 /// Document Parser Tool - extracts text from various document formats
 pub struct DocParserTool;
 
@@ -413,7 +429,7 @@ impl DocParserTool {
                     }
                 }
                 Ok(quick_xml::events::Event::Text(e)) => {
-                    if in_text && let Ok(t) = e.unescape() {
+                    if in_text && let Some(t) = decoded_text(&e) {
                         text.push_str(&t);
                     }
                 }
@@ -444,7 +460,7 @@ impl DocParserTool {
                     current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 }
                 Ok(quick_xml::events::Event::Text(e)) => {
-                    if let Ok(t) = e.unescape() {
+                    if let Some(t) = decoded_text(&e) {
                         match current_element.as_str() {
                             "dc:title" => title = Some(t.to_string()),
                             "dc:creator" => author = Some(t.to_string()),
@@ -586,7 +602,7 @@ impl DocParserTool {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(quick_xml::events::Event::Text(e)) => {
-                    if let Ok(t) = e.unescape() {
+                    if let Some(t) = decoded_text(&e) {
                         let trimmed = t.trim();
                         if !trimmed.is_empty() {
                             text.push_str(trimmed);
