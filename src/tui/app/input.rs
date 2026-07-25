@@ -305,6 +305,70 @@ impl App {
         }
     }
 
+    /// Pin a turn header to the screen row it currently occupies, so folding or
+    /// unfolding the turn grows it in place instead of jumping the viewport.
+    ///
+    /// The message-keyed [`Self::set_expand_anchor`] cannot do this: a header
+    /// line maps to no message, so it is absent from `chat_line_to_msg`.
+    fn set_turn_expand_anchor(&mut self, anchor: Uuid) {
+        if let Some(line_top) = self
+            .chat_line_to_turn
+            .iter()
+            .position(|t| *t == Some(anchor))
+        {
+            let row = line_top.saturating_sub(self.chat_render_scroll) as u16;
+            self.chat_expand_anchor_turn = Some((anchor, row));
+        }
+    }
+
+    /// The newest turn's anchor id, if there is one. `ctrl+o` is scoped to this
+    /// turn so a long transcript does not reflow under the user.
+    fn newest_turn_anchor(&self) -> Option<Uuid> {
+        let turns = crate::tui::render::chat::turn_ranges(&self.messages);
+        let last = turns.last()?;
+        self.messages.get(last.start).map(|m| m.id)
+    }
+
+    /// `ctrl+o`: open or close the newest turn, working-out and all.
+    ///
+    /// The fold is the outer layer, so it drives the toggle: expanding a tool
+    /// group while its turn is folded changes nothing on screen, which is what
+    /// made `ctrl+o` look broken once folding shipped. Flipping the fold and
+    /// the turn's groups together keeps one key honest.
+    ///
+    /// `cycle_details` distinguishes the two call sites. The normal handler
+    /// also advances Thinking blocks through their 3-state cycle (#727); the
+    /// approval-mode handler must not, since its whole purpose is collapsing
+    /// far enough to see the pending prompt.
+    fn toggle_newest_turn(&mut self, cycle_details: bool) {
+        let Some(anchor) = self.newest_turn_anchor() else {
+            return;
+        };
+        let turn = crate::tui::render::chat::turn_ranges(&self.messages)
+            .into_iter()
+            .next_back();
+        let target = !self.turn_expanded.get(&anchor).copied().unwrap_or(false);
+
+        self.set_turn_expand_anchor(anchor);
+        self.turn_expanded.insert(anchor, target);
+
+        if let Some(ref mut group) = self.active_tool_group {
+            group.expanded = target;
+        }
+        let Some(turn) = turn else {
+            return;
+        };
+        let end = turn.end.min(self.messages.len());
+        for msg in &mut self.messages[turn.start.min(end)..end] {
+            if let Some(ref mut group) = msg.tool_group {
+                group.expanded = target;
+            }
+            if cycle_details && msg.details.is_some() {
+                msg.cycle_details_expand();
+            }
+        }
+    }
+
     /// The turn anchor whose HEADER sits on `row`, if any (#758).
     fn row_to_turn_anchor(&self, row: u16) -> Option<Uuid> {
         let row_in_chat = row.saturating_sub(self.chat_area_y + 1) as usize;
@@ -321,6 +385,11 @@ impl App {
         // A turn header folds/unfolds the whole turn (#758). Checked before
         // message routing because header rows map to no message.
         if let Some(anchor) = self.row_to_turn_anchor(row) {
+            // Pin the header BEFORE toggling, the same way the tool-group and
+            // details paths below do. Without it, unfolding inserts the turn's
+            // whole working-out above the fixed-from-bottom offset and the
+            // view jumps pages away from what was clicked (#728).
+            self.set_turn_expand_anchor(anchor);
             // Folded is the default, so an unclicked header opens its turn.
             let currently_expanded = self.turn_expanded.get(&anchor).copied().unwrap_or(false);
             self.turn_expanded.insert(anchor, !currently_expanded);
@@ -1170,24 +1239,11 @@ impl App {
                 }
                 return Ok(());
             } else if event.code == KeyCode::Char('o') && event.modifiers == KeyModifiers::CONTROL {
-                // Allow Ctrl+O during approval so user can collapse tool groups to see the approval
-                let target = if let Some(ref group) = self.active_tool_group {
-                    !group.expanded
-                } else if let Some(msg) =
-                    self.messages.iter().rev().find(|m| m.tool_group.is_some())
-                {
-                    !msg.tool_group.as_ref().expect("checked").expanded
-                } else {
-                    true
-                };
-                if let Some(ref mut group) = self.active_tool_group {
-                    group.expanded = target;
-                }
-                for msg in self.messages.iter_mut() {
-                    if let Some(ref mut group) = msg.tool_group {
-                        group.expanded = target;
-                    }
-                }
+                // Allow Ctrl+O during approval so user can collapse the newest
+                // turn far enough to see the approval prompt. Details are left
+                // alone here: cycling them can grow the view, which is the
+                // opposite of what this key press is for.
+                self.toggle_newest_turn(false);
                 return Ok(());
             }
             // Other keys ignored while approval pending
@@ -1750,30 +1806,10 @@ impl App {
                 self.error_message_shown_at = Some(std::time::Instant::now());
             }
         } else if event.code == KeyCode::Char('o') && event.modifiers == KeyModifiers::CONTROL {
-            // Ctrl+O — toggle expand/collapse on ALL tool groups and reasoning details
-            let target = if let Some(ref group) = self.active_tool_group {
-                !group.expanded
-            } else if let Some(msg) = self.messages.iter().rev().find(|m| m.tool_group.is_some()) {
-                !msg.tool_group
-                    .as_ref()
-                    .expect("tool_group checked is_some above")
-                    .expanded
-            } else {
-                true
-            };
-            if let Some(ref mut group) = self.active_tool_group {
-                group.expanded = target;
-            }
-            for msg in self.messages.iter_mut() {
-                if let Some(ref mut group) = msg.tool_group {
-                    group.expanded = target;
-                }
-                // Reasoning details cycle through the 3-state expand (#727):
-                // collapsed -> capped -> full -> collapsed, matching a click.
-                if msg.details.is_some() {
-                    msg.cycle_details_expand();
-                }
-            }
+            // Ctrl+O: open or close the newest turn, its fold, its tool groups
+            // and its reasoning details. Scoped to that turn so a long
+            // transcript does not reflow out from under the user.
+            self.toggle_newest_turn(true);
         } else if keys::is_page_up(&event) {
             let before = self.scroll_offset;
             self.scroll_offset = self.scroll_offset.saturating_add(10);

@@ -280,6 +280,25 @@ pub(crate) fn final_answer_idx(messages: &[DisplayMessage], turn: TurnRange) -> 
     })
 }
 
+/// The one-line preview shown under a folded turn header: the description of
+/// the last tool call the turn made, and whether it succeeded.
+///
+/// A collapsed tool group already renders its last call this way, so without
+/// this a folded turn would be strictly LESS informative than the group it
+/// replaced: the header alone says how many calls ran but never what they did.
+/// `None` when the turn ran no tools, in which case there is no header either.
+pub(crate) fn folded_turn_preview(
+    messages: &[DisplayMessage],
+    turn: TurnRange,
+) -> Option<(String, bool)> {
+    (turn.start..turn.end.min(messages.len()))
+        .rev()
+        .find_map(|i| {
+            let last = messages[i].tool_group.as_ref()?.calls.last()?;
+            Some((last.description.clone(), last.success))
+        })
+}
+
 /// Whether row `idx` still renders while its turn is folded (#758).
 ///
 /// Folding hides the turn's working-out — thinking, tool groups, and the
@@ -326,6 +345,16 @@ pub(crate) fn turn_is_folded(
     }
 }
 
+/// One turn's header row, resolved before the render loop walks the messages.
+struct TurnHeader {
+    /// `✓ 39 tool calls · 3m 57s`
+    base: String,
+    /// The trailing affordance, which names ctrl+o only on the newest turn.
+    hint: &'static str,
+    /// Last call description and success, shown only while folded.
+    preview: Option<(String, bool)>,
+}
+
 /// Render the chat messages
 pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
@@ -340,11 +369,14 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // Per-turn folding (#758) + header (#759). A turn's working-out — thinking,
     // tool groups, intermediate narration — folds into one header line, leaving
     // the question, the final answer, errors and anything interactive visible.
-    // The newest turn stays open; older turns fold unless the user clicked.
+    // EVERY turn folds by default, the running one included; only an explicit
+    // click or ctrl+o opens one.
     let all_turns = turn_ranges(&app.messages);
     // idx → header text, and idx → the turn anchor it toggles.
-    let mut turn_headers: std::collections::HashMap<usize, (String, &'static str)> =
+    let mut turn_headers: std::collections::HashMap<usize, TurnHeader> =
         std::collections::HashMap::new();
+    // ctrl+o acts on the newest turn only, so only its header may advertise it.
+    let newest_start = all_turns.last().map(|t| t.start);
     let mut header_anchor: std::collections::HashMap<usize, Uuid> =
         std::collections::HashMap::new();
     // idx → false when that row is folded away this frame.
@@ -370,10 +402,12 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         if let Some(base) = format_turn_header(summary)
             .or_else(|| hid_something.then(|| format!("{} steps", t.end.saturating_sub(t.start))))
         {
-            let hint = if folded {
-                " (click to expand)"
-            } else {
-                " (click to fold)"
+            let newest = newest_start == Some(t.start);
+            let hint = match (folded, newest) {
+                (true, true) => " (click / ctrl+o to expand)",
+                (true, false) => " (click to expand)",
+                (false, true) => " (click / ctrl+o to fold)",
+                (false, false) => " (click to fold)",
             };
             let at = if app.messages.get(t.start).is_some_and(|m| m.role == "user") {
                 t.start + 1
@@ -381,7 +415,18 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 t.start
             };
             if at < t.end {
-                turn_headers.insert(at, (base, hint));
+                turn_headers.insert(
+                    at,
+                    TurnHeader {
+                        base,
+                        hint,
+                        // Only a folded turn needs the preview: an open one is
+                        // already showing the calls themselves.
+                        preview: folded
+                            .then(|| folded_turn_preview(&app.messages, *t))
+                            .flatten(),
+                    },
+                );
                 header_anchor.insert(at, anchor_id);
             }
         }
@@ -399,18 +444,18 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         // Turn header, above the turn's first non-user row. Mapped to no
         // MESSAGE (so line→message routing for click/drag is untouched) but to
         // its turn anchor, so a click on this row folds/unfolds the turn (#758).
-        if let Some((base, hint)) = turn_headers.get(&msg_idx) {
+        if let Some(header) = turn_headers.get(&msg_idx) {
             // Same cyan weight the tool-group header carried before folding —
             // a folded turn must not be LESS visible than the rows it replaced.
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("  {base}"),
+                    format!("  {}", header.base),
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    (*hint).to_string(),
+                    header.hint.to_string(),
                     Style::default().fg(Color::Rgb(100, 100, 100)),
                 ),
             ]));
@@ -421,6 +466,37 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             {
                 *slot = Some(*anchor);
             }
+            // Last call under the header, styled exactly like the collapsed
+            // tool group's preview so folding loses no information.
+            if let Some((description, success)) = &header.preview {
+                let style = if *success {
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC)
+                } else {
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::ITALIC)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("    └─ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(description.clone(), style),
+                ]));
+                line_to_msg.resize(lines.len(), None);
+                line_to_turn.resize(lines.len(), None);
+                if let (Some(anchor), Some(slot)) =
+                    (header_anchor.get(&msg_idx), line_to_turn.last_mut())
+                {
+                    // The preview row toggles the turn too, so a click near the
+                    // header does what it looks like it should.
+                    *slot = Some(*anchor);
+                }
+            }
+            // Breathing room: without it the header sits flush against the
+            // answer below and reads as part of it.
+            lines.push(Line::from(""));
+            line_to_msg.resize(lines.len(), None);
+            line_to_turn.resize(lines.len(), None);
         }
 
         // Folded away this frame — the turn header above can bring it back.
@@ -1277,6 +1353,21 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         let (offset, auto) = anchored_scroll_offset(line_top, anchor_row as usize, max_scroll);
         app.scroll_offset = offset;
         // At the very bottom, re-arm auto-scroll so streaming keeps sticking.
+        app.auto_scroll = auto;
+    }
+
+    // Same pin for a turn header, resolved through the turn map because a
+    // header line belongs to no message (#743 follow-up). Folding a turn hides
+    // its whole working-out, so this is the case where an unpinned viewport
+    // jumps furthest.
+    if let Some((anchor, anchor_row)) = app.chat_expand_anchor_turn.take()
+        && let Some(line_top) = app
+            .chat_line_to_turn
+            .iter()
+            .position(|t| *t == Some(anchor))
+    {
+        let (offset, auto) = anchored_scroll_offset(line_top, anchor_row as usize, max_scroll);
+        app.scroll_offset = offset;
         app.auto_scroll = auto;
     }
 

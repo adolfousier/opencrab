@@ -760,6 +760,12 @@ pub struct App {
     /// expanding a block grows it in place instead of jumping the viewport.
     /// Consumed (cleared) on the render that applies it.
     pub chat_expand_anchor: Option<(usize, u16)>,
+    /// The same pin for a turn header: `(turn anchor id, screen row)`.
+    /// Separate from `chat_expand_anchor` because a header line maps to no
+    /// message. It populates `chat_line_to_turn`, not `chat_line_to_msg`, so
+    /// the message-keyed anchor above can never resolve it and folding a turn
+    /// would jump the viewport by however many rows it hid.
+    pub chat_expand_anchor_turn: Option<(Uuid, u16)>,
 
     /// Drag selection: anchor point in terminal-screen coords (col, row), set on first drag event.
     pub drag_anchor: Option<(u16, u16)>,
@@ -965,6 +971,7 @@ impl App {
             chat_line_to_turn: Vec::new(),
             turn_expanded: std::collections::HashMap::new(),
             chat_expand_anchor: None,
+            chat_expand_anchor_turn: None,
             chat_render_scroll: 0,
             chat_area_y: 0,
             chat_area_x: 0,

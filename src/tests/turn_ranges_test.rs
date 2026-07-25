@@ -306,3 +306,84 @@ fn an_explicit_click_overrides_the_default_either_way() {
     overrides.insert(a, false);
     assert!(turn_is_folded(&overrides, a), "click folds it again");
 }
+
+// ── Folded-turn preview (#743 follow-up) ────────────────────────────────────
+// A folded turn must not be less informative than the collapsed tool group it
+// replaced, which always showed its last call.
+
+use crate::tui::render::chat::folded_turn_preview;
+
+fn failing_tool_group_msg(description: &str) -> DisplayMessage {
+    let mut m = msg("tool_group", "1 tool call");
+    m.tool_group = Some(ToolCallGroup {
+        calls: vec![ToolCallEntry {
+            description: description.to_string(),
+            success: false,
+            details: None,
+            completed: true,
+            tool_input: serde_json::Value::Null,
+        }],
+        expanded: false,
+    });
+    m
+}
+
+#[test]
+fn preview_shows_the_turns_last_tool_call() {
+    let msgs = vec![
+        msg("user", "do the thing"),
+        tool_group_msg(),
+        failing_tool_group_msg("cargo test"),
+        msg("assistant", "done"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let (description, success) =
+        folded_turn_preview(&msgs, turn).expect("a turn that ran tools has a preview");
+    assert_eq!(description, "cargo test", "the LAST call, not the first");
+    assert!(!success, "a failed call must be reported as failed");
+}
+
+#[test]
+fn preview_reports_success_when_the_last_call_passed() {
+    let msgs = vec![
+        msg("user", "do the thing"),
+        failing_tool_group_msg("first attempt"),
+        tool_group_msg(),
+        msg("assistant", "done"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let (description, success) = folded_turn_preview(&msgs, turn).expect("preview exists");
+    assert_eq!(description, "read a file");
+    assert!(success, "an earlier failure must not colour the last call");
+}
+
+#[test]
+fn a_turn_with_no_tools_has_no_preview() {
+    // Matches format_turn_header, which gives such a turn no header either.
+    let msgs = vec![msg("user", "hello"), msg("assistant", "hi")];
+    let turn = turn_ranges(&msgs)[0];
+    assert_eq!(folded_turn_preview(&msgs, turn), None);
+}
+
+#[test]
+fn preview_does_not_reach_outside_its_own_turn() {
+    let msgs = vec![
+        msg("user", "first"),
+        tool_group_msg(),
+        msg("user", "second"),
+        msg("assistant", "no tools this time"),
+    ];
+    let turns = turn_ranges(&msgs);
+    assert!(
+        folded_turn_preview(&msgs, turns[1]).is_none(),
+        "the second turn ran no tools, so the first turn's call must not leak in"
+    );
+}
+
+#[test]
+fn preview_survives_a_range_past_the_end() {
+    // turn_ranges is index-based, so a stale range must not panic.
+    let msgs = vec![msg("user", "hi")];
+    let past_end = crate::tui::render::chat::TurnRange { start: 0, end: 99 };
+    assert_eq!(folded_turn_preview(&msgs, past_end), None);
+}
