@@ -223,3 +223,91 @@ fn header_humanises_duration() {
     assert!(format_turn_header(mk(120)).unwrap().ends_with("2m"));
     assert!(format_turn_header(mk(7200)).unwrap().ends_with("2h"));
 }
+
+// ── per-turn fold (#758) ────────────────────────────────────────
+
+use crate::tui::render::chat::{final_answer_idx, turn_is_folded, visible_when_folded};
+use std::collections::HashMap;
+
+/// user, thinking, tools, intermediate text, tools, final answer
+fn worked_turn() -> Vec<DisplayMessage> {
+    let mut thinking = msg("assistant", "");
+    thinking.details = Some("pondering".to_string());
+    vec![
+        msg("user", "do it"),
+        thinking,
+        tool_group_with(&[true]),
+        msg("assistant", "checking one more thing"),
+        tool_group_with(&[true]),
+        msg("assistant", "all done, here is the answer"),
+    ]
+}
+
+#[test]
+fn final_answer_is_the_last_visible_assistant_text() {
+    let msgs = worked_turn();
+    let t = turn_ranges(&msgs)[0];
+    assert_eq!(final_answer_idx(&msgs, t), Some(5));
+}
+
+#[test]
+fn folding_hides_the_working_out_and_keeps_question_and_answer() {
+    let msgs = worked_turn();
+    let t = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, t);
+    let vis: Vec<usize> = (t.start..t.end)
+        .filter(|i| visible_when_folded(&msgs, *i, fin))
+        .collect();
+    // The question and the final answer survive; thinking, both tool groups and
+    // the intermediate narration fold away.
+    assert_eq!(vis, vec![0, 5], "folded turn keeps only question + answer");
+}
+
+#[test]
+fn folding_never_hides_errors_or_interactive_rows() {
+    let mut msgs = worked_turn();
+    msgs.insert(3, msg("error", "provider blew up"));
+    let mut menu = msg("assistant", "");
+    menu.approve_menu = Some(crate::tui::app::ApproveMenu {
+        selected_option: 0,
+        state: crate::tui::app::ApproveMenuState::Pending,
+    });
+    msgs.insert(4, menu);
+
+    let t = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, t);
+    assert!(
+        visible_when_folded(&msgs, 3, fin),
+        "an error row must stay visible when folded"
+    );
+    assert!(
+        visible_when_folded(&msgs, 4, fin),
+        "an approval prompt must stay reachable when folded"
+    );
+}
+
+#[test]
+fn newest_turn_is_open_and_older_turns_fold_by_default() {
+    let overrides: HashMap<uuid::Uuid, bool> = HashMap::new();
+    let a = uuid::Uuid::new_v4();
+    assert!(
+        turn_is_folded(&overrides, a, false),
+        "an older turn folds by default"
+    );
+    assert!(
+        !turn_is_folded(&overrides, a, true),
+        "the newest turn stays open so live work is visible"
+    );
+}
+
+#[test]
+fn an_explicit_click_overrides_the_default_either_way() {
+    let a = uuid::Uuid::new_v4();
+    let mut overrides = HashMap::new();
+    // Re-open an old turn.
+    overrides.insert(a, true);
+    assert!(!turn_is_folded(&overrides, a, false));
+    // Fold the newest one.
+    overrides.insert(a, false);
+    assert!(turn_is_folded(&overrides, a, true));
+}

@@ -731,6 +731,16 @@ pub struct App {
     /// Mapping from rendered line index → message index (for click-to-copy).
     /// Updated each frame by render_chat.
     pub chat_line_to_msg: Vec<Option<usize>>,
+    /// Rendered line → the turn whose HEADER that line is (#758). Lets a click
+    /// on a turn header toggle the whole turn without disturbing the
+    /// line→message routing everything else uses. Rebuilt each frame.
+    pub chat_line_to_turn: Vec<Option<Uuid>>,
+    /// Explicit per-turn expand overrides, keyed by the turn's anchor message
+    /// id (#758). A Uuid — not an index — because indices shift as messages
+    /// arrive and are meaningless across sessions, so this stays correct with
+    /// split panes. Absent = the default (the newest turn is expanded, older
+    /// turns are folded).
+    pub turn_expanded: std::collections::HashMap<Uuid, bool>,
     /// The scroll offset used during the last render (for coordinate mapping)
     pub chat_render_scroll: usize,
     /// The top-left Y coordinate of the chat area in the terminal
@@ -952,6 +962,8 @@ impl App {
             resume_session_id: None,
             render_cache: HashMap::new(),
             chat_line_to_msg: Vec::new(),
+            chat_line_to_turn: Vec::new(),
+            turn_expanded: std::collections::HashMap::new(),
             chat_expand_anchor: None,
             chat_render_scroll: 0,
             chat_area_y: 0,

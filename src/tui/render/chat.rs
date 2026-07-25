@@ -14,6 +14,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph},
 };
 use unicode_width::UnicodeWidthStr;
+use uuid::Uuid;
 
 /// Render reasoning/thinking text as plain lines, preserving literal newlines.
 /// Unlike `parse_markdown`, single `\n` is honoured instead of being collapsed.
@@ -270,6 +271,57 @@ fn humanize_secs(secs: i64) -> String {
     }
 }
 
+/// Index of the turn's final answer: the LAST message carrying visible
+/// assistant text (#758). Everything before it is working-out.
+pub(crate) fn final_answer_idx(messages: &[DisplayMessage], turn: TurnRange) -> Option<usize> {
+    (turn.start..turn.end.min(messages.len())).rev().find(|&i| {
+        let m = &messages[i];
+        m.role == "assistant" && !m.content.trim().is_empty()
+    })
+}
+
+/// Whether row `idx` still renders while its turn is folded (#758).
+///
+/// Folding hides the turn's working-out — thinking, tool groups, and the
+/// intermediate narration between them — and keeps what the user must still
+/// see: their own question, the final answer, errors, and anything
+/// interactive (an approval prompt or menu, which would otherwise become
+/// unreachable). This mirrors the Telegram flow block, where the log folds and
+/// the final answer stays a clean bubble.
+pub(crate) fn visible_when_folded(
+    messages: &[DisplayMessage],
+    idx: usize,
+    final_idx: Option<usize>,
+) -> bool {
+    let Some(m) = messages.get(idx) else {
+        return false;
+    };
+    // Never hide something the user has to act on, or an error they must see.
+    if m.approval.is_some() || m.approve_menu.is_some() {
+        return true;
+    }
+    match m.role.as_str() {
+        "user" | "error" | "history_marker" => true,
+        _ => Some(idx) == final_idx,
+    }
+}
+
+/// Whether a turn renders folded.
+///
+/// Default: the newest turn stays open (its work is what you are watching),
+/// every older turn folds. An explicit click overrides that for one turn and is
+/// remembered by anchor id.
+pub(crate) fn turn_is_folded(
+    overrides: &std::collections::HashMap<Uuid, bool>,
+    anchor_id: Uuid,
+    is_last_turn: bool,
+) -> bool {
+    match overrides.get(&anchor_id) {
+        Some(expanded) => !expanded,
+        None => !is_last_turn,
+    }
+}
+
 /// Render the chat messages
 pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
@@ -281,22 +333,58 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // Track how many messages to skip (already rendered as part of a stack)
     let mut skip_count: usize = 0;
 
-    // Per-turn header lines (#759), keyed by the message they render above.
-    // Placed on the first row AFTER the user message that opened the turn, so
-    // the summary sits with the assistant's work rather than the question. Only
-    // turns that ran tools get one — a plain Q&A turn would just gain noise.
-    let turn_headers: std::collections::HashMap<usize, String> = turn_ranges(&app.messages)
-        .into_iter()
-        .filter_map(|t| {
-            let header = format_turn_header(turn_summary(&app.messages, t))?;
+    // Per-turn folding (#758) + header (#759). A turn's working-out — thinking,
+    // tool groups, intermediate narration — folds into one header line, leaving
+    // the question, the final answer, errors and anything interactive visible.
+    // The newest turn stays open; older turns fold unless the user clicked.
+    let all_turns = turn_ranges(&app.messages);
+    let last_turn_start = all_turns.last().map(|t| t.start);
+    // idx → header text, and idx → the turn anchor it toggles.
+    let mut turn_headers: std::collections::HashMap<usize, String> =
+        std::collections::HashMap::new();
+    let mut header_anchor: std::collections::HashMap<usize, Uuid> =
+        std::collections::HashMap::new();
+    // idx → false when that row is folded away this frame.
+    let mut row_visible: std::collections::HashMap<usize, bool> = std::collections::HashMap::new();
+    for t in &all_turns {
+        let Some(anchor_id) = app.messages.get(t.start).map(|m| m.id) else {
+            continue;
+        };
+        let is_last = Some(t.start) == last_turn_start;
+        let folded = turn_is_folded(&app.turn_expanded, anchor_id, is_last);
+        let summary = turn_summary(&app.messages, *t);
+        let final_idx = final_answer_idx(&app.messages, *t);
+
+        if folded {
+            for idx in t.start..t.end.min(app.messages.len()) {
+                if !visible_when_folded(&app.messages, idx, final_idx) {
+                    row_visible.insert(idx, false);
+                }
+            }
+        }
+        // A header is worth showing when the turn did work, or when folding
+        // actually hid something (so the user can get it back).
+        let hid_something = folded && row_visible.keys().any(|i| *i >= t.start && *i < t.end);
+        if let Some(base) = format_turn_header(summary)
+            .or_else(|| hid_something.then(|| format!("{} steps", t.end.saturating_sub(t.start))))
+        {
+            let hint = if folded {
+                " (click to expand)"
+            } else {
+                " (click to fold)"
+            };
             let at = if app.messages.get(t.start).is_some_and(|m| m.role == "user") {
                 t.start + 1
             } else {
                 t.start
             };
-            (at < t.end).then_some((at, header))
-        })
-        .collect();
+            if at < t.end {
+                turn_headers.insert(at, format!("{base}{hint}"));
+                header_anchor.insert(at, anchor_id);
+            }
+        }
+    }
+    let mut line_to_turn: Vec<Option<Uuid>> = Vec::new();
 
     // Iterate by index to allow mutable access to render_cache while reading messages
     for msg_idx in 0..app.messages.len() {
@@ -307,14 +395,25 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         }
 
         // Turn header, above the turn's first non-user row. Mapped to no
-        // message so click/drag routing is untouched (#759); wiring it to a
-        // turn-level toggle is the follow-up.
+        // MESSAGE (so line→message routing for click/drag is untouched) but to
+        // its turn anchor, so a click on this row folds/unfolds the turn (#758).
         if let Some(header) = turn_headers.get(&msg_idx) {
             lines.push(Line::from(Span::styled(
                 format!("  {header}"),
                 Style::default().fg(Color::Rgb(100, 100, 100)),
             )));
             line_to_msg.resize(lines.len(), None);
+            line_to_turn.resize(lines.len(), None);
+            if let (Some(anchor), Some(slot)) =
+                (header_anchor.get(&msg_idx), line_to_turn.last_mut())
+            {
+                *slot = Some(*anchor);
+            }
+        }
+
+        // Folded away this frame — the turn header above can bring it back.
+        if row_visible.get(&msg_idx) == Some(&false) {
+            continue;
         }
 
         let lines_before = lines.len();
@@ -1123,6 +1222,9 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // Pad line_to_msg for any remaining lines (streaming, errors, etc.)
     line_to_msg.resize(lines.len(), None);
     app.chat_line_to_msg = line_to_msg;
+    // Same length as the line map so a row index is valid in both (#758).
+    line_to_turn.resize(app.chat_line_to_msg.len(), None);
+    app.chat_line_to_turn = line_to_turn;
 
     // Calculate scroll offset — lines are pre-wrapped so count is accurate
     let total_lines = lines.len();

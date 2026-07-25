@@ -305,11 +305,41 @@ impl App {
         }
     }
 
+    /// The turn anchor whose HEADER sits on `row`, if any (#758).
+    fn row_to_turn_anchor(&self, row: u16) -> Option<Uuid> {
+        let row_in_chat = row.saturating_sub(self.chat_area_y + 1) as usize;
+        let line_idx = self.chat_render_scroll + row_in_chat;
+        self.chat_line_to_turn.get(line_idx).copied().flatten()
+    }
+
     /// Left-click: select/highlight a message
     pub(crate) fn handle_click_select(&mut self, row: u16) {
         // A fresh click clears any in-flight drag selection.
         self.drag_anchor = None;
         self.drag_current = None;
+
+        // A turn header folds/unfolds the whole turn (#758). Checked before
+        // message routing because header rows map to no message.
+        if let Some(anchor) = self.row_to_turn_anchor(row) {
+            let currently_expanded = self
+                .turn_expanded
+                .get(&anchor)
+                .copied()
+                // No override yet: the header only offers "expand" for a folded
+                // turn, so the first click on one flips it open, and on the
+                // newest (open) turn it folds.
+                .unwrap_or_else(|| {
+                    self.messages.last().is_some_and(|_| {
+                        crate::tui::render::chat::turn_ranges(&self.messages)
+                            .last()
+                            .and_then(|t| self.messages.get(t.start))
+                            .is_some_and(|m| m.id == anchor)
+                    })
+                });
+            self.turn_expanded.insert(anchor, !currently_expanded);
+            return;
+        }
+
         let msg_idx = self.row_to_msg_idx(row);
         // Click on an expandable block (tool group or reasoning details)
         // toggles that single block's expand state, mirroring Ctrl+O but
