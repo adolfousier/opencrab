@@ -7,14 +7,16 @@
 //!
 //! teloxide 0.17 / teloxide-core 0.13 has no binding for the parameter, so
 //! this calls `sendMessage` directly over HTTP, mirroring [`super::rich::api`].
-//! `sendRichMessage` did *not* gain `receiver_user_id` in 10.2, so an
-//! ephemeral reply is always plain or HTML, never a native rich message.
+//! Whether `sendRichMessage` also accepts the parameter is settled at runtime
+//! rather than assumed: see [`try_send_rich`]. Scoped replies fall back to
+//! HTML only once the server has actually refused the rich variant.
 //!
 //! Nothing here returns an error. A send that does not land reports how much
 //! was delivered and the caller finishes the job on its normal public path,
 //! which is exactly the pre-10.2 behaviour. That covers both a Bot API server
 //! older than 10.2 and a future rename of the parameter.
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use teloxide::Bot;
 use teloxide::types::{ChatId, ThreadId};
 
@@ -67,7 +69,77 @@ pub(crate) async fn send_one(
     parse_html: bool,
 ) -> bool {
     let body = build_body(chat_id, thread_id, receiver_user_id, text, parse_html);
-    post_send(token, &body).await
+    post(token, "sendMessage", &body).await == Outcome::Sent
+}
+
+/// Build the scoped `sendRichMessage` body: exactly what the public rich path
+/// sends, plus the scoping field. Split out so the shape stays testable and so
+/// the two paths cannot drift.
+pub(crate) fn build_rich_body(
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    receiver_user_id: i64,
+    markdown: &str,
+) -> serde_json::Value {
+    let mut body = super::rich::api::build_body(chat_id, thread_id, markdown);
+    body["receiver_user_id"] = serde_json::json!(receiver_user_id);
+    body
+}
+
+/// Whether `sendRichMessage` accepts `receiver_user_id`, as answered by the
+/// server rather than assumed here. See [`try_send_rich`].
+static RICH_SCOPING: AtomicU8 = AtomicU8::new(RICH_UNKNOWN);
+const RICH_UNKNOWN: u8 = 0;
+const RICH_SUPPORTED: u8 = 1;
+const RICH_UNSUPPORTED: u8 = 2;
+
+/// Try to deliver `markdown` as a *native rich* message scoped to one user,
+/// so a table or heading keeps its real Telegram rendering while staying
+/// private. `true` when it landed.
+///
+/// The 10.2 changelog enumerates the methods that gained `receiver_user_id`
+/// (`sendMessage` and the media senders) and `sendRichMessage` is not among
+/// them, but that method's own parameter table was never available to confirm
+/// the omission. So this asks the server instead of hard-coding the guess: the
+/// first group reply attempts it, and the answer is remembered for the life of
+/// the process. If the API does support it, every later reply gets native rich
+/// blocks *and* privacy; if not, exactly one call is wasted before the HTML
+/// path takes over for good.
+///
+/// A transport error leaves the answer `UNKNOWN` on purpose: a dropped
+/// connection is not the server declining the parameter, and caching it as one
+/// would forfeit native rich for the rest of the process over a network blip.
+pub(crate) async fn try_send_rich(
+    token: &str,
+    chat_id: i64,
+    thread_id: Option<ThreadId>,
+    receiver_user_id: i64,
+    markdown: &str,
+) -> bool {
+    if RICH_SCOPING.load(Ordering::Relaxed) == RICH_UNSUPPORTED {
+        return false;
+    }
+    let body = build_rich_body(chat_id, thread_id, receiver_user_id, markdown);
+    match post(token, "sendRichMessage", &body).await {
+        Outcome::Sent => {
+            if RICH_SCOPING.swap(RICH_SUPPORTED, Ordering::Relaxed) == RICH_UNKNOWN {
+                tracing::info!(
+                    "Telegram: sendRichMessage accepts receiver_user_id, \
+                     scoped command replies keep native rich rendering"
+                );
+            }
+            true
+        }
+        Outcome::Rejected => {
+            RICH_SCOPING.store(RICH_UNSUPPORTED, Ordering::Relaxed);
+            tracing::info!(
+                "Telegram: sendRichMessage does not accept receiver_user_id, \
+                 scoped command replies will render as HTML from here on"
+            );
+            false
+        }
+        Outcome::Transport => false,
+    }
 }
 
 /// Deliver `chunks` in order, scoped to `receiver_user_id`.
@@ -119,21 +191,32 @@ pub(crate) async fn send_ack(
     .map(|_| ())
 }
 
-/// POST an ephemeral `sendMessage`, logging why it did not land.
+/// What the server did with an ephemeral send.
+///
+/// `Rejected` and `Transport` both leave the caller sending publicly, but only
+/// `Rejected` is the server stating an opinion. A dropped connection says
+/// nothing about what the API supports, so the two must not be conflated when
+/// caching a capability.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    Sent,
+    Rejected,
+    Transport,
+}
+
+/// POST an ephemeral send to `method`, logging why it did not land.
 ///
 /// A 400 here is the expected shape of "this server predates 10.2" or "the
 /// bot may not scope messages in this chat", so it is a warning and the
 /// caller recovers, but it is never swallowed, because a silent failure
 /// looks identical to the feature working while every reply stays public.
-async fn post_send(token: &str, body: &serde_json::Value) -> bool {
-    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+async fn post(token: &str, method: &str, body: &serde_json::Value) -> Outcome {
+    let url = format!("https://api.telegram.org/bot{token}/{method}");
     let resp = match reqwest::Client::new().post(&url).json(body).send().await {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!(
-                "Telegram: ephemeral sendMessage transport error: {e}, sending publicly"
-            );
-            return false;
+            tracing::warn!("Telegram: ephemeral {method} transport error: {e}, sending publicly");
+            return Outcome::Transport;
         }
     };
     let status = resp.status();
@@ -141,13 +224,13 @@ async fn post_send(token: &str, body: &serde_json::Value) -> bool {
     let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
 
     if status.is_success() && parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        return true;
+        return Outcome::Sent;
     }
 
     let desc = parsed
         .get("description")
         .and_then(serde_json::Value::as_str)
         .unwrap_or(&text);
-    tracing::warn!("Telegram: ephemeral sendMessage rejected ({status}): {desc}, sending publicly");
-    false
+    tracing::warn!("Telegram: ephemeral {method} rejected ({status}): {desc}, sending publicly");
+    Outcome::Rejected
 }

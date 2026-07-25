@@ -2416,10 +2416,23 @@ pub(crate) async fn handle_message(
         }
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
             // Every slash command is owner-gated, so its output is addressed
-            // to one person: in a group it goes ephemeral (#756). Bot API 10.2
-            // did not add `receiver_user_id` to sendRichMessage, so scoping the
-            // reply costs the native rich rendering, the cheaper of the two.
+            // to one person: in a group it goes ephemeral (#756). Native rich
+            // is tried first for output that benefits from it, so a scoped
+            // reply only drops to HTML once the server has refused the rich
+            // variant of the parameter.
             if let Some(rx) = super::ephemeral::receiver_for(is_dm, user_id) {
+                if super::rich::should_send_native_rich(&reply)
+                    && super::ephemeral::try_send_rich(
+                        bot.token(),
+                        msg.chat.id.0,
+                        thread_id,
+                        rx,
+                        &reply,
+                    )
+                    .await
+                {
+                    return Ok(());
+                }
                 let html = command_md_to_html(&reply);
                 let chunks = split_message(&html, 4096);
                 let delivered = super::ephemeral::send_html_chunks(

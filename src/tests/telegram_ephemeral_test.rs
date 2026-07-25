@@ -3,7 +3,7 @@
 //! Covers the two pure pieces: who a reply is scoped to, and the request
 //! shape sent to `sendMessage`. The transport itself needs a live bot.
 
-use crate::channels::telegram::ephemeral::{build_body, receiver_for};
+use crate::channels::telegram::ephemeral::{build_body, build_rich_body, receiver_for};
 use teloxide::types::{MessageId, ThreadId};
 
 #[test]
@@ -38,6 +38,24 @@ fn plain_body_has_no_parse_mode() {
 fn html_body_sets_parse_mode() {
     let body = build_body(-100200, None, 12345, "<b>hi</b>", true);
     assert_eq!(body["parse_mode"], "HTML");
+}
+
+#[test]
+fn rich_body_is_the_public_body_plus_the_receiver() {
+    // The scoped rich attempt must be byte-for-byte the public rich request
+    // apart from the scoping field, or the two paths render differently.
+    let public = crate::channels::telegram::rich::api::build_body(-100200, None, "# hi");
+    let scoped = build_rich_body(-100200, None, 12345, "# hi");
+    assert_eq!(scoped["rich_message"], public["rich_message"]);
+    assert_eq!(scoped["chat_id"], public["chat_id"]);
+    assert_eq!(scoped["receiver_user_id"], 12345);
+}
+
+#[test]
+fn rich_body_keeps_the_forum_topic() {
+    let body = build_rich_body(-100200, Some(ThreadId(MessageId(77))), 12345, "# hi");
+    assert_eq!(body["message_thread_id"], 77);
+    assert_eq!(body["receiver_user_id"], 12345);
 }
 
 #[test]
