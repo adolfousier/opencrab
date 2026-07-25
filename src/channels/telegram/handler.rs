@@ -823,10 +823,13 @@ pub(crate) async fn handle_message(
             user_id,
             user.username.as_deref().unwrap_or("unknown"),
         );
-        message_in_thread(
+        // Addressed to exactly one person, so in a group the other members do
+        // not need to watch someone get refused (#756).
+        super::ephemeral::send_ack(
             &bot,
             msg.chat.id,
             thread_id,
+            super::ephemeral::receiver_for(is_dm, user_id),
             "You are not authorized. Send /start to get your user ID.",
         )
         .await?;
@@ -2412,6 +2415,31 @@ pub(crate) async fn handle_message(
             return Ok(());
         }
         if let Some(reply) = commands::try_execute_text_command(&cmd).await {
+            // Every slash command is owner-gated, so its output is addressed
+            // to one person: in a group it goes ephemeral (#756). Bot API 10.2
+            // did not add `receiver_user_id` to sendRichMessage, so scoping the
+            // reply costs the native rich rendering, the cheaper of the two.
+            if let Some(rx) = super::ephemeral::receiver_for(is_dm, user_id) {
+                let html = command_md_to_html(&reply);
+                let chunks = split_message(&html, 4096);
+                let delivered = super::ephemeral::send_html_chunks(
+                    bot.token(),
+                    msg.chat.id.0,
+                    thread_id,
+                    rx,
+                    &chunks,
+                )
+                .await;
+                if delivered > 0 {
+                    // A short delivery finishes publicly: dropping the tail
+                    // would truncate the reply with nothing to show for it.
+                    for chunk in chunks.iter().skip(delivered) {
+                        send_html_or_plain(&bot, msg.chat.id, thread_id, chunk).await?;
+                    }
+                    return Ok(());
+                }
+                // Nothing landed: fall through to the public path unchanged.
+            }
             let sent_rich = super::rich::should_send_native_rich(&reply)
                 && super::rich::api::send_rich_markdown(
                     bot.token(),
@@ -2430,6 +2458,12 @@ pub(crate) async fn handle_message(
             return Ok(());
         }
 
+        // Set once for the command acks below. `None` in a DM, where there is
+        // nobody to hide the ack from. Commands whose reply carries an inline
+        // keyboard (Models, Sessions, ChangeDir, Profiles) stay public: their
+        // buttons drive callback edits, which need the ephemeral edit/delete
+        // methods 10.2 added and this path does not implement.
+        let ephemeral_rx = super::ephemeral::receiver_for(is_dm, user_id);
         match cmd {
             ChannelCommand::Models(resp) => {
                 let rows: Vec<Vec<InlineKeyboardButton>> = resp
@@ -2534,9 +2568,13 @@ pub(crate) async fn handle_message(
                         let ctx_max = agent.context_limit_for_session(new_session.id);
                         let footer = crate::utils::format_ctx_footer(baseline, ctx_max, None);
                         let msg_text = format!("✅ New session started.\n\n{footer}");
-                        send_retrying_rate_limit("command reply", || {
-                            message_in_thread(&bot, msg.chat.id, thread_id, &msg_text)
-                        })
+                        super::ephemeral::send_ack(
+                            &bot,
+                            msg.chat.id,
+                            thread_id,
+                            ephemeral_rx,
+                            &msg_text,
+                        )
                         .await?;
                         tracing::info!(
                             "Telegram /new: sent ctx footer='{}' (baseline={}, ctx_max={})",
@@ -2547,14 +2585,13 @@ pub(crate) async fn handle_message(
                     }
                     Err(e) => {
                         tracing::error!("Telegram: failed to create session: {}", e);
-                        send_retrying_rate_limit("command reply", || {
-                            message_in_thread(
-                                &bot,
-                                msg.chat.id,
-                                thread_id,
-                                "Failed to create session.",
-                            )
-                        })
+                        super::ephemeral::send_ack(
+                            &bot,
+                            msg.chat.id,
+                            thread_id,
+                            ephemeral_rx,
+                            "Failed to create session.",
+                        )
                         .await?;
                     }
                 }
@@ -2592,10 +2629,8 @@ pub(crate) async fn handle_message(
                 } else {
                     "No operation in progress."
                 };
-                send_retrying_rate_limit("command reply", || {
-                    message_in_thread(&bot, msg.chat.id, thread_id, reply)
-                })
-                .await?;
+                super::ephemeral::send_ack(&bot, msg.chat.id, thread_id, ephemeral_rx, reply)
+                    .await?;
                 return Ok(());
             }
             ChannelCommand::ChangeDir(resp) => {
@@ -2631,9 +2666,15 @@ pub(crate) async fn handle_message(
                 return Ok(());
             }
             ChannelCommand::Compact => {
-                send_retrying_rate_limit("command reply", || {
-                    message_in_thread(&bot, msg.chat.id, thread_id, "⏳ Compacting context...")
-                })
+                // Only the ack is scoped: the compaction turn that follows is
+                // an ordinary agent turn and stays public.
+                super::ephemeral::send_ack(
+                    &bot,
+                    msg.chat.id,
+                    thread_id,
+                    ephemeral_rx,
+                    "⏳ Compacting context...",
+                )
                 .await?;
                 text = "[SYSTEM: Compact context now. Summarize this conversation for continuity.]"
                     .to_string();
@@ -2643,23 +2684,26 @@ pub(crate) async fn handle_message(
                 // Approve and /execute are FORBIDDEN while a turn is
                 // running: refuse immediately, never queue (locked).
                 if telegram_state.is_turn_active(session_id) {
-                    send_retrying_rate_limit("command reply", || {
-                        message_in_thread(
-                            &bot,
-                            msg.chat.id,
-                            thread_id,
-                            "⛔ A turn is running. /execute and Approve are refused while \
-                             busy; try again when the turn finishes.",
-                        )
-                    })
+                    super::ephemeral::send_ack(
+                        &bot,
+                        msg.chat.id,
+                        thread_id,
+                        ephemeral_rx,
+                        "⛔ A turn is running. /execute and Approve are refused while \
+                         busy; try again when the turn finishes.",
+                    )
                     .await?;
                     return Ok(());
                 }
                 match crate::utils::plan_mode::try_approve(session_id).await {
                     crate::utils::plan_mode::ApproveOutcome::Refused(reply) => {
-                        send_retrying_rate_limit("command reply", || {
-                            message_in_thread(&bot, msg.chat.id, thread_id, reply.clone())
-                        })
+                        super::ephemeral::send_ack(
+                            &bot,
+                            msg.chat.id,
+                            thread_id,
+                            ephemeral_rx,
+                            &reply,
+                        )
                         .await?;
                         return Ok(());
                     }
@@ -2681,10 +2725,8 @@ pub(crate) async fn handle_message(
                 if cancelled {
                     reply = format!("⏹️ Cancelled the running turn. {reply}");
                 }
-                send_retrying_rate_limit("command reply", || {
-                    message_in_thread(&bot, msg.chat.id, thread_id, reply.clone())
-                })
-                .await?;
+                super::ephemeral::send_ack(&bot, msg.chat.id, thread_id, ephemeral_rx, &reply)
+                    .await?;
                 return Ok(());
             }
             ChannelCommand::UserPrompt(prompt) => {

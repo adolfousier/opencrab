@@ -6,6 +6,7 @@
 mod agent;
 pub(crate) mod cowork;
 pub(crate) mod delivery;
+pub(crate) mod ephemeral;
 pub(crate) mod flow;
 pub(crate) mod flow_chrome;
 pub(crate) mod follow_up_question;
