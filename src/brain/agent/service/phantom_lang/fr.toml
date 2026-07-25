@@ -200,6 +200,16 @@ action_verbs = [
     "déployé",
     "fusionné",
     "committé",
+    # Issue-tracker and review actions (see en.toml for the case that
+    # exposed the gap).
+    "fermé",
+    "refermé",
+    "rouvert",
+    "commenté",
+    "ouvert",
+    "étiqueté",
+    "assigné",
+    "clôturé",
 ]
 
 completion_claims = [

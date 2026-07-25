@@ -535,6 +535,20 @@ action_verbs = [
     "synced",
     "rolled back",
     "rolled out",
+    # Issue-tracker and review actions. Absent until a fabricated
+    # "Closed #767 as completed" cleared every structural gate and then
+    # found no verb to match: the list was written for a deploy pipeline
+    # and never covered the collaboration actions the agent runs daily.
+    "closed",
+    "reopened",
+    "commented",
+    "filed",
+    "opened",
+    "labeled",
+    "labelled",
+    "assigned",
+    "approved",
+    "requested changes",
 ]
 
 completion_claims = [

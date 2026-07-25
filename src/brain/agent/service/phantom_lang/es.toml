@@ -188,6 +188,18 @@ action_verbs = [
     "eliminado",
     "borrado",
     "ejecutado",
+    # Issue-tracker and review actions (see en.toml for the case that
+    # exposed the gap).
+    "cerré",
+    "cerrado",
+    "reabrí",
+    "reabierto",
+    "comenté",
+    "comentado",
+    "abrí",
+    "abierto",
+    "etiqueté",
+    "asigné",
 ]
 
 completion_claims = [

@@ -200,6 +200,14 @@ action_verbs = [
     "собрал",
     "протестировал",
     "проверил",
+    # Issue-tracker and review actions (see en.toml for the case that
+    # exposed the gap).
+    "закрыл",
+    "переоткрыл",
+    "прокомментировал",
+    "открыл",
+    "назначил",
+    "пометил",
 ]
 
 completion_claims = [

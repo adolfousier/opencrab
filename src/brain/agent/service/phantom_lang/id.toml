@@ -132,6 +132,13 @@ action_verbs = [
     "diunggah",
     "disimpan",
     "diselesaikan",
+    # Issue-tracker and review actions (see en.toml for the case that
+    # exposed the gap).
+    "ditutup",
+    "dibuka",
+    "dikomentari",
+    "ditugaskan",
+    "dilabeli",
 ]
 
 completion_claims = [

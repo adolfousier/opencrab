@@ -186,6 +186,18 @@ action_verbs = [
     "removido",
     "deletado",
     "executado",
+    # Issue-tracker and review actions (see en.toml for the case that
+    # exposed the gap).
+    "fechei",
+    "fechado",
+    "reabri",
+    "reaberto",
+    "comentei",
+    "comentado",
+    "abri",
+    "aberto",
+    "etiquetei",
+    "atribuí",
 ]
 
 completion_claims = [

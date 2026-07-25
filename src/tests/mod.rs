@@ -191,6 +191,7 @@ pub mod new_session_pane_binding_test;
 pub mod pending_request_age_test;
 pub mod pending_resume_no_reinsert_test;
 pub mod phantom_going_to_test;
+pub mod phantom_issue_action_test;
 pub mod phantom_work_announcement_test;
 pub mod pricing_fallback_test;
 pub mod profile_pid_lock_test;
