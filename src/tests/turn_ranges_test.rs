@@ -287,16 +287,20 @@ fn folding_never_hides_errors_or_interactive_rows() {
 }
 
 #[test]
-fn newest_turn_is_open_and_older_turns_fold_by_default() {
+fn only_a_running_turn_stays_open_by_default() {
     let overrides: HashMap<uuid::Uuid, bool> = HashMap::new();
     let a = uuid::Uuid::new_v4();
     assert!(
-        turn_is_folded(&overrides, a, false),
-        "an older turn folds by default"
+        turn_is_folded(&overrides, a, false, true),
+        "an older turn folds even while another runs"
     );
     assert!(
-        !turn_is_folded(&overrides, a, true),
-        "the newest turn stays open so live work is visible"
+        !turn_is_folded(&overrides, a, true, true),
+        "the running turn stays open so live work is visible"
+    );
+    assert!(
+        turn_is_folded(&overrides, a, true, false),
+        "once the turn settles it folds — otherwise nothing ever collapses"
     );
 }
 
@@ -306,8 +310,8 @@ fn an_explicit_click_overrides_the_default_either_way() {
     let mut overrides = HashMap::new();
     // Re-open an old turn.
     overrides.insert(a, true);
-    assert!(!turn_is_folded(&overrides, a, false));
-    // Fold the newest one.
+    assert!(!turn_is_folded(&overrides, a, false, false));
+    // Fold the running one.
     overrides.insert(a, false);
-    assert!(turn_is_folded(&overrides, a, true));
+    assert!(turn_is_folded(&overrides, a, true, true));
 }

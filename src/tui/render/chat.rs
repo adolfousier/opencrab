@@ -308,17 +308,23 @@ pub(crate) fn visible_when_folded(
 
 /// Whether a turn renders folded.
 ///
-/// Default: the newest turn stays open (its work is what you are watching),
-/// every older turn folds. An explicit click overrides that for one turn and is
+/// Default: a turn stays open only while it is STILL RUNNING — that is the work
+/// you are watching. The moment it settles it folds to its header, and every
+/// older turn is folded. Keying "open" on newest-turn alone was wrong in
+/// practice: the turn on screen is always the newest, so nothing ever appeared
+/// to collapse while working.
+///
+/// An explicit click overrides this for one turn, in either direction, and is
 /// remembered by anchor id.
 pub(crate) fn turn_is_folded(
     overrides: &std::collections::HashMap<Uuid, bool>,
     anchor_id: Uuid,
     is_last_turn: bool,
+    is_processing: bool,
 ) -> bool {
     match overrides.get(&anchor_id) {
         Some(expanded) => !expanded,
-        None => !is_last_turn,
+        None => !(is_last_turn && is_processing),
     }
 }
 
@@ -351,7 +357,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             continue;
         };
         let is_last = Some(t.start) == last_turn_start;
-        let folded = turn_is_folded(&app.turn_expanded, anchor_id, is_last);
+        let folded = turn_is_folded(&app.turn_expanded, anchor_id, is_last, app.is_processing);
         let summary = turn_summary(&app.messages, *t);
         let final_idx = final_answer_idx(&app.messages, *t);
 

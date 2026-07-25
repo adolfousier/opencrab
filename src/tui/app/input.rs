@@ -329,12 +329,13 @@ impl App {
                 // turn, so the first click on one flips it open, and on the
                 // newest (open) turn it folds.
                 .unwrap_or_else(|| {
-                    self.messages.last().is_some_and(|_| {
-                        crate::tui::render::chat::turn_ranges(&self.messages)
+                    // Matches the render default: open only while the newest
+                    // turn is still running.
+                    self.is_processing
+                        && crate::tui::render::chat::turn_ranges(&self.messages)
                             .last()
                             .and_then(|t| self.messages.get(t.start))
                             .is_some_and(|m| m.id == anchor)
-                    })
                 });
             self.turn_expanded.insert(anchor, !currently_expanded);
             return;
