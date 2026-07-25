@@ -109,7 +109,9 @@ async fn ensure_weekly_dedup_scan_job(repo: &CronJobRepository) -> anyhow::Resul
         None,
         "off".to_string(),
         true,
-        None,
+        // Deliver the interactive approval keyboard to the dev group so pending
+        // cross-file duplicates can be approved or rejected in-chat (#765).
+        Some("telegram:-1002554690655".to_string()),
         None,
     );
     repo.insert(&job).await?;
@@ -144,9 +146,59 @@ async fn run_dedup_scan_job(job: &CronJob) -> anyhow::Result<()> {
         // (no-op when the job has no deliver_to); the name is rebuild-specific
         // but the body just fans `msg` out to the job's configured channels.
         deliver_rebuild_status(job, &msg).await;
+        // Follow the text summary with an interactive approval keyboard so the
+        // dev group can apply or reject the pending duplicates in-chat (#765).
+        // No-op when the job has no telegram target or the feature is off.
+        send_dedup_approval_keyboard(job).await;
     }
     Ok(())
 }
+
+/// Send the interactive brain-dedup approval keyboard to the job's Telegram
+/// target (#765). Parses the chat id from `deliver_to` (format
+/// `telegram:<chat_id>`), builds a bot from the keys.toml token, and posts the
+/// pending proposals with inline Approve/Reject buttons. Removals only happen
+/// on an explicit button tap; this just surfaces the pending list. Silent no-op
+/// when the job has no telegram target, the token is missing, or nothing filed.
+#[cfg(feature = "telegram")]
+async fn send_dedup_approval_keyboard(job: &CronJob) {
+    // Pull the first `telegram:<chat_id>` target out of the (possibly
+    // comma-separated) deliver_to list.
+    let Some(chat_id) = job
+        .deliver_to
+        .as_deref()
+        .and_then(|targets| {
+            targets
+                .split(',')
+                .map(str::trim)
+                .find_map(|t| t.strip_prefix("telegram:"))
+        })
+        .and_then(|id| id.trim().parse::<i64>().ok())
+    else {
+        return;
+    };
+    let Some(token) = read_channel_secret("telegram", "token") else {
+        tracing::warn!("No Telegram bot token in keys.toml, cannot send dedup approval keyboard");
+        return;
+    };
+    let bot = teloxide::Bot::new(token);
+    match crate::channels::telegram::dedup_approval::send_approval_request(
+        &bot,
+        teloxide::types::ChatId(chat_id),
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            "Sent dedup approval keyboard to Telegram chat {chat_id} ({n} proposal(s))"
+        ),
+        Err(e) => tracing::warn!("Failed to send dedup approval keyboard to {chat_id}: {e}"),
+    }
+}
+
+/// Non-telegram builds have no keyboard to send; keep the call site unconditional.
+#[cfg(not(feature = "telegram"))]
+async fn send_dedup_approval_keyboard(_job: &CronJob) {}
 
 /// Execute the reserved background-rebuild job: delete it first (one-shot, no
 /// retry on the 60s tick), build from source, then exec-restart into the

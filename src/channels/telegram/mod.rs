@@ -5,6 +5,7 @@
 
 mod agent;
 pub(crate) mod cowork;
+pub(crate) mod dedup_approval;
 pub(crate) mod delivery;
 pub(crate) mod ephemeral;
 pub(crate) mod flow;
