@@ -131,6 +131,79 @@ pub(crate) fn scan_tool_stack(messages: &[DisplayMessage], start: usize) -> Tool
     }
 }
 
+/// One turn's span in the message list: `[start, end)` (#757).
+///
+/// `dead_code` is allowed only while this lands ahead of its consumer: the
+/// per-turn header (#759) and per-turn expand state (#758) render from it. The
+/// attribute comes off with the header — it is not covering an unused API.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TurnRange {
+    /// Index of the turn's first message (the user message that opened it).
+    pub start: usize,
+    /// Exclusive end — the index of the next turn's user message, or the list end.
+    pub end: usize,
+}
+
+#[allow(dead_code)]
+impl TurnRange {
+    /// Number of messages in the turn.
+    pub fn len(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    /// Whether the turn spans no messages (never produced by `turn_ranges`,
+    /// but required alongside `len` and cheap to be correct about).
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Split the message list into turns (#757).
+///
+/// `DisplayMessage` carries no turn marker, so a turn is inferred from the
+/// structure of the conversation: it opens at a `user` message and runs until
+/// the next `user` message, absorbing the assistant text, thinking-only
+/// messages, tool groups, and any system/error rows the turn produced in
+/// between. Every per-turn feature (one collapsible block, a per-turn header, a
+/// single expand state) needs this.
+///
+/// Messages that precede the first user message — history-paging markers, a
+/// restored transcript's leading rows — form their own leading range so nothing
+/// is dropped. Pure: no `App`, no terminal, no side effects.
+#[allow(dead_code)]
+pub(crate) fn turn_ranges(messages: &[DisplayMessage]) -> Vec<TurnRange> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<TurnRange> = Vec::new();
+    let mut start = 0usize;
+    for (i, m) in messages.iter().enumerate() {
+        // A user message opens a new turn, closing the one before it. `i > start`
+        // keeps the very first message (and each freshly-opened turn) from
+        // closing a zero-length range, and makes back-to-back user messages
+        // split into one turn each.
+        if m.role == "user" && i > start {
+            out.push(TurnRange { start, end: i });
+            start = i;
+        }
+    }
+    out.push(TurnRange {
+        start,
+        end: messages.len(),
+    });
+    out
+}
+
+/// The turn containing `msg_idx`, if any (#757). Used to resolve a clicked or
+/// anchored row back to its turn.
+#[allow(dead_code)]
+pub(crate) fn turn_of(messages: &[DisplayMessage], msg_idx: usize) -> Option<TurnRange> {
+    turn_ranges(messages)
+        .into_iter()
+        .find(|t| msg_idx >= t.start && msg_idx < t.end)
+}
+
 /// Render the chat messages
 pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
