@@ -351,6 +351,24 @@ pub(crate) fn visible_when_folded(
     }
 }
 
+/// Whether a turn has working-out that folding would hide.
+///
+/// Deliberately independent of the turn's CURRENT fold state. The header is
+/// the only control that can collapse a turn again, so deriving its existence
+/// from `folded` made an expanded turn erase its own header: a turn with no
+/// tool calls gets no header from [`format_turn_header`], so the step-count
+/// fallback was all it had, and that fallback used to require `folded`. One
+/// click and the turn was open with nothing on screen to close it (#743
+/// follow-up).
+pub(crate) fn turn_has_hideable(
+    messages: &[DisplayMessage],
+    turn: TurnRange,
+    final_idx: Option<usize>,
+) -> bool {
+    (turn.start..turn.end.min(messages.len()))
+        .any(|idx| !visible_when_folded(messages, idx, final_idx))
+}
+
 /// Whether a turn renders folded.
 ///
 /// Folded is the DEFAULT, always — including while the turn is still running.
@@ -415,6 +433,8 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         let summary = turn_summary(&app.messages, *t);
         let final_idx = final_answer_idx(&app.messages, *t);
 
+        let has_hideable = turn_has_hideable(&app.messages, *t, final_idx);
+
         if folded {
             for idx in t.start..t.end.min(app.messages.len()) {
                 if !visible_when_folded(&app.messages, idx, final_idx) {
@@ -422,9 +442,10 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
                 }
             }
         }
-        // A header is worth showing when the turn did work, or when folding
-        // actually hid something (so the user can get it back).
-        let hid_something = folded && row_visible.keys().any(|i| *i >= t.start && *i < t.end);
+        // A header is worth showing when the turn did work, or when it has
+        // working-out to fold away (so the user can get it back, and put it
+        // back).
+        let hid_something = has_hideable;
         if let Some(base) = format_turn_header(summary)
             .or_else(|| hid_something.then(|| format!("{} steps", t.end.saturating_sub(t.start))))
         {

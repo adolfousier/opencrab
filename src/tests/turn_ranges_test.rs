@@ -387,3 +387,61 @@ fn preview_survives_a_range_past_the_end() {
     let past_end = crate::tui::render::chat::TurnRange { start: 0, end: 99 };
     assert_eq!(folded_turn_preview(&msgs, past_end), None);
 }
+
+// ── A turn must never erase its own collapse control (#743 follow-up) ───────
+// The header is the only way to fold a turn back up. It used to exist only
+// while folded, so expanding a turn with no tool calls left it open with
+// nothing on screen to close it.
+
+use crate::tui::render::chat::turn_has_hideable;
+
+#[test]
+fn a_turn_with_working_out_has_a_header_in_both_states() {
+    // No tool calls, so format_turn_header gives nothing and the step-count
+    // fallback is the turn's only header. It must not depend on fold state.
+    let msgs = vec![
+        msg("user", "do the thing"),
+        msg("assistant", "intermediate narration"),
+        msg("assistant", "the answer"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert!(
+        turn_has_hideable(&msgs, turn, fin),
+        "the narration row is hideable, so the header must exist whether \
+         the turn is folded or open"
+    );
+}
+
+#[test]
+fn a_bare_question_and_answer_needs_no_header() {
+    // Nothing to fold away, so no header and nothing to strand the user with.
+    let msgs = vec![msg("user", "hi"), msg("assistant", "hello")];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert!(!turn_has_hideable(&msgs, turn, fin));
+}
+
+#[test]
+fn a_turn_with_tool_groups_has_working_out() {
+    let msgs = vec![
+        msg("user", "do the thing"),
+        tool_group_msg(),
+        msg("assistant", "done"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert!(turn_has_hideable(&msgs, turn, fin));
+}
+
+#[test]
+fn a_thinking_only_row_counts_as_working_out() {
+    // Reasoning rows carry empty content, so they are never the final answer
+    // and always fold away. A turn holding one still needs its header.
+    let mut thinking = msg("assistant", "");
+    thinking.details = Some("some reasoning".to_string());
+    let msgs = vec![msg("user", "hi"), thinking, msg("assistant", "answer")];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert!(turn_has_hideable(&msgs, turn, fin));
+}
