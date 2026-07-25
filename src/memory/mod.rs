@@ -16,7 +16,7 @@ pub use embedding::{
     embed_content, embed_content_api, embed_query_api, embed_via_api, engine_if_ready, get_engine,
 };
 pub use index::{BRAIN_FILES, index_file, reindex};
-pub use search::search;
+pub use search::{search, search_brain};
 pub use store::get_store;
 
 /// Whether vector embeddings are enabled in the current config.

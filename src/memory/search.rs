@@ -102,6 +102,54 @@ pub async fn search(
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
+/// FTS-only search over the brain-file collection (no vector overhead).
+///
+/// Sub-millisecond BM25 over the indexed brain files (SOUL/USER/AGENTS/TOOLS/
+/// CODE/SECURITY/MEMORY/BOOT/HEARTBEAT). Used by the harness brain-hints layer
+/// (#767) to inject relevant guidance into tool errors and `tool_search`
+/// results without paying the embedding round-trip the hybrid `search` does.
+pub async fn search_brain(
+    store: &'static Mutex<Store>,
+    query: &str,
+    n: usize,
+) -> Result<Vec<MemoryResult>, String> {
+    let fts_query = sanitize_fts_query(query);
+    if fts_query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let store = store
+            .lock()
+            .map_err(|e| format!("Store lock poisoned: {e}"))?;
+        let home = crate::config::opencrabs_home();
+
+        let fts_results = store
+            .search_fts(&fts_query, n, Some(COLLECTION_BRAIN))
+            .map_err(|e| format!("FTS search failed: {e}"))?;
+
+        Ok(fts_results
+            .iter()
+            .map(|r| {
+                let snippet = match store.get_document(&r.doc.collection_name, &r.doc.path) {
+                    Ok(Some(doc)) => {
+                        let body = doc.body.as_deref().unwrap_or("");
+                        extract_snippet(body, &fts_query, 200)
+                    }
+                    _ => r.doc.title.clone(),
+                };
+                MemoryResult {
+                    path: resolve_path(&home, &r.doc.collection_name, &r.doc.path),
+                    snippet,
+                    rank: r.score,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
 /// Convert SearchResults to RRF tuple format: (file_path, display_path, title, body).
 fn results_to_tuples(
     store: &Store,

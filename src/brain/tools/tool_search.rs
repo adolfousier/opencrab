@@ -108,6 +108,11 @@ impl Tool for ToolSearchTool {
                 serde_json::to_string(&def.input_schema).unwrap_or_default(),
             ));
         }
+        // Surface relevant brain guidance alongside the discovered schemas so
+        // routing rules (canonical names, gotchas) ride the discovery (#767).
+        if let Some(hints) = crate::brain::hints::hints_for(query).await {
+            out.push_str(&hints);
+        }
         Ok(ToolResult::success(out))
     }
 }

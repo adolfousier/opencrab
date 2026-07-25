@@ -5145,12 +5145,22 @@ impl AgentService {
                                     .collect(),
                             }
                         } else {
-                            // Tool not found, skip approval
+                            // Tool not found, skip approval. Inject brain-file
+                            // guidance so the model learns the canonical name or
+                            // routing inline instead of guessing again (#767).
                             let err = format!("Tool not found: {}", tool_name);
                             tool_outputs.push((false, err.clone()));
+                            let mut content = err;
+                            if let Some(hints) = crate::brain::hints::hints_for(&format!(
+                                "{tool_name} tool not found"
+                            ))
+                            .await
+                            {
+                                content.push_str(&hints);
+                            }
                             tool_results.push(ContentBlock::ToolResult {
                                 tool_use_id: tool_id,
-                                content: err,
+                                content,
                                 is_error: Some(true),
                             });
                             continue;
@@ -5629,9 +5639,19 @@ impl AgentService {
                                 },
                             );
                         }
+                        // Inject brain-file guidance inline so a tool miss
+                        // carries its own remediation hint (#767). err_msg stays
+                        // pristine above for logging/feedback; only the
+                        // model-facing content gets the hints.
+                        let mut content = err_msg;
+                        if let Some(hints) =
+                            crate::brain::hints::hints_for(&format!("{tool_name} {content}")).await
+                        {
+                            content.push_str(&hints);
+                        }
                         tool_results.push(ContentBlock::ToolResult {
                             tool_use_id: tool_id,
-                            content: err_msg,
+                            content,
                             is_error: Some(true),
                         });
                     }
