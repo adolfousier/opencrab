@@ -3,8 +3,8 @@
 //! This module handles automatic updating of LLM provider information
 //! from the Crabrace registry.
 
+use super::registry_client::Provider;
 use anyhow::{Context, Result};
-use crabrace::Provider;
 use std::time::{Duration, SystemTime};
 use tokio::time;
 use tracing::{debug, info, warn};

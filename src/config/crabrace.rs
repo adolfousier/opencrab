@@ -1,8 +1,8 @@
 // Crabrace client integration for OpenCrabs
 // Replaces the planned Catwalk integration with Crabrace
 
+use super::registry_client::{Provider, RegistryClient};
 use anyhow::{Context, Result};
-use crabrace::{CrabraceClient, Provider};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for Crabrace provider registry client
@@ -55,14 +55,14 @@ impl Default for CrabraceConfig {
 
 /// Crabrace client wrapper for OpenCrabs
 pub struct CrabraceIntegration {
-    client: CrabraceClient,
+    client: RegistryClient,
     config: CrabraceConfig,
 }
 
 impl CrabraceIntegration {
     /// Create a new Crabrace integration instance
     pub fn new(config: CrabraceConfig) -> Result<Self> {
-        let client = CrabraceClient::new(&config.base_url);
+        let client = RegistryClient::new(&config.base_url);
 
         Ok(Self { client, config })
     }
