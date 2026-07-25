@@ -2,6 +2,7 @@
 //!
 //! Main rendering logic for the terminal interface.
 
+pub(crate) mod background;
 pub(crate) mod chat;
 mod dialogs;
 

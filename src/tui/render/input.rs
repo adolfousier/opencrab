@@ -1050,6 +1050,26 @@ pub(super) fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         ));
     }
 
+    // Detached background commands (#762). These end the turn immediately, so
+    // without this the footer looks idle while a long build runs and there is
+    // no way to tell waiting from hung.
+    if let Some(session) = app.current_session.as_ref()
+        && let Some(mgr) = app.agent_service.background_manager()
+    {
+        let tasks: Vec<(String, u64)> = mgr
+            .running_tasks(session.id)
+            .into_iter()
+            .map(|t| (t.label, t.started.elapsed().as_secs()))
+            .collect();
+        if let Some(text) = super::background::format_background_tasks(&tasks) {
+            spans.push(Span::styled("  ·  ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                format!("⏳ {text}"),
+                Style::default().fg(Color::Rgb(230, 180, 80)),
+            ));
+        }
+    }
+
     spans.push(Span::styled(sep_text, Style::default().fg(Color::DarkGray)));
     spans.push(Span::styled(policy_text, Style::default().fg(policy_color)));
 

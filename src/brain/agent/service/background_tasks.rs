@@ -22,11 +22,25 @@ pub struct CmdResult {
     pub output: String,
 }
 
+/// One in-flight background command.
+#[derive(Debug, Clone)]
+pub struct RunningTask {
+    /// Short label for the command, e.g. `cargo test`.
+    pub label: String,
+    /// When it was spawned, for the elapsed time a surface displays.
+    pub started: std::time::Instant,
+}
+
 /// Manages background commands and resumes their sessions on completion.
 pub struct BackgroundTaskManager {
     enqueue: MessageEnqueueCallback,
-    /// Running background task count per session (for status / future cancel).
-    running: Mutex<HashMap<Uuid, usize>>,
+    /// In-flight background tasks per session.
+    ///
+    /// Holds the label and start time, not just a count, because a surface has
+    /// to be able to say WHAT is running and for how long. A detached task
+    /// takes the turn idle, so without this the TUI has nothing at all to draw
+    /// while a long build runs and the wait looks like a hang (#762).
+    running: Mutex<HashMap<Uuid, Vec<RunningTask>>>,
 }
 
 impl BackgroundTaskManager {
@@ -41,22 +55,39 @@ impl BackgroundTaskManager {
     pub fn running_for(&self, session_id: Uuid) -> usize {
         self.running
             .lock()
-            .map(|m| m.get(&session_id).copied().unwrap_or(0))
+            .map(|m| m.get(&session_id).map(Vec::len).unwrap_or(0))
             .unwrap_or(0)
     }
 
-    fn mark_started(&self, session_id: Uuid) {
+    /// What is running for `session_id`, oldest first, for surfaces that show
+    /// progress. Returns owned data so the caller never holds the lock.
+    pub fn running_tasks(&self, session_id: Uuid) -> Vec<RunningTask> {
+        self.running
+            .lock()
+            .map(|m| m.get(&session_id).cloned().unwrap_or_default())
+            .unwrap_or_default()
+    }
+
+    fn mark_started(&self, session_id: Uuid, label: &str) {
         if let Ok(mut m) = self.running.lock() {
-            *m.entry(session_id).or_insert(0) += 1;
+            m.entry(session_id).or_default().push(RunningTask {
+                label: label.to_string(),
+                started: std::time::Instant::now(),
+            });
         }
     }
 
-    fn mark_finished(&self, session_id: Uuid) {
+    fn mark_finished(&self, session_id: Uuid, label: &str) {
         if let Ok(mut m) = self.running.lock()
-            && let Some(n) = m.get_mut(&session_id)
+            && let Some(tasks) = m.get_mut(&session_id)
         {
-            *n = n.saturating_sub(1);
-            if *n == 0 {
+            // Remove the OLDEST entry with this label: two `cargo test` runs are
+            // indistinguishable here, and dropping the oldest keeps the elapsed
+            // time shown for the survivor honest.
+            if let Some(pos) = tasks.iter().position(|t| t.label == label) {
+                tasks.remove(pos);
+            }
+            if tasks.is_empty() {
                 m.remove(&session_id);
             }
         }
@@ -72,7 +103,7 @@ impl BackgroundTaskManager {
         label: String,
         command: String,
     ) {
-        self.mark_started(session_id);
+        self.mark_started(session_id, &label);
         let this = std::sync::Arc::clone(&self);
         tokio::spawn(async move {
             let result = run_detached(&command, &cwd).await;
@@ -83,7 +114,7 @@ impl BackgroundTaskManager {
             );
             let msg = completion_message(&label, &command, &result);
             (this.enqueue)(session_id, msg);
-            this.mark_finished(session_id);
+            this.mark_finished(session_id, &label);
         });
     }
 }
