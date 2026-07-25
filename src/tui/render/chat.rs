@@ -57,6 +57,32 @@ pub(crate) fn anchored_scroll_offset(
     )
 }
 
+/// Whether this frame's extra lines are content that arrived at the bottom,
+/// so the from-bottom scroll offset must absorb them to keep the viewport
+/// still.
+///
+/// `expand_pending` is the important one. A click or ctrl+o that opened a
+/// block also grows `total_lines`, but that growth is the user's own doing and
+/// happens where they are looking, not appended below them. Treating it as new
+/// content scrolled the view up by exactly the number of lines the block added,
+/// which for a large tool group is several pages. The anchor restore further
+/// down overwrites the offset, but ONLY when the anchored row still has lines
+/// this frame: a row hidden by the turn fold resolves to nothing, and then the
+/// compensation was the last word and the jump stood (#743 follow-up).
+pub(crate) fn should_compensate_for_growth(
+    auto_scroll: bool,
+    scroll_offset: usize,
+    prev_lines: usize,
+    total_lines: usize,
+    expand_pending: bool,
+) -> bool {
+    !auto_scroll
+        && !expand_pending
+        && scroll_offset > 0
+        && prev_lines > 0
+        && total_lines > prev_lines
+}
+
 /// Live-turn spinner suffix. Pure so it can be tested directly.
 ///
 /// `turn_tokens` is the whole turn's streamed output (reasoning + completion
@@ -1321,11 +1347,13 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // Only add the delta (new lines since last render), not the total, to avoid
     // the accumulation bug that inflated scroll_offset by 1000+ in seconds.
     // Skip if prev_rendered_lines == 0 (first render) to avoid massive jump.
-    if !app.auto_scroll
-        && app.scroll_offset > 0
-        && app.prev_rendered_lines > 0
-        && total_lines > app.prev_rendered_lines
-    {
+    if should_compensate_for_growth(
+        app.auto_scroll,
+        app.scroll_offset,
+        app.prev_rendered_lines,
+        total_lines,
+        app.chat_expand_anchor.is_some() || app.chat_expand_anchor_turn.is_some(),
+    ) {
         let delta = total_lines - app.prev_rendered_lines;
         app.scroll_offset += delta;
         tracing::debug!(

@@ -73,3 +73,55 @@ fn spinner_meta_never_shows_ctx() {
         "spinner must not repeat the ctx budget: {m}"
     );
 }
+
+// ── Expanding a block is not "content appended below" (#743 follow-up) ──────
+// The growth compensation existed for streaming output arriving at the bottom
+// while the user is scrolled up. A click or ctrl+o that opens a block grows
+// the transcript too, but where the user is looking, so absorbing it scrolled
+// the view up by exactly the size of the expansion: several pages for a big
+// tool group.
+
+use crate::tui::render::chat::should_compensate_for_growth;
+
+#[test]
+fn streaming_growth_is_still_compensated() {
+    assert!(should_compensate_for_growth(false, 40, 100, 130, false));
+}
+
+#[test]
+fn an_expand_is_never_compensated() {
+    // The case that produced the jump.
+    assert!(
+        !should_compensate_for_growth(false, 40, 100, 400, true),
+        "a user-opened block must not shift the viewport"
+    );
+}
+
+#[test]
+fn an_expand_is_not_compensated_even_when_it_grows_hugely() {
+    assert!(!should_compensate_for_growth(false, 5, 100, 5000, true));
+}
+
+#[test]
+fn auto_scroll_never_compensates() {
+    // Pinned to the bottom already, so there is nothing to hold still.
+    assert!(!should_compensate_for_growth(true, 40, 100, 130, false));
+}
+
+#[test]
+fn the_first_render_never_compensates() {
+    // prev_lines == 0 would make the delta the whole transcript.
+    assert!(!should_compensate_for_growth(false, 40, 0, 500, false));
+}
+
+#[test]
+fn shrinking_never_compensates() {
+    // Collapsing a block removes lines; there is no delta to absorb.
+    assert!(!should_compensate_for_growth(false, 40, 300, 100, false));
+    assert!(!should_compensate_for_growth(false, 40, 300, 100, true));
+}
+
+#[test]
+fn at_the_bottom_there_is_nothing_to_hold_still() {
+    assert!(!should_compensate_for_growth(false, 0, 100, 130, false));
+}
