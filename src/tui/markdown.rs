@@ -20,17 +20,24 @@ const LIST_MARKER: Color = Color::Rgb(120, 120, 120);
 const LINK_COLOR: Color = Color::Rgb(90, 160, 230);
 /// Inline code (`` `like this` ``).
 ///
-/// A muted amber rather than the full-saturation brand orange, and NOT bold.
-/// Inline code appears many times in a single answer, so at brand intensity it
-/// out-shouted the prose it was embedded in and every other accent on screen:
-/// the failure red, the syntax-highlighted block, the cyan language label.
-/// It only has to be identifiable as code, not compete for attention, so this
-/// keeps the warm hue and drops the chroma and the weight.
+/// The footer's slate blue, and NOT bold. Inline code appears many times in a
+/// single answer, so at the full-saturation brand orange it out-shouted the
+/// prose it was embedded in and every other accent on screen. Desaturating the
+/// orange only turned it brown, so it borrows a colour the UI already uses for
+/// recessive text instead of inventing another warm one.
+///
+/// Kept a step brighter than the footer's own `Rgb(90, 110, 150)`: chrome can
+/// sit back because nobody reads it closely, but inline code carries the
+/// identifiers in a sentence and has to stay legible against body text at
+/// `Rgb(200, 200, 210)`.
+///
+/// Less saturated than `LINK_COLOR` so the two blues stay distinguishable
+/// beyond the link's underline.
 ///
 /// Deliberately local to markdown rendering and not `palette::ORANGE`: the
 /// brand colour still belongs to titles, spinners and selections, which appear
 /// once each and are supposed to draw the eye.
-const INLINE_CODE: Color = Color::Rgb(184, 128, 74);
+const INLINE_CODE: Color = Color::Rgb(125, 150, 195);
 
 /// Fold an emphasis style stack (bold/italic/strikethrough/link) into a single
 /// `Style`. Inner tags `patch` over outer ones so nesting composes (bold inside
