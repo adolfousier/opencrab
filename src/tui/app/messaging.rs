@@ -2839,6 +2839,13 @@ impl App {
             }
         });
 
+        // Re-read the plan file so the widget reflects the post-turn state.
+        // When the plan completed and was archived (JSON renamed to archive/),
+        // the file no longer exists and reload_plan() clears plan_document,
+        // making the widget vanish. Without this, the TUI kept rendering a
+        // stale in-memory copy of the plan forever after completion.
+        self.reload_plan();
+
         Ok(())
     }
 

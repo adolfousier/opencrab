@@ -287,21 +287,13 @@ fn folding_never_hides_errors_or_interactive_rows() {
 }
 
 #[test]
-fn only_a_running_turn_stays_open_by_default() {
+fn every_turn_is_folded_by_default_including_a_running_one() {
+    // Grouped-and-collapsed means always: no turn may render its working-out
+    // as a wall, running or settled. Live progress still shows because
+    // streaming text and the active tool group render from their own state.
     let overrides: HashMap<uuid::Uuid, bool> = HashMap::new();
     let a = uuid::Uuid::new_v4();
-    assert!(
-        turn_is_folded(&overrides, a, false, true),
-        "an older turn folds even while another runs"
-    );
-    assert!(
-        !turn_is_folded(&overrides, a, true, true),
-        "the running turn stays open so live work is visible"
-    );
-    assert!(
-        turn_is_folded(&overrides, a, true, false),
-        "once the turn settles it folds — otherwise nothing ever collapses"
-    );
+    assert!(turn_is_folded(&overrides, a), "default is folded");
 }
 
 #[test]
@@ -310,8 +302,7 @@ fn an_explicit_click_overrides_the_default_either_way() {
     let mut overrides = HashMap::new();
     // Re-open an old turn.
     overrides.insert(a, true);
-    assert!(!turn_is_folded(&overrides, a, false, false));
-    // Fold the running one.
+    assert!(!turn_is_folded(&overrides, a), "click opens it");
     overrides.insert(a, false);
-    assert!(turn_is_folded(&overrides, a, true, true));
+    assert!(turn_is_folded(&overrides, a), "click folds it again");
 }

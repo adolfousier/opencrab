@@ -308,23 +308,21 @@ pub(crate) fn visible_when_folded(
 
 /// Whether a turn renders folded.
 ///
-/// Default: a turn stays open only while it is STILL RUNNING — that is the work
-/// you are watching. The moment it settles it folds to its header, and every
-/// older turn is folded. Keying "open" on newest-turn alone was wrong in
-/// practice: the turn on screen is always the newest, so nothing ever appeared
-/// to collapse while working.
+/// Folded is the DEFAULT, always — including while the turn is still running.
+/// The turn's working-out (thinking, tool groups, intermediate narration) lives
+/// behind the header; nothing should ever render as a wall. Live progress is
+/// unaffected because in-flight streaming text and the active tool group render
+/// from their own state after the message loop, not from these finalized rows.
 ///
-/// An explicit click overrides this for one turn, in either direction, and is
-/// remembered by anchor id.
+/// An explicit click on the header overrides this for one turn, in either
+/// direction, remembered by anchor id.
 pub(crate) fn turn_is_folded(
     overrides: &std::collections::HashMap<Uuid, bool>,
     anchor_id: Uuid,
-    is_last_turn: bool,
-    is_processing: bool,
 ) -> bool {
     match overrides.get(&anchor_id) {
         Some(expanded) => !expanded,
-        None => !(is_last_turn && is_processing),
+        None => true,
     }
 }
 
@@ -344,7 +342,6 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
     // the question, the final answer, errors and anything interactive visible.
     // The newest turn stays open; older turns fold unless the user clicked.
     let all_turns = turn_ranges(&app.messages);
-    let last_turn_start = all_turns.last().map(|t| t.start);
     // idx → header text, and idx → the turn anchor it toggles.
     let mut turn_headers: std::collections::HashMap<usize, String> =
         std::collections::HashMap::new();
@@ -356,8 +353,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         let Some(anchor_id) = app.messages.get(t.start).map(|m| m.id) else {
             continue;
         };
-        let is_last = Some(t.start) == last_turn_start;
-        let folded = turn_is_folded(&app.turn_expanded, anchor_id, is_last, app.is_processing);
+        let folded = turn_is_folded(&app.turn_expanded, anchor_id);
         let summary = turn_summary(&app.messages, *t);
         let final_idx = final_answer_idx(&app.messages, *t);
 

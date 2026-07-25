@@ -321,22 +321,8 @@ impl App {
         // A turn header folds/unfolds the whole turn (#758). Checked before
         // message routing because header rows map to no message.
         if let Some(anchor) = self.row_to_turn_anchor(row) {
-            let currently_expanded = self
-                .turn_expanded
-                .get(&anchor)
-                .copied()
-                // No override yet: the header only offers "expand" for a folded
-                // turn, so the first click on one flips it open, and on the
-                // newest (open) turn it folds.
-                .unwrap_or_else(|| {
-                    // Matches the render default: open only while the newest
-                    // turn is still running.
-                    self.is_processing
-                        && crate::tui::render::chat::turn_ranges(&self.messages)
-                            .last()
-                            .and_then(|t| self.messages.get(t.start))
-                            .is_some_and(|m| m.id == anchor)
-                });
+            // Folded is the default, so an unclicked header opens its turn.
+            let currently_expanded = self.turn_expanded.get(&anchor).copied().unwrap_or(false);
             self.turn_expanded.insert(anchor, !currently_expanded);
             return;
         }
