@@ -1681,6 +1681,8 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
             let marker = if *m == current_model { " ✓" } else { "" };
             text_lines.push(format!("{}. `{}`{}", i + 1, m, marker));
         }
+        // Positions are what long-name buttons encode, so record them.
+        crate::channels::model_menu::remember(provider_name, &models);
 
         return ModelsResponse {
             provider_name: provider_name.to_string(),
@@ -1756,6 +1758,8 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
             let marker = if *m == current_model { " ✓" } else { "" };
             text_lines.push(format!("{}. `{}`{}", i + 1, m, marker));
         }
+        // Positions are what long-name buttons encode, so record them.
+        crate::channels::model_menu::remember(provider_name, &models);
 
         return ModelsResponse {
             provider_name: provider_name.to_string(),
@@ -1787,21 +1791,45 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
 
     let current_model = provider.default_model().to_string();
 
-    // Standard providers: config models first (instant), then live fetch with timeout.
-    let mut models = if !config_models.is_empty() {
-        config_models
+    // Standard providers: config models are a seed and an ordering preference,
+    // not the inventory. A `models = [...]` array used to short-circuit the
+    // live fetch entirely, which froze the menu at whatever was written to
+    // config: a model the provider released later was unreachable from the
+    // chat channels even though the TUI could select it (#761). So the live
+    // list is always fetched and unioned in behind the configured order.
+    //
+    // The wait is budgeted on whether there is anything to fall back to. With
+    // a config list already in hand the menu can render without the live
+    // answer, so the reconcile gets a short budget and a slow provider costs
+    // little; with nothing in hand it is worth waiting, because the
+    // alternative is a one-item menu.
+    let fetch_budget = if config_models.is_empty() {
+        std::time::Duration::from_secs(10)
     } else {
-        match tokio::time::timeout(std::time::Duration::from_secs(10), provider.fetch_models())
-            .await
-        {
-            Ok(fetched) if !fetched.is_empty() => fetched,
-            Ok(_) => vec![current_model.clone()],
-            Err(_) => {
-                tracing::warn!("fetch_models timed out for '{}'", provider_name);
-                vec![current_model.clone()]
-            }
+        std::time::Duration::from_secs(3)
+    };
+    let fetched = match tokio::time::timeout(fetch_budget, provider.fetch_models()).await {
+        Ok(live) => live,
+        Err(_) => {
+            // Not fatal: the config list (or the current model) still renders.
+            tracing::warn!(
+                "fetch_models timed out after {}s for '{}', showing the configured list",
+                fetch_budget.as_secs(),
+                provider_name
+            );
+            Vec::new()
         }
     };
+
+    let mut models = config_models;
+    for m in fetched {
+        if !models.contains(&m) {
+            models.push(m);
+        }
+    }
+    if models.is_empty() {
+        models.push(current_model.clone());
+    }
 
     // Ensure current model is in the list
     if !models.contains(&current_model) {
@@ -1817,6 +1845,8 @@ pub async fn models_for_provider(provider_name: &str) -> ModelsResponse {
         let marker = if *m == current_model { " ✓" } else { "" };
         text_lines.push(format!("{}. `{}`{}", i + 1, m, marker));
     }
+    // Positions are what long-name buttons encode, so record them.
+    crate::channels::model_menu::remember(provider_name, &models);
 
     ModelsResponse {
         provider_name: provider_name.to_string(),
@@ -1859,6 +1889,12 @@ pub fn model_button_callback_data(provider_name: &str, model: &str, index: usize
 /// the WHOLE inline keyboard (BUTTON_DATA_INVALID) so the picker silently
 /// renders nothing. The button encodes the index instead; this resolves it.
 pub fn model_at_index(provider_name: &str, index: usize) -> Option<String> {
+    // What the picker actually rendered wins: since the standard-provider list
+    // is config unioned with the live inventory (#761), config can no longer
+    // reconstruct the positions the buttons were built from.
+    if let Some(model) = crate::channels::model_menu::resolve_index(provider_name, index) {
+        return Some(model);
+    }
     let config = crate::config::Config::load().ok()?;
     let models = provider_config_models(&config, provider_name);
     if !models.is_empty() {
