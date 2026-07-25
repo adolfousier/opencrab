@@ -508,8 +508,11 @@ impl BrainLoader {
                 ));
             }
             if has("TOOLS.md") {
-                prompt
-                    .push_str("- Working with environment-specific tool configs → load TOOLS.md\n");
+                prompt.push_str(
+                    "- Using non-core tools (Telegram, cron, browser, agents, dynamic tools), \
+                     debugging tool failures, sending channel messages, or scheduling work \
+                     → load TOOLS.md\n",
+                );
             }
             prompt.push('\n');
 
