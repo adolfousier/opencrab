@@ -35,6 +35,13 @@ fn is_active_profile(job_profile: Option<&str>, active: Option<&str>) -> bool {
 /// the user's session.
 pub const REBUILD_JOB_NAME: &str = "__opencrabs_rebuild__";
 
+/// Reserved recurring job: weekly cross-file brain dedup scan (#765). Unlike
+/// the one-shot rebuild job, this one is NOT self-deleting — it fires every
+/// week as a safety net that catches cross-file drift the event-based trigger
+/// (brain writes) and the manual `/dedup` command can miss (template sync,
+/// manual edits, preamble changes). Report-only: files proposals, never applies.
+pub const DEDUP_SCAN_JOB_NAME: &str = "__opencrabs_dedup_scan__";
+
 /// Schedule a one-shot background rebuild for `session_id`. Returns once the
 /// job is queued — the build runs out-of-band on the scheduler's next tick
 /// (within ~60s), so the calling session is never blocked. `deliver_to` (if
@@ -77,6 +84,67 @@ pub async fn schedule_background_rebuild(
     };
     repo.insert(&job).await?;
     tracing::info!("Background rebuild queued for session {session_id}");
+    Ok(())
+}
+
+/// Idempotently seed the reserved weekly brain-dedup scan job (#765). A no-op
+/// if a job named [`DEDUP_SCAN_JOB_NAME`] already exists, so repeated scheduler
+/// starts never stack duplicate jobs. The job runs the scanner directly (see
+/// [`run_dedup_scan_job`]) every Sunday at 04:00 UTC.
+async fn ensure_weekly_dedup_scan_job(repo: &CronJobRepository) -> anyhow::Result<()> {
+    if let Ok(existing) = repo.list_all().await
+        && existing.iter().any(|j| j.name == DEDUP_SCAN_JOB_NAME)
+    {
+        return Ok(());
+    }
+    let job = CronJob::new(
+        DEDUP_SCAN_JOB_NAME.to_string(),
+        // Weekly: Sunday 04:00 UTC (quiet window). Cron weekday 0 = Sunday.
+        "0 4 * * 0".to_string(),
+        "UTC".to_string(),
+        // Reserved job — the prompt is never run as an agent turn; kept as a
+        // human-readable descriptor only.
+        "reserved: weekly cross-file brain dedup scan (report-only)".to_string(),
+        None,
+        None,
+        "off".to_string(),
+        true,
+        None,
+        None,
+    );
+    repo.insert(&job).await?;
+    tracing::info!("Seeded weekly brain dedup scan job ({DEDUP_SCAN_JOB_NAME})");
+    Ok(())
+}
+
+/// Execute the reserved weekly brain-dedup scan (#765): run the cross-file
+/// scanner directly against this profile's brain dir (no agent prompt, no LLM
+/// cost), filing report-only proposals into the Mission Control inbox. Never
+/// applies — merging across files changes enforcement scope and needs human
+/// approval. Runs inline (the scan touches a handful of small `.md` files) so
+/// it stays inside the per-profile home scope the scheduler's spawned task set,
+/// keeping `opencrabs_home()` pointed at the right profile. Delivers a summary
+/// to the job's channel only when something is pending, so a clean tree doesn't
+/// spam weekly.
+async fn run_dedup_scan_job(job: &CronJob) -> anyhow::Result<()> {
+    let brain_dir = crate::config::opencrabs_home();
+    let store = crate::brain::rsi_proposals::ProposalsStore::new();
+    store.prune_handled();
+    let filed = crate::brain::dedup_scan::file_dedup_proposals(&brain_dir, &store);
+    let pending = store.list_brain_dedup_proposals().len();
+    tracing::info!(
+        "Weekly brain dedup scan complete: {filed} new proposal(s), {pending} pending total"
+    );
+    if pending > 0 {
+        let msg = format!(
+            "🧹 Weekly brain dedup scan: {pending} pending cross-file duplicate proposal(s) \
+             ({filed} new this run). Review and approve in the Mission Control inbox."
+        );
+        // deliver_rebuild_status is the generic per-channel delivery helper
+        // (no-op when the job has no deliver_to); the name is rebuild-specific
+        // but the body just fans `msg` out to the job's configured channels.
+        deliver_rebuild_status(job, &msg).await;
+    }
     Ok(())
 }
 
@@ -206,6 +274,14 @@ impl CronScheduler {
         tracing::info!(
             "Cron scheduler started — polling every 60s (shared Cron session, compaction-isolated)"
         );
+        // Seed the reserved weekly brain-dedup safety-net job once per scheduler
+        // start (#765). Idempotent: a no-op if the job already exists. Runs in
+        // the per-profile home scope (daemon case), so the job is stamped with
+        // the correct profile.
+        if let Err(e) = ensure_weekly_dedup_scan_job(&self.repo).await {
+            tracing::warn!("Failed to seed weekly brain dedup scan job: {e}");
+        }
+
         loop {
             if let Err(e) = self.tick().await {
                 tracing::error!("Cron scheduler tick error: {e}");
@@ -457,6 +533,12 @@ async fn execute_job(
     // agent prompt.
     if job.name == REBUILD_JOB_NAME {
         return run_rebuild_job(job, ctx, session_notifier).await;
+    }
+
+    // Reserved weekly cross-file brain dedup scan (#765) — runs the scanner
+    // directly (no agent prompt, no LLM cost) and files report-only proposals.
+    if job.name == DEDUP_SCAN_JOB_NAME {
+        return run_dedup_scan_job(job).await;
     }
 
     // Resolve the config + agent for this job's profile. A job created in a
@@ -1038,5 +1120,39 @@ async fn deliver_slack(channel_id: &str, message: &str) {
     }
     if delivered > 0 {
         tracing::info!("Cron result delivered to Slack channel {channel_id} ({delivered} part(s))");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEDUP_SCAN_JOB_NAME, ensure_weekly_dedup_scan_job};
+    use crate::db::{CronJobRepository, Database};
+
+    /// The weekly safety-net job must seed exactly once: repeated scheduler
+    /// starts (process restarts, the multi-profile daemon) must never stack
+    /// duplicate reserved jobs (#765).
+    #[tokio::test]
+    async fn ensure_weekly_dedup_scan_job_is_idempotent() {
+        let db = Database::connect_in_memory().await.expect("db connect");
+        db.run_migrations().await.expect("migrations");
+        let repo = CronJobRepository::new(db.pool().clone());
+
+        ensure_weekly_dedup_scan_job(&repo).await.unwrap();
+        ensure_weekly_dedup_scan_job(&repo).await.unwrap();
+
+        let jobs = repo.list_all().await.unwrap();
+        let dedup_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.name == DEDUP_SCAN_JOB_NAME)
+            .collect();
+        assert_eq!(
+            dedup_jobs.len(),
+            1,
+            "weekly dedup job must seed exactly once, never stack"
+        );
+
+        let job = dedup_jobs[0];
+        assert_eq!(job.cron_expr, "0 4 * * 0", "weekly Sunday 04:00 UTC");
+        assert!(job.enabled, "safety-net job must be enabled");
     }
 }
