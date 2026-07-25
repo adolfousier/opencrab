@@ -105,7 +105,25 @@ impl BackgroundTaskManager {
     ) {
         self.mark_started(session_id, &label);
         let this = std::sync::Arc::clone(&self);
+        let task_id = Uuid::new_v4();
         tokio::spawn(async move {
+            // Persist BEFORE running: a restart mid-command must find a row to
+            // report as interrupted, otherwise the session waits forever on a
+            // resume that can no longer come (#763).
+            if let Some(repo) = task_repo() {
+                let cwd_str = cwd.to_string_lossy().to_string();
+                if let Err(e) = repo
+                    .record(task_id, session_id, &label, &command, &cwd_str)
+                    .await
+                {
+                    // Not fatal: the command still runs and still resumes the
+                    // session in this process. Only restart accounting is lost.
+                    tracing::error!(
+                        target: "background_task",
+                        "Failed to persist background task '{label}': {e:#}"
+                    );
+                }
+            }
             let result = run_detached(&command, &cwd).await;
             tracing::info!(
                 target: "background_task",
@@ -113,9 +131,90 @@ impl BackgroundTaskManager {
                 result.success
             );
             let msg = completion_message(&label, &command, &result);
+            if let Some(repo) = task_repo()
+                && let Err(e) = repo.clear(task_id).await
+            {
+                // A stale row makes the NEXT startup report a phantom
+                // interruption, so this must be visible even though the
+                // command itself succeeded.
+                tracing::error!(
+                    target: "background_task",
+                    "Failed to clear background task '{label}' after completion: {e:#}"
+                );
+            }
             (this.enqueue)(session_id, msg);
             this.mark_finished(session_id, &label);
         });
+    }
+}
+
+/// The background-task repository, when a pool exists.
+///
+/// Resolved per call through the global pool rather than threaded through the
+/// manager, because `spawn_command` is reached from the bash tool which has no
+/// pool in its context. `None` before the DB is initialized (early startup,
+/// tests), which simply means restart accounting is skipped.
+fn task_repo() -> Option<crate::db::BackgroundTaskRepository> {
+    crate::db::global_pool().map(|p| crate::db::BackgroundTaskRepository::new(p.clone()))
+}
+
+/// Account for background tasks that were running when a previous process
+/// died, then clear them.
+///
+/// Every surviving row belonged to a process that no longer exists, so its
+/// child is gone too: there is nothing to reattach to and no result coming.
+/// Each one is reported into its session as an interruption so the agent can
+/// decide whether to re-run it, rather than waiting forever on a resume that
+/// can never arrive (#763). Returns how many were reported.
+pub async fn report_interrupted(enqueue: &MessageEnqueueCallback) -> usize {
+    let Some(repo) = task_repo() else {
+        return 0;
+    };
+    let rows = match repo.all().await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!(target: "background_task", "Failed to read background tasks: {e:#}");
+            return 0;
+        }
+    };
+    if rows.is_empty() {
+        return 0;
+    }
+    let count = rows.len();
+    for row in rows {
+        tracing::warn!(
+            target: "background_task",
+            "Background task '{}' for session {} was interrupted by a restart",
+            row.label,
+            row.session_id
+        );
+        enqueue(row.session_id, interrupted_message(&row));
+    }
+    if let Err(e) = repo.clear_all().await {
+        // Leaving rows behind would re-report the same interruption on the
+        // next start, so this is loud even though the reports already landed.
+        tracing::error!(
+            target: "background_task",
+            "Failed to clear background tasks after reporting: {e:#}"
+        );
+    }
+    count
+}
+
+/// What the agent is told about a command a restart killed. Deliberately
+/// states that it did NOT finish and hands the decision back, rather than
+/// re-running something expensive on the agent's behalf.
+fn interrupted_message(row: &crate::db::BackgroundTaskRow) -> QueuedUserMessage {
+    let context_text = format!(
+        "[BACKGROUND TASK INTERRUPTED] `{}` was still running when OpenCrabs restarted, so it \
+         was killed and produced no result. The command was:\n\n```\n{}\n```\n\nIt did NOT \
+         complete. Decide whether to run it again based on what you were doing; do not assume \
+         it passed or failed.",
+        row.label, row.command
+    );
+    QueuedUserMessage {
+        context_text,
+        display_text: format!("⚠️ Background task interrupted by restart: {}", row.label),
     }
 }
 

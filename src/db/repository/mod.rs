@@ -2,6 +2,7 @@
 //!
 //! Repository pattern implementations for database access.
 
+pub mod background_task;
 pub mod channel_message;
 pub mod cron_job;
 pub mod cron_job_run;
@@ -15,6 +16,7 @@ pub mod session;
 pub mod tool_execution;
 pub mod usage_ledger;
 
+pub use background_task::{BackgroundTaskRepository, BackgroundTaskRow};
 pub use channel_message::{ChannelMessageRepository, TopicSummary};
 pub use cron_job::CronJobRepository;
 pub use cron_job_run::CronJobRunRepository;

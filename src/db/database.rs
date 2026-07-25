@@ -167,7 +167,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    pub const MIGRATION_COUNT: usize = 30;
+    pub const MIGRATION_COUNT: usize = 31;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
@@ -259,6 +259,9 @@ impl Database {
             )),
             M::up(include_str!(
                 "../migrations/20260713000001_drop_orphaned_plans_tables.sql"
+            )),
+            M::up(include_str!(
+                "../migrations/20260725000001_add_background_tasks.sql"
             )),
         ]);
 

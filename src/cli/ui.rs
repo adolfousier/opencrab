@@ -941,6 +941,18 @@ async fn cmd_chat_inner(
             });
         });
 
+    // Anything still recorded as running belonged to a process that is gone, so
+    // its child died with it. Report each into its session as an interruption
+    // instead of leaving the session waiting on a resume that can never arrive
+    // (#763).
+    let interrupted = crate::brain::agent::service::background_tasks::report_interrupted(
+        &message_enqueue_callback,
+    )
+    .await;
+    if interrupted > 0 {
+        tracing::info!("Reported {interrupted} background task(s) interrupted by restart");
+    }
+
     let agent_service = Arc::new(
         AgentService::new(provider.clone(), service_context.clone(), config)
             .await

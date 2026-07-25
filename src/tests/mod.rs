@@ -27,6 +27,7 @@ pub mod auto_title_e2e_test;
 pub mod auto_title_test;
 pub mod background_indicator_test;
 pub mod background_session_test;
+pub mod background_task_persistence_test;
 pub mod background_tasks_test;
 pub mod baseline_merge_test;
 pub mod bash_blocklist_test;
