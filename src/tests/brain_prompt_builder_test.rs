@@ -493,3 +493,49 @@ fn test_override_runtime_working_directory_noop_without_section() {
     let out = override_runtime_working_directory(brain, "~/other");
     assert_eq!(out, brain);
 }
+
+// ── Clarify-before-building instruction (#778) ───────────────────────────────
+// The preamble had no instruction to gather context before implementing, so an
+// ambiguous request got an invented interpretation and the user corrected an
+// artifact instead of a premise.
+
+#[test]
+fn preamble_instructs_clarifying_before_implementation() {
+    let brain = crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    assert!(
+        brain.contains("CLARIFY BEFORE YOU BUILD"),
+        "the clarify instruction must survive preamble edits"
+    );
+    assert!(
+        brain.contains("follow_up_question"),
+        "discrete choices must be routed to the tool that renders buttons"
+    );
+}
+
+#[test]
+fn the_clarify_instruction_carries_its_own_brakes() {
+    // An agent that interviews before every small task is unusable, so the
+    // exemptions are load-bearing, not decoration. Losing them in a future
+    // edit would be worse than not having the instruction at all.
+    let brain = crate::brain::prompt_builder::BRAIN_PREAMBLE;
+    let section = brain
+        .split("CLARIFY BEFORE YOU BUILD")
+        .nth(1)
+        .expect("section present")
+        .split("\n\n")
+        .next()
+        .expect("section body");
+
+    assert!(
+        section.contains("Do NOT interrogate"),
+        "must keep the exemption for trivial requests"
+    );
+    assert!(
+        section.contains("Never ask what you could answer yourself"),
+        "must keep the discoverable-answer brake"
+    );
+    assert!(
+        section.contains("state the assumption"),
+        "must keep the do-not-block escape so questions never stall delivery"
+    );
+}
