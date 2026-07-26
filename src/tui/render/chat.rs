@@ -379,7 +379,12 @@ pub(crate) fn visible_when_folded(
         return true;
     }
     match m.role.as_str() {
-        "user" | "error" | "history_marker" => true,
+        // `system` sits with `error`: short harness status the user needs to
+        // see — a model switch, a retry, a phantom warning. Folding it away
+        // buried the warnings that matter most, and because the step count is
+        // "rows the fold hides", it also reported a turn that did no work as
+        // having taken a step (#786).
+        "user" | "error" | "history_marker" | "system" => true,
         _ => Some(idx) == final_idx,
     }
 }

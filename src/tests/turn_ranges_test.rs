@@ -613,3 +613,56 @@ fn nothing_to_report_still_gets_no_header() {
     };
     assert_eq!(format_turn_header(s, 0), None);
 }
+
+// ── Harness status is not a step (#786) ─────────────────────────────────────
+// Model switches, retries and phantom warnings are the harness reporting on
+// itself, not work the agent did. They were hidden by the fold, which both
+// buried the warnings that matter most and counted each one as a "step".
+
+#[test]
+fn a_status_notice_is_not_counted_as_a_step() {
+    let msgs = vec![
+        msg("user", "carry on"),
+        msg("system", "[Model changed to provider/model-name]"),
+        msg("assistant", "the answer"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert_eq!(
+        turn_hideable_count(&msgs, turn, fin),
+        0,
+        "a model switch is not a step the agent took"
+    );
+}
+
+#[test]
+fn a_status_notice_stays_visible_when_folded() {
+    // A phantom warning nobody can see is not a warning.
+    let msgs = vec![
+        msg("user", "carry on"),
+        msg("system", "⚡ Model reasoned without answering — nudge 1/5"),
+        msg("assistant", "the answer"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert!(visible_when_folded(&msgs, 1, fin));
+}
+
+#[test]
+fn real_work_is_still_counted_alongside_status() {
+    // The status row must not mask the steps around it.
+    let msgs = vec![
+        msg("user", "do the thing"),
+        msg("system", "[Model changed to provider/model-name]"),
+        tool_group_msg(),
+        msg("assistant", "narration"),
+        msg("assistant", "the answer"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert_eq!(
+        turn_hideable_count(&msgs, turn, fin),
+        2,
+        "tool group and narration count; the status notice does not"
+    );
+}
