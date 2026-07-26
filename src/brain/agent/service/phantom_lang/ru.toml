@@ -300,3 +300,14 @@ media_context_words = [
     "контраст",
     "логотип",
 ]
+
+# Framings that present a named command as ALREADY RUN. The command is
+# language-neutral; the claim around it is not. See #789.
+executed_framings = [
+    "запустил",
+    "выполнил",
+    "проверил с",
+    "вывод выше",
+    "результат выше",
+    "подтвердил",
+]

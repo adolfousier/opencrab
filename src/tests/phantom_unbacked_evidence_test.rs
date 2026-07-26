@@ -81,3 +81,42 @@ fn a_timestamp_is_not_an_evidence_line() {
                 Nothing else ran.";
     assert!(!claims_unbacked_evidence(text, &[]));
 }
+
+// ── The other two fabrication shapes (#789) ─────────────────────────────────
+// is_evidence_line was built against grep output alone and missed both later
+// fabrications: an aligned key-value block and a column row.
+
+#[test]
+fn an_aligned_key_value_block_is_evidence() {
+    let text = "Checked with gh, real data, three open issues:\n\
+                #      : 775\n\
+                Title  : Non-owner can no longer trigger /new in group chats\n\
+                Labels : bug, telegram\n\
+                Opened : 2026-07-26";
+    assert!(claims_unbacked_evidence(text, &[]));
+}
+
+#[test]
+fn a_column_row_listing_is_evidence() {
+    let text = "The actual output is above:\n\
+                #776  TUI: pasted multi-line text loses formatting   bug, tui\n\
+                #775  Non-owner can no longer trigger /new ...       bug, telegram\n\
+                #769  Provider wave follow-up: CI and docs           chore, providers";
+    assert!(claims_unbacked_evidence(text, &[]));
+}
+
+#[test]
+fn prose_containing_a_colon_is_not_a_key_value_block() {
+    // The alignment padding is the signal; an ordinary sentence with a colon
+    // must stay untouched or every explanatory answer trips this.
+    let text = "Here is the thing: the module is declarations only.\n\
+                That matters because: the code lives in submodules.\n\
+                So the fix is: move the layer out.";
+    assert!(!claims_unbacked_evidence(text, &[]));
+}
+
+#[test]
+fn a_markdown_heading_is_not_a_column_row() {
+    let text = "# Findings\n# Next steps\n# Open questions";
+    assert!(!claims_unbacked_evidence(text, &[]));
+}

@@ -688,3 +688,21 @@ media_context_words = [
     "seamless",
     "logo",
 ]
+
+# Framings that present a named command as ALREADY RUN. The command is
+# language-neutral; the claim around it is not. See #789.
+executed_framings = [
+    "ran ",
+    "just ran",
+    "i ran",
+    "which ran",
+    "checked with",
+    "verified with",
+    "output is above",
+    "output above",
+    "the output",
+    "here is the output",
+    "executed ",
+    "i executed",
+    "confirmed with",
+]

@@ -903,12 +903,139 @@ pub fn claims_unbacked_evidence(text: &str, tool_outputs: &[String]) -> bool {
 }
 
 /// A line shaped like quoted tool output rather than prose.
+///
+/// Covers the three shapes fabrications have actually taken, not just the
+/// first one seen: grep output, aligned key-value blocks, and column rows.
+/// Built too narrowly the first time, it matched only grep lines and missed
+/// two later fabrications that used the other two (#789).
 fn is_evidence_line(line: &str) -> bool {
     // `149:pub struct Tui {` — grep -n, and the `wc -l` / `ls` numeric forms.
     let numbered = line.split_once(':').is_some_and(|(n, rest)| {
         !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && !rest.trim().is_empty()
     });
-    // `=== LINE COUNT ===`, the framing a model adds around a fabricated dump.
+    // `=== LINE COUNT ===`, the framing a model adds around a dump.
     let marker = line.len() > 6 && line.starts_with("===") && line.ends_with("===");
-    numbered || marker
+    // `Title  : Non-owner can no longer …` — an aligned key-value block. The
+    // padding before the colon is what distinguishes it from ordinary prose
+    // that happens to contain one.
+    let aligned_kv = line.split_once(':').is_some_and(|(k, v)| {
+        let key = k.trim_end();
+        !key.is_empty()
+            && k.len() > key.len()
+            && key.len() <= 24
+            && !key.contains(' ')
+            && !v.trim().is_empty()
+    });
+    // `#776  TUI: pasted multi-line text …  bug, tui` — a column row: an id
+    // token followed by run-together spacing.
+    let column_row = line.starts_with('#')
+        && line.contains("  ")
+        && line[1..].chars().take_while(|c| c.is_ascii_digit()).count() >= 2;
+    numbered || marker || aligned_kv || column_row
+}
+
+/// Commands the text claims to have ALREADY RUN that no tool call actually
+/// contained this turn.
+///
+/// Every other detector here matches how a fabrication looks — its verbs, its
+/// layout, where in the turn it sits — and a model can always look different.
+/// This one does not infer: the loop knows exactly what it executed, so a
+/// claim naming a specific command is checkable against fact.
+///
+/// Two conditions, both required, so a PROPOSED command stays untouched:
+/// the command appears in backticks, and the surrounding sentence frames it as
+/// already executed. "I could run `gh issue list`" is a suggestion; "Ran `gh
+/// issue list` for real this turn" is a claim, and if no tool input contains
+/// it, it is a false one (#789).
+pub fn claims_uncalled_commands(text: &str, executed_inputs: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    // Framings are scanned across EVERY language, like the intent phrases, not
+    // taken from the detected one. The command is language-neutral but the
+    // claim around it is not, and detection is a character-set heuristic that
+    // reads accented Latin as the wrong language — Portuguese and Spanish
+    // claims slipped through when this trusted it. Multi-word framings carry
+    // little cross-language collision risk, which is why the intent phrases
+    // are scanned the same way.
+    for sentence in text.split(['.', '\n', '!', '?']) {
+        if !frames_as_executed_any(&sentence.to_lowercase()) {
+            continue;
+        }
+        for cmd in backticked_commands(sentence) {
+            // Match on the distinctive head (program + first argument) rather
+            // than the whole span: a real call may add flags, redirects or a
+            // pipeline the prose omits, and that is not a fabrication.
+            let head: String = cmd.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+            if head.is_empty() {
+                continue;
+            }
+            if !executed_inputs.iter().any(|inp| inp.contains(&head)) {
+                out.push(cmd);
+            }
+        }
+    }
+    out
+}
+
+/// Whether the sentence presents its command as done rather than proposed.
+///
+/// Scanned across every language's `executed_framings`, so a claim in
+/// Portuguese or Russian is caught the same as one in English.
+fn frames_as_executed_any(lower: &str) -> bool {
+    phantom_lang::all_langs().iter().any(|lang| {
+        lang.executed_framings
+            .iter()
+            .any(|m| lower.contains(m.as_str()))
+    })
+}
+
+/// Backticked spans that look like a shell command: a bare program name
+/// followed by at least one argument. Prose in backticks (`mod.rs`, a symbol,
+/// a file path) has no space and is skipped.
+fn backticked_commands(text: &str) -> Vec<String> {
+    const PROGRAMS: &[&str] = &[
+        "gh",
+        "git",
+        "cargo",
+        "npm",
+        "pnpm",
+        "yarn",
+        "grep",
+        "rg",
+        "ls",
+        "cat",
+        "wc",
+        "sed",
+        "awk",
+        "curl",
+        "docker",
+        "psql",
+        "sqlite3",
+        "python",
+        "python3",
+        "make",
+        "find",
+        "head",
+        "tail",
+        "shasum",
+        "sha256sum",
+        "diff",
+        "kubectl",
+        "terraform",
+    ];
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('`') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('`') else { break };
+        let span = after[..close].trim();
+        rest = &after[close + 1..];
+        let mut words = span.split_whitespace();
+        if let Some(prog) = words.next()
+            && words.next().is_some()
+            && PROGRAMS.contains(&prog)
+        {
+            out.push(span.to_string());
+        }
+    }
+    out
 }

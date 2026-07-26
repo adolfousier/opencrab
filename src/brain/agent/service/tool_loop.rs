@@ -1077,6 +1077,10 @@ impl AgentService {
         // what the tools actually returned (#785). Turn-scoped because the
         // fabrication appears in a LATER iteration than the call it claims.
         let mut turn_tool_output: Vec<String> = Vec::new();
+        // Every tool INPUT this turn, so a claim naming a command can be
+        // checked against what actually ran rather than inferred from its
+        // wording (#789).
+        let mut turn_tool_input: Vec<String> = Vec::new();
         // One-shot nudge budget for the empty-analysis case: model ran
         // tool calls (e.g. `gh pr view`) on a user request whose verb
         // signals analysis ("audit the PR") but ended with
@@ -3953,7 +3957,18 @@ impl AgentService {
                         || super::phantom::claims_unbacked_evidence(
                             &iteration_text,
                             &turn_tool_output,
-                        ));
+                        )
+                        // A named command the turn never ran. Unlike every
+                        // other check here this one does not read the wording
+                        // for signals — the loop knows what it executed, so a
+                        // sentence claiming `gh issue list` ran when no tool
+                        // input contains it is false as a matter of fact
+                        // (#789).
+                        || !super::phantom::claims_uncalled_commands(
+                            &iteration_text,
+                            &turn_tool_input,
+                        )
+                        .is_empty());
                 if !phantom_eligible && tool_calls_completed_this_turn > 0 {
                     tracing::info!(
                         target: "phantom",
@@ -5116,6 +5131,7 @@ impl AgentService {
 
                 // Save tool input for progress reporting (before it's moved to execute)
                 let tool_input_for_progress = tool_input.clone();
+                turn_tool_input.push(tool_input.to_string());
 
                 // Build short description for DB persistence
                 tool_descriptions.push(Self::format_tool_summary(&tool_name, &tool_input));

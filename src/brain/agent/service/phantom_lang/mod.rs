@@ -29,6 +29,13 @@ pub struct LangConfig {
     pub work_announcement_re: String,
     #[serde(default)]
     pub completion_claims: Vec<String>,
+    /// Phrases presenting a named command as ALREADY RUN, e.g. "ran",
+    /// "checked with", "output above". Required by the uncalled-command check
+    /// (#789): the command itself is language-neutral, but the framing that
+    /// turns a proposal into a claim is not, and an English-only list let a
+    /// fabrication in any other language through untouched.
+    #[serde(default)]
+    pub executed_framings: Vec<String>,
     #[serde(default)]
     pub gerund_re: String,
     #[serde(default)]

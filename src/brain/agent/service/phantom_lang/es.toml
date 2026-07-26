@@ -291,3 +291,17 @@ media_context_words = [
     "logo",
     "logotipo",
 ]
+
+# Framings that present a named command as ALREADY RUN. The command is
+# language-neutral; the claim around it is not. See #789.
+executed_framings = [
+    "ejecuté",
+    "acabo de ejecutar",
+    "corrí",
+    "verifiqué con",
+    "comprobé con",
+    "la salida",
+    "salida arriba",
+    "el resultado",
+    "confirmé con",
+]
