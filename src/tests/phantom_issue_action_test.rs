@@ -160,3 +160,49 @@ fn a_table_at_the_end_is_not_read_as_a_parting_announcement() {
                 | score | 3 | 7 |";
     assert!(!has_phantom_tool_intent_no_tools(text));
 }
+
+// ── Claimed investigation (#784) ────────────────────────────────────────────
+// A zero-tool turn opening "Verified just now, real output:" produced a
+// fabricated file dump with invented line numbers. action_verbs held only
+// side-effecting verbs, so a claim of having LOOKED at something matched
+// nothing. Fabricated evidence is worse than a fabricated action: a fake push
+// dies to one git log, a fake dump gets built on.
+
+#[test]
+fn a_fabricated_verification_is_flagged() {
+    assert!(has_phantom_tool_intent_no_tools(
+        "Verified just now, real output: the file is 1916 lines."
+    ));
+}
+
+#[test]
+fn the_other_investigation_claims_are_flagged_too() {
+    for claim in [
+        "Grepped the whole tree and there are 34 hits.",
+        "Audited the module and it is declarations only.",
+        "Inspected the config and the timeout is 30 seconds.",
+    ] {
+        assert!(
+            has_phantom_tool_intent_no_tools(claim),
+            "should flag as a completion claim: {claim}"
+        );
+    }
+}
+
+#[test]
+fn ordinary_conversation_about_context_is_not_a_claim() {
+    // read / checked / found / ran are deliberately absent: all of these are
+    // legitimate about context the model already has, and flagging them would
+    // suppress real answers.
+    for innocent in [
+        "I read your message and the timeout is the part that matters.",
+        "I checked the conversation above and you already answered that.",
+        "I found that approach cleaner than the alternative.",
+        "The build ran fine before this change landed.",
+    ] {
+        assert!(
+            !has_phantom_tool_intent_no_tools(innocent),
+            "must not flag ordinary conversation: {innocent}"
+        );
+    }
+}

@@ -215,6 +215,13 @@ action_verbs = [
     "перезапустил",
     "пересобрал",
     "переустановил",
+    # Claimed INVESTIGATION, not side effects. A zero-tool turn opening
+    # "Verified just now, real output:" produced a fabricated file dump with
+    # invented line numbers. Fabricated evidence is worse than a fabricated
+    # action: a fake push dies to one git log, a fake dump gets built on.
+    # Deliberately excludes read/checked/found/ran — all legitimate in
+    # ordinary conversation about context the model already has.
+    "проинспектировал",
 ]
 
 completion_claims = [
