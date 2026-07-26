@@ -29,20 +29,84 @@ use std::path::{Path, PathBuf};
 use crate::brain::tools::brain_file_safety;
 
 /// GitHub raw URL base for templates.
-const TEMPLATE_BASE_URL: &str =
-    "https://raw.githubusercontent.com/adolfousier/opencrabs/main/src/docs/reference/templates";
+/// Raw base for the repository ROOT, not the templates directory: tracked
+/// files now live in both places (brain templates under
+/// `src/docs/reference/templates`, config examples at the root), so each
+/// entry carries its own repo-relative path (#819).
+const TEMPLATE_BASE_URL: &str = "https://raw.githubusercontent.com/adolfousier/opencrabs/main";
 
-/// Brain files tracked for upstream sync.
-const TRACKED_FILES: &[&str] = &[
-    "SOUL.md",
-    "USER.md",
-    "AGENTS.md",
-    "TOOLS.md",
-    "CODE.md",
-    "SECURITY.md",
-    "MEMORY.md",
-    "BOOT.md",
-    "HEARTBEAT.md",
+/// A brain file: same name locally and under the templates directory.
+macro_rules! md {
+    ($name:literal) => {
+        TrackedTemplate {
+            local: $name,
+            upstream: concat!("src/docs/reference/templates/", $name),
+            kind: TemplateKind::Markdown,
+        }
+    };
+}
+
+/// A config example: `foo.toml` locally, `foo.toml.example` at the repo root.
+macro_rules! toml_example {
+    ($name:literal) => {
+        TrackedTemplate {
+            local: $name,
+            upstream: concat!($name, ".example"),
+            kind: TemplateKind::Toml,
+        }
+    };
+}
+
+/// How a template's content is merged into the user's copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplateKind {
+    /// Prose: append `## ` sections the local copy lacks.
+    Markdown,
+    /// Config: add missing keys, never touch existing values (#819).
+    Toml,
+}
+
+/// A template tracked for upstream sync.
+///
+/// The local name and the upstream path differ for config examples: the repo
+/// ships `usage_pricing.toml.example` at its root, while the user holds
+/// `usage_pricing.toml` in their home. Carrying both explicitly is what lets
+/// examples be tracked at all.
+#[derive(Debug, Clone, Copy)]
+pub struct TrackedTemplate {
+    /// Filename inside `~/.opencrabs`.
+    pub local: &'static str,
+    /// Path relative to the repository root.
+    pub upstream: &'static str,
+    pub kind: TemplateKind,
+}
+
+/// Everything tracked for upstream sync.
+///
+/// The `.toml.example` entries are why #816 and #817 could not reach users:
+/// the examples gained pricing for two models, nothing carried it into the
+/// live `usage_pricing.toml`, and `/usage` reported $0.00 on real spend.
+const TRACKED: &[TrackedTemplate] = &[
+    // Brain files — prose, merged by section, shipped under the templates dir.
+    md!("SOUL.md"),
+    md!("USER.md"),
+    md!("AGENTS.md"),
+    md!("TOOLS.md"),
+    md!("CODE.md"),
+    md!("SECURITY.md"),
+    md!("MEMORY.md"),
+    md!("BOOT.md"),
+    md!("HEARTBEAT.md"),
+    // Config examples — merged by key, additively, shipped at the repo root
+    // with a `.example` suffix the local copy does not carry.
+    toml_example!("usage_pricing.toml"),
+    toml_example!("config.toml"),
+    toml_example!("commands.toml"),
+    toml_example!("tools.toml"),
+    toml_example!("rtk_filters.toml"),
+    // keys.toml is deliberately NOT tracked: it holds credentials and the
+    // upstream example carries only placeholders, so merging it would add
+    // dummy keys to a working install.
 ];
 
 /// Parsed state from `rsi/state.toml`.
@@ -163,9 +227,10 @@ pub fn needs_sync(state: &SyncState) -> bool {
     state.last_synced_version != crate::VERSION
 }
 
-/// Fetch a single template from GitHub raw URL.
-pub async fn fetch_template(filename: &str) -> Result<String, String> {
-    let url = format!("{TEMPLATE_BASE_URL}/{filename}");
+/// Fetch a single template. `path` is relative to the repository root.
+pub async fn fetch_template(path: &str) -> Result<String, String> {
+    let filename = path;
+    let url = format!("{TEMPLATE_BASE_URL}/{path}");
     let response = reqwest::get(&url)
         .await
         .map_err(|e| format!("Failed to fetch {filename}: {e}"))?;
@@ -269,6 +334,121 @@ pub(crate) fn extract_section_headers(content: &str) -> Vec<String> {
 }
 
 /// Backup directory for RSI sync.
+/// Merge an upstream config example into the user's live file (#819).
+///
+/// Additive only: keys the local file lacks are added, values it already has
+/// are never touched, because those may be deliberate customisations. This is
+/// what carries new model pricing (#816, #817) into a live install without
+/// resetting rates the user set themselves.
+fn sync_toml_file(
+    local_path: &Path,
+    filename: &str,
+    local_content: &str,
+    upstream_content: &str,
+) -> FileSyncResult {
+    let (merged, report) =
+        match crate::brain::toml_merge::merge_additive(local_content, upstream_content) {
+            Ok(v) => v,
+            Err(e) => {
+                // A malformed file on either side leaves the local one untouched.
+                // Rewriting a working config from a broken template would be worse
+                // than skipping the update.
+                return FileSyncResult {
+                    filename: filename.to_string(),
+                    synced: false,
+                    sections_added: 0,
+                    error: Some(format!("{filename}: {e}")),
+                    bailed_for_cap: None,
+                };
+            }
+        };
+
+    if report.is_empty() {
+        tracing::debug!("RSI sync: {filename} has no new keys, skipping");
+        return FileSyncResult {
+            filename: filename.to_string(),
+            synced: true,
+            sections_added: 0,
+            error: None,
+            bailed_for_cap: None,
+        };
+    }
+
+    // Back up before writing, matching the markdown path: a config the user
+    // depends on must be recoverable if the merge turns out wrong.
+    let backup = backups_dir().join(format!("{filename}.bak"));
+    if let Err(e) = std::fs::write(&backup, local_content) {
+        return FileSyncResult {
+            filename: filename.to_string(),
+            synced: false,
+            sections_added: 0,
+            error: Some(format!("{filename}: failed to back up before merge: {e}")),
+            bailed_for_cap: None,
+        };
+    }
+
+    if let Err(e) = std::fs::write(local_path, &merged) {
+        return FileSyncResult {
+            filename: filename.to_string(),
+            synced: false,
+            sections_added: 0,
+            error: Some(format!("{filename}: failed to write merge: {e}")),
+            bailed_for_cap: None,
+        };
+    }
+
+    // Name what arrived rather than logging "updated": a config change the
+    // user cannot see is a config change they cannot audit.
+    tracing::info!(
+        "RSI sync: {filename} gained {} key(s): {}",
+        report.added.len(),
+        report.added.join(", ")
+    );
+    log_toml_merge_to_improvements(filename, &report);
+
+    FileSyncResult {
+        filename: filename.to_string(),
+        synced: true,
+        sections_added: report.added.len(),
+        error: None,
+        bailed_for_cap: None,
+    }
+}
+
+/// Record a config merge in `rsi/improvements.md`, listing the keys added.
+fn log_toml_merge_to_improvements(filename: &str, report: &crate::brain::toml_merge::MergeReport) {
+    let path = crate::config::opencrabs_home().join("rsi/improvements.md");
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!("RSI sync: failed to create rsi dir for improvements log: {e}");
+        return;
+    }
+    let entry = format!(
+        "\n## {} — {filename} config sync\n\nAdded {} key(s) from the upstream example:\n{}\n",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
+        report.added.len(),
+        report
+            .added
+            .iter()
+            .map(|k| format!("- `{k}`"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(entry.as_bytes()) {
+                tracing::warn!("RSI sync: failed to append config merge to improvements: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("RSI sync: failed to open improvements log: {e}"),
+    }
+}
+
 fn backups_dir() -> PathBuf {
     crate::config::opencrabs_home().join("rsi/backups")
 }
@@ -324,18 +504,23 @@ pub async fn sync_templates() -> Vec<FileSyncResult> {
     // install is unaffected.
     seed_missing_templates_if_blank(&home);
 
-    for filename in TRACKED_FILES {
-        let local_path = home.join(filename);
+    for tracked in TRACKED {
+        let local_path = home.join(tracked.local);
 
         // Skip files that don't exist locally (don't create new brain files)
         if !local_path.exists() {
-            tracing::debug!("RSI sync: {filename} does not exist locally, skipping");
+            tracing::debug!(
+                "RSI sync: {} does not exist locally, skipping",
+                tracked.local
+            );
             continue;
         }
 
-        let result = sync_single_file(&local_path, filename, &now).await;
+        let result = sync_single_file(&local_path, tracked, &now).await;
         if result.synced {
-            state.file_dates.insert(filename.to_string(), now.clone());
+            state
+                .file_dates
+                .insert(tracked.local.to_string(), now.clone());
         }
         results.push(result);
     }
@@ -475,7 +660,12 @@ fn log_cap_bail_to_improvements(report: &CapBailReport) {
 }
 
 /// Sync a single brain file.
-async fn sync_single_file(local_path: &Path, filename: &str, _timestamp: &str) -> FileSyncResult {
+async fn sync_single_file(
+    local_path: &Path,
+    tracked: &TrackedTemplate,
+    _timestamp: &str,
+) -> FileSyncResult {
+    let filename = tracked.local;
     // 1. Read local content
     let local_content = match std::fs::read_to_string(local_path) {
         Ok(c) => c,
@@ -491,7 +681,7 @@ async fn sync_single_file(local_path: &Path, filename: &str, _timestamp: &str) -
     };
 
     // 2. Fetch upstream template
-    let upstream_content = match fetch_template(filename).await {
+    let upstream_content = match fetch_template(tracked.upstream).await {
         Ok(c) => c,
         Err(e) => {
             return FileSyncResult {
@@ -503,6 +693,14 @@ async fn sync_single_file(local_path: &Path, filename: &str, _timestamp: &str) -
             };
         }
     };
+
+    // 3. TOML takes a different route entirely (#819). Sections, pruning and
+    // line caps are all prose concepts; a config file merges by key, and
+    // appending a `## ` block to it would produce a duplicate table that stops
+    // the file parsing.
+    if tracked.kind == TemplateKind::Toml {
+        return sync_toml_file(local_path, filename, &local_content, &upstream_content);
+    }
 
     // 3. Extract new sections
     let new_sections = extract_new_sections(&local_content, &upstream_content);
