@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.75] - 2026-07-25
+
+62 commits since v0.3.74. 113 files changed, +6757 / -1188 lines.
+
+### ✨ Features
+
+- `9636584d` **Background-task indicator on the input border**: move the background-task indicator onto the input border
+- `3a6c0d94` **Brain hints on approval-branch errors**: inject brain-file hints into approval-branch tool errors too (#767)
+- `f1d7f1ff` **Brain-file hints on tool misses**: surface relevant brain notes when a tool call misses or errors (#767)
+- `7b47e034` **Wider TOOLS.md load trigger**: widen the TOOLS.md proactive load trigger so routing, skill, and cron questions load it
+- `14cbbb31` **Inline-keyboard dedup approval**: approve brain dedup proposals from a Telegram inline keyboard (#765)
+- `507c539e` **Weekly dedup safety net**: a weekly cron scan catches cross-file brain duplication (#765)
+- `ecf979ca` **Post-write dedup scan**: fire a cross-file dedup scan after brain writes (#765)
+- `53063409` **/dedup command**: on-demand cross-file brain dedup scan (#765)
+- `385c8185` **Reasoning summary room**: give the live reasoning summary room to finish a thought
+- `bf10972e` **Detached command status**: show what a detached background command is doing
+- `f9baad56` **Probe rich-message scoping**: ask the Telegram server whether rich messages can be scoped
+- `95b934bc` **Scope owner-command replies**: scope owner-gated command replies to the invoker
+- `1fd7d0fd` **Fold working-out into the header**: fold a turn's working-out into its header
+- `f6164ccf` **Per-turn header**: a per-turn header summarising the work a turn did
+- `fe6dca92` **Turn-boundary inference**: infer turn boundaries so a turn can be grouped
+- `c2d9b776` **claude-cli model discovery**: discover the model list from the CLI instead of hardcoding
+- `2244878a` **CLI background-task resume**: background-task resume in the interactive agent
+- `6e5708ad` **WhatsApp background-task resume**: activate background-task resume on WhatsApp
+- `b4cad46c` **Slack background-task resume**: activate background-task resume on Slack
+- `5b4ad2ce` **Discord background-task resume**: activate background-task resume on Discord
+- `0025b09f` **Shared bg_resume helper**: a shared helper powering background-task resume across channels
+
+### 🔧 Fixes
+
+- `ace0e502` **Phantom: issue-tracker completion**: count issue-tracker actions as completion claims
+- `842c00d7` **Fold intermediate text live**: fold intermediate text while the turn is still running
+- `b27fb39c` **approval_policy on every surface**: let approval_policy reach the tool gate on every surface
+- `622f51b1` **Drop crabrace**: drop the crabrace dependency, keep the two GETs it existed for
+- `723021c1` **Clear quick-xml DoS advisories**: clear the quick-xml DoS advisories from the dependency tree
+- `fc8b90bf` **Hide bg-task scaffolding**: stop a background task's system scaffolding reaching the chat
+- `ee4f0d40` **Keep header after expand**: keep a turn's header after it is expanded
+- `daecf786` **No expand scroll-jump**: stop an expand from scrolling the view up by its own size
+- `78c930d8` **Collapse stale narration**: collapse narration the model kept thinking past
+- `67b919ef` **Split reloaded turn iterations**: split a reloaded turn back into its iterations
+- `761cef24` **Report restart-killed tasks**: report background tasks a restart killed instead of waiting forever
+- `b585b77e` **Readable folded turn**: make a folded turn readable and keep it in place when toggled
+- `9dea8585` **Reconcile /models picker**: reconcile the /models picker against the live inventory
+- `a4c509b5` **Tool summary stays visible**: keep the tool-call summary at full visibility when a turn is folded
+- `0206e58b` **qwen blank reasoning chain**: stop sending a blank reasoning chain that made qwen leak and repeat
+- `9b97c398` **Fold every turn by default**: fold every turn by default, running or settled
+- `f6d412f7` **Fold on settle**: fold a turn as soon as it settles, not only older turns
+- `4411d605` **Model picker newest-first**: order the model picker newest-first instead of by merge order
+- `144ae43a` **Consistent claude-cli rows**: format every claude-cli model row consistently in the picker
+- `a0ee110f` **Surface Opus 5**: surface Opus 5 in the model picker via a third parallel list and state discovery
+- `6b518b8a` **Phantom verdict on recovery paths**: turn-end phantom verdict catches narration delivered via recovery paths
+- `baaa5614` **No image hallucination on give-up**: don't deliver an image hallucination when self-heal gives up
+- `054229f4` **Multilingual hallucination detection**: make image-generation hallucination detection multilingual
+- `895e00b8` **Recover poisoned session**: auto-recover from a repetitive-tool-call poisoned session
+- `307ed939` **Patient mid-stream retry**: make mid-stream retry more patient (5 attempts, exponential backoff)
+- `55baa517` **Retry flaky 404**: retry a flaky-provider 404 instead of treating it as permanent
+- `a7569327` **Catch image hallucination**: catch image-generation hallucination (media claim, no marker, 0 tools)
+- `a7c0557c` **Bound the self-heal loop**: bound the phantom self-heal loop instead of re-nudging forever
+- `c4795ffd` **Strip discarded self-heal narration**: strip discarded phantom self-heal narration from the live buffer
+- `632d1686` **Drop ctx from spinner**: drop ctx from the live spinner, it already shows under the input
+- `63d99437` **Short live-thinking excerpt**: live thinking shows a short excerpt, not a scrolling wall
+- `ccd14660` **Label live token counter**: label the live token counter as a turn total and show ctx budget
+- `ede0763b` **Auto-complete delivery task**: auto-complete the trailing delivery task at turn settle
+- `eec518c7` **Truthful tab-close outcome**: validate tab close with a truthful outcome
+- `83b6016d` **Larger browser viewport**: larger viewport and maximized headed window
+- `2b7d8340` **Dedup scanner ignores code and tables**: dedup scanner ignores fenced code and table rows
+
+### 📖 Documentation
+
+- `e8e43aaf` say approval_policy governs headless runs too
+
+### 🧹 Miscellaneous
+
+- `de3f8058` style(tui): make inline code the footer's slate blue, not a brown
+- `bf097170` style(tui): quiet inline code so it stops out-shouting the prose
+- `122ac2c9` refactor(config): rename the provider-registry surface off the vendor name
+- `95be6345` refactor(tui): extract the tool-group scan from render_chat behind a tested seam
+
+### 📊 Stats
+
+- 62 commits since v0.3.74
+- 113 files changed, +6757 / -1188 lines
+- 5399 tests (5399 passed, 0 failed, 25 ignored)
+
 ## [0.3.74] - 2026-07-23
 
 40 commits since v0.3.73. 70 files changed, +2948 / -212 lines.
@@ -7170,3 +7254,4 @@ fixes.
 [0.3.72]: https://github.com/adolfousier/opencrabs/compare/v0.3.71...v0.3.72
 [0.3.73]: https://github.com/adolfousier/opencrabs/compare/v0.3.72...v0.3.73
 [0.3.74]: https://github.com/adolfousier/opencrabs/compare/v0.3.73...v0.3.74
+[0.3.75]: https://github.com/adolfousier/opencrabs/compare/v0.3.74...v0.3.75
