@@ -28,6 +28,7 @@ pub mod rsi_sync;
 pub mod self_update;
 pub mod skills;
 pub mod tokenizer;
+pub mod toml_merge;
 pub mod tools;
 
 // Brain re-exports
