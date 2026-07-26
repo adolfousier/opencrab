@@ -1024,12 +1024,23 @@ pub(crate) async fn handle_message(
         let client = client.clone();
         let chat_jid = reply_target.clone();
         let cancel = typing_cancel.clone();
+        let background = agent.background_manager();
         async move {
             loop {
                 let _ = client.chatstate().send_composing(&chat_jid).await;
                 tokio::select! {
                     _ = cancel.cancelled() => break,
                     _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                }
+            }
+            // Keep composing past the end of the turn while this session still
+            // has detached work (#812). Spawning a long background command ENDS
+            // the turn, so without this the indicator dies at the moment the
+            // user most needs a sign that something is happening.
+            if let Some(manager) = background {
+                while manager.running_for(session_id) > 0 {
+                    let _ = client.chatstate().send_composing(&chat_jid).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             }
             let _ = client.chatstate().send_paused(&chat_jid).await;

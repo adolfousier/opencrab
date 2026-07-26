@@ -2282,6 +2282,22 @@ pub(crate) async fn handle_message(
         }
     };
 
+    // Keep "typing" alive past the end of the turn while this session still has
+    // detached work (#812). Spawning a long background command ENDS the turn, so
+    // the loop above stops at the exact moment the user most needs a sign that
+    // something is happening, and the chat looks dead until the command
+    // finishes. Attached here rather than beside that loop because `session_id`
+    // is only resolved now, and delaying the indicator itself would cost
+    // responsiveness on every message.
+    super::typing::spawn_typing_after_turn(
+        bot.clone(),
+        msg.chat.id,
+        thread_id,
+        typing_cancel.clone(),
+        agent.background_manager(),
+        session_id,
+    );
+
     // Fast-cancel: "/stop" or "stop" exact match — cancel and reply immediately.
     // Prevents the agent from receiving the stop message and running more tool calls.
     //

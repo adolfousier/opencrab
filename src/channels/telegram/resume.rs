@@ -86,20 +86,16 @@ pub(crate) async fn resume_session(
     // ── Typing indicator ────────────────────────────────────────────────────
     let typing_cancel = CancellationToken::new();
     let _typing_guard = TypingGuard(typing_cancel.clone());
-    tokio::spawn({
-        let bot = bot.clone();
-        let cancel = typing_cancel.clone();
-        async move {
-            loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {
-                        let _ = chat_action_in_thread(&bot, chat_id, thread_id,  ChatAction::Typing).await;
-                    }
-                }
-            }
-        }
-    });
+    // Outlives the turn while the session still has detached work, so a long
+    // background command does not leave the chat looking dead (#812).
+    super::typing::spawn_typing(
+        bot.clone(),
+        chat_id,
+        thread_id,
+        typing_cancel.clone(),
+        agent.background_manager(),
+        session_id,
+    );
 
     // ── Streaming setup ────────────────────────────────────────────────────
     let streaming = Arc::new(std::sync::Mutex::new(StreamingState {
