@@ -806,6 +806,15 @@ pub struct App {
 
     /// Active plan document for the current session (loaded from disk)
     pub plan_document: Option<crate::tui::plan::PlanDocument>,
+
+    /// The last completed plan, shown once the live one archives (#810).
+    ///
+    /// A plan archives at turn settle, so the checklist the user just watched
+    /// finish vanished at the instant it finished, with no record of what was
+    /// done. This holds the final all-complete state until the next plan
+    /// starts. Loaded from the archived file rather than kept from memory, so
+    /// it survives a restart the way plan state itself does.
+    pub completed_plan: Option<crate::tui::plan::PlanDocument>,
     /// Path to the plan JSON file for the current session
     pub plan_file_path: Option<std::path::PathBuf>,
 
@@ -1002,6 +1011,7 @@ impl App {
             ssh_pending: None,
             ssh_input: String::new(),
             plan_document: None,
+            completed_plan: None,
             plan_file_path: None,
             pane_manager: PaneManager::load_layout(),
             pane_message_cache: HashMap::new(),
@@ -1180,6 +1190,18 @@ impl App {
             .plan_file_path
             .as_ref()
             .and_then(|path| crate::utils::plan_files::load_plan_from_path(path));
+        // With no live plan, fall back to the last completed one so the
+        // finished checklist stays visible instead of vanishing the moment it
+        // completes (#810). A live plan always wins: the current work is what
+        // the user needs to see, and showing a stale finished list beside it
+        // would be worse than showing nothing.
+        self.completed_plan = if self.plan_document.is_some() {
+            None
+        } else {
+            self.plan_file_path
+                .as_ref()
+                .and_then(|path| crate::utils::plan_files::latest_archived_plan_from_path(path))
+        };
     }
 
     /// Get the shared session ID handle (for channels like Telegram/WhatsApp)

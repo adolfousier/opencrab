@@ -15,9 +15,15 @@ use ratatui::{
 
 /// Render the plan checklist panel.
 pub(super) fn render_plan_checklist(f: &mut Frame, app: &App, area: Rect) {
-    let plan = match app.plan_document.as_ref() {
-        Some(p) => p,
-        None => return,
+    // A live plan wins; with none, render the last completed one so the
+    // finished checklist stays visible instead of vanishing at the moment it
+    // completes (#810).
+    let (plan, is_completed) = match app.plan_document.as_ref() {
+        Some(p) => (p, false),
+        None => match app.completed_plan.as_ref() {
+            Some(p) => (p, true),
+            None => return,
+        },
     };
 
     if area.height == 0 {
@@ -70,7 +76,13 @@ pub(super) fn render_plan_checklist(f: &mut Frame, app: &App, area: Rect) {
 
     let header = Line::from(vec![
         Span::styled(
-            format!(" Plan: {}  ·  {}/{}  ", title, completed, total),
+            if is_completed {
+                // Say it is finished, or an all-☑ list reads as live work
+                // that has stalled.
+                format!(" Plan complete: {}  ·  {}/{}  ", title, completed, total)
+            } else {
+                format!(" Plan: {}  ·  {}/{}  ", title, completed, total)
+            },
             Style::default()
                 .fg(Color::Rgb(160, 160, 160))
                 .add_modifier(Modifier::BOLD),

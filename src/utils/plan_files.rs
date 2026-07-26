@@ -465,6 +465,35 @@ fn archive_plan_files(json_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Load the most recently archived plan sitting beside `json_path` (#810).
+///
+/// A completed plan archives at turn settle and vanishes from every surface,
+/// so the checklist the user just watched finish disappears at the moment it
+/// finishes. This reads it back so the final all-complete state can stay on
+/// screen until the next plan starts.
+///
+/// Reads from disk rather than process memory, so the view survives a restart
+/// exactly as plan state itself does. Archive names end in `-%Y%m%d-%H%M%S`,
+/// which is lexicographically ordered, so the greatest name is the newest and
+/// no timestamp parsing is needed.
+///
+/// Path-based and synchronous to match `archive_plan_files`, so the TUI's
+/// synchronous reload can call it.
+pub fn latest_archived_plan_from_path(json_path: &Path) -> Option<PlanDocument> {
+    let dir = json_path.parent()?.join("archive");
+    let newest = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .max_by_key(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        })?;
+    load_plan_from_path(&newest)
+}
+
 /// Delete the session's plan artifacts (or clear the pre-init sidecar),
 /// returning the session to NoPlan. The engine half of Discard; command
 /// wiring is the UX layer's.
