@@ -1088,6 +1088,35 @@ pub fn spawn_rsi_engine(
                 }
             }
 
+            // 2b. An available upgrade is the most actionable finding there
+            // is, and RSI was the one component running on a schedule that
+            // never mentioned it (#821). Proposed, never applied: replacing
+            // the running binary is the user's call.
+            //
+            // Recorded once. RSI runs hourly, and a proposal per hour for the
+            // same version trains the user to ignore the inbox. check_for_update
+            // already returns None when no asset exists for this platform or
+            // the network failed, so neither produces a finding.
+            if let Some(latest) = crate::brain::tools::evolve::check_for_update().await {
+                let marker = crate::config::opencrabs_home().join("rsi/last_proposed_version");
+                let already = std::fs::read_to_string(&marker)
+                    .ok()
+                    .map(|s| s.trim().to_string());
+                if already.as_deref() != Some(latest.as_str()) {
+                    if let Err(e) = std::fs::write(&marker, &latest) {
+                        tracing::warn!("RSI: failed to record proposed version: {e}");
+                    }
+                    tracing::info!("RSI: upgrade available, {} -> {latest}", crate::VERSION);
+                    opportunities.push(format!(
+                        "OpenCrabs {latest} is available (running {}). This is a capability \
+                         gap, not a guidance one: propose it with rsi_propose so the user can \
+                         review and run /evolve. Do NOT upgrade autonomously — replacing the \
+                         running binary is the user's decision.",
+                        crate::VERSION
+                    ));
+                }
+            }
+
             // 3. Dedup: hash the assembled opportunity descriptions and
             // compare against the previous cycle's hash. When identical,
             // the autonomous agent would have nothing new to act on — its
