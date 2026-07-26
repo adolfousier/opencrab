@@ -198,6 +198,7 @@ pub mod pending_request_age_test;
 pub mod pending_resume_no_reinsert_test;
 pub mod phantom_going_to_test;
 pub mod phantom_issue_action_test;
+pub mod phantom_null_effect_test;
 pub mod phantom_unbacked_evidence_test;
 pub mod phantom_uncalled_command_test;
 pub mod phantom_work_announcement_test;

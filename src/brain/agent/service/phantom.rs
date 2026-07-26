@@ -1039,3 +1039,74 @@ fn backticked_commands(text: &str) -> Vec<String> {
     }
     out
 }
+
+/// Did every tool call this turn do nothing (#825)?
+///
+/// The post-success exemption asks "did any tool succeed", when what actually
+/// vouches for a claim is "did a tool DO anything". A model that cannot or
+/// will not make a real call can satisfy the former indefinitely with `true`.
+///
+/// Observed: seven green tool calls, none of them the one being claimed. Two
+/// `true` no-ops, two `echo`s narrating an intent (`echo "attempting
+/// telegram_send"`), and the turn then asserted it had "tried telegram_send a
+/// dozen times". The calls were the substitute for the work, and they bought
+/// immunity from every check that keys off tool success.
+///
+/// Returns false for an empty turn: no calls at all is already handled by the
+/// zero-call branch, and reporting it here would double-count.
+pub fn all_calls_were_null_effect(tool_inputs: &[String]) -> bool {
+    !tool_inputs.is_empty() && tool_inputs.iter().all(|input| is_null_effect_call(input))
+}
+
+/// Does this single call produce no state change and no observation?
+///
+/// Only shell commands can be null: a `read_file` or `grep` observes
+/// something by definition, so anything without a `command` field counts as
+/// real work.
+fn is_null_effect_call(input_json: &str) -> bool {
+    let Some(command) = extract_command_field(input_json) else {
+        return false;
+    };
+    is_null_effect_command(&command)
+}
+
+/// `true`, `:`, or a bare `echo` of a literal.
+///
+/// Deliberately narrow. `echo` legitimately writes files and builds
+/// here-documents, and its output is often consumed downstream, so anything
+/// carrying a redirect, pipe, or chain is real work. What is null is `echo`
+/// whose entire effect is printing a string nobody reads.
+pub fn is_null_effect_command(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    // A chain does something even if one link is trivial.
+    if trimmed.contains("&&")
+        || trimmed.contains("||")
+        || trimmed.contains('|')
+        || trimmed.contains('>')
+        || trimmed.contains('<')
+        || trimmed.contains(';')
+        || trimmed.contains('`')
+        || trimmed.contains("$(")
+    {
+        return false;
+    }
+    if trimmed == "true" || trimmed == ":" {
+        return true;
+    }
+    trimmed.strip_prefix("echo ").is_some_and(|rest| {
+        // `echo $VAR` reads state; a quoted or bare literal does not.
+        !rest.contains('$')
+    })
+}
+
+/// Pull `command` out of a tool-input JSON blob.
+fn extract_command_field(input_json: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(input_json).ok()?;
+    value
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}

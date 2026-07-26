@@ -3972,6 +3972,14 @@ impl AgentService {
                     super::phantom::claims_uncalled_commands(&iteration_text, &turn_tool_input);
                 let phantom_eligible = !is_cli_provider
                     && (tool_calls_completed_this_turn == 0
+                        // Every call this turn did nothing (#825). `true` and a
+                        // bare `echo` naming a tool are the SUBSTITUTE for the
+                        // work, not the work: seven green calls, none of them
+                        // the one being claimed, then "I've tried telegram_send
+                        // a dozen times". The exemption asks whether a tool
+                        // succeeded when what vouches for a claim is whether
+                        // one did anything.
+                        || super::phantom::all_calls_were_null_effect(&turn_tool_input)
                         || super::phantom::has_forward_intent_post_success(&iteration_text)
                         // A successful call vouches for the work IT did, not for
                         // every claim in the turn. One trivial `echo` used to buy
