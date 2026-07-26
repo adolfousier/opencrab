@@ -1073,6 +1073,10 @@ impl AgentService {
         // completed work (logged in user reports as "phantom detected"
         // x8+ after a clean commit+push).
         let mut tool_calls_completed_this_turn: usize = 0;
+        // Every tool result this turn, for checking quoted evidence against
+        // what the tools actually returned (#785). Turn-scoped because the
+        // fabrication appears in a LATER iteration than the call it claims.
+        let mut turn_tool_output: Vec<String> = Vec::new();
         // One-shot nudge budget for the empty-analysis case: model ran
         // tool calls (e.g. `gh pr view`) on a user request whose verb
         // signals analysis ("audit the PR") but ended with
@@ -3939,7 +3943,17 @@ impl AgentService {
                 //      portion of the turn.
                 let phantom_eligible = !is_cli_provider
                     && (tool_calls_completed_this_turn == 0
-                        || super::phantom::has_forward_intent_post_success(&iteration_text));
+                        || super::phantom::has_forward_intent_post_success(&iteration_text)
+                        // A successful call vouches for the work IT did, not for
+                        // every claim in the turn. One trivial `echo` used to buy
+                        // blanket immunity: self-heal forced a tool, the model ran
+                        // it, then reported the output of two greps it never made.
+                        // Quoted evidence absent from every real result was
+                        // written, not read, whatever verb introduced it (#785).
+                        || super::phantom::claims_unbacked_evidence(
+                            &iteration_text,
+                            &turn_tool_output,
+                        ));
                 if !phantom_eligible && tool_calls_completed_this_turn > 0 {
                     tracing::info!(
                         target: "phantom",
@@ -5072,6 +5086,7 @@ impl AgentService {
                 if batch.successes > 0 {
                     phantom_retries_used = 0;
                     tool_calls_completed_this_turn += batch.successes;
+                    turn_tool_output.extend(batch.outputs.iter().map(|(_, out)| out.clone()));
                 }
                 tool_results = batch.results;
                 tool_descriptions = batch.descriptions;
@@ -5492,6 +5507,7 @@ impl AgentService {
                     Ok(result) => {
                         let success = result.success;
                         let images = result.images;
+                        let result_output_for_evidence = result.output.clone();
                         let content =
                             build_tool_result_content(result.success, result.error, &result.output);
 
@@ -5515,6 +5531,9 @@ impl AgentService {
                             // the comment on the `tool_calls_completed_this_turn`
                             // declaration at the top of `run_tool_loop_inner`.
                             tool_calls_completed_this_turn += 1;
+                            // Keep the real output so a later iteration's
+                            // quoted "evidence" can be checked against it.
+                            turn_tool_output.push(result_output_for_evidence.clone());
                             // Persist the touched path (same rationale as the
                             // approval-path branch above).
                             if let Some(p) = extract_path_for_recent_buffer(

@@ -863,3 +863,52 @@ fn ends_with_url(text: &str) -> bool {
     let tail = &trimmed[boundary..];
     tail.contains("://")
 }
+
+/// Whether `text` presents literal command output that no tool produced this
+/// turn.
+///
+/// Verb lists cannot catch this one. After a genuine grep, "Grepped and found
+/// 34 hits" is an honest recap, and the sentence is identical when the grep
+/// never ran — what differs is whether the CONTENT came from a tool. So this
+/// checks content, not wording, and holds regardless of how many calls the
+/// turn made.
+///
+/// The trigger is quoted evidence: grep-style `149:pub struct Tui {` lines and
+/// `=== marker ===` blocks, the shapes a model uses when presenting tool
+/// output. Prose and paraphrase carry neither, so ordinary answers are never
+/// examined. At least [`MIN_EVIDENCE_LINES`] are required, so a passing mention
+/// of a line number is not enough, and it only fires when a MAJORITY are absent
+/// from every tool result — a partially-quoted real output stays clean.
+///
+/// This is the case where one trivial call bought immunity for a whole turn:
+/// self-heal forced a tool, the model ran an `echo`, then reported the output
+/// of two greps it never made (#785).
+pub fn claims_unbacked_evidence(text: &str, tool_outputs: &[String]) -> bool {
+    /// Below this, a numbered line is more likely a citation than a dump.
+    const MIN_EVIDENCE_LINES: usize = 3;
+
+    let evidence: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| is_evidence_line(l))
+        .collect();
+    if evidence.len() < MIN_EVIDENCE_LINES {
+        return false;
+    }
+    let backed = evidence
+        .iter()
+        .filter(|line| tool_outputs.iter().any(|out| out.contains(**line)))
+        .count();
+    backed * 2 < evidence.len()
+}
+
+/// A line shaped like quoted tool output rather than prose.
+fn is_evidence_line(line: &str) -> bool {
+    // `149:pub struct Tui {` — grep -n, and the `wc -l` / `ls` numeric forms.
+    let numbered = line.split_once(':').is_some_and(|(n, rest)| {
+        !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && !rest.trim().is_empty()
+    });
+    // `=== LINE COUNT ===`, the framing a model adds around a fabricated dump.
+    let marker = line.len() > 6 && line.starts_with("===") && line.ends_with("===");
+    numbered || marker
+}
