@@ -216,6 +216,7 @@ pub mod rsi_pruned_test;
 pub mod rsi_session_pin_test;
 pub mod rsi_staleness_test;
 pub mod rsi_sync_cap_bail_test;
+pub mod rsi_sync_tracked_test;
 #[cfg(target_os = "linux")]
 pub mod service_scope_test;
 pub mod services_context_test;

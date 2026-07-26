@@ -109,6 +109,10 @@ const TRACKED: &[TrackedTemplate] = &[
     // dummy keys to a working install.
 ];
 
+/// The tracked set, exposed for tests (#823). The failure mode for a wrong
+/// path or kind is silence, so it is asserted rather than eyeballed.
+pub const TRACKED_FOR_TEST: &[TrackedTemplate] = TRACKED;
+
 /// Parsed state from `rsi/state.toml`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SyncState {
