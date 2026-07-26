@@ -1,6 +1,7 @@
 //! Utility modules for common functionality
 
 pub mod approval;
+pub mod command_label;
 pub mod config_watcher;
 pub mod fd_suppress;
 pub mod file_extract;

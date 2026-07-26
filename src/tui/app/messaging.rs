@@ -1147,7 +1147,10 @@ impl App {
                 let cmd = ci(tool_input, "command")
                     .and_then(|v| v.as_str())
                     .unwrap_or("?");
-                format!("bash: {}", cmd)
+                // Drop the leading `cd` and flatten newlines (#790, #791): raw,
+                // this row shows a path and can fuse tokens across a line break.
+                let label = crate::utils::command_label::command_label(cmd);
+                format!("bash: {}", if label.is_empty() { "?" } else { &label })
             }
             "read_file" | "read" => {
                 let path = ci(tool_input, "path")

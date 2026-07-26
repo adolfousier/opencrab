@@ -281,8 +281,7 @@ pub(crate) fn is_known_long(command: &str) -> bool {
 /// A short human label for a command (first meaningful token sequence), for the
 /// "running in the background" acknowledgement and the completion tag.
 pub(crate) fn short_label(command: &str) -> String {
-    let trimmed = command.trim();
-    let after_cd = trimmed.rsplit("&&").next().unwrap_or(trimmed).trim();
+    let after_cd = crate::utils::command_label::command_label(command);
     let label: String = after_cd.chars().take(60).collect();
     if after_cd.chars().count() > 60 {
         format!("{label}…")

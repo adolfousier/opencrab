@@ -1033,7 +1033,10 @@ impl AgentService {
                     .get("command")
                     .and_then(|v| v.as_str())
                     .unwrap_or("?");
-                format!("bash: {}", tilde_home(cmd))
+                // Drop the leading `cd` and flatten newlines (#790, #791).
+                let label = crate::utils::command_label::command_label(cmd);
+                let label = if label.is_empty() { "?" } else { &label };
+                format!("bash: {}", tilde_home(label))
             }
             "read_file" | "read" => {
                 let path = tool_input
