@@ -6050,9 +6050,17 @@ impl AgentService {
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 
-        // Update session token usage
+        // Update session token usage. The pair is resolved here, not read back
+        // off the session row, so a fallback's spend is attributed to the
+        // provider that actually served it (#807).
         session_service
-            .update_session_usage(session_id, total_tokens as i64, cost)
+            .update_session_usage(
+                session_id,
+                total_tokens as i64,
+                cost,
+                &self.provider_name_for_session(session_id),
+                &self.provider_model_for_session(session_id),
+            )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 

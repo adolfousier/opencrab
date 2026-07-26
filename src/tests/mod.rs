@@ -364,6 +364,7 @@ pub mod tui_render_utils_test;
 pub mod usage_categorizer_test;
 pub mod usage_dashboard_test;
 pub mod usage_data_test;
+pub mod usage_ledger_attribution_test;
 pub mod utils_file_extract_test;
 pub mod utils_install_test;
 pub mod utils_retry_test;

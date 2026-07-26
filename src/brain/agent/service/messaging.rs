@@ -86,9 +86,15 @@ impl AgentService {
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 
-        // Update session token usage
+        // Update session token usage with the pair that served it (#807).
         session_service
-            .update_session_usage(session_id, total_tokens as i64, cost)
+            .update_session_usage(
+                session_id,
+                total_tokens as i64,
+                cost,
+                &self.provider_name_for_session(session_id),
+                &self.provider_model_for_session(session_id),
+            )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;
 

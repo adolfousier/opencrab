@@ -119,13 +119,27 @@ impl SessionService {
 
     /// Update session usage statistics and record to the cumulative usage ledger.
     /// The ledger persists even when sessions are deleted.
-    pub async fn update_session_usage(&self, id: Uuid, token_count: i64, cost: f64) -> Result<()> {
+    ///
+    /// `provider` and `model` must be the pair that ACTUALLY SERVED the request
+    /// (#807), which is why they are passed in rather than read back off the
+    /// session row. Re-deriving them from the row attributed cost to whatever
+    /// pair happened to be stored, so a row left inconsistent by a sticky
+    /// fallback or a partial switch (#705) minted a permanent ledger entry for
+    /// a request that never happened, e.g. a Xiaomi row naming a GLM model. It
+    /// also credited a fallback's work and spend to the primary that did not
+    /// serve it. The ledger is append-only, so each such row is permanent.
+    pub async fn update_session_usage(
+        &self,
+        id: Uuid,
+        token_count: i64,
+        cost: f64,
+        provider: &str,
+        model: &str,
+    ) -> Result<()> {
         let mut session = self.get_session_required(id).await?;
         session.token_count += token_count;
         session.total_cost += cost;
         session.updated_at = Utc::now();
-
-        let model = session.model.clone().unwrap_or_default();
 
         let repo = SessionRepository::new(self.context.pool());
         repo.update(&session)
@@ -134,9 +148,8 @@ impl SessionService {
 
         // Append to cumulative usage ledger (never deleted)
         let ledger = UsageLedgerRepository::new(self.context.pool());
-        let provider = session.provider_name.clone().unwrap_or_default();
         if let Err(e) = ledger
-            .record(&id.to_string(), &provider, &model, token_count, cost)
+            .record(&id.to_string(), provider, model, token_count, cost)
             .await
         {
             tracing::warn!("Failed to record usage to ledger: {}", e);
