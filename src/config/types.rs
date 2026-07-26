@@ -868,6 +868,18 @@ pub struct AgentConfig {
     #[serde(default)]
     pub subagent_model: Option<String>,
 
+    /// Provider to use while a plan is being drafted, between `/plan` and
+    /// approval (#792). Unset means planning runs on whatever the session is
+    /// already using, which is the default and a true no-op.
+    #[serde(default)]
+    pub plan_provider: Option<String>,
+
+    /// Model to use while a plan is being drafted. With `plan_provider` set,
+    /// unset means that provider's default; on its own it swaps the model and
+    /// keeps the current provider.
+    #[serde(default)]
+    pub plan_model: Option<String>,
+
     /// Auto-install new releases on startup without prompting (default: true).
     /// When false, the user is shown an update prompt dialog instead.
     #[serde(default = "default_auto_update")]
@@ -1025,6 +1037,8 @@ impl Default for AgentConfig {
             max_tokens: default_max_tokens(),
             subagent_provider: None,
             subagent_model: None,
+            plan_provider: None,
+            plan_model: None,
             auto_update: default_auto_update(),
             self_improvement_provider: None,
             self_improvement_model: None,

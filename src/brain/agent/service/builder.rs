@@ -196,6 +196,18 @@ pub struct AgentService {
     /// suppressing the fallback's model-sync event mid-turn; this never does).
     pub(super) manual_switch: std::sync::RwLock<HashMap<Uuid, ManualSwitchPin>>,
 
+    /// What a plan-mode provider override replaced, so the session can be put
+    /// back when the plan ends (#792).
+    ///
+    /// Without this the override would be permanent. `ensure_session_provider_restored`
+    /// early-returns whenever the session already has a `session_providers`
+    /// entry, so a swap left in the map is never undone by the normal restore
+    /// path: the session would silently keep running on the planning model
+    /// long after the plan archived, with the footer showing it as if the user
+    /// had chosen it. That is the #704/#705 silent-switch failure exactly.
+    pub(super) plan_mode_swap:
+        std::sync::RwLock<HashMap<Uuid, super::plan_mode_provider::PlanModeSwap>>,
+
     /// Per-session context window overrides. When a session's provider
     /// has a custom `configured_context_window()`, it's cached here so
     /// compaction and budget checks use the correct window even when
@@ -350,6 +362,7 @@ impl AgentService {
             session_providers: std::sync::RwLock::new(HashMap::new()),
             session_models: std::sync::RwLock::new(HashMap::new()),
             manual_switch: std::sync::RwLock::new(HashMap::new()),
+            plan_mode_swap: std::sync::RwLock::new(HashMap::new()),
             session_context_limits: std::sync::RwLock::new(HashMap::new()),
             session_primary_failure_streak: std::sync::RwLock::new(HashMap::new()),
             active_skills: std::sync::RwLock::new(HashMap::new()),
@@ -935,6 +948,195 @@ impl AgentService {
     /// gap for ALL entry points. No-op when the session already has an entry,
     /// has no saved provider, or its saved provider is already the global
     /// default (nothing to restore).
+    /// Route this turn onto the provider/model its plan state calls for, and
+    /// put the session back once the plan ends (#792).
+    ///
+    /// Called at turn start, after `ensure_session_provider_restored` so the
+    /// session is on its OWN pair before any override is measured against it,
+    /// and before the turn reads `provider_for_session`.
+    ///
+    /// Keying off plan state rather than the `/plan` and `/execute` commands is
+    /// what makes this work everywhere at once: the TUI approval, the channel
+    /// command, and the agent approving its own plan in prose all converge on
+    /// `try_approve`, so all three route identically with no per-surface code.
+    ///
+    /// A no-op when the config sets no plan-mode keys, which is the default: no
+    /// provider is built and no swap happens, so an install that has never
+    /// heard of this feature behaves exactly as before.
+    pub(crate) async fn apply_plan_mode_provider(&self, session_id: Uuid) {
+        let state = crate::utils::plan_files::plan_mode_state(session_id).await;
+        let config = match crate::config::Config::load() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not load config to resolve plan-mode provider for session {session_id}: {e}"
+                );
+                return;
+            }
+        };
+        let desired = super::plan_mode_provider::override_for(state, &config.agent);
+
+        // Cheap: both are in-memory map reads.
+        let current_provider = self.provider_for_session(session_id);
+        let current_name = current_provider.name().to_string();
+        let current_model = self.provider_model_for_session(session_id);
+
+        let Some(over) = desired else {
+            self.restore_from_plan_mode(session_id, &config, &current_name, &current_model)
+                .await;
+            return;
+        };
+
+        let target_name = over
+            .provider
+            .clone()
+            .unwrap_or_else(|| current_name.clone());
+
+        if target_name == current_name {
+            // Same provider. Only a model change is left to make, and only if
+            // one was configured — a provider-only override whose provider is
+            // already active has nothing to do.
+            let Some(target_model) = over.model.clone() else {
+                return;
+            };
+            if target_model == current_model {
+                return;
+            }
+            self.record_plan_mode_swap(
+                session_id,
+                &current_name,
+                &current_model,
+                &target_name,
+                &target_model,
+            );
+            self.set_session_model(session_id, target_model.clone());
+            tracing::info!(
+                "Plan-mode routing ({state:?}) for session {session_id}: model {current_model} -> {target_model} on {current_name}"
+            );
+            return;
+        }
+
+        // A different provider: build it. Reached only when the session is not
+        // already on the target, so this does not rebuild every turn.
+        let provider =
+            match crate::brain::provider::create_provider_by_name(&config, &target_name).await {
+                Ok(p) => p,
+                Err(e) => {
+                    // A dead configured provider must not kill the turn (#469).
+                    tracing::warn!(
+                        "Plan-mode provider '{target_name}' failed to create ({e:#}) for session \
+                         {session_id} — staying on '{current_name}'"
+                    );
+                    return;
+                }
+            };
+        // Model and provider are set as one unit. Swapping the provider alone
+        // would leave the previous model pinned against the new catalogue, and
+        // `guard_cross_provider_model_leak` would substitute a default nobody
+        // asked for.
+        let target_model = over
+            .model
+            .clone()
+            .unwrap_or_else(|| provider.default_model().to_string());
+        self.record_plan_mode_swap(
+            session_id,
+            &current_name,
+            &current_model,
+            &target_name,
+            &target_model,
+        );
+        self.swap_provider_for_session(session_id, provider, target_model.clone());
+        tracing::info!(
+            "Plan-mode routing ({state:?}) for session {session_id}: {current_name}/{current_model} \
+             -> {target_name}/{target_model}"
+        );
+    }
+
+    /// Remember what an override replaced, the first time it replaces it.
+    ///
+    /// Only the FIRST swap records. Moving from drafting to executing changes
+    /// which override applies, and the pair worth keeping is the one the
+    /// session had before any of it started: recording again would make the
+    /// plan model the restore target, so finishing a plan would leave the
+    /// session on the planning model instead of the user's own.
+    fn record_plan_mode_swap(
+        &self,
+        session_id: Uuid,
+        original_provider: &str,
+        original_model: &str,
+        applied_provider: &str,
+        applied_model: &str,
+    ) {
+        if let Ok(mut map) = self.plan_mode_swap.write() {
+            map.entry(session_id)
+                .and_modify(|s| {
+                    // Keep the original; update what is currently installed so
+                    // the "did the user change this themselves" check stays
+                    // accurate across a drafting -> executing transition.
+                    s.applied_provider = applied_provider.to_string();
+                    s.applied_model = applied_model.to_string();
+                })
+                .or_insert_with(|| super::plan_mode_provider::PlanModeSwap {
+                    original_provider: original_provider.to_string(),
+                    original_model: original_model.to_string(),
+                    applied_provider: applied_provider.to_string(),
+                    applied_model: applied_model.to_string(),
+                });
+        }
+    }
+
+    /// Put the session back on the pair it had before plan-mode routing.
+    ///
+    /// Runs on the first turn after the plan archives, which is the turn where
+    /// the state resolves to no override at all.
+    async fn restore_from_plan_mode(
+        &self,
+        session_id: Uuid,
+        config: &crate::config::Config,
+        current_name: &str,
+        current_model: &str,
+    ) {
+        let Some(swap) = self
+            .plan_mode_swap
+            .write()
+            .ok()
+            .and_then(|mut m| m.remove(&session_id))
+        else {
+            return;
+        };
+        // If the pair is no longer the one the override installed, the user
+        // switched deliberately while the plan was live. Their pick outranks a
+        // stale restore target, so drop the record and leave them alone.
+        if !swap.still_applied(current_name, current_model) {
+            tracing::info!(
+                "Plan-mode routing ended for session {session_id}: provider is now \
+                 {current_name}/{current_model}, not the {}/{} that was installed — \
+                 leaving the current pick in place",
+                swap.applied_provider,
+                swap.applied_model
+            );
+            return;
+        }
+        match crate::brain::provider::create_provider_by_name(config, &swap.original_provider).await
+        {
+            Ok(provider) => {
+                self.swap_provider_for_session(session_id, provider, swap.original_model.clone());
+                tracing::info!(
+                    "Plan-mode routing ended for session {session_id}: restored {}/{}",
+                    swap.original_provider,
+                    swap.original_model
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Plan-mode routing ended for session {session_id} but the original provider \
+                     '{}' could not be rebuilt ({e:#}) — session stays on {current_name}",
+                    swap.original_provider
+                );
+            }
+        }
+    }
+
     pub async fn ensure_session_provider_restored(
         &self,
         session_id: Uuid,

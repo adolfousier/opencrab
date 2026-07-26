@@ -506,6 +506,12 @@ impl AgentService {
             session.model.as_deref(),
         )
         .await;
+        // Then route by plan state (#792): drafting and executing can each run
+        // on their own provider/model. Must come AFTER the restore above, or
+        // the restore would measure the override as the session's own pair;
+        // must come BEFORE the read below, which is what the turn runs on.
+        // A no-op unless the config sets plan-mode keys.
+        self.apply_plan_mode_provider(session_id).await;
         let session_provider = self.provider_for_session(session_id);
         // Did the turn START on the session's OWN saved provider (#705)? If the
         // saved provider is set and doesn't match the resolved one, the turn is

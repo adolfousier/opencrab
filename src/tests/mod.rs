@@ -307,6 +307,7 @@ pub mod plan_files_test;
 pub mod plan_flow_keyboard_gate_test;
 pub mod plan_gate_test;
 pub mod plan_mode_command_test;
+pub mod plan_mode_provider_test;
 pub mod plan_reminder_test;
 pub mod plan_tool_contract_test;
 pub mod plan_tool_description_test;
