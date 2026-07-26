@@ -14,6 +14,7 @@ pub(crate) mod feedback;
 mod gaslighting;
 pub(crate) mod helpers;
 mod messaging;
+pub(crate) mod nudge;
 pub(crate) mod parallel_tools;
 pub(crate) mod phantom;
 pub(crate) mod phantom_lang;

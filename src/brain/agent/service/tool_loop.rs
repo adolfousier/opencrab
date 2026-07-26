@@ -4156,33 +4156,9 @@ impl AgentService {
                     // Do NOT add the phantom text as assistant message — it
                     // pollutes context and causes the model to hallucinate
                     // new responses from the correction feedback itself.
-                    let nudge = if is_local_provider {
-                        // Local models (Qwen/Kimi/DeepSeek) over-index on
-                        // "STOP" and interpret it as "wait for further
-                        // instruction" — they reply with acknowledgements
-                        // ("Under the STOP rule I'll wait") instead of
-                        // calling a tool. Also emphasise the STRUCTURED
-                        // API: when the prompt is ambiguous the model
-                        // writes JSON text like `{"tool_call":{...}}`
-                        // thinking that IS the invocation.
-                        "[System: Your last response produced ZERO tool_use blocks — the tool \
-                         was NOT executed. Do not write JSON, do not write markdown code blocks, \
-                         do not describe what you would do. Invoke the tool through the \
-                         provider's structured tool-call API (the same channel the function \
-                         schemas were registered on). Pick the correct tool and call it now. \
-                         If the task is already completed and you've reported the results, \
-                         respond with a short confirmation (e.g., 'Done.', 'Fixed.', 'Committed.') \
-                         and stop — do not run additional tool calls to verify work you already did.]"
-                    } else {
-                        "[System: You described changes to files but did not execute any tool \
-                         calls. Your response contained action language and file paths but zero \
-                         tool_use blocks. Execute the actual tool calls NOW. Do not narrate — \
-                         call the tools. If the task is already completed and you've reported \
-                         the results, respond with a short confirmation (e.g., 'Done.', 'Fixed.', \
-                         'Committed.') and stop — do not run additional tool calls to verify work \
-                         you already did.]"
-                    };
-                    context.add_message(Message::user(nudge.to_string()));
+                    context.add_message(Message::user(super::nudge::no_tool_calls_nudge(
+                        is_local_provider,
+                    )));
                     continue;
                 }
 

@@ -189,6 +189,7 @@ pub mod mission_control_report_test;
 pub mod model_display_label_test;
 pub mod model_menu_test;
 pub mod new_session_pane_binding_test;
+pub mod nudge_text_test;
 pub mod pending_request_age_test;
 pub mod pending_resume_no_reinsert_test;
 pub mod phantom_going_to_test;
