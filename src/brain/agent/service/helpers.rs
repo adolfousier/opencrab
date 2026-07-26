@@ -506,8 +506,20 @@ impl AgentService {
                                     text_window.drain(..drain);
                                 }
 
-                                // Check for repeated substring in window
-                                if detect_text_repetition(&text_window, REPEAT_MIN_MATCH) {
+                                // Check for repeated substring in window, with
+                                // fenced code excluded. Repeated literal blocks
+                                // are NORMAL in a correct technical answer — two
+                                // SQL variants differing by a table name, a
+                                // before/after diff, a pair of migrations — and
+                                // byte-identical runs there look exactly like a
+                                // loop. One such answer was terminated at 3322
+                                // bytes and reached the user torn in half (#788).
+                                // Prose repetition, which is the real loop signal,
+                                // is still fully detected.
+                                if detect_text_repetition(
+                                    &strip_fenced_code(&text_window),
+                                    REPEAT_MIN_MATCH,
+                                ) {
                                     tracing::warn!(
                                         "🔁 Repetition detected in streaming response after {} bytes. \
                                          Provider appears to be looping. Terminating stream.",
@@ -1473,4 +1485,31 @@ pub fn detect_text_repetition(window: &str, min_match: usize) -> bool {
 /// persisted over the session's saved choice.
 pub fn provider_matches_session(saved_provider: Option<&str>, active_provider: &str) -> bool {
     saved_provider.is_none_or(|saved| saved == active_provider)
+}
+
+/// Blank out fenced code blocks so repetition detection sees only prose.
+///
+/// Fences are replaced by their newlines rather than removed, so the window
+/// keeps its shape and an unclosed fence (the normal case mid-stream) masks to
+/// the end. A model looping inside a code block still loops in the prose around
+/// it; a correct answer quoting two similar queries does not.
+pub fn strip_fenced_code(window: &str) -> String {
+    let mut out = String::with_capacity(window.len());
+    let mut in_fence = false;
+    for line in window.split_inclusive('\n') {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            out.push('\n');
+            continue;
+        }
+        if in_fence {
+            // Preserve the line break only, so offsets stay roughly aligned.
+            if line.ends_with('\n') {
+                out.push('\n');
+            }
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
