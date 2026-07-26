@@ -95,6 +95,14 @@ pub struct TelegramState {
     /// surfaces built without a database, which keeps the old in-memory-only
     /// behaviour rather than failing.
     plan_card_store: Mutex<Option<crate::db::repository::PlanCardRepository>>,
+    /// Session → when card writes may resume, after Telegram asked us to wait
+    /// (#814). Without this the next refresh wrote immediately and renewed the
+    /// flood-control window, so the countdown never elapsed.
+    plan_card_backoff: Mutex<HashMap<Uuid, std::time::Instant>>,
+    /// Session → when the card was last re-stuck (deleted and reposted at the
+    /// bottom). The re-stick costs two writes, so it is worth doing
+    /// occasionally to keep the card reachable and ruinous to do every settle.
+    plan_card_restick: Mutex<HashMap<Uuid, std::time::Instant>>,
     /// Photo batching buffer: (chat_id, user_id, media_group_id) → Vec<(img_marker, Option<caption>)>
     /// When user sends multiple photos in an album, we buffer them and only fire the agent
     /// after a quiet period (no new photos for 3s). Keyed by media_group_id to avoid merging
@@ -190,6 +198,8 @@ impl TelegramState {
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
             plan_card_store: Mutex::new(None),
+            plan_card_backoff: Mutex::new(HashMap::new()),
+            plan_card_restick: Mutex::new(HashMap::new()),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
             cowork_conversations: Mutex::new(HashMap::new()),
@@ -582,6 +592,51 @@ impl TelegramState {
             .insert(session_id, card.clone());
         tracing::info!("Recovered plan card for session {session_id} after restart");
         Some(card)
+    }
+
+    /// Are card writes for this session currently suppressed (#814)?
+    pub(crate) async fn plan_card_suppressed(&self, session_id: Uuid) -> bool {
+        let mut map = self.plan_card_backoff.lock().await;
+        match map.get(&session_id) {
+            Some(until) if *until > std::time::Instant::now() => true,
+            Some(_) => {
+                // Window elapsed; drop the entry so the map cannot grow
+                // without bound across long-lived sessions.
+                map.remove(&session_id);
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Suppress card writes for this session for `wait`.
+    pub(crate) async fn suppress_plan_card(&self, session_id: Uuid, wait: std::time::Duration) {
+        self.plan_card_backoff
+            .lock()
+            .await
+            .insert(session_id, std::time::Instant::now() + wait);
+    }
+
+    /// Should the card be re-stuck (deleted and reposted at the bottom) now?
+    ///
+    /// Records the decision, so a `true` starts the cooldown. Re-sticking keeps
+    /// the card from being buried by streamed output, but costs a delete plus a
+    /// create; doing it every settle is what put the card within reach of flood
+    /// control (#814, regression from 3c45e41a).
+    pub(crate) async fn should_restick_plan_card(
+        &self,
+        session_id: Uuid,
+        cooldown: std::time::Duration,
+    ) -> bool {
+        let now = std::time::Instant::now();
+        let mut map = self.plan_card_restick.lock().await;
+        match map.get(&session_id) {
+            Some(last) if now.duration_since(*last) < cooldown => false,
+            _ => {
+                map.insert(session_id, now);
+                true
+            }
+        }
     }
 
     /// Give the plan-card map durable backing. Called once at startup.

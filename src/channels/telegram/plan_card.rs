@@ -115,6 +115,11 @@ pub(crate) async fn refresh_plan_card(
     session_id: Uuid,
     plan_kb: PlanKb,
 ) {
+    // Telegram asked us to wait. The card is chrome, so skipping an update
+    // beats renewing the flood-control window on every refresh (#814).
+    if state.plan_card_suppressed(session_id).await {
+        return;
+    }
     let (title, checklist) = load_plan_sections(session_id).await;
     // Fold the design prose into the card (#621): the same per-heading
     // sections the flow message renders via chrome_classic (ADR 0005
@@ -171,6 +176,21 @@ pub(crate) async fn refresh_plan_card(
                         .await;
                     return;
                 }
+                // Throttled, not broken. Keep the tracked id: dropping it would
+                // force the next refresh to CREATE, which is the write most
+                // likely to be rejected and the one that leaves duplicates
+                // behind (#814).
+                if let Some(wait) = super::rate_limit::parse_retry_after(&es) {
+                    tracing::warn!(
+                        "Telegram plan card edit throttled for session {session_id}: {es} — \
+                         pausing card writes for {}s",
+                        wait.as_secs()
+                    );
+                    state
+                        .suppress_plan_card(session_id, wait + super::rate_limit::RETRY_MARGIN)
+                        .await;
+                    return;
+                }
                 // The tracked card is gone / unusable — drop it and recreate.
                 tracing::debug!("Telegram plan card edit failed ({mid:?}): {es} — recreating");
                 state.take_plan_card(session_id).await;
@@ -189,7 +209,24 @@ pub(crate) async fn refresh_plan_card(
                 .set_plan_card(session_id, chat, thread_id, m.id, signature)
                 .await
         }
-        Err(e) => tracing::warn!("Telegram plan card create failed: {e}"),
+        Err(e) => {
+            let es = e.to_string();
+            // Do not retry into the same window. Every rejected attempt kept
+            // flood control alive, which is why the countdown ticked from 40s
+            // to 3s without ever elapsing (#814).
+            if let Some(wait) = super::rate_limit::parse_retry_after(&es) {
+                tracing::warn!(
+                    "Telegram plan card create throttled for session {session_id}: {es} — \
+                     pausing card writes for {}s",
+                    wait.as_secs()
+                );
+                state
+                    .suppress_plan_card(session_id, wait + super::rate_limit::RETRY_MARGIN)
+                    .await;
+            } else {
+                tracing::warn!("Telegram plan card create failed: {es}");
+            }
+        }
     }
 }
 

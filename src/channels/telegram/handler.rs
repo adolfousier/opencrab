@@ -3971,7 +3971,20 @@ pub(crate) async fn handle_message(
                 .sections
                 .plan_kb
         };
-        super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id).await;
+        // Re-stick on a cooldown, not every settle (#814). Doing it every turn
+        // cost a delete PLUS a create on top of the refreshes already firing
+        // from the streaming path, which is what put the card within reach of
+        // flood control and produced duplicate cards. Skipping the re-stick
+        // still refreshes in place below, so the card stays correct; it just
+        // stays where it is until the next re-stick is due.
+        const RESTICK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(90);
+        if telegram_state
+            .should_restick_plan_card(session_id, RESTICK_COOLDOWN)
+            .await
+        {
+            super::plan_card::remove_plan_card(&bot, msg.chat.id, &telegram_state, session_id)
+                .await;
+        }
         super::plan_card::refresh_plan_card(
             &bot,
             msg.chat.id,
