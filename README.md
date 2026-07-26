@@ -2648,6 +2648,24 @@ self_improvement_provider = "<your-provider-name>"   # provider for RSI cycles
 self_improvement_model    = "<model-id-on-that-provider>"   # paired model
 ```
 
+**Plan and Execute Provider and Model** — run `/plan` and `/execute` on different provider+model pairs, so designing and building each get the model they suit. Set them under `[agent]`, paired exactly like `subagent_provider`/`subagent_model`. All four are optional, and leaving them unset changes nothing: an install that sets none of them behaves exactly as before.
+
+```toml
+[agent]
+plan_provider    = "<your-provider-name>"          # drafting: /plan until approval
+plan_model       = "<model-id-on-that-provider>"
+execute_provider = "<your-provider-name>"          # executing: approval until the plan completes
+execute_model    = "<model-id-on-that-provider>"
+```
+
+Each pair applies to one window of the plan's life. `plan_*` covers drafting, from `/plan` until the plan is approved. `execute_*` covers execution, from approval until the plan is 100% complete. When a provider is unset that window inherits your active provider; when a model is unset it uses that provider's default. Setting only the model swaps the model and keeps the current provider, which is the simplest way to think harder about design without changing providers.
+
+The two halves are independent: routing only execution leaves planning on your active model, and vice versa.
+
+Routing follows plan **state**, not the command that caused it, so approving a plan by asking in prose gets the same routing as typing `/execute`. This holds across the TUI, Telegram and Discord without per-surface configuration.
+
+Once the plan is complete the session returns to its own provider and model. Completion is the plan's own: when every task is checked off (or skipped), the plan archives and normal turns resume on your pair. A plan that is incomplete, failed or blocked deliberately stays on the execute pair rather than reverting mid-work, and `/discard` ends it. If you switch provider yourself while a plan is live, your pick wins and is left in place when the plan ends.
+
 **Lazy Tool Loading** — **on by default, and recommended.** Instead of sending all ~95 tool schemas (~20k tokens) to the provider on *every* request, OpenCrabs ships only a small CORE set (file I/O, shell, search, task/plan/context, http, brain-file loader, config/session — ~4k tokens) plus a `tool_search` discovery tool. When the agent needs something else (browser, channels, sub-agents, media, system tools), it calls `tool_search("what I need")`, which returns the matching tool's schema and activates it for the rest of the session. This keeps a tool-light turn (e.g. a quick answer) from paying ~16k tokens of unused schemas — and that overhead is counted by the provider on every call, so it's real cost, not just display. The recommendation is to leave it on: load only the core set and let the agent pull the rest on demand.
 
 Setting `lazy_tools = false` reverts to sending the **full tool-schema set — all ~95 tools (~20k tokens) — in every single request**, whether the turn uses them or not. Only do this if a model in your setup struggles to reach for `tool_search`.
