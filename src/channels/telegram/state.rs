@@ -99,6 +99,18 @@ pub struct TelegramState {
     /// (#814). Without this the next refresh wrote immediately and renewed the
     /// flood-control window, so the countdown never elapsed.
     plan_card_backoff: Mutex<HashMap<Uuid, std::time::Instant>>,
+    /// Session → lock serialising card writes (#822).
+    ///
+    /// `refresh_plan_card` reads whether a card is tracked, decides to edit or
+    /// post, then records the id. With nothing held across that, two concurrent
+    /// refreshes both saw no card, both posted, and the second id overwrote the
+    /// first: one card was left visible but untracked, so it could never be
+    /// edited or deleted again. Concurrency here is routine, since the
+    /// streaming path refreshes repeatedly while the settle and resume paths
+    /// also fire.
+    ///
+    /// Per session, so unrelated chats never wait on each other.
+    plan_card_locks: Mutex<HashMap<Uuid, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     /// Session → when the card was last re-stuck (deleted and reposted at the
     /// bottom). The re-stick costs two writes, so it is worth doing
     /// occasionally to keep the card reachable and ruinous to do every settle.
@@ -199,6 +211,7 @@ impl TelegramState {
             plan_cards: Mutex::new(HashMap::new()),
             plan_card_store: Mutex::new(None),
             plan_card_backoff: Mutex::new(HashMap::new()),
+            plan_card_locks: Mutex::new(HashMap::new()),
             plan_card_restick: Mutex::new(HashMap::new()),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
@@ -592,6 +605,23 @@ impl TelegramState {
             .insert(session_id, card.clone());
         tracing::info!("Recovered plan card for session {session_id} after restart");
         Some(card)
+    }
+
+    /// The lock serialising card writes for a session (#822).
+    ///
+    /// Returned as an `Arc` so the caller holds it across its API calls; the
+    /// inner map lock is released immediately, so acquiring one session's lock
+    /// never blocks another's.
+    pub(crate) async fn plan_card_lock(
+        &self,
+        session_id: Uuid,
+    ) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        self.plan_card_locks
+            .lock()
+            .await
+            .entry(session_id)
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     /// Are card writes for this session currently suppressed (#814)?

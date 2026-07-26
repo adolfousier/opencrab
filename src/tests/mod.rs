@@ -310,6 +310,7 @@ pub mod phantom_deferment_test;
 pub mod phantom_post_success_exemption_test;
 pub mod phantom_pronoun_drop_test;
 pub mod phantom_side_effect_test;
+pub mod plan_card_lock_test;
 pub mod plan_card_persist_test;
 pub mod plan_card_rate_limit_test;
 pub mod plan_completed_persist_test;

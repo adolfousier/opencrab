@@ -117,9 +117,22 @@ pub(crate) async fn refresh_plan_card(
 ) {
     // Telegram asked us to wait. The card is chrome, so skipping an update
     // beats renewing the flood-control window on every refresh (#814).
+    // Checked BEFORE taking the lock, so a throttled session releases waiters
+    // immediately instead of queueing them behind a write that will not happen.
     if state.plan_card_suppressed(session_id).await {
         return;
     }
+
+    // Serialise everything below (#822). The sequence is check-whether-a-card-
+    // is-tracked, decide edit-or-post, record the id — and with nothing held
+    // across it two concurrent refreshes both saw no card, both posted, and the
+    // second id overwrote the first. The loser was left visible in the chat but
+    // untracked, so it could never be edited or deleted again.
+    //
+    // Held across the API calls, not just the map reads: releasing before the
+    // create is exactly what leaves the window open.
+    let card_lock = state.plan_card_lock(session_id).await;
+    let _guard = card_lock.lock().await;
     let (title, checklist) = load_plan_sections(session_id).await;
     // Fold the design prose into the card (#621): the same per-heading
     // sections the flow message renders via chrome_classic (ADR 0005
@@ -240,6 +253,12 @@ pub(crate) async fn remove_plan_card(
     state: &Arc<TelegramState>,
     session_id: Uuid,
 ) {
+    // Same lock as refresh (#822). Removal clears tracking, so a refresh
+    // interleaving here is guaranteed to see no card and post one, which is
+    // the widest form of the race. Acquired and released independently, so the
+    // settle path's remove-then-refresh cannot deadlock against itself.
+    let card_lock = state.plan_card_lock(session_id).await;
+    let _guard = card_lock.lock().await;
     if let Some(mid) = state.take_plan_card(session_id).await
         && let Err(e) = bot.delete_message(chat, mid).await
     {
