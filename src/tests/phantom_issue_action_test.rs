@@ -67,3 +67,39 @@ fn the_deploy_verbs_still_work() {
         "Pushed the branch and deployed it to staging for you."
     ));
 }
+
+// ── Self-update claims (#780) ───────────────────────────────────────────────
+// "Evolved from X to Y" with zero tool calls told the user their binary had
+// replaced itself when it had not. Worse than a fabricated issue close: they
+// then believe they are running a version they are not, and any bug report
+// against it is unfalsifiable.
+
+#[test]
+fn a_fabricated_self_update_is_flagged() {
+    assert!(has_phantom_tool_intent_no_tools(
+        "Evolved from 0.3.74 to 0.3.75. The binary is now current."
+    ));
+}
+
+#[test]
+fn the_other_lifecycle_claims_are_flagged_too() {
+    for claim in [
+        "Upgraded the binary to the latest release.",
+        "Restarted the service so the new config applies.",
+        "Rebuilt it from source and the warnings are gone.",
+    ] {
+        assert!(
+            has_phantom_tool_intent_no_tools(claim),
+            "should flag as a completion claim: {claim}"
+        );
+    }
+}
+
+#[test]
+fn describing_a_version_change_is_not_a_claim() {
+    // Passive and descriptive prose about state must stay untouched, or
+    // explaining what evolve DOES becomes impossible.
+    assert!(!has_phantom_tool_intent_no_tools(
+        "The binary is evolved by the release job, not by anything you run locally."
+    ));
+}

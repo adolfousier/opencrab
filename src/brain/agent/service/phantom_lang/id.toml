@@ -139,6 +139,13 @@ action_verbs = [
     "dikomentari",
     "ditugaskan",
     "dilabeli",
+    # Self-update and lifecycle. A fabricated "Evolved from X to Y" with zero
+    # tool calls told the user their binary had replaced itself when it had
+    # not, leaving them to report bugs against a version they were not running.
+    "di-upgrade",
+    "di-restart",
+    "dibangun ulang",
+    "diinstal ulang",
 ]
 
 completion_claims = [

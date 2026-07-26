@@ -200,6 +200,15 @@ action_verbs = [
     "abierto",
     "etiqueté",
     "asigné",
+    # Self-update and lifecycle. A fabricated "Evolved from X to Y" with zero
+    # tool calls told the user their binary had replaced itself when it had
+    # not, leaving them to report bugs against a version they were not running.
+    "evolucioné",
+    "evolucionado",
+    "actualicé la versión",
+    "reinicié",
+    "reiniciado",
+    "reconstruí",
 ]
 
 completion_claims = [
