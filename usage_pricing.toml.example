@@ -113,6 +113,12 @@ entries = [
 entries = [
   # Qwen 3.6 Max Preview — DashScope tiered pricing (≤128k: $1.3/$7.8, 128k-256k: $2/$12)
   # All variants map here: qwen3.6-max-preview, qwen-3.6-max-preview, qwen-3-6-max-preview, etc.
+  # Qwen 3.8 Max Preview — no public 3.8-specific DashScope rate published yet; mirrored from
+  # the 3.6-max-preview tier (≤128k: $1.3/$7.8) until an official 3.8 rate lands. Update when published.
+  { prefix = "qwen-3.8-max-preview",  input_per_m = 1.30,  output_per_m = 7.80,  cache_write_per_m = 1.625, cache_read_per_m = 0.13 },
+  { prefix = "qwen3.8-max-preview",   input_per_m = 1.30,  output_per_m = 7.80,  cache_write_per_m = 1.625, cache_read_per_m = 0.13 },
+  { prefix = "qwen-3-8-max-preview",  input_per_m = 1.30,  output_per_m = 7.80,  cache_write_per_m = 1.625, cache_read_per_m = 0.13 },
+  { prefix = "qwen3-8-max-preview",   input_per_m = 1.30,  output_per_m = 7.80,  cache_write_per_m = 1.625, cache_read_per_m = 0.13 },
   { prefix = "qwen-3.6-max-preview",  input_per_m = 1.30,  output_per_m = 7.80,  cache_write_per_m = 1.625, cache_read_per_m = 0.13 },
   { prefix = "qwen3.6-max-preview",   input_per_m = 1.30,  output_per_m = 7.80,  cache_write_per_m = 1.625, cache_read_per_m = 0.13 },
   { prefix = "qwen-3-6-max-preview",  input_per_m = 1.30,  output_per_m = 7.80,  cache_write_per_m = 1.625, cache_read_per_m = 0.13 },
