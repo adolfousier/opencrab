@@ -82,6 +82,37 @@ fn no_archive_yields_nothing() {
 }
 
 #[test]
+fn reading_an_archive_never_mutates_it() {
+    // The live loader acts on terminal statuses: "Completed" archives the file
+    // and returns None, "Cancelled" deletes it. Correct for a live plan and
+    // destructive for one already archived, which would move the file deeper
+    // on every read and render nothing (#809). Reading history must not
+    // rewrite it.
+    let tmp = tempfile::tempdir().unwrap();
+    let live = tmp.path().join("plan.json");
+    let dir = tmp.path().join("archive");
+    std::fs::create_dir_all(&dir).unwrap();
+    let archived = dir.join("plan-20260726-101500.json");
+    std::fs::write(
+        &archived,
+        r#"{"title":"Terminal status","description":"","status":"Completed",
+            "tasks":[{"title":"Ship it","description":"d","task_type":"Edit",
+                      "status":"Completed"}]}"#,
+    )
+    .unwrap();
+
+    let found = latest_archived_plan_from_path(&live);
+    assert!(
+        found.is_some(),
+        "an archived plan must stay readable whatever status it carries"
+    );
+    assert!(
+        archived.exists(),
+        "reading an archived plan must not move or delete it"
+    );
+}
+
+#[test]
 fn a_non_json_file_in_the_archive_is_ignored() {
     // Archiving moves the .md alongside the .json; picking the .md would
     // fail to parse and lose the plan.

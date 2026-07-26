@@ -491,7 +491,41 @@ pub fn latest_archived_plan_from_path(json_path: &Path) -> Option<PlanDocument> 
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default()
         })?;
-    load_plan_from_path(&newest)
+    read_archived_plan(&newest)
+}
+
+/// Parse an archived plan without the live loader's side effects.
+///
+/// `load_plan_from_path` acts on terminal statuses: `Completed` archives the
+/// file and returns `None`, `Cancelled` deletes it. Correct for a live plan,
+/// destructive for one already in `archive/` — it would move the file deeper on
+/// every read and return nothing, so the finished checklist could never render.
+///
+/// Reading history must never mutate it, so this only parses.
+fn read_archived_plan(path: &Path) -> Option<PlanDocument> {
+    if let Ok(meta) = std::fs::metadata(path)
+        && meta.len() > MAX_PLAN_FILE_SIZE
+    {
+        tracing::warn!(
+            "Archived plan too large ({} bytes) at {}; refusing to load",
+            meta.len(),
+            path.display()
+        );
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    match serde_json::from_str(&content) {
+        Ok(plan) => Some(plan),
+        Err(e) => {
+            tracing::warn!("Unreadable archived plan at {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// The most recently archived plan for `session_id` (#809, #810).
+pub async fn latest_archived_plan(session_id: Uuid) -> Option<PlanDocument> {
+    latest_archived_plan_from_path(&plan_json_read_path(session_id).await)
 }
 
 /// Delete the session's plan artifacts (or clear the pre-init sidecar),
