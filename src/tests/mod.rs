@@ -212,6 +212,7 @@ pub mod repetition_fenced_code_test;
 pub mod repetition_test;
 pub mod rsi_notification_redaction_test;
 pub mod rsi_pruned_test;
+pub mod rsi_session_pin_test;
 pub mod rsi_staleness_test;
 pub mod rsi_sync_cap_bail_test;
 #[cfg(target_os = "linux")]

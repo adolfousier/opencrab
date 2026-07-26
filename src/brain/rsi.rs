@@ -241,6 +241,28 @@ pub(crate) fn format_rsi_notification(notification: &RsiNotification) -> String 
 }
 
 /// Build a minimal tool registry containing only the RSI tools.
+/// Does the RSI session's stored pair disagree with what config selects (#805)?
+///
+/// The session outlives the config, and `ensure_session_provider_restored`
+/// (#704) restores the SESSION's saved provider at turn start. Right for a user
+/// session; wrong for this one, where config is the authority. Without this
+/// check a session created months ago re-pins its original provider on every
+/// cycle and `self_improvement_provider` has no effect at all.
+///
+/// An unset `self_improvement_model` is not a disagreement: the provider's own
+/// default is intended, so the stored model is left alone rather than cleared.
+pub(crate) fn rsi_pair_is_stale(
+    session_provider: Option<&str>,
+    session_model: Option<&str>,
+    configured_provider: &str,
+    configured_model: Option<&str>,
+) -> bool {
+    if session_provider != Some(configured_provider) {
+        return true;
+    }
+    matches!(configured_model, Some(m) if session_model != Some(m))
+}
+
 fn build_rsi_tool_registry() -> Arc<crate::brain::tools::ToolRegistry> {
     use crate::brain::tools::ToolRegistry;
     use crate::brain::tools::feedback_analyze::FeedbackAnalyzeTool;
@@ -516,6 +538,27 @@ async fn run_rsi_agent_cycle(
     let provider =
         crate::brain::provider::factory::wrap_with_fallback_chain(config, provider).await?;
 
+    // A CLI provider cannot run OpenCrabs tools: `cli_handles_tools()` makes the
+    // tool loop skip local execution entirely, on the understanding that the CLI
+    // runs tools internally. RSI exists ONLY to call `feedback_analyze`,
+    // `self_improve` and `rsi_propose`, so on such a provider every cycle is a
+    // guaranteed no-op that still pays for a full turn.
+    //
+    // It also fails silently, which is why this is a hard refusal rather than a
+    // warning: the same flag disables phantom detection, so the model narrates
+    // tool calls that never execute and nothing corrects it. Observed on a live
+    // install as hourly cycles reporting "I described actions but did not
+    // actually execute any tool this turn" and "Same data. Stopping." for
+    // months, because nothing could ever be applied (#805).
+    if provider.cli_handles_tools() {
+        return Err(anyhow::anyhow!(
+            "RSI cannot run on '{}': it is a CLI provider, so OpenCrabs tools \
+             (feedback_analyze, self_improve, rsi_propose) never execute and every cycle \
+             is a silent no-op. Set [agent] self_improvement_provider to an API provider.",
+            provider.name()
+        ));
+    }
+
     let service_ctx = ServiceContext::new(pool);
     let tool_registry = build_rsi_tool_registry();
     let brain_path = crate::config::opencrabs_home();
@@ -531,7 +574,7 @@ async fn run_rsi_agent_cycle(
     // Reuse a persistent RSI session — keeps context across cycles so the agent
     // knows what it already improved and doesn't repeat work.
     let session_service = SessionService::new(service_ctx);
-    let session = match session_service
+    let mut session = match session_service
         .find_session_by_title("RSI autonomous cycle")
         .await?
     {
@@ -547,6 +590,43 @@ async fn run_rsi_agent_cycle(
                 .await?
         }
     };
+
+    // The session outlives the config, so its stored pair must follow config
+    // rather than override it (#805). `ensure_session_provider_restored` (#704)
+    // restores the SESSION's saved provider at turn start, which is right for a
+    // user session and wrong here: this session was created in April on
+    // whatever was active then, and re-pinned that provider on every cycle
+    // since, so changing `self_improvement_provider` had no effect at all.
+    //
+    // Re-checked every cycle, not just at creation, or a later config change
+    // silently keeps the old pair, which is exactly the bug.
+    {
+        let configured_model = config.agent.self_improvement_model.clone();
+        let pair_is_stale = rsi_pair_is_stale(
+            session.provider_name.as_deref(),
+            session.model.as_deref(),
+            provider_name,
+            configured_model.as_deref(),
+        );
+        if pair_is_stale {
+            tracing::warn!(
+                "RSI session pinned to {:?}/{:?} but config selects '{}'/{:?} — repinning to config",
+                session.provider_name,
+                session.model,
+                provider_name,
+                configured_model
+            );
+            let mut repinned = session.clone();
+            repinned.provider_name = Some(provider_name.to_string());
+            if configured_model.is_some() {
+                repinned.model = configured_model;
+            }
+            match session_service.update_session(&repinned).await {
+                Ok(()) => session = repinned,
+                Err(e) => tracing::warn!("Failed to repin RSI session to the configured pair: {e}"),
+            }
+        }
+    }
 
     // Build the user prompt with detected opportunities
     let mut prompt = "Run an autonomous self-improvement cycle.\n\n".to_string();
