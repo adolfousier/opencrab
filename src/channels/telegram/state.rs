@@ -88,6 +88,13 @@ pub struct TelegramState {
     /// the edit API call when nothing changed — avoiding a redundant-edit
     /// rate-limit storm.
     plan_cards: Mutex<HashMap<Uuid, (teloxide::types::MessageId, String)>>,
+    /// Durable backing for `plan_cards` (#809). The map alone is process-local,
+    /// so a restart lost the tracked message id and the card could then neither
+    /// be edited nor removed: the next turn posted a SECOND card below the
+    /// stale one instead of updating it. Set once at startup; `None` on
+    /// surfaces built without a database, which keeps the old in-memory-only
+    /// behaviour rather than failing.
+    plan_card_store: Mutex<Option<crate::db::repository::PlanCardRepository>>,
     /// Photo batching buffer: (chat_id, user_id, media_group_id) → Vec<(img_marker, Option<caption>)>
     /// When user sends multiple photos in an album, we buffer them and only fire the agent
     /// after a quiet period (no new photos for 3s). Keyed by media_group_id to avoid merging
@@ -182,6 +189,7 @@ impl TelegramState {
             pending_followups: Mutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(HashMap::new()),
             plan_cards: Mutex::new(HashMap::new()),
+            plan_card_store: Mutex::new(None),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
             cowork_conversations: Mutex::new(HashMap::new()),
@@ -546,20 +554,73 @@ impl TelegramState {
         &self,
         session_id: Uuid,
     ) -> Option<(teloxide::types::MessageId, String)> {
-        self.plan_cards.lock().await.get(&session_id).cloned()
+        if let Some(hit) = self.plan_cards.lock().await.get(&session_id).cloned() {
+            return Some(hit);
+        }
+        // Miss: either no card, or this process just started and the map is
+        // empty. Rehydrating here rather than scanning every session at boot
+        // means the cost is paid once, only for sessions that actually ask
+        // (#809).
+        let stored = {
+            let guard = self.plan_card_store.lock().await;
+            let repo = guard.as_ref()?;
+            match repo.get(&session_id.to_string()).await {
+                Ok(row) => row?,
+                Err(e) => {
+                    tracing::warn!("Plan-card lookup failed for session {session_id}: {e}");
+                    return None;
+                }
+            }
+        };
+        let card = (
+            teloxide::types::MessageId(stored.message_id as i32),
+            stored.signature,
+        );
+        self.plan_cards
+            .lock()
+            .await
+            .insert(session_id, card.clone());
+        tracing::info!("Recovered plan card for session {session_id} after restart");
+        Some(card)
+    }
+
+    /// Give the plan-card map durable backing. Called once at startup.
+    pub(crate) async fn set_plan_card_store(
+        &self,
+        repo: crate::db::repository::PlanCardRepository,
+    ) {
+        *self.plan_card_store.lock().await = Some(repo);
     }
 
     /// Track the plan-card message id + its rendered signature for a session.
     pub(crate) async fn set_plan_card(
         &self,
         session_id: Uuid,
+        chat_id: teloxide::types::ChatId,
+        thread_id: Option<teloxide::types::ThreadId>,
         msg_id: teloxide::types::MessageId,
         signature: String,
     ) {
         self.plan_cards
             .lock()
             .await
-            .insert(session_id, (msg_id, signature));
+            .insert(session_id, (msg_id, signature.clone()));
+        // Persist alongside, so a restart can still find and update THIS
+        // message instead of posting a second card below the stale one (#809).
+        let guard = self.plan_card_store.lock().await;
+        if let Some(repo) = guard.as_ref()
+            && let Err(e) = repo
+                .set(crate::db::repository::PlanCard {
+                    session_id: session_id.to_string(),
+                    chat_id: chat_id.0,
+                    thread_id: thread_id.map(|t| t.0.0 as i64),
+                    message_id: msg_id.0 as i64,
+                    signature,
+                })
+                .await
+        {
+            tracing::warn!("Failed to persist plan card for session {session_id}: {e}");
+        }
     }
 
     /// Stop tracking the plan card and return the id that was tracked, if any
@@ -568,11 +629,18 @@ impl TelegramState {
         &self,
         session_id: Uuid,
     ) -> Option<teloxide::types::MessageId> {
-        self.plan_cards
-            .lock()
-            .await
-            .remove(&session_id)
-            .map(|(mid, _)| mid)
+        // Resolve through `plan_card` so a card tracked by a PREVIOUS process
+        // is still removable. Without that, a restart left the stale card
+        // undeletable and it lingered in the chat forever (#809).
+        let existing = self.plan_card(session_id).await.map(|(mid, _)| mid);
+        self.plan_cards.lock().await.remove(&session_id);
+        let guard = self.plan_card_store.lock().await;
+        if let Some(repo) = guard.as_ref()
+            && let Err(e) = repo.delete(&session_id.to_string()).await
+        {
+            tracing::warn!("Failed to clear plan card for session {session_id}: {e}");
+        }
+        existing
     }
 
     /// Mark `session_id` as having a turn in flight, returning an RAII guard

@@ -158,13 +158,17 @@ pub(crate) async fn refresh_plan_card(
         }
         match req.await {
             Ok(_) => {
-                state.set_plan_card(session_id, mid, signature).await;
+                state
+                    .set_plan_card(session_id, chat, thread_id, mid, signature)
+                    .await;
                 return;
             }
             Err(e) => {
                 let es = e.to_string();
                 if es.contains("message is not modified") {
-                    state.set_plan_card(session_id, mid, signature).await;
+                    state
+                        .set_plan_card(session_id, chat, thread_id, mid, signature)
+                        .await;
                     return;
                 }
                 // The tracked card is gone / unusable — drop it and recreate.
@@ -180,7 +184,11 @@ pub(crate) async fn refresh_plan_card(
         req = req.reply_markup(k.clone());
     }
     match req.await {
-        Ok(m) => state.set_plan_card(session_id, m.id, signature).await,
+        Ok(m) => {
+            state
+                .set_plan_card(session_id, chat, thread_id, m.id, signature)
+                .await
+        }
         Err(e) => tracing::warn!("Telegram plan card create failed: {e}"),
     }
 }

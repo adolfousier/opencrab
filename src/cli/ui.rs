@@ -693,6 +693,15 @@ async fn cmd_chat_inner(
     // Shared Telegram state for proactive messaging
     #[cfg(feature = "telegram")]
     let telegram_state = Arc::new(crate::channels::telegram::TelegramState::new());
+    // Durable plan-card tracking (#809): without it a restart loses which
+    // message carries the card, so the next turn posts a second one below the
+    // stale card instead of updating it, and the old one can never be removed.
+    #[cfg(feature = "telegram")]
+    telegram_state
+        .set_plan_card_store(crate::db::repository::PlanCardRepository::new(
+            db.pool().clone(),
+        ))
+        .await;
 
     // Register Telegram connect tool (agent-callable bot setup)
     #[cfg(feature = "telegram")]
