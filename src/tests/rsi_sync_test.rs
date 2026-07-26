@@ -4,7 +4,8 @@
 //! Verifies version gating, section extraction, state persistence, and backup safety.
 
 use crate::brain::rsi_sync::{
-    SyncState, extract_new_sections, extract_section_headers, needs_sync,
+    SyncState, content_fingerprint, extract_new_sections, extract_section_headers,
+    upstream_changed, version_changed,
 };
 use std::collections::HashMap;
 
@@ -71,21 +72,85 @@ fn extract_new_sections_partial_overlap() {
 // --- Version Gate Tests ---
 
 #[test]
-fn sync_needed_on_version_change() {
+fn version_change_is_detected() {
+    // Still reported and logged; it just no longer gates whether to look
+    // (#820).
     let state = SyncState {
         last_synced_version: "0.3.13".to_string(),
         ..Default::default()
     };
-    assert!(needs_sync(&state));
+    assert!(version_changed(&state));
 }
 
 #[test]
-fn sync_not_needed_on_same_version() {
+fn same_version_is_not_a_change() {
     let state = SyncState {
         last_synced_version: crate::VERSION.to_string(),
         ..Default::default()
     };
-    assert!(!needs_sync(&state));
+    assert!(!version_changed(&state));
+}
+
+// --- Content gate (#820) ---
+// Version equality asked "was the app upgraded" when the question is "is
+// upstream different from mine". Those diverge whenever a template is fixed
+// after a release: #816 and #817 landed ~21 hours after the v0.3.75 bump and
+// were undeliverable until the next one.
+
+#[test]
+fn unchanged_upstream_is_not_worth_syncing() {
+    // The critical property: nothing changed means do nothing. No merge, no
+    // backup, no write.
+    let upstream = "# Notes\n\n## A\n\nbody\n";
+    let mut state = SyncState::default();
+    state
+        .file_hashes
+        .insert("TOOLS.md".to_string(), content_fingerprint(upstream));
+
+    assert!(!upstream_changed(&state, "TOOLS.md", upstream));
+}
+
+#[test]
+fn a_single_byte_makes_it_worth_syncing() {
+    let mut state = SyncState::default();
+    state
+        .file_hashes
+        .insert("TOOLS.md".to_string(), content_fingerprint("body\n"));
+
+    assert!(upstream_changed(&state, "TOOLS.md", "body!\n"));
+}
+
+#[test]
+fn a_never_seen_file_counts_as_changed() {
+    // No record means never synced, so a first run must still merge.
+    assert!(upstream_changed(
+        &SyncState::default(),
+        "TOOLS.md",
+        "anything"
+    ));
+}
+
+#[test]
+fn each_file_is_gated_independently() {
+    // One file changing must not drag an unchanged one into a rewrite.
+    let mut state = SyncState::default();
+    state
+        .file_hashes
+        .insert("TOOLS.md".to_string(), content_fingerprint("same"));
+    state
+        .file_hashes
+        .insert("CODE.md".to_string(), content_fingerprint("old"));
+
+    assert!(!upstream_changed(&state, "TOOLS.md", "same"));
+    assert!(upstream_changed(&state, "CODE.md", "new"));
+}
+
+#[test]
+fn identical_content_hashes_identically() {
+    // A fingerprint rather than a timestamp because a file can be rewritten
+    // with identical content by a rebase or reformat.
+    assert_eq!(content_fingerprint("abc"), content_fingerprint("abc"));
+    assert_ne!(content_fingerprint("abc"), content_fingerprint("abd"));
 }
 
 // --- State Persistence Tests ---

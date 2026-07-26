@@ -693,14 +693,12 @@ pub fn spawn_rsi_engine(
         // Delay to let the app fully start
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-        // 1. Check for upstream template sync (version gate)
-        let sync_state = crate::brain::rsi_sync::SyncState::load();
-        if crate::brain::rsi_sync::needs_sync(&sync_state) {
-            tracing::info!(
-                "RSI: version changed ({} -> {}), running template sync",
-                sync_state.last_synced_version,
-                crate::VERSION
-            );
+        // 1. Upstream template sync. No version gate (#820): whether the app
+        // was upgraded says nothing about whether a template changed, and
+        // gating on it left #816/#817 undeliverable for as long as the release
+        // took. sync_templates decides per file by content, and one whose
+        // upstream is unchanged writes nothing.
+        {
             let results = crate::brain::rsi_sync::sync_templates().await;
             if results.is_empty() {
                 tracing::info!("RSI template sync: no files to sync");

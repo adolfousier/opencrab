@@ -115,6 +115,27 @@ pub struct SyncState {
     pub last_synced_version: String,
     pub last_sync_date: String,
     pub file_dates: HashMap<String, String>,
+    /// Upstream content fingerprint per tracked file (#820).
+    ///
+    /// The gate used to be version equality, which asks "has the app been
+    /// upgraded" when the question is "is upstream different from mine". Those
+    /// diverge whenever a template is fixed after a release, which is the
+    /// normal case: #816 and #817 landed ~21 hours after the v0.3.75 bump and
+    /// were therefore undeliverable until the next release.
+    ///
+    /// A fingerprint rather than a timestamp because timestamps lie in both
+    /// directions: a file can be rewritten with identical content by a rebase
+    /// or a reformat, and a mirror can serve a stale `Last-Modified`. Content
+    /// equality is the only thing that answers "is there anything to do".
+    pub file_hashes: HashMap<String, String>,
+}
+
+/// Fingerprint upstream content for the change gate (#820).
+pub fn content_fingerprint(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 impl SyncState {
@@ -134,6 +155,7 @@ impl SyncState {
 
         let mut state = Self::default();
         let mut in_files_section = false;
+        let mut in_hashes_section = false;
 
         for line in content.lines() {
             let trimmed = line.trim();
@@ -142,17 +164,26 @@ impl SyncState {
             }
             if trimmed == "[files]" {
                 in_files_section = true;
+                in_hashes_section = false;
+                continue;
+            }
+            if trimmed == "[hashes]" {
+                in_hashes_section = true;
+                in_files_section = false;
                 continue;
             }
             if trimmed.starts_with('[') {
                 in_files_section = false;
+                in_hashes_section = false;
                 continue;
             }
 
             if let Some((key, value)) = trimmed.split_once('=') {
                 let key = key.trim();
                 let value = value.trim().trim_matches('"');
-                if in_files_section {
+                if in_hashes_section {
+                    state.file_hashes.insert(key.to_string(), value.to_string());
+                } else if in_files_section {
                     state.file_dates.insert(key.to_string(), value.to_string());
                 } else if key == "last_synced_version" {
                     state.last_synced_version = value.to_string();
@@ -179,6 +210,11 @@ impl SyncState {
 
         for (file, date) in &self.file_dates {
             content.push_str(&format!("{file} = \"{date}\"\n"));
+        }
+
+        content.push_str("\n[hashes]\n");
+        for (file, hash) in &self.file_hashes {
+            content.push_str(&format!("{file} = \"{hash}\"\n"));
         }
 
         std::fs::write(&path, content)
@@ -222,9 +258,28 @@ pub struct CapBailReport {
     pub top_new_sections: Vec<String>,
 }
 
-/// Check if a version change requires a sync.
-pub fn needs_sync(state: &SyncState) -> bool {
+/// Whether an upgrade happened since the last sync.
+///
+/// No longer a gate (#820): it decides nothing about whether to fetch, because
+/// a template fixed AFTER a release is invisible to it. Kept because the
+/// version is still worth recording and logging. The real gate is per-file
+/// content equality, applied in `sync_single_file`.
+pub fn version_changed(state: &SyncState) -> bool {
     state.last_synced_version != crate::VERSION
+}
+
+/// Has upstream changed since the last time this file was merged (#820)?
+///
+/// `None` stored means never synced, which counts as changed so a first run
+/// still merges. Identical means there is nothing to do: no merge, no backup,
+/// no write, no log entry. That silence is the point — RSI already writes a
+/// digest hourly, and a sync that reports "checked, nothing to do" every pass
+/// buries the entries that mean something.
+pub fn upstream_changed(state: &SyncState, local_name: &str, upstream_content: &str) -> bool {
+    match state.file_hashes.get(local_name) {
+        Some(seen) => seen != &content_fingerprint(upstream_content),
+        None => true,
+    }
 }
 
 /// Fetch a single template. `path` is relative to the repository root.
@@ -465,19 +520,18 @@ pub async fn sync_templates() -> Vec<FileSyncResult> {
     let home = crate::config::opencrabs_home();
     let mut state = SyncState::load();
 
-    if !needs_sync(&state) {
+    // No version gate (#820). Whether the app was upgraded says nothing about
+    // whether a template changed: #816 and #817 landed ~21 hours AFTER the
+    // v0.3.75 bump, so a version-equality check kept them undeliverable
+    // indefinitely. Each file now decides for itself by content, and a file
+    // whose upstream is unchanged costs one comparison and writes nothing.
+    if version_changed(&state) {
         tracing::info!(
-            "RSI sync: no new release since last sync (v{}). Skipping.",
-            state.last_synced_version
+            "RSI sync: version changed from {} to {}.",
+            state.last_synced_version,
+            crate::VERSION
         );
-        return vec![];
     }
-
-    tracing::info!(
-        "RSI sync: version changed from {} to {}. Starting template sync.",
-        state.last_synced_version,
-        crate::VERSION
-    );
 
     // Ensure directories
     if let Err(e) = ensure_backups_dir() {
@@ -516,11 +570,23 @@ pub async fn sync_templates() -> Vec<FileSyncResult> {
             continue;
         }
 
+        // Fetched here too so the fingerprint recorded is exactly what was
+        // considered, and a merge and its record cannot disagree (#820).
+        let upstream = fetch_template(tracked.upstream).await.ok();
+
         let result = sync_single_file(&local_path, tracked, &now).await;
         if result.synced {
             state
                 .file_dates
                 .insert(tracked.local.to_string(), now.clone());
+            // Record what upstream looked like, so an unchanged file does
+            // nothing next pass. Only on success: a failed sync must retry
+            // rather than mark itself as seen.
+            if let Some(ref content) = upstream {
+                state
+                    .file_hashes
+                    .insert(tracked.local.to_string(), content_fingerprint(content));
+            }
         }
         results.push(result);
     }
@@ -694,7 +760,25 @@ async fn sync_single_file(
         }
     };
 
-    // 3. TOML takes a different route entirely (#819). Sections, pruning and
+    // 3. Nothing to do if upstream is byte-identical to what was last merged
+    // (#820). Checked before any merge, backup or write, so an unchanged file
+    // costs one comparison and produces no side effects at all — no log line
+    // either, since RSI already writes a digest hourly and "checked, nothing
+    // to do" on every pass buries the entries that mean something.
+    {
+        let state = SyncState::load();
+        if !upstream_changed(&state, filename, &upstream_content) {
+            return FileSyncResult {
+                filename: filename.to_string(),
+                synced: true,
+                sections_added: 0,
+                error: None,
+                bailed_for_cap: None,
+            };
+        }
+    }
+
+    // 4. TOML takes a different route entirely (#819). Sections, pruning and
     // line caps are all prose concepts; a config file merges by key, and
     // appending a `## ` block to it would produce a duplicate table that stops
     // the file parsing.
