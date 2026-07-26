@@ -2291,6 +2291,40 @@ impl App {
                 session.id
             );
 
+            // Re-submitting the message already being answered produces a
+            // second identical turn whose cost is paid on every later turn of
+            // the session, since both copies reload into context (#798). The
+            // usual cause is Arrow Up then Enter while the first is still
+            // running. Compare only against the turn in flight and the pending
+            // queue, never further back, so a deliberate repeat later in the
+            // session is untouched.
+            let sid = session.id;
+            let in_flight = self
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.clone());
+            let already_queued: Vec<String> = self
+                .queued_messages
+                .lock()
+                .ok()
+                .and_then(|q| {
+                    q.get(&sid)
+                        .map(|msgs| msgs.iter().map(|m| m.display_text.clone()).collect())
+                })
+                .unwrap_or_default();
+            let verdict =
+                super::duplicate_submit::classify(&content, in_flight.as_deref(), &already_queued);
+            if verdict.is_duplicate() {
+                tracing::info!(
+                    "[send_message] DROPPED duplicate submission for session {sid} ({verdict:?}) \
+                     — the first copy is still being answered"
+                );
+                self.cursor_position = self.input_buffer.len();
+                return Ok(());
+            }
+
             // Stack queued messages — multiple sends accumulate. The same
             // map serves the UI's "Queued" indicator AND the agent's
             // mid-tool inject callback (keyed by session id), so we only

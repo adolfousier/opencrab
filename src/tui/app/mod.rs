@@ -2,6 +2,7 @@
 
 pub(crate) mod background_session;
 mod dialogs;
+pub(crate) mod duplicate_submit;
 pub(crate) mod input;
 mod messaging;
 pub mod mission_control;
