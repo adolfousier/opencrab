@@ -39,35 +39,74 @@ pub fn has_phantom_tool_intent_no_tools(text: &str) -> bool {
     // commits now." sailed through). Strip them before any matching.
     let cleaned = strip_inline_directives(text);
     let trimmed = cleaned.trim();
-    let lead = prose_lead_in(trimmed);
-    if lead.is_empty() {
+    if trimmed.is_empty() {
         return false;
     }
-    // Brief present-continuous work announcements ("Running checks now.",
-    // "Checking the logs…") are phantom on their own — the model says it's
-    // acting but emitted no tool call. At 19 bytes "Running checks now." fell
-    // under the length floor below and the turn dropped with zero tools
-    // (2026-06-12), so check this before the floor.
-    if matches_work_announcement(lead) {
-        return true;
-    }
-    // Leading-imminence announcement ("... Now downloading the fonts.") — the
-    // work-announcement regex needs a trailing marker and misses it.
-    if matches_now_gerund(lead) {
-        return true;
-    }
-    if trimmed.len() < 20 {
-        return false;
-    }
-    let lower = lead.to_lowercase();
-    if lang_intent_match_any(&lower) {
-        return true;
-    }
-    // Past-tense completion claims stay gated to the detected language:
-    // action_verbs are short single words with real cross-language
-    // collision risk, unlike the multi-word intent phrases above.
     let lang = phantom_lang::detect_language(trimmed);
-    has_past_tense_action_claim(&lower, &lang.action_verbs)
+    let too_short_for_phrases = trimmed.len() < 20;
+
+    // Both ENDS, not just the lead. Every rule used to match against the lead
+    // alone, which is the first 7 lines or up to the first list item. That held
+    // while a turn opened with its intent ("Let me read the config."), and
+    // stopped holding once reasoning began occupying the lead: the announcement
+    // slid past the window and nothing was examined but deliberation. An
+    // announcement sits at one end of a turn or the other, never buried
+    // mid-paragraph, so the tail closes the gap without widening the middle
+    // where discussing an action would false-positive (#783).
+    for window in [prose_lead_in(trimmed), prose_tail(trimmed)] {
+        if window.is_empty() {
+            continue;
+        }
+        // Brief present-continuous work announcements ("Running checks now.",
+        // "Checking the logs…") are phantom on their own — the model says it's
+        // acting but emitted no tool call. At 19 bytes "Running checks now."
+        // falls under the length floor below, so check this before it.
+        if matches_work_announcement(window) {
+            return true;
+        }
+        // Leading-imminence announcement ("... Now downloading the fonts.") —
+        // the work-announcement regex needs a trailing marker and misses it.
+        if matches_now_gerund(window) {
+            return true;
+        }
+        if too_short_for_phrases {
+            continue;
+        }
+        let lower = window.to_lowercase();
+        if lang_intent_match_any(&lower) {
+            return true;
+        }
+        // Past-tense completion claims stay gated to the detected language:
+        // action_verbs are short single words with real cross-language
+        // collision risk, unlike the multi-word intent phrases above.
+        if has_past_tense_action_claim(&lower, &lang.action_verbs) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The turn's closing prose, mirroring [`prose_lead_in`] from the other end.
+///
+/// Walks backwards over at most [`TAIL_LINES`] lines and stops at the first
+/// structural one, so a table or code block at the end of an answer is not
+/// mistaken for the model's parting announcement.
+fn prose_tail(text: &str) -> &str {
+    const TAIL_LINES: usize = 5;
+    let lines: Vec<&str> = text.lines().collect();
+    let first_kept = lines
+        .iter()
+        .enumerate()
+        .rev()
+        .take(TAIL_LINES)
+        .take_while(|(_, line)| !is_structural_line(line))
+        .map(|(idx, _)| idx)
+        .last();
+    let Some(first_kept) = first_kept else {
+        return "";
+    };
+    let offset: usize = lines[..first_kept].iter().map(|l| l.len() + 1).sum();
+    text[offset.min(text.len())..].trim()
 }
 
 /// Detects short past-tense completion claims like `"Pushed."`, `"Deployed."`,
@@ -578,21 +617,22 @@ fn lang_completion_match(lower: &str, claims: &[String]) -> bool {
 
 /// Slice of the text before the first code fence, markdown table row,
 /// or list-item line — the "narration" portion.
+/// Whether `line` is markup rather than prose: a fence, table row, bullet, or
+/// numbered item. Shared so both ends of a turn agree on where prose stops.
+fn is_structural_line(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("```")
+        || (t.starts_with('|') && t.contains('|'))
+        || t.starts_with("- ")
+        || t.starts_with("* ")
+        || t.starts_with("• ")
+        || (t.chars().next().is_some_and(|c| c.is_ascii_digit()) && t.contains(". "))
+}
+
 fn prose_lead_in(text: &str) -> &str {
     let mut byte_offset: usize = 0;
     for (idx, line) in text.lines().enumerate() {
-        let trimmed_line = line.trim_start();
-        let is_structural = trimmed_line.starts_with("```")
-            || (trimmed_line.starts_with('|') && trimmed_line.contains('|'))
-            || trimmed_line.starts_with("- ")
-            || trimmed_line.starts_with("* ")
-            || trimmed_line.starts_with("• ")
-            || (trimmed_line
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit())
-                && trimmed_line.contains(". "));
-        if is_structural {
+        if is_structural_line(line) {
             return text[..byte_offset].trim_end();
         }
         if idx >= 6 {

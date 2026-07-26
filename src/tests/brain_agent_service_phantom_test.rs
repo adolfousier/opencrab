@@ -171,11 +171,15 @@ const STRUCTURED_PREAMBLE_PHANTOM: &str = "The user wants a full audit of the da
 
 #[test]
 fn structured_preamble_phantom_slips_leadin_but_strict_catches() {
-    // The bug: the lead-in detector (used by the zero-tool retry gate) MISSES it
-    // because the numbered list truncates prose_lead_in to a benign description.
+    // Premise changed by #783, deliberately. The lead-in detector used to MISS
+    // this: the numbered list truncated prose_lead_in to a benign description
+    // and every "Let me start" below it was invisible. #589 worked around that
+    // by ORing the strict full-text detector into ONE of the five gates, so the
+    // other four stayed blind. The window now covers both ends of a turn, so
+    // the lead-in detector catches it directly and every gate is closed.
     assert!(
-        !has_phantom_tool_intent_no_tools(STRUCTURED_PREAMBLE_PHANTOM),
-        "lead-in detector unexpectedly caught it — bug premise changed"
+        has_phantom_tool_intent_no_tools(STRUCTURED_PREAMBLE_PHANTOM),
+        "lead-in detector must now catch a buried announcement (#783)"
     );
     // The fix (#589): the strict full-text detector DOES catch it, so wiring it
     // into the retry gate closes the hole.

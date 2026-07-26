@@ -103,3 +103,60 @@ fn describing_a_version_change_is_not_a_claim() {
         "The binary is evolved by the release job, not by anything you run locally."
     ));
 }
+
+// ── Buried announcements (#783) ─────────────────────────────────────────────
+// Every rule matched the lead only: the first 7 lines, or up to the first list
+// item. That held while a turn opened with its intent, and stopped holding once
+// reasoning occupied the lead — the announcement slid past the window and only
+// deliberation was examined. Zero-tool turns then went unenforced.
+//
+// Fixtures are synthetic and carry no user identifiers.
+
+#[test]
+fn an_announcement_after_a_numbered_plan_is_still_caught() {
+    // prose_lead_in stops dead at "1. ", so everything below it used to be
+    // invisible — which is exactly where the announcement lands.
+    let text = "The request is a scoring diagnosis with five deliverables.\n\
+                Time to execute.\n\
+                Plan:\n\
+                1. Read the service file\n\
+                2. Understand the axes\n\
+                3. Query the database\n\n\
+                Let me start. First locate and read the service file.";
+    assert!(has_phantom_tool_intent_no_tools(text));
+}
+
+#[test]
+fn an_announcement_below_the_seven_line_window_is_still_caught() {
+    let text = "Line one of deliberation.\nLine two.\nLine three.\nLine four.\n\
+                Line five.\nLine six.\nLine seven.\nLine eight.\n\
+                On it. Starting the diagnosis now.";
+    assert!(has_phantom_tool_intent_no_tools(text));
+}
+
+#[test]
+fn a_lead_announcement_still_fires_as_before() {
+    // The window that already worked must keep working.
+    assert!(has_phantom_tool_intent_no_tools(
+        "Let me read the config file and see what it says about the timeout."
+    ));
+}
+
+#[test]
+fn a_closing_courtesy_is_not_an_announcement() {
+    // "let me know" is the obvious tail false positive. Every pattern is a
+    // specific verb phrase, so it must not match.
+    assert!(!has_phantom_tool_intent_no_tools(
+        "The timeout is set to 30 seconds in the config, and the retry budget \
+         is three attempts. Let me know if you want either changed."
+    ));
+}
+
+#[test]
+fn a_table_at_the_end_is_not_read_as_a_parting_announcement() {
+    let text = "Here is the comparison you asked for.\n\n\
+                | axis | before | after |\n\
+                |---|---|---|\n\
+                | score | 3 | 7 |";
+    assert!(!has_phantom_tool_intent_no_tools(text));
+}
