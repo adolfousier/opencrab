@@ -381,22 +381,31 @@ pub(crate) fn visible_when_folded(
 /// ceiling, so a long chain truncates instead of growing into a wall.
 pub(crate) const THINKING_EXCERPT_LINES: usize = 3;
 
-/// Whether a turn has working-out that folding would hide.
+/// How many rows the fold actually hides, which is what the header's step
+/// count must report.
 ///
-/// Deliberately independent of the turn's CURRENT fold state. The header is
-/// the only control that can collapse a turn again, so deriving its existence
-/// from `folded` made an expanded turn erase its own header: a turn with no
-/// tool calls gets no header from [`format_turn_header`], so the step-count
-/// fallback was all it had, and that fallback used to require `folded`. One
-/// click and the turn was open with nothing on screen to close it (#743
-/// follow-up).
-pub(crate) fn turn_has_hideable(
+/// NOT the turn's message count. That includes the user's own message and the
+/// final answer, rows the fold never touches, so a turn of question, one
+/// thinking row and an answer announced "3 steps" when exactly one row sat
+/// behind the header. Every count was inflated by two, and by more whenever a
+/// turn carried extra always-visible rows such as errors.
+pub(crate) fn turn_hideable_count(
     messages: &[DisplayMessage],
     turn: TurnRange,
     final_idx: Option<usize>,
-) -> bool {
+) -> usize {
     (turn.start..turn.end.min(messages.len()))
-        .any(|idx| !visible_when_folded(messages, idx, final_idx))
+        .filter(|&idx| !visible_when_folded(messages, idx, final_idx))
+        .count()
+}
+
+/// `1 step` / `4 steps`, for a turn with no tool calls to summarise.
+pub(crate) fn format_step_count(hidden: usize) -> String {
+    if hidden == 1 {
+        "1 step".to_string()
+    } else {
+        format!("{hidden} steps")
+    }
 }
 
 /// Whether a turn renders folded.
@@ -468,7 +477,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
             app.is_processing,
         );
 
-        let has_hideable = turn_has_hideable(&app.messages, *t, final_idx);
+        let hideable = turn_hideable_count(&app.messages, *t, final_idx);
 
         if folded {
             for idx in t.start..t.end.min(app.messages.len()) {
@@ -480,9 +489,8 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         // A header is worth showing when the turn did work, or when it has
         // working-out to fold away (so the user can get it back, and put it
         // back).
-        let hid_something = has_hideable;
         if let Some(base) = format_turn_header(summary)
-            .or_else(|| hid_something.then(|| format!("{} steps", t.end.saturating_sub(t.start))))
+            .or_else(|| (hideable > 0).then(|| format_step_count(hideable)))
         {
             let newest = newest_start == Some(t.start);
             let hint = match (folded, newest) {

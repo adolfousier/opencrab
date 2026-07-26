@@ -393,8 +393,6 @@ fn preview_survives_a_range_past_the_end() {
 // while folded, so expanding a turn with no tool calls left it open with
 // nothing on screen to close it.
 
-use crate::tui::render::chat::turn_has_hideable;
-
 #[test]
 fn a_turn_with_working_out_has_a_header_in_both_states() {
     // No tool calls, so format_turn_header gives nothing and the step-count
@@ -407,7 +405,7 @@ fn a_turn_with_working_out_has_a_header_in_both_states() {
     let turn = turn_ranges(&msgs)[0];
     let fin = final_answer_idx(&msgs, turn);
     assert!(
-        turn_has_hideable(&msgs, turn, fin),
+        (turn_hideable_count(&msgs, turn, fin) > 0),
         "the narration row is hideable, so the header must exist whether \
          the turn is folded or open"
     );
@@ -419,7 +417,7 @@ fn a_bare_question_and_answer_needs_no_header() {
     let msgs = vec![msg("user", "hi"), msg("assistant", "hello")];
     let turn = turn_ranges(&msgs)[0];
     let fin = final_answer_idx(&msgs, turn);
-    assert!(!turn_has_hideable(&msgs, turn, fin));
+    assert!(!(turn_hideable_count(&msgs, turn, fin) > 0));
 }
 
 #[test]
@@ -431,7 +429,7 @@ fn a_turn_with_tool_groups_has_working_out() {
     ];
     let turn = turn_ranges(&msgs)[0];
     let fin = final_answer_idx(&msgs, turn);
-    assert!(turn_has_hideable(&msgs, turn, fin));
+    assert!((turn_hideable_count(&msgs, turn, fin) > 0));
 }
 
 #[test]
@@ -443,7 +441,7 @@ fn a_thinking_only_row_counts_as_working_out() {
     let msgs = vec![msg("user", "hi"), thinking, msg("assistant", "answer")];
     let turn = turn_ranges(&msgs)[0];
     let fin = final_answer_idx(&msgs, turn);
-    assert!(turn_has_hideable(&msgs, turn, fin));
+    assert!((turn_hideable_count(&msgs, turn, fin) > 0));
 }
 
 // ── A running turn has no final answer yet ──────────────────────────────────
@@ -515,4 +513,72 @@ fn everything_folds_while_the_turn_runs() {
         visible_when_folded(&msgs, 0, fin),
         "the question always stays"
     );
+}
+
+// ── The step count reports what folding hides (#777) ────────────────────────
+// It used to report the turn's total message count, which includes the user's
+// own message and the final answer. A turn with one hidden row announced
+// "3 steps".
+
+use crate::tui::render::chat::{format_step_count, turn_hideable_count};
+
+#[test]
+fn the_step_count_excludes_the_question_and_the_answer() {
+    // The reported shape: question, one thinking row, answer.
+    let mut thinking = msg("assistant", "");
+    thinking.details = Some("some reasoning".to_string());
+    let msgs = vec![
+        msg("user", "why did this happen?"),
+        thinking,
+        msg("assistant", "because X"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert_eq!(
+        turn_hideable_count(&msgs, turn, fin),
+        1,
+        "3 messages, but only the thinking row is ever hidden"
+    );
+}
+
+#[test]
+fn the_step_count_counts_every_hidden_row() {
+    let msgs = vec![
+        msg("user", "do the thing"),
+        tool_group_msg(),
+        msg("assistant", "narration"),
+        tool_group_msg(),
+        msg("assistant", "the answer"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert_eq!(turn_hideable_count(&msgs, turn, fin), 3);
+}
+
+#[test]
+fn a_bare_exchange_hides_nothing() {
+    let msgs = vec![msg("user", "hi"), msg("assistant", "hello")];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert_eq!(turn_hideable_count(&msgs, turn, fin), 0);
+}
+
+#[test]
+fn errors_are_never_counted_as_hidden() {
+    // They stay on screen when folded, so counting them would re-inflate.
+    let msgs = vec![
+        msg("user", "do the thing"),
+        msg("error", "it broke"),
+        msg("assistant", "here is what happened"),
+    ];
+    let turn = turn_ranges(&msgs)[0];
+    let fin = final_answer_idx(&msgs, turn);
+    assert_eq!(turn_hideable_count(&msgs, turn, fin), 0);
+}
+
+#[test]
+fn one_hidden_row_reads_as_singular() {
+    assert_eq!(format_step_count(1), "1 step");
+    assert_eq!(format_step_count(2), "2 steps");
+    assert_eq!(format_step_count(0), "0 steps");
 }
