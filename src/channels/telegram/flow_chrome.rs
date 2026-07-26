@@ -438,21 +438,14 @@ pub(crate) fn merged_footer(parts: &FooterParts, markup: HeaderMarkup) -> String
 /// Editing/Active and resolves terminal ones (Completed archives, Cancelled
 /// deletes) — so stale chrome never outlives the plan.
 pub(crate) async fn load_plan_sections(session_id: Uuid) -> (Option<String>, Option<Vec<String>>) {
-    // A completed plan archives INSIDE the turn (ADR 0005 Decision 9), before
-    // the channel's settle refresh runs. So by the time the card is rebuilt the
-    // live plan is already gone, the card renders nothing, and the surface
-    // takes the remove path: the all-☑ final state was structurally impossible
-    // to show, even with no restart involved (#809).
-    //
-    // Falling back to the just-archived plan makes that final render possible
-    // without moving the archive, which ADR 0005 puts inside the turn
-    // deliberately so the next turn carries no plan chrome.
-    let plan = match crate::utils::plan_files::load_plan(session_id).await {
-        Some(plan) => plan,
-        None => match crate::utils::plan_files::latest_archived_plan(session_id).await {
-            Some(archived) => archived,
-            None => return (None, None),
-        },
+    // NO archive fallback here. An earlier attempt at #809 fell back to the
+    // most recent archived plan whenever no live plan existed, which is true
+    // FOREVER once a plan completes: the card resurrected a finished checklist
+    // on every refresh and every restart, contaminating chats that had long
+    // moved on. Rendering the final state has to be bounded to the completing
+    // turn, not derived from "there is no live plan".
+    let Some(plan) = crate::utils::plan_files::load_plan(session_id).await else {
+        return (None, None);
     };
     let title = {
         let t = plan.title.trim();

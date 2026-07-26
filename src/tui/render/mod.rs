@@ -136,15 +136,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 (p.tasks.len() + 2).min(12) as u16
             }
         })
-        // No live plan: keep the last completed checklist on screen until the
-        // next plan starts (#810). Same sizing, so a finished plan does not
-        // resize the chat as it settles.
-        .or_else(|| {
-            app.completed_plan
-                .as_ref()
-                .filter(|p| !p.tasks.is_empty())
-                .map(|p| (p.tasks.len() + 2).min(12) as u16)
-        })
         .unwrap_or(0);
 
     let chunks = Layout::default()

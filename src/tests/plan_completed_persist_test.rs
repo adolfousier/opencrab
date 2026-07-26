@@ -1,12 +1,15 @@
-//! The finished checklist survives the plan archiving (#810).
+//! Reading an archived plan (#810, #813).
 //!
-//! A plan archives at turn settle, so the checklist the user just watched
-//! complete vanished at the instant it completed, leaving no record of what
-//! was done. Reading the archived file back keeps the final all-complete state
-//! on screen until the next plan starts.
+//! These cover the archive READER only. The surfaces that once rendered from
+//! it are gone: deriving "show the finished checklist" from "there is no live
+//! plan" is true forever once a plan completes, so the finished card
+//! resurrected on every refresh and every restart, in the TUI as an
+//! undismissable panel and in Telegram as a completed plan pushed into chats
+//! that had moved on.
 //!
-//! Reading from disk rather than holding it in memory is what makes it survive
-//! a restart, the same way plan state itself does.
+//! The reader is kept because it must stay side-effect free: the live loader
+//! would archive or delete on terminal statuses, which would mutate history
+//! just by reading it.
 //!
 //! Fixtures are synthetic and carry no user identifiers.
 
