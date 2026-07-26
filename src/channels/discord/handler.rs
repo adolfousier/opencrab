@@ -656,6 +656,21 @@ pub(crate) async fn handle_message(
         .store_cancel_token(session_id, cancel_token.clone())
         .await;
 
+    // Sustained typing for the turn, continuing while the session has detached
+    // work (#812). Discord had no turn-long pinger at all, so an ordinary turn
+    // showed the dots briefly and a background command showed nothing: spawning
+    // one ENDS the turn. Its own token, not `cancel_token`, which only fires on
+    // abort — this must stop when the turn FINISHES, however it finishes.
+    let typing_cancel = tokio_util::sync::CancellationToken::new();
+    super::typing::spawn_typing(
+        ctx.http.clone(),
+        msg.channel_id,
+        typing_cancel.clone(),
+        agent.background_manager(),
+        session_id,
+    );
+    let _typing_guard = super::typing::TypingGuard(typing_cancel);
+
     // Track spawned intermediate sends so the follow-up-question
     // callback can await them before posting the question (issue
     // #142). Sync Mutex because the progress callback closure is
