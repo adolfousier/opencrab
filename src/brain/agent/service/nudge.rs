@@ -29,7 +29,32 @@ const NO_EXECUTION_WHILE_REASONING: &str = "Tools execute only between turns; no
      output while thinking, you imagined it. The only evidence a tool ran is its result \
      present in this conversation.";
 
-/// Correction for a turn that produced no tool calls.
+/// Correction naming the exact commands claimed but never run (#797).
+///
+/// This is the one correction that does not infer. Every other phantom check
+/// reads wording for signals, and wording is arguable; the loop knows what it
+/// executed, so "you claimed X ran and X did not run" is a matter of fact and
+/// cannot be talked around. Quoting it turns a category into a citation.
+pub fn uncalled_commands_nudge(commands: &[String]) -> String {
+    let quoted = commands
+        .iter()
+        .map(|c| format!("`{c}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let subject = if commands.len() == 1 {
+        "output from"
+    } else {
+        "output from these commands:"
+    };
+    format!(
+        "[System: You reported {subject} {quoted}. No such call ran this turn. \
+         {NO_EXECUTION_WHILE_REASONING} Call the tool now through the structured tool-call API, \
+         or retract the claim and tell the user it has not been run.{FINISHED_ESCAPE}]"
+    )
+}
+
+/// Correction for a turn that produced no tool calls, when no specific
+/// fabricated command was identified.
 ///
 /// `local_model` selects wording for Qwen/Kimi/DeepSeek-class models, which
 /// need two things the cloud variant does not. They read "STOP" as "wait for

@@ -3951,6 +3951,11 @@ impl AgentService {
                 //      dispatched because the original exemption
                 //      disabled phantom for the whole post-tool
                 //      portion of the turn.
+                // Computed once, not thrown away: the exact commands claimed
+                // but never run are the strongest evidence we hold, and the
+                // correction quotes them back rather than gesturing (#797).
+                let uncalled_commands =
+                    super::phantom::claims_uncalled_commands(&iteration_text, &turn_tool_input);
                 let phantom_eligible = !is_cli_provider
                     && (tool_calls_completed_this_turn == 0
                         || super::phantom::has_forward_intent_post_success(&iteration_text)
@@ -3970,11 +3975,7 @@ impl AgentService {
                         // sentence claiming `gh issue list` ran when no tool
                         // input contains it is false as a matter of fact
                         // (#789).
-                        || !super::phantom::claims_uncalled_commands(
-                            &iteration_text,
-                            &turn_tool_input,
-                        )
-                        .is_empty());
+                        || !uncalled_commands.is_empty());
                 if !phantom_eligible && tool_calls_completed_this_turn > 0 {
                     tracing::info!(
                         target: "phantom",
@@ -4156,9 +4157,17 @@ impl AgentService {
                     // Do NOT add the phantom text as assistant message — it
                     // pollutes context and causes the model to hallucinate
                     // new responses from the correction feedback itself.
-                    context.add_message(Message::user(super::nudge::no_tool_calls_nudge(
-                        is_local_provider,
-                    )));
+                    // Naming the fabricated command outranks the generic
+                    // wording: it cites a fact instead of a category, so the
+                    // model cannot rationalise it (#797). Falls back to the
+                    // generic correction for the other phantom triggers, which
+                    // identify no specific command.
+                    let nudge = if uncalled_commands.is_empty() {
+                        super::nudge::no_tool_calls_nudge(is_local_provider)
+                    } else {
+                        super::nudge::uncalled_commands_nudge(&uncalled_commands)
+                    };
+                    context.add_message(Message::user(nudge));
                     continue;
                 }
 

@@ -1,4 +1,4 @@
-//! The correction injected when a turn claims work it never ran (#796).
+//! The correction injected when a turn claims work it never ran (#796, #797).
 //!
 //! The old wording stated what was missing ("your last response produced ZERO
 //! tool_use blocks"), which argues against a position the model does not hold.
@@ -8,7 +8,45 @@
 //!
 //! Fixtures are synthetic and carry no user identifiers.
 
-use crate::brain::agent::service::nudge::no_tool_calls_nudge;
+use crate::brain::agent::service::nudge::{no_tool_calls_nudge, uncalled_commands_nudge};
+
+#[test]
+fn a_fabricated_command_is_quoted_back() {
+    // The whole point of #797: cite the fact, do not gesture at a category.
+    let nudge = uncalled_commands_nudge(&["gh issue list --state open".to_string()]);
+    assert!(
+        nudge.contains("`gh issue list --state open`"),
+        "the claimed command must appear verbatim: {nudge}"
+    );
+    assert!(
+        nudge.contains("No such call ran this turn"),
+        "the correction must state the fact plainly: {nudge}"
+    );
+}
+
+#[test]
+fn several_fabricated_commands_are_all_quoted() {
+    let nudge = uncalled_commands_nudge(&[
+        "git log --oneline -5".to_string(),
+        "cargo test --all-features".to_string(),
+    ]);
+    assert!(nudge.contains("`git log --oneline -5`"), "{nudge}");
+    assert!(nudge.contains("`cargo test --all-features`"), "{nudge}");
+}
+
+#[test]
+fn the_named_variant_shares_the_mechanism_and_the_escape() {
+    // It must not drift from the generic wording: same premise, same exit.
+    let nudge = uncalled_commands_nudge(&["ls -la".to_string()]);
+    assert!(
+        nudge.contains("nothing runs inside your reasoning"),
+        "{nudge}"
+    );
+    assert!(nudge.contains("imagined it"), "{nudge}");
+    assert!(nudge.contains("genuinely done"), "{nudge}");
+    assert!(nudge.starts_with("[System:"), "{nudge}");
+    assert!(nudge.ends_with(']'), "{nudge}");
+}
 
 #[test]
 fn every_variant_states_that_reasoning_cannot_execute() {
