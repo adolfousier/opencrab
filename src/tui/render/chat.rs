@@ -250,8 +250,8 @@ pub(crate) fn turn_summary(messages: &[DisplayMessage], turn: TurnRange) -> Turn
 /// noise — only turns that actually did work get one. Mirrors the shape of the
 /// Telegram flow header (status • N tool calls • duration); ctx is deliberately
 /// absent because it already lives in the footer under the input (#744).
-pub(crate) fn format_turn_header(summary: TurnSummary) -> Option<String> {
-    if summary.tool_calls == 0 {
+pub(crate) fn format_turn_header(summary: TurnSummary, steps: usize) -> Option<String> {
+    if steps == 0 && summary.tool_calls == 0 {
         return None;
     }
     let status = if summary.has_error || summary.failed > 0 {
@@ -259,12 +259,19 @@ pub(crate) fn format_turn_header(summary: TurnSummary) -> Option<String> {
     } else {
         "✓"
     };
-    let calls = if summary.tool_calls == 1 {
+    // Steps and tool calls are independent facts, so the header carries BOTH.
+    // They used to be alternatives: the tool count won when any tool ran, and
+    // the step count only appeared as its fallback. A turn that narrated 17
+    // times without calling anything therefore showed a plausible "17 steps"
+    // and never said that nothing executed, which is the one thing worth
+    // seeing at a glance.
+    let mut parts = vec![format_step_count(steps)];
+    parts.push(if summary.tool_calls == 1 {
         "1 tool call".to_string()
     } else {
+        // Zero is stated, never omitted: "0 tool calls" IS the diagnostic.
         format!("{} tool calls", summary.tool_calls)
-    };
-    let mut parts = vec![calls];
+    });
     if summary.failed > 0 {
         parts.push(format!("{} failed", summary.failed));
     }
@@ -489,9 +496,7 @@ pub(super) fn render_chat(f: &mut Frame, app: &mut App, area: Rect) {
         // A header is worth showing when the turn did work, or when it has
         // working-out to fold away (so the user can get it back, and put it
         // back).
-        if let Some(base) = format_turn_header(summary)
-            .or_else(|| (hideable > 0).then(|| format_step_count(hideable)))
-        {
+        if let Some(base) = format_turn_header(summary, hideable) {
             let newest = newest_start == Some(t.start);
             let hint = match (folded, newest) {
                 (true, true) => " (click / ctrl+o to expand)",

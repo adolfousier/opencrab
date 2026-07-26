@@ -159,7 +159,7 @@ fn a_turn_with_no_tools_gets_no_header() {
     // A plain question-and-answer turn must not gain a noise line.
     let msgs = vec![msg("user", "hi"), msg("assistant", "hello")];
     let turns = turn_ranges(&msgs);
-    assert_eq!(format_turn_header(turn_summary(&msgs, turns[0])), None);
+    assert_eq!(format_turn_header(turn_summary(&msgs, turns[0]), 0), None);
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn header_counts_tool_calls_across_the_whole_turn() {
     let s = turn_summary(&msgs, turns[0]);
     assert_eq!(s.tool_calls, 3, "counts across groups in the turn");
     assert_eq!(s.failed, 0);
-    let h = format_turn_header(s).unwrap();
+    let h = format_turn_header(s, 0).unwrap();
     assert!(h.contains("3 tool calls"), "{h}");
     assert!(h.starts_with('✓'), "{h}");
 }
@@ -185,7 +185,7 @@ fn header_marks_failure_when_a_call_failed_or_an_error_row_exists() {
     let msgs = vec![msg("user", "do it"), tool_group_with(&[true, false])];
     let s = turn_summary(&msgs, turn_ranges(&msgs)[0]);
     assert_eq!(s.failed, 1);
-    let h = format_turn_header(s).unwrap();
+    let h = format_turn_header(s, 0).unwrap();
     assert!(h.starts_with('✗'), "failed turn must be marked: {h}");
     assert!(h.contains("1 failed"), "{h}");
 
@@ -196,7 +196,7 @@ fn header_marks_failure_when_a_call_failed_or_an_error_row_exists() {
     ];
     let s2 = turn_summary(&with_error, turn_ranges(&with_error)[0]);
     assert!(s2.has_error);
-    assert!(format_turn_header(s2).unwrap().starts_with('✗'));
+    assert!(format_turn_header(s2, 0).unwrap().starts_with('✗'));
 }
 
 #[test]
@@ -207,7 +207,9 @@ fn header_singularises_one_call_and_omits_zero_duration() {
         duration_secs: 0,
         has_error: false,
     };
-    assert_eq!(format_turn_header(s).unwrap(), "✓ 1 tool call");
+    // Both counts now, always: steps and tool calls are separate facts.
+    assert_eq!(format_turn_header(s, 0).unwrap(), "✓ 0 steps · 1 tool call");
+    assert_eq!(format_turn_header(s, 4).unwrap(), "✓ 4 steps · 1 tool call");
 }
 
 #[test]
@@ -218,10 +220,10 @@ fn header_humanises_duration() {
         duration_secs: secs,
         has_error: false,
     };
-    assert!(format_turn_header(mk(45)).unwrap().ends_with("45s"));
-    assert!(format_turn_header(mk(90)).unwrap().ends_with("1m 30s"));
-    assert!(format_turn_header(mk(120)).unwrap().ends_with("2m"));
-    assert!(format_turn_header(mk(7200)).unwrap().ends_with("2h"));
+    assert!(format_turn_header(mk(45), 0).unwrap().ends_with("45s"));
+    assert!(format_turn_header(mk(90), 0).unwrap().ends_with("1m 30s"));
+    assert!(format_turn_header(mk(120), 0).unwrap().ends_with("2m"));
+    assert!(format_turn_header(mk(7200), 0).unwrap().ends_with("2h"));
 }
 
 // ── per-turn fold (#758) ────────────────────────────────────────
@@ -581,4 +583,33 @@ fn one_hidden_row_reads_as_singular() {
     assert_eq!(format_step_count(1), "1 step");
     assert_eq!(format_step_count(2), "2 steps");
     assert_eq!(format_step_count(0), "0 steps");
+}
+
+#[test]
+fn a_turn_that_ran_no_tools_says_so_instead_of_hiding_it() {
+    // The whole point of #781: "17 steps" alone let a turn that narrated
+    // seventeen times without executing anything look unremarkable.
+    let s = TurnSummary {
+        tool_calls: 0,
+        failed: 0,
+        duration_secs: 0,
+        has_error: false,
+    };
+    assert_eq!(
+        format_turn_header(s, 17).unwrap(),
+        "✓ 17 steps · 0 tool calls",
+        "zero must be stated, never omitted"
+    );
+}
+
+#[test]
+fn nothing_to_report_still_gets_no_header() {
+    // No steps and no tools is a plain exchange; a header there is noise.
+    let s = TurnSummary {
+        tool_calls: 0,
+        failed: 0,
+        duration_secs: 0,
+        has_error: false,
+    };
+    assert_eq!(format_turn_header(s, 0), None);
 }
