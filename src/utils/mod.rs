@@ -8,6 +8,7 @@ pub mod file_extract;
 pub mod git_branch;
 pub mod image;
 pub mod install;
+pub mod model_match;
 pub mod pdf_vision;
 pub mod plan_files;
 pub mod plan_mode;

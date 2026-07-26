@@ -1931,6 +1931,54 @@ pub fn provider_display_name(name: &str) -> &str {
 /// Saves a `[Model changed to ...]` message to the session history so the agent
 /// is aware of the switch.
 /// Returns an error message on failure so channels can report it to the user.
+/// Resolve a spaced argument like `xiaomi mimo v2.5 pro` into a real
+/// provider/model pair (#801).
+///
+/// Only reached when exact `provider/model` parsing failed, so it can never
+/// change how an established argument behaves.
+///
+/// Every outcome except a single unambiguous hit is an error. Loose matching
+/// that guesses between candidates is worse than none: the user gets a model
+/// they did not ask for and has no reason to check it.
+async fn resolve_loose_pair(
+    config: &crate::config::Config,
+    arg: &str,
+) -> Result<(String, String), String> {
+    use crate::utils::model_match::{ModelMatch, match_model, split_provider_and_model};
+
+    let Some((provider_ref, model_ref)) = split_provider_and_model(arg) else {
+        return Err(format!(
+            "'{arg}' names a provider but no model. Try `/models <provider> <model>`, \
+             or send /models for the picker."
+        ));
+    };
+
+    if !crate::brain::provider::factory::is_known_provider_name(config, &provider_ref) {
+        return Err(format!(
+            "Unknown provider '{provider_ref}'. Send /models for the picker."
+        ));
+    }
+
+    // The catalogue is the provider's own, so matching never invents a model
+    // the provider does not serve.
+    let provider = crate::brain::provider::create_provider_by_name(config, &provider_ref)
+        .await
+        .map_err(|e| format!("Provider '{provider_ref}' could not be loaded: {e}"))?;
+    let catalogue = provider.supported_models();
+
+    match match_model(&model_ref, &catalogue) {
+        ModelMatch::One(model) => Ok((provider_ref, model)),
+        ModelMatch::Ambiguous(hits) => Err(format!(
+            "'{model_ref}' matches {} models on {provider_ref}: {}. Name one exactly.",
+            hits.len(),
+            hits.join(", ")
+        )),
+        ModelMatch::None => Err(format!(
+            "No model on {provider_ref} matches '{model_ref}'. Send /models for the picker."
+        )),
+    }
+}
+
 /// Direct-argument model switch (#467): `/models <provider/model>` applies
 /// the pair to the CURRENT session immediately on every channel and the
 /// TUI, reusing the exact keyboard-flow switch path (per-session swap +
@@ -1947,13 +1995,19 @@ pub async fn direct_model_switch(
         Some(rest) if !rest.trim().is_empty() => (rest.trim(), true),
         _ => (arg.trim(), false),
     };
-    let (provider, model) = match crate::utils::provider_pair::parse_pair(pair_arg) {
-        Ok(pair) => pair,
-        Err(e) => return format!("⚠️ {e}"),
-    };
     let config = match crate::config::Config::load() {
         Ok(c) => c,
         Err(e) => return format!("⚠️ Failed to load config: {e}"),
+    };
+    // Exact `provider/model` first, so the established form is untouched.
+    // Only when that fails do we try the spaced form (#801), where the words
+    // are what the user remembers and the punctuation is not.
+    let (provider, model) = match crate::utils::provider_pair::parse_pair(pair_arg) {
+        Ok(pair) => pair,
+        Err(exact_err) => match resolve_loose_pair(&config, pair_arg).await {
+            Ok(pair) => pair,
+            Err(loose_err) => return format!("⚠️ {loose_err}\n({exact_err})"),
+        },
     };
     if !crate::brain::provider::factory::is_known_provider_name(&config, &provider) {
         return format!(
