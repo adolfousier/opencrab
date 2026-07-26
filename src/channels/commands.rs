@@ -446,7 +446,16 @@ pub async fn handle_command(
                 ChannelCommand::ModelSwitched(direct_model_switch(agent, session_id, arg).await)
             }
         }
-        "/new" => ChannelCommand::NewSession,
+        "/new" => {
+            // Owner-gated like every sibling. It was the one command without
+            // the check, so anyone in an allowlisted group could reset the
+            // owner's session out from under them (#782).
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::NewSession
+            }
+        }
         "/plan" => {
             if !is_owner {
                 ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())

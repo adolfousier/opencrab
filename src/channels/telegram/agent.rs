@@ -1573,7 +1573,6 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
     use teloxide::types::BotCommand;
 
     let mut commands: Vec<BotCommand> = vec![
-        BotCommand::new("start", "Get your user ID to start using the bot"),
         BotCommand::new("new", "Start a new session"),
         BotCommand::new("cd", "Change working directory"),
         BotCommand::new("sessions", "List and switch sessions"),
@@ -1658,11 +1657,101 @@ pub(crate) async fn register_bot_commands(bot: &Bot) {
     // Telegram limit: max 100 commands
     commands.truncate(100);
 
-    let count = commands.len();
-    match bot.set_my_commands(commands).await {
-        Ok(_) => tracing::info!("Telegram: registered {} bot commands", count),
-        Err(e) => tracing::warn!("Telegram: failed to register bot commands: {}", e),
+    register_scoped_menus(bot, commands).await;
+}
+
+/// Publish the command menu per audience instead of one list for everyone.
+///
+/// Every command except `/start` is owner-gated at execution, so a single
+/// global menu showed non-owners ~22 entries that all answer "🔒 Owner-only
+/// command." `/start` had the mirror problem: offered to users already on the
+/// allowlist, for whom registering again means nothing (#782).
+///
+/// - default: `/start` alone, the one command a stranger needs
+/// - owner: the full list, in DMs and in every configured group
+/// - allowed non-owner: nothing, because nothing there is theirs to run
+///
+/// Registration runs at startup, so an allowlist edited afterwards keeps the
+/// menu it was last given until the next restart.
+async fn register_scoped_menus(bot: &Bot, commands: Vec<teloxide::types::BotCommand>) {
+    use teloxide::payloads::SetMyCommandsSetters;
+    use teloxide::types::{BotCommand, BotCommandScope, ChatId, Recipient, UserId};
+
+    let Ok(cfg) = crate::config::Config::load() else {
+        tracing::warn!("Telegram: no config for scoped command menus, skipping");
+        return;
+    };
+    let tg = &cfg.channels.telegram;
+
+    let start_only = vec![BotCommand::new(
+        "start",
+        "Get your user ID to start using the bot",
+    )];
+    if let Err(e) = bot
+        .set_my_commands(start_only)
+        .scope(BotCommandScope::Default)
+        .await
+    {
+        tracing::warn!("Telegram: failed to set default command menu: {e}");
     }
+
+    let owner_id: Option<u64> = tg.allowed_users.first().and_then(|s| s.parse().ok());
+    let Some(owner_id) = owner_id else {
+        tracing::info!("Telegram: no owner configured, only the default menu is set");
+        return;
+    };
+
+    let count = commands.len();
+    // Owner in DMs.
+    if let Err(e) = bot
+        .set_my_commands(commands.clone())
+        .scope(BotCommandScope::Chat {
+            chat_id: Recipient::Id(ChatId(owner_id as i64)),
+        })
+        .await
+    {
+        tracing::warn!("Telegram: failed to set owner DM menu: {e}");
+    }
+
+    for group_id in tg.groups.keys() {
+        let Ok(chat) = group_id.parse::<i64>() else {
+            continue;
+        };
+        // Owner inside the group.
+        if let Err(e) = bot
+            .set_my_commands(commands.clone())
+            .scope(BotCommandScope::ChatMember {
+                chat_id: Recipient::Id(ChatId(chat)),
+                user_id: UserId(owner_id),
+            })
+            .await
+        {
+            tracing::warn!("Telegram: failed to set owner menu in {group_id}: {e}");
+        }
+        // Everyone else already allowed there: empty, since every command is
+        // owner-only. Leaving them the default would offer /start to someone
+        // already registered.
+        let group = &tg.groups[group_id];
+        for uid in group.allowed_users.iter().chain(tg.allowed_users.iter()) {
+            let Ok(uid) = uid.parse::<u64>() else {
+                continue;
+            };
+            if uid == owner_id {
+                continue;
+            }
+            if let Err(e) = bot
+                .set_my_commands(Vec::<BotCommand>::new())
+                .scope(BotCommandScope::ChatMember {
+                    chat_id: Recipient::Id(ChatId(chat)),
+                    user_id: UserId(uid),
+                })
+                .await
+            {
+                tracing::warn!("Telegram: failed to clear menu for {uid} in {group_id}: {e}");
+            }
+        }
+    }
+    tracing::info!("Telegram: registered {count} owner commands, /start for everyone else");
 }
 
 /// Sanitize a command name for Telegram: lowercase, underscores only.

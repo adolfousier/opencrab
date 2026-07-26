@@ -39,3 +39,27 @@ async fn cd_with_path_is_also_denied_for_non_owner() {
         "non-owner /cd <path> must be denied too"
     );
 }
+
+// ── /new is owner-gated like every sibling (#782) ───────────────────────────
+// It was the one command without the check, so anyone in an allowlisted group
+// could reset the owner's session out from under them.
+
+#[tokio::test]
+async fn new_is_denied_for_non_owner() {
+    let (agent, svc, sid) = create_test_service_full().await;
+    let cmd = handle_command("/new", sid, &agent, &svc, false, None).await;
+    match cmd {
+        ChannelCommand::UnknownCommand(msg) => assert!(
+            msg.to_lowercase().contains("owner"),
+            "denial should mention owner-only, got: {msg}"
+        ),
+        _ => panic!("non-owner /new must be denied — it resets the owner's session"),
+    }
+}
+
+#[tokio::test]
+async fn new_is_allowed_for_owner() {
+    let (agent, svc, sid) = create_test_service_full().await;
+    let cmd = handle_command("/new", sid, &agent, &svc, true, None).await;
+    assert!(matches!(cmd, ChannelCommand::NewSession));
+}
