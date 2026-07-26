@@ -594,6 +594,17 @@ impl Config {
                     ),
                 }
             }
+            // Migration 5: inject commented plan-mode routing defaults (#793).
+            // Re-read: the subagent injection above may have just rewritten the
+            // file, and writing a stale copy would drop it.
+            let content = fs::read_to_string(path).unwrap_or_default();
+            if !content.contains("plan_provider")
+                && !content.contains("execute_provider")
+                && let Ok(injected) = inject_plan_mode_defaults(&content)
+                && let Err(e) = fs::write(path, &injected)
+            {
+                tracing::warn!("Config migration: failed to inject plan-mode defaults: {e}");
+            }
             // No structural migration needed — do NOT re-serialize with
             // toml::to_string_pretty as that destroys comments and ordering.
             return;
@@ -642,6 +653,17 @@ impl Config {
             && let Err(e) = fs::write(path, &injected)
         {
             tracing::warn!("Config migration: failed to inject subagent defaults: {e}");
+        }
+
+        // Migration 5: inject plan-mode routing defaults after structural
+        // migration. Re-read for the same reason as above.
+        let updated_content = fs::read_to_string(path).unwrap_or_default();
+        if !updated_content.contains("plan_provider")
+            && !updated_content.contains("execute_provider")
+            && let Ok(injected) = inject_plan_mode_defaults(&updated_content)
+            && let Err(e) = fs::write(path, &injected)
+        {
+            tracing::warn!("Config migration: failed to inject plan-mode defaults: {e}");
         }
     }
 
@@ -1321,7 +1343,24 @@ impl Config {
 /// Pure text-level operation — preserves all existing formatting and comments.
 fn inject_subagent_defaults(content: &str) -> Result<String> {
     let comment_block = "\n# Sub-agent routing — override the parent session's provider for\n# spawned agents, team members, and background workers.\n# subagent_provider = \"anthropic\"    # e.g. openrouter, minimax, custom:ollama\n# subagent_model = \"claude-sonnet-4-6\"  # only used when subagent_provider is set\n";
+    inject_into_agent_section(content, comment_block)
+}
 
+/// Commented plan-mode routing defaults, so the keys are discoverable in an
+/// existing config rather than only in the README (#793).
+///
+/// All four stay commented: uncommenting is opt-in, and an untouched config
+/// must keep routing every turn to the session's own provider.
+fn inject_plan_mode_defaults(content: &str) -> Result<String> {
+    let comment_block = "\n# Plan-mode routing: run /plan and /execute on their own provider+model.\n# Drafting applies between /plan and approval; executing applies from\n# approval until the plan is 100% complete, then the session returns to\n# its own pair. Unset (the default) changes nothing.\n# plan_provider = \"anthropic\"          # omit to keep the session's provider\n# plan_model = \"claude-opus-4-6\"       # alone, swaps the model only\n# execute_provider = \"openrouter\"\n# execute_model = \"qwen3.8-max\"\n";
+    inject_into_agent_section(content, comment_block)
+}
+
+/// Append a comment block to the end of the `[agent]` section.
+///
+/// Text-level insertion because comments cannot survive a `toml::Value`
+/// round-trip, which is why this is not done with the structural editor.
+fn inject_into_agent_section(content: &str, comment_block: &str) -> Result<String> {
     // Find [agent] section boundary
     let marker = "[agent]";
     let agent_pos = content

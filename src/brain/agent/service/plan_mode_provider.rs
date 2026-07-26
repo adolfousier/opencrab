@@ -30,11 +30,23 @@ pub struct ModeOverride {
 /// every state, and it must mean no computation, no swap, and behaviour
 /// byte-identical to having no feature at all.
 pub fn override_for(state: PlanModeState, agent: &AgentConfig) -> Option<ModeOverride> {
-    // Drafting: from `/plan` until the plan is approved.
     let (provider, model) = if state.is_editing() {
+        // Drafting: from `/plan` until the plan is approved.
         (agent.plan_provider.as_ref(), agent.plan_model.as_ref())
+    } else if state == PlanModeState::Active {
+        // Executing: from approval until the plan is 100% complete. The end is
+        // the plan lifecycle's own, not a signal invented here: at every turn
+        // settle the tool loop ticks the trailing delivery task (#737) and
+        // archives a plan whose tasks are all resolved, which returns the
+        // session to NoPlan and so to no override. A plan left incomplete,
+        // failed or blocked never satisfies that, and deliberately keeps the
+        // execute pair rather than reverting mid-work.
+        (
+            agent.execute_provider.as_ref(),
+            agent.execute_model.as_ref(),
+        )
     } else {
-        // `Active` (executing) is handled in #793; `NoPlan` never overrides.
+        // NoPlan: ordinary work is never routed.
         return None;
     };
 

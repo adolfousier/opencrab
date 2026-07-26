@@ -1,7 +1,8 @@
-//! Plan-state provider routing (#792).
+//! Plan-state provider routing (#792, #793).
 //!
-//! Planning and executing reward different models, so `/plan` can route to its
-//! own provider/model. The mapping keys off plan STATE, not the command, which
+//! Planning and executing reward different models, so `/plan` and `/execute`
+//! each route to their own provider/model. The mapping keys off plan STATE,
+//! not the command, which
 //! is what lets the TUI approval, the channel command and the agent approving
 //! its own plan in prose all route identically.
 //!
@@ -98,10 +99,89 @@ fn a_model_alone_keeps_the_current_provider() {
 
 #[test]
 fn plan_keys_do_not_leak_into_execution() {
-    // Executing is #793's half. Until then the plan pair must not silently
-    // apply to it, or approving a plan would keep drafting's model.
+    // Routing only the drafting half must leave execution on the session's own
+    // model; otherwise approving a plan would silently keep drafting's model.
     let agent = planning(Some("anthropic"), Some("claude-opus-4-6"));
     assert_eq!(override_for(PlanModeState::Active, &agent), None);
+}
+
+// ── Executing (#793) ────────────────────────────────────────────────────────
+
+fn executing(provider: Option<&str>, model: Option<&str>) -> AgentConfig {
+    AgentConfig {
+        execute_provider: provider.map(str::to_string),
+        execute_model: model.map(str::to_string),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn executing_uses_the_execute_pair() {
+    let agent = executing(Some("openrouter"), Some("qwen3.8-max"));
+    assert_eq!(
+        override_for(PlanModeState::Active, &agent),
+        Some(ModeOverride {
+            provider: Some("openrouter".to_string()),
+            model: Some("qwen3.8-max".to_string()),
+        })
+    );
+}
+
+#[test]
+fn execute_keys_do_not_leak_into_drafting() {
+    // The mirror of plan_keys_do_not_leak_into_execution: configuring only the
+    // execution pair must leave planning on the session's own model.
+    let agent = executing(Some("openrouter"), Some("qwen3.8-max"));
+    for state in [
+        PlanModeState::PreInitEditing,
+        PlanModeState::PostInitEditing,
+    ] {
+        assert_eq!(
+            override_for(state, &agent),
+            None,
+            "{state:?} must not use the execute pair"
+        );
+    }
+}
+
+#[test]
+fn drafting_and_executing_route_independently() {
+    // The whole point: two different pairs across one plan's life.
+    let agent = AgentConfig {
+        plan_provider: Some("anthropic".to_string()),
+        plan_model: Some("claude-opus-4-6".to_string()),
+        execute_provider: Some("openrouter".to_string()),
+        execute_model: Some("qwen3.8-max".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        override_for(PlanModeState::PostInitEditing, &agent)
+            .and_then(|o| o.provider)
+            .as_deref(),
+        Some("anthropic")
+    );
+    assert_eq!(
+        override_for(PlanModeState::Active, &agent)
+            .and_then(|o| o.provider)
+            .as_deref(),
+        Some("openrouter")
+    );
+    // And the session returns to its own pair once the plan archives.
+    assert_eq!(override_for(PlanModeState::NoPlan, &agent), None);
+}
+
+#[test]
+fn only_one_half_configured_leaves_the_other_alone() {
+    // Routing just execution is a legitimate setup and must not drag planning
+    // along with it, nor vice versa.
+    let plan_only = planning(Some("anthropic"), None);
+    assert_eq!(override_for(PlanModeState::Active, &plan_only), None);
+
+    let exec_only = executing(Some("openrouter"), None);
+    assert_eq!(
+        override_for(PlanModeState::PostInitEditing, &exec_only),
+        None
+    );
 }
 
 // ── Restore bookkeeping ─────────────────────────────────────────────────────
