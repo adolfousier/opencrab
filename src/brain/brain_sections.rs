@@ -40,9 +40,19 @@ impl Section {
         }
     }
 
-    /// Lowercased heading + body, for matching.
-    fn haystack(&self) -> String {
-        format!("{} {}", self.heading, self.body).to_lowercase()
+    /// The section's distinct words, lowercased, for matching.
+    ///
+    /// Words rather than raw substrings: `contains("the")` is true of "them",
+    /// so substring matching let a short common term score against a section
+    /// that never mentions it, and two such accidents were enough to clear the
+    /// relevance bar.
+    fn words(&self) -> std::collections::HashSet<String> {
+        format!("{} {}", self.heading, self.body)
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(str::to_string)
+            .collect()
     }
 }
 
@@ -135,6 +145,23 @@ impl Matches {
 /// covering the whole question outranks one that repeats a single common word.
 /// Ties keep file order, which keeps results stable between identical calls.
 pub fn find_sections(content: &str, query: &str) -> Matches {
+    find_sections_with(content, query, MAX_SECTIONS, MAX_CHARS, 1)
+}
+
+/// [`find_sections`] with explicit bounds.
+///
+/// Automatic recall needs far tighter limits than a read the model chose to
+/// make: it is paid on every turn, and it competes with the actual task for
+/// attention. `min_hits` raises the bar for what counts as a match at all,
+/// which is what keeps an incidental common word from injecting a section
+/// nobody asked about.
+pub fn find_sections_with(
+    content: &str,
+    query: &str,
+    max_sections: usize,
+    max_chars: usize,
+    min_hits: usize,
+) -> Matches {
     let terms: Vec<String> = query
         .split_whitespace()
         .map(|t| {
@@ -155,9 +182,9 @@ pub fn find_sections(content: &str, query: &str) -> Matches {
         .into_iter()
         .enumerate()
         .filter_map(|(idx, section)| {
-            let hay = section.haystack();
+            let hay = section.words();
             let hits = terms.iter().filter(|t| hay.contains(t.as_str())).count();
-            (hits > 0).then_some((hits, idx, section))
+            (hits >= min_hits.max(1)).then_some((hits, idx, section))
         })
         .collect();
 
@@ -168,11 +195,11 @@ pub fn find_sections(content: &str, query: &str) -> Matches {
     let mut sections = Vec::new();
     let mut chars = 0usize;
     for (_, _, section) in scored {
-        if sections.len() >= MAX_SECTIONS {
+        if sections.len() >= max_sections {
             break;
         }
         let len = section.render().chars().count();
-        if chars + len > MAX_CHARS && !sections.is_empty() {
+        if chars + len > max_chars && !sections.is_empty() {
             break;
         }
         chars += len;
