@@ -298,20 +298,41 @@ impl TelegramAgent {
                                     let agent_clone = agent.clone();
                                     let bot_clone = bot.clone();
                                     tokio::spawn(async move {
-                                        // Echo the chosen suggestion so the chat
-                                        // shows what was picked.
+                                        // Echo what was picked. Telegram gives no
+                                        // way to post as the USER from an inline
+                                        // keyboard, so this is the only record of
+                                        // the choice — quoted, so it reads as the
+                                        // user's pick rather than the bot's own
+                                        // statement (#787).
                                         let echo = crate::channels::telegram::handler::md_to_html(
-                                            &format!("\u{25b6}\u{fe0f} {text}"),
+                                            &format!("> \u{25b6}\u{fe0f} {text}"),
                                         );
                                         let _ = crate::channels::telegram::send::message_in_thread(
                                             &bot_clone, chat_id, thread_id, echo,
                                         )
                                         .parse_mode(teloxide::types::ParseMode::Html)
                                         .await;
-                                        match agent_clone.send_message(sid, text, None).await {
-                                            Ok(resp) => {
+                                        // A real turn WITH tools. This used to
+                                        // call send_message, the plain
+                                        // single-completion path that sends no
+                                        // tool definitions at all, so a tapped
+                                        // "Run the breakdown first" produced a
+                                        // turn that physically could not run
+                                        // anything (#787, same defect #492 fixed
+                                        // for headless run).
+                                        let chat_target = chat_id.0.to_string();
+                                        match crate::channels::bg_resume::run_resume_turn(
+                                            agent_clone,
+                                            sid,
+                                            text,
+                                            "telegram",
+                                            &chat_target,
+                                        )
+                                        .await
+                                        {
+                                            Some(content) => {
                                                 let clean = crate::utils::sanitize::strip_llm_artifacts(
-                                                    &resp.content,
+                                                    &content,
                                                 );
                                                 let html =
                                                     crate::channels::telegram::handler::md_to_html(
@@ -324,9 +345,10 @@ impl TelegramAgent {
                                                     .parse_mode(teloxide::types::ParseMode::Html)
                                                     .await;
                                             }
-                                            Err(e) => {
-                                                tracing::error!(
-                                                    "Telegram follow-up tap turn failed: {e}"
+                                            None => {
+                                                tracing::warn!(
+                                                    "Telegram follow-up tap: turn produced \
+                                                     nothing to deliver for session {sid}"
                                                 );
                                             }
                                         }
