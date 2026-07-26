@@ -4,6 +4,7 @@
 //! dynamic system prompt assembly, user-defined slash commands, and self-update.
 
 pub mod agent;
+pub mod brain_sections;
 pub mod commands;
 pub mod dedup_scan;
 pub mod directives;

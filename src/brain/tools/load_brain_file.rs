@@ -25,6 +25,10 @@ impl Tool for LoadBrainFileTool {
          Works with built-in files (USER.md, MEMORY.md, AGENTS.md, TOOLS.md, SECURITY.md) \
          and any custom .md files you have created in your workspace. \
          Pass name=\"all\" to load all .md files at once. \
+         Pass an optional `query` to get back ONLY the sections that match, instead of the whole \
+         file — use it when you want to check what the rules say about something specific \
+         (e.g. name=\"MEMORY.md\", query=\"telegram owner gate\"). Cheap, so prefer it over \
+         loading a large file in full. \
          To edit or update brain files, use the `write_opencrabs_file` tool."
     }
 
@@ -35,6 +39,10 @@ impl Tool for LoadBrainFileTool {
                 "name": {
                     "type": "string",
                     "description": "Brain file to load, e.g. \"MEMORY.md\", \"USER.md\", \"AGENTS.md\", \"TOOLS.md\", \"SECURITY.md\". Use \"all\" to load all contextual files."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional. Return only the sections of the file matching this text, instead of the whole file. Whole sections are returned, so a rule is never cut in half."
                 }
             },
             "required": ["name"]
@@ -59,6 +67,13 @@ impl Tool for LoadBrainFileTool {
         if name.is_empty() {
             return Ok(ToolResult::error("name parameter is required".to_string()));
         }
+
+        // Optional: return only matching sections rather than the whole file.
+        let query = input
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
 
         let home = crate::config::opencrabs_home();
 
@@ -227,6 +242,27 @@ impl Tool for LoadBrainFileTool {
                     );
                 }
                 let trimmed = filtered.trim();
+
+                // A query returns only the matching sections (#800). Runs over
+                // the profile file AND its project overlay, since that is what
+                // loading the file in full would have given.
+                if !query.is_empty() {
+                    let mut combined = trimmed.to_string();
+                    if let Some(ref ov) = overlay {
+                        if !combined.is_empty() {
+                            combined.push_str("\n\n");
+                        }
+                        combined.push_str(ov.trim_end());
+                    }
+                    let matches = crate::brain::brain_sections::find_sections(&combined, query);
+                    tracing::info!(
+                        "load_brain_file({canonical}) query={query:?}: {} section(s) returned, {} omitted",
+                        matches.sections.len(),
+                        matches.omitted
+                    );
+                    return Ok(ToolResult::success(matches.render(canonical, query)));
+                }
+
                 let mut out = if trimmed.is_empty() {
                     String::new()
                 } else {

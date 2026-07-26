@@ -56,6 +56,7 @@ pub mod brain_provider_json_repair_test;
 pub mod brain_provider_qwen_test;
 pub mod brain_provider_trait_test;
 pub mod brain_provider_types_test;
+pub mod brain_sections_test;
 pub mod brain_self_update_test;
 pub mod brain_templates_test;
 pub mod brain_tokenizer_test;
