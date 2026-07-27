@@ -63,6 +63,20 @@ pub(crate) async fn deliver_final_response(
             let text_only = crate::utils::sanitize::strip_llm_artifacts(&text_only);
             let text_only = redact_secrets(&text_only);
 
+            // Drop an echoed plan title (#837). The reminder shows the model
+            // the title every turn and it opens by repeating it, directly
+            // under the card that already renders it.
+            //
+            // Covers Editing as well as Active: #621 folded title and prose
+            // into the card in BOTH states, so limiting this to Active left
+            // the duplicate visible for every plan still being drafted.
+            let text_only = match crate::utils::plan_files::load_plan(session_id).await {
+                Some(plan) if !plan.title.trim().is_empty() => {
+                    strip_echoed_plan_title(&text_only, &plan.title)
+                }
+                _ => text_only,
+            };
+
             // Extract <<react:emoji>> directive — the LLM outputs this to
             // signal a reaction-only response (no text bubble). If the
             // response is ONLY a reaction, the emoji is sent as a Telegram
@@ -732,4 +746,54 @@ pub(crate) async fn drain_remaining_display(
     // Flush any remaining tools into the open group (merges the final batch
     // into the running collapsible block instead of opening a new message).
     append_tool_group(bot, chat, thread_id, streaming, &tool_buffer).await;
+}
+
+/// Strip an echoed plan title from the start of the agent's response (#837).
+///
+/// The `[ACTIVE PLAN REMINDER]` shows the model `📋 Plan: "{title}"` every
+/// turn, and the model opens its reply by repeating it. The plan card already
+/// carries the title, so the text repeats what is rendered directly above it.
+///
+/// Pure, taking the title rather than loading it, so the matching is testable
+/// without a session on disk — the first version compared an exact string and
+/// could only be exercised end to end.
+pub(crate) fn strip_echoed_plan_title(text: &str, plan_title: &str) -> String {
+    let title = normalize_title_line(plan_title);
+    if title.is_empty() {
+        return text.to_string();
+    }
+    let trimmed = text.trim_start();
+    let Some(first_line) = trimmed.lines().next() else {
+        return text.to_string();
+    };
+    if normalize_title_line(first_line) != title {
+        return text.to_string();
+    }
+    // Drop the line and the blank line that usually follows a heading.
+    let rest = trimmed[first_line.len()..].trim_start_matches('\n');
+    rest.to_string()
+}
+
+/// Reduce a line to the bare title for comparison.
+///
+/// Handles the shapes the model actually produces, which are the shapes the
+/// reminder itself shows it: markdown headings and emphasis, the `📋` the
+/// reminder and the card both use, a `Plan:` label, and surrounding quotes.
+/// The earlier version trimmed only `#`, `*` and `~`, so an echo of the
+/// reminder's own formatting — the most likely echo of all — never matched.
+fn normalize_title_line(line: &str) -> String {
+    let mut s = line.trim();
+    // Leading blockquote / list / heading markers.
+    s = s.trim_start_matches(['#', '>', '-', '*', '_', '~', ' ']);
+    // Any leading non-alphanumeric run: emoji such as 📋, bullets, symbols.
+    s = s.trim_start_matches(|c: char| !c.is_alphanumeric() && c != '"');
+    // The reminder labels it `Plan: "…"`; the model copies the label too.
+    for label in ["Plan:", "plan:", "PLAN:"] {
+        if let Some(rest) = s.strip_prefix(label) {
+            s = rest.trim_start();
+            break;
+        }
+    }
+    s = s.trim_matches(['"', '\'', '*', '~', '_', ' ']);
+    s.trim().to_string()
 }
