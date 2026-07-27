@@ -649,10 +649,13 @@ pub(crate) async fn refresh_sections(
     session_id: Uuid,
 ) -> bool {
     use crate::utils::plan_files::{PlanModeState, plan_mode_state};
-    // Plan title + checklist now live on the persistent plan card, not in the
-    // per-turn flow block (#580) — the card reads them itself via
-    // load_plan_sections, so they are not populated on FlowSections here.
-    let prose = load_plan_prose(session_id).await;
+    // Plan title, prose, and checklist now live on the persistent plan card,
+    // not in the per-turn flow block (#580, #621). The card reads them itself
+    // via load_plan_sections / load_plan_prose, so they are not populated on
+    // FlowSections here. The card is the single surface carrying title, prose,
+    // checklist, and keyboard, so the flow block stays clean. Prose was still
+    // loaded here after #621 folded it into the card, which duplicated the
+    // design prose across two messages (Alexey, OC Dev 2026-07-27).
     let mode = plan_mode_state(session_id).await;
     let editing = matches!(
         mode,
@@ -704,9 +707,11 @@ pub(crate) async fn refresh_sections(
         // plan_kb is still tracked here so the plan card can read it, but the
         // keyboard is attached to the CARD, not the flow block (#580).
         plan_kb,
-        // Title + checklist moved to the persistent plan card (#580).
+        // Title, prose, and checklist moved to the persistent plan card
+        // (#580, #621). The card owns the design prose entirely, so the flow
+        // block never renders it (rendering it here duplicated the prose).
         plan_title: None,
-        prose,
+        prose: None,
         checklist: None,
         goal,
         ctx: s.sections.ctx.clone(),
