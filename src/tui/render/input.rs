@@ -530,7 +530,7 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
                 format!(" ⏳ {text} "),
                 Style::default().fg(Color::Rgb(230, 180, 80)),
             ))
-            .alignment(Alignment::Left)
+            .alignment(Alignment::Right)
         });
 
     let mut block = Block::default()
@@ -538,12 +538,13 @@ pub(super) fn render_input(f: &mut Frame, app: &App, area: Rect) {
         .title_bottom(context_title)
         .border_style(border_style);
 
-    if let Some(title) = bg_task_title {
-        block = block.title(title);
-    }
-
+    // Attachments rightmost, background task to their left (#836).
     if !app.attachments.is_empty() {
         block = block.title(attach_title);
+    }
+
+    if let Some(title) = bg_task_title {
+        block = block.title(title);
     }
 
     // Compute a vertical scroll so the cursor row is always inside the
