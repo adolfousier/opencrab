@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.76] - 2026-07-27
+
+53 commits since v0.3.75. 96 files changed, +6937 / -278 lines.
+
+### ✨ Features
+
+- `7dc9f376` **Telegram /usage cache breakdown**: per-model cache breakdown in /usage (#815)
+- `1eda8e1e` **RSI /evolve proposal**: surface an available release as an /evolve proposal (#821)
+- `d1521ce2` **RSI config-example tracking**: track the config examples so pricing fixes reach users (#819)
+- `78ddf975` **Brain template-sync merge**: additive key-level TOML merge for template sync (#819)
+- `785b6bed` **TUI finished checklist**: keep the finished checklist on screen after a plan completes (#810)
+- `0dc08c2e` **Models natural naming**: accept a model named the way people say it (#801)
+- `8683d7bd` **Brain proactive memory**: surface relevant memory without waiting to be asked (#799)
+- `70f6a14d` **Brain query loading**: let load_brain_file return only the sections that match (#800)
+- `c852daae` **/execute provider routing**: route /execute onto its own provider and model (#793)
+- `d37f1308` **/plan provider routing**: route /plan onto its own provider and model (#792)
+- `34558b5d` **Telegram /new gating**: gate /new to the owner and scope the menu to its audience
+- `d82629c7` **Brain clarify-before-build**: instruct the agent to clarify before implementing
+
+### 🔧 Fixes
+
+- `59b40556` **Memory UTC timestamps**: store timestamps in UTC with the zone stated (#826)
+- `3632f741` **Phantom file-delivery detection**: detect a claimed file delivery when nothing sent one (#825)
+- `58a28b81` **Telegram /start closed-group**: /start recognises an existing member of a closed group (#776)
+- `9ad09c13` **RSI finding hash**: hash the finding, not the events that illustrate it (#804)
+- `3ecc8c2a` **Telegram substance check**: stop defining substance as "contains a pipe table" (#824)
+- `c3e238ae` **Phantom null-effect calls**: null-effect tool calls no longer buy immunity (#825)
+- `a1cf081c` **Brain no-announce rule**: restore the rule against announcing a call instead of making one
+- `700fcc49` **RSI content-gated sync**: gate template sync on content, not on the version number (#820)
+- `c6a817dd` **Telegram plan-card serialisation**: serialise plan-card writes so concurrent refreshes stop duplicating (#822)
+- `439ed829` **Usage Opus 5 pricing**: price Claude Opus 5 on /usage (#817)
+- `1ff869de` **Usage qwen3.8 pricing**: price qwen3.8-max-preview on /usage (#816)
+- `8c93bc71` **Telegram plan-card flood**: stop the plan card flooding itself into duplicates (#814)
+- `3b99c835` **Telegram plan-card persistence**: persist plan-card tracking so a restart stops duplicating it (#809 defect 1)
+- `dc072018` **Discord typing indicator**: add the sustained typing indicator it never had (#812)
+- `f26ac0ee` **Channels typing persistence**: keep the typing indicator alive through background tasks (#812)
+- `5d1a4e9f` **Plan completed-card render**: let the completed card render its final state (#809 defect 2)
+- `3a390bed` **RSI capability-gap routing**: route capability gaps to a proposal instead of discarding them (#811)
+- `b314020f` **RSI dead-cycle guard**: stop cycles that can never execute a tool (#805)
+- `f0bfe3b4` **Usage cost attribution**: attribute cost to the provider that served it (#807)
+- `a9898159` **TUI duplicate-submit guard**: drop a re-submitted message the running turn is already answering (#798)
+- `83704dd9` **Brain unrun-command quote**: quote the command a turn never ran back at it (#797)
+- `04ebc6e6` **Brain phantom-belief correction**: correct the belief behind a phantom turn, not the format (#796)
+- `424e4f98` **Brain reasoning-cannot-tools**: state that reasoning cannot execute tools (#795)
+- `822d2092` **TUI command labelling**: label commands by what they run, not the directory (#790, #791)
+- `14bb031f` **Phantom command verification**: verify claimed commands against what the turn actually ran
+- `a56f6bed` **Repetition fenced-code exclusion**: exclude fenced code from streaming loop detection
+- `65255c9e` **Telegram follow-up tools turn**: run a real tools turn when a follow-up is tapped
+- `8b29df55` **TUI harness-status handling**: stop counting harness status as work, and stop burying it
+- `a57c1241` **Phantom evidence check**: check quoted evidence against what the tools returned
+- `9eea2a86` **Phantom investigation claim**: count claimed investigation as a completion claim
+- `198c6999` **Phantom both-ends check**: examine both ends of a turn, not just the lead
+- `a2c285f6` **TUI steps-and-tools display**: show steps AND tool calls, drop the either/or fallback
+- `7f645896` **Phantom self-update claim**: count self-update claims as completion claims
+- `6fa56e77` **Brain preamble iteration fix**: stop the preamble telling the agent not to iterate, and tighten it
+- `b3c09301` **TUI fold row count**: count only the rows the fold hides in the step header
+
+### 📖 Documentation
+
+- `0b44e266` docs(readme): document the spaced /models form (#803)
+- `09ec1783` docs(readme): document plan/execute provider and model routing (#794)
+
+### 🧹 Miscellaneous
+
+- `b49419b3` chore(provider): log the reasoning_content decision (#830 step 1)
+- `cead5014` test(rsi): assert what the sync tracks and how each entry routes (#823)
+- `7df4d617` revert(plan): stop resurrecting completed plans everywhere (#813, #809)
+- `7ecadacf` refactor(brain): cut the domain sections to reference size
+
+### 📊 Stats
+
+- 53 commits since v0.3.75
+- 96 files changed, +6937 / -278 lines
+- 552 tests (549 passed, 0 failed, 3 ignored)
+
 ## [0.3.75] - 2026-07-25
 
 62 commits since v0.3.74. 113 files changed, +6757 / -1188 lines.
@@ -7255,3 +7330,4 @@ fixes.
 [0.3.73]: https://github.com/adolfousier/opencrabs/compare/v0.3.72...v0.3.73
 [0.3.74]: https://github.com/adolfousier/opencrabs/compare/v0.3.73...v0.3.74
 [0.3.75]: https://github.com/adolfousier/opencrabs/compare/v0.3.74...v0.3.75
+[0.3.76]: https://github.com/adolfousier/opencrabs/compare/v0.3.75...v0.3.76
