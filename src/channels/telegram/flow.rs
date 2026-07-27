@@ -1154,6 +1154,25 @@ pub(crate) async fn open_flow(
     thread_id: Option<teloxide::types::ThreadId>,
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
 ) {
+    // Already open: edit in place, never post a second block.
+    //
+    // This function's contract is "send the open processing-log message for
+    // the FIRST time", and nothing enforced it. append_tool_group guarded at
+    // its call site, but the chrome tick calls open_flow directly on every
+    // activity update, so a long turn posted a new block per tick. Once plan
+    // title, prose and checklist moved to the card, the only content left was
+    // the elapsed time, so the chat filled with timer-only bubbles seconds
+    // apart. Guarding here covers every caller instead of relying on each one
+    // to remember.
+    let already_open = {
+        let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+        s.open_group_msg_id.is_some()
+    };
+    if already_open {
+        refresh_flow(bot, chat, streaming).await;
+        return;
+    }
+
     // Rich-first WITH collapse parity (#420 path A): the flow renders as a
     // <details><summary> collapsible through the rich API's HTML input mode
     // (native RichBlockDetails, 32K limit — no block splitting). Any rich
