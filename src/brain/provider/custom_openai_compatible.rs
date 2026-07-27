@@ -2583,6 +2583,9 @@ impl OpenAIProvider {
 
     /// Convert our generic request to OpenAI-specific format
     pub(crate) fn to_openai_request(&self, request: LLMRequest) -> OpenAIRequest {
+        // Captured before `request.messages` is consumed below, so the
+        // reasoning-echo telemetry (#830) can name the model.
+        let request_model_for_log = request.model.clone();
         let mut messages = Vec::new();
 
         // Debug: log system brain
@@ -2743,6 +2746,22 @@ impl OpenAIProvider {
                 } else {
                     None
                 };
+
+                // #830: the `thinking` DB column has not been written since
+                // 2026-05-14 (reasoning now lives as `<!-- reasoning -->`
+                // markers inside `content`), so `thinking_parts` is expected
+                // to be empty on every resumed turn. On a model with
+                // preserve_thinking that is a contract violation, and this
+                // path emitted no telemetry at all, leaving the claim
+                // unmeasurable. One line, no behaviour change.
+                tracing::debug!(
+                    target: "reasoning_echo",
+                    model = %request_model_for_log,
+                    thinking_blocks = thinking_parts.len(),
+                    reasoning_chars = reasoning_content.as_deref().map(str::len).unwrap_or(0),
+                    echoed = reasoning_content.is_some(),
+                    "assistant tool_call message: reasoning_content decision"
+                );
 
                 messages.push(OpenAIMessage {
                     role: role.to_string(),
