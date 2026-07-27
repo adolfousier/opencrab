@@ -156,7 +156,12 @@ pub(crate) async fn refresh_plan_card(
         prose.as_deref(),
         goal.as_ref(),
     ) else {
-        remove_plan_card(bot, chat, state, session_id).await;
+        // Lock-free variant: this function already holds the per-session card
+        // lock, and it is not reentrant. Calling the public remove_plan_card
+        // here deadlocked the handler, and since this branch fires whenever a
+        // session has no card content — i.e. most sessions — it blocked
+        // delivery in every chat.
+        remove_plan_card_locked(bot, chat, state, session_id).await;
         return;
     };
     let kb = plan_kb.keyboard();
@@ -255,10 +260,26 @@ pub(crate) async fn remove_plan_card(
 ) {
     // Same lock as refresh (#822). Removal clears tracking, so a refresh
     // interleaving here is guaranteed to see no card and post one, which is
-    // the widest form of the race. Acquired and released independently, so the
-    // settle path's remove-then-refresh cannot deadlock against itself.
+    // the widest form of the race.
+    //
+    // Callers that ALREADY hold the lock must use remove_plan_card_locked
+    // instead: the lock is not reentrant, so re-acquiring it deadlocks.
     let card_lock = state.plan_card_lock(session_id).await;
     let _guard = card_lock.lock().await;
+    remove_plan_card_locked(bot, chat, state, session_id).await;
+}
+
+/// Removal body, for callers already holding the per-session card lock.
+///
+/// Split out because `refresh_plan_card` takes the lock and then needs to
+/// remove on its no-content path. Calling the lock-taking version there
+/// deadlocked the Telegram handler outright.
+async fn remove_plan_card_locked(
+    bot: &Bot,
+    chat: ChatId,
+    state: &Arc<TelegramState>,
+    session_id: Uuid,
+) {
     if let Some(mid) = state.take_plan_card(session_id).await
         && let Err(e) = bot.delete_message(chat, mid).await
     {
