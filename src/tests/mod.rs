@@ -202,6 +202,7 @@ pub mod phantom_issue_action_test;
 pub mod phantom_null_effect_test;
 pub mod phantom_unbacked_evidence_test;
 pub mod phantom_uncalled_command_test;
+pub mod phantom_unsent_file_test;
 pub mod phantom_work_announcement_test;
 pub mod pricing_fallback_test;
 pub mod profile_pid_lock_test;

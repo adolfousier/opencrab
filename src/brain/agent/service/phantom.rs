@@ -1110,3 +1110,61 @@ fn extract_command_field(input_json: &str) -> Option<String> {
         .and_then(|v| v.as_str())
         .map(str::to_string)
 }
+
+/// Tool-input fragments that mean a file was actually handed to a surface.
+///
+/// Checked as substrings of the raw input JSON so a new channel's send does
+/// not silently fall outside the check.
+///
+/// Deliberately underscore-style action names and parameter keys only. A first
+/// attempt included bare words like `attachment`, and the very turn this
+/// detector exists for defeated it: its `tool_search` query was "send telegram
+/// document file attachment", so SEARCHING for how to send a file counted as
+/// having sent one. Prose never contains `send_document` or `document_url`.
+const FILE_SEND_MARKERS: &[&str] = &[
+    "send_document",
+    "send_file",
+    "upload_file",
+    "document_url",
+    "file_url",
+    "media_url",
+];
+
+/// Claimed a file was delivered when nothing sent one (#825).
+///
+/// The image equivalent (#747) checks for an `<<IMG:>>` marker in the text,
+/// because `generate_image` delivers inline. A document goes out through a
+/// tool call instead, so the evidence lives in what the turn INVOKED, not in
+/// what it wrote. Document sending arrived after those media checks, which is
+/// why this shape was uncovered.
+///
+/// Observed: a turn ran `write_file`, four no-ops, and `tool_search`, never
+/// invoked any send, and opened its reply with "File sent above." The file
+/// existed on disk; nothing had carried it to the chat.
+///
+/// Multilingual by construction — phrases come from every `phantom_lang`
+/// TOML scanned as a union, never via `detect_language`, so an accented
+/// language cannot disable it.
+pub fn claims_unsent_file(text: &str, tool_inputs: &[String]) -> bool {
+    // Something really did ship a file: nothing to flag.
+    if tool_inputs
+        .iter()
+        .any(|input| FILE_SEND_MARKERS.iter().any(|m| input.contains(m)))
+    {
+        return false;
+    }
+    let lower = text.to_lowercase();
+    let claims_delivery = phantom_lang::all_langs()
+        .iter()
+        .flat_map(|l| l.file_delivery_phrases.iter())
+        .any(|p| lower.contains(p.as_str()));
+    if !claims_delivery {
+        return false;
+    }
+    // The phrase must actually be about a file. "sent above" alone is said of
+    // ordinary messages all the time.
+    phantom_lang::all_langs()
+        .iter()
+        .flat_map(|l| l.file_context_words.iter())
+        .any(|w| lower.contains(w.as_str()))
+}

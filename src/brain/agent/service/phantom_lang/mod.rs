@@ -62,6 +62,18 @@ pub struct LangConfig {
     /// "background", "brightness", ...). Paired with `media_delivery_phrases`.
     #[serde(default)]
     pub media_context_words: Vec<String>,
+    /// Claims that a FILE or DOCUMENT was sent ("file sent", "attached the
+    /// file", "sent the report"). Paired with `file_context_words` to catch a
+    /// delivery claim in a turn that never invoked a document-sending tool
+    /// (#825). Document sending is newer than image generation, so the media
+    /// checks (#747) did not cover it.
+    #[serde(default)]
+    pub file_delivery_phrases: Vec<String>,
+    /// Words marking the claimed deliverable as a file rather than a message
+    /// ("file", "document", "report", ".md"). Paired with
+    /// `file_delivery_phrases`.
+    #[serde(default)]
+    pub file_context_words: Vec<String>,
 }
 
 /// Embedded TOML content (compile-time validated).

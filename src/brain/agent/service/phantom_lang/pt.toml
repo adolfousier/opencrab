@@ -301,3 +301,37 @@ executed_framings = [
     "o resultado",
     "confirmei com",
 ]
+
+# Claims that a FILE or DOCUMENT was sent (#825). Paired with
+# `file_context_words`: a claim of a delivered file in a turn that never
+# invoked a document-sending tool is fabricating. Document sending is a
+# newer capability than image generation, so the media checks (#747) did
+# not cover it.
+file_delivery_phrases = [
+    "ficheiro enviado",
+    "arquivo enviado",
+    "enviei o ficheiro",
+    "enviei o arquivo",
+    "anexei",
+    "já anexei",
+    "anexo o ficheiro",
+    "carreguei o ficheiro",
+    "documento enviado",
+    "enviei o documento",
+    "enviei o relatório",
+    "relatório entregue",
+    "o ficheiro está acima",
+    "ver o anexo",
+]
+
+# Words marking the claimed deliverable as a file rather than a message.
+file_context_words = [
+    "ficheiro",
+    "arquivo",
+    "documento",
+    "relatório",
+    ".md",
+    "anexo",
+    "pdf",
+    "csv",
+]

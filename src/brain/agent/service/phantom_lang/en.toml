@@ -706,3 +706,43 @@ executed_framings = [
     "i executed",
     "confirmed with",
 ]
+
+# Claims that a FILE or DOCUMENT was sent (#825). Paired with
+# `file_context_words`: a claim of a delivered file in a turn that never
+# invoked a document-sending tool is fabricating. Document sending is a
+# newer capability than image generation, so the media checks (#747) did
+# not cover it.
+file_delivery_phrases = [
+    "file sent",
+    "sent the file",
+    "sent it above",
+    "sent above",
+    "file is attached",
+    "attached the file",
+    "i attached",
+    "i've attached",
+    "uploaded the file",
+    "i uploaded",
+    "i've uploaded",
+    "document sent",
+    "sent the document",
+    "sent you the file",
+    "sent the report",
+    "report is delivered",
+    "delivered the report",
+    "the file is above",
+    "see the attachment",
+    "attachment above",
+]
+
+# Words marking the claimed deliverable as a file rather than a message.
+file_context_words = [
+    "file",
+    "document",
+    "report",
+    ".md",
+    "markdown",
+    "attachment",
+    "pdf",
+    "csv",
+]

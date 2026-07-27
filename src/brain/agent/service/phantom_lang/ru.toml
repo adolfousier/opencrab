@@ -311,3 +311,35 @@ executed_framings = [
     "результат выше",
     "подтвердил",
 ]
+
+# Claims that a FILE or DOCUMENT was sent (#825). Paired with
+# `file_context_words`: a claim of a delivered file in a turn that never
+# invoked a document-sending tool is fabricating. Document sending is a
+# newer capability than image generation, so the media checks (#747) did
+# not cover it.
+file_delivery_phrases = [
+    "файл отправлен",
+    "отправил файл",
+    "я отправил файл",
+    "файл прикреплён",
+    "прикрепил",
+    "я прикрепил",
+    "загрузил файл",
+    "документ отправлен",
+    "отправил документ",
+    "отчёт отправлен",
+    "отчёт доставлен",
+    "файл выше",
+    "смотрите вложение",
+]
+
+# Words marking the claimed deliverable as a file rather than a message.
+file_context_words = [
+    "файл",
+    "документ",
+    "отчёт",
+    ".md",
+    "вложение",
+    "pdf",
+    "csv",
+]

@@ -248,3 +248,35 @@ executed_framings = [
     "hasilnya",
     "dikonfirmasi dengan",
 ]
+
+# Claims that a FILE or DOCUMENT was sent (#825). Paired with
+# `file_context_words`: a claim of a delivered file in a turn that never
+# invoked a document-sending tool is fabricating. Document sending is a
+# newer capability than image generation, so the media checks (#747) did
+# not cover it.
+file_delivery_phrases = [
+    "file terkirim",
+    "sudah kirim file",
+    "saya kirim file",
+    "file dilampirkan",
+    "saya lampirkan",
+    "sudah dilampirkan",
+    "mengunggah file",
+    "dokumen terkirim",
+    "saya kirim dokumen",
+    "laporan terkirim",
+    "laporan sudah dikirim",
+    "filenya di atas",
+    "lihat lampiran",
+]
+
+# Words marking the claimed deliverable as a file rather than a message.
+file_context_words = [
+    "file",
+    "dokumen",
+    "laporan",
+    ".md",
+    "lampiran",
+    "pdf",
+    "csv",
+]

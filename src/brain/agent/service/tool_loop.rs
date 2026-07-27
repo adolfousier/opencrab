@@ -3980,6 +3980,14 @@ impl AgentService {
                         // succeeded when what vouches for a claim is whether
                         // one did anything.
                         || super::phantom::all_calls_were_null_effect(&turn_tool_input)
+                        // Claimed a file was delivered when nothing sent one
+                        // (#825). Catches the case null-effect misses: the
+                        // turn DID do real work (write_file) and still
+                        // asserted "File sent above" with no send invoked.
+                        || super::phantom::claims_unsent_file(
+                            &iteration_text,
+                            &turn_tool_input,
+                        )
                         || super::phantom::has_forward_intent_post_success(&iteration_text)
                         // A successful call vouches for the work IT did, not for
                         // every claim in the turn. One trivial `echo` used to buy
