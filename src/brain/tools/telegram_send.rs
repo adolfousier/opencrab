@@ -381,8 +381,7 @@ impl Tool for TelegramSendTool {
                 // content. The rich API's HTML input mode renders tags natively
                 // (tables, bold, code); the markdown input mode showed literal
                 // tags as text when the model emitted HTML (#834).
-                let html =
-                    crate::channels::telegram::handler::markdown_to_telegram_html(&text);
+                let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
                 let sent_rich = crate::channels::telegram::rich::should_send_native_rich(&text)
                     && match crate::channels::telegram::rich::api::send_rich_html_id(
                         bot.token(),

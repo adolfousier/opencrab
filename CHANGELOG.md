@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.77] - 2026-07-27
+
+4 commits since v0.3.76. 4 files changed, +68 / -26 lines.
+
+### 🔧 Fixes
+
+- `51d3f6af` **Plan-card lock deadlock**: stop the plan-card lock deadlocking every chat (#831)
+- `31544ba4` **Plan prose duplication**: stop plan prose duplicating across card and flow block (#824)
+- `e1d24cf8` **Telegram send HTML conversion**: apply HTML conversion to all telegram_send actions (#835)
+- `b35c2710` **TUI bg-task position**: move bg-task feedback from left to right on input border (#836)
+
+### 📊 Stats
+
+- 4 commits since v0.3.76
+- 4 files changed, +68 / -26 lines
+- 5649 tests (5624 passed, 0 failed, 25 ignored)
+
 ## [0.3.76] - 2026-07-27
 
 53 commits since v0.3.75. 96 files changed, +6937 / -278 lines.
