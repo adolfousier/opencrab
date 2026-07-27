@@ -1431,13 +1431,27 @@ mod hash_opportunities {
     }
 
     #[test]
-    fn reordered_top_5_changes_hash() {
-        // Even a single recent event that shifts the top-5 slice must
-        // re-enable the full emission path. The mitigation the user
-        // asked for: don't collapse "same count, different events".
+    fn reordered_examples_no_longer_change_the_hash() {
+        // CONTRACT REVERSED (#804), deliberately.
+        //
+        // This previously asserted that a shifted top-5 slice must re-enable
+        // emission, so "same count, different events" would never collapse.
+        // That sensitivity is what stopped the gate ever firing: the example
+        // lines carry a session id and timestamp from whatever the latest
+        // events happen to be, so the hash differed on essentially every
+        // cycle even when the finding was word-for-word identical.
+        //
+        // The cost was measured before changing it: "Same data. Stopping."
+        // appeared 46 times in nine days, each a spawned agent and a full
+        // paid turn, reporting that nothing had changed.
+        //
+        // The finding is what matters, not which events illustrate it. A
+        // changed count, a new entry, or a reordering of the FINDINGS
+        // themselves all still change the hash — asserted in
+        // rsi_opportunity_hash_test.
         let a = vec!["recent:\n  - session=aaa\n  - session=bbb".to_string()];
         let b = vec!["recent:\n  - session=bbb\n  - session=aaa".to_string()];
-        assert_ne!(hash_opportunities(&a), hash_opportunities(&b));
+        assert_eq!(hash_opportunities(&a), hash_opportunities(&b));
     }
 
     #[test]

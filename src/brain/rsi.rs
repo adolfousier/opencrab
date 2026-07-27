@@ -47,9 +47,35 @@ fn ensure_rsi_dirs() -> std::io::Result<PathBuf> {
 /// descriptions from collapsing into the same hash as one merged one.
 pub(crate) fn hash_opportunities(opps: &[String]) -> String {
     use sha2::{Digest, Sha256};
+    let substance: Vec<String> = opps.iter().map(|o| opportunity_substance(o)).collect();
     let mut hasher = Sha256::new();
-    hasher.update(opps.join("\n---\n").as_bytes());
+    hasher.update(substance.join("\n---\n").as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Strip the per-event illustration from an opportunity, keeping the finding
+/// (#804).
+///
+/// The hash was computed over the full description INCLUDING the
+/// `- session=…, time=…` example lines. Those carry a fresh session id and
+/// timestamp from whatever the most recent events happened to be, so the hash
+/// differed on essentially every cycle even when the finding was word-for-word
+/// the same. The dedup gate could therefore never fire, and the agent was
+/// spawned hourly to look at identical data and say so: "Same data. Stopping."
+/// appeared 46 times in nine days, each costing a full paid turn.
+///
+/// The gate was written to be sensitive so nothing new was missed, and that
+/// sensitivity is exactly what stopped it ever suppressing a repeat.
+///
+/// What remains is the finding itself: the dimension, the counts, the failing
+/// tool names, the headers. A genuinely new entry, a changed count or a
+/// reordered top-5 all still change the hash.
+fn opportunity_substance(description: &str) -> String {
+    description
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("- session="))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Write the startup digest to `~/.opencrabs/rsi/digest.md`.
