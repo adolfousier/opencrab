@@ -376,12 +376,19 @@ impl Tool for TelegramSendTool {
                 // Track sent (message_id, content) so the message is persisted
                 // for reply-recovery below.
                 let mut sent: Vec<(i32, String)> = Vec::new();
+                // Convert markdown to Telegram HTML upfront so that both the
+                // rich path and the plain fallback send properly formatted
+                // content. The rich API's HTML input mode renders tags natively
+                // (tables, bold, code); the markdown input mode showed literal
+                // tags as text when the model emitted HTML (#834).
+                let html =
+                    crate::channels::telegram::handler::markdown_to_telegram_html(&text);
                 let sent_rich = crate::channels::telegram::rich::should_send_native_rich(&text)
-                    && match crate::channels::telegram::rich::api::send_rich_markdown_id(
+                    && match crate::channels::telegram::rich::api::send_rich_html_id(
                         bot.token(),
                         chat_id,
                         thread_id,
-                        &text,
+                        &html,
                     )
                     .await
                     {
@@ -395,13 +402,10 @@ impl Tool for TelegramSendTool {
                         }
                     };
                 if !sent_rich {
-                    for chunk in crate::channels::telegram::handler::split_message(&text, 4096) {
+                    // html already computed above; split the converted
+                    // output so chunks stay within Telegram's 4096 limit.
+                    for chunk in crate::channels::telegram::handler::split_message(&html, 4096) {
                         let chunk_str = chunk.to_string();
-                        // Convert markdown to Telegram HTML for consistent formatting
-                        // with auto-delivered agent responses (fixes #315).
-                        let html = crate::channels::telegram::handler::markdown_to_telegram_html(
-                            &chunk_str,
-                        );
                         // Retry Telegram 429 (RetryAfter): a rate-limited send
                         // must be delayed and retried, not dropped as a failure
                         // to the agent (#524).
@@ -410,7 +414,7 @@ impl Tool for TelegramSendTool {
                                 &bot,
                                 ChatId(chat_id),
                                 thread_id,
-                                html.clone(),
+                                chunk_str.clone(),
                             )
                             .parse_mode(teloxide::types::ParseMode::Html)
                         })
@@ -440,14 +444,19 @@ impl Tool for TelegramSendTool {
                 let thread_id =
                     resolve_thread_id(&input, chat_id, context.session_id, &self.telegram_state)
                         .await;
+                // Convert markdown to Telegram HTML, same as the "send"
+                // action, so formatting (bold, code, tables) renders instead
+                // of arriving as raw literal tags (#834).
+                let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
                 let reply_text = text.clone();
                 match send_retrying_rate_limit("telegram_send reply", || {
                     crate::channels::telegram::send::message_in_thread(
                         &bot,
                         ChatId(chat_id),
                         thread_id,
-                        text.clone(),
+                        html.clone(),
                     )
+                    .parse_mode(teloxide::types::ParseMode::Html)
                     .reply_parameters(ReplyParameters::new(MessageId(message_id as i32)))
                 })
                 .await
@@ -469,12 +478,16 @@ impl Tool for TelegramSendTool {
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
                 let message_id = pget!(get_id(&input, "message_id"));
+                // Convert markdown to Telegram HTML, same as the "send"
+                // action, so formatting renders correctly (#834).
+                let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
                 match send_retrying_rate_limit("telegram_send edit", || {
                     bot.edit_message_text(
                         ChatId(chat_id),
                         MessageId(message_id as i32),
-                        text.clone(),
+                        html.clone(),
                     )
+                    .parse_mode(teloxide::types::ParseMode::Html)
                 })
                 .await
                 {
@@ -742,8 +755,10 @@ impl Tool for TelegramSendTool {
                         }
                     };
                 let keyboard = InlineKeyboardMarkup::new(rows);
+                let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
                 match send_retrying_rate_limit("telegram_send send_buttons", || {
-                    bot.send_message(ChatId(chat_id), text.clone())
+                    bot.send_message(ChatId(chat_id), html.clone())
+                        .parse_mode(teloxide::types::ParseMode::Html)
                         .reply_markup(keyboard.clone())
                 })
                 .await
