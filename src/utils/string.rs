@@ -245,3 +245,20 @@ pub fn thinking_excerpt_capped(thinking: &str, max_chars: usize) -> Option<Strin
 /// three, so this stays a fixed budget rather than the scrolling window #742
 /// replaced (#768).
 pub const THINKING_EXCERPT_CHARS: usize = 300;
+
+/// An unambiguous UTC timestamp for anything persisted or logged (#826).
+///
+/// The codebase wrote two shapes that look identical and are not:
+/// `Local::now().format("%Y-%m-%dT%H:%M:%S")` and
+/// `Utc::now().format("%Y-%m-%dT%H:%M:%SZ")`. The first carries no zone, so a
+/// local time was stored beside UTC epochs everywhere else and read back as
+/// though it were UTC — an hour of silent skew, in whichever direction the
+/// host happens to sit.
+///
+/// One clock, stated once, with the `Z` present so a reader never has to
+/// guess. Correlating a stored time with a log line or a chat timestamp is
+/// exactly when the guess gets made, and getting it wrong pulls the wrong
+/// records while looking authoritative.
+pub fn utc_timestamp() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}

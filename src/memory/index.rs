@@ -88,7 +88,7 @@ fn index_file_sync(
         return Ok(false);
     }
 
-    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now = crate::utils::string::utc_timestamp();
     let title = Store::extract_title(body);
 
     // Pre-clear any existing FTS entry so the ON CONFLICT UPDATE branch in
@@ -253,7 +253,7 @@ pub async fn reindex(store: &'static Mutex<Store>) -> Result<usize, String> {
             for (hash, path, body) in &needing {
                 if body.len() > 32_000 {
                     tracing::warn!("Skipping embedding for '{path}' — body too large");
-                    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+                    let now = crate::utils::string::utc_timestamp();
                     if let Ok(s) = store_ref.lock() {
                         let _ = s.insert_embedding(hash, 0, 0, &[], "skipped-too-large", &now);
                     }
@@ -262,7 +262,7 @@ pub async fn reindex(store: &'static Mutex<Store>) -> Result<usize, String> {
 
                 match embed_via_api(body).await {
                     Ok(embedding) => {
-                        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+                        let now = crate::utils::string::utc_timestamp();
                         let model_name = embedding_api_config()
                             .and_then(|c| c.model)
                             .unwrap_or_else(|| "api-embedding".to_string());

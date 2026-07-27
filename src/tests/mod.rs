@@ -490,6 +490,7 @@ pub mod usage_cosmetic_alias_test;
 pub mod usage_grouping_test;
 pub mod usage_ledger_test;
 pub mod user_correction_metadata_test;
+pub mod utc_timestamp_test;
 pub mod voice_onboarding_test;
 pub mod voice_stt_dispatch_test;
 pub mod wait_agent_resolver_test;

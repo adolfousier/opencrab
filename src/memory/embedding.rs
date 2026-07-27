@@ -132,7 +132,7 @@ pub fn embed_content(store: &Mutex<Store>, body: &str) -> Result<(), String> {
     };
 
     // Store lock → insert → release
-    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now = crate::utils::string::utc_timestamp();
     store
         .lock()
         .map_err(|e| format!("Store lock poisoned: {e}"))?
@@ -176,7 +176,7 @@ pub(super) fn backfill_embeddings(store: &Mutex<Store>) {
     // Process one document at a time, releasing the engine lock between each
     // so other callers (session_search, embed_content) aren't blocked for the
     // entire batch duration.
-    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now = crate::utils::string::utc_timestamp();
     let mut stored = 0usize;
 
     for (i, (hash, path, body)) in needing.iter().enumerate() {
@@ -331,7 +331,7 @@ pub async fn embed_content_api(store: &'static Mutex<Store>, body: &str) -> Resu
     let model_name = super::embedding_api_config()
         .and_then(|c| c.model)
         .unwrap_or_else(|| "api-embedding".to_string());
-    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now = crate::utils::string::utc_timestamp();
 
     store
         .lock()
