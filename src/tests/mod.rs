@@ -212,6 +212,7 @@ pub mod queued_message_join_test;
 pub mod reasoning_split_test;
 pub mod repetition_fenced_code_test;
 pub mod repetition_test;
+pub mod rsi_disposition_test;
 pub mod rsi_notification_redaction_test;
 pub mod rsi_opportunity_hash_test;
 pub mod rsi_prompt_propose_test;

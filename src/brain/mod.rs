@@ -19,6 +19,7 @@ pub mod prompt_builder;
 pub mod provider;
 pub mod rsi;
 pub mod rsi_command_patterns;
+pub mod rsi_disposition;
 pub mod rsi_git_history;
 pub mod rsi_proposals;
 pub mod rsi_pruned;

@@ -541,6 +541,14 @@ the tool entirely. Always include the search-then-call pattern.";
 ///
 /// Creates a lightweight AgentService with only RSI tools, sends the improvement
 /// prompt, and returns the agent's summary of what it did.
+/// Pending proposals across every kind, for the before/after cycle audit.
+fn pending_proposal_count() -> usize {
+    let store = crate::brain::rsi_proposals::ProposalsStore::new();
+    store.list_tool_proposals().len()
+        + store.list_command_proposals().len()
+        + store.list_skill_proposals().len()
+}
+
 async fn run_rsi_agent_cycle(
     pool: crate::db::Pool,
     config: &Config,
@@ -678,20 +686,41 @@ async fn run_rsi_agent_cycle(
     let mut prompt = "Run an autonomous self-improvement cycle.\n\n".to_string();
     if !opportunities.is_empty() {
         prompt.push_str("Detected opportunities:\n");
-        for opp in opportunities {
-            prompt.push_str(&format!("- {opp}\n"));
+        for (i, opp) in opportunities.iter().enumerate() {
+            prompt.push_str(&format!("{}. {opp}\n", i + 1));
         }
         prompt.push('\n');
     }
     prompt.push_str(
-        "Analyze the feedback data, identify the highest-impact issues, and apply improvements.",
+        "Analyze the feedback data, identify the highest-impact issues, and apply improvements.\n",
     );
+    // Capability gaps last, so the closing instruction is not "apply
+    // improvements" — which reads as `self_improve` and was answered that way
+    // on every cycle while the proposal path went unused (#842).
+    prompt.push_str(&crate::brain::rsi_disposition::required_actions_block(
+        opportunities,
+    ));
 
     let model = config.agent.self_improvement_model.clone();
+
+    // Counted before and after so a cycle that ignores its capability gaps is
+    // visible in the log instead of closing as a success (#842).
+    let gaps = crate::brain::rsi_disposition::capability_count(opportunities);
+    let proposals_before = pending_proposal_count();
 
     let response = agent
         .send_message_with_tools(session.id, prompt, model)
         .await?;
+
+    let filed = pending_proposal_count().saturating_sub(proposals_before);
+    if gaps > 0 && filed == 0 {
+        tracing::warn!(
+            "RSI cycle answered {gaps} capability-gap opportunity/opportunities with zero \
+             rsi_propose calls: the gaps will be re-detected next cycle (#842)"
+        );
+    } else if gaps > 0 {
+        tracing::info!("RSI cycle: {gaps} capability gap(s), {filed} proposal(s) filed");
+    }
 
     tracing::info!(
         "RSI agent cycle complete: {} tokens used, ${:.4} cost",
