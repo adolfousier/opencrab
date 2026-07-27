@@ -153,71 +153,7 @@ pub(crate) async fn try_send_intermediate_rich(
 /// which the model may emit before a tool call (e.g. text + `plan complete` in
 /// one step) — is surfaced.
 pub(crate) fn is_deliverable_rich_report(text: &str) -> bool {
-    is_substantial_report(text, super::rich::contains_table(text))
-}
-
-/// Minimum length before anything is considered a report rather than
-/// narration. "Let me check the database and report back" must keep folding.
-const REPORT_MIN_CHARS: usize = 200;
-
-/// Length past which prose is substance on its own, with no structural
-/// markers required. A user asked for a reconstruction and received nothing
-/// because the answer happened not to contain a pipe table.
-const LONG_PROSE_CHARS: usize = 800;
-
-/// Is this a report the user needs to see, rather than progress chatter?
-///
-/// Split out and made pure because the original rule was
-/// `contains_table && len >= 200`, which defined substance as "has a markdown
-/// table". An 8.6KB, 226-line reconstruction written as prose and code spans
-/// was therefore classified as narration and folded into the collapsed
-/// processing log, where the user never saw it — while the model, having
-/// emitted it, reported the work as delivered (#824).
-///
-/// Tables still qualify immediately. So do other structural signals, and so
-/// does sheer length: what matters is whether the model produced an answer,
-/// not which markup it happened to reach for.
-pub(crate) fn is_substantial_report(text: &str, has_table: bool) -> bool {
-    let trimmed = text.trim();
-    let len = trimmed.chars().count();
-    if len < REPORT_MIN_CHARS {
-        return false;
-    }
-    if has_table || has_report_structure(trimmed) {
-        return true;
-    }
-    len >= LONG_PROSE_CHARS
-}
-
-/// Markers that distinguish an authored answer from a passing remark.
-fn has_report_structure(text: &str) -> bool {
-    let mut list_items = 0usize;
-    for line in text.lines() {
-        let l = line.trim_start();
-        // A heading is deliberate structure.
-        if l.starts_with("# ") || l.starts_with("## ") || l.starts_with("### ") {
-            return true;
-        }
-        // A fenced block carries output or code worth reading.
-        if l.starts_with("```") {
-            return true;
-        }
-        if l.starts_with("- ") || l.starts_with("* ") {
-            list_items += 1;
-        } else if l.len() > 2 {
-            // `1.` / `2)` style, without pulling in ordinary sentences that
-            // merely begin with a digit.
-            let mut chars = l.chars();
-            if chars.next().is_some_and(|c| c.is_ascii_digit())
-                && chars.next().is_some_and(|c| c == '.' || c == ')')
-                && chars.next() == Some(' ')
-            {
-                list_items += 1;
-            }
-        }
-    }
-    // One or two bullets is a sentence with dashes; several is a list.
-    list_items >= 3
+    super::rich::contains_table(text) && text.trim().chars().count() >= 200
 }
 
 /// Deliver `text` as its own message (rich-first, HTML fallback) and record it
