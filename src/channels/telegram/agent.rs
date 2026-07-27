@@ -8,7 +8,7 @@ use crate::brain::agent::AgentService;
 use crate::config::Config;
 use crate::db::ChannelMessageRepository;
 use crate::services::{ServiceContext, SessionService};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use teloxide::prelude::*;
@@ -1753,12 +1753,16 @@ async fn register_scoped_menus(bot: &Bot, commands: Vec<teloxide::types::BotComm
         // Everyone else already allowed there: empty, since every command is
         // owner-only. Leaving them the default would offer /start to someone
         // already registered.
+        // The global admins are allowed in every group, so they belong here
+        // alongside the group's own roster. Deduplicated because an admin
+        // listed in both lists was otherwise called twice per group.
         let group = &tg.groups[group_id];
+        let mut cleared: HashSet<u64> = HashSet::new();
         for uid in group.allowed_users.iter().chain(tg.allowed_users.iter()) {
             let Ok(uid) = uid.parse::<u64>() else {
                 continue;
             };
-            if uid == owner_id {
+            if uid == owner_id || !cleared.insert(uid) {
                 continue;
             }
             if let Err(e) = bot
@@ -1769,7 +1773,14 @@ async fn register_scoped_menus(bot: &Bot, commands: Vec<teloxide::types::BotComm
                 })
                 .await
             {
-                tracing::warn!("Telegram: failed to clear menu for {uid} in {group_id}: {e}");
+                // An admin who is not in THIS group is the common case, not a
+                // fault: there is no roster to consult and no cheaper probe,
+                // so the failed call is the membership test (#839).
+                if super::menu_scope::means_not_a_member(&e.to_string()) {
+                    tracing::debug!("Telegram: {uid} is not in {group_id}, no menu to clear");
+                } else {
+                    tracing::warn!("Telegram: failed to clear menu for {uid} in {group_id}: {e}");
+                }
             }
         }
     }
