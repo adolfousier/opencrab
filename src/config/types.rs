@@ -425,6 +425,16 @@ impl TelegramConfig {
     }
 
     /// Whether any list in `list` matches `uid` (ignoring a leading '+').
+    /// Is `user_id` already on `chat_id`'s roster?
+    ///
+    /// Lets the caller skip a registration attempt that would reload config
+    /// only to discover the user is already listed (#840).
+    pub fn group_has_user(&self, chat_id: &str, user_id: &str) -> bool {
+        self.groups
+            .get(chat_id)
+            .is_some_and(|g| Self::id_in(&g.allowed_users, user_id.trim_start_matches('+')))
+    }
+
     fn id_in(list: &[String], uid: &str) -> bool {
         list.iter().any(|u| u.trim_start_matches('+') == uid)
     }

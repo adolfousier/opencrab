@@ -775,23 +775,48 @@ pub(crate) async fn handle_message(
     // knows to ask the owner for access.
     let mut acl_passed = tg_cfg.user_allowed(&user_id.to_string(), &chat_id_str, is_dm);
 
-    // Lazy registration: non-allowed users in cowork groups get auto-registered
-    // to the group ACL on first message. This catches existing members who were
-    // in the group before the bot joined (new_chat_members doesn't fire for them).
-    if !acl_passed && !is_dm && super::cowork::is_cowork_group(msg.chat.id.0, &telegram_state).await
+    // Lazy registration: users in cowork groups are recorded on first message.
+    // This catches existing members who were in the group before the bot joined
+    // (new_chat_members doesn't fire for them).
+    //
+    // Deliberately NOT gated on `!acl_passed` (#840). An open group short-circuits
+    // `user_allowed` on the open flag, so acl_passed was already true and this
+    // branch never ran: members could talk indefinitely while the roster stayed
+    // empty. Two consequences — no record of who used the bot, and turning `open`
+    // off later silently locked out every existing member, since none of them had
+    // ever been written to the list.
+    //
+    // Registration records someone already permitted; it never grants permission.
+    // A user the ACL rejects in a non-open group is still rejected below.
+    // Bots excluded, matching the join path: a bot in the room must not gain
+    // access by talking.
+    // Skipped once the user is already on the roster: this runs on every
+    // message, and auto_register_to_group reloads config from disk to answer a
+    // question the in-memory config already answers.
+    if !is_dm
+        && !user.is_bot
+        && !tg_cfg.group_has_user(&chat_id_str, &user_id.to_string())
+        && super::cowork::is_cowork_group(msg.chat.id.0, &telegram_state).await
     {
         match super::cowork::auto_register_to_group(user_id, msg.chat.id.0) {
-            Ok(_) => {
+            // Ok(false) means already on the roster. Distinguished from a real
+            // registration because this now runs on EVERY message: matching
+            // Ok(_) logged "Lazy-registered" for known users on every line they
+            // sent, which is how a useful audit record becomes noise.
+            Ok(true) => {
                 tracing::info!(
-                    "[cowork] Lazy-registered user {} ({}) to group {} on first message",
+                    "[cowork] Registered user {} ({}) to group {} roster",
                     user_id,
                     user.username.as_deref().unwrap_or("unknown"),
                     msg.chat.id.0,
                 );
                 acl_passed = true;
             }
+            Ok(false) => {
+                acl_passed = true;
+            }
             Err(e) => {
-                tracing::warn!("[cowork] Failed to lazy-register user {}: {}", user_id, e);
+                tracing::warn!("[cowork] Failed to register user {}: {}", user_id, e);
             }
         }
     }
