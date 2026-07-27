@@ -43,6 +43,19 @@ pub(crate) async fn flush_intermediates(
                     continue;
                 }
             }
+            // Same gate the streaming path applies (#838). This function sent
+            // everything queued, so "an intermediate needs a table to earn its
+            // own message" held on one delivery path and not the other. A turn
+            // routed through resume or follow-up dumped its working-out
+            // verbatim, and the reply then arrived twice: once as the
+            // intermediate, once as the final answer saying the same thing in
+            // a different shape.
+            //
+            // Deliberately the shared function rather than a copy of its rule,
+            // so the two paths cannot drift again.
+            if !is_deliverable_rich_report(&text) {
+                continue;
+            }
             if let Some(id) = try_send_intermediate_rich(bot, chat, thread_id, &text).await {
                 let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 s.sent_intermediates.push(text.clone());
