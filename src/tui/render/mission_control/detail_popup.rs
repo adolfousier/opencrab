@@ -170,7 +170,10 @@ fn activity_detail(app: &App) -> (String, ratatui::style::Color, Vec<Line<'stati
 }
 
 fn render_activity(entry: &McActivity) -> Vec<Line<'static>> {
-    let when = entry.timestamp.format("%Y-%m-%d %H:%M UTC").to_string();
+    let when = entry.timestamp.map_or_else(
+        || "undated".to_string(),
+        |ts| ts.format("%Y-%m-%d %H:%M UTC").to_string(),
+    );
     let mut lines: Vec<Line<'static>> = vec![
         blank(),
         kv("When", &when),

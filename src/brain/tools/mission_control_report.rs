@@ -240,7 +240,10 @@ pub(crate) fn render_markdown(
                     format!(
                         "{} {}",
                         activity_icon(&entry.level),
-                        entry.timestamp.format("%Y-%m-%d")
+                        entry.timestamp.map_or_else(
+                            || "undated".to_string(),
+                            |ts| ts.format("%Y-%m-%d").to_string()
+                        )
                     ),
                     entry.detail.clone(),
                 ]

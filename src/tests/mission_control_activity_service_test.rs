@@ -31,7 +31,11 @@ fn parses_one_well_formed_entry() {
     assert!(entry.detail.contains("Users prefer shorter responses"));
     // Date parsed and sane (2026-04-12 23:01 UTC).
     assert_eq!(
-        entry.timestamp.format("%Y-%m-%d %H:%M").to_string(),
+        entry
+            .timestamp
+            .expect("date parses")
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
         "2026-04-12 23:01"
     );
 }
@@ -105,9 +109,10 @@ fn missing_date_does_not_drop_entry() {
     let parsed = parse_improvements_md(raw, 50);
     assert_eq!(parsed.len(), 1);
     assert!(parsed[0].detail.contains("dateless"));
-    // Falls back to "now" when date is missing — just assert the
-    // timestamp is something coherent (not the unix epoch).
-    assert!(parsed[0].timestamp.timestamp() > 1_700_000_000);
+    // Undated, NOT "now". The old fallback stamped the render instant onto
+    // entries whose date was missing, so weeks-old journal rows displayed as
+    // seconds old (#841).
+    assert!(parsed[0].timestamp.is_none());
 }
 
 #[test]

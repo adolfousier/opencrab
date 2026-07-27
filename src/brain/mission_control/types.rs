@@ -73,7 +73,11 @@ impl McInboxKind {
 /// One entry in the activity feed — RSI-emitted events worth surfacing.
 #[derive(Debug, Clone)]
 pub struct McActivity {
-    pub timestamp: DateTime<Utc>,
+    /// `None` when the journal entry carried no parseable date. Optional
+    /// rather than defaulted because the old `Utc::now()` fallback rendered
+    /// weeks-old entries as "10s ago" (#841): an unknown time must read as
+    /// unknown, never as this instant.
+    pub timestamp: Option<DateTime<Utc>>,
     /// One-line summary, already truncated to a reasonable display length
     /// by the service layer.
     pub detail: String,

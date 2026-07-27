@@ -111,7 +111,12 @@ fn compute_scroll(selected: Option<usize>, count: usize, visible_h: usize) -> u1
     }
 }
 
-fn relative_time(ts: DateTime<Utc>) -> String {
+fn relative_time(ts: Option<DateTime<Utc>>) -> String {
+    // An entry the journal wrote without a parseable date reads as undated
+    // rather than borrowing the current instant (#841).
+    let Some(ts) = ts else {
+        return "undated".to_string();
+    };
     let secs = (Utc::now() - ts).num_seconds();
     if secs < 60 {
         format!("{secs}s ago")

@@ -41,7 +41,7 @@ fn sample_analytics() -> McAnalytics {
 fn report_includes_all_sections() {
     let analytics = sample_analytics();
     let activity = vec![McActivity {
-        timestamp: Utc::now(),
+        timestamp: Some(Utc::now()),
         detail: "Add conciseness guideline -> SOUL.md".into(),
         level: McActivityLevel::Success,
         source: "rsi".into(),
