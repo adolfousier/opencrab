@@ -1144,6 +1144,27 @@ async fn format_usage(
                 fmt_tokens(cache.cached_tokens),
                 fmt_tokens(cache.total_input_tokens),
             ));
+
+            // Per-model cache breakdown (top 5 by hit rate, matching TUI card).
+            if !cache.per_model.is_empty() {
+                let rows: Vec<Vec<String>> = cache
+                    .per_model
+                    .iter()
+                    .take(5)
+                    .map(|ms| {
+                        let name: String = ms.model.chars().take(24).collect();
+                        vec![
+                            format!("`{name}`"),
+                            format!("{:.0}%", ms.cache_hit_pct),
+                            fmt_tokens(ms.cached_tokens),
+                        ]
+                    })
+                    .collect();
+                blocks.push(format!(
+                    "### Cache by Model\n\n{}",
+                    md_table(&["Model", "Hit %", "Cached"], &rows).trim_end()
+                ));
+            }
         }
 
         let section = |title: &str, headers: &[&str], rows: Vec<Vec<String>>| -> Option<String> {
