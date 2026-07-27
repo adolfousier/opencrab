@@ -312,6 +312,7 @@ pub mod phantom_bare_completion_test;
 pub mod phantom_cleanup_intent_test;
 pub mod phantom_db_persistence_test;
 pub mod phantom_deferment_test;
+pub mod phantom_playback_claim_test;
 pub mod phantom_post_success_exemption_test;
 pub mod phantom_pronoun_drop_test;
 pub mod phantom_side_effect_test;

@@ -178,6 +178,12 @@ intent_phrases = [
 ]
 
 action_verbs = [
+    # Local playback / launching an artifact (see en.toml).
+    "воспроизвёл",
+    "воспроизвел",
+    "проиграл",
+    "открыл файл",
+    "запустил файл",
     "проверил",
     "обновил",
     "исправил",

@@ -175,6 +175,11 @@ intent_phrases = [
 ]
 
 action_verbs = [
+    # Local playback / launching an artifact (see en.toml).
+    "joué",
+    "lu le fichier",
+    "lancé",
+    "prévisualisé",
     "mis à jour",
     "modifié",
     "corrigé",

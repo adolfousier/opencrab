@@ -113,6 +113,11 @@ intent_phrases = [
 ]
 
 action_verbs = [
+    # Local playback / launching an artifact (see en.toml).
+    "memutar",
+    "diputar",
+    "membuka file",
+    "menjalankan file",
     "dimuat",
     "dijalankan",
     "diperbarui",

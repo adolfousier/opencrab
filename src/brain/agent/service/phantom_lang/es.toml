@@ -161,6 +161,11 @@ intent_phrases = [
 ]
 
 action_verbs = [
+    # Local playback / launching an artifact (see en.toml).
+    "reproduje",
+    "abrí el archivo",
+    "lancé",
+    "previsualicé",
     "actualicé",
     "modifiqué",
     "corregí",

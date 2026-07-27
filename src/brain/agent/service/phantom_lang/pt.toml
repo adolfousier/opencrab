@@ -162,6 +162,12 @@ intent_phrases = [
 ]
 
 action_verbs = [
+    # Local playback / launching an artifact (see en.toml).
+    "reproduzi",
+    "toquei",
+    "abri o ficheiro",
+    "abri o arquivo",
+    "lancei",
     "atualizei",
     "modifiquei",
     "corrigi",

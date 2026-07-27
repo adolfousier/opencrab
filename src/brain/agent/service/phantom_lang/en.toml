@@ -514,6 +514,15 @@ intent_phrases = [
 ]
 
 action_verbs = [
+    # Local playback / launching an artifact. A zero-tool turn claiming
+    # "Played it. Your notification.mp3 is alive and well" ran nothing, and
+    # only played the file after the user challenged it. The list covered
+    # deploys, issue tracking, self-update and investigation, never the act
+    # of running something on the user's own machine.
+    "played",
+    "previewed",
+    "launched",
+    "opened the file",
     "loaded",
     "synced",
     "installed",
