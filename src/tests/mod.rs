@@ -227,8 +227,9 @@ pub mod services_file_test;
 pub mod services_message_test;
 pub mod services_project_test;
 pub mod services_session_test;
-pub mod systemd_unit_test;
 #[cfg(feature = "telegram")]
+pub mod start_gate_allowed_user_test;
+pub mod systemd_unit_test;
 pub mod telegram_cancel_token_no_drop_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_md_to_html_test;

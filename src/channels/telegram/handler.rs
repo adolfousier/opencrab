@@ -472,8 +472,28 @@ pub(crate) async fn handle_message(
                 .map(|g| g.open)
                 .unwrap_or(false);
             if !group_open {
-                // Not an open group: never self-register (secure by default).
-                // Hand back the id so the owner can add them or open the group.
+                // Already on the group's allow-list? Then there is nothing to
+                // register and nothing for the owner to add (#776). The `open`
+                // flag gates SELF-registration by strangers, not whether an
+                // existing member may chat, so testing it alone told an
+                // already-allowed user to go ask for access they have.
+                if cfg.channels.telegram.user_allowed(
+                    &user_id.to_string(),
+                    &msg.chat.id.0.to_string(),
+                    false,
+                ) {
+                    message_in_thread(
+                        &bot,
+                        msg.chat.id,
+                        thread_id,
+                        "🦀 Already got you on the roster. @mention me and let's go.".to_string(),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                // Genuinely not allowed, in a closed group: never
+                // self-register (secure by default). Hand back the id so the
+                // owner can add them or open the group.
                 let reply = format!(
                     "🦀 Your Telegram ID: {}\n\nThis group isn't open yet. Ask the owner to run \
                      /cowork here, or to add your ID.",
