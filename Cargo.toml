@@ -257,6 +257,11 @@ name = "memory"
 harness = false
 path = "src/benches/memory.rs"
 
+# Live eval example — needs the `eval` feature (offline harness not compiled by default)
+[[example]]
+name = "live_eval"
+path = "examples/live_eval.rs"
+required-features = ["eval"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(crates_publish)'] }

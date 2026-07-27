@@ -18,6 +18,24 @@ use super::TelegramState;
 /// Callback-data prefix for a tapped follow-up suggestion: `followup:<session>:<idx>`.
 pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 
+/// What the suggestion block becomes once one of its options is tapped.
+///
+/// Replaces the prompt and its keyboard in place. The Bot API has no
+/// send-as-user, so posting the choice as a new message renders a
+/// user-chosen continuation under the bot's name, avatar and badge. A `>`
+/// quote does not change that: the bubble is still labelled as the bot
+/// (#844). Editing the block reads as a selected control instead.
+pub(crate) fn picked_block(text: &str) -> String {
+    format!("\u{25b6}\u{fe0f} {text}")
+}
+
+/// Last-resort record when the suggestion block cannot be edited, because it
+/// is too old or no longer accessible. Worse attribution than editing, but
+/// losing the record of what was chosen is worse still.
+pub(crate) fn echo_fallback(text: &str) -> String {
+    format!("> \u{25b6}\u{fe0f} {text}")
+}
+
 /// Post the follow-up suggestion buttons under the response and stash the option
 /// list on state so the tap handler can resolve `idx -> text`. No-op on empty.
 pub(crate) async fn render_suggestions(

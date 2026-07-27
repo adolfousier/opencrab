@@ -526,6 +526,7 @@ mod telegram_attachment_tmp_name_test;
 mod telegram_caption_test;
 pub mod telegram_command_sanitize_test;
 pub mod telegram_flow_chrome_test;
+pub mod telegram_followup_pick_test;
 pub mod telegram_group_history_capture_test;
 pub mod telegram_group_sender_label_test;
 pub mod telegram_handler_test;

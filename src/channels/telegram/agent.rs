@@ -285,33 +285,80 @@ impl TelegramAgent {
                                     }
                                 };
                                 if let Some((sid, text)) = taken {
-                                    let (chat_id, thread_id) = query
+                                    let (chat_id, thread_id, prompt_msg_id) = query
                                         .message
                                         .as_ref()
                                         .map(|m| {
                                             (
                                                 m.chat().id,
                                                 m.regular_message().and_then(|r| r.thread_id),
+                                                Some(m.id()),
                                             )
                                         })
-                                        .unwrap_or((teloxide::types::ChatId(0), None));
+                                        .unwrap_or((teloxide::types::ChatId(0), None, None));
                                     let agent_clone = agent.clone();
                                     let bot_clone = bot.clone();
                                     tokio::spawn(async move {
-                                        // Echo what was picked. Telegram gives no
-                                        // way to post as the USER from an inline
-                                        // keyboard, so this is the only record of
-                                        // the choice — quoted, so it reads as the
-                                        // user's pick rather than the bot's own
-                                        // statement (#787).
-                                        let echo = crate::channels::telegram::handler::md_to_html(
-                                            &format!("> \u{25b6}\u{fe0f} {text}"),
-                                        );
-                                        let _ = crate::channels::telegram::send::message_in_thread(
-                                            &bot_clone, chat_id, thread_id, echo,
-                                        )
-                                        .parse_mode(teloxide::types::ParseMode::Html)
-                                        .await;
+                                        // Record the pick ON the suggestion block
+                                        // rather than posting a new message.
+                                        //
+                                        // The Bot API has no send-as-user, so any
+                                        // fresh message carries the bot's name,
+                                        // avatar and badge: a continuation the USER
+                                        // chose renders as the bot saying it. #787
+                                        // tried to fix that with a `>` quote, but
+                                        // quote formatting sits inside a bubble
+                                        // that is still labelled as the bot, so the
+                                        // attribution never changed (#844).
+                                        //
+                                        // Editing reads as a selected control, and
+                                        // drops the keyboard at the moment it stops
+                                        // working: take_pending_followup consumes
+                                        // the whole set, so the other buttons are
+                                        // already dead after one tap.
+                                        let picked =
+                                            crate::channels::telegram::handler::md_to_html(
+                                                &crate::channels::telegram::suggest_followups::
+                                                    picked_block(&text),
+                                            );
+                                        let recorded = match prompt_msg_id {
+                                            Some(mid) => bot_clone
+                                                .edit_message_text(chat_id, mid, &picked)
+                                                .parse_mode(teloxide::types::ParseMode::Html)
+                                                .await
+                                                .map_err(|e| {
+                                                    tracing::warn!(
+                                                        "Telegram followup tap: could not edit the \
+                                                         suggestion block ({e}) — falling back to \
+                                                         a quoted echo"
+                                                    );
+                                                })
+                                                .is_ok(),
+                                            None => false,
+                                        };
+                                        if !recorded {
+                                            // The block is gone or too old to edit.
+                                            // A quoted echo is worse attribution
+                                            // but better than losing the record of
+                                            // what was chosen.
+                                            let echo =
+                                                crate::channels::telegram::handler::md_to_html(
+                                                    &crate::channels::telegram::suggest_followups::
+                                                        echo_fallback(&text),
+                                                );
+                                            if let Err(e) =
+                                                crate::channels::telegram::send::message_in_thread(
+                                                    &bot_clone, chat_id, thread_id, echo,
+                                                )
+                                                .parse_mode(teloxide::types::ParseMode::Html)
+                                                .await
+                                            {
+                                                tracing::warn!(
+                                                    "Telegram followup tap: echo fallback also \
+                                                     failed: {e}"
+                                                );
+                                            }
+                                        }
                                         // A real turn WITH tools. This used to
                                         // call send_message, the plain
                                         // single-completion path that sends no
@@ -1312,8 +1359,95 @@ impl TelegramAgent {
                                 } else if let Some(id) = data.strip_prefix("deny:") {
                                     (false, false, false, id.to_string())
                                 } else {
-                                    tracing::warn!("Telegram: unknown callback data: {}", data);
+                                    // Route unrecognized callback data to the agent as a
+                                    // synthetic message. This allows skills (like earbot)
+                                    // to handle their own inline button taps.
+                                    tracing::info!(
+                                        "Telegram: routing unrecognized callback to agent: {}",
+                                        data
+                                    );
                                     let _ = bot.answer_callback_query(query.id.clone()).await;
+
+                                    // Echo the tapped button as a quoted message so there's
+                                    // a visible record of the user's choice in the chat.
+                                    let (cb_chat, cb_thread) = query
+                                        .message
+                                        .as_ref()
+                                        .map(|m| {
+                                            (
+                                                m.chat().id,
+                                                m.regular_message().and_then(|r| r.thread_id),
+                                            )
+                                        })
+                                        .unwrap_or((teloxide::types::ChatId(0), None));
+                                    let echo =
+                                        crate::channels::telegram::handler::md_to_html(
+                                            &format!("> 🔘 {data}"),
+                                        );
+                                    let _ =
+                                        crate::channels::telegram::send::message_in_thread(
+                                            &bot, cb_chat, cb_thread, echo,
+                                        )
+                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                        .await;
+
+                                    // Clone data for the spawned task (tokio::spawn requires 'static)
+                                    let data_owned = data.to_string();
+                                    if let Some(sid) = resolve_callback_session(
+                                        &query,
+                                        &state,
+                                        &shared_session,
+                                    )
+                                    .await
+                                    {
+                                        let agent_cb = agent.clone();
+                                        let bot_cb = bot.clone();
+                                        tokio::spawn(async move {
+                                            let chat_target = cb_chat.0.to_string();
+                                            match crate::channels::bg_resume::run_resume_turn(
+                                                agent_cb,
+                                                sid,
+                                                format!("[callback:{data_owned}]"),
+                                                "telegram",
+                                                &chat_target,
+                                            )
+                                            .await
+                                            {
+                                                Some(content) => {
+                                                    let clean =
+                                                        crate::utils::sanitize::strip_llm_artifacts(
+                                                            &content,
+                                                        );
+                                                    let html =
+                                                        crate::channels::telegram::handler::md_to_html(
+                                                            &clean,
+                                                        );
+                                                    let _ =
+                                                        crate::channels::telegram::send::message_in_thread(
+                                                            &bot_cb, cb_chat, cb_thread, html,
+                                                        )
+                                                        .parse_mode(
+                                                            teloxide::types::ParseMode::Html,
+                                                        )
+                                                        .await;
+                                                }
+                                                None => {
+                                                    tracing::warn!(
+                                                        "Telegram: callback routing produced no \
+                                                         response for data={}",
+                                                        data_owned
+                                                    );
+                                                }
+                                            }
+                                        });
+                                    } else {
+                                        tracing::warn!(
+                                            "Telegram: no session for chat {} — cannot route \
+                                             callback",
+                                            cb_chat.0
+                                        );
+                                    }
+
                                     return ResponseResult::Ok(());
                                 };
 
