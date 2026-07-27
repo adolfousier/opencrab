@@ -49,6 +49,26 @@ pub(crate) fn build_enqueue_callback(
                 tracing::warn!("[bg-resume] telegram: agent gone; dropping resume");
                 return;
             };
+            // One streaming turn per session (#845). Several detached commands
+            // finishing together used to spawn a resume turn each, all on this
+            // session and all in this chat, so every one opened and edited its
+            // own flow block: duplicated, overlapping output.
+            //
+            // The background path was the only one skipping this gate; user
+            // messages and reactions have gone through it since #501.
+            let Some(_turn_guard) = state.try_begin_turn(session_id) else {
+                // A turn is already streaming. Hand the result to it instead of
+                // forking a second one: the tool loop drains this queue between
+                // rounds via reaction_queue_callback, so the result lands in the
+                // block that is already open.
+                tracing::info!(
+                    "[bg-resume] telegram: session {session_id} already streaming — queuing the \
+                     result for the in-flight turn instead of opening a second block"
+                );
+                state.enqueue_reaction(session_id, msg);
+                return;
+            };
+
             let thread_id = super::send::latest_thread_id_for_chat(chat_id).await;
             if let Err(e) = resume_session(
                 bot,

@@ -523,6 +523,7 @@ pub mod pdf_vision_test;
 pub mod slack_handler_test;
 mod telegram_acl_test;
 mod telegram_attachment_tmp_name_test;
+pub mod telegram_bg_resume_gate_test;
 mod telegram_caption_test;
 pub mod telegram_command_sanitize_test;
 pub mod telegram_flow_chrome_test;
