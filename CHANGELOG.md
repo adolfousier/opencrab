@@ -7347,4 +7347,4 @@ fixes.
 [0.3.73]: https://github.com/adolfousier/opencrabs/compare/v0.3.72...v0.3.73
 [0.3.74]: https://github.com/adolfousier/opencrabs/compare/v0.3.73...v0.3.74
 [0.3.75]: https://github.com/adolfousier/opencrabs/compare/v0.3.74...v0.3.75
-[0.3.76]: https://github.com/adolfousier/opencrabs/compare/v0.3.75...v0.3.76
+[0.3.77]: https://github.com/adolfousier/opencrabs/compare/v0.3.75...v0.3.77
