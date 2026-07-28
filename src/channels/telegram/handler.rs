@@ -793,10 +793,23 @@ pub(crate) async fn handle_message(
     // Skipped once the user is already on the roster: this runs on every
     // message, and auto_register_to_group reloads config from disk to answer a
     // question the in-memory config already answers.
+    // Gated on the group's persisted `open` flag (#848). This previously keyed
+    // off an in-memory cowork set that lived only in TelegramState and was
+    // filled when /cowork connected the group, so it was empty after every
+    // restart: the gate never fired and nobody was written to allowed_users.
+    // Nothing looked broken because `open = true` passes the ACL regardless, so
+    // the roster stayed silently empty while the group worked fine.
+    //
+    // `open` is the durable record of the same opt-in: /cowork sets it via
+    // set_group_open, and the owner can set it by hand. Either way it is in
+    // config.toml, so it survives restarts. Registration stays scoped to the
+    // group: a group roster grants nothing anywhere else, and DMs are still
+    // refused (see TelegramConfig::user_allowed).
+    let group_is_open = tg_cfg.groups.get(&chat_id_str).is_some_and(|g| g.open);
     if !is_dm
         && !user.is_bot
+        && group_is_open
         && !tg_cfg.group_has_user(&chat_id_str, &user_id.to_string())
-        && super::cowork::is_cowork_group(msg.chat.id.0, &telegram_state).await
     {
         match super::cowork::auto_register_to_group(user_id, msg.chat.id.0) {
             // Ok(false) means already on the roster. Distinguished from a real

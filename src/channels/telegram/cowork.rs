@@ -136,10 +136,6 @@ pub fn auto_register_to_group(user_id: i64, chat_id: i64) -> Result<bool, String
 }
 
 /// Check if a chat_id is a tracked cowork group.
-pub async fn is_cowork_group(chat_id: i64, state: &TelegramState) -> bool {
-    state.is_cowork_group(chat_id).await
-}
-
 /// Persist `[channels.telegram.groups.<chat_id>].open = true` (#718). This is the
 /// owner-initiated opt-in that /cowork performs: every member of the group is
 /// then allowed (and auto-registered on join / on /start), and it stays open
@@ -210,9 +206,6 @@ pub async fn handle_cowork_group_join(
 
     // Look up the cowork state by session_id
     let cowork = state.take_cowork_by_session(session_id).await;
-
-    // Track this group as a cowork group
-    state.add_cowork_group(group_chat_id).await;
 
     // Check if the bot is an admin in the group before attempting admin-only ops
     let bot_info = bot.get_me().await?;
