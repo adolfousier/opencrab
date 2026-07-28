@@ -335,6 +335,176 @@ pub(crate) const MAX_TITLE_LENGTH: usize = 200;
 pub(crate) const MAX_DESCRIPTION_LENGTH: usize = 5000;
 pub(crate) const MAX_CONTEXT_LENGTH: usize = 5000;
 
+// ── Ralph Loop: Mechanical verification gate ────────────────────────
+// Loaded from ~/.opencrabs/safety/ralph_loop.toml. The TOML defines
+// verification commands per task type. Before accepting "success" on
+// a task, the gate runs those commands and rejects the completion if
+// any exit non-zero. This prevents the model from hallucinating
+// "clippy passed" when it didn't.
+
+use std::sync::OnceLock;
+
+#[derive(Debug, Deserialize)]
+struct RalphLoopConfig {
+    #[serde(default)]
+    forward: RalphForward,
+    #[serde(default)]
+    reverse: RalphReverse,
+    #[serde(default)]
+    epistemic: RalphEpistemic,
+    #[serde(default)]
+    verification: RalphVerification,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RalphForward {
+    #[serde(default = "default_max_iterations")]
+    max_iterations: u32,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RalphReverse {
+    #[serde(default = "default_max_reverse_iterations")]
+    max_iterations: u32,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RalphEpistemic {
+    #[serde(default)]
+    confidence_levels: Vec<String>,
+    #[serde(default = "default_decay_days")]
+    decay_days: u32,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RalphVerification {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    require_all_pass: bool,
+    #[serde(default)]
+    task_type_commands: Vec<TaskTypeCommands>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskTypeCommands {
+    task_type: String,
+    commands: Vec<String>,
+}
+
+fn default_max_iterations() -> u32 { 20 }
+fn default_max_reverse_iterations() -> u32 { 10 }
+fn default_decay_days() -> u32 { 30 }
+
+fn ralph_loop_config() -> Option<&'static RalphLoopConfig> {
+    static CONFIG: OnceLock<Option<RalphLoopConfig>> = OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let home = dirs::home_dir()?;
+        let path = home.join(".opencrabs/safety/ralph_loop.toml");
+        if !path.exists() {
+            tracing::debug!("No Ralph loop config at {}, verification gate disabled", path.display());
+            return None;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<RalphLoopConfig>(&content) {
+                Ok(config) => {
+                    tracing::info!("Loaded Ralph loop config: verification={}, {} task type rules",
+                        config.verification.enabled, config.verification.task_type_commands.len());
+                    Some(config)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse Ralph loop config: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to read Ralph loop config: {e}");
+                None
+            }
+        }
+    }).as_ref()
+}
+
+/// Get verification commands for a task type from the Ralph loop config.
+fn verification_commands_for_type(task_type: &str) -> Option<Vec<String>> {
+    let config = ralph_loop_config()?;
+    if !config.verification.enabled {
+        return None;
+    }
+    let type_lower = task_type.to_lowercase();
+    config.verification.task_type_commands.iter()
+        .find(|tc| tc.task_type.to_lowercase() == type_lower)
+        .filter(|tc| !tc.commands.is_empty())
+        .map(|tc| tc.commands.clone())
+}
+
+/// Run a shell command and return (exit_code, stdout+stderr).
+fn run_verification_command(cmd: &str) -> (i32, String) {
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .output();
+
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let combined = format!("{stdout}{stderr}");
+            (out.status.code().unwrap_or(-1), combined)
+        }
+        Err(e) => (-1, format!("Failed to execute verification command: {e}")),
+    }
+}
+
+/// Mechanical verification gate: run all verification commands for the
+/// task type. Returns Ok(()) if all pass, Err(message) if any fail.
+/// This is the anti-hallucination gate — the model cannot claim success
+/// when the commands say otherwise.
+fn verify_task_completion(task_type: &str, task_order: usize) -> std::result::Result<(), String> {
+    let commands = match verification_commands_for_type(task_type) {
+        Some(cmds) => cmds,
+        None => return Ok(()), // No verification configured for this type
+    };
+
+    tracing::info!("Ralph loop verification for task #{task_order} (type={task_type}): {} commands", commands.len());
+
+    let config = ralph_loop_config().unwrap(); // Safe: verification_commands_for_type returned Some
+    let require_all = config.verification.require_all_pass;
+    let mut failures: Vec<String> = Vec::new();
+
+    for cmd in &commands {
+        let (exit_code, output) = run_verification_command(cmd);
+        if exit_code != 0 {
+            let truncated = if output.len() > 500 {
+                format!("{}...[truncated]", &output[..500])
+            } else {
+                output.clone()
+            };
+            failures.push(format!("`{cmd}` exited {exit_code}\n{truncated}"));
+            tracing::warn!("Verification failed for task #{task_order}: {cmd} exited {exit_code}");
+            if !require_all {
+                // First failure is enough when require_all_pass is false
+                return Err(format!(
+                    "Verification gate REJECTED for task #{task_order} (type={task_type}):\n{}\n\n\
+                     The command `{cmd}` exited with code {exit_code}. Fix the issue and try \
+                     completing again. The Ralph loop does not accept self-reported success \
+                     when verification commands fail.",
+                    truncated
+                ));
+            }
+        }
+    }
+
+    if require_all && !failures.is_empty() {
+        return Err(format!(
+            "Verification gate REJECTED for task #{task_order} (type={}): {}/{} commands failed.\n\n{}",
+            task_type, failures.len(), commands.len(), failures.join("\n---\n")
+        ));
+    }
+
+    Ok(())
+}
+
 /// Validate string input
 pub(crate) fn validate_string(s: &str, max_len: usize, field_name: &str) -> Result<()> {
     if s.is_empty() || s.trim().is_empty() {
@@ -1058,8 +1228,32 @@ impl Tool for PlanTool {
                         let already_done =
                             matches!(status, TaskStatus::Completed | TaskStatus::Skipped);
                         if !already_done {
+                            // Ralph loop: iteration cap. If the task has been
+                            // retried too many times, block the start
+                            // mechanically. The model cannot hallucinate its
+                            // way past this gate.
+                            if matches!(status, TaskStatus::Failed) {
+                                let task = current_plan.get_task_by_order(order).unwrap();
+                                let current_retries = task.retry_count;
+                                let max_iter = ralph_loop_config()
+                                    .map(|c| c.forward.max_iterations)
+                                    .unwrap_or(20);
+                                if (current_retries as u32) >= max_iter {
+                                    return Ok(ToolResult::error(format!(
+                                        "🔒 Ralph Loop iteration cap REACHED for task #{order}.\n\n\
+                                         This task has failed {current_retries} times (max: {max_iter}). \
+                                         The task is mechanically blocked. Either redesign the approach, \
+                                         break it into smaller tasks, or ask the user to override."
+                                    )));
+                                }
+                                tracing::info!(
+                                    "Ralph loop: task #{order} retry {}/{max_iter}",
+                                    current_retries + 1
+                                );
+                            }
                             // start() sets the task InProgress (also resets a
-                            // Failed task for retry).
+                            // Failed task for retry). Increments retry_count
+                            // when coming from Failed state.
                             current_plan.get_task_by_order_mut(order).unwrap().start();
                             current_plan.status = PlanStatus::Active;
                         }
@@ -1112,6 +1306,23 @@ impl Tool for PlanTool {
                 } else {
                     Some(output.clone())
                 };
+
+                // ── Ralph Loop: mechanical verification gate ────────
+                // Before accepting "success," run verification commands
+                // from ralph_loop.toml. Non-zero exit = rejection.
+                // The model cannot hallucinate "tests passed" when the
+                // shell says otherwise.
+                if action.to_lowercase() == "success" {
+                    let task_type_str = current_plan
+                        .get_task_by_order(task_order)
+                        .map(|t| t.task_type.to_string())
+                        .unwrap_or_default();
+                    if let Err(verify_msg) = verify_task_completion(&task_type_str, task_order) {
+                        return Ok(ToolResult::error(format!(
+                            "🔒 Ralph Loop verification REJECTED task #{task_order}.\n\n{verify_msg}"
+                        )));
+                    }
+                }
 
                 let (verb, emoji) = {
                     let task = current_plan.get_task_by_order_mut(task_order).unwrap();

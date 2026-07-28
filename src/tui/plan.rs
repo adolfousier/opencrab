@@ -811,7 +811,11 @@ impl PlanTask {
     /// Mark task as in progress. Idempotent and works from any prior state
     /// (Pending, InProgress, or Failed) so `start` can re-surface a task's
     /// details after a context compaction or to retry a failed task.
+    /// Increments retry_count when retrying from Failed state.
     pub fn start(&mut self) {
+        if matches!(self.status, TaskStatus::Failed) {
+            self.retry_count += 1;
+        }
         self.status = TaskStatus::InProgress;
     }
 
