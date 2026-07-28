@@ -129,12 +129,18 @@ pub fn verify_brain_file(file_name: &str, content: &str) -> Vec<String> {
         }
     }
 
-    // Check contradiction pairs for this file
-    // Contradictions apply to all brain files (no file field in TOML)
+    // Check contradiction pairs for this file.
+    // Contradictions apply to all brain files (no file field in TOML).
+    // Scoped per-entry: both patterns must match within the SAME entry
+    // (paragraph/section), not across the entire file. This prevents
+    // false positives where unrelated entries happen to contain both
+    // patterns (e.g. "NEVER push" in one rule and "always push" in another).
+    let entries: Vec<&str> = content.split("\n\n").collect();
     for contra in &config.contradictions {
-        if pattern_matches(&contra.pattern_a, content)
-            && pattern_matches(&contra.pattern_b, content)
-        {
+        let contradiction_in_entry = entries.iter().any(|entry| {
+            pattern_matches(&contra.pattern_a, entry) && pattern_matches(&contra.pattern_b, entry)
+        });
+        if contradiction_in_entry {
             violations.push(format!(
                 "Contradiction detected in {}: {}",
                 file_name, contra.message
@@ -221,11 +227,42 @@ NEVER delete or disable cron jobs without approval.
 
     #[test]
     fn test_contradiction_detection() {
+        // Both patterns in the SAME entry → contradiction detected
         let content = "No markdown tables. Use rich markdown tables for reports.";
         let violations = verify_brain_file("AGENTS.md", content);
         assert!(
             violations.iter().any(|v| v.contains("Contradiction")),
-            "Should detect contradiction. Violations: {:?}",
+            "Should detect contradiction in same entry. Violations: {:?}",
+            violations
+        );
+    }
+
+    #[test]
+    fn test_contradiction_scoped_per_entry() {
+        // Patterns in DIFFERENT entries (separated by blank line) → NO contradiction.
+        // This is the #855 fix: "NEVER push" in one rule and "always push" in
+        // an unrelated entry must NOT trigger a false positive.
+        let content = "NEVER push to main without explicit user approval.\n\nAlways push after tests pass and the user says go.";
+        let violations = verify_brain_file("MEMORY.md", content);
+        let contradictions: Vec<_> = violations
+            .iter()
+            .filter(|v| v.contains("Contradiction"))
+            .collect();
+        assert!(
+            contradictions.is_empty(),
+            "Patterns in separate entries must NOT trigger contradiction. Got: {:?}",
+            contradictions
+        );
+    }
+
+    #[test]
+    fn test_contradiction_same_entry_still_fires() {
+        // Both patterns in the SAME paragraph → contradiction still detected
+        let content = "Never push anything. Always push everything.";
+        let violations = verify_brain_file("MEMORY.md", content);
+        assert!(
+            violations.iter().any(|v| v.contains("Contradiction")),
+            "Same-entry contradiction must still fire. Violations: {:?}",
             violations
         );
     }
