@@ -5,6 +5,7 @@
 
 pub mod brain_file_safety;
 pub mod brain_verify;
+pub mod epistemic;
 pub mod catalog;
 pub(crate) mod classify;
 pub mod error;

@@ -116,7 +116,16 @@ pub fn verify_brain_file(file_name: &str, content: &str) -> Vec<String> {
         Some(c) => c,
         None => return vec![], // No TOML = no verification (graceful fallback)
     };
+    verify_brain_file_with_config(file_name, content, config)
+}
 
+/// Verify brain file content against a specific config.
+/// Used by tests to be self-contained (not dependent on live TOML).
+fn verify_brain_file_with_config(
+    file_name: &str,
+    content: &str,
+    config: &BrainVerifyConfig,
+) -> Vec<String> {
     let mut violations = Vec::new();
 
     // Check required rules for this file
@@ -155,6 +164,54 @@ pub fn verify_brain_file(file_name: &str, content: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// Build a test config from a TOML string. Tests are self-contained
+    /// and do NOT depend on the live brain_verify.toml.
+    fn test_config(toml_str: &str) -> BrainVerifyConfig {
+        toml::from_str(toml_str).expect("test TOML must parse")
+    }
+
+    const AGENTS_TOML: &str = r#"
+[[required]]
+file = "AGENTS.md"
+pattern = "Reports use rich markdown tables"
+why = "Report Format Hard Rule"
+
+[[required]]
+file = "AGENTS.md"
+pattern = "NEVER add.*Co-authored-by"
+why = "Commit attribution: user is sole author"
+
+[[required]]
+file = "AGENTS.md"
+pattern = "NEVER push to main without explicit"
+why = "Git push safety"
+
+[[required]]
+file = "AGENTS.md"
+pattern = "NEVER use.*git revert"
+why = "Git revert creates new commits"
+
+[[required]]
+file = "AGENTS.md"
+pattern = "NEVER start.*draft.*redo a release"
+why = "Release safety"
+
+[[required]]
+file = "AGENTS.md"
+pattern = "NEVER delete.*disable.*cron"
+why = "Cron safety"
+
+[[contradictions]]
+pattern_a = "(?i)no.*markdown.*table"
+pattern_b = "(?i)rich markdown table"
+message = "'no markdown tables' vs 'use rich markdown tables'"
+
+[[contradictions]]
+pattern_a = "(?i)never.*push"
+pattern_b = "(?i)always.*push"
+message = "'never push' vs 'always push'"
+"#;
+
     #[test]
     fn test_simple_substring_match() {
         assert!(pattern_matches(
@@ -191,9 +248,10 @@ mod tests {
 
     #[test]
     fn test_verify_brain_file_required() {
+        let config = test_config(AGENTS_TOML);
         // AGENTS.md rule: "Reports use rich markdown tables"
         let content_no_rule = "Some content without the required rule.";
-        let violations = verify_brain_file("AGENTS.md", content_no_rule);
+        let violations = verify_brain_file_with_config("AGENTS.md", content_no_rule, &config);
         assert!(
             violations.iter().any(|v| v.contains("Reports use rich")),
             "Should detect missing required rule. Violations: {:?}",
@@ -203,6 +261,7 @@ mod tests {
 
     #[test]
     fn test_verify_brain_file_no_violations() {
+        let config = test_config(AGENTS_TOML);
         // Content with all AGENTS.md rules present
         let content = r#"
 Reports use rich markdown tables for structured data.
@@ -212,7 +271,7 @@ NEVER use git revert.
 NEVER start, draft, or redo a release unless explicitly asked.
 NEVER delete or disable cron jobs without approval.
 "#;
-        let violations = verify_brain_file("AGENTS.md", content);
+        let violations = verify_brain_file_with_config("AGENTS.md", content, &config);
         // Should have no required-rule violations (contradictions may or may not fire)
         let required_violations: Vec<_> = violations
             .iter()
@@ -227,9 +286,10 @@ NEVER delete or disable cron jobs without approval.
 
     #[test]
     fn test_contradiction_detection() {
+        let config = test_config(AGENTS_TOML);
         // Both patterns in the SAME entry → contradiction detected
         let content = "No markdown tables. Use rich markdown tables for reports.";
-        let violations = verify_brain_file("AGENTS.md", content);
+        let violations = verify_brain_file_with_config("AGENTS.md", content, &config);
         assert!(
             violations.iter().any(|v| v.contains("Contradiction")),
             "Should detect contradiction in same entry. Violations: {:?}",
@@ -239,11 +299,12 @@ NEVER delete or disable cron jobs without approval.
 
     #[test]
     fn test_contradiction_scoped_per_entry() {
+        let config = test_config(AGENTS_TOML);
         // Patterns in DIFFERENT entries (separated by blank line) → NO contradiction.
         // This is the #855 fix: "NEVER push" in one rule and "always push" in
         // an unrelated entry must NOT trigger a false positive.
         let content = "NEVER push to main without explicit user approval.\n\nAlways push after tests pass and the user says go.";
-        let violations = verify_brain_file("MEMORY.md", content);
+        let violations = verify_brain_file_with_config("MEMORY.md", content, &config);
         let contradictions: Vec<_> = violations
             .iter()
             .filter(|v| v.contains("Contradiction"))
@@ -257,9 +318,10 @@ NEVER delete or disable cron jobs without approval.
 
     #[test]
     fn test_contradiction_same_entry_still_fires() {
+        let config = test_config(AGENTS_TOML);
         // Both patterns in the SAME paragraph → contradiction still detected
         let content = "Never push anything. Always push everything.";
-        let violations = verify_brain_file("MEMORY.md", content);
+        let violations = verify_brain_file_with_config("MEMORY.md", content, &config);
         assert!(
             violations.iter().any(|v| v.contains("Contradiction")),
             "Same-entry contradiction must still fire. Violations: {:?}",
@@ -269,9 +331,10 @@ NEVER delete or disable cron jobs without approval.
 
     #[test]
     fn test_wrong_file_ignored() {
+        let config = test_config(AGENTS_TOML);
         // Rules for AGENTS.md should not trigger on MEMORY.md
         let content = "Some content without any rules.";
-        let violations = verify_brain_file("MEMORY.md", content);
+        let violations = verify_brain_file_with_config("MEMORY.md", content, &config);
         let agents_violations: Vec<_> = violations
             .iter()
             .filter(|v| v.contains("AGENTS.md"))
