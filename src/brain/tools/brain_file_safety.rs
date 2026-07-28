@@ -132,6 +132,68 @@ fn prune_backups(path: &Path, max_count: usize, max_age_days: u64) -> std::io::R
     Ok(())
 }
 
+/// Longest a single `apply` rule may be (#857).
+///
+/// RSI wrote rules as paragraphs: one application added 1,329 bytes to
+/// AGENTS.md, which is always-loaded, so those bytes are paid on every turn of
+/// every channel forever. 645 of 722 improvements target the two always-loaded
+/// files. The short form demonstrably carries the same instruction, so this is
+/// a budget rather than a loss.
+pub const MAX_RULE_CHARS: usize = 600;
+
+/// Largest shrink one consolidation may perform (#858).
+///
+/// Bounds the blast radius by construction: a consolidation can never remove
+/// more than a single rule's worth of text, whatever else it claims. The
+/// unbounded `cleanup_intent` bypass this replaces was used to delete 47% of
+/// SOUL.md in one pass.
+pub const MAX_CONSOLIDATION_SHRINK: usize = 2048;
+
+/// Is `new` a tighter version of the SAME rule as `old`, rather than a deletion?
+///
+/// The test is that the rule survives identifiably: `new` must be non-empty and
+/// must still carry `old`'s identifier, meaning its leading bold directive or
+/// heading. Rewording the body is the whole point of consolidating, so the body
+/// is not compared.
+///
+/// Deliberately narrow. It cannot express "remove this section", which is what
+/// the general bypass allowed.
+pub fn is_rule_consolidation(old: &str, new: &str) -> bool {
+    let new_trimmed = new.trim();
+    if new_trimmed.is_empty() {
+        return false;
+    }
+    let Some(identifier) = rule_identifier(old) else {
+        // No identifiable rule to preserve, so nothing proves this is a
+        // tightening rather than a deletion.
+        return false;
+    };
+    let needle = identifier.to_lowercase();
+    new_trimmed.to_lowercase().contains(&needle)
+}
+
+/// The leading bold directive or heading that names a rule.
+fn rule_identifier(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("**")
+            && let Some((ident, _)) = rest.split_once("**")
+        {
+            let ident = ident.trim().trim_end_matches([':', '.']).trim();
+            if ident.len() >= 8 {
+                return Some(ident.to_string());
+            }
+        }
+        if let Some(rest) = line.strip_prefix('#') {
+            let ident = rest.trim_start_matches('#').trim();
+            if ident.len() >= 8 {
+                return Some(ident.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Decision returned by [`check_no_shrink`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum ShrinkCheck {
@@ -157,6 +219,7 @@ pub fn check_no_shrink(
     updated: &str,
     dedup_intent: bool,
     cleanup_intent: bool,
+    consolidation: bool,
 ) -> ShrinkCheck {
     if !is_protected_path(path) {
         return ShrinkCheck::Allowed;
@@ -173,6 +236,14 @@ pub fn check_no_shrink(
     }
 
     let removed_bytes = existing.len().saturating_sub(updated.len());
+
+    // A verified single-rule consolidation, bounded in bytes (#858). The caller
+    // proves the rule survives identifiably; the cap is enforced here so no
+    // caller can turn this into a general shrink.
+    if consolidation && removed_bytes <= MAX_CONSOLIDATION_SHRINK {
+        return ShrinkCheck::Allowed;
+    }
+
     let label = path
         .file_name()
         .and_then(|n| n.to_str())

@@ -136,9 +136,22 @@ impl Tool for SelfImproveTool {
                 "action": {
                     "type": "string",
                     "description": "What to do:\n\
-                        - 'read': Read a brain file BEFORE modifying it. ALWAYS do this first.\n\
-                        - 'apply': Append NEW content to a brain file (only for genuinely new instructions).\n\
-                        - 'update': Surgically replace an existing section/paragraph. Use when an existing instruction needs refinement rather than a new one added.\n\
+                        - 'read': Read a brain file BEFORE modifying it. ALWAYS do this first, and \
+                        search what you read for the rule you are about to write. If it is already \
+                        there in any wording, do NOT append a second copy — either leave it alone or \
+                        'update' the existing one.\n\
+                        - 'apply': Append a genuinely NEW rule. Keep it to ONE directive, under 600 \
+                        characters. These files are loaded on every turn of every channel, so the \
+                        cost is permanent. Put the rule in a bold lead and stop; incident history \
+                        belongs in the feedback ledger, and a 'Violations: N' count is enough here. \
+                        Over-length is rejected, and splitting one rule across two appends to dodge \
+                        that is the same mistake twice.\n\
+                        - 'update': Surgically replace an existing section/paragraph. Use when an \
+                        existing instruction needs refinement rather than a new one added, and to \
+                        CONSOLIDATE: a long rule may be replaced by a shorter version of itself, \
+                        provided the replacement keeps the original's bold lead or heading so the \
+                        rule is still identifiable. That is the only way these files ever shrink; \
+                        it cannot be used to remove a rule.\n\
                         - 'list': Show previously applied improvements.\n\
                         - 'sync_templates': Fetch upstream brain file templates from the repo and append new sections.",
                     "enum": ["read", "apply", "update", "list", "sync_templates"]
@@ -319,6 +332,17 @@ impl Tool for SelfImproveTool {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 use crate::brain::tools::brain_file_safety;
+                // A surgical replace MAY shorten, but only when the rule
+                // survives identifiably: `new_content` must still carry
+                // `old_content`'s leading directive (#858). That makes this a
+                // tightening of one rule, never a section deletion, and
+                // check_no_shrink caps the bytes regardless of what we claim.
+                //
+                // Without this RSI could not consolidate at all: rewording is
+                // a shrink, and dedup_intent cannot prove reworded bytes
+                // reappear, so the files could only ever grow.
+                let consolidation =
+                    brain_file_safety::is_rule_consolidation(old_content, new_content);
                 if let brain_file_safety::ShrinkCheck::Rejected { message } =
                     brain_file_safety::check_no_shrink(
                         &target_path,
@@ -326,6 +350,7 @@ impl Tool for SelfImproveTool {
                         &updated,
                         dedup_intent,
                         false, // cleanup_intent: RSI cannot do cleanup (no approval mechanism)
+                        consolidation,
                     )
                 {
                     return Ok(ToolResult::error(message));
@@ -519,8 +544,26 @@ impl Tool for SelfImproveTool {
                 // is already present, skip the write entirely (and don't log it
                 // as a fresh "Applied" improvement below).
                 use crate::brain::tools::brain_file_safety::{
-                    AppendDedup, filter_duplicate_append,
+                    AppendDedup, MAX_RULE_CHARS, filter_duplicate_append,
                 };
+
+                // A rule is a one-liner, not an essay (#857). These land in
+                // always-loaded files, so every character is paid on every turn
+                // of every channel, permanently. Rejected rather than
+                // truncated: the model must tighten the rule itself, and
+                // splitting it across two appends defeats the point.
+                let rule_chars = content.trim().chars().count();
+                if rule_chars > MAX_RULE_CHARS {
+                    return Ok(ToolResult::error(format!(
+                        "Rule is {rule_chars} characters; the limit is {MAX_RULE_CHARS}. Brain \
+                         files are always-loaded, so this cost is paid on every turn forever. \
+                         Rewrite it as a single directive with the essentials only. Incident \
+                         history belongs in the feedback ledger, which already stores it — a \
+                         'Violations: N' count is enough here. Do NOT split it across two \
+                         appends."
+                    )));
+                }
+
                 let existing = std::fs::read_to_string(&target_path).unwrap_or_default();
                 let to_append = match filter_duplicate_append(&existing, content) {
                     AppendDedup::AllNew => content.trim().to_string(),

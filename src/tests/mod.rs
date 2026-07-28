@@ -219,6 +219,7 @@ pub mod rsi_notification_redaction_test;
 pub mod rsi_opportunity_hash_test;
 pub mod rsi_prompt_propose_test;
 pub mod rsi_pruned_test;
+pub mod rsi_rule_budget_test;
 pub mod rsi_session_pin_test;
 pub mod rsi_staleness_test;
 pub mod rsi_sync_cap_bail_test;

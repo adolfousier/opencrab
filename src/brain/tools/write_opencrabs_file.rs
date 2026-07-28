@@ -232,6 +232,7 @@ impl Tool for WriteOpenCrabsFileTool {
                             content,
                             dedup_intent,
                             cleanup_intent,
+                            false, // consolidation: only self_improve's surgical update qualifies
                         )
                     {
                         return Ok(ToolResult::error(message));
@@ -449,6 +450,7 @@ impl Tool for WriteOpenCrabsFileTool {
                         &updated,
                         dedup_intent,
                         cleanup_intent,
+                        false, // consolidation: only self_improve's surgical update qualifies
                     )
                 {
                     return Ok(ToolResult::error(message));
