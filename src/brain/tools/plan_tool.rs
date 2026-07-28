@@ -359,19 +359,19 @@ struct RalphForward {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct RalphVerification {
+pub(crate) struct RalphVerification {
     #[serde(default)]
-    enabled: bool,
+    pub(crate) enabled: bool,
     #[serde(default)]
-    require_all_pass: bool,
+    pub(crate) require_all_pass: bool,
     #[serde(default)]
-    task_type_commands: Vec<TaskTypeCommands>,
+    pub(crate) task_type_commands: Vec<TaskTypeCommands>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TaskTypeCommands {
-    task_type: String,
-    commands: Vec<String>,
+pub(crate) struct TaskTypeCommands {
+    pub(crate) task_type: String,
+    pub(crate) commands: Vec<String>,
 }
 
 fn default_max_iterations() -> u32 {
@@ -395,22 +395,6 @@ fn ralph_loop_config() -> Option<std::sync::Arc<RalphLoopConfig>> {
         .get()
 }
 
-/// Get verification commands for a task type from the Ralph loop config.
-fn verification_commands_for_type(task_type: &str) -> Option<Vec<String>> {
-    let config = ralph_loop_config()?;
-    if !config.verification.enabled {
-        return None;
-    }
-    let type_lower = task_type.to_lowercase();
-    config
-        .verification
-        .task_type_commands
-        .iter()
-        .find(|tc| tc.task_type.to_lowercase() == type_lower)
-        .filter(|tc| !tc.commands.is_empty())
-        .map(|tc| tc.commands.clone())
-}
-
 /// Run a shell command and return (exit_code, stdout+stderr).
 fn run_verification_command(cmd: &str) -> (i32, String) {
     let output = std::process::Command::new("sh").arg("-c").arg(cmd).output();
@@ -426,14 +410,101 @@ fn run_verification_command(cmd: &str) -> (i32, String) {
     }
 }
 
-/// Mechanical verification gate: run all verification commands for the
-/// task type. Returns Ok(()) if all pass, Err(message) if any fail.
-/// This is the anti-hallucination gate — the model cannot claim success
-/// when the commands say otherwise.
+/// Truncate on a character boundary.
+///
+/// Slicing `&output[..500]` panics when byte 500 lands inside a multi-byte
+/// character, which compiler output makes likely: rustc emits `^`, `─` and
+/// smart quotes freely. A verification gate that panics on the failure it was
+/// meant to report is worse than no gate.
+pub(crate) fn truncate_output(output: &str, max_bytes: usize) -> String {
+    if output.len() <= max_bytes {
+        return output.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !output.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...[truncated]", &output[..end])
+}
+
+/// Which commands verify a task of this type, if verification is on.
+///
+/// Pure over the config section so the mapping can be tested without a file on
+/// disk. A type with no entry, or an entry with no commands, verifies nothing.
+pub(crate) fn commands_for_type(
+    verification: &RalphVerification,
+    task_type: &str,
+) -> Option<Vec<String>> {
+    if !verification.enabled {
+        return None;
+    }
+    let type_lower = task_type.to_lowercase();
+    verification
+        .task_type_commands
+        .iter()
+        .find(|tc| tc.task_type.to_lowercase() == type_lower)
+        .filter(|tc| !tc.commands.is_empty())
+        .map(|tc| tc.commands.clone())
+}
+
+/// The gate itself, over an injected runner.
+///
+/// `run` is a seam: production passes `run_verification_command`, tests pass a
+/// fake so the verdict logic can be exercised without shelling out. Without it
+/// nothing here was testable, because every path ran `sh -c`.
+///
+/// With `require_all` false the first failure returns immediately, so the
+/// runner is NOT called for the remaining commands. That short-circuit is part
+/// of the contract, not an optimisation: a cheap check placed first is meant to
+/// spare an expensive one after it.
+pub(crate) fn verify_with(
+    task_type: &str,
+    task_order: usize,
+    commands: &[String],
+    require_all: bool,
+    run: &mut dyn FnMut(&str) -> (i32, String),
+) -> std::result::Result<(), String> {
+    let mut failures: Vec<String> = Vec::new();
+
+    for cmd in commands {
+        let (exit_code, output) = run(cmd);
+        if exit_code == 0 {
+            continue;
+        }
+        let truncated = truncate_output(&output, 500);
+        failures.push(format!("`{cmd}` exited {exit_code}\n{truncated}"));
+        tracing::warn!("Verification failed for task #{task_order}: {cmd} exited {exit_code}");
+        if !require_all {
+            return Err(format!(
+                "Verification gate REJECTED for task #{task_order} (type={task_type}):\n{truncated}\n\n\
+                 The command `{cmd}` exited with code {exit_code}. Fix the issue and try \
+                 completing again. The Ralph loop does not accept self-reported success \
+                 when verification commands fail."
+            ));
+        }
+    }
+
+    if failures.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Verification gate REJECTED for task #{task_order} (type={task_type}):\n{}\n\n\
+         Fix the issues and try completing again. The Ralph loop does not accept \
+         self-reported success when verification commands fail.",
+        failures.join("\n\n")
+    ))
+}
+
+/// Mechanical verification gate: run the verification commands for the task
+/// type. `Ok(())` when they pass, `Err(message)` when they do not. This is the
+/// anti-hallucination gate — the model cannot claim success when the shell
+/// says otherwise.
 fn verify_task_completion(task_type: &str, task_order: usize) -> std::result::Result<(), String> {
-    let commands = match verification_commands_for_type(task_type) {
-        Some(cmds) => cmds,
-        None => return Ok(()), // No verification configured for this type
+    let Some(config) = ralph_loop_config() else {
+        return Ok(());
+    };
+    let Some(commands) = commands_for_type(&config.verification, task_type) else {
+        return Ok(()); // No verification configured for this type
     };
 
     tracing::info!(
@@ -441,44 +512,13 @@ fn verify_task_completion(task_type: &str, task_order: usize) -> std::result::Re
         commands.len()
     );
 
-    let config = ralph_loop_config().unwrap(); // Safe: verification_commands_for_type returned Some
-    let require_all = config.verification.require_all_pass;
-    let mut failures: Vec<String> = Vec::new();
-
-    for cmd in &commands {
-        let (exit_code, output) = run_verification_command(cmd);
-        if exit_code != 0 {
-            let truncated = if output.len() > 500 {
-                format!("{}...[truncated]", &output[..500])
-            } else {
-                output.clone()
-            };
-            failures.push(format!("`{cmd}` exited {exit_code}\n{truncated}"));
-            tracing::warn!("Verification failed for task #{task_order}: {cmd} exited {exit_code}");
-            if !require_all {
-                // First failure is enough when require_all_pass is false
-                return Err(format!(
-                    "Verification gate REJECTED for task #{task_order} (type={task_type}):\n{}\n\n\
-                     The command `{cmd}` exited with code {exit_code}. Fix the issue and try \
-                     completing again. The Ralph loop does not accept self-reported success \
-                     when verification commands fail.",
-                    truncated
-                ));
-            }
-        }
-    }
-
-    if require_all && !failures.is_empty() {
-        return Err(format!(
-            "Verification gate REJECTED for task #{task_order} (type={}): {}/{} commands failed.\n\n{}",
-            task_type,
-            failures.len(),
-            commands.len(),
-            failures.join("\n---\n")
-        ));
-    }
-
-    Ok(())
+    verify_with(
+        task_type,
+        task_order,
+        &commands,
+        config.verification.require_all_pass,
+        &mut run_verification_command,
+    )
 }
 
 /// Validate string input
