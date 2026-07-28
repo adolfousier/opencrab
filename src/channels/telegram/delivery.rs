@@ -492,7 +492,13 @@ pub(crate) async fn deliver_final_response(
                         )
                         .await
                         {
-                            Ok(id) => Some(id),
+                            Ok(id) => {
+                                tracing::info!(
+                                    "Telegram: rich blocks delivered as msg {id} ({} chars)",
+                                    text_only.len()
+                                );
+                                Some(id)
+                            }
                             Err(be) => {
                                 tracing::warn!(
                                     "Telegram: rich blocks delivery failed ({be}), trying markdown"
@@ -517,6 +523,12 @@ pub(crate) async fn deliver_final_response(
                         .await
                         {
                             Ok(id) => {
+                                // Success was silent, which is why an
+                                // unformatted table could not be traced (#860).
+                                tracing::info!(
+                                    "Telegram: rich markdown delivered as msg {id} ({} chars)",
+                                    rich_md.len()
+                                );
                                 sent_reply_id = Some(id);
                                 true
                             }

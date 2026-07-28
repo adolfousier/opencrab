@@ -45,11 +45,26 @@ pub(crate) fn contains_table(text: &str) -> bool {
 /// deployments opt out (onboard dialog or `richtext off`) and get the
 /// universal HTML rendering. Read via the zero-disk config mirror.
 pub(crate) fn should_send_native_rich(text: &str) -> bool {
-    crate::config::Config::current()
+    let flag = crate::config::Config::current()
         .channels
         .telegram
-        .rich_messages
-        && has_rich_structure(text)
+        .rich_messages;
+    let structured = has_rich_structure(text);
+    // Logged because the verdict was previously invisible: only FAILURES down
+    // the rich path were recorded, so "rich was never attempted" and "rich was
+    // sent and the client rendered it badly" produced identical logs. A table
+    // that arrived as unformatted HTML could not be diagnosed from the log at
+    // all (#860). Both inputs are recorded, not just the answer, so a false
+    // verdict says which half caused it.
+    tracing::info!(
+        "Telegram rich verdict: {} (rich_messages={}, structured={}, table={}, len={})",
+        flag && structured,
+        flag,
+        structured,
+        contains_table(text),
+        text.len()
+    );
+    flag && structured
 }
 
 /// Whether `text` contains block-level markdown structure that native rich
