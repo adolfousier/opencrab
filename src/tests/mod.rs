@@ -37,6 +37,7 @@ pub mod bash_interactive_reject_test;
 pub mod bash_posix_quote_test;
 pub mod bash_retry_loop_test;
 pub mod bash_ssh_detection_test;
+pub mod bash_toml_blocklist_test;
 pub mod brain_agent_context_test;
 pub mod brain_agent_service_phantom_lang_test;
 pub mod brain_agent_service_phantom_test;
@@ -371,6 +372,7 @@ pub mod rtk_autodownload_test;
 pub mod rtk_rewrite_test;
 #[cfg(feature = "rtk")]
 pub mod rtk_tracker_test;
+pub mod toml_hot_reload_test;
 pub mod tui_app_state_test;
 pub mod tui_components_logo_test;
 pub mod tui_events_test;

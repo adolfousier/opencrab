@@ -79,16 +79,23 @@ fn verify_or_rollback(
     }
 
     // Rollback from backup
-    if let Some(bak) = backup_path {
-        if let Ok(original) = std::fs::read_to_string(bak) {
-            if let Ok(mut f) = std::fs::File::create(full_path) {
-                let _ = f.write_all(original.as_bytes());
-            }
-            tracing::warn!(
+    if let Some(bak) = backup_path
+        && let Ok(original) = std::fs::read_to_string(bak)
+    {
+        match std::fs::File::create(full_path).and_then(|mut f| f.write_all(original.as_bytes())) {
+            Ok(()) => tracing::warn!(
                 "write_opencrabs_file: verification failed, rolled back {}: {}",
                 file_name,
                 violations.join("; ")
-            );
+            ),
+            // Never silent: the rollback is the only thing standing between a
+            // rejected write and the file keeping it.
+            Err(e) => tracing::error!(
+                "write_opencrabs_file: verification failed for {} AND rollback failed ({e}) \
+                 — the rejected content is still on disk: {}",
+                file_name,
+                violations.join("; ")
+            ),
         }
     }
 
@@ -336,10 +343,11 @@ impl Tool for WriteOpenCrabsFileTool {
                     Ok(mut f) => match f.write_all(effective_content.as_bytes()) {
                         Ok(()) => {
                             // Post-write verification: re-read file for full content
-                            if let Ok(full_content) = std::fs::read_to_string(&full_path) {
-                                if let Err(msg) = verify_or_rollback(&full_path, &full_content, &backup_path) {
-                                    return Ok(ToolResult::error(msg));
-                                }
+                            if let Ok(full_content) = std::fs::read_to_string(&full_path)
+                                && let Err(msg) =
+                                    verify_or_rollback(&full_path, &full_content, &backup_path)
+                            {
+                                return Ok(ToolResult::error(msg));
                             }
                             // #765 event-based cross-file trigger
                             if brain_file_safety::is_protected_path(&full_path) {

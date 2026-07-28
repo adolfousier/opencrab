@@ -76,6 +76,7 @@ pub mod subagent;
 
 // Dynamic tools — runtime-defined via tools.toml
 pub mod dynamic;
+pub mod toml_hot_reload;
 pub mod tool_manage;
 
 // Browser automation — headless Chrome via CDP

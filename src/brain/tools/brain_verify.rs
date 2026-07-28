@@ -121,13 +121,11 @@ pub fn verify_brain_file(file_name: &str, content: &str) -> Vec<String> {
 
     // Check required rules for this file
     for rule in &config.required {
-        if rule.file == file_name {
-            if !pattern_matches(&rule.pattern, content) {
-                violations.push(format!(
-                    "Required rule missing in {}: \"{}\" ({})",
-                    file_name, rule.pattern, rule.why
-                ));
-            }
+        if rule.file == file_name && !pattern_matches(&rule.pattern, content) {
+            violations.push(format!(
+                "Required rule missing in {}: \"{}\" ({})",
+                file_name, rule.pattern, rule.why
+            ));
         }
     }
 
@@ -153,7 +151,10 @@ mod tests {
 
     #[test]
     fn test_simple_substring_match() {
-        assert!(pattern_matches("BAN em-dashes", "## BAN em-dashes. ZERO TOLERANCE."));
+        assert!(pattern_matches(
+            "BAN em-dashes",
+            "## BAN em-dashes. ZERO TOLERANCE."
+        ));
         assert!(!pattern_matches("BAN em-dashes", "No issues here"));
     }
 
@@ -168,10 +169,7 @@ mod tests {
     #[test]
     fn test_case_insensitive() {
         let text = "Reports use rich markdown tables for tabular data.";
-        assert!(pattern_matches(
-            "(?i)reports use rich markdown table",
-            text
-        ));
+        assert!(pattern_matches("(?i)reports use rich markdown table", text));
         assert!(pattern_matches("reports use rich", text));
     }
 
@@ -179,7 +177,10 @@ mod tests {
     fn test_pattern_with_glob() {
         let text = "NEVER push to main without explicit user approval.";
         assert!(pattern_matches("NEVER push.*without explicit", text));
-        assert!(!pattern_matches("NEVER push.*without approval.*extra", text));
+        assert!(!pattern_matches(
+            "NEVER push.*without approval.*extra",
+            text
+        ));
     }
 
     #[test]

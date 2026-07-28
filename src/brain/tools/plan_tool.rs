@@ -349,10 +349,6 @@ struct RalphLoopConfig {
     #[serde(default)]
     forward: RalphForward,
     #[serde(default)]
-    reverse: RalphReverse,
-    #[serde(default)]
-    epistemic: RalphEpistemic,
-    #[serde(default)]
     verification: RalphVerification,
 }
 
@@ -360,20 +356,6 @@ struct RalphLoopConfig {
 struct RalphForward {
     #[serde(default = "default_max_iterations")]
     max_iterations: u32,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RalphReverse {
-    #[serde(default = "default_max_reverse_iterations")]
-    max_iterations: u32,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RalphEpistemic {
-    #[serde(default)]
-    confidence_levels: Vec<String>,
-    #[serde(default = "default_decay_days")]
-    decay_days: u32,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -392,37 +374,25 @@ struct TaskTypeCommands {
     commands: Vec<String>,
 }
 
-fn default_max_iterations() -> u32 { 20 }
-fn default_max_reverse_iterations() -> u32 { 10 }
-fn default_decay_days() -> u32 { 30 }
+fn default_max_iterations() -> u32 {
+    20
+}
 
-fn ralph_loop_config() -> Option<&'static RalphLoopConfig> {
-    static CONFIG: OnceLock<Option<RalphLoopConfig>> = OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let home = dirs::home_dir()?;
-        let path = home.join(".opencrabs/safety/ralph_loop.toml");
-        if !path.exists() {
-            tracing::debug!("No Ralph loop config at {}, verification gate disabled", path.display());
-            return None;
-        }
-        match std::fs::read_to_string(&path) {
-            Ok(content) => match toml::from_str::<RalphLoopConfig>(&content) {
-                Ok(config) => {
-                    tracing::info!("Loaded Ralph loop config: verification={}, {} task type rules",
-                        config.verification.enabled, config.verification.task_type_commands.len());
-                    Some(config)
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to parse Ralph loop config: {e}");
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::warn!("Failed to read Ralph loop config: {e}");
-                None
-            }
-        }
-    }).as_ref()
+/// The Ralph loop config, reloaded when the file changes on disk.
+///
+/// Was a `OnceLock`, so changing `max_iterations` or a verification command
+/// needed a restart. Keyed on mtime + length now, so an edit takes effect on
+/// the next task transition (#852).
+fn ralph_loop_config() -> Option<std::sync::Arc<RalphLoopConfig>> {
+    static CONFIG: OnceLock<Option<super::toml_hot_reload::HotToml<RalphLoopConfig>>> =
+        OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            super::toml_hot_reload::safety_path("ralph_loop.toml")
+                .map(|p| super::toml_hot_reload::HotToml::new(p, "Ralph loop config"))
+        })
+        .as_ref()?
+        .get()
 }
 
 /// Get verification commands for a task type from the Ralph loop config.
@@ -432,7 +402,10 @@ fn verification_commands_for_type(task_type: &str) -> Option<Vec<String>> {
         return None;
     }
     let type_lower = task_type.to_lowercase();
-    config.verification.task_type_commands.iter()
+    config
+        .verification
+        .task_type_commands
+        .iter()
         .find(|tc| tc.task_type.to_lowercase() == type_lower)
         .filter(|tc| !tc.commands.is_empty())
         .map(|tc| tc.commands.clone())
@@ -440,10 +413,7 @@ fn verification_commands_for_type(task_type: &str) -> Option<Vec<String>> {
 
 /// Run a shell command and return (exit_code, stdout+stderr).
 fn run_verification_command(cmd: &str) -> (i32, String) {
-    let output = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .output();
+    let output = std::process::Command::new("sh").arg("-c").arg(cmd).output();
 
     match output {
         Ok(out) => {
@@ -466,7 +436,10 @@ fn verify_task_completion(task_type: &str, task_order: usize) -> std::result::Re
         None => return Ok(()), // No verification configured for this type
     };
 
-    tracing::info!("Ralph loop verification for task #{task_order} (type={task_type}): {} commands", commands.len());
+    tracing::info!(
+        "Ralph loop verification for task #{task_order} (type={task_type}): {} commands",
+        commands.len()
+    );
 
     let config = ralph_loop_config().unwrap(); // Safe: verification_commands_for_type returned Some
     let require_all = config.verification.require_all_pass;
@@ -498,7 +471,10 @@ fn verify_task_completion(task_type: &str, task_order: usize) -> std::result::Re
     if require_all && !failures.is_empty() {
         return Err(format!(
             "Verification gate REJECTED for task #{task_order} (type={}): {}/{} commands failed.\n\n{}",
-            task_type, failures.len(), commands.len(), failures.join("\n---\n")
+            task_type,
+            failures.len(),
+            commands.len(),
+            failures.join("\n---\n")
         ));
     }
 

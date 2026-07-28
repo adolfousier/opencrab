@@ -20,71 +20,52 @@ use uuid::Uuid;
 // are the immovable floor; TOML adds runtime-configurable patterns.
 
 #[derive(Debug, Deserialize)]
-struct TomlBlocklist {
+pub(crate) struct TomlBlocklist {
     #[allow(dead_code)]
-    meta: Option<toml::Value>,
+    pub(crate) meta: Option<toml::Value>,
     #[serde(default)]
-    rules: Vec<TomlBlockRule>,
+    pub(crate) rules: Vec<TomlBlockRule>,
     #[serde(default)]
-    overrides: Vec<TomlOverride>,
+    pub(crate) overrides: Vec<TomlOverride>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TomlBlockRule {
+pub(crate) struct TomlBlockRule {
     #[allow(dead_code)]
-    id: String,
+    pub(crate) id: String,
     #[allow(dead_code)]
-    category: String,
-    severity: String,
-    reason: String,
+    pub(crate) category: String,
+    pub(crate) severity: String,
+    pub(crate) reason: String,
     #[serde(default)]
-    patterns: Vec<String>,
+    pub(crate) patterns: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TomlOverride {
+pub(crate) struct TomlOverride {
     #[allow(dead_code)]
-    id: String,
+    pub(crate) id: String,
     #[allow(dead_code)]
-    reason: String,
-    patterns: Vec<String>,
+    pub(crate) reason: String,
+    pub(crate) patterns: Vec<String>,
 }
 
-/// Load and cache the TOML blocklist. Returns `None` if file missing,
-/// unparseable, or home dir undetectable. Logs warnings on parse errors.
-/// The hardcoded blocklist is always active; this adds runtime patterns.
-fn toml_blocklist() -> Option<&'static TomlBlocklist> {
-    static BLOCKLIST: OnceLock<Option<TomlBlocklist>> = OnceLock::new();
+/// The TOML blocklist, reloaded when the file changes on disk.
+///
+/// Was a `OnceLock`, which read the file once per process and made the
+/// "editable at runtime, no rebuild" promise false: a new pattern needed a
+/// restart. Keyed on mtime + length now, so an edit takes effect on the next
+/// bash call (#851). The hardcoded blocklist is always active; this only adds.
+fn toml_blocklist() -> Option<std::sync::Arc<TomlBlocklist>> {
+    static BLOCKLIST: OnceLock<Option<super::toml_hot_reload::HotToml<TomlBlocklist>>> =
+        OnceLock::new();
     BLOCKLIST
         .get_or_init(|| {
-            let home = dirs::home_dir()?;
-            let path = home.join(".opencrabs/safety/bash_blocklist.toml");
-            if !path.exists() {
-                tracing::debug!("No TOML blocklist at {}", path.display());
-                return None;
-            }
-            match std::fs::read_to_string(&path) {
-                Ok(content) => match toml::from_str::<TomlBlocklist>(&content) {
-                    Ok(bl) => {
-                        tracing::info!(
-                            "Loaded TOML blocklist: {} rules, {} overrides",
-                            bl.rules.len(),
-                            bl.overrides.len()
-                        );
-                        Some(bl)
-                    }
-                    Err(e) => {
-                        tracing::warn!("TOML blocklist parse error: {}", e);
-                        None
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("TOML blocklist read error: {}", e);
-                    None
-                }
-            }
+            super::toml_hot_reload::safety_path("bash_blocklist.toml")
+                .map(|p| super::toml_hot_reload::HotToml::new(p, "TOML blocklist"))
         })
-        .as_ref()
+        .as_ref()?
+        .get()
 }
 
 /// Check the command against the TOML blocklist. Returns `Some(reason)`
@@ -94,13 +75,25 @@ fn toml_blocklist() -> Option<&'static TomlBlocklist> {
 /// whitespace-collapsed) input.
 fn check_toml_blocklist(command: &str) -> Option<String> {
     let blocklist = toml_blocklist()?;
+    evaluate_blocklist(&blocklist, command)
+}
+
+/// Pure match of `command` against an already-loaded blocklist.
+///
+/// Split from the loader so the precedence rules can be tested without a home
+/// directory or a file on disk. Overrides are checked first: an override match
+/// allows the command even when a rule also matches. It can only relax TOML
+/// rules — the hardcoded blocklist runs before this is ever reached.
+///
+/// Matching is substring on normalized (lowercased, whitespace-collapsed)
+/// input, so a pattern is exactly as precise as the string chosen for it.
+pub(crate) fn evaluate_blocklist(blocklist: &TomlBlocklist, command: &str) -> Option<String> {
     let normalized: String = command
         .split_whitespace()
         .collect::<Vec<&str>>()
         .join(" ")
         .to_lowercase();
 
-    // Check overrides first — if any matches, allow the command
     for ov in &blocklist.overrides {
         if ov
             .patterns
@@ -111,7 +104,6 @@ fn check_toml_blocklist(command: &str) -> Option<String> {
         }
     }
 
-    // Check rules
     for rule in &blocklist.rules {
         if rule.severity != "block" || rule.patterns.is_empty() {
             continue;
