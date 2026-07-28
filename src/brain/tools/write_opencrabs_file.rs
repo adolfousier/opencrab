@@ -8,6 +8,8 @@
 //! writes, dedup-aware shrinking, and saves a `.bak` snapshot before
 //! every change.
 
+use super::brain_file_safety;
+use super::brain_verify;
 use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
@@ -54,6 +56,47 @@ pub(crate) fn validate_opencrabs_path(path: &str) -> std::result::Result<(), Str
         ));
     }
     Ok(())
+}
+
+/// Post-write verification: run brain_verify checks on the file content.
+/// If violations found, restores from backup and returns an error message.
+/// Returns `Ok(())` if verification passes, `Err(message)` if rolled back.
+fn verify_or_rollback(
+    full_path: &std::path::Path,
+    content: &str,
+    backup_path: &Option<std::path::PathBuf>,
+) -> std::result::Result<(), String> {
+    use std::io::Write;
+
+    let file_name = match full_path.file_name().and_then(|n| n.to_str()) {
+        Some(n) => n,
+        None => return Ok(()), // Can't determine filename, skip verification
+    };
+
+    let violations = brain_verify::verify_brain_file(file_name, content);
+    if violations.is_empty() {
+        return Ok(());
+    }
+
+    // Rollback from backup
+    if let Some(bak) = backup_path {
+        if let Ok(original) = std::fs::read_to_string(bak) {
+            if let Ok(mut f) = std::fs::File::create(full_path) {
+                let _ = f.write_all(original.as_bytes());
+            }
+            tracing::warn!(
+                "write_opencrabs_file: verification failed, rolled back {}: {}",
+                file_name,
+                violations.join("; ")
+            );
+        }
+    }
+
+    Err(format!(
+        "Brain file verification failed for {}: {}. Write rolled back.",
+        file_name,
+        violations.join("; ")
+    ))
 }
 
 #[async_trait]
@@ -110,7 +153,7 @@ impl Tool for WriteOpenCrabsFileTool {
                 },
                 "dedup_intent": {
                     "type": "boolean",
-                    "description": "Set to true ONLY when shrinking a protected brain file (TOOLS.md, MEMORY.md, SOUL.md, USER.md, AGENTS.md, CODE.md, SECURITY.md, BOOT.md, IDENTITY.md) to deduplicate. Brain files are append-only — any overwrite/replace whose result is shorter than the existing file is rejected unless dedup_intent=true AND every original line still appears in the result."
+                    "description": "Set to true ONLY when shrinking a protected brain file (TOOLS.md, MEMORY.md, SOUL.md, USER.md, AGENTS.md, CODE.md, SECURITY.md, BOOT.md) to deduplicate. Brain files are append-only — any overwrite/replace whose result is shorter than the existing file is rejected unless dedup_intent=true AND every original line still appears in the result."
                 },
                 "cleanup_intent": {
                     "type": "boolean",
@@ -218,15 +261,20 @@ impl Tool for WriteOpenCrabsFileTool {
                         e
                     )));
                 }
-                if let Err(e) = brain_file_safety::backup_before_write(&full_path) {
-                    tracing::warn!("write_opencrabs_file: backup failed for {path_str}: {e}");
-                }
+                let backup_path = brain_file_safety::backup_before_write(&full_path)
+                    .ok()
+                    .flatten();
                 match std::fs::write(&full_path, content) {
-                    Ok(()) => Ok(ToolResult::success(format!(
-                        "Wrote {} bytes to {}",
-                        content.len(),
-                        full_path.display()
-                    ))),
+                    Ok(()) => {
+                        if let Err(msg) = verify_or_rollback(&full_path, content, &backup_path) {
+                            return Ok(ToolResult::error(msg));
+                        }
+                        Ok(ToolResult::success(format!(
+                            "Wrote {} bytes to {}",
+                            content.len(),
+                            full_path.display()
+                        )))
+                    }
                     Err(e) => Ok(ToolResult::error(format!(
                         "Failed to write {}: {}",
                         path_str, e
@@ -276,9 +324,9 @@ impl Tool for WriteOpenCrabsFileTool {
                         e
                     )));
                 }
-                if let Err(e) = brain_file_safety::backup_before_write(&full_path) {
-                    tracing::warn!("write_opencrabs_file: backup failed for {path_str}: {e}");
-                }
+                let backup_path = brain_file_safety::backup_before_write(&full_path)
+                    .ok()
+                    .flatten();
                 use std::io::Write;
                 match std::fs::OpenOptions::new()
                     .create(true)
@@ -287,11 +335,13 @@ impl Tool for WriteOpenCrabsFileTool {
                 {
                     Ok(mut f) => match f.write_all(effective_content.as_bytes()) {
                         Ok(()) => {
-                            // #765 event-based cross-file trigger: this append
-                            // may duplicate content that lives in another brain
-                            // file (the within-file guard above only sees this
-                            // file). Run the report-only scan so it surfaces in
-                            // the inbox. Best-effort — never fails the write.
+                            // Post-write verification: re-read file for full content
+                            if let Ok(full_content) = std::fs::read_to_string(&full_path) {
+                                if let Err(msg) = verify_or_rollback(&full_path, &full_content, &backup_path) {
+                                    return Ok(ToolResult::error(msg));
+                                }
+                            }
+                            // #765 event-based cross-file trigger
                             if brain_file_safety::is_protected_path(&full_path) {
                                 let brain_dir = crate::config::opencrabs_home();
                                 let filed =
@@ -376,7 +426,6 @@ impl Tool for WriteOpenCrabsFileTool {
                 let new_text_nfc: String = new_text.nfc().collect();
                 let updated =
                     existing_nfc.replacen(old_text_nfc.as_str(), new_text_nfc.as_str(), 1);
-                use crate::brain::tools::brain_file_safety;
                 let dedup_intent = input
                     .get("dedup_intent")
                     .and_then(|v| v.as_bool())
@@ -419,14 +468,19 @@ impl Tool for WriteOpenCrabsFileTool {
                         }
                     }
                 }
-                if let Err(e) = brain_file_safety::backup_before_write(&full_path) {
-                    tracing::warn!("write_opencrabs_file: backup failed for {path_str}: {e}");
-                }
+                let backup_path = brain_file_safety::backup_before_write(&full_path)
+                    .ok()
+                    .flatten();
                 match std::fs::write(&full_path, &updated) {
-                    Ok(()) => Ok(ToolResult::success(format!(
-                        "Replaced text in {}",
-                        full_path.display()
-                    ))),
+                    Ok(()) => {
+                        if let Err(msg) = verify_or_rollback(&full_path, &updated, &backup_path) {
+                            return Ok(ToolResult::error(msg));
+                        }
+                        Ok(ToolResult::success(format!(
+                            "Replaced text in {}",
+                            full_path.display()
+                        )))
+                    }
                     Err(e) => Ok(ToolResult::error(format!(
                         "Failed to write {}: {}",
                         path_str, e

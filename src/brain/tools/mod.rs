@@ -4,6 +4,7 @@
 //! including file operations, shell commands, and more.
 
 pub mod brain_file_safety;
+pub mod brain_verify;
 pub mod catalog;
 pub(crate) mod classify;
 pub mod error;
