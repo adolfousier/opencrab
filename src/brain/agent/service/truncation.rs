@@ -105,3 +105,46 @@ pub(super) fn try_emit_truncation_continue(
 
     true
 }
+
+/// Join a truncated partial with the continuation that was asked for (#859).
+///
+/// `final_text` is built from the LAST response only, on the assumption that
+/// earlier text already reached the user as `IntermediateText`. That holds for
+/// the TUI and stopped holding for Telegram once intermediates were gated to
+/// deliverable rich reports (#838): a plain-prose partial is emitted, dropped
+/// by the gate, and the continuation alone becomes the answer.
+///
+/// Observed cost: a 551-token answer was replaced by a 60-character provider
+/// refusal, because the refusal was the tail of the partial AND the whole of
+/// the continuation. The user saw only the refusal.
+pub(crate) fn join_continuation(partial: &str, continuation: &str) -> String {
+    let p = partial.trim_end();
+    let c = continuation.trim();
+    if p.is_empty() {
+        return c.to_string();
+    }
+    if c.is_empty() {
+        return p.to_string();
+    }
+    // The continuation repeated ground the partial already covers. This is the
+    // reported case: the model echoed the tail it was asked to continue from.
+    if p.contains(c) {
+        return p.to_string();
+    }
+    // The model restarted and reproduced the partial in full.
+    if c.contains(p) {
+        return c.to_string();
+    }
+    // A genuine continuation. A separator is inserted only when neither side
+    // supplies one: the cut can land mid-word, where joining with a space would
+    // corrupt the word, but two clauses run together are worse to read than one
+    // stray space. Same trade already made for command labels.
+    let needs_space = !p.ends_with(char::is_whitespace)
+        && !c.starts_with(char::is_whitespace)
+        && !p.ends_with(char::is_alphanumeric);
+    if needs_space {
+        format!("{p} {c}")
+    } else {
+        format!("{p}{c}")
+    }
+}

@@ -21,7 +21,7 @@ pub(crate) mod phantom_lang;
 pub(crate) mod plan_mode_provider;
 pub(crate) mod repetition;
 pub(crate) mod tool_loop;
-mod truncation;
+pub(crate) mod truncation;
 mod types;
 
 pub use builder::{AgentService, BrainRebuild};

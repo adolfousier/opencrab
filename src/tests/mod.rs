@@ -375,6 +375,7 @@ pub mod rtk_rewrite_test;
 #[cfg(feature = "rtk")]
 pub mod rtk_tracker_test;
 pub mod toml_hot_reload_test;
+pub mod truncation_join_test;
 pub mod tui_app_state_test;
 pub mod tui_components_logo_test;
 pub mod tui_events_test;

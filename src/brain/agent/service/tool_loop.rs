@@ -1204,6 +1204,9 @@ impl AgentService {
         // and leave the visibly truncated response than fabricate a Frankenstein
         // continuation in a different format.
         let mut current_iter_is_truncation_continue: bool = false;
+        // Text from the iteration that looked cut off, held so the continuation
+        // can be joined onto it rather than replacing it (#859).
+        let mut truncation_partial: Option<String> = None;
         let mut rotation_retry_used = false; // Single retry when Qwen rotation yields 0 tools
 
         // Ordered content segments for CLI providers — tracks text and tool markers
@@ -4652,6 +4655,10 @@ impl AgentService {
                         &progress_callback,
                     )
                 {
+                    // Keep the partial: final_text is built from the LAST
+                    // response only, so without this the continuation replaces
+                    // the answer instead of extending it (#859).
+                    truncation_partial = Some(iteration_text.clone());
                     truncated_mid_sentence_retry_used = true;
                     // Mark the next iteration so the stream-error path skips
                     // cross-provider fallback for the continuation request.
@@ -5988,6 +5995,25 @@ impl AgentService {
         // Extract text from the final response only (for TUI display).
         // Intermediate text was already shown in real-time via IntermediateText events.
         let mut final_text = Self::extract_text_from_response(&response);
+
+        // A continuation EXTENDS the partial, it does not replace it. The
+        // comment above is true for the TUI, where the partial already reached
+        // the user as IntermediateText, and false for channels that gate
+        // intermediates (#838): there the partial is dropped and only the
+        // continuation is delivered (#859).
+        if let Some(partial) = truncation_partial.as_deref() {
+            let joined = super::truncation::join_continuation(partial, &final_text);
+            if joined != final_text {
+                tracing::info!(
+                    "Truncation continue: joined {} char partial with {} char continuation \
+                     into {} chars",
+                    partial.chars().count(),
+                    final_text.chars().count(),
+                    joined.chars().count()
+                );
+            }
+            final_text = joined;
+        }
 
         // Turn-end phantom verdict (#752): a turn that ran ZERO tools and ends
         // with a narration promising or claiming action ("On it, filing the
