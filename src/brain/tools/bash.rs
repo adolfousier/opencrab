@@ -14,6 +14,120 @@ use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
+// ── TOML blocklist (runtime-configurable safety rules) ─────────────
+// Loaded once from ~/.opencrabs/safety/bash_blocklist.toml on first use.
+// Adds patterns on top of the hardcoded blocklist. The hardcoded rules
+// are the immovable floor; TOML adds runtime-configurable patterns.
+
+#[derive(Debug, Deserialize)]
+struct TomlBlocklist {
+    #[allow(dead_code)]
+    meta: Option<toml::Value>,
+    #[serde(default)]
+    rules: Vec<TomlBlockRule>,
+    #[serde(default)]
+    overrides: Vec<TomlOverride>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TomlBlockRule {
+    #[allow(dead_code)]
+    id: String,
+    #[allow(dead_code)]
+    category: String,
+    severity: String,
+    reason: String,
+    #[serde(default)]
+    patterns: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TomlOverride {
+    #[allow(dead_code)]
+    id: String,
+    #[allow(dead_code)]
+    reason: String,
+    patterns: Vec<String>,
+}
+
+/// Load and cache the TOML blocklist. Returns `None` if file missing,
+/// unparseable, or home dir undetectable. Logs warnings on parse errors.
+/// The hardcoded blocklist is always active; this adds runtime patterns.
+fn toml_blocklist() -> Option<&'static TomlBlocklist> {
+    static BLOCKLIST: OnceLock<Option<TomlBlocklist>> = OnceLock::new();
+    BLOCKLIST
+        .get_or_init(|| {
+            let home = dirs::home_dir()?;
+            let path = home.join(".opencrabs/safety/bash_blocklist.toml");
+            if !path.exists() {
+                tracing::debug!("No TOML blocklist at {}", path.display());
+                return None;
+            }
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match toml::from_str::<TomlBlocklist>(&content) {
+                    Ok(bl) => {
+                        tracing::info!(
+                            "Loaded TOML blocklist: {} rules, {} overrides",
+                            bl.rules.len(),
+                            bl.overrides.len()
+                        );
+                        Some(bl)
+                    }
+                    Err(e) => {
+                        tracing::warn!("TOML blocklist parse error: {}", e);
+                        None
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("TOML blocklist read error: {}", e);
+                    None
+                }
+            }
+        })
+        .as_ref()
+}
+
+/// Check the command against the TOML blocklist. Returns `Some(reason)`
+/// if blocked, `None` if allowed. Overrides are checked first: if any
+/// override pattern matches, the command is allowed even if a rule also
+/// matches. Rules use simple substring matching on normalized (lowercase,
+/// whitespace-collapsed) input.
+fn check_toml_blocklist(command: &str) -> Option<String> {
+    let blocklist = toml_blocklist()?;
+    let normalized: String = command
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .to_lowercase();
+
+    // Check overrides first — if any matches, allow the command
+    for ov in &blocklist.overrides {
+        if ov
+            .patterns
+            .iter()
+            .any(|p| normalized.contains(&p.to_lowercase()))
+        {
+            return None;
+        }
+    }
+
+    // Check rules
+    for rule in &blocklist.rules {
+        if rule.severity != "block" || rule.patterns.is_empty() {
+            continue;
+        }
+        if rule
+            .patterns
+            .iter()
+            .any(|p| normalized.contains(&p.to_lowercase()))
+        {
+            return Some(format!("{} [runtime rule: {}]", rule.reason, rule.id));
+        }
+    }
+
+    None
+}
+
 /// Detach a child from the controlling terminal before `exec`.
 ///
 /// Without this, programs that bypass `stdin` and open `/dev/tty` directly
@@ -235,6 +349,19 @@ impl Tool for BashTool {
         if let Some(reason) = check_blocked_command(&input.command) {
             return Err(ToolError::InvalidInput(format!(
                 "Blocked: {}. This command is on the hard blocklist and cannot be executed.",
+                reason
+            )));
+        }
+
+        // Runtime TOML blocklist — additional patterns loaded from
+        // ~/.opencrabs/safety/bash_blocklist.toml. Editable at runtime
+        // with approval gate. Checked AFTER the hardcoded rules so the
+        // compiled floor always applies. Overrides in the TOML can allow
+        // commands that would otherwise match a TOML rule (but NOT the
+        // hardcoded rules).
+        if let Some(reason) = check_toml_blocklist(&input.command) {
+            return Err(ToolError::InvalidInput(format!(
+                "Blocked: {}. This command matches a runtime blocklist rule.",
                 reason
             )));
         }
