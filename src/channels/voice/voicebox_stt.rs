@@ -15,6 +15,9 @@ use super::openai_tts::build_endpoint_url;
 /// a dead voicebox doesn't block the STT dispatcher's fallback chain.
 const LIVENESS_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// OGG container magic bytes: "OggS"
+const OGG_MAGIC: &[u8; 4] = b"OggS";
+
 /// Quick liveness probe so a dead voicebox process fails in ~2s instead of
 /// blocking on a 30s+ multipart upload that will time out anyway. Any HTTP
 /// response (2xx/3xx/4xx) means the server is reachable and counts as
@@ -35,6 +38,39 @@ pub async fn probe_liveness(base_url: &str) -> Result<()> {
     Ok(())
 }
 
+/// Convert OGG/Opus audio to 16-bit PCM WAV for voicebox compatibility.
+///
+/// Voicebox v0.5.0's bundled audio decoder cannot handle OGG/Opus
+/// (returns 500 "could not open/decode file"). Telegram voice notes
+/// are OGG/Opus, so we decode to PCM via symphonia and re-encode as
+/// WAV via hound before sending. Only compiled when `local-stt` is
+/// available (symphonia + hound are behind that feature).
+#[cfg(feature = "local-stt")]
+fn convert_ogg_to_wav(bytes: &[u8]) -> Result<Vec<u8>> {
+    let (samples, sample_rate) = super::local_whisper::decode_audio(bytes)
+        .context("Failed to decode OGG audio for voicebox WAV conversion")?;
+
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer =
+            hound::WavWriter::new(&mut cursor, spec).context("Failed to create WAV writer")?;
+        for &sample in &samples {
+            let clamped = sample.clamp(-1.0, 1.0);
+            writer
+                .write_sample((clamped * i16::MAX as f32) as i16)
+                .context("Failed to write WAV sample")?;
+        }
+        writer.finalize().context("Failed to finalize WAV")?;
+    }
+    Ok(cursor.into_inner())
+}
+
 /// Transcribe audio bytes using Voicebox.
 ///
 /// POST audio file to `/transcribe` endpoint.
@@ -51,9 +87,36 @@ pub async fn transcribe(audio_bytes: Vec<u8>, base_url: &str) -> Result<String> 
 
     let client = Client::new();
 
-    let file_part = reqwest::multipart::Part::bytes(audio_bytes)
-        .file_name("voice.ogg")
-        .mime_str("audio/ogg")?;
+    // Voicebox v0.5.0 cannot decode OGG/Opus (Telegram voice note format).
+    // Convert to WAV when local-stt is available; otherwise send raw bytes.
+    #[cfg(feature = "local-stt")]
+    let (payload, file_name, mime_type): (Vec<u8>, &str, &str) =
+        if audio_bytes.len() >= 4 && &audio_bytes[..4] == OGG_MAGIC {
+            match convert_ogg_to_wav(&audio_bytes) {
+                Ok(wav) => {
+                    tracing::debug!(
+                        "Voicebox STT: converted {} OGG bytes → {} WAV bytes",
+                        audio_bytes.len(),
+                        wav.len(),
+                    );
+                    (wav, "voice.wav", "audio/wav")
+                }
+                Err(e) => {
+                    tracing::warn!("Voicebox STT: OGG→WAV conversion failed, sending raw: {e}");
+                    (audio_bytes, "voice.ogg", "audio/ogg")
+                }
+            }
+        } else {
+            (audio_bytes, "voice.ogg", "audio/ogg")
+        };
+
+    #[cfg(not(feature = "local-stt"))]
+    let (payload, file_name, mime_type): (Vec<u8>, &str, &str) =
+        (audio_bytes, "voice.ogg", "audio/ogg");
+
+    let file_part = reqwest::multipart::Part::bytes(payload)
+        .file_name(file_name)
+        .mime_str(mime_type)?;
 
     let form = reqwest::multipart::Form::new().part("file", file_part);
 
