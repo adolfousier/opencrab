@@ -218,6 +218,14 @@ pdfium = ["dep:pdfium-render"]
 [profile.dev]
 opt-level = 0
 debug = true
+split-debuginfo = "unpacked"
+
+# Optimise dependencies at full speed while keeping our own code at
+# opt-level 0 for fast incremental builds.  This cuts runtime of
+# dependency-heavy paths (reqwest, serde, tokio, …) without slowing
+# down the edit-compile cycle for our own code.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 opt-level = 3
