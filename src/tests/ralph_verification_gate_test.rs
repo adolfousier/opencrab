@@ -11,7 +11,8 @@
 //! Fixtures are synthetic and carry no user identifiers.
 
 use crate::brain::tools::plan_tool::{
-    RalphVerification, TaskTypeCommands, commands_for_type, truncate_output, verify_with,
+    CriteriaPolicy, CriteriaVerdict, RalphVerification, TaskTypeCommands, VerificationOutcome,
+    commands_for_type, criteria_verdict, truncate_output, verify_with,
 };
 
 fn cmds(v: &[&str]) -> Vec<String> {
@@ -138,6 +139,9 @@ fn verification(enabled: bool, pairs: &[(&str, &[&str])]) -> RalphVerification {
     RalphVerification {
         enabled,
         require_all_pass: true,
+        // Added by #870 after these tests were written. Default keeps them
+        // testing the command-mapping behaviour they were written for.
+        criteria_policy: Default::default(),
         task_type_commands: pairs
             .iter()
             .map(|(t, c)| TaskTypeCommands {
@@ -145,7 +149,6 @@ fn verification(enabled: bool, pairs: &[(&str, &[&str])]) -> RalphVerification {
                 commands: cmds(c),
             })
             .collect(),
-        criteria_policy: CriteriaPolicy::default(),
     }
 }
 
@@ -245,7 +248,11 @@ fn truncating_at_an_exact_boundary_is_stable() {
 fn strict_rejects_an_unverified_claim_against_criteria() {
     // The teeth: criteria declared, no commands ran for the type → refuse.
     assert_eq!(
-        criteria_verdict(CriteriaPolicy::Strict, true, VerificationOutcome::NotConfigured),
+        criteria_verdict(
+            CriteriaPolicy::Strict,
+            true,
+            VerificationOutcome::NotConfigured
+        ),
         CriteriaVerdict::Reject
     );
 }
@@ -266,7 +273,11 @@ fn downgrade_accepts_but_flags_an_unverified_claim() {
 #[test]
 fn off_keeps_the_pre_870_behaviour() {
     assert_eq!(
-        criteria_verdict(CriteriaPolicy::Off, true, VerificationOutcome::NotConfigured),
+        criteria_verdict(
+            CriteriaPolicy::Off,
+            true,
+            VerificationOutcome::NotConfigured
+        ),
         CriteriaVerdict::Accept
     );
 }
