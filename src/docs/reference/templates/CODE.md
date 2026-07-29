@@ -157,8 +157,11 @@ src/
 cargo clippy --all-features          # lint — NOT cargo check
 cargo test --all-features            # test everything
 cargo fmt                            # format
+
+# Before ANY release build, clear the artifacts first — target/ grows into
+# tens of GB otherwise, and stale artifacts accumulate across builds:
+cargo clean
 cargo build --release --all-features # release binary
-# clean when done: cargo clean
 ```
 
 > **Exception — OpenCrabs' own source.** The commands above are for YOUR
