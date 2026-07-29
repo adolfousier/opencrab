@@ -240,9 +240,17 @@ fn task_outcome_key(task_order: usize, title: &str) -> String {
 
 /// Epistemic engine integration (#862): log a plan task's outcome as a
 /// belief, letting the engine record fail→success transitions across retries.
-fn log_task_outcome_belief(task_order: usize, title: &str, verb: &str, output: &Option<String>) {
+fn log_task_outcome_belief(
+    task_order: usize,
+    title: &str,
+    verb: &str,
+    output: &Option<String>,
+    confidence_override: Option<super::epistemic::Confidence>,
+) {
     let key = task_outcome_key(task_order, title);
-    let confidence = task_outcome_confidence(verb);
+    // A criteria-aware downgrade (#870) logs a success as Uncertain instead of
+    // Verified when nothing mechanically checked the declared criteria.
+    let confidence = confidence_override.unwrap_or_else(|| task_outcome_confidence(verb));
 
     let mut value = verb.to_string();
     if let Some(o) = output {
@@ -412,6 +420,25 @@ pub(crate) struct RalphVerification {
     pub(crate) require_all_pass: bool,
     #[serde(default)]
     pub(crate) task_type_commands: Vec<TaskTypeCommands>,
+    /// What to do when a task declares acceptance criteria but its type has no
+    /// verification commands (#870). `downgrade` (default) logs the completion
+    /// as Uncertain instead of Verified; `strict` rejects it outright; `off`
+    /// keeps the pre-#870 behaviour.
+    #[serde(default)]
+    pub(crate) criteria_policy: CriteriaPolicy,
+}
+
+/// Policy for completion claims made against unverified acceptance criteria (#870).
+#[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CriteriaPolicy {
+    /// Accept the completion but log the belief as Uncertain, not Verified.
+    #[default]
+    Downgrade,
+    /// Reject the completion: criteria were declared but nothing verifies them.
+    Strict,
+    /// Pre-#870 behaviour: criteria stay advisory, no enforcement.
+    Off,
 }
 
 #[derive(Debug, Deserialize)]
@@ -541,16 +568,38 @@ pub(crate) fn verify_with(
     ))
 }
 
+/// What the verification gate decided about a completion claim (#870).
+///
+/// `verify_task_completion` used to return `Ok(())` for BOTH "commands ran and
+/// passed" and "nothing was configured," so the caller couldn't tell a proven
+/// completion from an unchecked one. The criteria policy needs that
+/// distinction, so the gate now reports which happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VerificationOutcome {
+    /// Verification commands ran and all passed — the claim is proven.
+    Verified,
+    /// No commands configured for this task type — passed through unchecked.
+    NotConfigured,
+    /// Verification globally disabled (no config / `enabled = false`).
+    Disabled,
+}
+
 /// Mechanical verification gate: run the verification commands for the task
-/// type. `Ok(())` when they pass, `Err(message)` when they do not. This is the
-/// anti-hallucination gate — the model cannot claim success when the shell
-/// says otherwise.
-fn verify_task_completion(task_type: &str, task_order: usize) -> std::result::Result<(), String> {
+/// type. `Ok(outcome)` reports how the claim was settled, `Err(message)` when a
+/// configured command fails. This is the anti-hallucination gate — the model
+/// cannot claim success when the shell says otherwise.
+fn verify_task_completion(
+    task_type: &str,
+    task_order: usize,
+) -> std::result::Result<VerificationOutcome, String> {
     let Some(config) = ralph_loop_config() else {
-        return Ok(());
+        return Ok(VerificationOutcome::Disabled);
     };
+    if !config.verification.enabled {
+        return Ok(VerificationOutcome::Disabled);
+    }
     let Some(commands) = commands_for_type(&config.verification, task_type) else {
-        return Ok(()); // No verification configured for this type
+        return Ok(VerificationOutcome::NotConfigured);
     };
 
     tracing::info!(
@@ -565,6 +614,42 @@ fn verify_task_completion(task_type: &str, task_order: usize) -> std::result::Re
         config.verification.require_all_pass,
         &mut run_verification_command,
     )
+    .map(|()| VerificationOutcome::Verified)
+}
+
+/// The verdict for a completion claim made against acceptance criteria (#870).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CriteriaVerdict {
+    /// Accept normally; log the belief at the verb's usual confidence.
+    Accept,
+    /// Accept, but nothing mechanically verified the claim — log as Uncertain.
+    Downgrade,
+    /// Refuse the completion: criteria were declared but nothing verifies them.
+    Reject,
+}
+
+/// Decide how to treat a success claim given the criteria policy (#870).
+///
+/// Pure so the whole policy matrix is unit-testable without a plan, a context,
+/// or a config file on disk. The policy only bites when a task DECLARES
+/// acceptance criteria yet its type ran NO verification commands
+/// (`NotConfigured`). A proven completion (`Verified`), a globally disabled
+/// gate (`Disabled` — an explicit user choice to turn the gate off), or a task
+/// with no criteria always accepts.
+pub(crate) fn criteria_verdict(
+    policy: CriteriaPolicy,
+    has_criteria: bool,
+    outcome: VerificationOutcome,
+) -> CriteriaVerdict {
+    let unverified = matches!(outcome, VerificationOutcome::NotConfigured);
+    if !(has_criteria && unverified) {
+        return CriteriaVerdict::Accept;
+    }
+    match policy {
+        CriteriaPolicy::Strict => CriteriaVerdict::Reject,
+        CriteriaPolicy::Downgrade => CriteriaVerdict::Downgrade,
+        CriteriaPolicy::Off => CriteriaVerdict::Accept,
+    }
 }
 
 /// Validate string input
@@ -1374,15 +1459,48 @@ impl Tool for PlanTool {
                 // from ralph_loop.toml. Non-zero exit = rejection.
                 // The model cannot hallucinate "tests passed" when the
                 // shell says otherwise.
+                //
+                // Criteria-aware (#870): a success claimed against stated
+                // acceptance criteria that nothing mechanically verified is
+                // downgraded to an Uncertain belief (default) or rejected
+                // outright under `criteria_policy = "strict"`.
+                let mut criteria_downgraded = false;
                 if action.to_lowercase() == "success" {
-                    let task_type_str = current_plan
+                    let (task_type_str, has_criteria) = current_plan
                         .get_task_by_order(task_order)
-                        .map(|t| t.task_type.to_string())
+                        .map(|t| (t.task_type.to_string(), !t.acceptance_criteria.is_empty()))
                         .unwrap_or_default();
-                    if let Err(verify_msg) = verify_task_completion(&task_type_str, task_order) {
-                        return Ok(ToolResult::error(format!(
-                            "🔒 Ralph Loop verification REJECTED task #{task_order}.\n\n{verify_msg}"
-                        )));
+                    match verify_task_completion(&task_type_str, task_order) {
+                        Err(verify_msg) => {
+                            return Ok(ToolResult::error(format!(
+                                "🔒 Ralph Loop verification REJECTED task #{task_order}.\n\n{verify_msg}"
+                            )));
+                        }
+                        Ok(outcome) => {
+                            let policy = ralph_loop_config()
+                                .map(|c| c.verification.criteria_policy)
+                                .unwrap_or_default();
+                            match criteria_verdict(policy, has_criteria, outcome) {
+                                CriteriaVerdict::Reject => {
+                                    return Ok(ToolResult::error(format!(
+                                        "🔒 Ralph Loop REJECTED task #{task_order} (type={task_type_str}): \
+                                         it declares acceptance criteria but no verification commands are \
+                                         configured for this task type. Under `criteria_policy = \"strict\"` \
+                                         a success claim against unverified criteria is refused. Configure \
+                                         commands under [verification] in ralph_loop.toml (or remove the \
+                                         criteria), then complete again."
+                                    )));
+                                }
+                                CriteriaVerdict::Downgrade => {
+                                    criteria_downgraded = true;
+                                    tracing::info!(
+                                        "Ralph loop: task #{task_order} completion downgraded to Uncertain \
+                                         (criteria declared, type '{task_type_str}' has no verification commands)"
+                                    );
+                                }
+                                CriteriaVerdict::Accept => {}
+                            }
+                        }
                     }
                 }
 
@@ -1422,8 +1540,19 @@ impl Tool for PlanTool {
                     .title
                     .clone();
                 // Epistemic engine (#862): log task outcome as a belief.
-                log_task_outcome_belief(task_order, &title, verb, &out);
+                // A criteria-aware downgrade (#870) records Uncertain, not Verified.
+                let confidence_override =
+                    criteria_downgraded.then_some(super::epistemic::Confidence::Uncertain);
+                log_task_outcome_belief(task_order, &title, verb, &out, confidence_override);
                 let mut msg = format!("{emoji} Task #{task_order} ({title}) {verb}.");
+                if criteria_downgraded {
+                    msg.push_str(
+                        "\n⚠️ Criteria-aware gate: completion logged as UNCERTAIN, not Verified — \
+                         this task declares acceptance criteria but no verification commands ran \
+                         for its type. Configure [verification] commands in ralph_loop.toml to \
+                         earn a Verified belief.",
+                    );
+                }
                 if let Some(o) = &out {
                     msg.push_str(&format!("\nOutput: {o}"));
                 }
