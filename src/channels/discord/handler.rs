@@ -21,6 +21,39 @@ use serenity::model::channel::Message;
 use serenity::prelude::*;
 
 /// Split a message into chunks that fit Discord's 2000 char limit.
+/// Whether a chunk ending here leaves no markup open (#876).
+///
+/// Chunks are sent as separate messages and parsed independently, so an
+/// unclosed `<code>`/`<b>` or an odd number of backticks makes that chunk
+/// invalid on its own. Counts backtick runs and unclosed HTML start tags.
+///
+/// Conservative by design: it only ever moves a break EARLIER, never past the
+/// length limit, so a false negative costs a slightly shorter chunk and a false
+/// positive is the behaviour that already shipped.
+fn splits_cleanly(prefix: &str) -> bool {
+    if !prefix.matches('`').count().is_multiple_of(2) {
+        return false;
+    }
+    let mut depth: i32 = 0;
+    let mut rest = prefix;
+    while let Some(open) = rest.find('<') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('>') else {
+            return false; // a start tag left dangling mid-chunk
+        };
+        let tag = &after[..close];
+        if !tag.starts_with('!') {
+            if tag.starts_with('/') {
+                depth -= 1;
+            } else if !tag.ends_with('/') {
+                depth += 1;
+            }
+        }
+        rest = &after[close + 1..];
+    }
+    depth == 0
+}
+
 pub fn split_message(text: &str, max_len: usize) -> Vec<&str> {
     if text.len() <= max_len {
         return vec![text];
@@ -34,11 +67,34 @@ pub fn split_message(text: &str, max_len: usize) -> Vec<&str> {
             end -= 1;
         }
         let break_at = if end < text.len() {
-            text[start..end]
-                .rfind('\n')
-                .filter(|&pos| pos > end - start - 200)
-                .map(|pos| start + pos + 1)
-                .unwrap_or(end)
+            // Prefer a newline near the limit, as before. Then, among the
+            // newlines in the window, prefer one that does NOT sit inside an
+            // open code span or HTML tag (#876): breaking there leaves an
+            // unclosed `<code>` or a lone backtick, which Telegram rejects when
+            // it parses each chunk independently.
+            //
+            // Strictly an improvement: when no markup spans the boundary the
+            // first candidate is already safe and the result is byte-identical
+            // to the old behaviour. Only the previously-broken case moves.
+            let window = &text[start..end];
+            let floor = end - start - 200;
+            let mut chosen = None;
+            for (pos, _) in window.char_indices().rev().filter(|(_, c)| *c == '\n') {
+                if pos <= floor {
+                    break;
+                }
+                if splits_cleanly(&window[..pos]) {
+                    chosen = Some(start + pos + 1);
+                    break;
+                }
+            }
+            chosen.unwrap_or_else(|| {
+                window
+                    .rfind('\n')
+                    .filter(|&pos| pos > floor)
+                    .map(|pos| start + pos + 1)
+                    .unwrap_or(end)
+            })
         } else {
             end
         };

@@ -187,6 +187,7 @@ pub mod markdown_render_test;
 pub mod memory_recall_test;
 pub mod memory_search_test;
 pub mod memory_store_test;
+pub mod message_split_markup_test;
 pub mod mimo_tool_call_hint_test;
 pub mod mission_control_command_test;
 pub mod mission_control_report_test;
