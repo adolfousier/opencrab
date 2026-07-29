@@ -303,6 +303,7 @@ pub mod nonstream_compat_test;
 pub mod onboarding_brain_test;
 pub mod onboarding_channel_deep_link_test;
 pub mod onboarding_custom_model_input_test;
+pub mod onboarding_custom_model_pick_test;
 pub mod onboarding_field_nav_test;
 pub mod onboarding_keys_test;
 pub mod onboarding_navigation_test;

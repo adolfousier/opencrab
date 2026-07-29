@@ -863,7 +863,20 @@ impl OnboardingWizard {
                                 .iter()
                                 .filter(|m| m.to_lowercase().contains(&filter))
                                 .collect();
-                            if let Some(m) = filtered.get(self.ps.selected_model) {
+                            // An EXACT typed match wins over a substring hit
+                            // (#873). Filtering is `contains`, so against a
+                            // large catalogue a typed id is usually also a
+                            // substring of something else, and taking the
+                            // substring hit silently committed a DIFFERENT
+                            // model than the one typed — with no indication.
+                            // Only fall through to the highlighted row when the
+                            // typed text is not itself a catalogue entry.
+                            let typed_raw = self.ps.model_filter.trim();
+                            let typed_is_exact = !typed_raw.is_empty()
+                                && self.ps.models.iter().any(|m| m == typed_raw);
+                            if typed_is_exact {
+                                self.ps.custom_model = typed_raw.to_string();
+                            } else if let Some(m) = filtered.get(self.ps.selected_model) {
                                 self.ps.custom_model = (*m).clone();
                             } else if !self.ps.model_filter.trim().is_empty() {
                                 let typed = self.ps.model_filter.trim().to_string();
