@@ -218,6 +218,52 @@ fn checklist_blocked_reason(state: crate::utils::plan_files::PlanModeState) -> O
     }
 }
 
+/// Map a plan task outcome verb to an epistemic confidence level.
+/// Pure — unit-testable without store access.
+fn task_outcome_confidence(verb: &str) -> super::epistemic::Confidence {
+    match verb {
+        "completed" => super::epistemic::Confidence::Verified,
+        "failed" => super::epistemic::Confidence::Contradicted,
+        _ => super::epistemic::Confidence::Uncertain, // skipped
+    }
+}
+
+/// Stable belief key for a plan task (order + title hash) so a retry that
+/// later succeeds supersedes the earlier failure on the same key rather than
+/// duplicating it. Pure — unit-testable without store access.
+fn task_outcome_key(task_order: usize, title: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    title.hash(&mut hasher);
+    format!("plan:task:{}:{:016x}", task_order, hasher.finish())
+}
+
+/// Epistemic engine integration (#862): log a plan task's outcome as a
+/// belief, letting the engine record fail→success transitions across retries.
+fn log_task_outcome_belief(task_order: usize, title: &str, verb: &str, output: &Option<String>) {
+    let key = task_outcome_key(task_order, title);
+    let confidence = task_outcome_confidence(verb);
+
+    let mut value = verb.to_string();
+    if let Some(o) = output {
+        let snippet: String = o.trim().chars().take(120).collect();
+        if !snippet.is_empty() {
+            value.push_str(&format!(" — {snippet}"));
+        }
+    }
+
+    let result = super::epistemic::add_belief(&key, &value, confidence, "plan_tool:complete");
+    if let super::epistemic::ContradictionResult::Contradicted {
+        old_value,
+        new_value,
+    } = result
+    {
+        tracing::info!(
+            "plan_tool: task #{task_order} outcome superseded — was '{old_value}', now '{new_value}'"
+        );
+    }
+}
+
 /// Clear the session goal a plan task set (on complete or skip).
 async fn clear_task_goal(context: &ToolExecutionContext, session_id: uuid::Uuid) {
     let Some(svc) = context.service_context.as_ref() else {
@@ -1375,6 +1421,8 @@ impl Tool for PlanTool {
                     .unwrap()
                     .title
                     .clone();
+                // Epistemic engine (#862): log task outcome as a belief.
+                log_task_outcome_belief(task_order, &title, verb, &out);
                 let mut msg = format!("{emoji} Task #{task_order} ({title}) {verb}.");
                 if let Some(o) = &out {
                     msg.push_str(&format!("\nOutput: {o}"));
@@ -1517,5 +1565,37 @@ impl Tool for PlanTool {
         }
 
         Ok(ToolResult::success(result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::brain::tools::epistemic::Confidence;
+
+    #[test]
+    fn outcome_confidence_mapping() {
+        assert_eq!(task_outcome_confidence("completed"), Confidence::Verified);
+        assert_eq!(task_outcome_confidence("failed"), Confidence::Contradicted);
+        assert_eq!(task_outcome_confidence("skipped"), Confidence::Uncertain);
+    }
+
+    #[test]
+    fn outcome_key_stable_across_retries() {
+        let k1 = task_outcome_key(3, "Fix the parser");
+        let k2 = task_outcome_key(3, "Fix the parser");
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn outcome_key_differs_by_task() {
+        assert_ne!(
+            task_outcome_key(3, "Fix the parser"),
+            task_outcome_key(4, "Fix the parser")
+        );
+        assert_ne!(
+            task_outcome_key(3, "Fix the parser"),
+            task_outcome_key(3, "Write the docs")
+        );
     }
 }
