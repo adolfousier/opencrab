@@ -145,6 +145,7 @@ fn verification(enabled: bool, pairs: &[(&str, &[&str])]) -> RalphVerification {
                 commands: cmds(c),
             })
             .collect(),
+        criteria_policy: CriteriaPolicy::default(),
     }
 }
 
@@ -232,4 +233,113 @@ fn truncating_at_an_exact_boundary_is_stable() {
         exact,
         "no marker when it fits"
     );
+}
+
+// ── Criteria-aware policy (#870) ────────────────────────────────────────────
+//
+// Acceptance criteria used to be decorative: the gate keyed only on task_type,
+// so a task could declare criteria and complete "success" with nothing checking
+// them. `criteria_verdict` is the pure decision the Complete handler applies.
+
+#[test]
+fn strict_rejects_an_unverified_claim_against_criteria() {
+    // The teeth: criteria declared, no commands ran for the type → refuse.
+    assert_eq!(
+        criteria_verdict(CriteriaPolicy::Strict, true, VerificationOutcome::NotConfigured),
+        CriteriaVerdict::Reject
+    );
+}
+
+#[test]
+fn downgrade_accepts_but_flags_an_unverified_claim() {
+    // The default: honest, not blocking — the belief lands as Uncertain.
+    assert_eq!(
+        criteria_verdict(
+            CriteriaPolicy::Downgrade,
+            true,
+            VerificationOutcome::NotConfigured
+        ),
+        CriteriaVerdict::Downgrade
+    );
+}
+
+#[test]
+fn off_keeps_the_pre_870_behaviour() {
+    assert_eq!(
+        criteria_verdict(CriteriaPolicy::Off, true, VerificationOutcome::NotConfigured),
+        CriteriaVerdict::Accept
+    );
+}
+
+#[test]
+fn a_proven_completion_accepts_under_every_policy() {
+    // Commands ran and passed — the claim is Verified regardless of policy.
+    for policy in [
+        CriteriaPolicy::Downgrade,
+        CriteriaPolicy::Strict,
+        CriteriaPolicy::Off,
+    ] {
+        assert_eq!(
+            criteria_verdict(policy, true, VerificationOutcome::Verified),
+            CriteriaVerdict::Accept,
+            "policy {policy:?} must accept a proven completion"
+        );
+    }
+}
+
+#[test]
+fn a_disabled_gate_accepts_even_under_strict() {
+    // Global gate-off is an explicit user choice; strict must not override it.
+    assert_eq!(
+        criteria_verdict(CriteriaPolicy::Strict, true, VerificationOutcome::Disabled),
+        CriteriaVerdict::Accept
+    );
+}
+
+#[test]
+fn no_criteria_means_nothing_to_enforce() {
+    // A task without acceptance criteria has no claim to verify, under any
+    // policy or outcome.
+    for policy in [
+        CriteriaPolicy::Downgrade,
+        CriteriaPolicy::Strict,
+        CriteriaPolicy::Off,
+    ] {
+        for outcome in [
+            VerificationOutcome::Verified,
+            VerificationOutcome::NotConfigured,
+            VerificationOutcome::Disabled,
+        ] {
+            assert_eq!(
+                criteria_verdict(policy, false, outcome),
+                CriteriaVerdict::Accept,
+                "policy {policy:?} / outcome {outcome:?} must accept a criteria-less task"
+            );
+        }
+    }
+}
+
+// ── criteria_policy deserialization ─────────────────────────────────────────
+
+#[test]
+fn criteria_policy_defaults_to_downgrade_when_absent() {
+    // Non-destructive default: an existing config with no criteria_policy must
+    // not suddenly start rejecting completions.
+    let v: RalphVerification = toml::from_str("enabled = true").expect("valid TOML");
+    assert_eq!(v.criteria_policy, CriteriaPolicy::Downgrade);
+}
+
+#[test]
+fn criteria_policy_parses_each_variant_lowercase() {
+    let strict: RalphVerification =
+        toml::from_str("enabled = true\ncriteria_policy = \"strict\"").expect("valid TOML");
+    assert_eq!(strict.criteria_policy, CriteriaPolicy::Strict);
+
+    let off: RalphVerification =
+        toml::from_str("enabled = true\ncriteria_policy = \"off\"").expect("valid TOML");
+    assert_eq!(off.criteria_policy, CriteriaPolicy::Off);
+
+    let downgrade: RalphVerification =
+        toml::from_str("enabled = true\ncriteria_policy = \"downgrade\"").expect("valid TOML");
+    assert_eq!(downgrade.criteria_policy, CriteriaPolicy::Downgrade);
 }
