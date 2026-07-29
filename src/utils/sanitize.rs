@@ -134,13 +134,25 @@ pub(crate) fn redact_command(cmd: &str) -> String {
             if after > result.len() {
                 break;
             }
-            // Find end of the secret: whitespace, quote, or end of string
-            let secret_end = result[after..]
-                .find(['"', '\'', ' ', '&', '\n'])
-                .map(|p| after + p)
+            // A quoted value must redact its CONTENTS (#879). Previously the
+            // quote was just another terminator, so for `TOKEN="secret"` the
+            // delimiter search returned 0, `secret_end == after`, the guard
+            // below failed and NOTHING was redacted — the quoted form, which is
+            // the more common shell spelling, defeated redaction entirely.
+            let rest = &result[after..];
+            let (value_start, terminators): (usize, &[char]) = match rest.chars().next() {
+                // Opening quote: step over it and end at the matching one, so
+                // spaces inside a quoted secret do not cut it short either.
+                Some('"') => (after + 1, &['"', '\n']),
+                Some('\'') => (after + 1, &['\'', '\n']),
+                _ => (after, &['"', '\'', ' ', '&', '\n']),
+            };
+            let secret_end = result[value_start..]
+                .find(terminators)
+                .map(|p| value_start + p)
                 .unwrap_or(result.len());
-            if secret_end > after {
-                result.replace_range(after..secret_end, "[REDACTED]");
+            if secret_end > value_start {
+                result.replace_range(value_start..secret_end, "[REDACTED]");
             }
             // Advance past where we just redacted to avoid infinite loop
             search_start = after.saturating_add("[REDACTED]".len());
@@ -430,6 +442,16 @@ static HEX_TOKEN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[0-9a-fA-F]{32,}\
 static MIXED_ALNUM_TOKEN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\b[a-zA-Z0-9]{28,}\b").unwrap());
 
+/// Regex for provider tokens shaped `<digits>:<opaque>` — the Telegram bot
+/// token form (#879).
+///
+/// `MIXED_ALNUM_TOKEN_RE` cannot see these: the colon, hyphens and underscores
+/// break the run, so no 28+ alphanumeric stretch exists to match. Without this
+/// there was no structural net under the prefix matcher, which is why one
+/// quoting bug was enough to leak a live token.
+static COLON_TOKEN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b\d{6,12}:[A-Za-z0-9_-]{30,}\b").unwrap());
+
 /// Regex for environment variable assignments with sensitive suffixes.
 /// Matches UPPERCASE_VAR_NAME="value" or UPPERCASE_VAR_NAME=value where the
 /// name ends in _PASS, _SECRET, _TOKEN, _KEY, _APIKEY, _API_KEY, _CREDENTIAL,
@@ -437,7 +459,7 @@ static MIXED_ALNUM_TOKEN_RE: Lazy<Regex> =
 /// Only matches names starting with uppercase to avoid catching lowercase
 /// field names like auth_token that have dedicated prefix handlers.
 static ENV_SECRET_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"\b([A-Z][A-Z0-9_]*(?i:_PASS|_PASSWORD|_PASSWD|_SECRET|_TOKEN|_KEY|_APIKEY|_API_KEY|_CREDENTIAL|_CREDENTIALS|_AUTH))\s*=\s*(?:")?([^\s"']+)"#).unwrap()
+    Regex::new(r#"\b((?:[A-Z][A-Z0-9_]*_)?(?:PASS|PASSWORD|PASSWD|SECRET|TOKEN|KEY|APIKEY|API_KEY|CREDENTIAL|CREDENTIALS|AUTH))\s*=\s*(?:")?([^\s"']+)"#).unwrap()
 });
 
 /// Regex for sensitive `key=value` assignments and URL query params in any
@@ -609,6 +631,21 @@ fn redact_secrets_core(text: &str) -> String {
             let token = m.as_str();
             if is_url_path_segment(&result, m.start()) {
                 token.to_string()
+            } else {
+                "[REDACTED_TOKEN]".to_string()
+            }
+        })
+        .into_owned();
+
+    // 2b. Redact `<digits>:<opaque>` provider tokens (#879). The colon and the
+    //     hyphens/underscores break the run MIXED_ALNUM_TOKEN_RE looks for, so
+    //     without this pass nothing structural catches this shape and the
+    //     prefix matcher is the only line of defence.
+    result = COLON_TOKEN_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let m = caps.get(0).unwrap();
+            if is_url_path_segment(&result, m.start()) {
+                m.as_str().to_string()
             } else {
                 "[REDACTED_TOKEN]".to_string()
             }
