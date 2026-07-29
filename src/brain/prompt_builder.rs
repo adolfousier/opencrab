@@ -206,15 +206,15 @@ LONG TASKS RUN IN THE BACKGROUND — don't block, don't hand-roll polling:
 Genuinely long shell commands (`cargo test`, `cargo build`, `npx remotion render`, `gh run watch`, and similar) are run DETACHED automatically: bash returns "running in the background" immediately, and THIS session resumes itself the moment the task finishes — the result is injected at your next tool-call boundary if you're still working, or starts a fresh turn if you've gone idle. So: run the command normally, then either do other independent work or wrap up — do NOT sit in a wait loop, do NOT re-run it to "check", and do NOT hand-roll a poll loop. When the background result comes back it will say so explicitly; report it to the user and continue whatever was waiting on it. (Ordinary quick commands still run inline and return their output directly, as before.)
 
 LONG-RUNNING OPERATIONS (cron-scheduled, fire-and-forget):
-Some operations like `/rebuild` (compiling OpenCrabs from source) take 10+ minutes and run as **background cron jobs**:
-- **Trigger once, then wait.** The job is scheduled and will auto-report back to the originating chat when done.
-- **Do NOT poll or check status.** Polling will timeout and waste time. The completion report arrives automatically.
-- **Do NOT try to run the build inline.** A `cargo build --release` takes 5-15 minutes and will timeout the bash tool. Always use `/rebuild` which handles this correctly.
-- **Continue other work while waiting.** The rebuild runs in the background; you can keep working on other tasks until the report arrives.
+`/rebuild` compiles OPENCRABS' OWN Rust source. It is NOT part of normal work:
+- **It applies only to the OpenCrabs repository itself**, and only when the user has EXPLICITLY asked to rebuild it. Almost every user is running the shipped binary and never needs this. If you are working on ANY other project, `/rebuild` is not the tool — build that project however that project is built.
+- **Never reach for it on your own initiative**, and never as a way to "check" that a Rust change is sound. Verification is `cargo clippy --all-features`, `cargo test --all-features`, `cargo fmt` — matching CI. A release build proves nothing those do not, and costs 10+ minutes.
+- **Never run `cargo build --release` inline.** It takes 5-15 minutes and times out the bash tool. `/rebuild` exists precisely so this never blocks.
+- **Never wait on it.** It is a background cron job that reports back to the originating chat by itself. Trigger it and move on: do NOT poll, do NOT re-run it to check, do NOT sit idle until it lands. Sitting and waiting on a rebuild is the failure mode this section exists to prevent.
 
 **`/evolve` vs `/rebuild` — know the difference:**
 - `/evolve` downloads the latest prebuilt binary from GitHub releases and hot-reloads in place. No compilation, no restart, no downtime. Triggers the agent to reply once complete. This is the normal update path.
-- `/rebuild` compiles OpenCrabs from source via `cargo build --release`. Takes 10+ minutes, runs as a background cron job, swaps the binary, and reports back. No restart needed. Use this only when you've modified Rust code locally.
+- `/rebuild` compiles OpenCrabs from source via `cargo build --release`. Takes 10+ minutes, runs as a background cron job, swaps the binary, and reports back. No restart needed. Use this ONLY when the user explicitly asks to rebuild OpenCrabs itself after local Rust changes — maintainer and creator territory, not the normal path.
 
 If you accidentally trigger a long build via bash and it times out, that's fine, the cron job will still complete and report back.
 
