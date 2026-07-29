@@ -728,6 +728,8 @@ impl Tool for TelegramSendTool {
                 let text = pget!(get_str(&input, "message")).to_string();
                 let chat_id =
                     pget!(chat_or_err(&input, &self.telegram_state, context.session_id).await);
+                // Collect callback_data strings for origin tracking (#878)
+                let mut origin_keys: Vec<String> = Vec::new();
                 let rows: Vec<Vec<InlineKeyboardButton>> =
                     match input.get("buttons").and_then(|v| v.as_array()) {
                         Some(outer) => outer
@@ -742,6 +744,7 @@ impl Tool for TelegramSendTool {
                                             .get("callback_data")
                                             .and_then(|v| v.as_str())?
                                             .to_string();
+                                        origin_keys.push(data.clone());
                                         Some(InlineKeyboardButton::callback(text, data))
                                     })
                                     .collect()
@@ -753,6 +756,10 @@ impl Tool for TelegramSendTool {
                             ));
                         }
                     };
+                // Register callback_data → session_id so the callback
+                // dispatcher routes taps to THIS session (#878).
+                self.telegram_state
+                    .register_callback_origins(context.session_id, origin_keys);
                 let keyboard = InlineKeyboardMarkup::new(rows);
                 let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
                 match send_retrying_rate_limit("telegram_send send_buttons", || {

@@ -1386,13 +1386,40 @@ impl TelegramAgent {
 
                                     // Clone data for the spawned task (tokio::spawn requires 'static)
                                     let data_owned = data.to_string();
-                                    if let Some(sid) = resolve_callback_session(
-                                        &query,
-                                        &state,
-                                        &shared_session,
-                                    )
-                                    .await
-                                    {
+                                    // #878: resolve the originating session.
+                                    // 1st: look up the callback_origins map (set by
+                                    // telegram_send send_buttons) — this is the reliable
+                                    // path because it records which session sent the buttons.
+                                    // 2nd: try parsing a UUID from the callback_data
+                                    // (format: <prefix>:<uuid>:<rest>).
+                                    // 3rd: fall back to chat-context resolution (fragile).
+                                    let sid = if let Some(uuid) = state.lookup_callback_origin(data) {
+                                        tracing::info!(
+                                            "Telegram: callback routing — origin map hit: \
+                                             {data} → session {uuid}"
+                                        );
+                                        Some(uuid)
+                                    } else if let Some(uuid) = data.find(':').and_then(|i| {
+                                        data[i + 1..].find(':').map(|j| (i, j))
+                                    }).and_then(|(i, j)| {
+                                        uuid::Uuid::parse_str(&data[i + 1..i + 1 + j]).ok()
+                                    }) {
+                                        tracing::info!(
+                                            "Telegram: callback routing — parsed session UUID \
+                                             {uuid} from callback data"
+                                        );
+                                        Some(uuid)
+                                    } else {
+                                        tracing::warn!(
+                                            "Telegram: callback routing — no origin for '{}', \
+                                             falling back to chat context (may route to wrong \
+                                             session — see #878)",
+                                            data
+                                        );
+                                        resolve_callback_session(&query, &state, &shared_session)
+                                            .await
+                                    };
+                                    if let Some(sid) = sid {
                                         let agent_cb = agent.clone();
                                         let bot_cb = bot.clone();
                                         let state_cb = state.clone();

@@ -165,6 +165,15 @@ pub struct TelegramState {
     /// Dedup of outbound media uploaded via `telegram_send` so an identical
     /// file+caption isn't delivered twice back-to-back (#721).
     media_dedup: super::outbound_dedup::MediaSendDedup,
+    /// Tracks which session sent which inline-button callback data (#878).
+    /// When `telegram_send send_buttons` posts buttons, each callback_data
+    /// string is mapped to the sending session's UUID.  The callback
+    /// dispatcher looks up this map BEFORE falling back to chat-context
+    /// resolution, ensuring callbacks route to the session that ORIGINATED
+    /// the buttons — not whatever session last handled a message in that
+    /// chat.  Entries are ephemeral, in-memory, and evictable (LIFO
+    /// overwrite is fine; one active set per session is the norm).
+    callback_origins: std::sync::Mutex<HashMap<String, Uuid>>,
 }
 
 impl Default for TelegramState {
@@ -223,6 +232,7 @@ impl TelegramState {
             active_turns: std::sync::Mutex::new(std::collections::HashSet::new()),
             chat_newest_msg_id: std::sync::Mutex::new(HashMap::new()),
             media_dedup: super::outbound_dedup::MediaSendDedup::default(),
+            callback_origins: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -264,6 +274,30 @@ impl TelegramState {
             .unwrap_or_else(|e| e.into_inner())
             .get(&chat_id)
             .copied()
+    }
+
+    /// Register callback_data → originating session for inline buttons (#878).
+    /// Called by `telegram_send send_buttons` so the callback dispatcher can
+    /// route taps to the session that SENT the buttons, not the one bound
+    /// to the chat.
+    pub(crate) fn register_callback_origins(
+        &self,
+        session_id: Uuid,
+        callback_datas: impl IntoIterator<Item = String>,
+    ) {
+        if let Ok(mut map) = self.callback_origins.lock() {
+            for data in callback_datas {
+                map.insert(data, session_id);
+            }
+        }
+    }
+
+    /// Look up which session originated a given callback_data string (#878).
+    pub(crate) fn lookup_callback_origin(&self, callback_data: &str) -> Option<Uuid> {
+        self.callback_origins
+            .lock()
+            .ok()
+            .and_then(|map| map.get(callback_data).copied())
     }
 
     /// Store the connected Bot instance.
