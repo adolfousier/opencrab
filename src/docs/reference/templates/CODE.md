@@ -156,9 +156,18 @@ src/
 ```bash
 cargo clippy --all-features          # lint — NOT cargo check
 cargo test --all-features            # test everything
+cargo fmt                            # format
 cargo build --release --all-features # release binary
 # clean when done: cargo clean
 ```
+
+> **Exception — OpenCrabs' own source.** The commands above are for YOUR
+> projects; build them however they are normally built. If you are working on
+> the OpenCrabs repository itself, never run `cargo build --release` inline:
+> use the `/rebuild` tool, and only when the user has explicitly asked to
+> rebuild OpenCrabs. It runs in the background and reports back to the chat, so
+> never wait on it. To verify a change, clippy + test + fmt is the answer; a
+> release build proves nothing they do not.
 
 **Go:**
 ```bash
