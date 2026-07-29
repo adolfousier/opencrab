@@ -119,44 +119,45 @@ impl EpistemicStore {
         // Check for contradiction with existing belief.
         // Clone first to avoid borrow conflict (immutable get + mutable insert).
         let existing = self.beliefs.get(key).cloned();
-        if let Some(existing) = existing {
-            if existing.value != value && existing.confidence != Confidence::Contradicted {
-                // Extract old_value BEFORE mutable borrow
-                let old_value = existing.value.clone();
+        if let Some(existing) = existing
+            && existing.value != value
+            && existing.confidence != Confidence::Contradicted
+        {
+            // Extract old_value BEFORE mutable borrow
+            let old_value = existing.value.clone();
 
-                // Mark existing belief as contradicted
-                let mut contradicted = existing.clone();
-                contradicted.confidence = Confidence::Contradicted;
-                contradicted.notes = Some(format!(
-                    "Contradicted by new value '{}' from {} at {}",
-                    value,
-                    origin,
-                    now.format("%Y-%m-%d %H:%M:%S UTC")
-                ));
-                self.beliefs.insert(
-                    format!("{}:contradicted:{}", key, now.timestamp()),
-                    contradicted,
-                );
+            // Mark existing belief as contradicted
+            let mut contradicted = existing.clone();
+            contradicted.confidence = Confidence::Contradicted;
+            contradicted.notes = Some(format!(
+                "Contradicted by new value '{}' from {} at {}",
+                value,
+                origin,
+                now.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
+            self.beliefs.insert(
+                format!("{}:contradicted:{}", key, now.timestamp()),
+                contradicted,
+            );
 
-                // Insert new belief
-                let belief = Belief {
-                    key: key.to_string(),
-                    value: value.to_string(),
-                    confidence,
-                    source: Source {
-                        origin: origin.to_string(),
-                        recorded_at: now,
-                        last_verified: now,
-                    },
-                    notes: None,
-                };
-                self.beliefs.insert(key.to_string(), belief);
+            // Insert new belief
+            let belief = Belief {
+                key: key.to_string(),
+                value: value.to_string(),
+                confidence,
+                source: Source {
+                    origin: origin.to_string(),
+                    recorded_at: now,
+                    last_verified: now,
+                },
+                notes: None,
+            };
+            self.beliefs.insert(key.to_string(), belief);
 
-                return ContradictionResult::Contradicted {
-                    old_value,
-                    new_value: value.to_string(),
-                };
-            }
+            return ContradictionResult::Contradicted {
+                old_value,
+                new_value: value.to_string(),
+            };
         }
 
         // No contradiction — insert or update
@@ -240,8 +241,7 @@ impl EpistemicStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let content = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(path, content)
     }
 
@@ -300,10 +300,10 @@ pub fn add_belief(
     let result = guard.add_belief(key, value, confidence, origin);
 
     // Auto-save after modification
-    if let Some(path) = epistemic_store_path() {
-        if let Err(e) = guard.save(&path) {
-            tracing::warn!("Failed to save epistemic store: {}", e);
-        }
+    if let Some(path) = epistemic_store_path()
+        && let Err(e) = guard.save(&path)
+    {
+        tracing::warn!("Failed to save epistemic store: {}", e);
     }
 
     result
@@ -322,12 +322,11 @@ pub fn verify_belief(key: &str) -> bool {
     let mut guard = store.lock().expect("epistemic store lock poisoned");
     let result = guard.verify_belief(key);
 
-    if result {
-        if let Some(path) = epistemic_store_path() {
-            if let Err(e) = guard.save(&path) {
-                tracing::warn!("Failed to save epistemic store: {}", e);
-            }
-        }
+    if result
+        && let Some(path) = epistemic_store_path()
+        && let Err(e) = guard.save(&path)
+    {
+        tracing::warn!("Failed to save epistemic store: {}", e);
     }
 
     result
@@ -339,12 +338,11 @@ pub fn apply_decay(decay_days: i64) -> Vec<String> {
     let mut guard = store.lock().expect("epistemic store lock poisoned");
     let decayed = guard.apply_decay(decay_days);
 
-    if !decayed.is_empty() {
-        if let Some(path) = epistemic_store_path() {
-            if let Err(e) = guard.save(&path) {
-                tracing::warn!("Failed to save epistemic store: {}", e);
-            }
-        }
+    if !decayed.is_empty()
+        && let Some(path) = epistemic_store_path()
+        && let Err(e) = guard.save(&path)
+    {
+        tracing::warn!("Failed to save epistemic store: {}", e);
     }
 
     decayed
