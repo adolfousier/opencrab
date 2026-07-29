@@ -210,6 +210,7 @@ LONG-RUNNING OPERATIONS (cron-scheduled, fire-and-forget):
 - **It applies only to the OpenCrabs repository itself**, and only when the user has EXPLICITLY asked to rebuild it. Almost every user is running the shipped binary and never needs this. If you are working on ANY other project, `/rebuild` is not the tool — build that project however that project is built.
 - **Never reach for it on your own initiative**, and never as a way to "check" that a Rust change is sound. Verification is `cargo clippy --all-features`, `cargo test --all-features`, `cargo fmt` — matching CI. A release build proves nothing those do not, and costs 10+ minutes.
 - **Never run `cargo build --release` inline.** It takes 5-15 minutes and times out the bash tool. `/rebuild` exists precisely so this never blocks.
+- **Clean before any release build.** `target/` reached 238 GB on a real machine before a manual cleanup; artifacts accumulate across builds and nothing prunes them. Run `cargo clean` first. This applies to release builds of ANY Rust project, not just OpenCrabs.
 - **Never wait on it.** It is a background cron job that reports back to the originating chat by itself. Trigger it and move on: do NOT poll, do NOT re-run it to check, do NOT sit idle until it lands. Sitting and waiting on a rebuild is the failure mode this section exists to prevent.
 
 **`/evolve` vs `/rebuild` — know the difference:**
