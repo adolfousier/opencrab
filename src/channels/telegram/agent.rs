@@ -298,6 +298,7 @@ impl TelegramAgent {
                                         .unwrap_or((teloxide::types::ChatId(0), None, None));
                                     let agent_clone = agent.clone();
                                     let bot_clone = bot.clone();
+                                    let state_clone = state.clone();
                                     tokio::spawn(async move {
                                         // Record the pick ON the suggestion block
                                         // rather than posting a new message.
@@ -359,45 +360,37 @@ impl TelegramAgent {
                                                 );
                                             }
                                         }
-                                        // A real turn WITH tools. This used to
-                                        // call send_message, the plain
-                                        // single-completion path that sends no
-                                        // tool definitions at all, so a tapped
-                                        // "Run the breakdown first" produced a
-                                        // turn that physically could not run
-                                        // anything (#787, same defect #492 fixed
-                                        // for headless run).
-                                        let chat_target = chat_id.0.to_string();
-                                        match crate::channels::bg_resume::run_resume_turn(
-                                            agent_clone,
-                                            sid,
-                                            text,
-                                            "telegram",
-                                            &chat_target,
-                                        )
-                                        .await
-                                        {
-                                            Some(content) => {
-                                                let clean = crate::utils::sanitize::strip_llm_artifacts(
-                                                    &content,
-                                                );
-                                                let html =
-                                                    crate::channels::telegram::handler::md_to_html(
-                                                        &clean,
+                                        // #869: route through the full streaming pipeline
+                                        // (typing indicator, streaming edits, plan card
+                                        // refresh, flow chrome, deliver_final_response)
+                                        // instead of the stripped-down run_resume_turn.
+                                        let _guard =
+                                            match state_clone.try_begin_turn(sid) {
+                                                Some(g) => g,
+                                                None => {
+                                                    tracing::warn!(
+                                                        "Telegram followup tap: session {sid} \
+                                                         already mid-turn, dropping"
                                                     );
-                                                let _ =
-                                                    crate::channels::telegram::send::message_in_thread(
-                                                        &bot_clone, chat_id, thread_id, html,
-                                                    )
-                                                    .parse_mode(teloxide::types::ParseMode::Html)
-                                                    .await;
-                                            }
-                                            None => {
-                                                tracing::warn!(
-                                                    "Telegram follow-up tap: turn produced \
-                                                     nothing to deliver for session {sid}"
-                                                );
-                                            }
+                                                    return;
+                                                }
+                                            };
+                                        if let Err(e) =
+                                            crate::channels::telegram::resume::resume_session(
+                                                bot_clone,
+                                                chat_id,
+                                                thread_id,
+                                                sid,
+                                                text,
+                                                agent_clone,
+                                                state_clone,
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                "Telegram followup tap: resume_session \
+                                                 failed for session {sid}: {e}"
+                                            );
                                         }
                                     });
                                 }
@@ -1402,42 +1395,38 @@ impl TelegramAgent {
                                     {
                                         let agent_cb = agent.clone();
                                         let bot_cb = bot.clone();
+                                        let state_cb = state.clone();
                                         tokio::spawn(async move {
-                                            let chat_target = cb_chat.0.to_string();
-                                            match crate::channels::bg_resume::run_resume_turn(
-                                                agent_cb,
-                                                sid,
-                                                format!("[callback:{data_owned}]"),
-                                                "telegram",
-                                                &chat_target,
-                                            )
-                                            .await
+                                            // #869: route through the full streaming pipeline
+                                            // instead of the stripped-down run_resume_turn.
+                                            let _guard =
+                                                match state_cb.try_begin_turn(sid) {
+                                                    Some(g) => g,
+                                                    None => {
+                                                        tracing::warn!(
+                                                            "Telegram: callback routing — \
+                                                             session {sid} already mid-turn"
+                                                        );
+                                                        return;
+                                                    }
+                                                };
+                                            if let Err(e) =
+                                                crate::channels::telegram::resume::resume_session(
+                                                    bot_cb,
+                                                    cb_chat,
+                                                    cb_thread,
+                                                    sid,
+                                                    format!("[callback:{data_owned}]"),
+                                                    agent_cb,
+                                                    state_cb,
+                                                )
+                                                .await
                                             {
-                                                Some(content) => {
-                                                    let clean =
-                                                        crate::utils::sanitize::strip_llm_artifacts(
-                                                            &content,
-                                                        );
-                                                    let html =
-                                                        crate::channels::telegram::handler::md_to_html(
-                                                            &clean,
-                                                        );
-                                                    let _ =
-                                                        crate::channels::telegram::send::message_in_thread(
-                                                            &bot_cb, cb_chat, cb_thread, html,
-                                                        )
-                                                        .parse_mode(
-                                                            teloxide::types::ParseMode::Html,
-                                                        )
-                                                        .await;
-                                                }
-                                                None => {
-                                                    tracing::warn!(
-                                                        "Telegram: callback routing produced no \
-                                                         response for data={}",
-                                                        data_owned
-                                                    );
-                                                }
+                                                tracing::warn!(
+                                                    "Telegram: callback routing \
+                                                     resume_session failed for session \
+                                                     {sid}: {e}"
+                                                );
                                             }
                                         });
                                     } else {
