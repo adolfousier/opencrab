@@ -25,15 +25,29 @@ pub(crate) const FOLLOWUP_PREFIX: &str = "followup:";
 /// user-chosen continuation under the bot's name, avatar and badge. A `>`
 /// quote does not change that: the bubble is still labelled as the bot
 /// (#844). Editing the block reads as a selected control instead.
-pub(crate) fn picked_block(text: &str) -> String {
-    format!("\u{25b6}\u{fe0f} {text}")
+pub(crate) fn picked_block(text: &str, chooser: Option<&str>) -> String {
+    match chooser {
+        // Name the member who chose it (#893). Without this the record reads as
+        // an anonymous line from the bot, which in a group says nothing about
+        // who acted. The Bot API cannot post AS a user, but the callback query
+        // carries the tapper's identity and it was simply discarded.
+        Some(name) if !name.trim().is_empty() => {
+            format!("\u{25b6}\u{fe0f} {} \u{2014} {text}", name.trim())
+        }
+        _ => format!("\u{25b6}\u{fe0f} {text}"),
+    }
 }
 
 /// Last-resort record when the suggestion block cannot be edited, because it
 /// is too old or no longer accessible. Worse attribution than editing, but
 /// losing the record of what was chosen is worse still.
-pub(crate) fn echo_fallback(text: &str) -> String {
-    format!("> \u{25b6}\u{fe0f} {text}")
+pub(crate) fn echo_fallback(text: &str, chooser: Option<&str>) -> String {
+    match chooser {
+        Some(name) if !name.trim().is_empty() => {
+            format!("> \u{25b6}\u{fe0f} {} \u{2014} {text}", name.trim())
+        }
+        _ => format!("> \u{25b6}\u{fe0f} {text}"),
+    }
 }
 
 /// Post the follow-up suggestion buttons under the response and stash the option

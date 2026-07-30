@@ -20,7 +20,7 @@ const CHOICE: &str = "Update the SKILL.md with the new callback routing";
 fn the_edited_block_is_not_quoted() {
     // A leading `>` is what #787 added. It renders as a quote inside a bot
     // bubble, which is the appearance being fixed.
-    let block = picked_block(CHOICE);
+    let block = picked_block(CHOICE, None);
     assert!(
         !block.starts_with('>'),
         "the in-place record must not be quoted: {block}"
@@ -29,7 +29,7 @@ fn the_edited_block_is_not_quoted() {
 
 #[test]
 fn the_edited_block_marks_the_choice_and_keeps_the_text() {
-    let block = picked_block(CHOICE);
+    let block = picked_block(CHOICE, None);
     assert!(block.starts_with('\u{25b6}'), "must lead with the marker");
     assert!(block.contains(CHOICE), "the chosen text must survive");
 }
@@ -38,7 +38,7 @@ fn the_edited_block_marks_the_choice_and_keeps_the_text() {
 fn the_fallback_stays_quoted() {
     // Only reached when the block cannot be edited. Quoting is the weaker
     // presentation, which is why it is the fallback and not the default.
-    let echo = echo_fallback(CHOICE);
+    let echo = echo_fallback(CHOICE, None);
     assert!(
         echo.starts_with("> "),
         "fallback must remain a quote: {echo}"
@@ -50,7 +50,7 @@ fn the_fallback_stays_quoted() {
 fn the_two_shapes_differ() {
     // If these ever converge, the fix has been undone: the whole point is
     // that the in-place record does not look like the old echo.
-    assert_ne!(picked_block(CHOICE), echo_fallback(CHOICE));
+    assert_ne!(picked_block(CHOICE, None), echo_fallback(CHOICE, None));
 }
 
 #[test]
@@ -65,8 +65,39 @@ fn text_is_passed_through_untouched() {
         "",
     ] {
         assert!(
-            picked_block(text).ends_with(text),
+            picked_block(text, None).ends_with(text),
             "text was altered: {text}"
         );
     }
+}
+
+// ── Attribution (#893) ──────────────────────────────────────────────────────
+
+#[test]
+fn the_chooser_is_named_when_known() {
+    // In a group, an unattributed line says nothing about who acted.
+    let block = picked_block(CHOICE, Some("Daniel"));
+    assert!(block.contains("Daniel"), "chooser missing: {block}");
+    assert!(block.contains(CHOICE), "the choice must survive: {block}");
+}
+
+#[test]
+fn an_unknown_chooser_falls_back_to_the_plain_record() {
+    // Identity is not always available; the pick must still be recorded.
+    for chooser in [None, Some(""), Some("   ")] {
+        let block = picked_block(CHOICE, chooser);
+        assert!(block.contains(CHOICE), "the choice was lost: {block}");
+        assert!(
+            !block.contains("—"),
+            "an empty name left a dangling separator"
+        );
+    }
+}
+
+#[test]
+fn the_fallback_echo_names_the_chooser_too() {
+    let echo = echo_fallback(CHOICE, Some("Daniel"));
+    assert!(echo.starts_with("> "), "fallback must stay quoted: {echo}");
+    assert!(echo.contains("Daniel"));
+    assert!(echo.contains(CHOICE));
 }

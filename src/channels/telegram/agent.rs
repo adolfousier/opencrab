@@ -296,6 +296,24 @@ impl TelegramAgent {
                                             )
                                         })
                                         .unwrap_or((teloxide::types::ChatId(0), None, None));
+                                    // Who tapped, so the record names them rather
+                                    // than reading as anonymous bot text in a
+                                    // group (#893). The Bot API cannot post AS a
+                                    // user, but the callback carries the tapper's
+                                    // identity and it was simply discarded.
+                                    let chooser = {
+                                        let u = &query.from;
+                                        let name = match &u.last_name {
+                                            Some(last) => format!("{} {last}", u.first_name),
+                                            None => u.first_name.clone(),
+                                        };
+                                        let name = name.trim().to_string();
+                                        if name.is_empty() {
+                                            u.username.clone()
+                                        } else {
+                                            Some(name)
+                                        }
+                                    };
                                     let agent_clone = agent.clone();
                                     let bot_clone = bot.clone();
                                     let state_clone = state.clone();
@@ -320,7 +338,7 @@ impl TelegramAgent {
                                         let picked =
                                             crate::channels::telegram::handler::md_to_html(
                                                 &crate::channels::telegram::suggest_followups::
-                                                    picked_block(&text),
+                                                    picked_block(&text, chooser.as_deref()),
                                             );
                                         let recorded = match prompt_msg_id {
                                             Some(mid) => bot_clone
@@ -345,7 +363,7 @@ impl TelegramAgent {
                                             let echo =
                                                 crate::channels::telegram::handler::md_to_html(
                                                     &crate::channels::telegram::suggest_followups::
-                                                        echo_fallback(&text),
+                                                        echo_fallback(&text, chooser.as_deref()),
                                                 );
                                             if let Err(e) =
                                                 crate::channels::telegram::send::message_in_thread(
