@@ -48,6 +48,26 @@ mod clean_auto_title {
     }
 
     #[test]
+    fn caps_at_60_chars_cyrillic() {
+        // Cyrillic is 2 bytes per char — byte slicing at 60 panics mid-char
+        let cyrillic = "А".repeat(40); // 80 bytes, 40 chars
+        let long = format!("{cyrillic}Extra Text To Push Past Sixty Chars Here");
+        let result = AgentService::clean_auto_title(&long);
+        assert!(result.chars().count() <= 60, "should cap at 60 chars, got {}", result.chars().count());
+        // Must not panic and must be valid UTF-8
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn caps_at_60_chars_emoji() {
+        // Emoji can be 4 bytes per char
+        let emoji = "🦀".repeat(30); // 120 bytes, 30 chars
+        let long = format!("{emoji}Extra text to push past sixty characters boundary here ok");
+        let result = AgentService::clean_auto_title(&long);
+        assert!(result.chars().count() <= 60);
+    }
+
+    #[test]
     fn exactly_60_chars_unchanged() {
         let exact = "b".repeat(60);
         assert_eq!(AgentService::clean_auto_title(&exact), exact);

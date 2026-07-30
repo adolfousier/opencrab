@@ -444,8 +444,9 @@ impl AgentService {
         if trimmed.is_empty() {
             return String::new();
         }
-        if trimmed.len() > 60 {
-            trimmed[..60].to_string()
+        let char_count = trimmed.chars().count();
+        if char_count > 60 {
+            trimmed.chars().take(60).collect()
         } else {
             trimmed.to_string()
         }
