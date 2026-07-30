@@ -1209,7 +1209,10 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             };
 
             if !wizard.ps.models_fetching {
-                // Filter input (shown when model field is focused)
+                // Filter input — always visible above the model list so a
+                // long catalogue can never push the affordance below the
+                // fold. When focused: interactive input with cursor.
+                // When not focused: dimmed hint that typing is available.
                 if model_focused {
                     let cursor = "█";
                     let filter_display = if wizard.ps.model_filter.is_empty() {
@@ -1224,6 +1227,11 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                         } else {
                             Color::White
                         }),
+                    )));
+                } else {
+                    lines.push(Line::from(Span::styled(
+                        "  / type to filter…".to_string(),
+                        Style::default().fg(Color::DarkGray),
                     )));
                 }
 
