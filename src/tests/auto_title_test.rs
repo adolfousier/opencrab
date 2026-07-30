@@ -53,7 +53,11 @@ mod clean_auto_title {
         let cyrillic = "А".repeat(40); // 80 bytes, 40 chars
         let long = format!("{cyrillic}Extra Text To Push Past Sixty Chars Here");
         let result = AgentService::clean_auto_title(&long);
-        assert!(result.chars().count() <= 60, "should cap at 60 chars, got {}", result.chars().count());
+        assert!(
+            result.chars().count() <= 60,
+            "should cap at 60 chars, got {}",
+            result.chars().count()
+        );
         // Must not panic and must be valid UTF-8
         assert!(!result.is_empty());
     }

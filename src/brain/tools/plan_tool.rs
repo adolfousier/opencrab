@@ -1413,15 +1413,48 @@ impl Tool for PlanTool {
                         let total = current_plan.tasks.len();
                         let task = current_plan.get_task_by_order(order).unwrap();
                         let details = render_task_details(current_plan, task);
+
+                        // Epistemic Orient gate (#886): surface relevant
+                        // low-confidence beliefs so the agent sees prior
+                        // failures / uncertain outcomes before starting work.
+                        let epistemic_note = {
+                            let relevant: Vec<String> =
+                                super::epistemic::list_by_prefix("plan:task:")
+                                    .into_iter()
+                                    .filter(|b| {
+                                        matches!(
+                                            b.confidence,
+                                            super::epistemic::Confidence::Contradicted
+                                                | super::epistemic::Confidence::Uncertain
+                                        )
+                                    })
+                                    .map(|b| {
+                                        format!(
+                                            "  ⚠ [{}] {}: {}",
+                                            b.confidence.label(),
+                                            b.key,
+                                            b.value
+                                        )
+                                    })
+                                    .collect();
+                            if relevant.is_empty() {
+                                String::new()
+                            } else {
+                                format!("\n\nEpistemic flags ({}):", relevant.len())
+                                    + "\n"
+                                    + &relevant.join("\n")
+                            }
+                        };
+
                         if already_done {
                             format!(
-                                "Task #{order}: {} — already {status:?}.\n\n{details}\n\n\
+                                "Task #{order}: {} — already {status:?}.\n\n{details}{epistemic_note}\n\n\
                                  Progress: {done}/{total} done.",
                                 task.title
                             )
                         } else {
                             format!(
-                                "▶️ Task #{order}: {}\n\n{details}\n\n\
+                                "▶️ Task #{order}: {}\n\n{details}{epistemic_note}\n\n\
                                  Progress: {done}/{total} done. Do the work, then call 'complete' \
                                  with task_order={order}.",
                                 task.title

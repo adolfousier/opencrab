@@ -236,6 +236,14 @@ impl EpistemicStore {
         self.list_by_confidence(Confidence::Contradicted)
     }
 
+    /// List beliefs whose key starts with `prefix`.
+    pub fn list_by_key_prefix(&self, prefix: &str) -> Vec<&Belief> {
+        self.beliefs
+            .values()
+            .filter(|b| b.key.starts_with(prefix))
+            .collect()
+    }
+
     /// Save the store to disk.
     pub fn save(&self, path: &PathBuf) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
@@ -353,6 +361,17 @@ pub fn list_contradictions() -> Vec<Belief> {
     let store = get_store();
     let guard = store.lock().expect("epistemic store lock poisoned");
     guard.list_contradictions().into_iter().cloned().collect()
+}
+
+/// List beliefs whose key starts with `prefix` from the global store.
+pub fn list_by_prefix(prefix: &str) -> Vec<Belief> {
+    let store = get_store();
+    let guard = store.lock().expect("epistemic store lock poisoned");
+    guard
+        .list_by_key_prefix(prefix)
+        .into_iter()
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -488,5 +507,33 @@ mod tests {
             loaded.get_belief("test:key").unwrap().confidence,
             Confidence::Inferred
         );
+    }
+
+    #[test]
+    fn test_list_by_key_prefix() {
+        let mut store = EpistemicStore::new();
+        store.add_belief(
+            "plan:task:1:abc",
+            "failed",
+            Confidence::Contradicted,
+            "test",
+        );
+        store.add_belief("plan:task:2:def", "done", Confidence::Verified, "test");
+        store.add_belief(
+            "memory:truelens:ip",
+            "1.2.3.4",
+            Confidence::Inferred,
+            "test",
+        );
+
+        let plan_beliefs = store.list_by_key_prefix("plan:task:");
+        assert_eq!(plan_beliefs.len(), 2);
+
+        let memory_beliefs = store.list_by_key_prefix("memory:");
+        assert_eq!(memory_beliefs.len(), 1);
+        assert_eq!(memory_beliefs[0].key, "memory:truelens:ip");
+
+        let empty = store.list_by_key_prefix("nonexistent:");
+        assert!(empty.is_empty());
     }
 }
