@@ -93,6 +93,9 @@ pub struct OnboardingWizard {
     pub stt_openai_compat_key_input: String,
     // Voicebox STT
     pub stt_voicebox_base_url: String,
+    // Built-in OpenAI TTS
+    pub tts_api_voice: String,
+    pub tts_api_key_input: String,
     // OpenAI-compatible TTS
     pub tts_openai_compat_base_url: String,
     pub tts_openai_compat_model: String,
@@ -455,6 +458,9 @@ impl OnboardingWizard {
             stt_openai_compat_key_input: String::new(),
             // Voicebox STT
             stt_voicebox_base_url: "http://localhost:8000".to_string(),
+            // Built-in OpenAI TTS
+            tts_api_voice: "echo".to_string(),
+            tts_api_key_input: String::new(),
             // OpenAI-compatible TTS
             tts_openai_compat_base_url: String::new(),
             tts_openai_compat_model: "tts-1".to_string(),
@@ -816,6 +822,23 @@ impl OnboardingWizard {
             } else if tts.openai.as_ref().is_some_and(|o| o.enabled) {
                 wizard.tts_provider = TtsProvider::OpenAi;
                 wizard.tts_enabled = true;
+                // Seed voice from [voice] tts_voice
+                wizard.tts_api_voice = vc.tts_voice.clone();
+                // Seed key sentinel if a key exists in providers.tts.openai or providers.openai
+                let has_tts_key = tts
+                    .openai
+                    .as_ref()
+                    .and_then(|o| o.api_key.as_ref())
+                    .is_some_and(|k| !k.is_empty());
+                let has_chat_key = config
+                    .providers
+                    .openai
+                    .as_ref()
+                    .and_then(|o| o.api_key.as_ref())
+                    .is_some_and(|k| !k.is_empty());
+                if has_tts_key || has_chat_key {
+                    wizard.tts_api_key_input = super::types::EXISTING_KEY_SENTINEL.to_string();
+                }
             } else {
                 wizard.tts_provider = TtsProvider::Off;
                 wizard.tts_enabled = false;

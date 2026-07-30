@@ -743,6 +743,19 @@ impl OnboardingWizard {
                     "default_model",
                     "gpt-4o-mini-tts"
                 );
+                // Write selected voice to [voice] tts_voice
+                try_write!(write_errors, "voice", "tts_voice", &self.tts_api_voice);
+                // Write API key to keys.toml (only if newly entered, not sentinel)
+                if !self.tts_api_key_input.is_empty()
+                    && self.tts_api_key_input != super::types::EXISTING_KEY_SENTINEL
+                {
+                    try_write_keys!(
+                        write_errors,
+                        "providers.tts.openai",
+                        "api_key",
+                        &self.tts_api_key_input
+                    );
+                }
             }
 
             // TTS: Local Piper

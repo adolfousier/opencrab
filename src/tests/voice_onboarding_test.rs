@@ -332,8 +332,16 @@ fn tts_api_enter_advances_to_next_step() {
     wizard.voice_field = VoiceField::TtsModeSelect;
     wizard.tts_provider = TtsProvider::OpenAi; // API
 
+    // TtsModeSelect -> TtsApiVoiceSelect
+    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+    assert_eq!(wizard.voice_field, VoiceField::TtsApiVoiceSelect);
+    // TtsApiVoiceSelect -> TtsApiKey
+    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+    assert_eq!(wizard.voice_field, VoiceField::TtsApiKey);
+    // TtsApiKey -> Continue
     crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
     assert_eq!(wizard.voice_field, VoiceField::Continue);
+    // Continue -> ImageSetup
     crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
     assert_eq!(wizard.step, OnboardingStep::ImageSetup);
 }

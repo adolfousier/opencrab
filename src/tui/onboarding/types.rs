@@ -618,6 +618,9 @@ pub enum VoiceField {
     // TTS mode
     TtsModeSelect,
     TtsLocalVoiceSelect,
+    // Built-in OpenAI TTS
+    TtsApiVoiceSelect,
+    TtsApiKey,
     // OpenAI-compatible TTS
     TtsOpenaiCompatSelect,
     TtsOpenaiCompatUrl,

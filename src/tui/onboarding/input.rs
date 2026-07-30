@@ -330,6 +330,9 @@ impl OnboardingWizard {
                 VoiceField::TtsOpenaiCompatKey => {
                     self.tts_openai_compat_key_input.push_str(clean);
                 }
+                VoiceField::TtsApiKey => {
+                    self.tts_api_key_input.push_str(clean);
+                }
                 VoiceField::TtsVoiceboxUrl => {
                     self.tts_voicebox_base_url.push_str(clean);
                 }

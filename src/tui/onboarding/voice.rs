@@ -53,6 +53,14 @@ pub fn handle_key(wizard: &mut OnboardingWizard, event: KeyEvent) -> WizardActio
         ),
         VoiceField::TtsModeSelect => handle_tts_mode(wizard, event.code),
         VoiceField::TtsLocalVoiceSelect => handle_tts_voice(wizard, event.code),
+        VoiceField::TtsApiVoiceSelect => handle_tts_api_voice(wizard, event.code),
+        VoiceField::TtsApiKey => handle_text_field(
+            wizard,
+            event.code,
+            |w| &mut w.tts_api_key_input,
+            VoiceField::Continue,
+            VoiceField::TtsApiVoiceSelect,
+        ),
         VoiceField::TtsOpenaiCompatSelect => handle_tts_oc_select(wizard, event.code),
         VoiceField::TtsOpenaiCompatUrl => handle_text_field(
             wizard,
@@ -248,7 +256,7 @@ fn advance_from_tts(wizard: &mut OnboardingWizard) {
     wizard.tts_enabled = wizard.tts_provider != TtsProvider::Off;
     match wizard.tts_provider {
         TtsProvider::Off => wizard.voice_field = VoiceField::Continue,
-        TtsProvider::OpenAi => wizard.voice_field = VoiceField::Continue,
+        TtsProvider::OpenAi => wizard.voice_field = VoiceField::TtsApiVoiceSelect,
         TtsProvider::Local => {
             wizard.voice_field = VoiceField::TtsLocalVoiceSelect;
             refresh_tts_voice_status(wizard);
@@ -282,6 +290,32 @@ fn handle_tts_voice(wizard: &mut OnboardingWizard, key: KeyCode) -> WizardAction
             }
         }
         KeyCode::Tab => wizard.voice_field = VoiceField::Continue,
+        KeyCode::BackTab => wizard.voice_field = VoiceField::TtsModeSelect,
+        _ => {}
+    }
+    WizardAction::None
+}
+
+// ─── Built-in OpenAI TTS ────────────────────────────────────────────────────
+
+/// OpenAI TTS voices (tts-1 / gpt-4o-mini-tts).
+pub const OPENAI_TTS_VOICES: &[&str] = &[
+    "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer",
+];
+
+fn handle_tts_api_voice(wizard: &mut OnboardingWizard, key: KeyCode) -> WizardAction {
+    let idx = OPENAI_TTS_VOICES
+        .iter()
+        .position(|v| *v == wizard.tts_api_voice)
+        .unwrap_or(4); // default "echo" = index 4
+    match key {
+        KeyCode::Up if idx > 0 => {
+            wizard.tts_api_voice = OPENAI_TTS_VOICES[idx - 1].to_string();
+        }
+        KeyCode::Down if idx + 1 < OPENAI_TTS_VOICES.len() => {
+            wizard.tts_api_voice = OPENAI_TTS_VOICES[idx + 1].to_string();
+        }
+        KeyCode::Tab | KeyCode::Enter => wizard.voice_field = VoiceField::TtsApiKey,
         KeyCode::BackTab => wizard.voice_field = VoiceField::TtsModeSelect,
         _ => {}
     }
@@ -322,7 +356,8 @@ fn handle_continue(wizard: &mut OnboardingWizard, key: KeyCode) -> WizardAction 
                 TtsProvider::Voicebox => VoiceField::TtsVoiceboxEngine,
                 TtsProvider::OpenAiCompatible => VoiceField::TtsOpenaiCompatKey,
                 TtsProvider::Local => VoiceField::TtsLocalVoiceSelect,
-                TtsProvider::OpenAi | TtsProvider::Off => VoiceField::TtsModeSelect,
+                TtsProvider::OpenAi => VoiceField::TtsApiKey,
+                TtsProvider::Off => VoiceField::TtsModeSelect,
             };
         }
         _ => {}
@@ -479,7 +514,7 @@ pub fn render(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
     // TTS fields for the selected provider
     match wizard.tts_provider {
         TtsProvider::Off => {}
-        TtsProvider::OpenAi => {}
+        TtsProvider::OpenAi => render_tts_api_fields(lines, wizard),
         TtsProvider::Local => render_local_tts_fields(lines, wizard),
         TtsProvider::OpenAiCompatible => render_tts_openai_compat_fields(lines, wizard),
         TtsProvider::Voicebox => render_tts_voicebox_fields(lines, wizard),
@@ -741,6 +776,58 @@ fn render_local_tts_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWi
         lines.push(Line::from(Span::styled(
             "  Press Enter to download voice model",
             Style::default().fg(Color::DarkGray),
+        )));
+    }
+}
+
+fn render_tts_api_fields(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizard) {
+    // Voice selector
+    let voice_focused = wizard.voice_field == VoiceField::TtsApiVoiceSelect;
+    lines.push(Line::from(Span::styled(
+        "  Voice:",
+        Style::default().fg(if voice_focused {
+            Color::White
+        } else {
+            Color::DarkGray
+        }),
+    )));
+    for voice in OPENAI_TTS_VOICES {
+        let is_sel = *voice == wizard.tts_api_voice;
+        let prefix = if is_sel && voice_focused {
+            " > "
+        } else {
+            "   "
+        };
+        let marker = if is_sel { "(*)" } else { "( )" };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {}{} ", prefix, marker),
+                Style::default().fg(if is_sel { ACCENT_GOLD } else { Color::Gray }),
+            ),
+            Span::styled(
+                voice.to_string(),
+                Style::default().fg(if is_sel { Color::White } else { Color::Gray }),
+            ),
+        ]));
+    }
+
+    // API Key field
+    let key_focused = wizard.voice_field == VoiceField::TtsApiKey;
+    let has_key = !wizard.tts_api_key_input.is_empty()
+        && wizard.tts_api_key_input != super::types::EXISTING_KEY_SENTINEL;
+    render_text_field(
+        lines,
+        "  API Key: ",
+        &mask_if_not_empty(&wizard.tts_api_key_input),
+        "uses OpenAI key",
+        key_focused,
+    );
+    if key_focused && !has_key && wizard.tts_api_key_input != super::types::EXISTING_KEY_SENTINEL {
+        lines.push(Line::from(Span::styled(
+            "    (falls back to your OpenAI chat key if empty)",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         )));
     }
 }
