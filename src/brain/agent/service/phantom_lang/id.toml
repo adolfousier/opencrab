@@ -273,6 +273,9 @@ file_delivery_phrases = [
     "laporan sudah dikirim",
     "filenya di atas",
     "lihat lampiran",
+    "baru keluar dari oven",
+    "ini videonya",
+    "ini audionya",
 ]
 
 # Words marking the claimed deliverable as a file rather than a message.
@@ -284,4 +287,12 @@ file_context_words = [
     "lampiran",
     "pdf",
     "csv",
+    ".mp4",
+    ".mp3",
+    ".wav",
+    ".png",
+    ".jpg",
+    "video",
+    "audio",
+    "gambar",
 ]

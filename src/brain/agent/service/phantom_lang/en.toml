@@ -742,6 +742,10 @@ file_delivery_phrases = [
     "the file is above",
     "see the attachment",
     "attachment above",
+    "fresh out of the oven",
+    "hot off the press",
+    "here is the video",
+    "here is the audio",
 ]
 
 # Words marking the claimed deliverable as a file rather than a message.
@@ -754,4 +758,12 @@ file_context_words = [
     "attachment",
     "pdf",
     "csv",
+    ".mp4",
+    ".mp3",
+    ".wav",
+    ".png",
+    ".jpg",
+    "video",
+    "audio",
+    "image",
 ]
