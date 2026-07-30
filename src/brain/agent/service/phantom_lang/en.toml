@@ -746,6 +746,13 @@ file_delivery_phrases = [
     "hot off the press",
     "here is the video",
     "here is the audio",
+    "it is up there",
+    "it’s up there",
+    "hit play",
+    "just sent it",
+    "i just sent",
+    "sent it just now",
+    "it is there now",
 ]
 
 # Words marking the claimed deliverable as a file rather than a message.
@@ -766,4 +773,10 @@ file_context_words = [
     "video",
     "audio",
     "image",
+    "mp4",
+    "mp3",
+    "wav",
+    "mov",
+    "png",
+    "jpg",
 ]

@@ -92,3 +92,48 @@ fn ordinary_prose_about_files_is_untouched() {
         NO_TOOLS
     ));
 }
+
+// ── Colloquial "it's up there" claims (#894) ────────────────────────────────
+//
+// A turn insisted the video was delivered — "Tá aí em cima, dá o play" — with
+// one tool call that sent nothing. The agent later admitted several earlier
+// "enviado" messages had no tool call at all. The formal wording was covered
+// ("o ficheiro está acima"); the way people actually speak was not.
+
+#[test]
+fn the_observed_colloquial_claim_is_caught() {
+    assert!(claims_unsent_file(
+        "Pronto! Tá aí em cima o mp4, dá o play.",
+        NO_TOOLS
+    ));
+}
+
+#[test]
+fn just_sent_it_is_caught_in_each_language() {
+    for claim in [
+        "Mandei agora o ficheiro, tá aí.",
+        "Just sent it — the video is up there.",
+        "Acabo de enviarlo, está ahí arriba el vídeo.",
+        "Je viens de l’envoyer, c’est juste au-dessus la vidéo.",
+        "Baru saja saya kirim, videonya ada di atas.",
+        "Только что отправил, видео вот выше.",
+    ] {
+        assert!(claims_unsent_file(claim, NO_TOOLS), "not caught: {claim}");
+    }
+}
+
+#[test]
+fn a_promise_to_send_later_is_not_a_claim() {
+    // The same conversation contained "assim que o render sair eu mando o mp4",
+    // which is a promise about the future and must stay unflagged.
+    for promise in [
+        "Assim que o render sair eu mando o mp4.",
+        "I will send the video once the render finishes.",
+        "Te mando o arquivo quando terminar.",
+    ] {
+        assert!(
+            !claims_unsent_file(promise, NO_TOOLS),
+            "a promise was flagged: {promise}"
+        );
+    }
+}

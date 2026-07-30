@@ -276,6 +276,11 @@ file_delivery_phrases = [
     "baru keluar dari oven",
     "ini videonya",
     "ini audionya",
+    "ada di atas",
+    "sudah di atas",
+    "putar saja",
+    "baru saja saya kirim",
+    "sudah saya kirim",
 ]
 
 # Words marking the claimed deliverable as a file rather than a message.
@@ -295,4 +300,10 @@ file_context_words = [
     "video",
     "audio",
     "gambar",
+    "mp4",
+    "mp3",
+    "wav",
+    "mov",
+    "png",
+    "jpg",
 ]

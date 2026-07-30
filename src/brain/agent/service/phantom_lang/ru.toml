@@ -340,6 +340,11 @@ file_delivery_phrases = [
     "с пылу с жару",
     "вот видео",
     "вот аудио",
+    "вот выше",
+    "уже выше",
+    "включай",
+    "только что отправил",
+    "я уже отправил",
 ]
 
 # Words marking the claimed deliverable as a file rather than a message.
@@ -359,4 +364,10 @@ file_context_words = [
     "видео",
     "аудио",
     "изображение",
+    "mp4",
+    "mp3",
+    "wav",
+    "mov",
+    "png",
+    "jpg",
 ]

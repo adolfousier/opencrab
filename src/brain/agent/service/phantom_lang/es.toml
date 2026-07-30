@@ -334,6 +334,11 @@ file_delivery_phrases = [
     "recién salido del horno",
     "aquí está el vídeo",
     "aquí está el audio",
+    "está ahí arriba",
+    "ahí arriba",
+    "dale play",
+    "acabo de enviarlo",
+    "ya lo envié",
 ]
 
 # Words marking the claimed deliverable as a file rather than a message.
@@ -353,4 +358,10 @@ file_context_words = [
     "vídeo",
     "audio",
     "imagen",
+    "mp4",
+    "mp3",
+    "wav",
+    "mov",
+    "png",
+    "jpg",
 ]

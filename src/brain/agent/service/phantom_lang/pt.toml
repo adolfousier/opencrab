@@ -330,9 +330,17 @@ file_delivery_phrases = [
     "ver o anexo",
     "saiu do forno",
     "fresquinho do forno",
-    "mando o mp4",
     "segue o vídeo",
     "segue o áudio",
+    "tá aí em cima",
+    "está aí em cima",
+    "tá aí",
+    "dá o play",
+    "mandei agora",
+    "já mandei",
+    "acabei de mandar",
+    "acabei de enviar",
+    "foi de verdade",
 ]
 
 # Words marking the claimed deliverable as a file rather than a message.
@@ -353,4 +361,10 @@ file_context_words = [
     "vídeo",
     "áudio",
     "imagem",
+    "mp4",
+    "mp3",
+    "wav",
+    "mov",
+    "png",
+    "jpg",
 ]
