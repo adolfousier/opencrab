@@ -374,6 +374,29 @@ pub(crate) fn seed_brain_templates(profile_dir: &Path) {
             );
         }
     }
+
+    // Seed the brain-verify belief base (#881). Without it the Orient gate is
+    // inert — or hard-fails on the autonomous self_improve path. Idempotent:
+    // never overwrites a user's customized rules. Seeded here so profile create
+    // AND the periodic rsi_sync both ensure existing homes carry it.
+    let safety_dir = profile_dir.join("safety");
+    let verify_path = safety_dir.join("brain_verify.toml");
+    if !verify_path.exists() {
+        if let Err(e) = fs::create_dir_all(&safety_dir) {
+            tracing::warn!(
+                "seed_brain_templates: failed to create safety dir {}: {e}",
+                safety_dir.display()
+            );
+        } else if let Err(e) = fs::write(
+            &verify_path,
+            include_str!("../docs/reference/templates/brain_verify.toml"),
+        ) {
+            tracing::warn!(
+                "seed_brain_templates: failed to seed {}: {e}",
+                verify_path.display()
+            );
+        }
+    }
 }
 
 /// List all profiles (always includes "default").

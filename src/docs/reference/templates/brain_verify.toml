@@ -1,0 +1,87 @@
+# Brain File Verification — Belief Base
+#
+# The OODA "Orient" stage checks every autonomous brain-file write (self_improve
+# apply/update) against these rules before it persists. Required rules MUST be
+# present after the edit (stops RSI stripping critical anchors); contradictions
+# flag a self-contradictory edit when BOTH patterns land in the same paragraph.
+#
+# Editable at runtime — no rebuild. Missing/invalid TOML = autonomous writes
+# HARD-FAIL (no silent no-op); a gate with no rules looks enforced but checks
+# nothing. See issue #881.
+#
+# Required-rule patterns are matched case-insensitively; `.*` = ordered gap.
+# Only anchor on patterns that ship in these templates, so the gate never
+# false-rejects a legitimate seed/template write.
+
+# ---------------------------------------------------------------------------
+# Required anchors — the H1 title and the **Owns:** ownership header must
+# survive any autonomous edit. These are present in every shipped template.
+# ---------------------------------------------------------------------------
+
+[[required]]
+file = "SOUL.md"
+pattern = "# SOUL.md"
+why = "H1 title — file must stay identifiable as SOUL.md"
+
+[[required]]
+file = "SOUL.md"
+pattern = "Owns:"
+why = "Ownership header — brain-file ownership map must survive"
+
+[[required]]
+file = "AGENTS.md"
+pattern = "# AGENTS.md"
+why = "H1 title — file must stay identifiable as AGENTS.md"
+
+[[required]]
+file = "AGENTS.md"
+pattern = "Owns:"
+why = "Ownership header — workspace governance declaration must survive"
+
+[[required]]
+file = "TOOLS.md"
+pattern = "# TOOLS.md"
+why = "H1 title"
+
+[[required]]
+file = "TOOLS.md"
+pattern = "Owns:"
+why = "Ownership header"
+
+[[required]]
+file = "CODE.md"
+pattern = "# CODE.md"
+why = "H1 title"
+
+[[required]]
+file = "CODE.md"
+pattern = "Owns:"
+why = "Ownership header"
+
+[[required]]
+file = "SECURITY.md"
+pattern = "# SECURITY.md"
+why = "H1 title"
+
+[[required]]
+file = "SECURITY.md"
+pattern = "Owns:"
+why = "Ownership header"
+
+[[required]]
+file = "MEMORY.md"
+pattern = "# OpenCrabs Long-Term Memory"
+why = "H1 title"
+
+# ---------------------------------------------------------------------------
+# Contradiction guards — OPTIONAL, none shipped by default.
+#
+# The mechanism is supported and unit-tested (see the inline AGENTS_TOML const
+# in brain_verify.rs), but no guards ship here. Patterns on common governance
+# words ("push", "table") false-positive against real brain files: an unbroken
+# bullet list counts as ONE entry (entries split on blank lines), so a section
+# that legitimately holds "never push to main" in one bullet and "always push"
+# in another trips a guard meant to catch a single self-contradictory sentence.
+# Add your own guards ONLY with patterns provably absent from your templates.
+# See #881, #855.
+# ---------------------------------------------------------------------------

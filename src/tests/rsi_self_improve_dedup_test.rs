@@ -40,6 +40,11 @@ async fn duplicate_apply_does_not_double_append_to_brain_file() {
     let profile = "rsi-dedup-itest-dup";
     let home = home_for_profile(Some(profile));
     let _ = std::fs::remove_dir_all(&home); // clean slate
+    // Seed a realistic AGENTS.md + belief base so the Orient gate (#881)
+    // verifies the append against valid anchors (real self_improve appends
+    // into a populated brain file, never an empty one).
+    std::fs::create_dir_all(&home).unwrap();
+    crate::config::profile::seed_brain_templates(&home);
 
     with_profile_home_async(Some(profile), async {
         // First apply writes the guideline.
@@ -77,6 +82,8 @@ async fn partially_new_apply_appends_only_the_new_paragraph() {
     let profile = "rsi-dedup-itest-partial";
     let home = home_for_profile(Some(profile));
     let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    crate::config::profile::seed_brain_templates(&home);
 
     let fresh_marker = "Prefer ripgrep over grep for repo-wide scans";
     let combined = format!("{GUIDELINE}\n\n## Search guideline\n\n{fresh_marker}.");

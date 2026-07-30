@@ -10,6 +10,41 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::io::Write;
 
+use crate::brain::tools::brain_verify::GateDecision;
+
+/// OODA **Orient** stage for the autonomous RSI path: verify the *proposed*
+/// brain-file content against the belief base (`brain_verify.toml`) BEFORE any
+/// write, and hard-fail when no belief base is loaded (no silent no-op). This
+/// is the contract gate `write_opencrabs_file` enforces on the user-facing path
+/// but `self_improve` previously bypassed (#881: RSI was the sole verifier of
+/// its own writes).
+fn orient_gate(target_file: &str, proposed_content: &str) -> GateDecision {
+    crate::brain::tools::brain_verify::orient_gate_decision_active(target_file, proposed_content)
+}
+
+/// OODA **Verify** stage: re-read the file after a write and confirm the change
+/// actually persisted. Catches the overwrite/sync race where a write succeeds
+/// but the change vanishes (e.g. a concurrent template-sync regenerates the
+/// file). The marker is a snippet guaranteed to be in the just-written content.
+/// (#881)
+fn verify_persisted(
+    target_path: &std::path::Path,
+    marker: &str,
+) -> std::result::Result<(), String> {
+    match std::fs::read_to_string(target_path) {
+        Ok(after) if after.contains(marker) => Ok(()),
+        Ok(_) => Err(format!(
+            "Verify stage: wrote to {} but the change did not persist on re-read \
+             (the file may have been overwritten by a concurrent sync)",
+            target_path.display()
+        )),
+        Err(e) => Err(format!(
+            "Verify stage: could not re-read {} after write: {e}",
+            target_path.display()
+        )),
+    }
+}
+
 /// Ensures the RSI directory structure exists.
 fn ensure_rsi_dirs(home: &std::path::Path) -> std::io::Result<()> {
     let rsi_dir = home.join("rsi");
@@ -388,6 +423,17 @@ impl Tool for SelfImproveTool {
                     ))
                 })?;
 
+                // OODA Orient stage: verify the proposed full content against the
+                // belief base before any write. Replaces the bypass (#881).
+                match orient_gate(target_file, &updated) {
+                    GateDecision::Reject(reason) => {
+                        return Ok(ToolResult::error(format!(
+                            "{reason}. Change not applied (no write made)."
+                        )));
+                    }
+                    GateDecision::Allow => {}
+                }
+
                 // Snapshot the file before mutating so a bad agent edit can
                 // be rolled back from `<file>.YYYY-MM-DDTHHMMSS.bak`.
                 if let Err(e) = brain_file_safety::backup_before_write(&target_path) {
@@ -400,6 +446,14 @@ impl Tool for SelfImproveTool {
                         "Failed to write {target_file}: {e}"
                     ))
                 })?;
+
+                // OODA Verify stage: re-read to confirm the change persisted
+                // (overwrite/sync race — #881).
+                if let Err(msg) = verify_persisted(&target_path, new_content.trim()) {
+                    return Ok(ToolResult::error(format!(
+                        "{msg}. The write may have been clobbered — re-apply after the sync settles."
+                    )));
+                }
 
                 // Log to rsi/improvements.md
                 let entry = format!(
@@ -585,6 +639,18 @@ impl Tool for SelfImproveTool {
                     }
                 };
 
+                // OODA Orient stage: verify the full proposed content (existing
+                // file + the append) against the belief base before writing (#881).
+                let proposed_full = format!("{}\n{}\n", existing, to_append.trim());
+                match orient_gate(target_file, &proposed_full) {
+                    GateDecision::Reject(reason) => {
+                        return Ok(ToolResult::error(format!(
+                            "{reason}. Change not applied (no write made)."
+                        )));
+                    }
+                    GateDecision::Allow => {}
+                }
+
                 // Append the new content to target brain file
                 let mut file = std::fs::OpenOptions::new()
                     .create(true)
@@ -601,6 +667,14 @@ impl Tool for SelfImproveTool {
                             "Failed to write {target_file}: {e}"
                         ))
                     })?;
+
+                // OODA Verify stage: re-read to confirm the append persisted
+                // (overwrite/sync race — #881).
+                if let Err(msg) = verify_persisted(&target_path, to_append.trim()) {
+                    return Ok(ToolResult::error(format!(
+                        "{msg}. The append may have been clobbered — re-apply after the sync settles."
+                    )));
+                }
 
                 // #765 event-based cross-file trigger: the appended improvement
                 // may duplicate content living in another brain file (the

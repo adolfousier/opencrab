@@ -885,6 +885,11 @@ mod self_improve_tool {
         let profile = "rsi-test-apply-improvements";
         let home = crate::config::profile::home_for_profile(Some(profile));
         let _ = std::fs::remove_dir_all(&home);
+        // Seed a realistic brain file + belief base so the Orient gate (#881)
+        // verifies the append against valid anchors. Real self_improve always
+        // appends into a populated brain file, never an empty one.
+        std::fs::create_dir_all(&home).unwrap();
+        crate::config::profile::seed_brain_templates(&home);
         crate::config::profile::with_profile_home_async(Some(profile), async {
             let tool = SelfImproveTool;
             let result = tool
@@ -1011,6 +1016,11 @@ mod self_improve_tool {
         let profile = "rsi-test-apply-valid";
         let home = crate::config::profile::home_for_profile(Some(profile));
         let _ = std::fs::remove_dir_all(&home);
+        // Seed a realistic brain file + belief base so the Orient gate (#881)
+        // verifies the append against valid anchors. Real self_improve always
+        // appends into a populated brain file, never an empty one.
+        std::fs::create_dir_all(&home).unwrap();
+        crate::config::profile::seed_brain_templates(&home);
         crate::config::profile::with_profile_home_async(Some(profile), async {
             let tool = SelfImproveTool;
             let result = tool
@@ -1102,6 +1112,11 @@ mod self_improve_tool {
         let profile = "rsi-test-apply-no-rationale";
         let home = crate::config::profile::home_for_profile(Some(profile));
         let _ = std::fs::remove_dir_all(&home);
+        // Seed a realistic brain file + belief base so the Orient gate (#881)
+        // verifies the append against valid anchors. Real self_improve always
+        // appends into a populated brain file, never an empty one.
+        std::fs::create_dir_all(&home).unwrap();
+        crate::config::profile::seed_brain_templates(&home);
         crate::config::profile::with_profile_home_async(Some(profile), async {
             let tool = SelfImproveTool;
             let result = tool
