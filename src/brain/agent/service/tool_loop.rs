@@ -1501,6 +1501,71 @@ impl AgentService {
                     self.reset_primary_failure_streak(session_id);
                     resp
                 }
+                Err(ref e)
+                    if matches!(
+                        e,
+                        crate::brain::provider::ProviderError::ThinkingLoopTimeout(_)
+                    ) =>
+                {
+                    let secs =
+                        if let crate::brain::provider::ProviderError::ThinkingLoopTimeout(s) = e {
+                            *s
+                        } else {
+                            0
+                        };
+                    tracing::warn!(
+                        "Thinking-loop timeout (#890): {}s with zero tool calls — injecting \
+                         phantom enforcement and retrying (attempt {}/{})",
+                        secs,
+                        phantom_retries_used + 1,
+                        MAX_PHANTOM_RETRIES
+                    );
+                    self.record_provider_feedback(
+                        session_id,
+                        "thinking_loop_timeout",
+                        &model_name,
+                        Some(&format!("{}s no tool calls", secs)),
+                    );
+                    // Strip the partial reasoning tokens that streamed before
+                    // the timeout fired, then surface a self-heal alert so the
+                    // user sees what happened instead of a silent hang.
+                    if let Some(ref cb) = progress_callback {
+                        cb(
+                            session_id,
+                            ProgressEvent::StripStreamedContent {
+                                bytes: usize::MAX,
+                                reason: "thinking-loop timeout — partial reasoning discarded"
+                                    .to_string(),
+                            },
+                        );
+                        cb(
+                            session_id,
+                            ProgressEvent::SelfHealingAlert {
+                                message: format!(
+                                    "Thinking loop detected — {}s with no tool calls. \
+                                     Retrying with enforcement…",
+                                    secs
+                                ),
+                            },
+                        );
+                    }
+                    // Bound retries through the existing phantom budget so a
+                    // pathological model can't loop forever: once the cap is
+                    // hit the normal phantom give-up path takes over.
+                    phantom_retries_used += 1;
+                    if phantom_retries_used > MAX_PHANTOM_RETRIES {
+                        tracing::warn!(
+                            "Thinking-loop timeout retry cap reached — surfacing error to user"
+                        );
+                        return Err(AgentError::Provider(
+                            crate::brain::provider::ProviderError::ThinkingLoopTimeout(secs),
+                        ));
+                    }
+                    context.add_message(Message::user(super::nudge::no_tool_calls_nudge(
+                        is_local_provider,
+                    )));
+                    continue;
+                }
                 Err(e) if super::repetition::is_repetitive_tool_error(&e.to_string()) => {
                     // Provider's server-side loop guardrail fired: the history is
                     // poisoned with repeated identical tool-call/result pairs and

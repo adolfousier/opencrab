@@ -64,6 +64,11 @@ pub enum ProviderError {
     #[error("Request timed out after {0}s")]
     Timeout(u64),
 
+    /// Thinking-loop timeout (#890): model streamed for N seconds without
+    /// emitting a tool call. Retryable with phantom enforcement.
+    #[error("Thinking loop timeout: {0}s with no tool call emitted")]
+    ThinkingLoopTimeout(u64),
+
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
@@ -87,6 +92,7 @@ impl ProviderError {
             ProviderError::HttpError(_)
             | ProviderError::RateLimitExceeded(_)
             | ProviderError::Timeout(_)
+            | ProviderError::ThinkingLoopTimeout(_)
             // A stream that broke mid-flight ("connection closed before message
             // completed", the SSE socket dropping, a partial body) is a
             // transport hiccup, not a client mistake — re-issuing the request

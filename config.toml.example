@@ -401,6 +401,14 @@ profile_id = ""
 # restart. Effective state is `--debug OR debug_logs`, so the flag always wins.
 debug_logs = false
 
+# Thinking-loop timeout in seconds (#890). If the model streams for this long
+# without emitting a single tool call, the stream is killed and retried with
+# multi-language phantom enforcement injected into the prompt. Catches the
+# failure mode where a reasoning model loops internally (thinking tokens
+# flowing, 0 tool calls) for an hour or more. Default 600 = 10 min.
+# Set to 0 to disable. Hot-reloads with no restart.
+thinking_loop_timeout_secs = 600
+
 [image.generation]
 enabled = false
 model = "gemini-3.1-flash-image-preview"   # Gemini image-gen model ("Nano Banana")

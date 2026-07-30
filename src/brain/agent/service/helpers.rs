@@ -380,6 +380,29 @@ impl AgentService {
             std::time::Duration::from_secs(90)
         };
 
+        // --- Thinking-loop timeout (#890) ---
+        // If the model streams for `thinking_loop_timeout_secs` without
+        // emitting a single tool call, kill the stream and signal the
+        // tool loop to retry with phantom enforcement. Disabled (0) for
+        // CLI providers (they run tools internally) and when the config
+        // sets it to 0.
+        let thinking_loop_timeout_secs = if is_cli {
+            0
+        } else {
+            crate::config::Config::current()
+                .agent
+                .thinking_loop_timeout_secs
+        };
+        let thinking_loop_deadline = if thinking_loop_timeout_secs > 0 {
+            Some(
+                tokio::time::Instant::now()
+                    + std::time::Duration::from_secs(thinking_loop_timeout_secs),
+            )
+        } else {
+            None
+        };
+        let mut has_tool_call = false;
+
         loop {
             // Race stream.next() against cancellation token and idle timeout.
             // This ensures /stop takes effect immediately even mid-chunk.
@@ -395,6 +418,21 @@ impl AgentService {
                 } => {
                     tracing::info!("Stream cancelled by user");
                     break;
+                }
+                _ = async {
+                    match thinking_loop_deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                }, if !has_tool_call => {
+                    tracing::warn!(
+                        "🧠 Thinking-loop timeout (#890): {}s elapsed with zero tool calls. \
+                         Killing stream for phantom enforcement retry.",
+                        thinking_loop_timeout_secs
+                    );
+                    return Err(crate::brain::provider::ProviderError::ThinkingLoopTimeout(
+                        thinking_loop_timeout_secs,
+                    ));
                 }
                 result = tokio::time::timeout(stream_idle_timeout, stream.next()) => {
                     match result {
@@ -453,6 +491,11 @@ impl AgentService {
                                 },
                             );
                         }
+                    }
+                    // #890: flag a tool call BEFORE moving content_block
+                    // into block_states, then assign.
+                    if matches!(content_block, ContentBlock::ToolUse { .. }) {
+                        has_tool_call = true;
                     }
                     block_states[index] = BlockState {
                         block: content_block,

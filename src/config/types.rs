@@ -998,6 +998,15 @@ pub struct AgentConfig {
     /// Effective state is `--debug || debug_logs` — the flag always wins.
     #[serde(default = "default_debug_logs")]
     pub debug_logs: bool,
+
+    /// Thinking-loop timeout in seconds (#890). If the model streams for this
+    /// long without emitting a single tool call, the stream is killed and
+    /// retried with multi-language phantom enforcement injected into the
+    /// system prompt. Catches the failure mode where a reasoning model loops
+    /// internally (thinking tokens flowing) but never acts. Default: 600 (10 min).
+    /// Set to 0 to disable.
+    #[serde(default = "default_thinking_loop_timeout_secs")]
+    pub thinking_loop_timeout_secs: u64,
 }
 
 impl AgentConfig {
@@ -1024,6 +1033,10 @@ fn default_redact_sensitive_data() -> bool {
 
 fn default_debug_logs() -> bool {
     false
+}
+
+fn default_thinking_loop_timeout_secs() -> u64 {
+    600
 }
 
 fn default_approval_policy() -> String {
@@ -1075,6 +1088,7 @@ impl Default for AgentConfig {
             redact_group: None,
             redact_dm: None,
             debug_logs: default_debug_logs(),
+            thinking_loop_timeout_secs: default_thinking_loop_timeout_secs(),
         }
     }
 }
