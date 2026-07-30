@@ -28,6 +28,20 @@ const RSI_MAX_TOOL_ITERATIONS: usize = 10;
 /// At 1 hour per cycle, 24 cycles = once per day.
 const DEDUP_SCAN_EVERY_N_CYCLES: u64 = 24;
 
+/// Sentinel dimensions that fire as "failures" by design (self-heal
+/// detectors, regression probes). Excluded from opportunity surfacing so
+/// they don't show up as noise like "phantom_intent_loop has 100% failure".
+/// Shared by the digest Metrics block and the cycle opportunity filter so
+/// the two stay in sync.
+const SENTINEL_DIMENSIONS: &[&str] = &[
+    "phantom_intent_loop",
+    "phantom_tool_call",
+    "self_improve_exact_match_fail",
+    "sticky_fallback_regression",
+    "thinking_persistence_qwen36",
+    "", // empty tool name (internal bookkeeping)
+];
+
 /// Ensure `~/.opencrabs/rsi/` and `~/.opencrabs/rsi/history/` exist.
 fn ensure_rsi_dirs() -> std::io::Result<PathBuf> {
     let home = crate::config::opencrabs_home();
@@ -107,6 +121,51 @@ pub async fn write_startup_digest(pool: crate::db::Pool) {
         "# RSI Digest\n\n**Generated:** {}\n**Total events:** {total}\n\n",
         chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
     );
+
+    // RSI Metrics — surface raw failure totals vs surfaced opportunities on
+    // the same 7-day window the opportunity filter uses. Without this, a
+    // reader sees `tool_failure: N` and `K opportunities` with no bridge
+    // between them, which produced a false "RSI underreports failures ~25x"
+    // report (raw count vs noise-filtered surface). #888
+    {
+        let window_since = (chrono::Utc::now() - chrono::Duration::days(7))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        if let Ok(stats) = repo
+            .stats_by_dimension_since("tool_", Some(&window_since))
+            .await
+        {
+            let total_failures: i64 = stats
+                .iter()
+                .filter(|s| !SENTINEL_DIMENSIONS.contains(&s.dimension.as_str()))
+                .map(|s| s.failures)
+                .sum();
+            let tools_with_failures = stats
+                .iter()
+                .filter(|s| s.failures > 0 && !SENTINEL_DIMENSIONS.contains(&s.dimension.as_str()))
+                .count();
+            let surfaced = stats
+                .iter()
+                .filter(|s| {
+                    s.total_events >= 5
+                        && s.success_rate < 0.8
+                        && !SENTINEL_DIMENSIONS.contains(&s.dimension.as_str())
+                })
+                .count();
+            out.push_str("## RSI Metrics (last 7 days)\n\n");
+            out.push_str(&format!(
+                "- **Raw tool_failure events:** {total_failures}\n\
+                 - **Tools with failures:** {tools_with_failures}\n\
+                 - **Surfaced as opportunities:** {surfaced} \
+                 (filter: >=5 events, <80% success rate, sentinel dimensions excluded)\n\n"
+            ));
+            out.push_str(
+                "_Note: `recoverable_failure` and `discovery_miss` are classified separately \
+                 and excluded from the success-rate denominator by design (#236). The raw count \
+                 above is the total, not the filtered opportunity surface._\n\n",
+            );
+        }
+    }
 
     // Event type breakdown
     if let Ok(summary) = repo.summary().await {
@@ -900,16 +959,9 @@ pub fn spawn_rsi_engine(
                 .await
             {
                 // Sentinel dimensions that fire as "failures" by design
-                // (self-heal detectors, regression probes). Excluding them
-                // prevents noise like "phantom_intent_loop has 100% failure".
-                const SENTINEL_DIMENSIONS: &[&str] = &[
-                    "phantom_intent_loop",
-                    "phantom_tool_call",
-                    "self_improve_exact_match_fail",
-                    "sticky_fallback_regression",
-                    "thinking_persistence_qwen36",
-                    "", // empty tool name (internal bookkeeping)
-                ];
+                // (self-heal detectors, regression probes) — excluded via
+                // the module-level SENTINEL_DIMENSIONS above so the digest
+                // Metrics block and this filter stay in sync.
                 for s in stats
                     .iter()
                     .filter(|s| s.total_events >= 5 && s.success_rate < 0.8)
@@ -1221,7 +1273,9 @@ pub fn spawn_rsi_engine(
                 }
                 if !opportunities.is_empty() {
                     tracing::info!(
-                        "RSI cycle: {} opportunities found, spawning autonomous agent",
+                        "RSI cycle: {} improvement opportunities surfaced (filtered: \
+                         tools with >=5 events and <80% success rate over 7d, sentinel \
+                         dimensions excluded; not a raw failure count), spawning autonomous agent",
                         opportunities.len()
                     );
                     match run_rsi_agent_cycle(repo.pool().clone(), &config_clone, &opportunities)
