@@ -142,8 +142,17 @@ impl BackgroundTaskManager {
                     "Failed to clear background task '{label}' after completion: {e:#}"
                 );
             }
-            (this.enqueue)(session_id, msg);
+            // Clear the indicator BEFORE delivering, not after. The task is
+            // over the moment the process exits, but mark_finished sat behind
+            // the enqueue callback, so the "running" badge outlived the work by
+            // however long delivery took — on a killed task the user saw the
+            // agent confirm it had stopped while the input border still showed
+            // it running.
+            //
+            // Only touches the in-memory map, so moving it earlier cannot
+            // affect what gets delivered.
             this.mark_finished(session_id, &label);
+            (this.enqueue)(session_id, msg);
         });
     }
 }
