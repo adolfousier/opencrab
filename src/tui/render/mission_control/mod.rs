@@ -18,4 +18,6 @@ mod theme;
 pub use dispatch::draw;
 
 #[cfg(test)]
+pub(crate) use analytics_panel::render as render_analytics;
+#[cfg(test)]
 pub(crate) use layout::{McLayout, compute};
