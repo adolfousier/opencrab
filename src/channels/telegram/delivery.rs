@@ -480,38 +480,18 @@ pub(crate) async fn deliver_final_response(
                     // entirely when one is present and let the markdown send below
                     // render it. On any block rejection we also fall through to
                     // markdown, so worst case is exactly the rich-markdown render.
-                    let block_id = if super::rich::contains_table(&text_only) {
-                        None
-                    } else {
-                        let blocks = super::rich::markdown_to_rich_blocks(&text_only);
-                        match super::rich::api::send_rich_blocks_id(
-                            bot.token(),
-                            chat_id.0,
-                            thread_id,
-                            &blocks,
-                        )
-                        .await
-                        {
-                            Ok(id) => {
-                                tracing::info!(
-                                    "Telegram: rich blocks delivered as msg {id} ({} chars)",
-                                    text_only.len()
-                                );
-                                Some(id)
-                            }
-                            Err(be) => {
-                                tracing::warn!(
-                                    "Telegram: rich blocks delivery failed ({be}), trying markdown"
-                                );
-                                None
-                            }
-                        }
-                    };
-
-                    if let Some(id) = block_id {
-                        sent_reply_id = Some(id);
-                        true
-                    } else {
+                    // Straight to rich-markdown (#871). The native-blocks
+                    // attempt ran 68 times across two days and returned 400
+                    // (RICH_MESSAGE_CONTENT_REQUIRED) all 68 times, never once
+                    // succeeding, so every rich message already arrived via the
+                    // markdown fallback below. Keeping it cost a guaranteed
+                    // round-trip and a guaranteed error before every delivery.
+                    //
+                    // Markdown is also the only mode that renders tables: the
+                    // rich HTML input mode returns 200 and then flattens a table
+                    // into a run-on paragraph, which is why telegram_send now
+                    // uses this same call rather than its own.
+                    {
                         // Rich MARKDOWN: renders tables correctly (only fences
                         // mangle, which is why non-table content prefers blocks).
                         match super::rich::api::send_rich_markdown_id(

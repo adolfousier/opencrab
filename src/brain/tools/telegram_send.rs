@@ -381,13 +381,19 @@ impl Tool for TelegramSendTool {
                 // content. The rich API's HTML input mode renders tags natively
                 // (tables, bold, code); the markdown input mode showed literal
                 // tags as text when the model emitted HTML (#834).
-                let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
+                // Same rich mode as the agent's own replies (#871). This used
+                // send_rich_html_id, whose HTML input mode returns 200 and then
+                // renders headings inline and FLATTENS tables into a run-on
+                // paragraph — a silent wrong render with nothing logged, which
+                // is worse than an error. Rich-markdown renders tables
+                // correctly and is what every delivered rich message actually
+                // goes through, so both paths now behave identically.
                 let sent_rich = crate::channels::telegram::rich::should_send_native_rich(&text)
-                    && match crate::channels::telegram::rich::api::send_rich_html_id(
+                    && match crate::channels::telegram::rich::api::send_rich_markdown_id(
                         bot.token(),
                         chat_id,
                         thread_id,
-                        &html,
+                        &text,
                     )
                     .await
                     {
@@ -401,8 +407,10 @@ impl Tool for TelegramSendTool {
                         }
                     };
                 if !sent_rich {
-                    // html already computed above; split the converted
-                    // output so chunks stay within Telegram's 4096 limit.
+                    // Convert only on the fallback now that the rich send takes
+                    // markdown directly (#871); split so chunks stay within
+                    // Telegram's 4096 limit.
+                    let html = crate::channels::telegram::handler::markdown_to_telegram_html(&text);
                     for chunk in crate::channels::telegram::handler::split_message(&html, 4096) {
                         let chunk_str = chunk.to_string();
                         // Retry Telegram 429 (RetryAfter): a rate-limited send

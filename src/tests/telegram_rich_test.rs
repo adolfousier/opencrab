@@ -8,7 +8,7 @@
 //! for the new `edit_rich_markdown` and last-intermediate footer
 //! integration points.
 
-use crate::channels::telegram::rich::api::{build_body, build_body_blocks, build_body_html};
+use crate::channels::telegram::rich::api::{build_body, build_body_html};
 use crate::channels::telegram::rich::{contains_task_list, has_rich_structure};
 use teloxide::types::{MessageId, ThreadId};
 
@@ -92,48 +92,3 @@ fn rich_html_body_with_thread_id() {
 }
 
 // ── native block input (#476 path B) ─────────────────────────────────
-
-#[test]
-fn rich_block_body_passes_rich_message_through() {
-    // The block value is the InputRichMessage `{"blocks": [...]}`, sent
-    // as-is so the server does no markdown re-parsing (tables and fences
-    // both render natively, no fence-artifact mangling).
-    let rich = serde_json::json!({
-        "blocks": [
-            {"type": "table", "align": ["left"], "header": [[{"type": "text", "text": "A"}]], "rows": []},
-            {"type": "code", "language": "rust", "text": "fn main() {}"}
-        ]
-    });
-    let body = build_body_blocks(100, None, &rich);
-    assert_eq!(body["chat_id"], 100);
-    assert!(body.get("message_thread_id").is_none());
-    // Neither markdown nor html keys: the blocks ARE the rich_message.
-    assert!(body["rich_message"].get("markdown").is_none());
-    assert!(body["rich_message"].get("html").is_none());
-    assert_eq!(body["rich_message"]["blocks"][1]["type"], "code");
-    assert_eq!(body["rich_message"]["blocks"][1]["text"], "fn main() {}");
-}
-
-#[test]
-fn rich_block_body_with_thread_id() {
-    let rich = serde_json::json!({ "blocks": [] });
-    let body = build_body_blocks(99, Some(ThreadId(MessageId(42))), &rich);
-    assert_eq!(body["message_thread_id"], 42);
-}
-
-#[test]
-fn markdown_to_rich_blocks_serializes_table_and_fence() {
-    // The end-to-end helper: a message with BOTH a table and a code fence
-    // (the #476 case that mangled under markdown input) serializes to
-    // native blocks for each.
-    let v = crate::channels::telegram::rich::markdown_to_rich_blocks(
-        "| A | B |\n| - | - |\n| 1 | 2 |\n\n```rust\nfn x() {}\n```",
-    );
-    let blocks = v["blocks"].as_array().expect("blocks");
-    assert!(blocks.iter().any(|b| b["type"] == "table"));
-    assert!(
-        blocks
-            .iter()
-            .any(|b| b["type"] == "code" && b["text"] == "fn x() {}")
-    );
-}
