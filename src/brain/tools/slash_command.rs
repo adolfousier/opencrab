@@ -270,7 +270,10 @@ impl Tool for SlashCommandTool {
             "/goal" => self.handle_goal(args, context).await,
             "/dedup" => self.handle_dedup().await,
             "/profiles" => self.handle_profiles(context).await,
-            "/onboard" => Ok(ToolResult::success(
+            // `/onboard:channels`, `/onboard:voice` and the like are the shapes
+            // actually typed; matching only the bare word sent them to the
+            // "Unknown command" arm (#889).
+            c if c == "/onboard" || c.starts_with("/onboard:") => Ok(ToolResult::success(
                 "Onboarding wizard is a TUI-only interactive screen. \
                  However, you can read and modify all settings via config_manager \
                  (read_config, write_config) and manage API keys directly."
@@ -288,7 +291,7 @@ impl Tool for SlashCommandTool {
             // model sees in use (#574); return actionable guidance instead, the
             // same way /settings and /onboard do.
             "/plan" | "/execute" | "/discard" | "/show-plan" | "/showplan" | "/show_plan"
-            | "/new" | "/clear" | "/cowork" => {
+            | "/new" | "/clear" | "/cowork" | "/skills" => {
                 Ok(ToolResult::success(channel_command_guidance(command)))
             }
             _ => self.handle_user_command(command, args),
@@ -972,6 +975,18 @@ impl SlashCommandTool {
                     )))
                 }
             }
+        } else if let Some(skill) = crate::brain::skills::load_all_skills()
+            .into_iter()
+            .find(|s| s.slash_name == command)
+        {
+            // Skills are invoked by the same `/<name>` syntax as commands, but
+            // only commands.toml was consulted, so every skill reached the
+            // "Unknown command" arm (#889). `/servers` and `/channels` are
+            // skills on disk and failed for exactly this reason.
+            Ok(ToolResult::success(format!(
+                "Skill '{}' ({}): {}",
+                skill.name, skill.description, skill.body
+            )))
         } else {
             // List available commands for context
             let available: Vec<String> = commands.iter().map(|c| c.name.clone()).collect();
@@ -994,7 +1009,8 @@ impl SlashCommandTool {
                 "/profiles",
             ];
             Ok(ToolResult::error(format!(
-                "Unknown command: '{}'. Built-in: {}. User-defined: {}",
+                "Unknown command: '{}'. Not a built-in, a commands.toml entry, or a skill. \
+                 Built-in: {}. User-defined: {}",
                 command,
                 builtin.join(", "),
                 if available.is_empty() {
