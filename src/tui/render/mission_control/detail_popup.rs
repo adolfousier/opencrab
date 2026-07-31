@@ -35,7 +35,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         let py = area.y + area.height.saturating_sub(ph) / 2;
         let popup = Rect::new(px, py, pw, ph);
         frame.render_widget(Clear, popup);
-        super::analytics_panel::render(frame, &app.mc.analytics, popup, true);
+        super::analytics_panel::render(
+            frame,
+            &app.mc.analytics,
+            app.mc.analytics_window,
+            app.mc.scroll_offset,
+            popup,
+            true,
+        );
         return;
     }
 

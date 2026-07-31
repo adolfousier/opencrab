@@ -18,9 +18,15 @@
 //! `App`.
 
 use super::state::{McPanel, McState};
+use crate::brain::mission_control::TimeWindow;
 use crate::tui::app::App;
 use crate::tui::events::AppMode;
 use crossterm::event::{KeyCode, KeyEvent};
+
+/// Upper bound on the analytics panel's body scroll so holding `j` past the
+/// bottom can't wind `scroll_offset` far beyond the content (#900). The
+/// renderer clamps visually too; this just keeps the stored value sane.
+const MAX_ANALYTICS_SCROLL: u16 = 150;
 
 /// Effect of a keystroke that the wrapper has to apply at the App level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +44,10 @@ pub enum KeyOutcome {
     /// Inbox panel is focused and the user pressed `r` — caller should
     /// reject the currently selected proposal.
     RejectSelected,
+    /// Analytics panel is focused and the user switched the D/W/M/All window
+    /// (#900) — caller should re-fetch the snapshot via
+    /// `actions::refresh_analytics`.
+    AnalyticsWindowChanged,
 }
 
 /// Top-level handler called from the App's keystroke dispatcher.
@@ -55,6 +65,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyOutcome::ApplySelected => super::actions::apply_selected(app).await,
         KeyOutcome::RejectSelected => super::actions::reject_selected(app).await,
+        KeyOutcome::AnalyticsWindowChanged => super::actions::refresh_analytics(app).await,
     }
 }
 
@@ -76,13 +87,25 @@ fn decide_with_popup(state: &mut McState, panel_item_count: usize, key: KeyEvent
             KeyOutcome::Consumed
         }
         // Allow scrolling the underlying selection so the popup updates
-        // as the user moves through the list.
+        // as the user moves through the list. The analytics popup is a
+        // dashboard (no per-row selection), so j/k scroll its body instead.
         KeyCode::Up | KeyCode::Char('k') => {
-            move_selection(state, panel_item_count, -1);
+            if state.focused_panel == McPanel::Analytics {
+                state.scroll_offset = state.scroll_offset.saturating_sub(1);
+            } else {
+                move_selection(state, panel_item_count, -1);
+            }
             KeyOutcome::Consumed
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            move_selection(state, panel_item_count, 1);
+            if state.focused_panel == McPanel::Analytics {
+                state.scroll_offset = state
+                    .scroll_offset
+                    .saturating_add(1)
+                    .min(MAX_ANALYTICS_SCROLL);
+            } else {
+                move_selection(state, panel_item_count, 1);
+            }
             KeyOutcome::Consumed
         }
         _ => KeyOutcome::NotConsumed,
@@ -101,15 +124,30 @@ fn decide_without_popup(state: &mut McState, panel_item_count: usize, key: KeyEv
             KeyOutcome::Consumed
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            move_selection(state, panel_item_count, -1);
+            if state.focused_panel == McPanel::Analytics {
+                state.scroll_offset = state.scroll_offset.saturating_sub(1);
+            } else {
+                move_selection(state, panel_item_count, -1);
+            }
             KeyOutcome::Consumed
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            move_selection(state, panel_item_count, 1);
+            if state.focused_panel == McPanel::Analytics {
+                state.scroll_offset = state
+                    .scroll_offset
+                    .saturating_add(1)
+                    .min(MAX_ANALYTICS_SCROLL);
+            } else {
+                move_selection(state, panel_item_count, 1);
+            }
             KeyOutcome::Consumed
         }
         KeyCode::Home | KeyCode::Char('g') => {
-            state.selected_index = 0;
+            if state.focused_panel == McPanel::Analytics {
+                state.scroll_offset = 0;
+            } else {
+                state.selected_index = 0;
+            }
             KeyOutcome::Consumed
         }
         KeyCode::End | KeyCode::Char('G') => {
@@ -138,6 +176,29 @@ fn decide_without_popup(state: &mut McState, panel_item_count: usize, key: KeyEv
                 KeyOutcome::RejectSelected
             } else {
                 KeyOutcome::Consumed
+            }
+        }
+        // D/W/M/All filter tabs (#900): 1/2/3/4 switch the analytics window
+        // while the Analytics panel is focused. The wrapper re-fetches the
+        // snapshot through the new window (AnalyticsWindowChanged). Switching
+        // resets the body scroll so the re-windowed view starts at the top.
+        c @ (KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4')) => {
+            if state.focused_panel == McPanel::Analytics {
+                let window = match c {
+                    KeyCode::Char('1') => TimeWindow::Day,
+                    KeyCode::Char('2') => TimeWindow::Week,
+                    KeyCode::Char('3') => TimeWindow::Month,
+                    _ => TimeWindow::All,
+                };
+                if state.analytics_window == window {
+                    KeyOutcome::Consumed
+                } else {
+                    state.analytics_window = window;
+                    state.scroll_offset = 0;
+                    KeyOutcome::AnalyticsWindowChanged
+                }
+            } else {
+                KeyOutcome::NotConsumed
             }
         }
         _ => KeyOutcome::NotConsumed,

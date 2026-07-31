@@ -4,6 +4,8 @@
 //! a single `pub mc: McState` field. Adding a new MC behaviour means a
 //! new field on `McState`, not on `AppState`.
 
+use crate::brain::mission_control::TimeWindow;
+
 /// Which MC panel currently has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum McPanel {
@@ -15,7 +17,7 @@ pub enum McPanel {
 }
 
 /// All Mission-Control-specific runtime state.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct McState {
     /// Which panel keyboard input affects.
     pub focused_panel: McPanel,
@@ -40,6 +42,26 @@ pub struct McState {
     /// by `analytics_panel::draw`. Brain sizes + tool/RSI stats from the
     /// same DB; pre-fetched so the render path stays synchronous.
     pub analytics: crate::brain::mission_control::McAnalytics,
+    /// Active D/W/M/All filter for the analytics panel (#900). Switched
+    /// with 1/2/3/4 while Analytics is focused; `actions::refresh` re-fetches
+    /// the snapshot through this window so every panel respects it. Defaults
+    /// to Month so first-open matches the prior 30d flakiest behavior.
+    pub analytics_window: TimeWindow,
+}
+
+impl Default for McState {
+    fn default() -> Self {
+        Self {
+            focused_panel: McPanel::default(),
+            selected_index: 0,
+            scroll_offset: 0,
+            detail_open: false,
+            activity: Vec::new(),
+            schedule: Vec::new(),
+            analytics: crate::brain::mission_control::McAnalytics::default(),
+            analytics_window: TimeWindow::Month,
+        }
+    }
 }
 
 impl McState {

@@ -31,5 +31,5 @@ pub mod types;
 
 pub use types::{
     McActivity, McActivityLevel, McAnalytics, McBrainFile, McInboxDetail, McInboxItem, McInboxKind,
-    McScheduleItem, McScheduleKind, McToolStat,
+    McScheduleItem, McScheduleKind, McToolStat, TimeWindow,
 };

@@ -38,7 +38,15 @@ pub async fn refresh(app: &mut App) {
     app.mc.activity = activity_service::recent(ACTIVITY_LIMIT);
     let pool = app.agent_service.context().pool();
     app.mc.schedule = schedule_service::list(pool.clone()).await;
-    app.mc.analytics = analytics_service::summary(pool).await;
+    app.mc.analytics = analytics_service::summary(pool, app.mc.analytics_window).await;
+}
+
+/// Re-fetch only the analytics snapshot through the active D/W/M/All window
+/// (#900). Called after the user switches the filter so the panel re-windows
+/// without re-reading the activity feed and schedule.
+pub async fn refresh_analytics(app: &mut App) {
+    let pool = app.agent_service.context().pool();
+    app.mc.analytics = analytics_service::summary(pool, app.mc.analytics_window).await;
 }
 
 /// Apply the currently selected inbox proposal. Routes to

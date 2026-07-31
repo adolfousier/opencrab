@@ -11,7 +11,7 @@ use super::error::Result;
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use crate::brain::mission_control::types::{McActivity, McAnalytics, McInboxItem, McScheduleItem};
 use crate::brain::mission_control::{
-    activity_service, analytics_service, inbox_service, schedule_service,
+    TimeWindow, activity_service, analytics_service, inbox_service, schedule_service,
 };
 use crate::db::Pool;
 use async_trait::async_trait;
@@ -59,7 +59,7 @@ impl Tool for MissionControlReportTool {
     }
 
     async fn execute(&self, _input: Value, _context: &ToolExecutionContext) -> Result<ToolResult> {
-        let analytics = analytics_service::summary(self.pool.clone()).await;
+        let analytics = analytics_service::summary(self.pool.clone(), TimeWindow::All).await;
         let activity = activity_service::recent(5);
         let inbox = inbox_service::list();
         let schedule = schedule_service::list(self.pool.clone()).await;

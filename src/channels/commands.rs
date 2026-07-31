@@ -946,12 +946,12 @@ async fn format_rtk() -> String {
 /// channels as a single command.
 async fn format_mission_control(agent: &AgentService) -> String {
     use crate::brain::mission_control::{
-        activity_service, analytics_service, inbox_service, schedule_service,
+        TimeWindow, activity_service, analytics_service, inbox_service, schedule_service,
     };
     use crate::brain::tools::mission_control_report::render_markdown;
 
     let pool = agent.context().pool();
-    let analytics = analytics_service::summary(pool.clone()).await;
+    let analytics = analytics_service::summary(pool.clone(), TimeWindow::All).await;
     let activity = activity_service::recent(5);
     let inbox = inbox_service::list();
     let schedule = schedule_service::list(pool.clone()).await;

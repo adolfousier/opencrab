@@ -29,23 +29,24 @@ fn round1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
 }
 
-/// Build the analytics snapshot. Never errors: a DB blip yields zeros so the
-/// panel degrades gracefully instead of taking Mission Control down.
-pub async fn summary(pool: Pool) -> McAnalytics {
-    // Top-tools + totals stay ALL-TIME (lifetime usage is what matters there).
-    let tools = tool_stats(pool.clone(), TimeWindow::All).await;
-    // Flakiest is computed over a RECENT WINDOW (last month) so a tool that was
-    // flaky then fixed ages out, and a fixed-but-idle tool drops off entirely
-    // (#605). The RSI opportunity detector already windows for exactly this
-    // reason; a month is wide enough that a lightly-used tool still accumulates
-    // the >=5 calls needed to rank.
-    let recent_tools = tool_stats(pool.clone(), TimeWindow::Month).await;
-    // Provider/model-agnostic analytics (#897): phantom detection, streaming
-    // recoveries, brain-verify gate outcomes, and per-model tool reliability.
-    let phantom = phantom_stats(pool.clone(), TimeWindow::All).await;
-    let streaming = streaming_stats(pool.clone(), TimeWindow::All).await;
-    let brain_verify = brain_verify_stats(pool.clone(), TimeWindow::All).await;
-    let model_tools = tool_stats_by_model(pool.clone(), TimeWindow::All).await;
+/// Build the analytics snapshot for `window`. Never errors: a DB blip yields
+/// zeros so the panel degrades gracefully instead of taking Mission Control
+/// down.
+///
+/// Every time-series metric (totals, top tools, flakiest, and the #897
+/// provider/model-agnostic stats) respects `window`. The TUI passes the user's
+/// D/W/M/All filter (#900); the report tool and channel command pass
+/// `TimeWindow::All` for a lifetime view. Flakiest derives from the same
+/// windowed `tools` set, so at the TUI's default Month window it reproduces the
+/// prior 30d flakiest behavior (#605) while the tabs can still re-window it.
+/// RSI counts and brain sizes are point-in-time / current-state and stay
+/// unwindowed.
+pub async fn summary(pool: Pool, window: TimeWindow) -> McAnalytics {
+    let tools = tool_stats(pool.clone(), window).await;
+    let phantom = phantom_stats(pool.clone(), window).await;
+    let streaming = streaming_stats(pool.clone(), window).await;
+    let brain_verify = brain_verify_stats(pool.clone(), window).await;
+    let model_tools = tool_stats_by_model(pool.clone(), window).await;
     let (rsi_last_call_ts, tool_events_since_rsi) = rsi_staleness(pool.clone()).await;
     let (rsi_applied_total, rsi_top_dimensions) = rsi_stats(pool).await;
     let brain_files = collect_brain_sizes();
@@ -55,9 +56,10 @@ pub async fn summary(pool: Pool) -> McAnalytics {
     let tool_total_fails = tools.iter().map(|t| t.failures).sum();
     let top_tools = tools.iter().take(TOP_N).cloned().collect();
 
-    let mut flakiest_tools: Vec<McToolStat> = recent_tools
-        .into_iter()
+    let mut flakiest_tools: Vec<McToolStat> = tools
+        .iter()
         .filter(|t| t.total >= FLAKY_MIN_CALLS && t.failures > 0)
+        .cloned()
         .collect();
     flakiest_tools.sort_by(|a, b| {
         b.fail_rate
