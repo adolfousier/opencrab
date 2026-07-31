@@ -385,8 +385,37 @@ pub(crate) fn visible_when_folded(
         // "rows the fold hides", it also reported a turn that did no work as
         // having taken a step (#786).
         "user" | "error" | "history_marker" | "system" => true,
-        _ => Some(idx) == final_idx,
+        // A substantial report survives the fold even when it is not the single
+        // final answer (#904). The fold kept exactly one assistant row, so a
+        // turn that produced a real deliverable and then said anything after it
+        // folded the deliverable away and exposed the trailing remark instead.
+        // The user saw a collapsed turn and a completion that appeared eaten.
+        //
+        // Only ever shows MORE, never less: a row that already qualified as the
+        // final answer is unaffected, and prose without a table is untouched.
+        _ => Some(idx) == final_idx || is_deliverable_report(&m.content),
     }
+}
+
+/// Whether an assistant row carries a rendered report worth keeping visible
+/// when its turn is folded.
+///
+/// A GFM table is the marker: it is structure the user asked for and cannot
+/// reconstruct from a one-line summary. Length alone is not enough — a long
+/// narration is still narration — so both a separator row and real bulk are
+/// required.
+pub(crate) fn is_deliverable_report(content: &str) -> bool {
+    const MIN_REPORT_CHARS: usize = 200;
+    if content.chars().count() < MIN_REPORT_CHARS {
+        return false;
+    }
+    content.lines().any(|line| {
+        let t = line.trim();
+        t.starts_with('|')
+            && t.ends_with('|')
+            && t.contains("---")
+            && t.chars().filter(|c| *c == '|').count() >= 2
+    })
 }
 
 /// How many wrapped lines the live reasoning summary may occupy (#768). A hard
