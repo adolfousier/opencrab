@@ -90,6 +90,104 @@ impl AnalyticsEventRepository {
         &self.pool
     }
 
+    // ─── Best-effort Emitters ─────────────────────────────────────────
+    //
+    // These wrap the async record_* methods in a fire-and-forget spawn so
+    // analytics never blocks or breaks the hot path. Errors are logged, never
+    // propagated. All read provider/model from the global pool at call time.
+
+    /// Fire-and-forget phantom detection event. Called when the phantom
+    /// detector fires (WARN). Provider/model are read live so the event is
+    /// tagged with whatever was active when the phantom was emitted.
+    pub fn emit_phantom(session_id: &str, provider: Option<&str>, model: Option<&str>) {
+        let Some(pool) = crate::db::global_pool() else {
+            return;
+        };
+        let repo = Self::new(pool.clone());
+        let id = format!("phantom-{}", uuid::Uuid::new_v4());
+        let session_id = session_id.to_string();
+        let provider = provider.map(|s| s.to_string());
+        let model = model.map(|s| s.to_string());
+        tokio::spawn(async move {
+            if let Err(e) = repo
+                .record_phantom(&id, &session_id, provider.as_deref(), model.as_deref())
+                .await
+            {
+                tracing::error!("[ANALYTICS] phantom record failed: {e}");
+            }
+        });
+    }
+
+    /// Fire-and-forget phantom resolution. Called when, after a phantom, the
+    /// retry produces real tool calls.
+    pub fn emit_resolve_phantom(session_id: &str, retry_count: i64, tools_after_retry: i64) {
+        let Some(pool) = crate::db::global_pool() else {
+            return;
+        };
+        let repo = Self::new(pool.clone());
+        let session_id = session_id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = repo
+                .resolve_phantom(&session_id, retry_count, tools_after_retry)
+                .await
+            {
+                tracing::error!("[ANALYTICS] phantom resolve failed: {e}");
+            }
+        });
+    }
+
+    /// Fire-and-forget streaming recovery event.
+    pub fn emit_streaming_recovery(
+        session_id: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
+        tool_count: i64,
+    ) {
+        let Some(pool) = crate::db::global_pool() else {
+            return;
+        };
+        let repo = Self::new(pool.clone());
+        let id = format!("stream-recover-{}", uuid::Uuid::new_v4());
+        let session_id = session_id.to_string();
+        let provider = provider.map(|s| s.to_string());
+        let model = model.map(|s| s.to_string());
+        tokio::spawn(async move {
+            if let Err(e) = repo
+                .record_streaming_recovery(
+                    &id,
+                    &session_id,
+                    provider.as_deref(),
+                    model.as_deref(),
+                    tool_count,
+                )
+                .await
+            {
+                tracing::error!("[ANALYTICS] streaming recovery record failed: {e}");
+            }
+        });
+    }
+
+    /// Fire-and-forget brain verify gate event. `event_type` is one of
+    /// "pass" | "rollback" | "fail_closed".
+    pub fn emit_brain_verify(file_name: &str, event_type: &str, violations: Option<&str>) {
+        let Some(pool) = crate::db::global_pool() else {
+            return;
+        };
+        let repo = Self::new(pool.clone());
+        let id = format!("brain-verify-{}", uuid::Uuid::new_v4());
+        let file_name = file_name.to_string();
+        let event_type = event_type.to_string();
+        let violations = violations.map(|s| s.to_string());
+        tokio::spawn(async move {
+            if let Err(e) = repo
+                .record_brain_verify(&id, &file_name, &event_type, violations.as_deref())
+                .await
+            {
+                tracing::error!("[ANALYTICS] brain verify record failed: {e}");
+            }
+        });
+    }
+
     // ─── Phantom Events ───────────────────────────────────────────────
 
     /// Record a phantom detection event.

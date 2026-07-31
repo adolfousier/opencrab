@@ -260,7 +260,10 @@ impl super::AgentService {
                     "error"
                 };
                 tokio::spawn(async move {
-                    if let Err(e) = tool_repo.record(&exec_id, &mid, &sid, &tname, status).await {
+                    if let Err(e) = tool_repo
+                        .record(&exec_id, &mid, &sid, &tname, status, None, None, None)
+                        .await
+                    {
                         tracing::error!("[TOOL_EXEC] Failed to record tool execution: {}", e);
                     }
                 });

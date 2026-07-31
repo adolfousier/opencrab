@@ -427,11 +427,22 @@ impl Tool for SelfImproveTool {
                 // belief base before any write. Replaces the bypass (#881).
                 match orient_gate(target_file, &updated) {
                     GateDecision::Reject(reason) => {
+                        crate::db::repository::AnalyticsEventRepository::emit_brain_verify(
+                            target_file,
+                            "fail_closed",
+                            Some(&reason),
+                        );
                         return Ok(ToolResult::error(format!(
                             "{reason}. Change not applied (no write made)."
                         )));
                     }
-                    GateDecision::Allow => {}
+                    GateDecision::Allow => {
+                        crate::db::repository::AnalyticsEventRepository::emit_brain_verify(
+                            target_file,
+                            "pass",
+                            None,
+                        );
+                    }
                 }
 
                 // Snapshot the file before mutating so a bad agent edit can
@@ -644,11 +655,22 @@ impl Tool for SelfImproveTool {
                 let proposed_full = format!("{}\n{}\n", existing, to_append.trim());
                 match orient_gate(target_file, &proposed_full) {
                     GateDecision::Reject(reason) => {
+                        crate::db::repository::AnalyticsEventRepository::emit_brain_verify(
+                            target_file,
+                            "fail_closed",
+                            Some(&reason),
+                        );
                         return Ok(ToolResult::error(format!(
                             "{reason}. Change not applied (no write made)."
                         )));
                     }
-                    GateDecision::Allow => {}
+                    GateDecision::Allow => {
+                        crate::db::repository::AnalyticsEventRepository::emit_brain_verify(
+                            target_file,
+                            "pass",
+                            None,
+                        );
+                    }
                 }
 
                 // Append the new content to target brain file

@@ -19,7 +19,7 @@ async fn make_db() -> Database {
 async fn record_skips_empty_tool_name() {
     let db = make_db().await;
     let repo = ToolExecutionRepository::new(db.pool().clone());
-    repo.record("id-empty", "msg-1", "sess-1", "", "error")
+    repo.record("id-empty", "msg-1", "sess-1", "", "error", None, None, None)
         .await
         .expect("empty record returns Ok, just skips the insert");
     let stats = repo.stats_by_tool(None).await.unwrap();
@@ -30,9 +30,11 @@ async fn record_skips_empty_tool_name() {
 async fn record_skips_whitespace_only_tool_name() {
     let db = make_db().await;
     let repo = ToolExecutionRepository::new(db.pool().clone());
-    repo.record("id-ws", "msg-1", "sess-1", "   \t  ", "error")
-        .await
-        .expect("whitespace-only is treated as empty");
+    repo.record(
+        "id-ws", "msg-1", "sess-1", "   \t  ", "error", None, None, None,
+    )
+    .await
+    .expect("whitespace-only is treated as empty");
     let stats = repo.stats_by_tool(None).await.unwrap();
     assert!(stats.is_empty());
 }
@@ -41,12 +43,30 @@ async fn record_skips_whitespace_only_tool_name() {
 async fn record_accepts_normal_tool_name() {
     let db = make_db().await;
     let repo = ToolExecutionRepository::new(db.pool().clone());
-    repo.record("id-bash", "msg-1", "sess-1", "bash", "completed")
-        .await
-        .unwrap();
-    repo.record("id-grep", "msg-2", "sess-1", "grep", "completed")
-        .await
-        .unwrap();
+    repo.record(
+        "id-bash",
+        "msg-1",
+        "sess-1",
+        "bash",
+        "completed",
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    repo.record(
+        "id-grep",
+        "msg-2",
+        "sess-1",
+        "grep",
+        "completed",
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let stats = repo.stats_by_tool(None).await.unwrap();
     assert_eq!(stats.len(), 2);
     let names: Vec<&str> = stats.iter().map(|s| s.tool_name.as_str()).collect();
@@ -74,9 +94,18 @@ async fn stats_by_tool_filters_legacy_empty_rows() {
         .await
         .unwrap()
         .unwrap();
-    repo.record("id-bash", "msg-2", "sess-1", "bash", "completed")
-        .await
-        .unwrap();
+    repo.record(
+        "id-bash",
+        "msg-2",
+        "sess-1",
+        "bash",
+        "completed",
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     let stats = repo.stats_by_tool(None).await.unwrap();
     assert_eq!(
@@ -93,9 +122,18 @@ async fn record_skips_garbage_tool_name_with_xml_fragment() {
     let db = make_db().await;
     let repo = ToolExecutionRepository::new(db.pool().clone());
     let garbage = "i_apologize... i'll_call_write_opencrabs_file...";
-    repo.record("id-garbage", "msg-1", "sess-1", garbage, "error")
-        .await
-        .expect("garbage record returns Ok, just skips the insert");
+    repo.record(
+        "id-garbage",
+        "msg-1",
+        "sess-1",
+        garbage,
+        "error",
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("garbage record returns Ok, just skips the insert");
     let stats = repo.stats_by_tool(None).await.unwrap();
     assert!(stats.is_empty(), "garbage tool_name must not land in DB");
 }
@@ -104,9 +142,11 @@ async fn record_skips_garbage_tool_name_with_xml_fragment() {
 async fn record_skips_tool_name_with_uppercase() {
     let db = make_db().await;
     let repo = ToolExecutionRepository::new(db.pool().clone());
-    repo.record("id-upper", "msg-1", "sess-1", "Bash", "error")
-        .await
-        .unwrap();
+    repo.record(
+        "id-upper", "msg-1", "sess-1", "Bash", "error", None, None, None,
+    )
+    .await
+    .unwrap();
     let stats = repo.stats_by_tool(None).await.unwrap();
     assert!(stats.is_empty(), "uppercase tool_name must be rejected");
 }
@@ -116,9 +156,11 @@ async fn record_skips_overlong_tool_name() {
     let db = make_db().await;
     let repo = ToolExecutionRepository::new(db.pool().clone());
     let long_name = "a".repeat(65);
-    repo.record("id-long", "msg-1", "sess-1", &long_name, "error")
-        .await
-        .unwrap();
+    repo.record(
+        "id-long", "msg-1", "sess-1", &long_name, "error", None, None, None,
+    )
+    .await
+    .unwrap();
     let stats = repo.stats_by_tool(None).await.unwrap();
     assert!(stats.is_empty(), "tool_name >64 chars must be rejected");
 }
@@ -127,9 +169,18 @@ async fn record_skips_overlong_tool_name() {
 async fn record_accepts_tool_name_with_digits_and_underscores() {
     let db = make_db().await;
     let repo = ToolExecutionRepository::new(db.pool().clone());
-    repo.record("id-ok", "msg-1", "sess-1", "web_search_v2", "success")
-        .await
-        .unwrap();
+    repo.record(
+        "id-ok",
+        "msg-1",
+        "sess-1",
+        "web_search_v2",
+        "success",
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let stats = repo.stats_by_tool(None).await.unwrap();
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].tool_name, "web_search_v2");

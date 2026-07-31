@@ -1167,6 +1167,10 @@ impl AgentService {
         // (MAX_PHANTOM_ROLLS + 1).
         let mut phantom_rolls: u32 = 0;
         const MAX_PHANTOM_ROLLS: u32 = 2;
+        // Analytics (#897): when Some(retries), a phantom was detected this
+        // turn and not yet resolved. Cleared (and a resolution emitted) once a
+        // subsequent iteration produces real tool calls.
+        let mut phantom_pending: Option<u32> = None;
         // Set to true after we have forced a sticky fallback because
         // phantom retries exhausted. Guarantees we only swap once per
         // turn even if the fallback provider is also phantom-prone.
@@ -3538,6 +3542,27 @@ impl AgentService {
                 }
             } else {
                 // Successful stream completion — reset retry counter
+                // Analytics (#897): if the stream dropped and retried before
+                // succeeding, record a recovery. tool_count = tool calls in the
+                // recovered response.
+                if stream_retry_count > 0 {
+                    let tool_count = response
+                        .content
+                        .iter()
+                        .filter(|b| matches!(b, ContentBlock::ToolUse { .. }))
+                        .count() as i64;
+                    let prov = self.provider_name_for_session(session_id);
+                    let mdl = self
+                        .provider_for_session(session_id)
+                        .active_subprovider_model();
+                    let sid = session_id.to_string();
+                    crate::db::repository::AnalyticsEventRepository::emit_streaming_recovery(
+                        &sid,
+                        Some(&prov),
+                        mdl.as_deref(),
+                        tool_count,
+                    );
+                }
                 stream_retry_count = 0;
             }
 
@@ -4074,6 +4099,20 @@ impl AgentService {
                         // input contains it is false as a matter of fact
                         // (#789).
                         || !uncalled_commands.is_empty());
+                // Analytics (#897): if a phantom was detected earlier this turn
+                // and the current iteration produced real tool calls, the
+                // self-heal recovered. Mark the phantom resolved.
+                if let Some(retries) = phantom_pending
+                    && tool_calls_completed_this_turn > 0
+                {
+                    phantom_pending = None;
+                    let sid = session_id.to_string();
+                    crate::db::repository::AnalyticsEventRepository::emit_resolve_phantom(
+                        &sid,
+                        retries as i64,
+                        tool_calls_completed_this_turn as i64,
+                    );
+                }
                 if !phantom_eligible && tool_calls_completed_this_turn > 0 {
                     tracing::info!(
                         target: "phantom",
@@ -4217,6 +4256,22 @@ impl AgentService {
                          actions without executing tools. Injecting retry prompt.",
                         is_local_provider
                     );
+                    // Analytics (#897): record the phantom detection. Tagged with
+                    // the active provider/model so Mission Control can break
+                    // detection rates down per-model. Fire-and-forget.
+                    {
+                        let prov = self.provider_name_for_session(session_id);
+                        let mdl = self
+                            .provider_for_session(session_id)
+                            .active_subprovider_model();
+                        let sid = session_id.to_string();
+                        crate::db::repository::AnalyticsEventRepository::emit_phantom(
+                            &sid,
+                            Some(&prov),
+                            mdl.as_deref(),
+                        );
+                    }
+                    phantom_pending = Some(phantom_retries_used);
                     self.record_provider_feedback(
                         session_id,
                         "phantom_tool_call",
@@ -5416,9 +5471,22 @@ impl AgentService {
                                             let sid = session_id.to_string();
                                             let tname = tool_name.clone();
                                             let status = if success { "success" } else { "error" };
+                                            let prov = self.provider_name_for_session(session_id);
+                                            let mdl = self
+                                                .provider_for_session(session_id)
+                                                .active_subprovider_model();
                                             tokio::spawn(async move {
                                                 if let Err(e) = tool_repo
-                                                    .record(&exec_id, &mid, &sid, &tname, status)
+                                                    .record(
+                                                        &exec_id,
+                                                        &mid,
+                                                        &sid,
+                                                        &tname,
+                                                        status,
+                                                        Some(&prov),
+                                                        mdl.as_deref(),
+                                                        None,
+                                                    )
                                                     .await
                                                 {
                                                     tracing::error!(
@@ -5505,9 +5573,22 @@ impl AgentService {
                                             let mid = assistant_db_msg.id.to_string();
                                             let sid = session_id.to_string();
                                             let tname = tool_name.clone();
+                                            let prov = self.provider_name_for_session(session_id);
+                                            let mdl = self
+                                                .provider_for_session(session_id)
+                                                .active_subprovider_model();
                                             tokio::spawn(async move {
                                                 if let Err(e) = tool_repo
-                                                    .record(&exec_id, &mid, &sid, &tname, "error")
+                                                    .record(
+                                                        &exec_id,
+                                                        &mid,
+                                                        &sid,
+                                                        &tname,
+                                                        "error",
+                                                        Some(&prov),
+                                                        mdl.as_deref(),
+                                                        None,
+                                                    )
                                                     .await
                                                 {
                                                     tracing::error!(
@@ -5602,6 +5683,7 @@ impl AgentService {
                 // so the registry's own approval check doesn't block it)
                 let mut approved_context = tool_context.clone();
                 approved_context.auto_approve = true;
+                let tool_start = std::time::Instant::now();
                 let exec_result = tokio::select! {
                     biased;
                     _ = async {
@@ -5678,9 +5760,24 @@ impl AgentService {
                             let sid = session_id.to_string();
                             let tname = tool_name.clone();
                             let status = if success { "success" } else { "error" };
+                            let prov = self.provider_name_for_session(session_id);
+                            let mdl = self
+                                .provider_for_session(session_id)
+                                .active_subprovider_model();
+                            let dur_ms = tool_start.elapsed().as_millis() as i64;
                             tokio::spawn(async move {
-                                if let Err(e) =
-                                    tool_repo.record(&exec_id, &mid, &sid, &tname, status).await
+                                if let Err(e) = tool_repo
+                                    .record(
+                                        &exec_id,
+                                        &mid,
+                                        &sid,
+                                        &tname,
+                                        status,
+                                        Some(&prov),
+                                        mdl.as_deref(),
+                                        Some(dur_ms),
+                                    )
+                                    .await
                                 {
                                     tracing::error!(
                                         "[TOOL_EXEC] Failed to record tool execution: {}",
@@ -5755,9 +5852,23 @@ impl AgentService {
                             let mid = assistant_db_msg.id.to_string();
                             let sid = session_id.to_string();
                             let tname = tool_name.clone();
+                            let prov = self.provider_name_for_session(session_id);
+                            let mdl = self
+                                .provider_for_session(session_id)
+                                .active_subprovider_model();
+                            let dur_ms = tool_start.elapsed().as_millis() as i64;
                             tokio::spawn(async move {
                                 if let Err(e) = tool_repo
-                                    .record(&exec_id, &mid, &sid, &tname, "error")
+                                    .record(
+                                        &exec_id,
+                                        &mid,
+                                        &sid,
+                                        &tname,
+                                        "error",
+                                        Some(&prov),
+                                        mdl.as_deref(),
+                                        Some(dur_ms),
+                                    )
                                     .await
                                 {
                                     tracing::error!(

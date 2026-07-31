@@ -44,6 +44,7 @@ impl ToolExecutionRepository {
     /// meaningful to record for an unnamed tool; logging the refusal at warn
     /// level is enough to surface upstream model misbehaviour without
     /// polluting the stats.
+    #[allow(clippy::too_many_arguments)]
     pub async fn record(
         &self,
         id: &str,
@@ -51,6 +52,9 @@ impl ToolExecutionRepository {
         session_id: &str,
         tool_name: &str,
         status: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
+        duration_ms: Option<i64>,
     ) -> Result<()> {
         if tool_name.trim().is_empty() {
             tracing::warn!(
@@ -83,15 +87,27 @@ impl ToolExecutionRepository {
         let session_id = session_id.to_string();
         let tool_name = tool_name.to_string();
         let status = status.to_string();
+        let provider = provider.map(|s| s.to_string());
+        let model = model.map(|s| s.to_string());
         self.pool
             .get()
             .await
             .context("Failed to get connection")?
             .interact(move |conn| {
                 conn.execute(
-                    "INSERT OR IGNORE INTO tool_executions (id, message_id, session_id, tool_name, status) \
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![id, message_id, session_id, tool_name, status],
+                    "INSERT OR IGNORE INTO tool_executions \
+                     (id, message_id, session_id, tool_name, status, provider, model, duration_ms) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        id,
+                        message_id,
+                        session_id,
+                        tool_name,
+                        status,
+                        provider,
+                        model,
+                        duration_ms
+                    ],
                 )
             })
             .await

@@ -75,6 +75,7 @@ fn verify_or_rollback(
 
     let violations = brain_verify::verify_brain_file(file_name, content);
     if violations.is_empty() {
+        crate::db::repository::AnalyticsEventRepository::emit_brain_verify(file_name, "pass", None);
         return Ok(());
     }
 
@@ -99,10 +100,15 @@ fn verify_or_rollback(
         }
     }
 
+    let joined = violations.join("; ");
+    crate::db::repository::AnalyticsEventRepository::emit_brain_verify(
+        file_name,
+        "rollback",
+        Some(&joined),
+    );
     Err(format!(
         "Brain file verification failed for {}: {}. Write rolled back.",
-        file_name,
-        violations.join("; ")
+        file_name, joined
     ))
 }
 

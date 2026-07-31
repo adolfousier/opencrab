@@ -16,14 +16,20 @@ async fn setup() -> (Database, ToolExecutionRepository) {
 async fn counts_totals_and_errors_per_tool_ordered_by_usage() {
     let (_db, repo) = setup().await;
     // bash: 3 calls, 1 error
-    repo.record("1", "m", "s", "bash", "success").await.unwrap();
-    repo.record("2", "m", "s", "bash", "success").await.unwrap();
-    repo.record("3", "m", "s", "bash", "error").await.unwrap();
-    // read_file: 2 calls, 0 errors
-    repo.record("4", "m", "s", "read_file", "success")
+    repo.record("1", "m", "s", "bash", "success", None, None, None)
         .await
         .unwrap();
-    repo.record("5", "m", "s", "read_file", "success")
+    repo.record("2", "m", "s", "bash", "success", None, None, None)
+        .await
+        .unwrap();
+    repo.record("3", "m", "s", "bash", "error", None, None, None)
+        .await
+        .unwrap();
+    // read_file: 2 calls, 0 errors
+    repo.record("4", "m", "s", "read_file", "success", None, None, None)
+        .await
+        .unwrap();
+    repo.record("5", "m", "s", "read_file", "success", None, None, None)
         .await
         .unwrap();
 
