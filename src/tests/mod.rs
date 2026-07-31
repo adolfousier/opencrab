@@ -139,6 +139,7 @@ pub mod config_owner_seed_migration_test;
 pub mod config_provider_registry_test;
 pub mod config_repair_test;
 pub mod config_secrets_test;
+pub mod config_section_resolve_test;
 pub mod config_types_loader_test;
 pub mod config_update_test;
 pub mod config_watcher_test;

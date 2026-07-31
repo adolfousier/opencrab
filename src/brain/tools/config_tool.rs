@@ -108,6 +108,56 @@ impl Tool for ConfigTool {
     }
 }
 
+/// Top-level sections `read_config` can render.
+const CONFIG_SECTIONS: &[&str] = &[
+    "agent",
+    "voice",
+    "logging",
+    "debug",
+    "channels",
+    "provider_registry",
+    "database",
+    "providers",
+];
+
+/// Children whose parent section is not guessable from the name alone.
+const SECTION_PARENTS: &[(&str, &str)] = &[
+    ("telegram", "channels"),
+    ("discord", "channels"),
+    ("slack", "channels"),
+    ("whatsapp", "channels"),
+    ("trello", "channels"),
+    ("stt", "providers"),
+    ("tts", "providers"),
+    ("fallback", "providers"),
+    ("custom", "providers"),
+];
+
+/// Resolve what the caller asked for to a top-level section (#889).
+///
+/// Config is nested but this tool only renders the first level, so the paths
+/// people actually write were rejected: every recorded config_manager failure
+/// was `providers.stt`, `stt` or `telegram`. Those are the real shapes in
+/// config.toml, and requiring the caller to split them was the tool's problem.
+///
+/// Accepts an exact section, a dotted path (`providers.stt` -> `providers`),
+/// or a known child (`telegram` -> `channels`). Returns `None` when nothing
+/// matches, so the caller can still refuse rather than guess.
+pub(crate) fn resolve_section(requested: &str) -> Option<&'static str> {
+    let want = requested.trim().trim_matches('.').to_lowercase();
+    if want.is_empty() {
+        return None;
+    }
+    let head = want.split('.').next().unwrap_or(&want);
+    if let Some(hit) = CONFIG_SECTIONS.iter().find(|s| **s == head) {
+        return Some(hit);
+    }
+    SECTION_PARENTS
+        .iter()
+        .find(|(child, _)| *child == head)
+        .map(|(_, parent)| *parent)
+}
+
 impl ConfigTool {
     fn read_config(&self, input: &Value) -> Result<ToolResult> {
         let config = match crate::config::Config::load() {
@@ -115,7 +165,12 @@ impl ConfigTool {
             Err(e) => return Ok(ToolResult::error(format!("Failed to load config: {}", e))),
         };
 
-        let section = input.get("section").and_then(|v| v.as_str());
+        // Resolve `providers.stt` / `telegram` to the section that owns them
+        // before dispatch (#889); `None` keeps the original string so the error
+        // below names what was actually asked for.
+        let requested = input.get("section").and_then(|v| v.as_str());
+        let resolved = requested.and_then(resolve_section);
+        let section = resolved.or(requested);
 
         let output = match section {
             Some("agent") => format_toml(&config.agent),
@@ -139,9 +194,11 @@ impl ConfigTool {
             Some("providers") => format_toml(&config.providers),
             Some(other) => {
                 return Ok(ToolResult::error(format!(
-                    "Unknown config section: '{}'. Valid: agent, voice, logging, debug, \
-                     channels, provider_registry, database, providers",
-                    other
+                    "Unknown config section: '{}'. Valid: {}. Nested paths and child names \
+                     resolve to their parent (e.g. 'providers.stt' or 'stt' -> providers, \
+                     'telegram' -> channels).",
+                    other,
+                    CONFIG_SECTIONS.join(", ")
                 )));
             }
             None => {
