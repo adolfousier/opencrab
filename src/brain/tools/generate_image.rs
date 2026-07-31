@@ -159,9 +159,23 @@ impl Tool for GenerateImageTool {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
+        // A caller-supplied filename is used verbatim, so one without an
+        // extension produced an extensionless file. Downstream consumers
+        // identify images by extension: generate_document later failed with
+        // "not a decodable PNG/JPEG ... The image format could not be
+        // determined" on exactly such a path, and that counted against
+        // generate_document rather than against whatever named the file (#889).
         let filename = input["filename"]
             .as_str()
-            .map(|s| s.to_string())
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| {
+                let name = s.trim();
+                if std::path::Path::new(name).extension().is_some() {
+                    name.to_string()
+                } else {
+                    format!("{name}.png")
+                }
+            })
             .unwrap_or_else(|| format!("{}.png", uuid::Uuid::new_v4().simple()));
 
         // Ensure images directory exists
