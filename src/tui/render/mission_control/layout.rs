@@ -19,7 +19,7 @@
 //!
 //! `compute` is a pure fn so the geometry is unit-testable without a
 //! live `Frame` — the contract is "every panel rect stays inside the
-//! outer area, panels don't overlap, and the help bar takes 1 row at
+//! outer area, panels don't overlap, and the help bar takes 2 rows at
 //! the bottom whenever the area is tall enough".
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -69,22 +69,27 @@ pub fn compute(area: Rect) -> McLayout {
     }
 }
 
-/// Split the bottom row off as the help bar. Returns `(panels, help_bar)`.
-/// When the area is < 2 rows, no help bar is reserved.
+/// Rows reserved for the bottom commands bar. Two rows: panel navigation
+/// keys on the first, the global D/W/M/A analytics filter on the second
+/// (#900).
+const HELP_BAR_ROWS: u16 = 2;
+
+/// Split the bottom rows off as the help bar. Returns `(panels, help_bar)`.
+/// When the area is too short to spare the bar, no help bar is reserved.
 fn split_help_bar(area: Rect) -> (Rect, Rect) {
-    if area.height < 2 {
+    if area.height <= HELP_BAR_ROWS {
         let empty = Rect { height: 0, ..area };
         return (area, empty);
     }
     let panels = Rect {
-        height: area.height - 1,
+        height: area.height - HELP_BAR_ROWS,
         ..area
     };
     let help_bar = Rect {
         x: area.x,
-        y: area.y + area.height - 1,
+        y: area.y + area.height - HELP_BAR_ROWS,
         width: area.width,
-        height: 1,
+        height: HELP_BAR_ROWS,
     };
     (panels, help_bar)
 }

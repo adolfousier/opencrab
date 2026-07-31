@@ -44,8 +44,8 @@ pub enum KeyOutcome {
     /// Inbox panel is focused and the user pressed `r` — caller should
     /// reject the currently selected proposal.
     RejectSelected,
-    /// Analytics panel is focused and the user switched the D/W/M/All window
-    /// (#900) — caller should re-fetch the snapshot via
+    /// The user switched the D/W/M/All window (#900). Global to every
+    /// panel — caller should re-fetch the snapshot via
     /// `actions::refresh_analytics`.
     AnalyticsWindowChanged,
 }
@@ -178,27 +178,26 @@ fn decide_without_popup(state: &mut McState, panel_item_count: usize, key: KeyEv
                 KeyOutcome::Consumed
             }
         }
-        // D/W/M/All filter tabs (#900): 1/2/3/4 switch the analytics window
-        // while the Analytics panel is focused. The wrapper re-fetches the
-        // snapshot through the new window (AnalyticsWindowChanged). Switching
-        // resets the body scroll so the re-windowed view starts at the top.
-        c @ (KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4')) => {
-            if state.focused_panel == McPanel::Analytics {
-                let window = match c {
-                    KeyCode::Char('1') => TimeWindow::Day,
-                    KeyCode::Char('2') => TimeWindow::Week,
-                    KeyCode::Char('3') => TimeWindow::Month,
-                    _ => TimeWindow::All,
-                };
-                if state.analytics_window == window {
-                    KeyOutcome::Consumed
-                } else {
-                    state.analytics_window = window;
-                    state.scroll_offset = 0;
-                    KeyOutcome::AnalyticsWindowChanged
-                }
+        // D/W/M/A filter keys (#900): global to the whole Mission Control
+        // view, so the analytics window switches from any panel, not just
+        // Analytics. The active window is shown in the bottom commands bar.
+        // The wrapper re-fetches the snapshot through the new window
+        // (AnalyticsWindowChanged); switching resets the body scroll so the
+        // re-windowed view starts at the top. Capital `A` is "All" and is
+        // distinct from lowercase `a` (apply) matched above.
+        c @ (KeyCode::Char('d') | KeyCode::Char('w') | KeyCode::Char('m') | KeyCode::Char('A')) => {
+            let window = match c {
+                KeyCode::Char('d') => TimeWindow::Day,
+                KeyCode::Char('w') => TimeWindow::Week,
+                KeyCode::Char('m') => TimeWindow::Month,
+                _ => TimeWindow::All,
+            };
+            if state.analytics_window == window {
+                KeyOutcome::Consumed
             } else {
-                KeyOutcome::NotConsumed
+                state.analytics_window = window;
+                state.scroll_offset = 0;
+                KeyOutcome::AnalyticsWindowChanged
             }
         }
         _ => KeyOutcome::NotConsumed,

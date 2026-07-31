@@ -7,11 +7,15 @@
 //! This is the native home for what the external `opencrabs-analytics` HTML
 //! tool produced (discussion #178).
 //!
-//! Layout is a single full-width vertical stack so it reads at any terminal
-//! width (80-col or 120-col): the D/W/M/All filter tabs are pinned on the top
-//! line (#900) and the sections scroll beneath them. Section order: Totals
-//! (+ recovery/verify counters), Model reliability, Flakiest, Phantoms, RSI
-//! applied, Brain files, Top tools.
+//! Layout (#900): the D/W/M/All filter tabs are pinned on the top line, and
+//! the sections below render as individual bordered cards flowed into a
+//! responsive grid — 3 columns when the column is wide, 2 when medium, 1 when
+//! narrow. Each non-empty section is one card; empty sections are skipped so
+//! the grid stays tight. Cards fill the viewport and clip their own overflow
+//! (dashboard style, like btop/htop) rather than scrolling as one text block.
+//! Card order: Totals (+ recovery/verify counters), Model reliability (with a
+//! per-model ✓/⚠/✗ status glyph), Flakiest, Phantoms, RSI applied, Brain
+//! files, Top tools.
 
 use super::theme;
 use crate::brain::mission_control::{McAnalytics, McToolStat, TimeWindow};
@@ -35,14 +39,18 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     );
 }
 
-/// Render the analytics view (block + pinned filter tabs + scrolling section
-/// stack) into any rect. Shared by the Mission Control panel and the Enter
+/// Render the analytics view (block + pinned filter tabs + responsive card
+/// grid) into any rect. Shared by the Mission Control panel and the Enter
 /// detail popup, so the popup is the same rich view, just larger.
+///
+/// `_scroll` is kept in the signature for the shared caller contract but is
+/// unused: the card grid fills the viewport and clips per card, so there is
+/// no whole-panel scroll offset to apply (#900).
 pub(crate) fn render(
     frame: &mut Frame,
     a: &McAnalytics,
     window: TimeWindow,
-    scroll: u16,
+    _scroll: u16,
     area: Rect,
     focused: bool,
 ) {
@@ -61,43 +69,131 @@ pub(crate) fn render(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Pin the D/W/M/All filter tabs on the top line; the sections scroll
-    // beneath them (#900). A single full-width stack works at any width —
-    // sections truncate to fit and overflow scrolls rather than collapsing
-    // into unreadable slivers on narrow terminals.
+    // Pin the D/W/M/All filter tabs on the top line; the card grid fills the
+    // space beneath them (#900).
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
     frame.render_widget(Paragraph::new(tabs_line(window)), rows[0]);
+    let body = rows[1];
 
-    let w = rows[1].width as usize;
-    let sections = [
-        summary_lines(a),
-        model_comparison_lines(a, w),
-        flakiest_lines(a, w, window),
-        phantom_lines(a, w),
-        rsi_lines(a, w),
-        brain_lines(a, w),
-        top_tools_lines(a, w),
-    ];
-    let mut body: Vec<Line<'static>> = Vec::new();
-    for section in sections {
-        if section.is_empty() {
-            continue;
-        }
-        if !body.is_empty() {
-            body.push(blank());
-        }
-        body.extend(section);
+    let sections = active_sections(a, window);
+    if sections.is_empty() || body.height < 3 || body.width < 4 {
+        return;
     }
 
-    frame.render_widget(Paragraph::new(body).scroll((scroll, 0)), rows[1]);
+    let cols = grid_cols(body.width);
+    let nrows = sections.len().div_ceil(cols);
+    let row_areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(vec![Constraint::Ratio(1, nrows as u32); nrows])
+        .split(body);
+
+    for (i, (title, kind)) in sections.iter().enumerate() {
+        let r = i / cols;
+        let c = i % cols;
+        let col_areas = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(vec![Constraint::Ratio(1, cols as u32); cols])
+            .split(row_areas[r]);
+        render_card(frame, title, *kind, a, col_areas[c]);
+    }
+}
+
+/// The non-empty sections in display order, each paired with its card kind.
+/// Totals always renders; the rest appear only when they have data, so the
+/// grid stays tight (Phantoms, for example, hides itself until there is a
+/// detection to show).
+fn active_sections(a: &McAnalytics, window: TimeWindow) -> Vec<(String, CardKind)> {
+    let mut out: Vec<(String, CardKind)> = vec![("Totals".to_string(), CardKind::Totals)];
+    if !a.model_tools.is_empty() {
+        out.push(("Model reliability".to_string(), CardKind::Model));
+    }
+    if !a.flakiest_tools.is_empty() {
+        out.push((
+            format!("Flakiest ({})", window_label(window)),
+            CardKind::Flakiest,
+        ));
+    }
+    if a.phantom.total > 0 {
+        out.push(("Phantoms".to_string(), CardKind::Phantom));
+    }
+    if !a.rsi_top_dimensions.is_empty() {
+        out.push(("RSI applied".to_string(), CardKind::Rsi));
+    }
+    if !a.brain_files.is_empty() {
+        out.push(("Brain files".to_string(), CardKind::Brain));
+    }
+    if !a.top_tools.is_empty() {
+        out.push(("Top tools".to_string(), CardKind::TopTools));
+    }
+    out
+}
+
+/// Responsive column count for the card grid (#900). Wide columns get a 3-across
+/// dashboard, medium get 2, narrow fall back to a single stacked column.
+fn grid_cols(w: u16) -> usize {
+    if w >= 90 {
+        3
+    } else if w >= 56 {
+        2
+    } else {
+        1
+    }
+}
+
+/// One bordered card: the section title sits in the border, the body lines
+/// fill the interior and clip if they overflow the card's height.
+fn render_card(frame: &mut Frame, title: &str, kind: CardKind, a: &McAnalytics, rect: Rect) {
+    if rect.width < 4 || rect.height < 3 {
+        return;
+    }
+    let block = Block::default()
+        .title(format!(" {title} "))
+        .title_style(
+            Style::default()
+                .fg(theme::BORDER_ANALYTICS_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_set(symbols::border::ROUNDED)
+        .border_style(Style::default().fg(theme::BORDER_IDLE));
+    let card_inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let w = card_inner.width as usize;
+    let lines = card_body(kind, a, w);
+    frame.render_widget(Paragraph::new(lines), card_inner);
+}
+
+/// Which section a card renders.
+#[derive(Clone, Copy)]
+enum CardKind {
+    Totals,
+    Model,
+    Flakiest,
+    Phantom,
+    Rsi,
+    Brain,
+    TopTools,
+}
+
+fn card_body(kind: CardKind, a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
+    match kind {
+        CardKind::Totals => summary_body(a),
+        CardKind::Model => model_body(a, w),
+        CardKind::Flakiest => flakiest_body(a, w),
+        CardKind::Phantom => phantom_body(a, w),
+        CardKind::Rsi => rsi_body(a, w),
+        CardKind::Brain => brain_body(a, w),
+        CardKind::TopTools => top_tools_body(a, w),
+    }
 }
 
 /// D/W/M/All filter tabs, active tab highlighted in the accent color (#900).
-/// A trailing `1-4` hint keeps the hotkeys discoverable.
+/// A trailing hotkey hint keeps the global D/W/M/A keys discoverable.
 fn tabs_line(active: TimeWindow) -> Line<'static> {
     let tabs = [
         (TimeWindow::Day, "D"),
@@ -120,21 +216,20 @@ fn tabs_line(active: TimeWindow) -> Line<'static> {
         spans.push(Span::styled(format!("[{label}]"), style));
     }
     spans.push(Span::styled(
-        "  1-4 to switch",
+        "  D/W/M/A to switch",
         Style::default().fg(theme::TEXT_DIM),
     ));
     Line::from(spans)
 }
 
-/// Totals quadrant: calls / fails / recovery + verify counters / RSI / brain.
-fn summary_lines(a: &McAnalytics) -> Vec<Line<'static>> {
+/// Totals card: calls / fails / recovery + verify counters / RSI / brain.
+fn summary_body(a: &McAnalytics) -> Vec<Line<'static>> {
     let fail_pct = if a.tool_total_calls > 0 {
         (a.tool_total_fails as f64 / a.tool_total_calls as f64) * 100.0
     } else {
         0.0
     };
     vec![
-        header("Totals"),
         summary_row("Tools", format!("{} calls", a.tool_total_calls)),
         summary_row(
             "Fails",
@@ -164,62 +259,53 @@ fn summary_lines(a: &McAnalytics) -> Vec<Line<'static>> {
     ]
 }
 
-/// Model comparison: per-model fail rate + phantom rate, most calls first
-/// (#900). Provider-agnostic — shows the model name.
-fn model_comparison_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
-    if a.model_tools.is_empty() {
-        return Vec::new();
-    }
-    let mut lines = vec![header("Model reliability")];
-    for m in a.model_tools.iter().take(8) {
-        // Join the per-model phantom count onto the model's call volume; a
-        // model with no recorded phantoms reads as 0%.
-        let phantoms = a
-            .phantom
-            .by_model
-            .iter()
-            .find(|(name, _, _)| name == &m.model)
-            .map(|(_, total, _)| *total)
-            .unwrap_or(0);
-        let phantom_rate = if m.total > 0 {
-            (phantoms as f64 / m.total as f64) * 100.0
-        } else {
-            0.0
-        };
-        lines.push(model_row(&m.model, m.fail_rate, phantom_rate, w));
-    }
-    lines
+/// Model reliability card: per-model fail rate + phantom rate, most calls
+/// first, each row prefixed with a ✓/⚠/✗ status glyph (#900). Provider-agnostic
+/// — shows the model name.
+fn model_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
+    a.model_tools
+        .iter()
+        .take(8)
+        .map(|m| {
+            // Join the per-model phantom count onto the model's call volume; a
+            // model with no recorded phantoms reads as 0%.
+            let phantoms = a
+                .phantom
+                .by_model
+                .iter()
+                .find(|(name, _, _)| name == &m.model)
+                .map(|(_, total, _)| *total)
+                .unwrap_or(0);
+            let phantom_rate = if m.total > 0 {
+                (phantoms as f64 / m.total as f64) * 100.0
+            } else {
+                0.0
+            };
+            model_row(&m.model, m.fail_rate, phantom_rate, w)
+        })
+        .collect()
 }
 
-/// Flakiest quadrant: highest failure rates, values right-aligned to `w`.
-/// The window label tracks the active D/W/M/All filter (#900).
-fn flakiest_lines(a: &McAnalytics, w: usize, window: TimeWindow) -> Vec<Line<'static>> {
-    if a.flakiest_tools.is_empty() {
-        return Vec::new();
-    }
-    let mut lines = vec![header(&format!(
-        "Flakiest (≥5 calls, {})",
-        window_label(window)
-    ))];
-    for t in a.flakiest_tools.iter().take(8) {
-        lines.push(value_row(
-            &t.name,
-            format!("{:.1}%", t.fail_rate),
-            fail_color(t.fail_rate),
-            w,
-        ));
-    }
-    lines
+/// Flakiest card: highest failure rates, values right-aligned to the card
+/// width. The window label lives in the card title (#900).
+fn flakiest_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
+    a.flakiest_tools
+        .iter()
+        .take(8)
+        .map(|t| {
+            value_row(
+                &t.name,
+                format!("{:.1}%", t.fail_rate),
+                fail_color(t.fail_rate),
+                w,
+            )
+        })
+        .collect()
 }
 
-/// Phantom panel: detected / resolved / ratio plus a per-model breakdown
-/// (#900). Sits below Flakiest in the stack.
-fn phantom_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
-    if a.phantom.total == 0 {
-        return Vec::new();
-    }
-    let mut lines = vec![header("Phantoms")];
-    lines.push(Line::from(vec![
+/// Phantoms card: detected / resolved / ratio plus a per-model breakdown (#900).
+fn phantom_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![
         Span::raw("  "),
         Span::styled(
             format!(
@@ -228,7 +314,7 @@ fn phantom_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
             ),
             Style::default().fg(theme::GREEN),
         ),
-    ]));
+    ])];
     for (model, total, resolved) in a.phantom.by_model.iter().take(6) {
         lines.push(value_row(
             model,
@@ -240,41 +326,26 @@ fn phantom_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
     lines
 }
 
-/// RSI-by-dimension quadrant, counts right-aligned to `w`.
-fn rsi_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
-    if a.rsi_top_dimensions.is_empty() {
-        return Vec::new();
-    }
-    let mut lines = vec![header("RSI applied by dimension")];
-    for (dim, n) in a.rsi_top_dimensions.iter().take(8) {
-        lines.push(value_row(dim, n.to_string(), theme::GREEN, w));
-    }
-    lines
+/// RSI-by-dimension card, counts right-aligned to the card width.
+fn rsi_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
+    a.rsi_top_dimensions
+        .iter()
+        .take(8)
+        .map(|(dim, n)| value_row(dim, n.to_string(), theme::GREEN, w))
+        .collect()
 }
 
-/// Brain-files quadrant, sizes right-aligned to `w`.
-fn brain_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
-    if a.brain_files.is_empty() {
-        return Vec::new();
-    }
-    let mut lines = vec![header("Brain files")];
-    for f in a.brain_files.iter().take(14) {
-        lines.push(value_row(
-            &f.name,
-            format!("{:.1} KB", f.kb),
-            theme::TEXT_SECONDARY,
-            w,
-        ));
-    }
-    lines
+/// Brain-files card, sizes right-aligned to the card width.
+fn brain_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
+    a.brain_files
+        .iter()
+        .take(14)
+        .map(|f| value_row(&f.name, format!("{:.1} KB", f.kb), theme::TEXT_SECONDARY, w))
+        .collect()
 }
 
-/// Top tools, full-width, with proportional bars scaled to the whole panel.
-fn top_tools_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
-    if a.top_tools.is_empty() {
-        return Vec::new();
-    }
-    let mut lines = vec![header("Top tools")];
+/// Top tools card, with proportional bars scaled to the card width.
+fn top_tools_body(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
     let max = a
         .top_tools
         .iter()
@@ -282,23 +353,11 @@ fn top_tools_lines(a: &McAnalytics, w: usize) -> Vec<Line<'static>> {
         .max()
         .unwrap_or(1)
         .max(1);
-    for t in a.top_tools.iter().take(10) {
-        lines.push(tool_bar_row(t, max, w));
-    }
-    lines
-}
-
-fn blank() -> Line<'static> {
-    Line::from("")
-}
-
-fn header(text: &str) -> Line<'static> {
-    Line::from(Span::styled(
-        format!(" {text}"),
-        Style::default()
-            .fg(theme::BORDER_ANALYTICS_FOCUS)
-            .add_modifier(Modifier::BOLD),
-    ))
+    a.top_tools
+        .iter()
+        .take(10)
+        .map(|t| tool_bar_row(t, max, w))
+        .collect()
 }
 
 fn summary_row(label: &str, value: String) -> Line<'static> {
@@ -309,23 +368,41 @@ fn summary_row(label: &str, value: String) -> Line<'static> {
     ])
 }
 
-/// `model<spaces>fail X%  ph Y%` with the values flush against the right edge.
+/// `✓ model<spaces>fail X%  ph Y%` with the values flush against the right
+/// edge. The leading glyph summarises the model's health (#900).
 fn model_row(model: &str, fail_rate: f64, phantom_rate: f64, w: usize) -> Line<'static> {
+    let (icon, icon_color) = model_status(fail_rate, phantom_rate);
     let fail = format!("fail {:.1}%", fail_rate);
     let ph = format!("  ph {:.1}%", phantom_rate);
     let value_len = fail.chars().count() + ph.chars().count();
-    let name_room = w.saturating_sub(value_len + 3);
+    // Leading " ✓ " takes ~3 cells; reserve room for the icon plus gaps.
+    let name_room = w.saturating_sub(value_len + 5);
     let name = trunc(model, name_room.max(4));
     let gap = w
-        .saturating_sub(name.chars().count() + value_len + 2)
+        .saturating_sub(3 + name.chars().count() + value_len + 1)
         .max(1);
     Line::from(vec![
-        Span::raw("  "),
+        Span::raw(" "),
+        Span::styled(icon, Style::default().fg(icon_color)),
+        Span::raw(" "),
         Span::styled(name, Style::default().fg(theme::TEXT_PRIMARY)),
         Span::raw(" ".repeat(gap)),
         Span::styled(fail, Style::default().fg(fail_color(fail_rate))),
         Span::styled(ph, Style::default().fg(theme::TEXT_SECONDARY)),
     ])
+}
+
+/// Health glyph for a model row (#900): ✓ healthy, ⚠ warning, ✗ bad. A model
+/// is bad at a >=15% fail rate or a >=10% phantom rate; warning at >=5% fails
+/// or any phantoms; healthy otherwise.
+fn model_status(fail_rate: f64, phantom_rate: f64) -> (&'static str, Color) {
+    if fail_rate >= 15.0 || phantom_rate >= 10.0 {
+        ("✗", Color::Red)
+    } else if fail_rate >= 5.0 || phantom_rate > 0.0 {
+        ("⚠", theme::ORANGE)
+    } else {
+        ("✓", theme::GREEN)
+    }
 }
 
 /// `name  ███████▌ count rate%` with the bar filling the column width.

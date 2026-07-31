@@ -2,12 +2,12 @@
 //!
 //! Renders the real `analytics_panel::render` into a ratatui `TestBackend`
 //! buffer and asserts on the produced cells, plus drives the pure `decide`
-//! fn to verify the D/W/M/All filter switching and scroll behaviour that
-//! feed the renderer. Covers: the pinned filter tabs (active tab bold),
-//! the recovery / verify counters in Totals, the per-model reliability
-//! rows, the phantom panel, the window label tracking the active filter,
-//! empty-section hiding, body scrolling, and no layout regression at
-//! 80-col and 120-col.
+//! fn to verify the global D/W/M/A filter switching and scroll behaviour that
+//! feed the renderer. Covers: the pinned filter tabs (active tab bold), the
+//! recovery / verify counters in Totals, the per-model reliability rows with
+//! their ✓/⚠/✗ status glyphs, the phantom card, the window label tracking the
+//! active filter, empty-section hiding, the responsive multi-card grid, and no
+//! layout regression at 80-col and 120-col.
 
 use crate::brain::mission_control::types::{
     McAnalytics, McBrainFile, McBrainVerifyStats, McModelToolStat, McPhantomStats,
@@ -118,17 +118,18 @@ fn tabs_render_all_four_windows_with_hotkey_hint() {
     assert!(text.contains("[W]"), "missing Week tab");
     assert!(text.contains("[M]"), "missing Month tab");
     assert!(text.contains("[All]"), "missing All tab");
-    assert!(text.contains("1-4 to switch"), "missing hotkey hint");
+    assert!(text.contains("D/W/M/A to switch"), "missing hotkey hint");
 }
 
 #[test]
 fn active_tab_is_bold_others_are_not() {
-    // Month active: the [M] cells carry BOLD, the [D]/[W]/[All] cells do not.
+    // Month active: the [M] cells carry BOLD, the [D] cells do not. Scan only
+    // the tab region (cols 0..18) so the literal D/M letters in the trailing
+    // "D/W/M/A to switch" hint, which are dim, can't poison the check.
     let buf = render_buf(&McAnalytics::default(), TimeWindow::Month, 0, 80, 24);
-    // Tabs render on the first inner row (y=1, below the top border).
     let mut d_bold = false;
     let mut m_bold = false;
-    for col in 0..80u16 {
+    for col in 0..18u16 {
         if let Some(cell) = buf.cell((col, 1)) {
             let bold = cell.style().add_modifier.contains(Modifier::BOLD);
             match cell.symbol() {
@@ -161,14 +162,14 @@ fn totals_show_recovery_and_verify_counters() {
         ..Default::default()
     };
     let text = buf_text(&render_buf(&a, TimeWindow::Month, 0, 80, 30));
-    assert!(text.contains("Totals"), "missing Totals header");
+    assert!(text.contains("Totals"), "missing Totals card title");
     assert!(text.contains("100 calls"), "missing tool call total");
     assert!(text.contains("5 (5.0%)"), "missing fail count/rate");
     assert!(text.contains("7 recovered"), "missing recovery counter");
     assert!(text.contains("42 ok / 3 rollbk"), "missing verify counter");
 }
 
-// ── Model comparison ────────────────────────────────────────────────────────
+// ── Model comparison + status glyphs ────────────────────────────────────────
 
 #[test]
 fn model_comparison_row_shows_fail_and_phantom_rate() {
@@ -188,14 +189,42 @@ fn model_comparison_row_shows_fail_and_phantom_rate() {
         ..Default::default()
     };
     let text = buf_text(&render_buf(&a, TimeWindow::Month, 0, 80, 30));
-    assert!(text.contains("Model reliability"), "missing model header");
+    assert!(
+        text.contains("Model reliability"),
+        "missing model card title"
+    );
     assert!(text.contains("claude-opus-4"), "missing model name");
     assert!(text.contains("fail 5.0%"), "missing fail rate");
-    // phantom_rate = 10 phantoms / 100 calls = 10.0%
+    // phantom_rate = 10 phantoms / 100 calls = 10.0% -> bad (>=10%) -> ✗ glyph.
     assert!(text.contains("ph 10.0%"), "missing phantom rate");
+    assert!(
+        text.contains("✗"),
+        "phantom-heavy model should carry the ✗ glyph"
+    );
 }
 
-// ── Phantom panel ───────────────────────────────────────────────────────────
+#[test]
+fn healthy_model_row_shows_check_glyph() {
+    // Low fail rate and zero phantoms -> healthy -> ✓ glyph.
+    let a = McAnalytics {
+        model_tools: vec![McModelToolStat {
+            model: "gpt-5".into(),
+            total: 200,
+            failures: 2,
+            fail_rate: 1.0,
+        }],
+        ..Default::default()
+    };
+    let text = buf_text(&render_buf(&a, TimeWindow::Month, 0, 80, 30));
+    assert!(text.contains("gpt-5"), "missing model name");
+    assert!(text.contains("✓"), "healthy model should carry the ✓ glyph");
+    assert!(
+        !text.contains("✗"),
+        "healthy model must not carry the ✗ glyph"
+    );
+}
+
+// ── Phantom card ────────────────────────────────────────────────────────────
 
 #[test]
 fn phantom_panel_renders_detected_resolved_and_per_model() {
@@ -209,7 +238,7 @@ fn phantom_panel_renders_detected_resolved_and_per_model() {
         ..Default::default()
     };
     let text = buf_text(&render_buf(&a, TimeWindow::Month, 0, 80, 30));
-    assert!(text.contains("Phantoms"), "missing Phantoms header");
+    assert!(text.contains("Phantoms"), "missing Phantoms card title");
     assert!(
         text.contains("20 detected, 15 resolved (75.0%)"),
         "missing detected/resolved line"
@@ -221,7 +250,7 @@ fn phantom_panel_renders_detected_resolved_and_per_model() {
 // ── D/W/M label tracks the active window ────────────────────────────────────
 
 #[test]
-fn flakiest_header_label_tracks_active_window() {
+fn flakiest_card_title_tracks_active_window() {
     let a = McAnalytics {
         flakiest_tools: vec![McToolStat {
             name: "flaky_tool".into(),
@@ -239,7 +268,7 @@ fn flakiest_header_label_tracks_active_window() {
     ];
     for (window, label) in cases {
         let text = buf_text(&render_buf(&a, window, 0, 80, 30));
-        assert!(text.contains("Flakiest"), "missing Flakiest header");
+        assert!(text.contains("Flakiest"), "missing Flakiest card title");
         assert!(
             text.contains(label),
             "window {window:?} should label flakiest as {label}"
@@ -258,47 +287,46 @@ fn empty_sections_are_hidden_but_totals_and_tabs_remain() {
         80,
         40,
     ));
-    // Totals + tabs always render.
-    assert!(text.contains("Totals"), "Totals should always render");
+    // Totals card + tabs always render.
+    assert!(text.contains("Totals"), "Totals card should always render");
     assert!(text.contains("[M]"), "tabs should always render");
-    // Empty sections must not render their headers.
+    // Empty sections must not render their card titles.
     for absent in [
         "Model reliability",
         "Phantoms",
         "Flakiest",
         "Top tools",
         "Brain files",
-        "RSI applied by dimension",
+        "RSI applied",
     ] {
         assert!(
             !text.contains(absent),
-            "{absent} should be hidden when empty"
+            "{absent} card should be hidden when empty"
         );
     }
 }
 
-// ── Body scrolling ──────────────────────────────────────────────────────────
+// ── Responsive multi-card grid ──────────────────────────────────────────────
 
 #[test]
-fn scroll_offset_shifts_body_up() {
-    // Default fixture: only the Totals section renders, so the body is a
-    // predictable stack (Totals, Tools, Fails, Recov, Verify, RSI, ...).
-    let a = McAnalytics::default();
-    // rows[0] is the pinned tabs (y=1); the body starts at y=2.
-    let at0 = row_text(&render_buf(&a, TimeWindow::Month, 0, 80, 30), 2, 80);
+fn populated_sections_render_as_distinct_cards() {
+    // Full fixture populates every section; at 120-col the grid is 3-across,
+    // so all card titles render in their own bordered boxes.
+    let text = buf_text(&render_buf(&full_fixture(), TimeWindow::Month, 0, 120, 30));
+    for title in [
+        "Totals",
+        "Model reliability",
+        "Phantoms",
+        "Top tools",
+        "Brain files",
+        "RSI applied",
+    ] {
+        assert!(text.contains(title), "missing {title} card");
+    }
+    // Flakiest carries the window label in its title.
     assert!(
-        at0.contains("Totals"),
-        "body top at scroll=0 should be Totals"
-    );
-
-    let at2 = row_text(&render_buf(&a, TimeWindow::Month, 2, 80, 30), 2, 80);
-    assert!(
-        !at2.contains("Totals"),
-        "scrolling by 2 should move Totals off the top body row"
-    );
-    assert!(
-        at2.contains("Fails"),
-        "scrolling by 2 should bring Fails to the top body row"
+        text.contains("Flakiest (30d)"),
+        "missing labelled Flakiest card"
     );
 }
 
@@ -313,33 +341,33 @@ fn renders_at_80_and_120_col_without_panic() {
         assert!(text.contains("[All]"), "tabs should render at {width}-col");
         assert!(
             text.contains("Totals"),
-            "Totals should render at {width}-col"
+            "Totals card should render at {width}-col"
         );
     }
 }
 
-// ── decide(): D/W/M/All filter switching + scroll ───────────────────────────
+// ── decide(): global D/W/M/A filter switching + scroll ──────────────────────
 
 #[test]
-fn digit_keys_switch_window_when_analytics_focused() {
+fn letter_keys_switch_window_from_any_panel() {
+    // Global: works even when a non-Analytics panel is focused.
     let mut s = McState {
-        focused_panel: McPanel::Analytics,
+        focused_panel: McPanel::Activity,
         ..Default::default()
     };
     // Default window is Month.
     assert_eq!(s.analytics_window, TimeWindow::Month);
 
+    // Each target differs from the current window in this sequence, so every
+    // press is a genuine change.
     let cases = [
-        (KeyCode::Char('1'), TimeWindow::Day),
-        (KeyCode::Char('2'), TimeWindow::Week),
-        (KeyCode::Char('3'), TimeWindow::Month),
-        (KeyCode::Char('4'), TimeWindow::All),
+        (KeyCode::Char('d'), TimeWindow::Day),
+        (KeyCode::Char('w'), TimeWindow::Week),
+        (KeyCode::Char('A'), TimeWindow::All),
+        (KeyCode::Char('m'), TimeWindow::Month),
     ];
     for (code, want) in cases {
         let out = decide(&mut s, 5, key(code));
-        // Each target window differs from the current one in this sequence,
-        // so every press is a genuine change (the no-op case is covered by
-        // `same_window_key_is_consumed_not_changed`).
         assert_eq!(out, KeyOutcome::AnalyticsWindowChanged, "key {code:?}");
         assert_eq!(s.analytics_window, want, "key {code:?}");
     }
@@ -348,28 +376,48 @@ fn digit_keys_switch_window_when_analytics_focused() {
 #[test]
 fn same_window_key_is_consumed_not_changed() {
     let mut s = McState {
-        focused_panel: McPanel::Analytics,
         analytics_window: TimeWindow::Day,
         ..Default::default()
     };
-    let out = decide(&mut s, 5, key(KeyCode::Char('1')));
+    let out = decide(&mut s, 5, key(KeyCode::Char('d')));
     assert_eq!(out, KeyOutcome::Consumed);
     assert_eq!(s.analytics_window, TimeWindow::Day);
 }
 
 #[test]
-fn digit_keys_are_ignored_outside_analytics() {
+fn filter_keys_are_global_across_panels() {
+    // Inbox focused: 'w' still switches the window (the filter is global).
     let mut s = McState {
         focused_panel: McPanel::Inbox,
         ..Default::default()
     };
-    let out = decide(&mut s, 5, key(KeyCode::Char('1')));
-    assert_eq!(out, KeyOutcome::NotConsumed);
+    let out = decide(&mut s, 5, key(KeyCode::Char('w')));
+    assert_eq!(out, KeyOutcome::AnalyticsWindowChanged);
+    assert_eq!(s.analytics_window, TimeWindow::Week);
+}
+
+#[test]
+fn capital_a_is_all_but_lowercase_a_applies_in_inbox() {
+    let mut s = McState {
+        focused_panel: McPanel::Inbox,
+        ..Default::default()
+    };
+    // Lowercase 'a' applies the selected inbox proposal and leaves the window.
+    assert_eq!(
+        decide(&mut s, 3, key(KeyCode::Char('a'))),
+        KeyOutcome::ApplySelected
+    );
     assert_eq!(
         s.analytics_window,
         TimeWindow::Month,
-        "window must not change"
+        "apply must not touch the window"
     );
+    // Capital 'A' switches to the All window instead.
+    assert_eq!(
+        decide(&mut s, 3, key(KeyCode::Char('A'))),
+        KeyOutcome::AnalyticsWindowChanged
+    );
+    assert_eq!(s.analytics_window, TimeWindow::All);
 }
 
 #[test]

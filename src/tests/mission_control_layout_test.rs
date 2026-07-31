@@ -3,8 +3,9 @@
 //! Contract: the inbox / activity / schedule / help_bar rects must:
 //!   1. Stay strictly inside the outer area.
 //!   2. Not overlap each other.
-//!   3. Reserve exactly 1 row for the help bar when the area can spare it.
-//!   4. Collapse the help bar to 0-height when the area is < 2 rows.
+//!   3. Reserve exactly 2 rows for the help bar when the area can spare it.
+//!   4. Collapse the help bar to 0-height when the area is too short to
+//!      spare those 2 rows.
 
 use crate::tui::render::mission_control::{McLayout, compute};
 use ratatui::layout::Rect;
@@ -95,20 +96,20 @@ fn panels_do_not_overlap() {
 }
 
 #[test]
-fn help_bar_takes_exactly_one_row_when_area_is_tall_enough() {
+fn help_bar_takes_exactly_two_rows_when_area_is_tall_enough() {
     let outer = Rect::new(0, 0, 100, 30);
     let layout = compute(outer);
-    assert_eq!(layout.help_bar.height, 1);
-    // Help bar sits at the very bottom row.
-    assert_eq!(layout.help_bar.y, outer.y + outer.height - 1);
+    assert_eq!(layout.help_bar.height, 2);
+    // Help bar sits at the very bottom two rows.
+    assert_eq!(layout.help_bar.y, outer.y + outer.height - 2);
     assert_eq!(layout.help_bar.x, outer.x);
     assert_eq!(layout.help_bar.width, outer.width);
 }
 
 #[test]
 fn help_bar_collapses_to_zero_when_area_is_too_short() {
-    // 1-row area can't spare a help bar — panels take the whole height.
-    let outer = Rect::new(0, 0, 100, 1);
+    // A 2-row area can't spare the 2-row bar — panels take the whole height.
+    let outer = Rect::new(0, 0, 100, 2);
     let layout = compute(outer);
     assert_eq!(layout.help_bar.height, 0);
 }

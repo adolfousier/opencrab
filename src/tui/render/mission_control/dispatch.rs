@@ -10,7 +10,8 @@ use crate::tui::app::App;
 use crate::tui::app::mission_control::McPanel;
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -33,7 +34,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     schedule_panel::draw(frame, app, schedule, focus == McPanel::Schedule);
 
     if help_bar.height > 0 {
-        draw_help_bar(frame, help_bar);
+        draw_help_bar(frame, app, help_bar);
     }
 
     if app.mc.detail_open {
@@ -41,21 +42,62 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_help_bar(frame: &mut Frame, area: Rect) {
-    let line = Line::from(vec![
-        Span::styled(" Tab", theme::help_bar_style()),
+/// Bottom commands bar (2 rows): panel navigation keys on the first row,
+/// the global D/W/M/A analytics filter with the active window highlighted
+/// on the second (#900).
+fn draw_help_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+
+    let nav = Line::from(vec![
+        Span::styled(" Tab", theme::help_bar_style().add_modifier(Modifier::BOLD)),
         Span::styled(": switch panel  ", theme::dim()),
-        Span::styled("↑↓", theme::help_bar_style()),
+        Span::styled("↑↓", theme::help_bar_style().add_modifier(Modifier::BOLD)),
         Span::styled(": navigate  ", theme::dim()),
-        Span::styled("Enter", theme::help_bar_style()),
+        Span::styled(
+            "Enter",
+            theme::help_bar_style().add_modifier(Modifier::BOLD),
+        ),
         Span::styled(": detail  ", theme::dim()),
-        Span::styled("a", theme::help_bar_style()),
+        Span::styled("a", theme::help_bar_style().add_modifier(Modifier::BOLD)),
         Span::styled(": apply  ", theme::dim()),
-        Span::styled("r", theme::help_bar_style()),
+        Span::styled("r", theme::help_bar_style().add_modifier(Modifier::BOLD)),
         Span::styled(": reject  ", theme::dim()),
-        Span::styled("Esc", theme::help_bar_style()),
+        Span::styled("Esc", theme::help_bar_style().add_modifier(Modifier::BOLD)),
         Span::styled(": close", theme::dim()),
     ]);
-    let bar = Paragraph::new(line);
-    frame.render_widget(bar, area);
+
+    let active = window_word(app.mc.analytics_window);
+    let filter = Line::from(vec![
+        Span::styled(
+            " D/W/M/A",
+            theme::help_bar_style().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(": filter analytics  ", theme::dim()),
+        Span::styled("active: ", theme::dim()),
+        Span::styled(
+            active,
+            Style::default()
+                .fg(theme::BORDER_ANALYTICS_FOCUS)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+
+    frame.render_widget(Paragraph::new(nav), rows[0]);
+    if rows.len() > 1 {
+        frame.render_widget(Paragraph::new(filter), rows[1]);
+    }
+}
+
+/// Human-readable window name for the commands bar (#900).
+fn window_word(window: crate::brain::mission_control::TimeWindow) -> &'static str {
+    use crate::brain::mission_control::TimeWindow as W;
+    match window {
+        W::Day => "Day",
+        W::Week => "Week",
+        W::Month => "Month",
+        W::All => "All",
+    }
 }
