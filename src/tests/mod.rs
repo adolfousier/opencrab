@@ -22,6 +22,7 @@ pub mod agent_streaming_usage_test;
 pub mod agent_tool_normalization_test;
 pub mod altgr_input_test;
 pub mod analysis_intent_nudge_test;
+pub mod analytics_db_test;
 pub mod analyze_video_fallback_test;
 pub mod approval_policy_resolution_test;
 pub mod auto_title_e2e_test;

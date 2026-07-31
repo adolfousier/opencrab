@@ -167,7 +167,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    pub const MIGRATION_COUNT: usize = 32;
+    pub const MIGRATION_COUNT: usize = 33;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
@@ -265,6 +265,9 @@ impl Database {
             )),
             M::up(include_str!(
                 "../migrations/20260726000001_add_plan_cards.sql"
+            )),
+            M::up(include_str!(
+                "../migrations/20260731000001_add_analytics_events.sql"
             )),
         ]);
 
