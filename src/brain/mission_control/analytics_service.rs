@@ -11,19 +11,19 @@
 //! `summary` is async because the stats live in SQLite; the renderer
 //! pre-fetches once (like the other panels) rather than per `draw`.
 
-use super::types::{McAnalytics, McBrainFile, McToolStat};
+use super::types::{
+    McAnalytics, McBrainFile, McBrainVerifyStats, McModelToolStat, McPhantomStats,
+    McStreamingStats, McToolStat, TimeWindow,
+};
 use crate::db::Pool;
-use crate::db::repository::{FeedbackLedgerRepository, ToolExecutionRepository};
+use crate::db::repository::{
+    AnalyticsEventRepository, FeedbackLedgerRepository, ToolExecutionRepository,
+};
 
 /// How many rows to surface in each ranked list.
 const TOP_N: usize = 10;
 /// A tool needs at least this many calls before its fail rate is meaningful.
 const FLAKY_MIN_CALLS: i64 = 5;
-/// The Flakiest panel is computed over this recent window (days), so a tool that
-/// was flaky then fixed ages out instead of showing its historical rate forever
-/// (#605). Kept wider than the RSI detector's 7-day window so a lightly-used
-/// tool still accumulates the >=5 calls needed to rank.
-const FLAKY_WINDOW_DAYS: i64 = 30;
 
 fn round1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
@@ -33,12 +33,19 @@ fn round1(v: f64) -> f64 {
 /// panel degrades gracefully instead of taking Mission Control down.
 pub async fn summary(pool: Pool) -> McAnalytics {
     // Top-tools + totals stay ALL-TIME (lifetime usage is what matters there).
-    let tools = tool_stats(pool.clone(), None).await;
-    // Flakiest is computed over a RECENT WINDOW so a tool that was flaky then
-    // fixed ages out, and a fixed-but-idle tool drops off entirely (#605). The
-    // RSI opportunity detector already windows for exactly this reason.
-    let window_since = chrono::Utc::now().timestamp() - FLAKY_WINDOW_DAYS * 86_400;
-    let recent_tools = tool_stats(pool.clone(), Some(window_since)).await;
+    let tools = tool_stats(pool.clone(), TimeWindow::All).await;
+    // Flakiest is computed over a RECENT WINDOW (last month) so a tool that was
+    // flaky then fixed ages out, and a fixed-but-idle tool drops off entirely
+    // (#605). The RSI opportunity detector already windows for exactly this
+    // reason; a month is wide enough that a lightly-used tool still accumulates
+    // the >=5 calls needed to rank.
+    let recent_tools = tool_stats(pool.clone(), TimeWindow::Month).await;
+    // Provider/model-agnostic analytics (#897): phantom detection, streaming
+    // recoveries, brain-verify gate outcomes, and per-model tool reliability.
+    let phantom = phantom_stats(pool.clone(), TimeWindow::All).await;
+    let streaming = streaming_stats(pool.clone(), TimeWindow::All).await;
+    let brain_verify = brain_verify_stats(pool.clone(), TimeWindow::All).await;
+    let model_tools = tool_stats_by_model(pool.clone(), TimeWindow::All).await;
     let (rsi_last_call_ts, tool_events_since_rsi) = rsi_staleness(pool.clone()).await;
     let (rsi_applied_total, rsi_top_dimensions) = rsi_stats(pool).await;
     let brain_files = collect_brain_sizes();
@@ -70,17 +77,24 @@ pub async fn summary(pool: Pool) -> McAnalytics {
         rsi_top_dimensions,
         brain_files,
         brain_total_kb,
+        phantom,
+        streaming,
+        brain_verify,
+        model_tools,
     }
 }
 
-/// Per-tool usage with fail rate, most-used first. `since` bounds the query to
-/// a recent window (epoch seconds) when set; `None` is all-time.
-async fn tool_stats(pool: Pool, since: Option<i64>) -> Vec<McToolStat> {
+/// Per-tool usage with fail rate, most-used first. `window` bounds the query
+/// to a recent window; `TimeWindow::All` is all-time.
+async fn tool_stats(pool: Pool, window: TimeWindow) -> Vec<McToolStat> {
     let repo = ToolExecutionRepository::new(pool);
-    let rows = repo.stats_with_failures(since).await.unwrap_or_else(|e| {
-        tracing::warn!("analytics_service: tool stats query failed: {e:#}");
-        Vec::new()
-    });
+    let rows = repo
+        .stats_with_failures(window.since_epoch())
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("analytics_service: tool stats query failed: {e:#}");
+            Vec::new()
+        });
     rows.into_iter()
         .map(|r| {
             let fail_rate = if r.total > 0 {
@@ -96,6 +110,97 @@ async fn tool_stats(pool: Pool, since: Option<i64>) -> Vec<McToolStat> {
             }
         })
         .collect()
+}
+
+/// Phantom tool-call detection stats: total, resolved, resolved %, and a
+/// per-model breakdown. Provider/model-agnostic (#897).
+pub async fn phantom_stats(pool: Pool, window: TimeWindow) -> McPhantomStats {
+    let repo = AnalyticsEventRepository::new(pool);
+    let stats = repo
+        .phantom_stats(window.since_epoch())
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("analytics_service: phantom stats query failed: {e:#}");
+            Default::default()
+        });
+    let resolved_pct = if stats.total > 0 {
+        round1((stats.resolved as f64 / stats.total as f64) * 100.0)
+    } else {
+        0.0
+    };
+    McPhantomStats {
+        total: stats.total,
+        resolved: stats.resolved,
+        resolved_pct,
+        by_model: stats.by_model,
+    }
+}
+
+/// Streaming-recovery stats: total recoveries, tools recovered, per-model
+/// breakdown. Provider/model-agnostic (#897).
+pub async fn streaming_stats(pool: Pool, window: TimeWindow) -> McStreamingStats {
+    let repo = AnalyticsEventRepository::new(pool);
+    let stats = repo
+        .streaming_stats(window.since_epoch())
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("analytics_service: streaming stats query failed: {e:#}");
+            Default::default()
+        });
+    McStreamingStats {
+        total: stats.total,
+        total_tools: stats.total_tools,
+        by_model: stats.by_model,
+    }
+}
+
+/// Brain-file verification gate outcomes: passes, rollbacks, fail-closed (#897).
+pub async fn brain_verify_stats(pool: Pool, window: TimeWindow) -> McBrainVerifyStats {
+    let repo = AnalyticsEventRepository::new(pool);
+    let stats = repo
+        .brain_verify_stats(window.since_epoch())
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("analytics_service: brain verify stats query failed: {e:#}");
+            Default::default()
+        });
+    McBrainVerifyStats {
+        passes: stats.passes,
+        rollbacks: stats.rollbacks,
+        fail_closed: stats.fail_closed,
+    }
+}
+
+/// Per-model tool reliability: calls, failures, and fail rate per model,
+/// most calls first. Provider/model-agnostic (#897).
+pub async fn tool_stats_by_model(pool: Pool, window: TimeWindow) -> Vec<McModelToolStat> {
+    let repo = AnalyticsEventRepository::new(pool);
+    let rows = repo
+        .tool_stats_by_model(window.since_epoch())
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("analytics_service: model tool stats query failed: {e:#}");
+            Vec::new()
+        });
+    let mut out: Vec<McModelToolStat> = rows
+        .into_iter()
+        .map(|r| {
+            let fail_rate = if r.total > 0 {
+                round1((r.failures as f64 / r.total as f64) * 100.0)
+            } else {
+                0.0
+            };
+            McModelToolStat {
+                model: r.model,
+                total: r.total,
+                failures: r.failures,
+                fail_rate,
+            }
+        })
+        .collect();
+    out.sort_by_key(|m| std::cmp::Reverse(m.total));
+    out.truncate(TOP_N);
+    out
 }
 
 /// Last RSI activity and tool events recorded after it (#469).

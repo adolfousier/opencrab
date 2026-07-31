@@ -164,6 +164,69 @@ pub struct McBrainFile {
     pub kb: f64,
 }
 
+/// Time window for analytics queries. The TUI's D/W/M filter tabs and the
+/// report tool convert this to an epoch-seconds bound for the DB queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeWindow {
+    Day,
+    Week,
+    Month,
+    /// All-time (no lower bound).
+    #[default]
+    All,
+}
+
+impl TimeWindow {
+    /// Epoch seconds bounding the window's start; `None` = all-time.
+    pub fn since_epoch(self) -> Option<i64> {
+        let now = chrono::Utc::now().timestamp();
+        match self {
+            TimeWindow::Day => Some(now - 86_400),
+            TimeWindow::Week => Some(now - 7 * 86_400),
+            TimeWindow::Month => Some(now - 30 * 86_400),
+            TimeWindow::All => None,
+        }
+    }
+}
+
+/// Phantom tool-call detection stats for the analytics panel.
+#[derive(Debug, Clone, Default)]
+pub struct McPhantomStats {
+    pub total: i64,
+    pub resolved: i64,
+    /// Resolved as a percentage of total, rounded to one decimal.
+    pub resolved_pct: f64,
+    /// (model, total, resolved), most phantoms first.
+    pub by_model: Vec<(String, i64, i64)>,
+}
+
+/// Streaming-recovery stats for the analytics panel.
+#[derive(Debug, Clone, Default)]
+pub struct McStreamingStats {
+    pub total: i64,
+    pub total_tools: i64,
+    /// (model, recovery count), most recoveries first.
+    pub by_model: Vec<(String, i64)>,
+}
+
+/// Brain-file verification gate stats for the analytics panel.
+#[derive(Debug, Clone, Default)]
+pub struct McBrainVerifyStats {
+    pub passes: i64,
+    pub rollbacks: i64,
+    pub fail_closed: i64,
+}
+
+/// One model's tool-execution reliability, for the per-model breakdown.
+#[derive(Debug, Clone, Default)]
+pub struct McModelToolStat {
+    pub model: String,
+    pub total: i64,
+    pub failures: i64,
+    /// Failures as a percentage of total, rounded to one decimal.
+    pub fail_rate: f64,
+}
+
 /// Snapshot for the Mission Control analytics panel. Built from data
 /// OpenCrabs already owns: the `tool_executions` and `feedback_ledger`
 /// tables and the active profile's brain `.md` files. No secrets, no message
@@ -187,4 +250,12 @@ pub struct McAnalytics {
     /// Brain files, largest first.
     pub brain_files: Vec<McBrainFile>,
     pub brain_total_kb: f64,
+    /// Phantom tool-call detection stats (all-time).
+    pub phantom: McPhantomStats,
+    /// Streaming-recovery stats (all-time).
+    pub streaming: McStreamingStats,
+    /// Brain-file verification gate stats (all-time).
+    pub brain_verify: McBrainVerifyStats,
+    /// Per-model tool reliability, most calls first.
+    pub model_tools: Vec<McModelToolStat>,
 }

@@ -3,8 +3,9 @@
 //! present and the output must stay em-dash-free (it is published into channels).
 
 use crate::brain::mission_control::types::{
-    McActivity, McActivityLevel, McAnalytics, McBrainFile, McInboxItem, McInboxKind,
-    McScheduleItem, McScheduleKind, McToolStat,
+    McActivity, McActivityLevel, McAnalytics, McBrainFile, McBrainVerifyStats, McInboxItem,
+    McInboxKind, McModelToolStat, McPhantomStats, McScheduleItem, McScheduleKind, McStreamingStats,
+    McToolStat,
 };
 use crate::brain::tools::mission_control_report::render_markdown;
 use chrono::Utc;
@@ -34,6 +35,28 @@ fn sample_analytics() -> McAnalytics {
             kb: 120.3,
         }],
         brain_total_kb: 312.4,
+        phantom: McPhantomStats {
+            total: 5,
+            resolved: 4,
+            resolved_pct: 80.0,
+            by_model: vec![("claude-opus-4-8".into(), 5, 4)],
+        },
+        streaming: McStreamingStats {
+            total: 3,
+            total_tools: 7,
+            by_model: vec![("claude-opus-4-8".into(), 3)],
+        },
+        brain_verify: McBrainVerifyStats {
+            passes: 10,
+            rollbacks: 2,
+            fail_closed: 1,
+        },
+        model_tools: vec![McModelToolStat {
+            model: "claude-opus-4-8".into(),
+            total: 100,
+            failures: 7,
+            fail_rate: 7.0,
+        }],
     }
 }
 

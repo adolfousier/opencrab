@@ -148,6 +148,24 @@ pub(crate) fn render_markdown(
                         a.brain_files.len()
                     ),
                 ],
+                vec![
+                    "Phantoms".to_string(),
+                    format!(
+                        "{} detected, {} resolved ({:.1}%)",
+                        a.phantom.total, a.phantom.resolved, a.phantom.resolved_pct
+                    ),
+                ],
+                vec![
+                    "Stream recoveries".to_string(),
+                    format!("{} ({} tools)", a.streaming.total, a.streaming.total_tools),
+                ],
+                vec![
+                    "Brain verify".to_string(),
+                    format!(
+                        "{} pass, {} rollback, {} fail-closed",
+                        a.brain_verify.passes, a.brain_verify.rollbacks, a.brain_verify.fail_closed
+                    ),
+                ],
             ],
         )
         .trim_end()
@@ -207,6 +225,33 @@ pub(crate) fn render_markdown(
             .iter()
             .take(10)
             .map(|f| vec![f.name.clone(), format!("{:.1} KB", f.kb)])
+            .collect(),
+    );
+    table_section(
+        "Phantom by Model",
+        &["Model", "Total", "Resolved"],
+        a.phantom
+            .by_model
+            .iter()
+            .take(8)
+            .map(|(model, total, resolved)| {
+                vec![model.clone(), total.to_string(), resolved.to_string()]
+            })
+            .collect(),
+    );
+    table_section(
+        "Tool Reliability by Model",
+        &["Model", "Calls", "Fail"],
+        a.model_tools
+            .iter()
+            .take(8)
+            .map(|m| {
+                vec![
+                    m.model.clone(),
+                    format!("{} calls", m.total),
+                    format!("{:.1}% fail", m.fail_rate),
+                ]
+            })
             .collect(),
     );
 
