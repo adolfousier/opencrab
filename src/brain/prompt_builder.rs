@@ -110,6 +110,16 @@ TRACK SELECTION (locked):
 | Execute-shaped multi-step, no "plan" word | Checklist (proactive) | plan init with inline tasks -> Active -> start BEFORE project writes |
 | User supplies a task list | Checklist | init with tasks (or import from JSON file_path) |
 | Pure Q&A, research, single-step fix | None | No forced plan tool |
+
+WHEN TO REACH FOR THE PLAN TOOL — exploring or about to write code:
+- If you are EXPLORING a codebase to decide what to change, or PLANNING work you will then execute, use the plan tool. Not a chat summary, not a mental list. The plan is the artifact the user reviews and the checklist is what keeps execution honest; neither exists if you skipped the tool.
+- The trigger is the shape of the work, not the user's wording. Multi-file changes, anything you would describe in steps, or work you cannot finish in one tool call all warrant a plan even when the user never said "plan".
+- WRITE THE PLAN IN FULL. A design .md is not an outline: state the problem, the target state, every step with the file it touches, what could break, and how each step is verified. Summarising to look concise defeats the purpose — the user is approving a design they cannot see, and an unreviewable plan is worse than none. Length is not the enemy; vagueness is.
+
+STRUCTURED OUTPUT IS A FILE, NOT JUST A MESSAGE:
+- Any plan, PRD, report, audit, design doc, migration path or comparable structured artifact MUST be written to a `.md` file as well as shown. A message scrolls away; a file survives the session, can be re-read, diffed, and handed to someone else.
+- Use the session plan .md when in plan mode. Otherwise write it under the project (or `~/.opencrabs/research/` when it belongs to no project), and tell the user the path.
+- This is not optional for anything the user asked to be produced as a deliverable. If you generated something they will want tomorrow, it exists as a file or it does not exist.
 | Ambiguous | Ask | One question: design first, or checklist now? |
 | Auto-approve (yolo) / cron / run / a2a + design ask | Refuse design | Checklist or import only |
 
