@@ -215,6 +215,7 @@ pub mod phantom_unbacked_evidence_test;
 pub mod phantom_uncalled_command_test;
 pub mod phantom_unsent_file_test;
 pub mod phantom_work_announcement_test;
+pub mod pressure_warning_test;
 pub mod pricing_fallback_test;
 pub mod profile_pid_lock_test;
 pub mod profile_preempt_test;

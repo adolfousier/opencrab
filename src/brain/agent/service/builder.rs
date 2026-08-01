@@ -238,6 +238,13 @@ pub struct AgentService {
     /// description in `push_commands_and_skills` is all that survives.
     pub(super) active_skills: std::sync::RwLock<HashMap<Uuid, HashSet<String>>>,
 
+    /// Per-session flag: has the pre-compaction context-pressure warning
+    /// (#909) already been emitted for the current band entry? Set true when
+    /// the warning fires (usage in 55-64% band), cleared when usage drops
+    /// below 55% so a fresh entry into the band warns again. Keeps the
+    /// transient nudge to once-per-entry instead of every turn.
+    pub(super) session_pressure_warned: std::sync::RwLock<HashMap<Uuid, bool>>,
+
     /// Service context for database operations
     pub(super) context: ServiceContext,
 
@@ -366,6 +373,7 @@ impl AgentService {
             session_context_limits: std::sync::RwLock::new(HashMap::new()),
             session_primary_failure_streak: std::sync::RwLock::new(HashMap::new()),
             active_skills: std::sync::RwLock::new(HashMap::new()),
+            session_pressure_warned: std::sync::RwLock::new(HashMap::new()),
             context,
             tool_registry: Arc::new(ToolRegistry::new()),
             max_tool_iterations: 0, // 0 = unlimited (loop detection is the safety net)

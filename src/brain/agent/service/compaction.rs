@@ -117,13 +117,17 @@ impl AgentService {
             );
         }
 
-        // ── Tier 1: soft trigger at 65% — LLM compaction ──
+        // ── Tier 1: soft trigger at 65% - LLM compaction ──
         let usage_pct = if effective_max > 0 {
             (context.token_count as f64 / effective_max as f64) * 100.0
         } else {
             100.0
         };
         if usage_pct <= 65.0 {
+            // Below the compaction trigger. Try to emit the pre-compaction
+            // pressure warning if usage is in the 55-64% band (#909), and
+            // re-arm the throttle when usage has dropped below the floor.
+            self.maybe_emit_pressure_warning(session_id, context, usage_pct);
             return None;
         }
 
@@ -222,5 +226,62 @@ impl AgentService {
         }
 
         summary_result
+    }
+
+    /// Pre-compaction pressure-warning gate (#909).
+    ///
+    /// Called from `enforce_context_budget` when usage is at or below 65% (i.e.
+    /// compaction is NOT firing this turn). Decides whether to append the
+    /// behavioural "persist your state" nudge to the system brain:
+    ///
+    /// - usage **below** the 55% floor: clear the per-session throttle flag so
+    ///   the next entry into the band warns again. No nudge.
+    /// - usage **in** the 55-64% band AND not yet emitted this entry: append the
+    ///   nudge to `system_brain`, count its tokens, set the throttle flag.
+    /// - usage **in** the band but already emitted: no-op (once-per-entry).
+    ///
+    /// The nudge is transient: `system_brain` is rebuilt from disk every turn
+    /// (`live_system_brain_for_session`), so the suffix never persists to the
+    /// DB and cannot compound across turns.
+    pub(super) fn maybe_emit_pressure_warning(
+        &self,
+        session_id: Uuid,
+        context: &mut AgentContext,
+        usage_pct: f64,
+    ) {
+        use super::nudge::should_emit_pressure_warning;
+
+        // Re-arm the throttle once usage drops below the band floor so the
+        // next climb back into the band warns again.
+        if usage_pct < super::nudge::PRESSURE_WARN_FLOOR {
+            if let Ok(mut map) = self.session_pressure_warned.write() {
+                map.insert(session_id, false);
+            }
+            return;
+        }
+
+        let already_emitted = self
+            .session_pressure_warned
+            .read()
+            .ok()
+            .and_then(|map| map.get(&session_id).copied())
+            .unwrap_or(false);
+
+        if let Some(warning) = should_emit_pressure_warning(usage_pct, already_emitted) {
+            if let Some(ref mut brain) = context.system_brain {
+                tracing::info!(
+                    "Context at {:.0}% - emitting pre-compaction pressure warning",
+                    usage_pct
+                );
+                brain.push_str(warning);
+                context.token_count += AgentContext::estimate_tokens(warning);
+            }
+            // Mark emitted regardless of whether a brain existed, so a
+            // missing brain doesn't retry every turn until the band ends.
+            if let Ok(mut map) = self.session_pressure_warned.write() {
+                map.insert(session_id, true);
+            }
+        }
+        // else: in-band but already emitted -> no-op (once-per-entry).
     }
 }
