@@ -148,6 +148,7 @@ pub mod config_section_resolve_test;
 pub mod config_types_loader_test;
 pub mod config_update_test;
 pub mod config_watcher_test;
+pub mod context_store_concurrent_save_test;
 pub mod context_window_test;
 pub mod core_tool_names_test;
 pub mod corrupted_tool_call_test;

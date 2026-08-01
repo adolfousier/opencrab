@@ -32,11 +32,11 @@ struct ContextEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ContextStore {
+pub(crate) struct ContextStore {
     session_id: String,
     variables: HashMap<String, ContextEntry>,
     #[serde(default)]
-    facts: Vec<String>,
+    pub(crate) facts: Vec<String>,
     #[serde(default)]
     decisions: Vec<String>,
     created_at: DateTime<Utc>,
@@ -44,7 +44,7 @@ struct ContextStore {
 }
 
 impl ContextStore {
-    fn new(session_id: String) -> Self {
+    pub(crate) fn new(session_id: String) -> Self {
         let now = Utc::now();
         Self {
             session_id,
@@ -56,7 +56,7 @@ impl ContextStore {
         }
     }
 
-    async fn load(path: &Path, session_id: &str) -> Result<Self> {
+    pub(crate) async fn load(path: &Path, session_id: &str) -> Result<Self> {
         if path.exists() {
             let content = fs::read_to_string(path).await.map_err(ToolError::Io)?;
             let mut store: Self = serde_json::from_str(&content).map_err(|e| {
@@ -69,7 +69,7 @@ impl ContextStore {
         }
     }
 
-    async fn save(&self, path: &Path) -> Result<()> {
+    pub(crate) async fn save(&self, path: &Path) -> Result<()> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| ToolError::Execution(format!("Failed to serialize context: {}", e)))?;
 
@@ -79,7 +79,11 @@ impl ContextStore {
         })?;
         fs::create_dir_all(parent).await.map_err(ToolError::Io)?;
 
-        // Atomic, race-free write. `fs::write` truncates per call, but two
+        // Atomic, race-free write — against concurrent WRITERS, not against
+        // power loss: there is no fsync before the rename, so a crash can leave
+        // the rename applied and the bytes unflushed (#906). Acceptable for a
+        // transient context store; stated so the next reader does not assume
+        // durability. `fs::write` truncates per call, but two
         // concurrent `session_context` saves in one turn (e.g. several `set`
         // ops fired together) don't serialize: a shorter write landing over a
         // longer one leaves the longer object's tail bytes in place, producing
@@ -96,7 +100,20 @@ impl ContextStore {
         let seq = CONTEXT_TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tmp = parent.join(format!("{}.{}.{}.tmp", file_name, std::process::id(), seq));
         fs::write(&tmp, content).await.map_err(ToolError::Io)?;
-        fs::rename(&tmp, path).await.map_err(ToolError::Io)?;
+        // A failed rename must not strand its temp file (#906). Without this
+        // the `.tmp` stays beside the store indefinitely, accumulating silently
+        // in the same directory. Cleanup is best-effort and never masks the
+        // rename error, which is the failure the caller needs to see.
+        if let Err(e) = fs::rename(&tmp, path).await {
+            if let Err(cleanup) = fs::remove_file(&tmp).await {
+                tracing::warn!(
+                    "context store: rename failed and its temp file could not be \
+                     removed either ({cleanup}); leaving {}",
+                    tmp.display()
+                );
+            }
+            return Err(ToolError::Io(e));
+        }
         Ok(())
     }
 }
