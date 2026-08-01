@@ -76,3 +76,62 @@ pub fn no_tool_calls_nudge(local_model: bool) -> String {
          now.{FINISHED_ESCAPE}]"
     )
 }
+
+// ── Pre-compaction context-pressure warning (#909) ──
+//
+// Compaction is reactive today: Tier-1 fires at 65% and clips the conversation
+// with no prior warning. The model never gets a chance to deliberately finish
+// its current sub-task and persist critical state before the clip.
+//
+// These helpers define a warning band (55-64%) just below the trigger. When
+// usage enters the band, a behavioural nudge is appended to the system brain
+// telling the model to persist state to disk NOW. It is a nudge, not a number,
+// because `context.token_count` is a tiktoken estimate for all providers at
+// the point this runs - a precise percentage would repeat the units-confusion
+// that caused #896, and the model can't trigger compaction anyway, so the only
+// useful signal is the instruction itself.
+//
+// The nudge is transient: it rides on `system_brain`, which is rebuilt from
+// disk every turn, so it never lands in the DB. A per-session throttle flag
+// (held on AgentService) suppresses repeat warnings while usage lingers in the
+// band and re-arms when it drops below the band floor.
+
+/// Lower edge of the warning band (inclusive). Below this the throttle re-arms
+/// so a fresh entry into the band warns again.
+pub(crate) const PRESSURE_WARN_FLOOR: f64 = 55.0;
+
+/// Upper edge of the warning band (exclusive). At 65% Tier-1 compaction fires
+/// (see `compaction.rs`), so the warning band runs right up to the trigger.
+pub(crate) const PRESSURE_WARN_CEILING: f64 = 65.0;
+
+/// The behavioural nudge text appended to the system brain when usage is in the
+/// warning band. Public to the crate so the wiring site and tests can reference
+/// the exact wording.
+pub fn context_pressure_warning() -> &'static str {
+    "\n\n[SYSTEM WARNING - Context is filling up and auto-compaction will trigger soon. \
+     If you have critical state - active plan, key findings, partial work, decisions made - \
+     persist it to disk NOW (MEMORY.md, plan JSON, or a project file) so it survives the \
+     upcoming compaction. Do NOT stop or change task; just checkpoint your state.]"
+}
+
+/// Whether the current usage percentage is inside the warning band.
+/// Pure - testable without a provider or a full AgentService.
+pub fn in_pressure_warning_band(usage_pct: f64) -> bool {
+    (PRESSURE_WARN_FLOOR..PRESSURE_WARN_CEILING).contains(&usage_pct)
+}
+
+/// Decide whether to emit the pressure warning this turn.
+///
+/// Returns `Some(warning)` when usage is in the band AND the warning has not
+/// already been emitted for this band entry, `None` otherwise. The caller owns
+/// the `already_emitted` flag and must set it true on emit, false when usage
+/// drops below the floor (so the next band entry warns again).
+///
+/// Pure - testable in isolation.
+pub fn should_emit_pressure_warning(usage_pct: f64, already_emitted: bool) -> Option<&'static str> {
+    if in_pressure_warning_band(usage_pct) && !already_emitted {
+        Some(context_pressure_warning())
+    } else {
+        None
+    }
+}
