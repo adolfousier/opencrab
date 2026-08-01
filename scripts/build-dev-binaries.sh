@@ -14,6 +14,13 @@
 # alsa-sys needs via rodio for local-stt/local-tts.
 set -uo pipefail
 
+# cross publishes its images for linux/amd64 ONLY, including the image for the
+# aarch64 target. On an arm64 host Docker looks for an arm64 manifest, finds
+# none, and fails both Linux targets with "no match for platform in manifest"
+# before a single crate compiles. Asking for amd64 explicitly makes the host
+# run them under emulation (Rosetta on Apple Virtualization.Framework).
+export DOCKER_DEFAULT_PLATFORM=linux/amd64
+
 cd "$(dirname "$0")/.."
 VERSION="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
 STAMP="$(git rev-parse --short HEAD)"
