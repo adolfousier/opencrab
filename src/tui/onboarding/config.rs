@@ -11,7 +11,10 @@ macro_rules! try_write {
     ($errors:expr, $section:expr, $key:expr, $val:expr) => {
         if let Err(e) = Config::write_key($section, $key, $val) {
             tracing::warn!("Failed to write {}.{}: {}", $section, $key, e);
-            $errors.push(format!("{}.{}", $section, $key));
+            // Keep the REASON, not just the key name (#915). The error was
+            // logged and discarded, so the user was handed a list of keys and
+            // a guess about file permissions with nothing behind it.
+            $errors.push(format!("{}.{}: {}", $section, $key, e));
         }
     };
 }
@@ -21,7 +24,7 @@ macro_rules! try_write_keys {
     ($errors:expr, $section:expr, $key:expr, $val:expr) => {
         if let Err(e) = Config::write_keys_key($section, $key, $val) {
             tracing::warn!("Failed to write keys.toml {}.{}: {}", $section, $key, e);
-            $errors.push(format!("{}.{}", $section, $key));
+            $errors.push(format!("keys.toml {}.{}: {}", $section, $key, e));
         }
     };
 }
@@ -1171,9 +1174,13 @@ impl OnboardingWizard {
                 write_errors.len(),
                 write_errors.join(", ")
             );
+            // Report what actually failed and why. "Check file permissions"
+            // was a guess with no evidence behind it, and it sent users
+            // chasing a cause the error never claimed (#915).
             return Err(format!(
-                "Some settings could not be saved ({}). Check file permissions on config.toml.",
-                write_errors.join(", ")
+                "{} setting(s) could not be saved:\n  {}",
+                write_errors.len(),
+                write_errors.join("\n  ")
             ));
         }
 
