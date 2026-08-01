@@ -3176,12 +3176,15 @@ pub(crate) async fn handle_message(
          3. Is there substantive value to add in text (explanation, analysis, correction)? → respond\n\
          4. Otherwise (praise, acknowledgment, confirmation, shared link with nothing to add) → react-only\n\
          \n\
-         REACT-ONLY EXAMPLES:\n\
+         REACT-ONLY EXAMPLES (only when you did NO work this turn):\n\
          - Praise without action: \"The above is super clean\" / \"Great work\" → <<react:🔥>> or <<react:🎉>>\n\
-         - Confirmation of completed work: \"Done\" / \"Finished\" → <<react:✅>> or <<react:👍>>\n\
          - Shared link with nothing to add → <<react:👀>>\n\
          - Simple yes/no approval without follow-up → <<react:👍>> or <<react:✅>>\n\
          - Acknowledgment of waiting/pausing: \"Let's wait\" / \"Hold\" → <<react:👍>>\n\
+         \n\
+         CRITICAL: If you performed work this turn (ran tools, made changes, completed a task), \n\
+         you MUST confirm in text. A reaction NEVER replaces a completion summary. React-only is \n\
+         ONLY for pure acknowledgments where you did NO work.\n\
          \n\
          To react-only (no text), output ONLY the directive: <<react:👍>>\n\
          To react AND respond, include the directive at the start: <<react:👌>> Done, uploaded to Drive.\n\
