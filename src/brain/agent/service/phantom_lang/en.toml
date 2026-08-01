@@ -626,6 +626,10 @@ completion_claims = [
     "amended the commit",
     "bumped the version",
     "version bumped",
+    "the work is shipped",
+    "work is shipped and tracked",
+    "shipped and tracked",
+    "the work is done and tracked",
 ]
 
 # Regex patterns — all use (?im) for case-insensitive multiline matching.

@@ -239,6 +239,9 @@ completion_claims = [
     "feito",
     "concluído",
     "salvo",
+    "o trabalho está entregue",
+    "trabalho concluído e registado",
+    "está tudo entregue",
 ]
 
 line_start_re = "(?im)^[\\s\\-*•>]*(?:(?:ok|okay|bem|certo|tá|ta)\\s*,?\\s+)?(?:agora\\s+)?(?:deixe-me|vou|vamos|preciso|tenho que|devo|deveria|tenho de)\\s+\\w"

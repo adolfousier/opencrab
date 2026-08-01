@@ -187,6 +187,8 @@ completion_claims = [
     "saya sudah menghapus",
     "saya sudah commit",
     "saya sudah push",
+    "pekerjaan sudah selesai dan tercatat",
+    "sudah dikirim dan tercatat",
 ]
 
 # Regex patterns — Indonesian uses Latin script, so patterns mirror en.toml
