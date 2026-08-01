@@ -2152,6 +2152,19 @@ source_required = true                # no belief without an origin
 
 Recorded automatically on the paths that make claims: plan-task completion (`plan_tool`), brain-file writes (`write_opencrabs_file`), and the RSI self-improvement loop. You do not call this directly; it is the record of what the agent thinks it knows and why.
 
+### The Ralph loop
+
+A plan task moves forward only when a command says it may. The loop is: start a task, do the work, run the task type's verification commands, and accept `success` **only if they exit zero**. The model cannot mark its own work done.
+
+Two mechanical limits sit on it:
+
+- **`max_iterations`** (default 20) caps retries per task. Once exceeded the task is blocked rather than retried again, forcing a change of approach instead of the same attempt repeated.
+- **`criteria_policy`** decides what happens when a task declares acceptance criteria that no command verifies — `downgrade` records the completion as `uncertain` in the belief store, `strict` rejects it, `off` leaves criteria advisory.
+
+`require_all_pass` selects AND across the commands. With it `false`, the first failure returns immediately and the remaining commands do not run — deliberate, so a cheap check placed first can spare an expensive one after it.
+
+> **Only these keys are read.** `ralph_loop.toml` ships with more sections than the plan tool consumes: `[forward].max_iterations` and the whole `[verification]` table are live, and `[reverse]`, `[defaults]`, and the other `[forward]` keys (`verification_commands`, `signal_*`, `fresh_context`, `timeout_per_task_secs`) are currently inert. In particular the gate reads `[verification].task_type_commands` — **not** `[forward].verification_commands`. Editing the latter has no effect.
+
 ## 🛡️ Safety Gates (~/.opencrabs/safety/)
 
 Three TOML files that mechanically constrain what the agent can do. They are read at runtime and **reload when the file changes** — no rebuild, no restart.
@@ -2210,9 +2223,7 @@ Replaces self-reported task completion with a shell exit code. A task cannot be 
 
 ```toml
 [forward]
-enabled = true
 max_iterations = 20                   # retries per task before it is blocked
-verification_required = true
 
 [verification]
 enabled = true
