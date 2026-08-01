@@ -85,3 +85,6 @@ commands.md
 cc-research.md
 # modum linter local baseline (regenerable; not used by CI)
 .modum-baseline.json
+
+# Local dev binary drops (scripts/build-dev-binaries.sh)
+dist/

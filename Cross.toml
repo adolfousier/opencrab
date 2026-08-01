@@ -1,0 +1,33 @@
+# Cross-compilation images for LOCAL dev builds only.
+#
+# CI does not read this file: release.yml runs `cargo build --target ...`
+# directly on native GitHub runners and installs libasound2-dev with apt
+# (release.yml:79, :142). Cross.toml is read only by the `cross` binary, which
+# we use locally because macOS cannot link Linux binaries natively.
+#
+# alsa-sys (via rodio, for local-stt/local-tts) needs libasound2-dev, and
+# openssl-sys needs libssl-dev. The stock cross images carry neither; the
+# GitHub runners already ship libssl, which is why CI only apt-installs alsa.
+
+[target.x86_64-unknown-linux-gnu]
+# 0.2.5's default image ships an OpenSSL that openssl-sys 0.9.117 rejects
+# (reqwest -> native-tls -> openssl-sys). `main` is newer; local-only, CI is
+# unaffected because it never invokes cross.
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
+# Image is already amd64, so install natively: adding the architecture it
+# already is makes dpkg fail.
+pre-build = ["apt-get update && apt-get install -y libasound2-dev libssl-dev pkg-config"]
+
+[target.aarch64-unknown-linux-gnu]
+# Host image is amd64 cross-compiling to arm64, so the arm64 headers must be
+# added as a foreign architecture.
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update && apt-get install -y libasound2-dev:arm64 libssl-dev:arm64 pkg-config",
+]
+
+[target.x86_64-unknown-linux-gnu.env]
+passthrough = ["PKG_CONFIG_ALLOW_CROSS=1"]
+
+[target.aarch64-unknown-linux-gnu.env]
+passthrough = ["PKG_CONFIG_ALLOW_CROSS=1"]
