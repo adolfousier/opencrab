@@ -322,20 +322,33 @@ impl OnboardingWizard {
     /// overwriting unrelated channel/provider settings loaded with defaults.
     pub fn apply_config(&self) -> Result<(), String> {
         // Determine which sections to write based on quick_jump + current step
-        let mut write_provider = !self.quick_jump
+        let write_provider = !self.quick_jump
             || matches!(
                 self.step,
                 OnboardingStep::ProviderAuth | OnboardingStep::Complete
             );
         // Empty-custom_name guard: a custom provider with no name typed yet
         // would format the section as `providers.custom.` (empty subkey) and
-        // corrupt config.toml. Skip every provider write until a name exists.
+        // corrupt config.toml, so the write cannot proceed without one.
+        //
+        // This used to set `write_provider = false` and carry on: the ENTIRE
+        // provider write — key, base URL, model, context window — was dropped
+        // with only a `tracing::warn!`, while the wizard reported success. A
+        // first-time user configured a custom provider, saw no error, and ended
+        // up with nothing saved (#914).
+        //
+        // Refusing loudly is the only honest option. Silently discarding what
+        // someone just typed and calling it saved is worse than failing.
         if write_provider
             && self.ps.selected_provider >= CUSTOM_PROVIDER_IDX
-            && self.ps.custom_name.is_empty()
+            && self.ps.custom_name.trim().is_empty()
         {
-            tracing::warn!("Skipping provider write: custom provider selected with an empty name");
-            write_provider = false;
+            tracing::warn!("Refusing provider write: custom provider selected with an empty name");
+            return Err(
+                "Custom provider needs a name before it can be saved — nothing was written. \
+                 Go back to the Name field, enter one (e.g. 'lm_studio'), and save again."
+                    .to_string(),
+            );
         }
         let write_channels = !self.quick_jump
             || matches!(

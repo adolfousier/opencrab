@@ -22,7 +22,12 @@ impl App {
                     if let Some(ref wizard) = self.onboarding
                         && let Err(e) = wizard.apply_config()
                     {
+                        // Surface it, do not just log (#914). Leaving the
+                        // wizard is exactly when the user stops looking, so a
+                        // save that failed here is the one most likely to be
+                        // discovered days later as "it never saved anything".
                         tracing::warn!("Wizard cancel: partial save failed: {}", e);
+                        self.push_system_message(format!("⚠️ Settings not saved: {e}"));
                     }
                     self.onboarding = None;
                     self.switch_mode(AppMode::Chat).await?;
@@ -32,10 +37,10 @@ impl App {
                     let mut needs_rebuild = false;
                     if let Some(ref wizard) = self.onboarding {
                         if let Err(e) = wizard.apply_config() {
-                            self.push_system_message(format!(
-                                "Settings saved with warnings: {}",
-                                e
-                            ));
+                            // An Err means the write did NOT happen. Calling it
+                            // "saved with warnings" told the user their settings
+                            // were stored when nothing was (#914).
+                            self.push_system_message(format!("⚠️ Settings NOT saved: {e}"));
                         } else {
                             // Show what changed based on the step
                             let msg = match wizard.step {
@@ -207,10 +212,10 @@ impl App {
                                 }
                             }
                             Err(e) => {
-                                self.push_system_message(format!(
-                                    "Setup finished with warnings: {}",
-                                    e
-                                ));
+                                // "finished with warnings" reads as success.
+                                // apply_config returning Err means the config
+                                // was NOT written (#914).
+                                self.push_system_message(format!("⚠️ Setup did NOT save: {e}"));
                             }
                         }
                     }
@@ -641,6 +646,9 @@ impl App {
                             && let Err(e) = wizard.apply_config()
                         {
                             tracing::warn!("Brain gen: apply_config before generation: {}", e);
+                            self.push_system_message(format!(
+                                "⚠️ Settings NOT saved before brain generation: {e}"
+                            ));
                         }
                         if let Err(e) = self.rebuild_agent_service().await {
                             tracing::warn!("Brain gen: rebuild_agent_service failed: {}", e);
@@ -673,10 +681,10 @@ impl App {
                                 }
                             }
                             Err(e) => {
-                                self.push_system_message(format!(
-                                    "Setup finished with warnings: {}",
-                                    e
-                                ));
+                                // "finished with warnings" reads as success.
+                                // apply_config returning Err means the config
+                                // was NOT written (#914).
+                                self.push_system_message(format!("⚠️ Setup did NOT save: {e}"));
                             }
                         }
                     }
