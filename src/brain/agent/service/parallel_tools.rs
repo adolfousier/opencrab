@@ -252,6 +252,8 @@ impl super::AgentService {
                 let mid = assistant_msg_id.to_string();
                 let sid = session_id.to_string();
                 let tname = o.tool_name.clone();
+                let prov = self.provider_name_for_session(session_id);
+                let mdl = Some(self.provider_model_for_session(session_id));
                 let status = if o.exec_error {
                     "error"
                 } else if o.success {
@@ -261,7 +263,16 @@ impl super::AgentService {
                 };
                 tokio::spawn(async move {
                     if let Err(e) = tool_repo
-                        .record(&exec_id, &mid, &sid, &tname, status, None, None, None)
+                        .record(
+                            &exec_id,
+                            &mid,
+                            &sid,
+                            &tname,
+                            status,
+                            Some(&prov),
+                            mdl.as_deref(),
+                            None,
+                        )
                         .await
                     {
                         tracing::error!("[TOOL_EXEC] Failed to record tool execution: {}", e);

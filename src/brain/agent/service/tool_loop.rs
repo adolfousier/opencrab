@@ -3552,9 +3552,7 @@ impl AgentService {
                         .filter(|b| matches!(b, ContentBlock::ToolUse { .. }))
                         .count() as i64;
                     let prov = self.provider_name_for_session(session_id);
-                    let mdl = self
-                        .provider_for_session(session_id)
-                        .active_subprovider_model();
+                    let mdl = Some(self.provider_model_for_session(session_id));
                     let sid = session_id.to_string();
                     crate::db::repository::AnalyticsEventRepository::emit_streaming_recovery(
                         &sid,
@@ -4261,9 +4259,7 @@ impl AgentService {
                     // detection rates down per-model. Fire-and-forget.
                     {
                         let prov = self.provider_name_for_session(session_id);
-                        let mdl = self
-                            .provider_for_session(session_id)
-                            .active_subprovider_model();
+                        let mdl = Some(self.provider_model_for_session(session_id));
                         let sid = session_id.to_string();
                         crate::db::repository::AnalyticsEventRepository::emit_phantom(
                             &sid,
@@ -5472,9 +5468,8 @@ impl AgentService {
                                             let tname = tool_name.clone();
                                             let status = if success { "success" } else { "error" };
                                             let prov = self.provider_name_for_session(session_id);
-                                            let mdl = self
-                                                .provider_for_session(session_id)
-                                                .active_subprovider_model();
+                                            let mdl =
+                                                Some(self.provider_model_for_session(session_id));
                                             tokio::spawn(async move {
                                                 if let Err(e) = tool_repo
                                                     .record(
@@ -5574,9 +5569,8 @@ impl AgentService {
                                             let sid = session_id.to_string();
                                             let tname = tool_name.clone();
                                             let prov = self.provider_name_for_session(session_id);
-                                            let mdl = self
-                                                .provider_for_session(session_id)
-                                                .active_subprovider_model();
+                                            let mdl =
+                                                Some(self.provider_model_for_session(session_id));
                                             tokio::spawn(async move {
                                                 if let Err(e) = tool_repo
                                                     .record(
@@ -5761,9 +5755,7 @@ impl AgentService {
                             let tname = tool_name.clone();
                             let status = if success { "success" } else { "error" };
                             let prov = self.provider_name_for_session(session_id);
-                            let mdl = self
-                                .provider_for_session(session_id)
-                                .active_subprovider_model();
+                            let mdl = Some(self.provider_model_for_session(session_id));
                             let dur_ms = tool_start.elapsed().as_millis() as i64;
                             tokio::spawn(async move {
                                 if let Err(e) = tool_repo
@@ -5853,9 +5845,7 @@ impl AgentService {
                             let sid = session_id.to_string();
                             let tname = tool_name.clone();
                             let prov = self.provider_name_for_session(session_id);
-                            let mdl = self
-                                .provider_for_session(session_id)
-                                .active_subprovider_model();
+                            let mdl = Some(self.provider_model_for_session(session_id));
                             let dur_ms = tool_start.elapsed().as_millis() as i64;
                             tokio::spawn(async move {
                                 if let Err(e) = tool_repo
