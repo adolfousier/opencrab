@@ -44,11 +44,24 @@ for row in $TARGETS; do
     continue
   fi
 
+  # Container and host builds cannot share one target dir. Build scripts are
+  # compiled for whichever environment produced them, so a host-built script
+  # links against macOS-toolchain glibc and dies inside the older container
+  # with "version `GLIBC_2.39' not found" — after resolving the image, so it
+  # looks like a compile failure rather than a reuse failure. Giving cross its
+  # own directory keeps each set of artifacts with the environment that built
+  # them, at the cost of not sharing their compile time.
+  if [ "$builder" = "cross" ]; then
+    export CARGO_TARGET_DIR="target/cross"
+  else
+    unset CARGO_TARGET_DIR
+  fi
+
   echo "==> $target via $builder"
   # --locked matches CI (release.yml:158): without it a lockfile drift would
   # build different dependency versions than a real release.
   if $builder build --locked --release --target "$target" --all-features; then
-    bin="target/$target/release/opencrabs"
+    bin="${CARGO_TARGET_DIR:-target}/$target/release/opencrabs"
     if [ -f "$bin" ]; then
       cp "$bin" "$OUT/opencrabs-${target}"
       echo "    ok -> $OUT/opencrabs-${target}"
