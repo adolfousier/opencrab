@@ -457,7 +457,7 @@ This solves the core UX problem in mention-only groups: previously, tagging the 
 | **Autonomous /goal** | Set a goal with `/goal <text>` and the agent loops autonomously: executing, self-evaluating with an LLM judge, and continuing with a correction prompt until the goal is satisfied or the turn budget runs out. Supports `/goal pause`, `/goal resume`, `/goal status`, and `/goal clear` |
 | **Dynamic Tools** | Define custom tools at runtime via `~/.opencrabs/tools.toml` — the agent can call them autonomously like built-in tools. HTTP and shell executors, template parameters (`{{param}}`), enable/disable without restart. The `tool_manage` meta-tool lets the agent create, remove, and reload tools on the fly |
 | **Skills (cross-harness)** | Multi-stage workflow templates in the de-facto `SKILL.md` format used by Claude Code, Anthropic managed agents, and OpenClaw. Drop a `SKILL.md` under `~/.opencrabs/skills/<name>/` and it auto-registers as `/<name>` — no `commands.toml` entry needed. Works in the TUI **and** every connected channel (Telegram, Discord, Slack, WhatsApp). Built-ins ship with the binary (always version-matched); user skills override by file presence. Two built-ins out of the box: `/security-audit` (language-agnostic CVE & static-analysis audit, scores 0-100) and `/cost-estimate` (codebase valuation with AI-assisted ROI). Same `SKILL.md` is portable across harnesses |
-| **Mission Control** | Full-screen `/mission-control` dialog showing every actionable artifact in one place: pending RSI proposals (inbox cards), recent RSI activity (improvements log feed), the schedule queue (cron jobs + paused/active state), and a live **Analytics** panel (brain file sizes, tool usage with proportional bars, failure rates, RSI applied by dimension). Apply or reject inbox proposals inline with `a` / `r` — same machinery as the agent's `rsi_proposals` tool, byte-identical install. Tab between panels, j/k to navigate, Enter for the detail popup, Esc to close. Cron paused jobs flag in orange, active in teal — at-a-glance state |
+| **Mission Control** | Full-screen `/mission-control` dialog showing every actionable artifact in one place: pending RSI proposals (inbox cards), recent RSI activity (improvements log feed), the schedule queue (cron jobs + paused/active state), and a live **Analytics** panel (brain file sizes, tool usage with proportional bars, failure rates, RSI applied by dimension, phantom-detection and resolution rates, per-model reliability, stream-recovery counts) with **D / W / M / All** window tabs so a fixed 30-day view cannot hide a tool that has already recovered. Apply or reject inbox proposals inline with `a` / `r` — same machinery as the agent's `rsi_proposals` tool, byte-identical install. Tab between panels, j/k to navigate, Enter for the detail popup, Esc to close. Cron paused jobs flag in orange, active in teal — at-a-glance state |
 | **Skills picker** | Full-screen `/skills` dialog with a live filter input — start typing to narrow the list (case-insensitive on name + description), Tab / Shift-Tab cycle the filtered cards (wraps at the edges), Enter runs the selected skill (sends its body as a prompt to the agent), Esc closes. Built-in skills badge orange; user-installed skills badge teal. When the filter narrows to a single match, Enter just fires it — fastest path to launch a skill |
 | **Browser Automation** | Native browser control via CDP (Chrome DevTools Protocol). Auto-detects your default Chromium-based browser (Chrome, Brave, Edge, Arc, Vivaldi, Opera, Chromium) and uses its profile — your logins, cookies, and extensions carry over. 7 browser tools: navigate, click, type, screenshot, eval JS, extract content, wait for elements. Headed or headless mode with display auto-detection. **Note:** Firefox is not supported (no CDP) — if Firefox is your default, OpenCrabs falls back to the first available Chromium browser. Feature-gated under `browser` (included by default) |
 | **Natural Language Commands** | Tell OpenCrabs to create slash commands — it writes them to `commands.toml` autonomously via the `config_manager` tool |
@@ -1578,6 +1578,19 @@ First-time users are guided through a 9-step setup wizard that appears automatic
 
 Type `/onboard:voice` or `/onboard:image` in chat to jump directly to Voice or Image setup anytime. These work from any channel (Telegram, Discord, Slack, WhatsApp) via text-driven handlers — not just the TUI. From a channel, the agent walks you through each step interactively. You can also pass arguments directly: `/onboard:channels telegram <BOT_TOKEN> <YOUR_NUMERIC_ID>` to set up Telegram in one line, or `/onboard:image gemini <API_KEY>` to configure vision with Google.
 
+#### OpenAI TTS: voice and key
+
+Selecting **API (OpenAI TTS)** in `/onboard:voice` offers a voice picker (`alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `nova`, `onyx`, `sage`, `shimmer`) and its own API key field.
+
+The key resolves in this order:
+
+1. `providers.tts.openai` — a TTS-specific key, if set
+2. `providers.openai` — the general provider key, as fallback
+
+**A TTS-specific key wins.** It is deliberate configuration and is never shadowed by the general one. Entering a key in this step writes it to `providers.tts.openai`, so it can never overwrite the key your chat provider uses.
+
+The field shows as configured when a key is in effect from either source, so a blank field means no key is reachable at all — not that one is being inherited silently.
+
 #### Local STT (whisper.cpp)
 
 Run speech-to-text on-device with zero API cost. Included by default in prebuilt binaries and `cargo install opencrabs`.
@@ -1802,11 +1815,14 @@ Flip any scope live from a chat with the owner-only `/redact` command — `/reda
 1. **Prefix-based detection** — Keys with recognized prefixes are caught instantly (`sk-proj-...` → `sk-proj-[REDACTED]`)
 2. **Hex token detection** — Contiguous hex strings of 32+ chars are redacted
 3. **Mixed alphanumeric detection** — Opaque tokens of 28+ chars containing both letters and digits are caught as a safety net
+4. **Provider-token shape** — `<digits>:<opaque>` tokens (the Telegram bot-token form) are caught structurally, with no prefix and no assignment needed. The colon and hyphens break the run that layer 3 looks for, so without this the shape had no net beneath it
 
 **Structural redaction** also applies to:
 - JSON fields named `authorization`, `api_key`, `token`, `secret`, `password`, etc.
 - Inline patterns in bash commands (`bearer ...`, `x-api-key: ...`, `api_key=...`)
 - URL query params and key=value assignments in any casing (`?api_key=...`, `&token=...`)
+- **Quoted** values, not only bare ones: `TOKEN="secret"` redacts its contents. A quote used to terminate the match, so the quoted form — the more common shell spelling — escaped entirely
+- Bare sensitive names as well as suffixed ones (`TOKEN=`, not only `BOT_TOKEN=`)
 - URL passwords (`https://user:PASSWORD@host` → `https://user:[REDACTED]@host`)
 - The one-line tool-call summary and RSI self-improvement notifications, not just the expanded views
 
