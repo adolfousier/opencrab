@@ -846,6 +846,23 @@ pub fn strip_llm_artifacts(text: &str) -> String {
     if result.contains("<|tool") {
         result = QWEN_TOOL_MARKER_RE.replace_all(&result, "").into_owned();
     }
+    // Reasoning blocks go FIRST, before the generic comment sweep (#903).
+    //
+    // `<!-- reasoning -->` and `<!-- /reasoning -->` are two separate
+    // self-closed comments, so `strip_html_comments` deleted the markers and
+    // left the prose between them standing as ordinary message text. The
+    // agent's own deliberation therefore shipped to Telegram and the TUI as if
+    // it were the answer — and, being written in the past tense about work
+    // done, it fed fabricated-sounding claims into the phantom detectors.
+    //
+    // `hoist_reasoning_blocks` already removes the whole block correctly; it
+    // was only ever called on the context-rebuild path (`tool_loop.rs:745`),
+    // never on delivery. Here the hoisted reasoning is discarded rather than
+    // returned: this function's contract is "text safe to show a user", and
+    // callers that need the reasoning already call hoist directly.
+    if result.contains("<!-- reasoning -->") {
+        result = hoist_reasoning_blocks(&result).0;
+    }
     if result.contains("<!--") {
         result = AgentService::strip_html_comments(&result);
     }

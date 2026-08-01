@@ -290,6 +290,7 @@ pub mod recent_paths_test;
 pub mod redact_scope_test;
 pub mod sanitize_code_edit_block_test;
 pub mod sanitize_quoted_secret_test;
+pub mod sanitize_reasoning_leak_test;
 pub mod sanitize_redaction_test;
 pub mod toml_merge_test;
 pub mod tool_description_redaction_test;
