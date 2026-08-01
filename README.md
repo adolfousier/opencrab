@@ -130,6 +130,7 @@ This isn't a privacy policy checkbox. It's an architectural decision. There is n
 - [Onboarding Wizard](#-onboarding-wizard)
 - [API Keys (keys.toml)](#-api-keys-keystoml)
 - [Configuration (config.toml)](#-configuration-configtoml)
+- [Safety Gates (~/.opencrabs/safety/)](#-safety-gates-opencrabssafety)
 - [Commands (commands.toml)](#-commands-commandstoml)
 - [Dynamic Tools (tools.toml)](#-dynamic-tools-toolstoml)
 - [Using Local LLMs](#-using-local-llms)
@@ -2089,6 +2090,82 @@ default_model = "MiniMax-M3"    # Model for cron jobs that don't specify one
 > API keys go in `keys.toml`, not here. See [API Keys (keys.toml)](#-api-keys-keystoml).
 
 ---
+
+## 🛡️ Safety Gates (~/.opencrabs/safety/)
+
+Three TOML files that mechanically constrain what the agent can do. They are read at runtime and **reload when the file changes** — no rebuild, no restart.
+
+The governing principle: **the hardcoded Rust layer is an immovable floor.** These files only ever *add* enforcement on top. Nothing in them can weaken a compiled-in rule, and a missing or unparseable file degrades to the hardcoded behaviour rather than failing open.
+
+| File | Governs |
+|------|---------|
+| `bash_blocklist.toml` | Command patterns the `bash` tool refuses |
+| `brain_verify.toml` | Rules that must survive every brain-file write |
+| `ralph_loop.toml` | Task-completion verification and iteration limits |
+
+### bash_blocklist.toml
+
+Blocks command shapes without editing Rust. Patterns are substring matches on normalized (lowercased, whitespace-collapsed) input.
+
+```toml
+[[rules]]
+id = "rm-home"
+category = "destruction"
+severity = "block"                    # only "block" refuses; others are advisory
+reason = "Recursive delete on home directory"
+patterns = ["rm -rf ~", "rm -rf $HOME"]
+
+[[overrides]]
+id = "safe-rm-relative"
+reason = "rm on a relative subdirectory is safe"
+patterns = ["rm -rf ./build", "rm -rf target/", "rm -rf node_modules/"]
+```
+
+**Overrides are evaluated first** and are the only construct that turns a block into an allow. They relax TOML rules only — never the hardcoded floor. Because matching is substring-based with no word boundaries, a short pattern over-blocks: `rm` alone would also match `npm run format`.
+
+Compound rules needing AND logic stay in Rust; add simple patterns here.
+
+### brain_verify.toml
+
+Checked after every write to a protected brain file. A write that violates a rule is **rolled back from the pre-write backup**, not merely warned about.
+
+```toml
+[[required]]                          # must be PRESENT after the write
+file = "AGENTS.md"
+pattern = "NEVER add Co-authored-by"
+why = "Commit attribution: user is sole author"
+
+[[contradictions]]                    # must never co-exist
+file = "SOUL.md"
+a = "always push"
+b = "never push"
+```
+
+This exists because a brain file can be edited by the agent itself. `required` rules are the ones that must survive a well-intentioned tidy-up: if a trim removes one, the write is reverted.
+
+### ralph_loop.toml
+
+Replaces self-reported task completion with a shell exit code. A task cannot be marked done on the model's word alone.
+
+```toml
+[forward]
+enabled = true
+max_iterations = 20                   # retries per task before it is blocked
+verification_required = true
+
+[verification]
+enabled = true
+require_all_pass = true               # AND across commands; false = first failure wins
+criteria_policy = "downgrade"         # downgrade (default) | strict | off
+
+[[verification.task_type_commands]]
+task_type = "build"
+commands = ["cargo clippy --all-features -- -D warnings", "cargo test"]
+```
+
+`criteria_policy` decides what happens when a task declares acceptance criteria that nothing verifies: `downgrade` records the belief as uncertain rather than verified, `strict` rejects the completion, `off` leaves criteria advisory.
+
+**Note:** if the file is missing or fails to parse, the gate is simply absent — completions pass unverified. Unlike the bash blocklist, there is no hardcoded floor beneath this one.
 
 ## 📋 Commands (commands.toml)
 
