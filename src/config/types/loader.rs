@@ -598,7 +598,7 @@ impl Config {
             let has_subagent =
                 content.contains("subagent_provider") || content.contains("subagent_model");
             if !has_subagent && let Ok(injected) = inject_subagent_defaults(&content) {
-                match fs::write(path, &injected) {
+                match crate::config::types::io::atomic_write(path, &injected) {
                     Ok(()) => {
                         tracing::info!("Config migrated: injected subagent defaults into [agent]")
                     }
@@ -615,7 +615,7 @@ impl Config {
             if !content.contains("plan_provider")
                 && !content.contains("execute_provider")
                 && let Ok(injected) = inject_plan_mode_defaults(&content)
-                && let Err(e) = fs::write(path, &injected)
+                && let Err(e) = crate::config::types::io::atomic_write(path, &injected)
             {
                 tracing::warn!("Config migration: failed to inject plan-mode defaults: {e}");
             }
@@ -654,7 +654,7 @@ impl Config {
         }
 
         Self::backup_config(path, 7);
-        if fs::write(path, edit_doc.to_string()).is_ok() {
+        if crate::config::types::io::atomic_write(path, &edit_doc.to_string()).is_ok() {
             tracing::info!("Config migrated (structural changes written)");
         }
 
@@ -664,7 +664,7 @@ impl Config {
             || updated_content.contains("subagent_model");
         if !has_subagent
             && let Ok(injected) = inject_subagent_defaults(&updated_content)
-            && let Err(e) = fs::write(path, &injected)
+            && let Err(e) = crate::config::types::io::atomic_write(path, &injected)
         {
             tracing::warn!("Config migration: failed to inject subagent defaults: {e}");
         }
@@ -675,7 +675,7 @@ impl Config {
         if !updated_content.contains("plan_provider")
             && !updated_content.contains("execute_provider")
             && let Ok(injected) = inject_plan_mode_defaults(&updated_content)
-            && let Err(e) = fs::write(path, &injected)
+            && let Err(e) = crate::config::types::io::atomic_write(path, &injected)
         {
             tracing::warn!("Config migration: failed to inject plan-mode defaults: {e}");
         }
@@ -956,7 +956,7 @@ impl Config {
         // Back up before overwriting
         Self::backup_config(&path, 7);
 
-        fs::write(&path, serialized)?;
+        crate::config::types::io::atomic_write(&path, &serialized)?;
         tracing::info!("Wrote config key [{section}].{key}");
         Ok(())
     }
@@ -1017,7 +1017,7 @@ impl Config {
 
         Self::backup_config(&path, 7);
 
-        fs::write(&path, serialized)?;
+        crate::config::types::io::atomic_write(&path, &serialized)?;
         tracing::info!("Wrote keys.toml key [{section}].{key}");
         Ok(())
     }
@@ -1063,7 +1063,7 @@ impl Config {
         if current.remove(leaf).is_some() {
             tracing::info!("Removed keys.toml section [{section}]");
             Self::backup_config(&path, 7);
-            fs::write(&path, doc.to_string())?;
+            crate::config::types::io::atomic_write(&path, &doc.to_string())?;
         }
         Ok(())
     }
@@ -1106,7 +1106,7 @@ impl Config {
         tracing::info!("Removed config section [{section}]");
 
         Self::backup_config(&path, 7);
-        fs::write(&path, doc.to_string())?;
+        crate::config::types::io::atomic_write(&path, &doc.to_string())?;
         Ok(())
     }
 
@@ -1201,7 +1201,7 @@ impl Config {
         }
 
         daily_backup(&keys_file, 7);
-        if let Err(e) = std::fs::write(&keys_file, doc.to_string()) {
+        if let Err(e) = crate::config::types::io::atomic_write(&keys_file, &doc.to_string()) {
             tracing::warn!("Failed to clean ghost keys from keys.toml: {e}");
         }
     }
@@ -1260,7 +1260,7 @@ impl Config {
             );
         }
         Self::backup_config(&path, 7);
-        fs::write(&path, serialized)?;
+        crate::config::types::io::atomic_write(&path, &serialized)?;
         tracing::info!(
             "Wrote config array [{section}].{key} ({} items)",
             values.len()
@@ -1343,7 +1343,7 @@ impl Config {
         // Back up before overwriting
         Self::backup_config(path, 7);
 
-        fs::write(path, toml_string)
+        crate::config::types::io::atomic_write(path, &toml_string)
             .with_context(|| format!("Failed to write config file: {:?}", path))?;
 
         tracing::info!("Configuration saved to: {:?}", path);

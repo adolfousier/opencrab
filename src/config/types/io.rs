@@ -345,7 +345,7 @@ pub fn write_secret_key(section: &str, key: &str, value: &str) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     daily_backup(&path, 7);
-    fs::write(&path, doc.to_string())?;
+    atomic_write(&path, &doc.to_string())?;
     tracing::info!("Wrote secret key [{section}].{key}");
     Ok(())
 }
@@ -672,4 +672,49 @@ pub(crate) fn merge_channel_keys(mut base: ChannelsConfig, keys: ChannelsConfig)
     }
 
     base
+}
+
+/// Write `contents` to `path` atomically: a unique temp file in the same
+/// directory, then a rename (#911).
+///
+/// `fs::write` truncates at open and then writes, so between those two steps
+/// the file is ZERO BYTES on disk. The config watcher watches config.toml,
+/// keys.toml and commands.toml, and any event on any of them triggers a full
+/// `Config::load()`. A load landing in that window read nothing and reported a
+/// perfectly valid config.toml as broken — "TOML parse error at line 1,
+/// column 1" is the signature of an empty read, not of a syntax error.
+///
+/// Rename is atomic on the same filesystem, so a reader sees either the old
+/// file or the new one and never a partial state. Same pattern the session
+/// context store uses.
+pub fn atomic_write(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+    })?;
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config.toml");
+    let tmp = parent.join(format!(
+        "{name}.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    fs::write(&tmp, contents)?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        // Never strand the temp file beside the config it failed to become.
+        if let Err(cleanup) = fs::remove_file(&tmp) {
+            tracing::warn!(
+                "atomic_write: rename failed and the temp file could not be removed \
+                 either ({cleanup}); leaving {}",
+                tmp.display()
+            );
+        }
+        return Err(e);
+    }
+    Ok(())
 }
