@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 
 /// Flag set when Config::load() recovered from a last-known-good snapshot.
 static CONFIG_RECOVERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Why the last load fell back, so the user is told WHAT failed rather than
+/// only that something did (#909). The parse error was logged and discarded,
+/// leaving a warning that named a file and no reason.
+pub(crate) static CONFIG_RECOVERY_REASON: std::sync::Mutex<Option<String>> =
+    std::sync::Mutex::new(None);
 
 /// Flag set when Config::load() mechanically repaired a broken config file
 /// in place (e.g. closed an unterminated array) and re-loaded it.

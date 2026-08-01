@@ -195,6 +195,12 @@ impl Config {
                 // approvals into prompts).
                 tracing::error!("Auto-repair did not resolve it — trying last-known-good");
                 if let Some(good) = load_last_good_config() {
+                    // Keep the reason: the warning used to name a file and give
+                    // no cause, so a transient truncated read looked identical
+                    // to a genuine syntax error in the user's edit (#909).
+                    if let Ok(mut slot) = crate::config::types::CONFIG_RECOVERY_REASON.lock() {
+                        *slot = Some(format!("{e:#}"));
+                    }
                     CONFIG_RECOVERED.store(true, std::sync::atomic::Ordering::Relaxed);
                     Ok(good)
                 } else {
@@ -242,6 +248,14 @@ impl Config {
     /// Returns true (once) if the last `Config::load()` fell back to a last-known-good snapshot.
     pub fn was_recovered() -> bool {
         CONFIG_RECOVERED.swap(false, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Why the last recovery happened, consumed once alongside `was_recovered`.
+    pub fn recovery_reason() -> Option<String> {
+        crate::config::types::CONFIG_RECOVERY_REASON
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
     }
 
     /// Inner load implementation — separated so `load()` can wrap with recovery.
