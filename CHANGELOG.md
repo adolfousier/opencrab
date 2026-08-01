@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.78] - 2026-08-01
+
+68 commits since v0.3.77. 122 files changed, +9960 / -566 lines.
+
+### ✨ Features
+
+- `e48f36ca` **Mission Control analytics filter + card grid**: global D/W/M analytics filter, responsive 3-across card grid, and model status icons (#900)
+- `7fe07b0d` **Analytics panel tabs + scroll**: phantom/model/D-W-M tabs with scroll in the analytics panel (#900)
+- `45c6f384` **Analytics queries + report sections**: add analytics queries and report sections (#899)
+- `dade356f` **Analytics emitters**: wire analytics event emitters across the agent (#901)
+- `4846c774` **Analytics events DB layer**: add the analytics events database layer (#898)
+- `b588324b` **OpenAI TTS onboarding**: OpenAI TTS voice selector and API key field (#874, #875)
+- `197f1151` **Thinking-loop timeout**: thinking-loop timeout with phantom enforcement retry
+- `b4ecaa24` **Epistemic Orient gate**: gate plan start behind the epistemic Orient phase (#886)
+- `199cc545` **Criteria-aware verification gate**: Ralph criteria-aware verification gate (#870)
+- `10270544` **Belief tracking wiring**: wire belief tracking into brain-write and plan paths
+- `5ebe5009` **Epistemic engine**: belief tracking with confidence levels
+- `d06b6836` **TOML brain verification**: TOML-driven post-write brain file verification
+- `50cf22c2` **Ralph verification gate + iteration cap**: mechanical verification gate with iteration cap
+- `5687ebb0` **TOML bash blocklist**: TOML-driven bash blocklist, runtime-configurable safety gates
+
+### 🔧 Fixes
+
+- `3ef84597` **session_context concurrency**: pin the concurrency fix and clean up temp files (#906)
+- `e4823d12` **Reasoning-block redaction**: remove reasoning blocks on delivery, not just their markers (#903)
+- `6325d01c` **Phantom shipped-and-tracked claim**: catch the shipped-and-tracked completion claim (#903)
+- `a56364cd` **Analytics model recording**: record the active model on the primary provider path (#905)
+- `c8f9e55e` **Deliverable report visibility**: keep a deliverable report visible when its turn folds (#904)
+- `d2840333` **Background running indicator**: clear the running indicator before delivering (#896)
+- `3e8bb4b5` **slash_command resolution**: resolve skills and the /onboard:<topic> form (#889)
+- `b538730f` **config_manager nested paths**: resolve nested paths and child names to their section (#889)
+- `63c78a34` **generate_image extension**: always give a generated image an extension (#889)
+- `83852ff8` **Telegram rich delivery**: unify rich delivery on markdown, drop the dead blocks path (#871)
+- `65734067` **Phantom colloquial claims**: catch colloquial delivery claims, drop a false positive (#894)
+- `be87b8c2` **Telegram follow-up attribution**: name the member who tapped a follow-up (#895)
+- `d89ba482` **Phantom media-delivery claims**: catch media-delivery claims, and the oven idiom (#891)
+- `c1cfb4d6` **Onboarding model filter hint**: always render the model filter hint above the list (#873)
+- `2874d69d` **RSI digest totals**: surface raw failure totals vs surfaced opportunities in the digest (#888)
+- `006f9571` **clean_auto_title UTF-8 panic**: fix the UTF-8 panic on multi-byte characters (#885)
+- `733c8f5c` **RSI brain_verify gate**: route self_improve through the brain_verify Orient gate (#881)
+- `e1f7aa07` **Sanitize quoted secrets**: redact quoted secrets, and catch the colon-token shape (#879)
+- `f121faa5` **Telegram callback routing**: route callbacks to the originating session, not the chat-bound session (#878)
+- `d4f5bce7` **Channel chunk boundaries**: prefer chunk boundaries that leave no markup open (#876)
+- `eb60c998` **Onboarding exact model match**: an exactly-typed model id beats a substring match (#873)
+- `8b7f8bfe` **session_context atomic write**: atomic write to eliminate trailing-characters corruption (#853)
+- `9509cdae` **Voice OGG/Opus conversion**: convert OGG/Opus to WAV before sending to voicebox STT (#866)
+- `a3b29a7d` **Telegram rich verdict logging**: log the rich verdict and both send outcomes (#860)
+- `17775521` **Truncation continuation join**: join a truncation continuation onto its partial (#859)
+- `19556176` **RSI rule size cap**: cap rule size and allow a narrow consolidation path (#857, #858)
+- `7247c7ca` **brain_verify contradiction scope**: scope contradiction matching per-entry, not whole-file (#855)
+- `10d39848` **Safety TOML reload**: reload the safety TOMLs on change, and pin the behaviour
+- `9eab9ed7` **Telegram open-group registration**: gate open-group registration on the persisted open flag (#848)
+- `edd4123b` **Telegram background streaming**: one streaming turn per session for background results (#845)
+- `0065a8a2` **Telegram follow-up recording**: record a tapped follow-up on its own block (#844)
+- `2682b06c` **RSI capability-gap disposition**: keep the disposition of capability-gap opportunities (#842)
+- `5562d6b5` **Mission-control journal blocks**: stop malformed journal blocks corrupting neighbours (#841)
+- `861b9ade` **Telegram admin logging**: stop logging absent admins as menu failures (#839)
+- `ef088c5f` **Telegram cowork members**: record cowork members on first message (#840)
+
+### 📖 Documentation
+
+- `5cc8b643` refresh Mission Control, TTS and redaction sections in the README (#907)
+- `7d1f034c` document the Ralph loop, and correct an inert config key (#907)
+- `284e7d6d` document the epistemic engine and define OODA/BDI (#907)
+- `9227d25d` document the safety gates (#907)
+- `644a16cb` move the anti-fabrication rules into the preamble
+- `e89c88bf` clean build artifacts before a release build (preamble)
+- `9d07382f` clean build artifacts before a release build
+- `458ea84f` scope the CODE.md release-build exception to OpenCrabs itself
+- `d5ccef59` scope /rebuild to OpenCrabs' own source, on explicit request only
+
+### 🧹 Miscellaneous
+
+- `15cf8ded` local cross-compilation setup for unreleased dev binaries
+- `181b5cb1` analytics panel render + D/W/M switching tests (#900)
+- `0a13c127` add analytics query + report tests (#899)
+- `ae5aef93` add emitter integration tests (#901)
+- `55b7ba4b` import criteria types and dedup helper field (#870)
+- `a463e8cc` cover the criteria-aware policy matrix (#870)
+- `56bf6a71` use resume_session for followup tap and callback routing (#869)
+- `91b28929` collapse nested epistemic blocks into let-chains
+- `1786f29e` add dev profile build optimizations
+- `7ba99e3a` add a runner seam to the verification gate and pin it
+
+### 📊 Stats
+
+- 68 commits since v0.3.77
+- 122 files changed, +9960 / -566 lines
+- 5925 tests (5896 passed, 0 failed, 29 ignored)
+
 ## [0.3.77] - 2026-07-27
 
 4 commits since v0.3.76. 4 files changed, +68 / -26 lines.
@@ -7348,3 +7438,4 @@ fixes.
 [0.3.74]: https://github.com/adolfousier/opencrabs/compare/v0.3.73...v0.3.74
 [0.3.75]: https://github.com/adolfousier/opencrabs/compare/v0.3.74...v0.3.75
 [0.3.77]: https://github.com/adolfousier/opencrabs/compare/v0.3.75...v0.3.77
+[0.3.78]: https://github.com/adolfousier/opencrabs/compare/v0.3.77...v0.3.78
