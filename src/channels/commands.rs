@@ -223,6 +223,10 @@ pub enum ChannelCommand {
     Doctor,
     /// `/evolve` — check for updates and install directly (no LLM needed)
     Evolve,
+    /// `/restart` — cycle the process, same binary and arguments
+    Restart,
+    /// `/exit` — shut the process down
+    Exit,
     /// `/rtk` — show RTK token savings statistics
     Rtk(String),
     /// User-defined command with action "prompt" — forward prompt text to the agent
@@ -422,11 +426,25 @@ pub async fn handle_command(
                 ChannelCommand::Evolve
             }
         }
+        "/exit" | "/quit" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Exit
+            }
+        }
         "/help" => {
             if !is_owner {
                 ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
             } else {
                 ChannelCommand::Help(format_help())
+            }
+        }
+        "/restart" => {
+            if !is_owner {
+                ChannelCommand::UnknownCommand("🔒 Owner-only command.".to_string())
+            } else {
+                ChannelCommand::Restart
             }
         }
         "/models" => {
@@ -688,7 +706,11 @@ pub async fn handle_command(
         ChannelCommand::ModelSwitched(body) => Some(body.clone()),
         ChannelCommand::ChangeDir(resp) => Some(resp.text.clone()),
         ChannelCommand::Profiles(resp) => Some(resp.text.clone()),
-        ChannelCommand::Compact
+        // No acknowledgement: these announce themselves and then go down, so a
+        // separate ack would be a second message racing the shutdown.
+        ChannelCommand::Restart
+        | ChannelCommand::Exit
+        | ChannelCommand::Compact
         | ChannelCommand::UserPrompt(_)
         | ChannelCommand::PlanModeWithQuery(_)
         | ChannelCommand::NotACommand
@@ -840,6 +862,7 @@ pub(crate) fn format_help() -> String {
             "/execute",
             "Approve the design plan / retry the checklist seed",
         ),
+        ("/exit", "Exit OpenCrabs"),
         (
             "/goal",
             "Set/track an autonomous goal (`/goal <text>`, status, pause, resume, clear)",
@@ -861,6 +884,7 @@ pub(crate) fn format_help() -> String {
             "/respond_to",
             "Show/switch auto-mention mode (`/respond_to <all|mention|auto>`)",
         ),
+        ("/restart", "Restart OpenCrabs"),
         ("/rtk", "Show RTK token savings statistics"),
         ("/show-plan", "Show the current plan state"),
         (
@@ -2166,32 +2190,82 @@ pub async fn run_evolve() -> String {
     };
 
     // If we received a RestartReady signal, trigger the restart
-    if restart_ready.load(Ordering::SeqCst) {
-        trigger_restart();
+    if restart_ready.load(Ordering::SeqCst)
+        && let Err(e) = trigger_restart()
+    {
+        return format!("{result}\n\n⚠️ Update installed but restart failed: {e}");
     }
 
     result
 }
 
-/// Trigger a process restart by exec-ing the current binary.
-/// This replaces the current process with a fresh instance.
+/// Relaunch the current binary with the arguments it was started with.
+///
+/// The launching alias never has to be known: the shell expanded it before the
+/// process existed, so `args()` already holds that expansion and `current_exe()`
+/// holds the binary it resolved to. On unix `exec()` then replaces the process
+/// image in place, keeping the pid, file descriptors, terminal and environment,
+/// so anything the alias exported survives.
+///
+/// Only returns on failure.
 #[cfg(unix)]
-fn trigger_restart() {
+fn trigger_restart() -> Result<(), String> {
     use std::os::unix::process::CommandExt;
 
-    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("opencrabs"));
+    let exe = std::env::current_exe().map_err(|e| format!("cannot locate own binary: {e}"))?;
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    tracing::info!("Restarting daemon via exec()");
+    tracing::info!("Restarting via exec(): {} {:?}", exe.display(), args);
 
-    // exec() replaces the current process, so this never returns on success
+    // exec() replaces the current process, so this never returns on success.
     let err = std::process::Command::new(&exe).args(&args).exec();
-    tracing::error!("exec() failed: {}", err);
+    tracing::error!("exec() failed: {err}");
+    Err(format!("exec() failed: {err}"))
 }
 
+/// Windows has no `exec()`, so the replacement is spawned as a child and this
+/// process exits. The pid changes and the child is briefly a grandchild of the
+/// old parent, which is why unix keeps the `exec()` path instead.
 #[cfg(not(unix))]
-fn trigger_restart() {
-    tracing::warn!("Restart via exec() not supported on this platform. Manual restart required.");
+fn trigger_restart() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("cannot locate own binary: {e}"))?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    tracing::info!("Restarting via spawn: {} {:?}", exe.display(), args);
+
+    std::process::Command::new(&exe)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    std::process::exit(0);
+}
+
+/// How long to wait before going down, so the channel can flush the warning
+/// first. Nothing survives the restart to report a failure afterwards, so the
+/// message has to leave ahead of it.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Announce a restart, then perform it once the notice has been delivered.
+fn schedule_restart() -> String {
+    tokio::spawn(async {
+        tokio::time::sleep(SHUTDOWN_GRACE).await;
+        if let Err(e) = trigger_restart() {
+            // Reaching here means the process is still alive and the user was
+            // already told it was going down, so the correction has to be loud.
+            tracing::error!("Restart failed, still running: {e}");
+        }
+    });
+    "♻️ Restarting OpenCrabs. Unfinished work resumes automatically.".to_string()
+}
+
+/// Announce a shutdown, then perform it once the notice has been delivered.
+fn schedule_exit() -> String {
+    tokio::spawn(async {
+        tokio::time::sleep(SHUTDOWN_GRACE).await;
+        tracing::info!("Shutting down on /exit");
+        std::process::exit(0);
+    });
+    "👋 Exiting OpenCrabs. Starting it again needs access to the machine it runs on.".to_string()
 }
 
 /// Run doctor health check directly (no LLM needed). Returns a user-facing status message.
@@ -2215,6 +2289,8 @@ pub async fn try_execute_text_command(cmd: &ChannelCommand) -> Option<String> {
         | ChannelCommand::Rtk(body) => Some(body.clone()),
         ChannelCommand::Doctor => Some(run_doctor()),
         ChannelCommand::Evolve => Some(run_evolve().await),
+        ChannelCommand::Restart => Some(schedule_restart()),
+        ChannelCommand::Exit => Some(schedule_exit()),
         ChannelCommand::UnknownCommand(msg) => Some(msg.to_string()),
         ChannelCommand::ModelSwitched(msg) => Some(msg.to_string()),
         ChannelCommand::RespondTo(body) => Some(body.clone()),
