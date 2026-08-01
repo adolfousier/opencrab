@@ -12,6 +12,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
+/// Monotonic counter for unique context-store temp-file names, so concurrent
+/// `session_context` saves never race on the same temp path.
+static CONTEXT_TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Session context management tool
 pub struct ContextTool;
 
@@ -70,11 +74,29 @@ impl ContextStore {
             .map_err(|e| ToolError::Execution(format!("Failed to serialize context: {}", e)))?;
 
         // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await.map_err(ToolError::Io)?;
-        }
+        let parent = path.parent().ok_or_else(|| {
+            ToolError::Execution("context store path has no parent directory".to_string())
+        })?;
+        fs::create_dir_all(parent).await.map_err(ToolError::Io)?;
 
-        fs::write(path, content).await.map_err(ToolError::Io)?;
+        // Atomic, race-free write. `fs::write` truncates per call, but two
+        // concurrent `session_context` saves in one turn (e.g. several `set`
+        // ops fired together) don't serialize: a shorter write landing over a
+        // longer one leaves the longer object's tail bytes in place, producing
+        // "trailing characters" parse failures on the next read. Write a
+        // uniquely-named temp file in the same directory, then atomically
+        // rename it over the target — the store is always either the previous
+        // complete object or the new one, never a mix. The unique temp name
+        // (pid + monotonic counter) prevents two saves from racing on the temp
+        // file itself.
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("context_store.json");
+        let seq = CONTEXT_TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = parent.join(format!("{}.{}.{}.tmp", file_name, std::process::id(), seq));
+        fs::write(&tmp, content).await.map_err(ToolError::Io)?;
+        fs::rename(&tmp, path).await.map_err(ToolError::Io)?;
         Ok(())
     }
 }
