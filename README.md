@@ -130,6 +130,7 @@ This isn't a privacy policy checkbox. It's an architectural decision. There is n
 - [Onboarding Wizard](#-onboarding-wizard)
 - [API Keys (keys.toml)](#-api-keys-keystoml)
 - [Configuration (config.toml)](#-configuration-configtoml)
+- [Epistemic Engine](#-epistemic-engine)
 - [Safety Gates (~/.opencrabs/safety/)](#-safety-gates-opencrabssafety)
 - [Commands (commands.toml)](#-commands-commandstoml)
 - [Dynamic Tools (tools.toml)](#-dynamic-tools-toolstoml)
@@ -2090,6 +2091,66 @@ default_model = "MiniMax-M3"    # Model for cron jobs that don't specify one
 > API keys go in `keys.toml`, not here. See [API Keys (keys.toml)](#-api-keys-keystoml).
 
 ---
+
+## 🧠 Epistemic Engine
+
+Most agent failures are not wrong actions — they are **confident claims about things never checked**. The epistemic engine makes that distinction explicit: every belief the agent forms is recorded with how it came to be believed.
+
+### Confidence levels
+
+| Level | Meaning |
+|-------|---------|
+| `verified` | Proven by a command that ran and passed |
+| `inferred` | Derived from other beliefs or logical inference |
+| `uncertain` | Assumed true, not yet checked |
+| `contradicted` | Conflicts with another belief — needs resolution |
+
+A completed task is recorded as `uncertain` unless something actually verified it. That is the point: "I finished the task" and "the tests passed" are different claims, and only one of them is evidence.
+
+### OODA and BDI
+
+The vocabulary appears throughout the codebase and in gate names, so it is worth defining once:
+
+**OODA** — Observe, Orient, Decide, Act. The loop a turn moves through. The **Orient** stage is where verification gates sit: before a brain-file write is accepted or a plan task is marked complete, the proposed change is checked against what is already believed. `self_improve` runs an Orient gate on the RSI path for exactly this reason.
+
+**BDI** — Belief, Desire, Intention. Beliefs are what the engine stores; desires are the goal; intentions are the committed plan. The split matters because a plan built on `uncertain` beliefs is a different risk from one built on `verified` ones, and the engine keeps them distinguishable.
+
+### Storage
+
+Beliefs live in `~/.opencrabs/brain/epistemic/beliefs.toml`:
+
+```toml
+[beliefs."plan:task:2:b353fa70a23ee29e"]
+key = "plan:task:2:b353fa70a23ee29e"
+value = "completed — branch created off main, clean working tree"
+confidence = "uncertain"
+
+[beliefs."plan:task:2:b353fa70a23ee29e".source]
+origin = "plan_tool:complete"
+recorded_at = "2026-07-29T23:36:45Z"
+last_verified = "2026-07-29T23:36:45Z"
+```
+
+Every belief carries **source attribution** — which code path recorded it, when, and when it was last verified. A belief with `recorded_at == last_verified` and a `uncertain` confidence has never been independently confirmed.
+
+### Configuration
+
+The `[epistemic]` section of `~/.opencrabs/safety/ralph_loop.toml`:
+
+```toml
+[epistemic]
+enabled = true
+decay_enabled = true
+decay_interval_hours = 720            # unverified beliefs decay after 30 days
+contradiction_detection = true        # a conflicting fact flags both beliefs
+source_required = true                # no belief without an origin
+```
+
+**Decay** exists because an unverified assumption gets *less* trustworthy with age, not more. **Contradiction detection** flags rather than silently overwrites: when a new fact conflicts with an existing belief, both are marked `contradicted` so the conflict is visible instead of resolved by whichever wrote last.
+
+### Where beliefs come from
+
+Recorded automatically on the paths that make claims: plan-task completion (`plan_tool`), brain-file writes (`write_opencrabs_file`), and the RSI self-improvement loop. You do not call this directly; it is the record of what the agent thinks it knows and why.
 
 ## 🛡️ Safety Gates (~/.opencrabs/safety/)
 
