@@ -76,34 +76,30 @@ pub(crate) async fn send_rich_markdown_id(
         .ok_or_else(|| anyhow::anyhow!("sendRichMessage ok but response carried no message_id"))
 }
 
+/// How many times a 429 is waited out before giving up and letting the caller
+/// fall back. One retry was not enough: Telegram hands out multi-second waits
+/// under load, so a single retry lands inside the same window it was told to
+/// wait for and the send is abandoned while still rate limited.
+const RICH_MAX_RETRIES: u32 = 3;
+
+/// Longest single wait honoured. Telegram can ask for minutes; blocking a
+/// delivery that long is worse than falling back to HTML now.
+const RICH_MAX_RETRY_WAIT_SECS: u64 = 30;
+
 /// POST `body` to `url`, treating anything other than `{"ok":true,...}` as an
 /// error (surfacing Telegram's `description`). Returns the `result` object.
-/// Handles 429 RetryAfter with a single retry.
+///
+/// A 429 is retried up to `RICH_MAX_RETRIES` times, honouring the server's
+/// `retry_after`. The error returned always describes the LAST attempt: the
+/// previous version rebound `status`/`text`/`parsed` inside the retry block,
+/// so those bindings fell out of scope and a retry that failed for a new
+/// reason was reported as the rate limit that preceded it (#927).
 async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
-    let resp = reqwest::Client::new().post(url).json(body).send().await?;
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
-    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    let client = reqwest::Client::new();
+    let mut attempt = 0u32;
 
-    if status.is_success() && parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        return Ok(parsed
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null));
-    }
-
-    // Handle 429 rate limit with RetryAfter
-    if status.as_u16() == 429 {
-        let retry_after = parsed
-            .get("parameters")
-            .and_then(|p| p.get("retry_after"))
-            .and_then(|r| r.as_u64())
-            .unwrap_or(5);
-        tracing::warn!("Rich API rate limited, retrying after {retry_after}s");
-        tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
-
-        // Single retry
-        let resp = reqwest::Client::new().post(url).json(body).send().await?;
+    loop {
+        let resp = client.post(url).json(body).send().await?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
@@ -116,13 +112,35 @@ async fn post_rich(url: &str, body: &serde_json::Value) -> anyhow::Result<serde_
                 .cloned()
                 .unwrap_or(serde_json::Value::Null));
         }
-    }
 
-    let desc = parsed
-        .get("description")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(&text);
-    anyhow::bail!("Telegram rich API error ({status}): {desc}")
+        if status.as_u16() == 429 && attempt < RICH_MAX_RETRIES {
+            let retry_after = parsed
+                .get("parameters")
+                .and_then(|p| p.get("retry_after"))
+                .and_then(|r| r.as_u64())
+                .unwrap_or(5)
+                .min(RICH_MAX_RETRY_WAIT_SECS);
+            attempt += 1;
+            tracing::warn!(
+                "Rich API rate limited, retrying after {retry_after}s (attempt {attempt}/{RICH_MAX_RETRIES})"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
+            continue;
+        }
+
+        // Out of retries, or an error that retrying cannot fix. Report THIS
+        // attempt so the caller logs why the send actually failed.
+        let desc = parsed
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&text);
+        if status.as_u16() == 429 {
+            tracing::warn!(
+                "Rich API still rate limited after {RICH_MAX_RETRIES} retries — falling back"
+            );
+        }
+        anyhow::bail!("Telegram rich API error ({status}): {desc}")
+    }
 }
 
 /// POST `body` and discard the result — for calls where only success matters.

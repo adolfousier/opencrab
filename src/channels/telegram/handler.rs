@@ -2527,15 +2527,25 @@ pub(crate) async fn handle_message(
                 }
                 // Nothing landed: fall through to the public path unchanged.
             }
-            let sent_rich = super::rich::should_send_native_rich(&reply)
-                && super::rich::api::send_rich_markdown(
+            // `.is_ok()` used to discard the error here, so a rich failure left
+            // no trace at all and a fallback was indistinguishable from a clean
+            // rich send (#927). Both outcomes are logged now.
+            let sent_rich = super::rich::should_send_native_rich(&reply) && {
+                match super::rich::api::send_rich_markdown(
                     bot.token(),
                     msg.chat.id.0,
                     thread_id,
                     &reply,
                 )
                 .await
-                .is_ok();
+                {
+                    Ok(()) => true,
+                    Err(e) => {
+                        tracing::warn!("Telegram: rich command reply failed, using HTML: {e}");
+                        false
+                    }
+                }
+            };
             if !sent_rich {
                 let html = command_md_to_html(&reply);
                 for chunk in split_message(&html, 4096) {
