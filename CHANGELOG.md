@@ -11,8 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `/restart` and `/exit` on channels and in the TUI. Neither existed anywhere, so a daemon could not be stopped or cycled without shell access to the machine it runs on, and the TUI could only be quit with a key chord. `/restart` relaunches the same binary with the same arguments; unfinished turns resume on startup as they already did after any restart, and the TUI variant resumes the current session. On channels both are owner-only and announce themselves before acting, since nothing survives to report a failure afterwards.
 
+- Homebrew tap: `brew install adolfousier/opencrabs/opencrabs` installs the prebuilt binary for macOS and Linux on both architectures, with no Rust toolchain required. Releases now publish a `SHA256SUMS` file and regenerate the formula automatically, so the hashes always describe the artifacts that release actually shipped.
+
 ### Fixed
 
+- Install options in the README were numbered with three separate "Option 3" headings.
 - Ralph verification ran in the directory OpenCrabs was launched from rather than the session's own, so a plan in one repo was gated on another repo's build results. With a clean launch directory it reported success for a repo it never inspected (#921).
 - Linux dev binaries could not be cross-compiled on an arm64 host: cross publishes amd64-only images, and host build artifacts leaked into the container and failed on a glibc mismatch.
 

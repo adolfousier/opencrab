@@ -283,6 +283,16 @@ jobs:
           find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release-assets/ \;
           ls -la release-assets/
 
+      # Homebrew verifies the archive hash on download and refuses to install
+      # without one, so a formula cannot reference an asset that has no
+      # published sha256 (#924). Emitted here rather than recomputed later so
+      # the hash always describes the bytes this release actually shipped.
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -301,3 +311,54 @@ jobs:
               --latest \
               release-assets/*
           fi
+
+  # Regenerate the Homebrew formula from the template and push it to the tap
+  # (#924). Runs only after the release exists, because the formula references
+  # release asset URLs: publishing it first would point users at downloads that
+  # 404 until the release lands.
+  #
+  # Skipped when HOMEBREW_TAP_TOKEN is absent rather than failing, so a fork or
+  # a repo without the tap configured still releases normally.
+  update-tap:
+    name: Update Homebrew tap
+    needs: create-release
+    if: needs.create-release.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Render and push formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set — skipping tap update"
+            exit 0
+          fi
+          set -euo pipefail
+
+          # Pull the checksums this release actually published, so the formula
+          # can never describe bytes other than the ones users download.
+          gh release download "v${VERSION}" -p SHA256SUMS -D /tmp --clobber
+          ./scripts/render-homebrew-formula.sh "${VERSION}" /tmp/SHA256SUMS /tmp/opencrabs.rb
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/adolfousier/homebrew-opencrabs.git" /tmp/tap
+          mkdir -p /tmp/tap/Formula
+          cp /tmp/opencrabs.rb /tmp/tap/Formula/opencrabs.rb
+          cd /tmp/tap
+
+          if git diff --quiet; then
+            echo "formula already current for v${VERSION}"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/opencrabs.rb
+          git commit -m "opencrabs ${VERSION}"
+          git push

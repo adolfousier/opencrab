@@ -1382,7 +1382,15 @@ Then just type `opencrabs` to start. The onboarding wizard handles everything on
 
 > **Note:** `/rebuild` works even with pre-built binaries — it auto-clones the source to `~/.opencrabs/source/` on first use, then builds and hot-restarts. For active development or adding custom tools, Option 2 gives you the source tree directly.
 
-### Option 2: Install via Cargo
+### Option 2: Install via Homebrew
+
+```bash
+brew install adolfousier/opencrabs/opencrabs
+```
+
+Downloads the prebuilt binary for your platform (macOS arm64/amd64, Linux arm64/amd64) with `rtk` bundled. No Rust toolchain needed, and `brew upgrade opencrabs` tracks releases. The archive hash is verified on download.
+
+### Option 3: Install via Cargo
 
 ```bash
 cargo install opencrabs
@@ -1415,7 +1423,7 @@ cargo install opencrabs --no-default-features --features "telegram,whatsapp,disc
 | `local-tts` | opusic-sys | On-device text-to-speech (requires `python3` + `python3-venv` at runtime) |
 | `browser` | chromey | Browser automation via CDP (Chrome, Brave, Edge, Arc, Vivaldi, Opera — not Firefox) |
 
-### Option 3: Build from Source (full control)
+### Option 4: Build from Source (full control)
 
 Required for `/rebuild`, adding custom tools, or modifying the agent.
 
@@ -1455,7 +1463,7 @@ cargo build --release
 
 > **First run?** The onboarding wizard will guide you through provider setup, workspace, and more. See [Onboarding Wizard](#-onboarding-wizard).
 
-### Option 3: Docker (sandboxed)
+### Option 5: Docker (sandboxed)
 
 Run OpenCrabs in an isolated container. Build takes ~15min (Rust release + LTO).
 
