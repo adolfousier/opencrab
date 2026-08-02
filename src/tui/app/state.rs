@@ -235,6 +235,14 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Download latest release & restart",
     },
     SlashCommand {
+        name: "/restart",
+        description: "Restart OpenCrabs (resumes this session)",
+    },
+    SlashCommand {
+        name: "/exit",
+        description: "Exit OpenCrabs",
+    },
+    SlashCommand {
         name: "/whisper",
         description: "Speak anywhere, paste to clipboard",
     },

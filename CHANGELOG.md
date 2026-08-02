@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `/restart` and `/exit` channel commands. Neither existed, so a daemon could not be stopped or cycled without shell access to the machine it runs on. `/restart` relaunches the same binary with the same arguments; unfinished turns resume on startup as they already did after any restart. Both are owner-only and announce themselves before acting, since nothing survives to report a failure afterwards.
+- `/restart` and `/exit` on channels and in the TUI. Neither existed anywhere, so a daemon could not be stopped or cycled without shell access to the machine it runs on, and the TUI could only be quit with a key chord. `/restart` relaunches the same binary with the same arguments; unfinished turns resume on startup as they already did after any restart, and the TUI variant resumes the current session. On channels both are owner-only and announce themselves before acting, since nothing survives to report a failure afterwards.
 
 ### Fixed
 

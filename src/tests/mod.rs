@@ -398,6 +398,7 @@ pub mod tui_events_test;
 pub mod tui_highlight_test;
 pub mod tui_markdown_test;
 pub mod tui_plan_tests_test;
+pub mod tui_process_commands_test;
 pub mod tui_render_utils_test;
 pub mod usage_categorizer_test;
 pub mod usage_dashboard_test;

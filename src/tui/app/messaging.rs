@@ -931,6 +931,30 @@ impl App {
                 });
                 true
             }
+            "/exit" | "/quit" => {
+                // Same shutdown the runner already drives for Ctrl+C twice,
+                // just reachable by typing it (#923).
+                self.should_quit = true;
+                true
+            }
+            "/restart" => {
+                // Routed through SelfUpdater so the session is resumed on the
+                // way back up, rather than a second exec implementation that
+                // would come back to an empty chat. Only returns on failure.
+                let sid = self
+                    .current_session
+                    .as_ref()
+                    .map(|s| s.id)
+                    .unwrap_or(Uuid::nil());
+                self.push_system_message("♻️ Restarting OpenCrabs...".to_string());
+                match crate::brain::SelfUpdater::auto_detect().and_then(|u| u.restart(sid)) {
+                    Ok(()) => {}
+                    // Still running, and the user was already told it was going
+                    // down, so the correction has to be visible in-session.
+                    Err(e) => self.show_error(format!("Restart failed: {e}")),
+                }
+                true
+            }
             "/evolve" => {
                 self.push_system_message("Checking for updates...".to_string());
                 let sender = self.event_sender();

@@ -3000,6 +3000,8 @@ Any tool on your `$PATH` works. If it runs in your terminal, OpenCrabs can use i
 | `/stop` | Abort in-progress agent operation immediately (type `stop` or `/stop` in any channel or TUI) |
 | `/new` | Start a new session |
 | `/evolve` | Check for updates and install latest release |
+| `/restart` | Restart OpenCrabs and resume the current session. Unlike `/rebuild` and `/evolve`, which restart only as a side effect of updating, this cycles the process as-is |
+| `/exit` | Exit OpenCrabs (the typed equivalent of `Ctrl+C` twice) |
 | `/rtk` | Show RTK token savings statistics |
 | `/mission-control` | Full-screen dialog: RSI proposals, activity log, cron schedule |
 | `/skills` | Browse and run available skills |
