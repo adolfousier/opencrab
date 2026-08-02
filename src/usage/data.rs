@@ -235,13 +235,26 @@ pub fn normalize_model_for_grouping(name: &str) -> String {
 ///
 /// Canonical form: alphanumeric ASCII only, lowercased.
 pub fn is_cosmetic_alias_of_parent(variant: &str, parent: &str) -> bool {
-    fn canonical(s: &str) -> String {
-        s.chars()
-            .filter(|c| c.is_ascii_alphanumeric())
-            .flat_map(|c| c.to_lowercase())
-            .collect()
-    }
-    canonical(variant) == canonical(parent)
+    canonical_model_key(variant) == canonical_model_key(parent)
+}
+
+/// Punctuation- and case-insensitive identity for a model name: ASCII
+/// alphanumerics only, lowercased.
+///
+/// Grouping keyed on the raw name split one model across two rows whenever it
+/// was reported with different punctuation (`qwen3.8-max-preview` alongside
+/// `qwen-3.8-max-preview`), so its spend was reported as two smaller models
+/// (#929). Neither was ever the other's child, so `is_cosmetic_alias_of_parent`
+/// never ran on them.
+///
+/// Only punctuation and case collapse. A preview suffix, a dated snapshot or a
+/// different version number all differ in alphanumerics, so genuinely distinct
+/// models stay distinct.
+pub fn canonical_model_key(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
 }
 
 // ── Activity classifier ──────────────────────────────────────────────────────
@@ -623,18 +636,40 @@ async fn fetch_model_entries(pool: &Pool, since: Option<i64>) -> Result<Vec<Mode
     .map_err(interact_err)?
     .context("Failed to fetch model stats")?;
 
-    // Group by base model (normalize away quantization suffixes)
+    // Group by base model (normalize away quantization suffixes), keyed on the
+    // punctuation-insensitive identity so one model reported with two spellings
+    // is one row rather than two smaller ones (#929).
     let mut groups: std::collections::HashMap<String, Vec<(String, i64, i64)>> =
+        std::collections::HashMap::new();
+    // The key is unreadable by design, so each group also remembers the spelling
+    // to display: whichever variant carries the most tokens, i.e. the form this
+    // model is actually known by rather than the typo that split it.
+    let mut display_names: std::collections::HashMap<String, (String, i64)> =
         std::collections::HashMap::new();
     for (normalized, raw, tokens, calls) in raw {
         let base = normalize_model_for_grouping(&normalized);
-        groups.entry(base).or_default().push((raw, tokens, calls));
+        let key = canonical_model_key(&base);
+        display_names
+            .entry(key.clone())
+            .and_modify(|best| {
+                if tokens > best.1 {
+                    *best = (base.clone(), tokens);
+                }
+            })
+            .or_insert_with(|| (base.clone(), tokens));
+        groups.entry(key).or_default().push((raw, tokens, calls));
     }
 
     // Build ModelEntry tree, sorted by total tokens descending
     let mut entries: Vec<ModelEntry> = groups
         .into_iter()
-        .map(|(base, mut variants)| {
+        .map(|(key, mut variants)| {
+            // Fall back to the key only if a group somehow has no recorded
+            // spelling, which cannot happen for a group built above.
+            let base = display_names
+                .get(&key)
+                .map(|(name, _)| name.clone())
+                .unwrap_or(key);
             let mut total_tokens: i64 = 0;
             let mut total_calls: i64 = 0;
             let mut has_estimate = false;

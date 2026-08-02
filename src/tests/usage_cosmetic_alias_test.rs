@@ -126,3 +126,59 @@ fn slash_separator_is_alias() {
 fn case_only_difference_is_alias() {
     assert!(is_cosmetic_alias_of_parent("Qwen-3.7-Max", "qwen-3.7-max"));
 }
+
+// ── Group key (#929) ──────────────────────────────────────────────────────
+
+use crate::usage::data::canonical_model_key;
+
+/// The spellings that split one model into two top-level rows, each carrying
+/// its own spend, so the model's real total was never shown anywhere.
+#[test]
+fn punctuation_variants_share_a_group_key() {
+    assert_eq!(
+        canonical_model_key("qwen3.8-max-preview"),
+        canonical_model_key("qwen-3.8-max-preview"),
+        "a hyphen after the vendor prefix must not split the model"
+    );
+}
+
+#[test]
+fn case_and_separators_collapse() {
+    let expect = canonical_model_key("qwen-3.7-max");
+    for variant in ["Qwen 3.7 Max", "qwen3.7max", "QWEN_3_7_MAX", "qwen.3.7.max"] {
+        assert_eq!(
+            canonical_model_key(variant),
+            expect,
+            "{variant} should match"
+        );
+    }
+}
+
+/// The over-merge guard. These differ in alphanumerics, not just punctuation,
+/// so collapsing them would report distinct models as one.
+#[test]
+fn genuinely_different_models_keep_distinct_keys() {
+    let base = canonical_model_key("qwen-3.8-max");
+    for other in [
+        "qwen-3.8-max-preview", // preview is a different model
+        "qwen-3.7-max",         // different version
+        "qwen3.8-max-20260520", // dated snapshot
+        "qwen-3.8-plus",        // different tier
+    ] {
+        assert_ne!(
+            canonical_model_key(other),
+            base,
+            "{other} must stay separate"
+        );
+    }
+}
+
+/// The key exists to group, never to display: it is unreadable on purpose, so
+/// the caller has to carry a display name alongside it.
+#[test]
+fn key_strips_everything_but_alphanumerics() {
+    assert_eq!(
+        canonical_model_key("qwen-3.8-max-preview"),
+        "qwen38maxpreview"
+    );
+}
