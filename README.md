@@ -1396,6 +1396,8 @@ Downloads the prebuilt binary for your platform (macOS arm64/amd64, Linux arm64/
 cargo install opencrabs
 ```
 
+> **This compiles from source and takes around an hour.** Options 1 and 2 download the same binary in seconds. Use Cargo when you want a custom feature set (see below), you are on a platform with no published binary, or you specifically want a source install.
+
 > **Linux (Debian/Ubuntu):** Install system deps first: `sudo apt-get install build-essential pkg-config clang libclang-dev libasound2-dev libssl-dev cmake`
 >
 > **Large build:** The build can use 8GB+ in `/tmp`. If you run out of space: `CARGO_TARGET_DIR=~/.cargo/target cargo install opencrabs`
