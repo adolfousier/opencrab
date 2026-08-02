@@ -12,7 +12,7 @@
 
 use crate::brain::tools::plan_tool::{
     CriteriaPolicy, CriteriaVerdict, RalphVerification, TaskTypeCommands, VerificationOutcome,
-    commands_for_type, criteria_verdict, truncate_output, verify_with,
+    commands_for_type, criteria_verdict, run_verification_command, truncate_output, verify_with,
 };
 
 fn cmds(v: &[&str]) -> Vec<String> {
@@ -353,4 +353,52 @@ fn criteria_policy_parses_each_variant_lowercase() {
     let downgrade: RalphVerification =
         toml::from_str("enabled = true\ncriteria_policy = \"downgrade\"").expect("valid TOML");
     assert_eq!(downgrade.criteria_policy, CriteriaPolicy::Downgrade);
+}
+
+// ── Working directory (#921) ──────────────────────────────────────────
+
+/// The gate shelled out with no `current_dir`, so it inherited the OpenCrabs
+/// process cwd and verified whichever repo the binary happened to be launched
+/// from. A plan in one repo was gated on another repo's build.
+#[test]
+fn verification_runs_in_the_directory_it_is_given() {
+    let dir = std::env::temp_dir().join("opencrabs_ralph_cwd_test");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    // macOS reports /var/... as /private/var/..., so compare resolved paths.
+    let expected = dir.canonicalize().expect("canonicalize temp dir");
+
+    let (code, output) = run_verification_command("pwd", &expected);
+
+    assert_eq!(code, 0, "pwd should succeed: {output}");
+    assert_eq!(
+        output.trim(),
+        expected.to_string_lossy(),
+        "command must run in the directory passed in, not the process cwd"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The directory is threaded through, not silently replaced by the process cwd
+/// when the two differ.
+#[test]
+fn verification_directory_is_not_the_process_cwd() {
+    let dir = std::env::temp_dir().join("opencrabs_ralph_cwd_differs");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let expected = dir.canonicalize().expect("canonicalize temp dir");
+    let process_cwd = std::env::current_dir().expect("process cwd");
+
+    assert_ne!(
+        expected, process_cwd,
+        "fixture is meaningless if the temp dir IS the process cwd"
+    );
+
+    let (_, output) = run_verification_command("pwd", &expected);
+    assert_ne!(
+        output.trim(),
+        process_cwd.to_string_lossy(),
+        "the gate must not fall back to the launch directory"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }

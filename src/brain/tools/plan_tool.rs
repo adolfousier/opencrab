@@ -469,8 +469,16 @@ fn ralph_loop_config() -> Option<std::sync::Arc<RalphLoopConfig>> {
 }
 
 /// Run a shell command and return (exit_code, stdout+stderr).
-fn run_verification_command(cmd: &str) -> (i32, String) {
-    let output = std::process::Command::new("sh").arg("-c").arg(cmd).output();
+pub(crate) fn run_verification_command(cmd: &str, working_dir: &std::path::Path) -> (i32, String) {
+    // Without an explicit directory the child inherits the OpenCrabs process
+    // cwd, i.e. wherever the binary was launched, so a plan in one repo was
+    // gated on build results from another (#921). Every other tool resolves
+    // this per session; this path shelled out around ToolExecutionContext.
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(working_dir)
+        .output();
 
     match output {
         Ok(out) => {
@@ -591,6 +599,7 @@ pub(crate) enum VerificationOutcome {
 fn verify_task_completion(
     task_type: &str,
     task_order: usize,
+    working_dir: &std::path::Path,
 ) -> std::result::Result<VerificationOutcome, String> {
     let Some(config) = ralph_loop_config() else {
         return Ok(VerificationOutcome::Disabled);
@@ -603,7 +612,8 @@ fn verify_task_completion(
     };
 
     tracing::info!(
-        "Ralph loop verification for task #{task_order} (type={task_type}): {} commands",
+        "Ralph loop verification for task #{task_order} (type={task_type}) in {}: {} commands",
+        working_dir.display(),
         commands.len()
     );
 
@@ -612,7 +622,7 @@ fn verify_task_completion(
         task_order,
         &commands,
         config.verification.require_all_pass,
-        &mut run_verification_command,
+        &mut |cmd| run_verification_command(cmd, working_dir),
     )
     .map(|()| VerificationOutcome::Verified)
 }
@@ -1503,7 +1513,8 @@ impl Tool for PlanTool {
                         .get_task_by_order(task_order)
                         .map(|t| (t.task_type.to_string(), !t.acceptance_criteria.is_empty()))
                         .unwrap_or_default();
-                    match verify_task_completion(&task_type_str, task_order) {
+                    match verify_task_completion(&task_type_str, task_order, &context.working_dir())
+                    {
                         Err(verify_msg) => {
                             return Ok(ToolResult::error(format!(
                                 "🔒 Ralph Loop verification REJECTED task #{task_order}.\n\n{verify_msg}"
