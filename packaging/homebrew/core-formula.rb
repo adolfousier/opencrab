@@ -22,6 +22,10 @@ class Opencrabs < Formula
   head "https://github.com/adolfousier/opencrabs.git", branch: "main"
 
   depends_on "cmake" => :build
+  # bindgen, reached through llama-cpp-sys-2, loads libclang at build time and
+  # panics with "Unable to find libclang" without it. Present transitively but
+  # invisible inside Homebrew's sandbox, which exposes only declared deps.
+  depends_on "llvm" => :build
   depends_on "pkgconf" => :build
   depends_on "rust" => :build
 
@@ -42,6 +46,11 @@ class Opencrabs < Formula
   end
 
   def install
+    # bindgen searches default library paths, which do not include Homebrew's
+    # llvm keg. Pointing it at the keg is what actually resolves libclang;
+    # declaring the dependency alone only makes the keg exist.
+    ENV["LIBCLANG_PATH"] = formula_opt_lib("llvm").to_s
+
     system "cargo", "install", *std_cargo_args
   end
 
