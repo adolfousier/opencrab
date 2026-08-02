@@ -373,7 +373,7 @@ silence_group_start = true       # Silently ignore /start from non-allowed users
 
 Every channel has a `bot_owner` field (`[channels.telegram]`, `[channels.discord]`, `[channels.slack]`, `[channels.whatsapp]`, `[channels.trello]`). It names the user ID(s) (phone for WhatsApp) treated as the bot owner. On first-run setup the owner is seeded automatically from the first entry in your allow list (`allowed_users`, or `allowed_phones` for WhatsApp), and existing configs are migrated on load. Set `bot_owner` explicitly to pin the owner instead of relying on list order.
 
-The owner gets access that other allowlisted users do not. All channel commands except `/new` are owner-only: `/compact`, `/doctor`, `/evolve`, `/help`, `/models`, `/rtk`, `/sessions`, `/stop`, `/usage`, `/profiles`, `/goal`, `/mission-control`, `/rename`, `/cd`, `/respond_to`, `/redact`. `/new` stays open for session recovery (bugged/hallucinated sessions). Non-owners who try get a short "owner only" notice.
+The owner gets access that other allowlisted users do not. All channel commands except `/new` are owner-only: `/compact`, `/doctor`, `/evolve`, `/help`, `/models`, `/rtk`, `/sessions`, `/stop`, `/usage`, `/profiles`, `/goal`, `/mission-control`, `/rename`, `/cd`, `/respond_to`, `/redact`, `/restart`, `/exit`. `/new` stays open for session recovery (bugged/hallucinated sessions). Non-owners who try get a short "owner only" notice.
 
 **Deny-by-default access model:** if neither `allowed_users` nor `bot_owner` is configured, the bot refuses all interactions — unconfigured installs are locked down by default. Set at least one to unlock access. This prevents open-mode footguns on fresh deployments.
 
@@ -3020,8 +3020,12 @@ When connected via messaging channels, the following slash commands are availabl
 | `/onboard:channels` | Channel setup wizard — configure Telegram, Discord, WhatsApp, Slack, or Trello from chat |
 | `/onboard:voice` | Voice STT/TTS setup — pick provider, model, and credentials |
 | `/onboard:image` | Image handling setup — configure vision analysis and image generation |
+| `/restart` | Restart OpenCrabs. Relaunches the same binary with the same arguments, so nothing about how it was started has to be known or repeated. Unfinished turns resume automatically on startup |
+| `/exit` | Shut OpenCrabs down. Starting it again needs access to the machine it runs on, so this is the one command with no way back from chat |
 
 Model switching via `/models` changes the model within the current provider and takes effect immediately (no restart needed). The selection persists to `config.toml`.
+
+`/restart` and `/exit` announce themselves before acting, because once the process is gone nothing is left to report a failure. Both are owner-only, like every other command that changes the running process.
 
 Any message that isn't a recognized command is forwarded to the AI agent as normal.
 

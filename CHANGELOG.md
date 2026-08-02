@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/restart` and `/exit` channel commands. Neither existed, so a daemon could not be stopped or cycled without shell access to the machine it runs on. `/restart` relaunches the same binary with the same arguments; unfinished turns resume on startup as they already did after any restart. Both are owner-only and announce themselves before acting, since nothing survives to report a failure afterwards.
+
+### Fixed
+
+- Ralph verification ran in the directory OpenCrabs was launched from rather than the session's own, so a plan in one repo was gated on another repo's build results. With a clean launch directory it reported success for a repo it never inspected (#921).
+- Linux dev binaries could not be cross-compiled on an arm64 host: cross publishes amd64-only images, and host build artifacts leaked into the container and failed on a glibc mismatch.
+
 ## [0.3.78] - 2026-08-01
 
 68 commits since v0.3.77. 122 files changed, +9960 / -566 lines.
