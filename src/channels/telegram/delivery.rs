@@ -204,7 +204,30 @@ pub(crate) async fn deliver_final_response(
                     }
                     return Ok(false);
                 }
-                if text_only.trim().is_empty() {
+                // A react directive with no tool work is react-only by contract:
+                // the prompt tells the model to output ONLY the directive in
+                // that case. Prose alongside it is a contract violation, and in
+                // practice it is the model's own reasoning spilled into the
+                // content channel (#928) — a turn meant to produce no text has
+                // nothing else in there, which is why the leak is total rather
+                // than an answer with reasoning appended.
+                //
+                // Decided from the directive and the tool state, never by
+                // inspecting whether the prose reads like reasoning: the leaked
+                // text carries no markers, so classifying it would eventually
+                // suppress a real answer.
+                //
+                // The tools-ran case is untouched above (#439), so a work turn
+                // that both summarises and reacts still delivers its summary.
+                let leaked_prose = !text_only.trim().is_empty();
+                if !leaked_prose || !turn_ran_tools {
+                    if leaked_prose {
+                        tracing::warn!(
+                            "Telegram: react-only turn carried {} chars of prose alongside the \
+                             directive — suppressing it as leaked reasoning (#928)",
+                            text_only.trim().len()
+                        );
+                    }
                     // Never-silent guard (#353): a reaction-only turn whose
                     // reaction FAILED must degrade to text, not to nothing.
                     if react_result.is_err() {
@@ -231,7 +254,12 @@ pub(crate) async fn deliver_final_response(
                             let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                             s.turn_started_at.elapsed()
                         };
-                        if elapsed >= std::time::Duration::from_secs(60) {
+                        // Leaked prose is proof the model reasoned its way to a
+                        // deliberate react-only, so #546's dropped-request
+                        // notice would be wrong here: the turn was not
+                        // abandoned, its reasoning simply landed in the content
+                        // channel. Suppress the warning, not the reaction.
+                        if elapsed >= std::time::Duration::from_secs(60) && !leaked_prose {
                             tracing::warn!(
                                 "Telegram: react-only after {}s with no tools and no text — \
                                  surfacing as an incomplete turn, not a silent drop (#546)",
