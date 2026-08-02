@@ -4,14 +4,10 @@
 # Candidate formula for submission to Homebrew/homebrew-core (#924).
 #
 # NOT the tap formula. The tap (packaging/homebrew/opencrabs.rb.template)
-# installs the prebuilt release binary and bundles rtk. Core does not accept
-# either of those: it builds from source and forbids vendoring third-party
-# precompiled binaries. Users are not affected by the source build, because
-# core publishes bottles that Homebrew's CI compiles once per platform.
-#
-# RTK is deliberately absent. OpenCrabs downloads the right rtk binary for the
-# platform on first use when it is missing, so omitting it here costs a one-off
-# download rather than a feature.
+# installs the prebuilt release binary. Core builds from source instead, so
+# this formula reuses neither the release archive nor its bundled rtk copy.
+# Users are not affected by the source build, because core publishes bottles
+# that Homebrew's CI compiles once per platform.
 #
 # Submission checklist:
 #   1. Update url + sha256 to the release being submitted
@@ -29,9 +25,15 @@ class Opencrabs < Formula
   depends_on "pkgconf" => :build
   depends_on "rust" => :build
 
-  # No opus dependency: opusic-sys vendors and statically links it. CI builds
-  # Linux with --all-features installing only libasound2-dev, and the built
-  # binary shows no libopus linkage. Declaring it would be a phantom dependency.
+  # openssl-sys, via reqwest -> native-tls. Present transitively through other
+  # dependencies, but Homebrew's build sandbox only exposes DECLARED ones, so
+  # leaving it out fails with "Could not find directory of OpenSSL installation"
+  # even though the library is on the machine.
+  depends_on "openssl@3"
+
+  # OpenCrabs prepends rtk to supported shell commands to cut their output.
+  # Upstream archives bundle a copy; here it is a real dependency instead.
+  depends_on "rtk"
 
   on_linux do
     # alsa-sys, reached through rodio for local-stt/local-tts. macOS uses
@@ -44,10 +46,16 @@ class Opencrabs < Formula
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/opencrabs --version")
+    # Generate a config and check it is real, parseable TOML with the section
+    # the loader requires, rather than asserting on --version or --help.
+    system bin/"opencrabs", "init"
 
-    # --version alone would pass against a binary that cannot read its own
-    # config, so exercise a subcommand that touches the config layer.
-    assert_match "opencrabs", shell_output("#{bin}/opencrabs --help")
+    config = testpath/".opencrabs/config.toml"
+    assert_path_exists config
+    assert_match "[provider_registry]", config.read
+
+    # Reading it back exercises the config loader, so a binary that writes a
+    # file it cannot itself parse fails here.
+    assert_match "Database:", shell_output("#{bin}/opencrabs config")
   end
 end
