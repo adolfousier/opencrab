@@ -6,11 +6,20 @@
 use crate::brain::provider::claude_cli::{
     ClaudeCliProvider, clear_learned_models, learned_alias, record_alias, strip_claude_date_suffix,
 };
-use std::sync::Mutex;
 
 /// Serializes the tests that mutate the process-wide learned-model cache,
 /// so `clear_learned_models()` in one can't wipe a key another is asserting.
-static CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+///
+/// This must be the SHARED `crate::tests::MODEL_CACHE_LOCK`, not a lock private
+/// to this file: a private one serialized the mutators against each other but
+/// not against the tests that only read the cache, which is how a reader
+/// comparing two evaluations of discovery saw a clear() land between them
+/// (#932).
+fn cache_lock() -> std::sync::MutexGuard<'static, ()> {
+    crate::tests::MODEL_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[test]
 fn strip_claude_date_suffix_strips_eight_digit_date() {
@@ -52,7 +61,7 @@ fn seed_for_alias_holds_the_build_time_fallbacks() {
 
 #[test]
 fn learned_version_overrides_the_seed() {
-    let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _guard = cache_lock();
     // Simulate the CLI resolving `opus` to a release newer than the seed.
     // After observing it, the alias must resolve to the learned version so
     // footers/pricing track Anthropic's current model with no code change.
@@ -77,7 +86,7 @@ fn learned_version_overrides_the_seed() {
 
 #[test]
 fn record_alias_is_idempotent_and_updates() {
-    let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _guard = cache_lock();
     clear_learned_models();
     record_alias("haiku", "haiku-4-5");
     assert_eq!(learned_alias("haiku").as_deref(), Some("haiku-4-5"));

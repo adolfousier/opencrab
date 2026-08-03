@@ -13,28 +13,51 @@ use crate::brain::provider::{
 };
 use crate::utils::providers::cli_supported_models;
 
+/// Run `f` with everything claude-cli discovery reads held still (#932).
+///
+/// `available_models()` composes from the learned-model cache and from
+/// `~/.claude.json`, both process-global. A test that evaluates discovery twice
+/// and compares the results sees a `clear_learned_models()` or a `$HOME`
+/// override land between the two calls, then fails on a difference neither side
+/// caused. Only these two shared locks exist and nothing else takes both, so
+/// there is no lock ordering to deadlock on.
+fn with_discovery_held<T>(f: impl FnOnce() -> T) -> T {
+    let cache = crate::tests::MODEL_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = crate::tests::HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let out = f();
+    drop(home);
+    drop(cache);
+    out
+}
+
 #[test]
 fn claude_cli_menu_matches_provider_supported_models() {
-    // We don't construct ClaudeCliProvider here because `new()` calls
-    // resolve_claude_path which probes the filesystem. The claude-cli list is
-    // DISCOVERED from the installed CLI (#753) rather than a const, so the
-    // invariant is that the menu and the provider read the same discovery
-    // function — not that either matches a frozen list.
-    let (menu_models, _) =
-        cli_supported_models("claude-cli").expect("claude-cli must be a known CLI provider");
-    assert_eq!(
-        menu_models,
-        crate::brain::provider::claude_cli::available_models(),
-        "menu and provider must read from the same discovery function"
-    );
-    // The built-in const remains a floor: discovery may ADD names (a newly
-    // released model) but must never drop a known one.
-    for m in crate::brain::provider::claude_cli::SUPPORTED_MODELS {
-        assert!(
-            menu_models.iter().any(|x| x == m),
-            "discovery dropped the built-in model '{m}' — the const must stay a floor"
+    with_discovery_held(|| {
+        // We don't construct ClaudeCliProvider here because `new()` calls
+        // resolve_claude_path which probes the filesystem. The claude-cli list
+        // is DISCOVERED from the installed CLI (#753) rather than a const, so
+        // the invariant is that the menu and the provider read the same
+        // discovery function — not that either matches a frozen list.
+        let (menu_models, _) =
+            cli_supported_models("claude-cli").expect("claude-cli must be a known CLI provider");
+        assert_eq!(
+            menu_models,
+            crate::brain::provider::claude_cli::available_models(),
+            "menu and provider must read from the same discovery function"
         );
-    }
+        // The built-in const remains a floor: discovery may ADD names (a newly
+        // released model) but must never drop a known one.
+        for m in crate::brain::provider::claude_cli::SUPPORTED_MODELS {
+            assert!(
+                menu_models.iter().any(|x| x == m),
+                "discovery dropped the built-in model '{m}' — the const must stay a floor"
+            );
+        }
+    });
 }
 
 #[test]
@@ -138,26 +161,29 @@ fn claude_cli_default_is_real_claude_model() {
 
 #[test]
 fn claude_cli_trait_supported_models_uses_discovery() {
-    if let Ok(p) = ClaudeCliProvider::new() {
-        let trait_models = p.supported_models();
-        // Discovered (#753), so it may be a SUPERSET of the const — the
-        // invariant is that it comes from the same discovery the menu uses and
-        // never drops a built-in name. Matching the const exactly would defeat
-        // the purpose: a newly released model must be allowed through here or
-        // picking it would be rejected as "not in the catalogue".
-        assert_eq!(
-            trait_models,
-            crate::brain::provider::claude_cli::available_models()
-        );
-        for m in crate::brain::provider::claude_cli::SUPPORTED_MODELS {
-            assert!(
-                trait_models.iter().any(|x| x == m),
-                "provider dropped the built-in model '{m}'"
+    with_discovery_held(|| {
+        if let Ok(p) = ClaudeCliProvider::new() {
+            let trait_models = p.supported_models();
+            // Discovered (#753), so it may be a SUPERSET of the const — the
+            // invariant is that it comes from the same discovery the menu uses
+            // and never drops a built-in name. Matching the const exactly would
+            // defeat the purpose: a newly released model must be allowed
+            // through here or picking it would be rejected as "not in the
+            // catalogue".
+            assert_eq!(
+                trait_models,
+                crate::brain::provider::claude_cli::available_models()
             );
+            for m in crate::brain::provider::claude_cli::SUPPORTED_MODELS {
+                assert!(
+                    trait_models.iter().any(|x| x == m),
+                    "provider dropped the built-in model '{m}'"
+                );
+            }
         }
-    }
-    // If `claude` binary isn't installed in this test env, skip silently;
-    // the menu helper test above already pins the invariant.
+        // If `claude` binary isn't installed in this test env, skip silently;
+        // the menu helper test above already pins the invariant.
+    });
 }
 
 #[test]

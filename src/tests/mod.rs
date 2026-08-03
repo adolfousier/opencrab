@@ -4,6 +4,17 @@
 /// mid-run. Every HOME-mutating test must take THIS shared lock.
 pub static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Process-wide lock for tests that read or mutate the claude-cli learned-model
+/// cache (`LEARNED_MODELS`). Same story as `HOME_ENV_LOCK`: the mutating tests
+/// kept a lock private to their own file, so it serialized them against each
+/// other but not against the tests that only READ the cache. A reader that
+/// evaluates discovery twice and compares saw a `clear_learned_models()` land
+/// between the two calls and failed on a difference neither side caused (#932).
+///
+/// Every test that mutates the cache, and every test that depends on discovery
+/// returning the same answer twice, must take THIS lock.
+pub static MODEL_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub mod a2a_agent_card_test;
 pub mod a2a_debate_test;
 pub mod a2a_handler_tasks_test;
