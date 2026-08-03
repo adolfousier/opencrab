@@ -1211,7 +1211,10 @@ impl App {
         if self.force_onboard || is_first {
             self.force_onboard = false;
             tracing::info!("[init] Starting onboarding wizard");
-            let mut wizard = OnboardingWizard::new();
+            // Resume where the user left off rather than restarting from step
+            // one. `resumed()` falls back to a fresh wizard when there is no
+            // recorded progress, so an explicit `--onboard` still starts clean.
+            let mut wizard = OnboardingWizard::resumed();
             wizard.is_first_time = is_first;
             self.onboarding = Some(wizard);
             self.mode = AppMode::Onboarding;

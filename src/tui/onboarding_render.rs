@@ -115,6 +115,19 @@ pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
         }
     };
 
+    // Resume notice — what is still outstanding after picking up a run that
+    // was left halfway (#919). Shown above any error so an error about the
+    // current field stays closest to the field.
+    if let Some(ref notice) = wizard.resume_notice {
+        lines.push(Line::from(""));
+        for chunk in wrap_text(notice, wrap_width) {
+            lines.push(Line::from(Span::styled(
+                format!("  {chunk}"),
+                Style::default().fg(BRAND_BLUE),
+            )));
+        }
+    }
+
     // Error message
     if let Some(ref err) = wizard.error_message {
         lines.push(Line::from(""));

@@ -198,6 +198,11 @@ impl App {
                                         wizard.ps.selected_model_name().to_string(),
                                     )
                                 };
+                                // Record completion only where the config was
+                                // actually written. The Err arm below saved
+                                // nothing, so onboarding must run again rather
+                                // than be marked done (#919).
+                                crate::tui::onboarding::state::OnboardingState::mark_completed();
                                 self.push_system_message(format!(
                                     "Setup complete! Provider: {} | Model: {}",
                                     provider_name, model_name
@@ -672,6 +677,11 @@ impl App {
                                         wizard.ps.selected_model_name().to_string(),
                                     )
                                 };
+                                // Record completion only where the config was
+                                // actually written. The Err arm below saved
+                                // nothing, so onboarding must run again rather
+                                // than be marked done (#919).
+                                crate::tui::onboarding::state::OnboardingState::mark_completed();
                                 self.push_system_message(format!(
                                     "Setup complete! Provider: {} | Model: {}",
                                     provider_name, model_name

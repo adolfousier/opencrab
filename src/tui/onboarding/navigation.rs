@@ -2,8 +2,28 @@ use super::types::*;
 use super::wizard::OnboardingWizard;
 
 impl OnboardingWizard {
+    /// Write down where the user is, so leaving halfway is resumable (#919).
+    ///
+    /// Only for a genuine first-time run. `quick_jump` opens a single step from
+    /// a slash command and is not a pass through the wizard, and a user
+    /// re-running `/onboard` after finishing has nothing to resume — the gate
+    /// reads the completion marker and never looks at the step.
+    fn persist_progress(&self) {
+        if self.quick_jump || !self.is_first_time {
+            return;
+        }
+        super::state::OnboardingState::record_step(self.step.as_key(), self.mode.as_key());
+    }
+
     /// Advance to the next step
     pub fn next_step(&mut self) {
+        // Wrapped so every path out of the step machine below — including the
+        // early returns on validation errors — records where the user ended up.
+        self.next_step_inner();
+        self.persist_progress();
+    }
+
+    fn next_step_inner(&mut self) {
         self.error_message = None;
         self.focused_field = 0;
         // Reset manual scroll so each new step starts at the top —
@@ -106,6 +126,12 @@ impl OnboardingWizard {
 
     /// Go back to the previous step
     pub fn prev_step(&mut self) -> bool {
+        let cancelled = self.prev_step_inner();
+        self.persist_progress();
+        cancelled
+    }
+
+    fn prev_step_inner(&mut self) -> bool {
         self.error_message = None;
         self.focused_field = 0;
         self.user_scroll_offset = 0;

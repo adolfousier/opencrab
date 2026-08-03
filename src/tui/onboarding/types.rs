@@ -490,6 +490,97 @@ impl OnboardingStep {
         }
     }
 
+    /// Stable identifier for persisting progress. Deliberately not the title,
+    /// which is prose and free to change without invalidating saved state.
+    pub fn as_key(&self) -> &'static str {
+        match self {
+            Self::ModeSelect => "mode_select",
+            Self::Workspace => "workspace",
+            Self::ProviderAuth => "provider_auth",
+            Self::Channels => "channels",
+            Self::TelegramSetup => "telegram_setup",
+            Self::DiscordSetup => "discord_setup",
+            Self::WhatsAppSetup => "whatsapp_setup",
+            Self::SlackSetup => "slack_setup",
+            Self::TrelloSetup => "trello_setup",
+            Self::VoiceSetup => "voice_setup",
+            Self::ImageSetup => "image_setup",
+            Self::Daemon => "daemon",
+            Self::HealthCheck => "health_check",
+            Self::BrainSetup => "brain_setup",
+            Self::Complete => "complete",
+        }
+    }
+
+    /// Parse a key written by a previous run. Unknown keys return `None` so a
+    /// state file from a newer or older build restarts the wizard rather than
+    /// resuming somewhere arbitrary.
+    pub fn from_key(key: &str) -> Option<Self> {
+        let all = [
+            Self::ModeSelect,
+            Self::Workspace,
+            Self::ProviderAuth,
+            Self::Channels,
+            Self::TelegramSetup,
+            Self::DiscordSetup,
+            Self::WhatsAppSetup,
+            Self::SlackSetup,
+            Self::TrelloSetup,
+            Self::VoiceSetup,
+            Self::ImageSetup,
+            Self::Daemon,
+            Self::HealthCheck,
+            Self::BrainSetup,
+            Self::Complete,
+        ];
+        all.into_iter().find(|s| s.as_key() == key)
+    }
+
+    /// The main steps of a flow, in order. Channel sub-steps are left out:
+    /// they are reached from Channels and are not separate stops.
+    pub fn flow(mode: WizardMode) -> &'static [Self] {
+        match mode {
+            WizardMode::QuickStart => &[
+                Self::ModeSelect,
+                Self::Workspace,
+                Self::ProviderAuth,
+                Self::Daemon,
+                Self::HealthCheck,
+                Self::BrainSetup,
+            ],
+            WizardMode::Advanced => &[
+                Self::ModeSelect,
+                Self::Workspace,
+                Self::ProviderAuth,
+                Self::Channels,
+                Self::VoiceSetup,
+                Self::ImageSetup,
+                Self::Daemon,
+                Self::HealthCheck,
+                Self::BrainSetup,
+            ],
+        }
+    }
+
+    /// Titles of the steps still ahead, so a resumed wizard can say what is
+    /// left rather than dropping the user back in with no context (#919).
+    /// A step not in the flow (a channel sub-step) counts from its parent.
+    pub fn remaining_titles(&self, mode: WizardMode) -> Vec<&'static str> {
+        let flow = Self::flow(mode);
+        let anchor = match self {
+            Self::TelegramSetup
+            | Self::DiscordSetup
+            | Self::WhatsAppSetup
+            | Self::SlackSetup
+            | Self::TrelloSetup => Self::Channels,
+            other => *other,
+        };
+        let Some(pos) = flow.iter().position(|s| *s == anchor) else {
+            return Vec::new();
+        };
+        flow[pos + 1..].iter().map(|s| s.title()).collect()
+    }
+
     /// Step subtitle
     pub fn subtitle(&self) -> &'static str {
         match self {
@@ -517,6 +608,16 @@ impl OnboardingStep {
 pub enum WizardMode {
     QuickStart,
     Advanced,
+}
+
+impl WizardMode {
+    /// Stable identifier for persisting which flow the user chose.
+    pub fn as_key(&self) -> &'static str {
+        match self {
+            Self::QuickStart => "quick",
+            Self::Advanced => "advanced",
+        }
+    }
 }
 
 /// Health check status for individual checks

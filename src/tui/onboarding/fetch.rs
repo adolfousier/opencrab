@@ -118,47 +118,64 @@ impl OnboardingWizard {
     }
 }
 
-/// First-time detection: no config file AND no API keys in environment.
-/// Once config.toml is written (by onboarding or manually), this returns false forever.
-/// If any API key env var is set, the user has already configured auth — skip onboarding.
-/// To re-run the wizard, use `opencrabs onboard`, `--onboard` flag, or `/onboard`.
+/// Whether onboarding still needs to run.
+///
+/// The answer comes from a recorded fact — did the user reach the end of the
+/// wizard — not from inspecting the config. Those are different questions, and
+/// answering the second one hid the first: a CLI provider needs no API key, so
+/// a single `enabled = true` left by a partial run made onboarding disappear
+/// while nothing else had been set, dropping a first-time user into a chat
+/// with no usable pair (#919).
+///
+/// To re-run the wizard after finishing, use `opencrabs onboard`, `--onboard`,
+/// or `/onboard`.
 pub fn is_first_time() -> bool {
-    tracing::debug!("[is_first_time] checking if first time setup needed...");
-
-    // Check if config exists
-    let config_path = crate::config::opencrabs_home().join("config.toml");
-    if !config_path.exists() {
-        tracing::debug!("[is_first_time] no config found, need onboarding");
-        return true;
+    let state = super::state::OnboardingState::load();
+    if state.completed {
+        tracing::debug!("[is_first_time] onboarding recorded as completed");
+        return false;
     }
 
-    // Config exists - check if any provider is actually enabled
+    // Installs that predate the progress file have no marker, and nagging
+    // someone who genuinely finished would be its own bug. Decide once, from
+    // the config, then record it so this never runs again.
+    if !super::state::OnboardingState::path().exists() && setup_looks_finished() {
+        tracing::info!(
+            "[is_first_time] no progress file but setup is complete — recording it and skipping onboarding"
+        );
+        super::state::OnboardingState::mark_completed();
+        return false;
+    }
+
+    tracing::debug!("[is_first_time] onboarding not completed, wizard will run");
+    true
+}
+
+/// One-time migration test for installs that predate the progress file.
+///
+/// Deliberately stricter than the check it replaces. "A provider is enabled"
+/// was the old bar and is exactly what let an unconfigured CLI provider pass;
+/// a finished setup also has a model chosen for that provider. Anything short
+/// of that gets the wizard, which is the recoverable direction to be wrong in.
+fn setup_looks_finished() -> bool {
+    let config_path = crate::config::opencrabs_home().join("config.toml");
+    if !config_path.exists() {
+        return false;
+    }
     let config = match crate::config::Config::load() {
         Ok(c) => c,
         Err(e) => {
-            tracing::debug!(
-                "[is_first_time] failed to load config: {}, need onboarding",
-                e
-            );
-            return true;
+            tracing::debug!("[is_first_time] config did not load ({e}) — treating as unfinished");
+            return false;
         }
     };
-
-    // Past first-time setup iff there's an enabled + usable provider. Use
-    // active_provider_and_model (which walks provider_registry + customs)
-    // instead of a hardcoded list — the old hardcoded OR-chain silently omitted
-    // new providers (e.g. Xiaomi), so an enabled Xiaomi still looped
-    // back into onboarding on every restart. provider_registry is the single
-    // source of truth and can't drift.
-    let (active_provider, _) = config.providers.active_provider_and_model();
-    let has_enabled_provider = active_provider != "none";
-
-    tracing::debug!(
-        "[is_first_time] has_enabled_provider={}, result={}",
-        has_enabled_provider,
-        !has_enabled_provider
-    );
-    !has_enabled_provider
+    // active_provider_and_model walks provider_registry + customs, so it can't
+    // drift out of sync with the provider list the way a hardcoded OR-chain
+    // did (an enabled Xiaomi used to loop back into onboarding forever).
+    let (provider, model) = config.providers.active_provider_and_model();
+    let finished = provider != "none" && model != "none" && model != "(default)";
+    tracing::debug!("[is_first_time] migration check: {provider}/{model} finished={finished}");
+    finished
 }
 
 /// Fetch models from provider API. No API key needed for most providers.

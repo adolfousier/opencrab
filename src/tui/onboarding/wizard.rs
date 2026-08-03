@@ -169,6 +169,11 @@ pub struct OnboardingWizard {
     /// to send the first-time welcome message on completion.
     pub is_first_time: bool,
 
+    /// Set when the wizard reopened partway through a previous run, naming
+    /// the steps still outstanding. Shown once so a user who left halfway is
+    /// told what remains rather than dropped back in without context (#919).
+    pub resume_notice: Option<String>,
+
     /// Extra vertical scroll the user requested manually via Page Up /
     /// Page Down. Added on top of the focus-driven scroll computed each
     /// frame in `render_onboarding` so the user can peek at fields below
@@ -511,6 +516,7 @@ impl OnboardingWizard {
             quick_jump: false,
             quick_jump_done: false,
             is_first_time: false,
+            resume_notice: None,
             user_scroll_offset: 0,
         };
 
@@ -522,6 +528,46 @@ impl OnboardingWizard {
             wizard.original_about_me = truncated;
         }
 
+        wizard
+    }
+
+    /// Reopen the wizard where the user left it.
+    ///
+    /// Falls back to a fresh wizard when there is nothing to resume, when the
+    /// recorded step is from a build that does not have it, or when it is
+    /// `Complete` — resuming onto the finish screen would let a half-finished
+    /// setup be marked done by pressing Enter.
+    pub fn resumed() -> Self {
+        let mut wizard = Self::new();
+        let saved = super::state::OnboardingState::load();
+        let Some(step) = saved
+            .last_step
+            .as_deref()
+            .and_then(OnboardingStep::from_key)
+            .filter(|s| !matches!(s, OnboardingStep::ModeSelect | OnboardingStep::Complete))
+        else {
+            return wizard;
+        };
+
+        if saved.mode.as_deref() == Some(WizardMode::Advanced.as_key()) {
+            wizard.mode = WizardMode::Advanced;
+        }
+        wizard.step = step;
+        let remaining = step.remaining_titles(wizard.mode);
+        wizard.resume_notice = Some(if remaining.is_empty() {
+            format!("Picking up where you left off, at {}.", step.title())
+        } else {
+            format!(
+                "Picking up where you left off, at {}. Still to do: {}.",
+                step.title(),
+                remaining.join(", ")
+            )
+        });
+        tracing::info!(
+            "[onboarding] resuming at {} ({} step(s) outstanding)",
+            step.as_key(),
+            remaining.len()
+        );
         wizard
     }
 

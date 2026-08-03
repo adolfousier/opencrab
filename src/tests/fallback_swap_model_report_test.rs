@@ -227,10 +227,13 @@ async fn streaming_swap_reports_the_same_models_as_completion() {
     ));
     let provider = FallbackProvider::new(primary, vec![fallback]);
 
-    provider
+    let stream = provider
         .stream(request_for("shared-pinned"))
         .await
         .expect("fallback should answer");
+    // The swap is recorded when the fallback accepts the request; the stream's
+    // contents are not what this test is about.
+    drop(stream);
 
     let swap = provider
         .take_swap_event()
