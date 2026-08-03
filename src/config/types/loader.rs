@@ -8,6 +8,30 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// What one `Config::load()` had to do to produce a usable config.
+///
+/// Returned by value from [`Config::load_with_status`] so a caller learns the
+/// outcome of ITS OWN load. The flags this replaced were process-wide and
+/// consumed on read, so two threads loading config at once raced for a single
+/// signal and one of them lost it (#912).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfigLoadStatus {
+    /// A broken config file was mechanically repaired in place and re-loaded.
+    pub autofixed: bool,
+    /// The load fell back to the last-known-good snapshot.
+    pub recovered: bool,
+    /// Why it fell back, so the user is told WHAT failed rather than only that
+    /// something did (#909). Set only alongside `recovered`.
+    pub recovery_reason: Option<String>,
+}
+
+impl ConfigLoadStatus {
+    /// Nothing went wrong: the config on disk parsed as written.
+    fn clean() -> Self {
+        Self::default()
+    }
+}
+
 impl Config {
     /// Build a runtime `VoiceConfig` from `providers.stt` / `providers.tts`.
     pub fn voice_config(&self) -> VoiceConfig {
@@ -178,8 +202,18 @@ impl Config {
     /// 3. Local config: ./opencrabs.toml
     /// 4. Environment variables
     pub fn load() -> Result<Self> {
-        match Self::load_inner() {
-            Ok(config) => Ok(config),
+        Self::load_with_status().map(|(config, _)| config)
+    }
+
+    /// `load()`, plus what it had to do to succeed.
+    ///
+    /// Use this over `load()` + a global flag whenever the outcome of a
+    /// particular load matters: the status is returned to the caller that
+    /// asked for it and cannot be observed, cleared, or stolen by another
+    /// thread loading config at the same time (#912).
+    pub fn load_with_status() -> Result<(Self, ConfigLoadStatus)> {
+        let loaded = match Self::load_inner() {
+            Ok(config) => Ok((config, ConfigLoadStatus::clean())),
             Err(e) => {
                 tracing::error!("Config load failed: {e:#} — attempting auto-repair");
                 // First: try to mechanically fix a syntactically-broken config
@@ -187,27 +221,54 @@ impl Config {
                 // the fix back to disk, and re-load. This heals the typo on
                 // disk instead of silently running on a stale copy.
                 if let Some(fixed) = Self::try_autofix_configs() {
-                    CONFIG_AUTOFIXED.store(true, std::sync::atomic::Ordering::Relaxed);
-                    return Ok(fixed);
-                }
-                // If we can't safely auto-fix it, fall back to last-known-good
-                // so a typo never changes behaviour (e.g. flipping auto-always
-                // approvals into prompts).
-                tracing::error!("Auto-repair did not resolve it — trying last-known-good");
-                if let Some(good) = load_last_good_config() {
-                    // Keep the reason: the warning used to name a file and give
-                    // no cause, so a transient truncated read looked identical
-                    // to a genuine syntax error in the user's edit (#909).
-                    if let Ok(mut slot) = crate::config::types::CONFIG_RECOVERY_REASON.lock() {
-                        *slot = Some(format!("{e:#}"));
-                    }
-                    CONFIG_RECOVERED.store(true, std::sync::atomic::Ordering::Relaxed);
-                    Ok(good)
+                    Ok((
+                        fixed,
+                        ConfigLoadStatus {
+                            autofixed: true,
+                            ..ConfigLoadStatus::clean()
+                        },
+                    ))
                 } else {
-                    Err(e)
+                    // If we can't safely auto-fix it, fall back to last-known-good
+                    // so a typo never changes behaviour (e.g. flipping auto-always
+                    // approvals into prompts).
+                    tracing::error!("Auto-repair did not resolve it — trying last-known-good");
+                    match load_last_good_config() {
+                        // Keep the reason: the warning used to name a file and
+                        // give no cause, so a transient truncated read looked
+                        // identical to a genuine syntax error in the user's
+                        // edit (#909).
+                        Some(good) => Ok((
+                            good,
+                            ConfigLoadStatus {
+                                recovered: true,
+                                recovery_reason: Some(format!("{e:#}")),
+                                ..ConfigLoadStatus::clean()
+                            },
+                        )),
+                        None => Err(e),
+                    }
                 }
             }
+        };
+
+        // Record the first outcome for the startup notification. Ignored on
+        // every later load — `FIRST_LOAD_STATUS` describes the config the
+        // process started on, which is what the user is being told about.
+        if let Ok((_, ref status)) = loaded {
+            crate::config::types::FIRST_LOAD_STATUS.get_or_init(|| status.clone());
         }
+
+        loaded
+    }
+
+    /// Outcome of the first `Config::load()` in this process, for the startup
+    /// notification. Non-destructive: reading it never clears it.
+    pub fn first_load_status() -> ConfigLoadStatus {
+        crate::config::types::FIRST_LOAD_STATUS
+            .get()
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// On a parse failure, mechanically repair the broken config file(s) in
@@ -239,23 +300,17 @@ impl Config {
         }
     }
 
-    /// Returns true (once) if the last `Config::load()` auto-repaired a broken
-    /// config file in place.
-    pub fn was_autofixed() -> bool {
-        CONFIG_AUTOFIXED.swap(false, std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Returns true (once) if the last `Config::load()` fell back to a last-known-good snapshot.
-    pub fn was_recovered() -> bool {
-        CONFIG_RECOVERED.swap(false, std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Why the last recovery happened, consumed once alongside `was_recovered`.
-    pub fn recovery_reason() -> Option<String> {
-        crate::config::types::CONFIG_RECOVERY_REASON
-            .lock()
-            .ok()
-            .and_then(|mut slot| slot.take())
+    /// Bring config.toml up to date with the current schema, rewriting it in
+    /// place if anything changed.
+    ///
+    /// Call this once at process start, before the first `load()`. It used to
+    /// run inside `load_inner`, which made every config read a potential write
+    /// to disk — including reads from background threads and from code that
+    /// only wanted to look at a value (#912).
+    pub fn migrate_config_files() {
+        if let Some(ref path) = Self::system_config_path() {
+            Self::migrate_if_needed(path);
+        }
     }
 
     /// Inner load implementation — separated so `load()` can wrap with recovery.
@@ -280,10 +335,10 @@ impl Config {
             config = Self::merge_from_file(config, &local_config_path)?;
         }
 
-        // 2.5 Migrate old config keys if needed (e.g. trello.allowed_channels → board_ids)
-        if let Some(ref path) = Self::system_config_path() {
-            Self::migrate_if_needed(path);
-        }
+        // Migration used to run here, so every `load()` REWROTE config.toml —
+        // a read that mutates the file it read. Startup calls
+        // `migrate_config_files()` instead (#912): loading config is now a pure
+        // read, and the migration happens once, where it can be reasoned about.
 
         // 3. Load API keys from keys.toml (overrides config.toml keys)
         //    On parse failure, try keys.last_good.toml before giving up.

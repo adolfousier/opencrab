@@ -97,6 +97,19 @@ pub fn with_profile_home<T>(profile: Option<&str>, f: impl FnOnce() -> T) -> T {
     PROFILE_NAME_OVERRIDE.sync_scope(name, || PROFILE_HOME_OVERRIDE.sync_scope(home, f))
 }
 
+/// Run a sync closure with `opencrabs_home()` pointed at an explicit directory.
+///
+/// Unlike `with_profile_home`, the directory is arbitrary rather than derived
+/// from a profile name, and unlike setting `$HOME` the override is task-local:
+/// it is invisible to every other thread. That distinction is what makes it
+/// safe under a parallel test run — pointing `$HOME` at a tempdir redirects
+/// config reads for the WHOLE process, so an unrelated test loading config at
+/// that moment reads, repairs, and rewrites the tempdir's config.toml out from
+/// under whoever set it (#912).
+pub fn with_home_override<T>(home: PathBuf, f: impl FnOnce() -> T) -> T {
+    PROFILE_HOME_OVERRIDE.sync_scope(home, f)
+}
+
 /// Set the active profile. Must be called before any `opencrabs_home()` call.
 /// Returns `Err` if called more than once (OnceLock semantics).
 pub fn set_active_profile(name: Option<String>) -> Result<()> {

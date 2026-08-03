@@ -7,17 +7,16 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Flag set when Config::load() recovered from a last-known-good snapshot.
-static CONFIG_RECOVERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Why the last load fell back, so the user is told WHAT failed rather than
-/// only that something did (#909). The parse error was logged and discarded,
-/// leaving a warning that named a file and no reason.
-pub(crate) static CONFIG_RECOVERY_REASON: std::sync::Mutex<Option<String>> =
-    std::sync::Mutex::new(None);
-
-/// Flag set when Config::load() mechanically repaired a broken config file
-/// in place (e.g. closed an unterminated array) and re-loaded it.
-static CONFIG_AUTOFIXED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Outcome of the FIRST `Config::load()` in the process, kept so the TUI can
+/// tell the user at startup that it is running on recovered values.
+///
+/// Written once and only ever read, never consumed: the previous consume-once
+/// flags were stolen by whichever thread called the accessor first, so a
+/// concurrent reader silently cleared the signal out from under the startup
+/// notification (#912). Everything that needs the outcome of a SPECIFIC load
+/// takes it from `Config::load_with_status()` instead.
+pub(crate) static FIRST_LOAD_STATUS: std::sync::OnceLock<ConfigLoadStatus> =
+    std::sync::OnceLock::new();
 
 /// Unknown top-level keys found in config.toml (possible typos).
 static CONFIG_TYPO_WARNINGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());

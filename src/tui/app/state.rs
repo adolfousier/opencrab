@@ -1373,7 +1373,7 @@ impl App {
         }
 
         // Notify user if config was recovered from last-known-good snapshot
-        if crate::config::Config::was_recovered() {
+        if crate::config::Config::first_load_status().recovered {
             self.push_system_message(
                 "🔧 Config recovered from last-known-good snapshot. \
                  Review ~/.opencrabs/config.toml for issues."

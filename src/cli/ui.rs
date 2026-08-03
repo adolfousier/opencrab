@@ -173,6 +173,9 @@ async fn spawn_cron_scheduler_for_profile(profile_name: String) {
                 );
                 return Ok(());
             };
+            // Each profile has its own config.toml, so it needs its own
+            // migration pass — `load()` no longer does this implicitly (#912).
+            crate::config::Config::migrate_config_files();
             let config = crate::config::Config::load()?;
             let db = Database::connect(&config.database.path).await?;
             db.run_migrations().await?;

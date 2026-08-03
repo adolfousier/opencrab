@@ -123,8 +123,8 @@ pub fn spawn(
                 }
             }
 
-            match Config::load() {
-                Ok(new_config) => {
+            match Config::load_with_status() {
+                Ok((new_config, status)) => {
                     tracing::info!(
                         "ConfigWatcher: reloaded — firing {} callback(s)",
                         callbacks.len()
@@ -138,9 +138,11 @@ pub fn spawn(
                     // valid config and defaulted to "ask". Keep the existing
                     // snapshot and run on the recovered values until config.toml
                     // parses cleanly again.
-                    if Config::was_recovered() {
+                    if status.recovered {
                         // Say WHAT failed, not just that something did (#909).
-                        let reason = Config::recovery_reason()
+                        let reason = status
+                            .recovery_reason
+                            .clone()
                             .unwrap_or_else(|| "no reason recorded".to_string());
                         // "line 1, column 1" is the signature of reading an
                         // EMPTY file, not of a syntax error in the user's

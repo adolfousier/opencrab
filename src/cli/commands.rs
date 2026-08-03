@@ -443,6 +443,10 @@ pub(crate) async fn load_config(config_path: Option<&str>) -> Result<crate::conf
         Config::load_from_path(path)?
     } else {
         tracing::debug!("Loading default configuration");
+        // Schema migration is a startup step, not a side effect of reading
+        // config (#912). This is the one place every CLI entry point passes
+        // through, so it stays exactly as often as it used to run in practice.
+        Config::migrate_config_files();
         Config::load()?
     };
 

@@ -140,6 +140,7 @@ pub mod compaction_test;
 pub mod config_dotted_caps_test;
 pub mod config_guard_test;
 pub mod config_last_good_recovery_test;
+pub mod config_load_status_isolation_test;
 pub mod config_owner_seed_migration_test;
 pub mod config_provider_registry_test;
 pub mod config_repair_test;
