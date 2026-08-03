@@ -83,11 +83,16 @@ fn pre_fix_active_custom_fallback_pattern_is_absent() {
 fn empty_custom_name_guard_precedes_section_format() {
     // `apply_config` builds the custom write target with
     // `custom_section = format!("providers.custom.{}", self.ps.custom_name);`.
-    // An empty-name guard MUST appear BEFORE that assignment and disable the
-    // provider write (`write_provider = false`) so an empty custom_name can
-    // never format the literal section `providers.custom.` and corrupt
-    // config.toml. Anchor on the first format assignment and require the
-    // guard somewhere ahead of it.
+    // An empty-name guard MUST appear BEFORE that assignment so an empty
+    // custom_name can never format the literal section `providers.custom.` and
+    // corrupt config.toml.
+    //
+    // The guard must REFUSE — `return Err(...)` — not disable the write and
+    // carry on. Turning `write_provider = false` and continuing is what #914
+    // existed to kill: the whole provider write was dropped with only a
+    // `tracing::warn!` while the wizard reported success, so a first-time user
+    // configured a custom provider, saw no error, and had nothing saved.
+    // Asserting the old shape here would demand a regression.
     let src = save_src_code();
     let format_marker = "custom_section = format!(\"providers.custom.{}\", self.ps.custom_name)";
     let format_idx = src.find(format_marker).unwrap_or_else(|| {
@@ -100,18 +105,24 @@ fn empty_custom_name_guard_precedes_section_format() {
 
     let preceding = &src[..format_idx];
 
-    let guard_idx = preceding.find("self.ps.custom_name.is_empty()").expect(
-        "empty-custom_name guard must precede the section-format assignment. Without it, an \
-         empty custom_name falls through to a section format with `self.ps.custom_name = \"\"`, \
-         producing the literal section name `providers.custom.` (a TOML write to an \
-         empty-named subkey).",
-    );
+    // `.trim()` is the current shape; the untrimmed form is accepted so the
+    // sentinel pins the guard's EXISTENCE rather than one spelling of it.
+    let guard_idx = preceding
+        .find("self.ps.custom_name.trim().is_empty()")
+        .or_else(|| preceding.find("self.ps.custom_name.is_empty()"))
+        .expect(
+            "empty-custom_name guard must precede the section-format assignment. Without it, an \
+             empty custom_name falls through to a section format with `self.ps.custom_name = \"\"`, \
+             producing the literal section name `providers.custom.` (a TOML write to an \
+             empty-named subkey).",
+        );
 
-    // The guard must turn the provider write off, not merely test the name.
+    // The guard must abort the save, not quietly drop the provider write.
     let guard_window = &preceding[guard_idx..];
     assert!(
-        guard_window.contains("write_provider = false"),
-        "the empty-custom_name guard must set `write_provider = false` so the custom \
-         section (and api_key) are not written against an empty name."
+        guard_window.contains("return Err("),
+        "the empty-custom_name guard must `return Err(...)` so the user is told nothing was \
+         saved. Disabling the write and continuing reports success while discarding what they \
+         just typed — the #914 regression."
     );
 }
