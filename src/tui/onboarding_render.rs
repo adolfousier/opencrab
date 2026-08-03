@@ -734,7 +734,11 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 lines.push(Line::from(vec![
                     Span::styled(
                         "  Model:    ",
-                        Style::default().fg(if model_focused { BRAND_BLUE } else { Color::Gray }),
+                        Style::default().fg(if model_focused {
+                            BRAND_BLUE
+                        } else {
+                            Color::Gray
+                        }),
                     ),
                     Span::styled(
                         format!("{shown}{cursor}"),
