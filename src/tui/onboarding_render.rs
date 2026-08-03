@@ -703,9 +703,63 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                 ),
             ]));
         } else {
-            // Models fetched — show scrollable list picker
+            // Models fetched — show scrollable list picker.
+            //
+            // Typing filters (input.rs pushes to `model_filter`) and Enter
+            // commits the typed text as a model ID when nothing matches, but
+            // this list used to draw the UNFILTERED `ps.models` and never
+            // showed the filter at all (#916). Two things went wrong: the
+            // user typed and the screen did not react, so the feature looked
+            // absent, and navigation indexes the FILTERED list while the draw
+            // indexed the full one, so the highlight pointed at the wrong row.
             const MAX_VISIBLE: usize = 6;
-            let total = wizard.ps.models.len();
+            let filter = wizard.ps.model_filter.trim().to_lowercase();
+            let visible: Vec<String> = wizard
+                .ps
+                .models
+                .iter()
+                .filter(|m| filter.is_empty() || m.to_lowercase().contains(&filter))
+                .cloned()
+                .collect();
+
+            // Echo what was typed, so filtering is visible and a typed ID that
+            // matches nothing still shows what would be committed on Enter.
+            if model_focused || !wizard.ps.model_filter.is_empty() {
+                let cursor = if model_focused { "█" } else { "" };
+                let shown = if wizard.ps.model_filter.is_empty() {
+                    "type to filter, or enter a model ID".to_string()
+                } else {
+                    wizard.ps.model_filter.clone()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        "  Model:    ",
+                        Style::default().fg(if model_focused { BRAND_BLUE } else { Color::Gray }),
+                    ),
+                    Span::styled(
+                        format!("{shown}{cursor}"),
+                        Style::default().fg(if wizard.ps.model_filter.is_empty() {
+                            Color::Gray
+                        } else {
+                            Color::Reset
+                        }),
+                    ),
+                ]));
+            }
+
+            // Nothing matched: the typed text becomes the model ID on Enter,
+            // which is the only way to use a model the provider did not list.
+            if visible.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "  no match — Enter uses \"{}\" as the model ID",
+                        wizard.ps.model_filter.trim()
+                    ),
+                    Style::default().fg(Color::Gray),
+                )));
+            }
+
+            let total = visible.len();
             let safe_sel = wizard.ps.selected_model.min(total.saturating_sub(1));
             let half = MAX_VISIBLE / 2;
             let start = safe_sel
@@ -719,7 +773,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
                     Style::default().fg(Color::Gray),
                 )));
             }
-            for (off, m) in wizard.ps.models[start..end].iter().enumerate() {
+            for (off, m) in visible[start..end].iter().enumerate() {
                 let idx = start + off;
                 let sel = idx == safe_sel;
                 let prefix = if sel && model_focused { " > " } else { "   " };
