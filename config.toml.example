@@ -26,7 +26,7 @@
 # is ON by default (the model streams its reasoning); set enable_thinking = false
 # to turn it off. Prompt caching is automatic server-side — nothing to configure.
 [providers.xiaomi]
-enabled = true
+enabled = false
 # base_url = "https://api.xiaomimimo.com/v1"  # optional — this is the default
 default_model = "mimo-v2.5-pro"
 models = ["mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-flash"]
@@ -60,7 +60,7 @@ base_url = "http://localhost:11434/v1/chat/completions"
 # Every custom provider needs a name — the label after "custom." (e.g. lm_studio, nvidia, groq).
 # You can define as many as you need and switch between them via /models.
 [providers.custom.lm_studio]
-enabled = true
+enabled = false
 base_url = "http://localhost:1234/v1/chat/completions"  # LM Studio default
 models = ["kimi-k2.5", "glm-5", "MiniMax-M3", "qwen3-coder", "gpt-oss-120b", "llama-4-70B", "mistral-Large-3", "qwen3-coder-next"]
 

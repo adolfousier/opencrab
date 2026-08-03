@@ -1489,13 +1489,32 @@ pub struct ProviderConfigs {
 }
 
 impl ProviderConfigs {
-    /// Get the first enabled custom provider (name + config)
+    /// Get the first enabled custom provider that is actually usable.
+    ///
+    /// `enabled` alone is not enough. Built-in providers are already required
+    /// to carry a key before they can be selected, but custom ones were picked
+    /// on the flag by itself, so a provider that was merely present outranked
+    /// the one the user configured (#917). The map is a `BTreeMap`, so "first"
+    /// means alphabetically first, and a shipped example named early in the
+    /// alphabet won every time.
+    ///
+    /// A custom provider is only a candidate once it has a base URL, since
+    /// there is nowhere to send a request without one.
     pub fn active_custom(&self) -> Option<(&str, &ProviderConfig)> {
         self.custom
             .as_ref()?
             .iter()
-            .find(|(_, cfg)| cfg.enabled)
+            .find(|(_, cfg)| cfg.enabled && Self::custom_is_configured(cfg))
             .map(|(name, cfg)| (name.as_str(), cfg))
+    }
+
+    /// Whether a custom provider carries enough to be used at all.
+    ///
+    /// Deliberately minimal: a base URL is the one field without which no
+    /// request can be made. Demanding more here would silently drop working
+    /// local setups, which need no key.
+    fn custom_is_configured(cfg: &ProviderConfig) -> bool {
+        cfg.base_url.as_ref().is_some_and(|u| !u.trim().is_empty())
     }
 
     /// Get a specific custom provider by name (case-insensitive, normalized)
