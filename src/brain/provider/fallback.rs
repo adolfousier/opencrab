@@ -122,7 +122,16 @@ impl FallbackProvider {
 
     /// Promote a fallback to active. Records a swap event for the caller
     /// to surface in the UI.
-    fn promote(&self, new_idx: usize, reason: &str) {
+    ///
+    /// `from_model` is the model the failing request actually carried and
+    /// `to_model` the one the succeeding request was actually sent with, after
+    /// any remap. Both are required rather than derived from
+    /// `Provider::default_model()`: a session pinned to a non-default model
+    /// (a `/models` pick) still ran on its own model, and a fallback that
+    /// supports that model is not remapped to its default either. Announcing
+    /// the defaults named two models that were never used, contradicting the
+    /// footer, which reads the session's resolved pair (#918).
+    fn promote(&self, new_idx: usize, reason: &str, from_model: &str, to_model: &str) {
         let old_idx = self.active.swap(new_idx, Ordering::AcqRel);
         if old_idx == new_idx {
             return;
@@ -139,9 +148,9 @@ impl FallbackProvider {
         };
         let event = SwapEvent {
             from_name: from.name().to_string(),
-            from_model: from.default_model().to_string(),
+            from_model: from_model.to_string(),
             to_name: to.name().to_string(),
-            to_model: to.default_model().to_string(),
+            to_model: to_model.to_string(),
             reason: reason.to_string(),
         };
         tracing::warn!(
@@ -236,6 +245,7 @@ impl Provider for FallbackProvider {
         for offset in start_idx..self.fallbacks.len() {
             let fb = &self.fallbacks[offset];
             let fb_request = Self::remap_request_for_fallback(fb.as_ref(), &request);
+            let to_model = fb_request.model.clone();
             match fb.complete(fb_request).await {
                 Ok(resp) => {
                     self.promote(
@@ -245,6 +255,8 @@ impl Provider for FallbackProvider {
                             .map(super::error::user_facing_reason)
                             .unwrap_or_else(|| "unknown".into())
                             .as_str(),
+                        &request.model,
+                        &to_model,
                     );
                     return Ok(resp);
                 }
@@ -285,6 +297,7 @@ impl Provider for FallbackProvider {
         for offset in start_idx..self.fallbacks.len() {
             let fb = &self.fallbacks[offset];
             let fb_request = Self::remap_request_for_fallback(fb.as_ref(), &request);
+            let to_model = fb_request.model.clone();
             match fb.stream(fb_request).await {
                 Ok(stream) => {
                     self.promote(
@@ -294,6 +307,8 @@ impl Provider for FallbackProvider {
                             .map(super::error::user_facing_reason)
                             .unwrap_or_else(|| "unknown".into())
                             .as_str(),
+                        &request.model,
+                        &to_model,
                     );
                     return Ok(stream);
                 }
@@ -372,7 +387,7 @@ impl Provider for FallbackProvider {
             .calculate_cost(model, input_tokens, output_tokens)
     }
 
-    fn force_next_fallback(&self, reason: &str) -> bool {
+    fn force_next_fallback(&self, reason: &str, current_model: &str) -> bool {
         let current = self.active.load(Ordering::Acquire);
         let next = current + 1;
         let total = 1 + self.fallbacks.len(); // primary + fallbacks
@@ -384,7 +399,10 @@ impl Provider for FallbackProvider {
             );
             return false;
         }
-        self.promote(next, reason);
+        // No request in flight, so the model the next provider will receive is
+        // not yet decided. Its default is what an unremapped request lands on.
+        let to_model = self.fallbacks[next - 1].default_model().to_string();
+        self.promote(next, reason, current_model, &to_model);
         tracing::info!(
             "force_next_fallback: promoted index {} → {} (reason: {})",
             current,

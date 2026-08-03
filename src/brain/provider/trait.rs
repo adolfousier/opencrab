@@ -109,7 +109,13 @@ pub trait Provider: Send + Sync {
     /// but the response was empty/broken. Returns `true` if a fallback was
     /// promoted, `false` if there are no more fallbacks or the provider
     /// isn't a fallback wrapper.
-    fn force_next_fallback(&self, _reason: &str) -> bool {
+    ///
+    /// `current_model` is the model the session was actually running, so the
+    /// swap the caller surfaces names the pair the user was on rather than the
+    /// provider's default (#918). There is no request in flight here, so the
+    /// promoted provider's own default is the best available answer for the
+    /// model it moves TO.
+    fn force_next_fallback(&self, _reason: &str, _current_model: &str) -> bool {
         false
     }
 

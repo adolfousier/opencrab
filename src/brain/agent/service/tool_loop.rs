@@ -3486,10 +3486,10 @@ impl AgentService {
                     // Try to fallback to next provider before giving up
                     let fallback_reason =
                         format!("stream dropped {} times with 0 content", MAX_STREAM_RETRIES,);
-                    if self
-                        .provider_for_session(session_id)
-                        .force_next_fallback(&fallback_reason)
-                    {
+                    if self.provider_for_session(session_id).force_next_fallback(
+                        &fallback_reason,
+                        &self.provider_model_for_session(session_id),
+                    ) {
                         tracing::info!(
                             "🔄 Fallback triggered after stream drops — retrying with next provider"
                         );
@@ -4154,7 +4154,10 @@ impl AgentService {
                         || (stuck_loop_now && phantom_retries_used >= MAX_PHANTOM_RETRIES / 2));
                 if should_force_fallback {
                     let fb_provider = self.provider_for_session(session_id);
-                    if fb_provider.force_next_fallback("phantom_intent_loop_or_exhausted") {
+                    if fb_provider.force_next_fallback(
+                        "phantom_intent_loop_or_exhausted",
+                        &self.provider_model_for_session(session_id),
+                    ) {
                         phantom_sticky_swap_done = true;
                         phantom_retries_used = 0;
                         let new_name = fb_provider

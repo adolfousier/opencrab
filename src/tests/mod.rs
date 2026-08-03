@@ -300,6 +300,7 @@ pub mod tool_description_redaction_test;
 pub mod tool_execution_stats_test;
 //pub mod error_scenarios_test;
 pub mod fallback_streak_test;
+pub mod fallback_swap_model_report_test;
 pub mod fallback_vision_test;
 pub mod feedback_policy_test;
 pub mod file_extract_test;
