@@ -326,12 +326,23 @@ impl ToolRegistry {
                 return Ok(ToolResult::error(reason));
             }
             super::plan_gate::GateDecision::RequireApproval(reason) => {
-                tracing::info!(
-                    "Plan gate requires approval for tool '{}': {}",
-                    name,
-                    reason
-                );
-                return Err(ToolError::ApprovalRequired(reason));
+                if context.auto_approve {
+                    // User already approved via the Telegram/Discord/Slack
+                    // approval callback (or YOLO mode is active). Let the
+                    // call proceed — the plan gate's intent ("require
+                    // approval for mutators during Editing") is satisfied.
+                    tracing::info!(
+                        "Plan gate: allowing '{}' (already approved) — {}",
+                        name, reason
+                    );
+                } else {
+                    tracing::info!(
+                        "Plan gate requires approval for tool '{}': {}",
+                        name,
+                        reason
+                    );
+                    return Err(ToolError::ApprovalRequired(reason));
+                }
             }
         }
 
