@@ -38,6 +38,54 @@ pub(crate) fn is_implausible_token_report(
     expected >= 1000 && reported > expected.saturating_mul(2)
 }
 
+/// What to do with a provider-reported input-token count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TokenReport {
+    /// Trust it: this becomes the session's context count.
+    Adopt(usize),
+    /// The endpoint is over-reporting by an implausible factor; keep the
+    /// local estimate so the ctx counter and cost stay usable.
+    RejectImplausible,
+    /// Too small to be a real prompt — a truncated or malformed usage block.
+    BelowSanityFloor,
+    /// A drop so steep it would have to mean the context was rebuilt, which
+    /// this path cannot distinguish from a bad report.
+    ImplausibleDrop,
+}
+
+/// Decide whether to adopt a provider's reported message-token count.
+///
+/// Pure so the policy can be tested directly: it used to live inline in the
+/// tool loop, where the assignment was nested under a drift threshold meant
+/// only for the over-reporting guard. A report agreeing within that threshold
+/// was therefore never adopted, leaving the count on the local tiktoken
+/// estimate and making the displayed ctx wander (#942).
+pub(crate) fn evaluate_token_report(
+    local_estimate: usize,
+    tool_tokens: usize,
+    reported: usize,
+) -> TokenReport {
+    const MIN_SANE: usize = 100;
+    const MAX_DROP_RATIO: f64 = 0.2;
+    const IMPLAUSIBILITY_DRIFT_FLOOR: f64 = 5000.0;
+
+    if reported < MIN_SANE {
+        return TokenReport::BelowSanityFloor;
+    }
+    if (reported as f64) < local_estimate as f64 * MAX_DROP_RATIO {
+        return TokenReport::ImplausibleDrop;
+    }
+    // Only a LARGE disagreement can be implausible; a small one is ordinary
+    // tokenizer variance and must still be adopted.
+    let drift = (local_estimate as f64 - reported as f64).abs();
+    if drift > IMPLAUSIBILITY_DRIFT_FLOOR
+        && is_implausible_token_report(local_estimate, tool_tokens, reported)
+    {
+        return TokenReport::RejectImplausible;
+    }
+    TokenReport::Adopt(reported)
+}
+
 /// Minimum summed active-streaming time (seconds) below which a tok/s
 /// reading is not credible. Burst-delivering providers (e.g. glm-5.1)
 /// can dump an entire short response in a single sub-second SSE chunk,
@@ -3187,58 +3235,52 @@ impl AgentService {
                 // Subtract both to get the real message-only token count.
                 let overhead = self.base_context_tokens() as usize;
                 let real_message_tokens = api_input.saturating_sub(overhead);
-                let min_sane = 100;
-                let max_drop_ratio = 0.2;
-                let min_after_drop = (context.token_count as f64 * max_drop_ratio) as usize;
-                if real_message_tokens >= min_sane && real_message_tokens >= min_after_drop {
-                    let drift = (context.token_count as f64 - real_message_tokens as f64).abs();
-                    if drift > 5000.0 {
-                        // Sanity guard against a provider/proxy that OVER-REPORTS usage.
-                        // tiktoken and any real model tokenizer agree within ~2× for normal
-                        // text, so a reported input more than 2× the real content size
-                        // (system + tool schemas + messages) is the endpoint inflating the
-                        // count — observed as a flat ~20k additive overhead on EVERY call
-                        // from one fallback endpoint (zhipu "coding"). Trusting it blows up
-                        // the ctx counter and the billed-cost display. Keep the local
-                        // estimate instead, and make the anomaly visible. Mirrors the
-                        // cumulative-inflation guard already on the CLI calibration path.
-                        let tool_tokens = self.actual_tool_schema_tokens();
+                let tool_tokens = self.actual_tool_schema_tokens();
+                match evaluate_token_report(context.token_count, tool_tokens, real_message_tokens) {
+                    TokenReport::Adopt(actual) => {
+                        tracing::debug!(
+                            "Token calibration: estimated {} → API actual {}",
+                            context.token_count,
+                            actual,
+                        );
+                        context.token_count = actual;
+                    }
+                    TokenReport::RejectImplausible => {
                         let expected = context.token_count + tool_tokens;
-                        if is_implausible_token_report(
+                        tracing::warn!(
+                            "Token usage REJECTED: provider '{}' reported {} input tokens, but \
+                             the real content is ~{} ({} system+messages + {} tool schemas) — \
+                             {}× over. Endpoint is over-reporting; keeping local estimate {} so \
+                             the ctx counter and cost stay accurate.",
+                            self.provider_for_session(session_id).name(),
+                            api_input,
+                            expected,
                             context.token_count,
                             tool_tokens,
-                            real_message_tokens,
-                        ) {
+                            real_message_tokens / expected.max(1),
+                            context.token_count,
+                        );
+                    }
+                    TokenReport::BelowSanityFloor => {
+                        if real_message_tokens > 0 {
                             tracing::warn!(
-                                "Token usage REJECTED: provider '{}' reported {} input tokens, but \
-                                 the real content is ~{} ({} system+messages + {} tool schemas) — \
-                                 {}× over. Endpoint is over-reporting; keeping local estimate {} so \
-                                 the ctx counter and cost stay accurate.",
-                                self.provider_for_session(session_id).name(),
+                                "Token calibration skipped: api_input={}, overhead={}, result={} (below sanity threshold)",
                                 api_input,
-                                expected,
-                                context.token_count,
-                                tool_tokens,
-                                real_message_tokens / expected.max(1),
-                                context.token_count,
-                            );
-                        } else {
-                            tracing::info!(
-                                "Token calibration: estimated {} → API actual {} (drift: {:.0})",
-                                context.token_count,
+                                overhead,
                                 real_message_tokens,
-                                drift,
                             );
-                            context.token_count = real_message_tokens;
                         }
                     }
-                } else if real_message_tokens > 0 && real_message_tokens < min_sane {
-                    tracing::warn!(
-                        "Token calibration skipped: api_input={}, overhead={}, result={} (below sanity threshold)",
-                        api_input,
-                        overhead,
-                        real_message_tokens,
-                    );
+                    TokenReport::ImplausibleDrop => {
+                        tracing::warn!(
+                            "Token calibration skipped: provider '{}' reported {} message tokens \
+                             against a local estimate of {} — too steep a drop to be a real \
+                             prompt, keeping the estimate.",
+                            self.provider_for_session(session_id).name(),
+                            real_message_tokens,
+                            context.token_count,
+                        );
+                    }
                 }
             }
             // Fire real-time token count update after every API response

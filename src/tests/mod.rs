@@ -521,6 +521,7 @@ pub mod telegram_rich_decode_test;
 pub mod telegram_send_retry_test;
 pub mod telegram_session_resolve_test;
 pub mod template_governance_test;
+pub mod token_report_calibration_test;
 pub mod token_tracking_test;
 pub mod tool_arg_unescape_test;
 pub mod tool_execution_repo_test;
