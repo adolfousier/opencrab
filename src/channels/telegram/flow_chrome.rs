@@ -189,7 +189,7 @@ impl FlowSections {
         }
         if let Some(ref sections) = self.prose {
             for sec in sections {
-                let body: String = super::rich::markdown_to_html(&sec.body);
+                let body: String = super::rich::markdown_to_html_p(&sec.body);
                 match &sec.heading {
                     Some(h) => out.push_str(&format!(
                         "<details><summary>{}</summary>{body}</details>",

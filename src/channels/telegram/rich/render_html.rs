@@ -13,16 +13,29 @@ use super::ast::{Align, Block, Inline, List, Table};
 /// their breathing room (the source markdown's paragraph breaks); list items
 /// themselves stay single-spaced.
 pub(super) fn render_html(blocks: &[Block]) -> String {
+    render_html_inner(blocks, false)
+}
+
+/// Like [`render_html`] but wraps every paragraph in `<p>` tags and drops the
+/// `\n\n` separator (the tags provide their own spacing). Used by the
+/// chrome_rich path where Telegram's HTML renderer expects native paragraph
+/// elements inside `<details>` blocks.
+pub(super) fn render_html_p(blocks: &[Block]) -> String {
+    render_html_inner(blocks, true)
+}
+
+fn render_html_inner(blocks: &[Block], wrap_p: bool) -> String {
+    let sep = if wrap_p { "" } else { "\n\n" };
     blocks
         .iter()
-        .map(render_block)
+        .map(|b| render_block(b, wrap_p))
         .collect::<Vec<_>>()
-        .join("\n\n")
+        .join(sep)
         .trim()
         .to_string()
 }
 
-fn render_block(block: &Block) -> String {
+fn render_block(block: &Block, wrap_p: bool) -> String {
     match block {
         Block::Heading { level, content } => {
             // No heading tags in Telegram HTML: bold, and italicize deeper
@@ -34,7 +47,14 @@ fn render_block(block: &Block) -> String {
                 format!("<b>{inner}</b>")
             }
         }
-        Block::Paragraph(content) => render_inlines(content),
+        Block::Paragraph(content) => {
+            let inner = render_inlines(content);
+            if wrap_p {
+                format!("<p>{inner}</p>")
+            } else {
+                inner
+            }
+        }
         Block::List(list) => render_list(list, 0),
         Block::Table(table) => render_table(table),
         Block::Code { lang, text } => match lang {
@@ -45,7 +65,10 @@ fn render_block(block: &Block) -> String {
             ),
             None => format!("<pre><code>{}</code></pre>", escape(text)),
         },
-        Block::Quote(inner) => format!("<blockquote>{}</blockquote>", render_html(inner)),
+        Block::Quote(inner) => format!(
+            "<blockquote>{}</blockquote>",
+            render_html_inner(inner, false)
+        ),
         Block::Math(expr) => format!("<pre>{}</pre>", escape(expr)),
         Block::Divider => "──────────".to_string(),
         // Telegram HTML has no <details> — render as flat indented blocks
@@ -56,7 +79,7 @@ fn render_block(block: &Block) -> String {
             open: _,
         } => {
             let summary_html = render_inlines(summary);
-            let body = render_html(blocks);
+            let body = render_html_inner(blocks, wrap_p);
             format!(
                 "<b>▸ {summary_html}</b>\n{}",
                 body.lines()
@@ -84,7 +107,7 @@ fn render_list(list: &List, depth: usize) -> String {
         for child in &item.children {
             match child {
                 Block::List(inner) => lines.push(render_list(inner, depth + 1)),
-                other => lines.push(format!("{pad}  {}", render_block(other))),
+                other => lines.push(format!("{pad}  {}", render_block(other, false))),
             }
         }
     }

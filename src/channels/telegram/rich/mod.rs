@@ -116,3 +116,9 @@ pub(crate) fn contains_task_list(text: &str) -> bool {
 pub(crate) fn markdown_to_html(text: &str) -> String {
     render_html::render_html(&parse_markdown(text))
 }
+
+/// Like [`markdown_to_html`] but wraps paragraphs in `<p>` tags. Used by the
+/// chrome_rich path where Telegram expects native paragraph elements.
+pub(crate) fn markdown_to_html_p(text: &str) -> String {
+    render_html::render_html_p(&parse_markdown(text))
+}

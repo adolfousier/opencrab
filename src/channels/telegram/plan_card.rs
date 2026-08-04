@@ -81,20 +81,32 @@ fn render_plan_card(
                 None => (sec.body.as_str(), 0),
             };
             budget = budget.map(|b| b.saturating_sub(chars_used));
-            let html = super::rich::markdown_to_html(body);
             if !out.is_empty() {
                 out.push('\n');
             }
             match (&sec.heading, style) {
-                (Some(h), CollapsibleStyle::BlockquoteExpandable) => out.push_str(&format!(
-                    "<blockquote expandable><b>{}</b>\n{html}</blockquote>",
-                    escape_html(h),
-                )),
-                (Some(h), CollapsibleStyle::DetailsSummary) => out.push_str(&format!(
-                    "<details><summary><b>{}</b></summary>\n{html}</details>",
-                    escape_html(h),
-                )),
-                (None, _) => out.push_str(&html),
+                (Some(h), CollapsibleStyle::BlockquoteExpandable) => {
+                    let html = super::rich::markdown_to_html(body);
+                    out.push_str(&format!(
+                        "<blockquote expandable><b>{}</b>\n{html}</blockquote>",
+                        escape_html(h),
+                    ))
+                }
+                (Some(h), CollapsibleStyle::DetailsSummary) => {
+                    let html = super::rich::markdown_to_html_p(body);
+                    out.push_str(&format!(
+                        "<details><summary><b>{}</b></summary>{html}</details>",
+                        escape_html(h),
+                    ))
+                }
+                (None, CollapsibleStyle::DetailsSummary) => {
+                    let html = super::rich::markdown_to_html_p(body);
+                    out.push_str(&html)
+                }
+                (None, _) => {
+                    let html = super::rich::markdown_to_html(body);
+                    out.push_str(&html)
+                }
             }
         }
     }

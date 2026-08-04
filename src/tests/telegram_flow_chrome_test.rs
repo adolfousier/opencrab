@@ -209,7 +209,10 @@ fn classic_prose_keeps_blank_lines_and_formats_markdown_body() {
         "### Sub\n- item **bold**\n\nplain `code`",
     )]);
     let out = s.chrome_classic(false);
-    assert!(out.contains("<b>Sub</b>"), "nested heading bolded: {out}");
+    assert!(
+        out.contains("<b><i>Sub</i></b>"),
+        "nested heading bolded: {out}"
+    );
     assert!(out.contains("• item <b>bold</b>"), "list bulleted: {out}");
     assert!(out.contains("\n\n"), "paragraph break kept on classic");
     assert!(
