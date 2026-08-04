@@ -10,7 +10,6 @@
 
 use super::flow::{HeaderMarkup, StreamingState, humanize_duration, open_flow, refresh_flow};
 use super::handler::escape_html;
-use super::markdown::format_inline;
 use crate::brain::agent::AgentService;
 use crate::brain::goal::GoalManager;
 use crate::tui::plan::TaskStatus;

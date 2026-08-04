@@ -18,162 +18,226 @@ use teloxide::prelude::*;
 use teloxide::types::{MessageId, ParseMode, ThreadId};
 use uuid::Uuid;
 
-/// Total character budget for prose bodies on the card. The card also
-/// carries the title, checklist rows, and keyboard inside Telegram's
-/// 4096-char message cap, so prose gets a bounded share; sections past
-/// the budget are dropped (the full prose is one tap away via /show-plan).
+/// Total character budget for prose bodies on the classic card. The card
+/// carries the title, checklist rows, and keyboard inside Telegram's 4096-char
+/// message cap; sections past the budget are dropped (full prose via
+/// /show-plan). The rich path (`sendRichMessage`, 32K chars) needs no budget.
 const CARD_PROSE_BUDGET: usize = 2400;
 
-/// Goal text budget (chars) on one card. The goal renders as a collapsed
-/// expandable (ADR 0005 Decision 12), so the cap only trims the expanded
-/// body, never the visible chrome.
+/// Goal text budget (chars) on the classic card. The goal renders as a
+/// collapsed expandable (ADR 0005 Decision 12), so the cap only trims the
+/// expanded body, never the visible chrome.
 const GOAL_TEXT_CAP: usize = 600;
 
-/// Render the card body, or `None` when the session has no plan content (no
-/// title and no checklist) — the caller removes the card in that case.
+/// Collapsible wrapper style for prose sections and goals.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum CollapsibleStyle {
+    /// Classic `sendMessage` (4096 chars): `<blockquote expandable>`,
+    /// prose truncated to `CARD_PROSE_BUDGET`.
+    BlockquoteExpandable,
+    /// Rich `sendRichMessage` (32K chars): `<details><summary>`, no truncation.
+    DetailsSummary,
+}
+
+/// Unified plan card renderer. The two surfaces (classic sendMessage and rich
+/// sendRichMessage) share title, checklist, and goal logic; only the
+/// collapsible tag pair and truncation budget differ.
+///
+/// Returns `None` when the session has no plan content (no title and no
+/// checklist) — the caller removes the card in that case.
+fn render_plan_card(
+    style: CollapsibleStyle,
+    title: Option<&str>,
+    checklist: Option<&[String]>,
+    prose: Option<&[ProseSection]>,
+    goal: Option<&GoalSection>,
+) -> Option<String> {
+    let mut out = String::new();
+
+    // Title: identical for both styles.
+    if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
+        out.push_str(&format!("📋 <b>{}</b>", escape_html(t)));
+    }
+
+    // Prose: style-dependent collapsible tags + truncation budget.
+    // Locked order: title, prose expandables, checklist rows, goal.
+    if let Some(sections) = prose.filter(|s| !s.is_empty()) {
+        let mut budget: Option<usize> = match style {
+            CollapsibleStyle::BlockquoteExpandable => Some(CARD_PROSE_BUDGET),
+            CollapsibleStyle::DetailsSummary => None,
+        };
+        for sec in sections {
+            if budget == Some(0) {
+                break;
+            }
+            // Truncate raw text BEFORE HTML conversion so the collapsible
+            // tags are always well-formed (truncating rendered HTML can
+            // cut mid-tag, causing Telegram to strip rich formatting).
+            let (body, chars_used) = match budget {
+                Some(remaining) => {
+                    let truncated = truncate_chars(&sec.body, remaining);
+                    (truncated, truncated.chars().count())
+                }
+                None => (sec.body.as_str(), 0),
+            };
+            budget = budget.map(|b| b.saturating_sub(chars_used));
+            let html = super::rich::markdown_to_html(body);
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            match (&sec.heading, style) {
+                (Some(h), CollapsibleStyle::BlockquoteExpandable) => out.push_str(&format!(
+                    "<blockquote expandable><b>{}</b>\n{html}</blockquote>",
+                    escape_html(h),
+                )),
+                (Some(h), CollapsibleStyle::DetailsSummary) => out.push_str(&format!(
+                    "<details><summary><b>{}</b></summary>\n{html}</details>",
+                    escape_html(h),
+                )),
+                (None, _) => out.push_str(&html),
+            }
+        }
+    }
+
+    // Checklist: identical for both styles.
+    if let Some(rows) = checklist {
+        for row in rows {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&escape_html(row));
+        }
+    }
+
+    // Goal: style-dependent wrapper + truncation on classic only.
+    if let Some(g) = goal {
+        let text = g.text.trim();
+        if !text.is_empty() {
+            let has_prose = prose.is_some_and(|p| !p.is_empty());
+            if !out.is_empty() {
+                out.push('\n');
+                if checklist.is_some() || has_prose {
+                    out.push('\n');
+                }
+            }
+            let goal_html = match style {
+                CollapsibleStyle::BlockquoteExpandable => {
+                    let capped = escape_html(truncate_chars(text, GOAL_TEXT_CAP));
+                    format!(
+                        "<blockquote expandable>{} {capped}</blockquote>",
+                        g.prefix(true)
+                    )
+                }
+                CollapsibleStyle::DetailsSummary => format!(
+                    "<details><summary>{} goal</summary>\n{}</details>",
+                    g.prefix(true),
+                    escape_html(text)
+                ),
+            };
+            out.push_str(&goal_html);
+        }
+    }
+
+    (!out.is_empty()).then_some(out)
+}
+
+/// Classic sendMessage card: `<blockquote expandable>` collapsibles, 4096-char
+/// budget with per-section prose truncation.
 pub(crate) fn render_plan_card_html(
     title: Option<&str>,
     checklist: Option<&[String]>,
     prose: Option<&[ProseSection]>,
     goal: Option<&GoalSection>,
 ) -> Option<String> {
-    let mut out = String::new();
-    if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
-        out.push_str(&format!("📋 <b>{}</b>", escape_html(t)));
-    }
-    // Fold the design prose into the card (#621) using the same per-heading
-    // expandable format as the flow chrome (ADR 0005 Decision 3): every
-    // section is its own collapsed <blockquote expandable> with a bold
-    // heading, so the card stays compact and each section expands on tap.
-    // Locked order: title, prose expandables, checklist rows. The body
-    // prose body rendered through the rich AST pipeline (tables → <pre> grids,
-    // code blocks → <pre><code>, headings → bold/italic), matching the flow chrome.
-    if let Some(sections) = prose.filter(|s| !s.is_empty()) {
-        let mut budget = CARD_PROSE_BUDGET;
-        for sec in sections {
-            if budget == 0 {
-                break;
-            }
-            // Truncate the RAW text (before HTML conversion) so the
-            // <blockquote expandable> tags are always well-formed.
-            // Truncating already-HTML output could cut mid-tag, causing
-            // Telegram to strip the rich formatting entirely.
-            let truncated_body = truncate_chars(&sec.body, budget);
-            let full = super::rich::markdown_to_html(truncated_body);
-            budget = budget.saturating_sub(truncated_body.chars().count());
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            match &sec.heading {
-                Some(h) => out.push_str(&format!(
-                    "<blockquote expandable><b>{}</b>\n{full}</blockquote>",
-                    escape_html(h),
-                )),
-                None => out.push_str(&full),
-            }
-        }
-    }
-    if let Some(rows) = checklist {
-        for row in rows {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(&escape_html(row));
-        }
-    }
-    // Goal section last in the locked order (ADR 0005 Decision 3: title,
-    // prose expandables, checklist rows, goal), rendered as its own collapsed
-    // <blockquote expandable> with the Decision 10 prefix — the card is
-    // always a settled render, so a completed goal shows ✅ and an active
-    // one 🎯. A blank line separates it from prose/checklist above, exactly
-    // like FlowSections::chrome_classic.
-    if let Some(g) = goal {
-        let text = g.text.trim();
-        if !text.is_empty() {
-            let has_prose = prose.is_some_and(|p| !p.is_empty());
-            if !out.is_empty() {
-                out.push('\n');
-                if checklist.is_some() || has_prose {
-                    out.push('\n');
-                }
-            }
-            out.push_str(&format!(
-                "<blockquote expandable>{} {}</blockquote>",
-                g.prefix(true),
-                escape_html(crate::utils::truncate_chars(text, GOAL_TEXT_CAP))
-            ));
-        }
-    }
-    (!out.is_empty()).then_some(out)
+    render_plan_card(
+        CollapsibleStyle::BlockquoteExpandable,
+        title,
+        checklist,
+        prose,
+        goal,
+    )
 }
 
-/// Render the plan card using rich-native `<details><summary>` collapsible
-/// blocks instead of `<blockquote expandable>`. The rich API (Bot API 10.1)
-/// parses `<details><summary>` into native RichBlockDetails, which renders
-/// with proper collapse/expand behavior and a 32K char limit. No truncation
-/// is needed — prose renders in full.
+/// Rich `sendRichMessage` card: `<details><summary>` collapsibles, 32K-char
+/// limit, no truncation — prose renders in full.
 pub(crate) fn render_plan_card_rich_html(
     title: Option<&str>,
     checklist: Option<&[String]>,
     prose: Option<&[ProseSection]>,
     goal: Option<&GoalSection>,
 ) -> Option<String> {
-    let mut out = String::new();
-    if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
-        out.push_str(&format!("📋 <b>{}</b>", escape_html(t)));
-    }
-    // Rich collapsible sections: each prose section becomes a native
-    // RichBlockDetails via <details><summary>, with full body — no budget
-    // cap needed (32K limit vs 4096 for sendMessage).
-    if let Some(sections) = prose.filter(|s| !s.is_empty()) {
-        for sec in sections {
-            let full = super::rich::markdown_to_html(&sec.body);
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            match &sec.heading {
-                Some(h) => out.push_str(&format!(
-                    "<details><summary><b>{}</b></summary>\n{full}</details>",
-                    escape_html(h),
-                )),
-                None => out.push_str(&full),
-            }
-        }
-    }
-    if let Some(rows) = checklist {
-        for row in rows {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(&escape_html(row));
-        }
-    }
-    if let Some(g) = goal {
-        let text = g.text.trim();
-        if !text.is_empty() {
-            let has_prose = prose.is_some_and(|p| !p.is_empty());
-            if !out.is_empty() {
-                out.push('\n');
-                if checklist.is_some() || has_prose {
-                    out.push('\n');
-                }
-            }
-            // Rich collapsible goal — no truncation needed.
-            out.push_str(&format!(
-                "<details><summary>{} goal</summary>\n{}</details>",
-                g.prefix(true),
-                escape_html(text)
-            ));
-        }
-    }
-    (!out.is_empty()).then_some(out)
+    render_plan_card(
+        CollapsibleStyle::DetailsSummary,
+        title,
+        checklist,
+        prose,
+        goal,
+    )
 }
 
-/// Serialise the keyboard into a JSON value for the rich API's `reply_markup`
-/// parameter. Returns `None` when there is no keyboard (e.g. completed plan).
-fn kb_json(kb: &PlanKb) -> Option<serde_json::Value> {
-    let markup = kb.keyboard()?;
-    serde_json::to_value(markup).ok()
+/// Result of a plan card edit attempt.
+enum EditOutcome {
+    /// Card saved successfully (or content unchanged).
+    Saved,
+    /// Rate-limited: card writes suppressed for a duration.
+    Suppressed,
+    /// Card gone/unusable: caller should try creating fresh.
+    Gone,
+}
+
+/// Classify a plan card edit failure and take the appropriate state action.
+/// Handles "message is not modified" (silent success) and rate-limiting
+/// (suppress future writes). Returns `Gone` when the card needs recreating.
+async fn handle_edit_failure(
+    error: &str,
+    state: &TelegramState,
+    session_id: Uuid,
+    chat: ChatId,
+    thread_id: Option<ThreadId>,
+    signature: &str,
+    mid: MessageId,
+) -> EditOutcome {
+    if error.contains("message is not modified") {
+        state
+            .set_plan_card(session_id, chat, thread_id, mid, signature.to_string())
+            .await;
+        return EditOutcome::Saved;
+    }
+    if let Some(wait) = super::rate_limit::parse_retry_after(error) {
+        tracing::warn!(
+            "Telegram plan card edit throttled for session {session_id}: {error} — \
+             pausing card writes for {}s",
+            wait.as_secs()
+        );
+        state
+            .suppress_plan_card(session_id, wait + super::rate_limit::RETRY_MARGIN)
+            .await;
+        return EditOutcome::Suppressed;
+    }
+    tracing::debug!("Telegram plan card edit failed ({mid:?}): {error} — recreating");
+    state.take_plan_card(session_id).await;
+    EditOutcome::Gone
+}
+
+/// Classify a plan card create failure. Suppresses future writes on rate-limit,
+/// warns on other errors.
+async fn handle_create_failure(
+    error: &str,
+    state: &TelegramState,
+    session_id: Uuid,
+) {
+    if let Some(wait) = super::rate_limit::parse_retry_after(error) {
+        tracing::warn!(
+            "Telegram plan card create throttled for session {session_id}: {error} — \
+             pausing card writes for {}s",
+            wait.as_secs()
+        );
+        state
+            .suppress_plan_card(session_id, wait + super::rate_limit::RETRY_MARGIN)
+            .await;
+    } else {
+        tracing::warn!("Telegram plan card create failed: {error}");
+    }
 }
 
 /// Create or update the session's plan card to reflect the live plan state,
@@ -211,15 +275,7 @@ pub(crate) async fn refresh_plan_card(
     let card_lock = state.plan_card_lock(session_id).await;
     let _guard = card_lock.lock().await;
     let (title, checklist) = load_plan_sections(session_id).await;
-    // Fold the design prose into the card (#621): the same per-heading
-    // sections the flow message renders via chrome_classic (ADR 0005
-    // Decision 3), in both Editing and Active states. The card is the
-    // single surface carrying title + prose expandables + checklist +
-    // goal + keyboard. The full .md stays accessible via /show-plan.
     let prose = load_plan_prose(session_id).await;
-    // Goal chrome (ADR 0005 Decision 10) rides the card only once the plan
-    // is Active — "never set while the plan is Editing". Covers goals from
-    // /goal, goal_manage, and acceptance criteria auto-pushed on task start.
     let goal = if checklist.is_some() {
         load_goal_section(agent, session_id)
             .await
@@ -231,16 +287,18 @@ pub(crate) async fn refresh_plan_card(
 
     // Try rich path first when enabled: sendRichMessage (32K, native
     // <details><summary> collapsibles) with reply_markup for the keyboard.
-    if use_rich {
-        if let Some(rich_html) = render_plan_card_rich_html(
+    if use_rich
+        && let Some(rich_html) = render_plan_card_rich_html(
             title.as_deref(),
             checklist.as_deref(),
             prose.as_deref(),
             goal.as_ref(),
-        ) {
-            let kb_val = kb_json(&plan_kb);
-            let rich_sig =
-                format!("rich:{rich_html}\u{1}{plan_kb:?}");
+        )
+    {
+            let kb_val = plan_kb
+                .keyboard()
+                .and_then(|m| serde_json::to_value(m).ok());
+            let rich_sig = format!("rich:{rich_html}\u{1}{plan_kb:?}");
             if let Some((mid, last_sig)) = state.plan_card(session_id).await {
                 if last_sig == rich_sig {
                     return;
@@ -261,31 +319,20 @@ pub(crate) async fn refresh_plan_card(
                         return;
                     }
                     Err(e) => {
-                        let es = e.to_string();
-                        if es.contains("message is not modified") {
-                            state
-                                .set_plan_card(session_id, chat, thread_id, mid, rich_sig)
-                                .await;
-                            return;
+                        let outcome = handle_edit_failure(
+                            &e.to_string(),
+                            state,
+                            session_id,
+                            chat,
+                            thread_id,
+                            &rich_sig,
+                            mid,
+                        )
+                        .await;
+                        match outcome {
+                            EditOutcome::Saved | EditOutcome::Suppressed => return,
+                            EditOutcome::Gone => { /* fall through to create */ }
                         }
-                        if let Some(wait) = super::rate_limit::parse_retry_after(&es) {
-                            tracing::warn!(
-                                "Telegram rich plan card edit throttled for {session_id}: {es} — \
-                                 pausing for {}s",
-                                wait.as_secs()
-                            );
-                            state
-                                .suppress_plan_card(
-                                    session_id,
-                                    wait + super::rate_limit::RETRY_MARGIN,
-                                )
-                                .await;
-                            return;
-                        }
-                        tracing::warn!(
-                            "Rich plan card edit failed ({mid:?}): {es} — falling back to HTML"
-                        );
-                        state.take_plan_card(session_id).await;
                     }
                 }
             }
@@ -318,7 +365,6 @@ pub(crate) async fn refresh_plan_card(
                 }
             }
         }
-    }
 
     // Classic HTML path (sendMessage, 4096 chars, <blockquote expandable>).
     let Some(html) = render_plan_card_html(
@@ -327,22 +373,15 @@ pub(crate) async fn refresh_plan_card(
         prose.as_deref(),
         goal.as_ref(),
     ) else {
-        // Lock-free variant: this function already holds the per-session card
-        // lock, and it is not reentrant. Calling the public remove_plan_card
-        // here deadlocked the handler, and since this branch fires whenever a
-        // session has no card content — i.e. most sessions — it blocked
-        // delivery in every chat.
         remove_plan_card_locked(bot, chat, state, session_id).await;
         return;
     };
     let kb = plan_kb.keyboard();
-    // Signature = body + keyboard state, so an unchanged card is skipped
-    // entirely (no edit API call) — the per-tick refresh must not storm edits.
     let signature = format!("{html}\u{1}{plan_kb:?}");
 
     if let Some((mid, last_sig)) = state.plan_card(session_id).await {
         if last_sig == signature {
-            return; // nothing changed; skip the edit
+            return;
         }
         let mut req = bot
             .edit_message_text(chat, mid, html.clone())
@@ -358,31 +397,20 @@ pub(crate) async fn refresh_plan_card(
                 return;
             }
             Err(e) => {
-                let es = e.to_string();
-                if es.contains("message is not modified") {
-                    state
-                        .set_plan_card(session_id, chat, thread_id, mid, signature)
-                        .await;
-                    return;
+                let outcome = handle_edit_failure(
+                    &e.to_string(),
+                    state,
+                    session_id,
+                    chat,
+                    thread_id,
+                    &signature,
+                    mid,
+                )
+                .await;
+                match outcome {
+                    EditOutcome::Saved | EditOutcome::Suppressed => return,
+                    EditOutcome::Gone => { /* fall through to create */ }
                 }
-                // Throttled, not broken. Keep the tracked id: dropping it would
-                // force the next refresh to CREATE, which is the write most
-                // likely to be rejected and the one that leaves duplicates
-                // behind (#814).
-                if let Some(wait) = super::rate_limit::parse_retry_after(&es) {
-                    tracing::warn!(
-                        "Telegram plan card edit throttled for session {session_id}: {es} — \
-                         pausing card writes for {}s",
-                        wait.as_secs()
-                    );
-                    state
-                        .suppress_plan_card(session_id, wait + super::rate_limit::RETRY_MARGIN)
-                        .await;
-                    return;
-                }
-                // The tracked card is gone / unusable — drop it and recreate.
-                tracing::debug!("Telegram plan card edit failed ({mid:?}): {es} — recreating");
-                state.take_plan_card(session_id).await;
             }
         }
     }
@@ -399,22 +427,7 @@ pub(crate) async fn refresh_plan_card(
                 .await
         }
         Err(e) => {
-            let es = e.to_string();
-            // Do not retry into the same window. Every rejected attempt kept
-            // flood control alive, which is why the countdown ticked from 40s
-            // to 3s without ever elapsing (#814).
-            if let Some(wait) = super::rate_limit::parse_retry_after(&es) {
-                tracing::warn!(
-                    "Telegram plan card create throttled for session {session_id}: {es} — \
-                     pausing card writes for {}s",
-                    wait.as_secs()
-                );
-                state
-                    .suppress_plan_card(session_id, wait + super::rate_limit::RETRY_MARGIN)
-                    .await;
-            } else {
-                tracing::warn!("Telegram plan card create failed: {es}");
-            }
+            handle_create_failure(&e.to_string(), state, session_id).await;
         }
     }
 }
