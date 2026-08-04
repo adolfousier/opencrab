@@ -683,7 +683,8 @@ pub(crate) async fn cmd_run(
     // Core + runtime tools come from the shared tool_setup helpers so this
     // headless path never drifts from the TUI/daemon tool set.
     let tool_registry = Arc::new(ToolRegistry::new());
-    crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, config);
+    let subagent_manager =
+        crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, config);
 
     // Build dynamic system brain from workspace files
     let brain_path = BrainLoader::resolve_path();
@@ -717,7 +718,8 @@ pub(crate) async fn cmd_run(
         // --auto-approve executes tools without an approval prompt. Single-shot
         // `run` has no TTY to prompt on, so without the flag only non-approval
         // tools run and approval-gated ones are denied by the loop.
-        .with_auto_approve_tools(auto_approve);
+        .with_auto_approve_tools(auto_approve)
+        .with_subagent_manager(subagent_manager);
 
     // Create or get session
     let session_service = SessionService::new(service_context);
@@ -956,7 +958,8 @@ pub(crate) async fn cmd_agent_interactive(
     // drifts from the TUI/daemon tool set. Runtime tools (dynamic/browser) are
     // added after the system brain is built, below.
     let tool_registry = Arc::new(ToolRegistry::new());
-    crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, config);
+    let subagent_manager =
+        crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, config);
 
     let brain_path = BrainLoader::resolve_path();
     let brain_loader = BrainLoader::new(brain_path);
@@ -995,7 +998,8 @@ pub(crate) async fn cmd_agent_interactive(
         .with_message_enqueue_callback(Some(enqueue_cb))
         // --auto-approve runs tools without prompting; otherwise each
         // approval-gated tool prompts on stdin via stdin_approval_callback.
-        .with_auto_approve_tools(auto_approve);
+        .with_auto_approve_tools(auto_approve)
+        .with_subagent_manager(subagent_manager);
 
     let session_service = SessionService::new(service_context);
     let session = session_service

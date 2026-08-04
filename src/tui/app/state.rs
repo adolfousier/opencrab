@@ -1590,6 +1590,10 @@ impl App {
             .with_working_directory(working_dir)
             .with_auto_approve_tools(self.approval_auto_always);
 
+        if let Some(mgr) = self.agent_service.subagent_manager() {
+            new_agent_service = new_agent_service.with_subagent_manager(mgr);
+        }
+
         if let Some(tx) = session_updated_tx {
             new_agent_service = new_agent_service.with_session_updated_tx(tx);
         }

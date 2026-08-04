@@ -25,7 +25,7 @@ pub(crate) fn register_core_agent_tools(
     tool_registry: &Arc<ToolRegistry>,
     db: &Database,
     config: &Config,
-) {
+) -> Arc<crate::brain::tools::subagent::SubAgentManager> {
     use crate::brain::tools::{
         bash::BashTool, code_exec::CodeExecTool, config_tool::ConfigTool, context::ContextTool,
         doc_gen::GenerateDocumentTool, doc_parser::DocParserTool, edit::EditTool,
@@ -171,6 +171,8 @@ pub(crate) fn register_core_agent_tools(
     ));
     tool_registry.register(Arc::new(crate::brain::tools::self_improve::SelfImproveTool));
     tracing::info!("Registered 3 recursive self-improvement tools");
+
+    subagent_manager
 }
 
 /// Register the headless-safe RUNTIME tools that depend only on config + the

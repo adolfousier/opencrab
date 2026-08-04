@@ -355,6 +355,12 @@ pub struct AgentService {
     /// When the primary provider hits a rate/account limit mid-stream, these are
     /// tried in order.
     pub(super) fallback_providers: Vec<Arc<dyn Provider>>,
+
+    /// Tracks spawned sub-agents. Shared with the subagent tools; stored here
+    /// so compaction can inject running agent IDs into the post-compaction
+    /// summary (#936). `None` when the agent was constructed without the
+    /// manager (child agents, tests that don't need it).
+    pub(super) subagent_manager: Option<Arc<crate::brain::tools::subagent::SubAgentManager>>,
 }
 
 impl AgentService {
@@ -412,6 +418,7 @@ impl AgentService {
             brain_path: None,
             session_updated_tx: None,
             fallback_providers: Self::build_fallback_providers(config).await,
+            subagent_manager: None,
         }
     }
 
@@ -729,6 +736,21 @@ impl AgentService {
     pub fn with_ssh_callback(mut self, callback: Option<SshPasswordCallback>) -> Self {
         self.ssh_callback = callback;
         self
+    }
+
+    /// Wire the sub-agent manager so compaction can inject running agent IDs
+    /// into the post-compaction summary (#936).
+    pub fn with_subagent_manager(
+        mut self,
+        manager: Arc<crate::brain::tools::subagent::SubAgentManager>,
+    ) -> Self {
+        self.subagent_manager = Some(manager);
+        self
+    }
+
+    /// Clone the sub-agent manager handle (for carrying across service rebuilds).
+    pub fn subagent_manager(&self) -> Option<Arc<crate::brain::tools::subagent::SubAgentManager>> {
+        self.subagent_manager.clone()
     }
 
     /// Set the working directory for tool execution

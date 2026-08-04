@@ -36,6 +36,10 @@ pub struct ChannelFactory {
     /// startup via [`set_runtime_info`]; absent on the cron daemon path, where
     /// the brain is built with no runtime info anyway.
     runtime_info: OnceLock<crate::brain::prompt_builder::RuntimeInfo>,
+    /// Sub-agent manager for compaction persistence (#936). Set once at startup
+    /// via [`set_subagent_manager`]; wired into every agent service the factory
+    /// creates so compaction can inject running sub-agent IDs into the summary.
+    subagent_manager: OnceLock<Arc<crate::brain::tools::subagent::SubAgentManager>>,
 }
 
 impl ChannelFactory {
@@ -60,6 +64,7 @@ impl ChannelFactory {
             config_rx,
             session_updated_tx: OnceLock::new(),
             runtime_info: OnceLock::new(),
+            subagent_manager: OnceLock::new(),
         }
     }
 
@@ -81,6 +86,14 @@ impl ChannelFactory {
     /// Set the tool registry (call once, after Arc<ToolRegistry> is created).
     pub fn set_tool_registry(&self, registry: Arc<ToolRegistry>) {
         let _ = self.tool_registry.set(registry);
+    }
+
+    /// Set the sub-agent manager for compaction persistence (#936).
+    pub fn set_subagent_manager(
+        &self,
+        manager: Arc<crate::brain::tools::subagent::SubAgentManager>,
+    ) {
+        let _ = self.subagent_manager.set(manager);
     }
 
     /// Create a new AgentService configured for channel use.
@@ -137,6 +150,10 @@ impl ChannelFactory {
 
         if let Some(tx) = self.session_updated_tx.get() {
             builder = builder.with_session_updated_tx(tx.clone());
+        }
+
+        if let Some(mgr) = self.subagent_manager.get() {
+            builder = builder.with_subagent_manager(mgr.clone());
         }
 
         if message_queue_callback.is_some() {

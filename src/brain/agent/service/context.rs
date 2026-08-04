@@ -332,6 +332,18 @@ impl AgentService {
             None => summary,
         };
 
+        // When sub-agents are still alive, inject their IDs into the summary
+        // so the post-compaction agent can still call wait_agent, send_input,
+        // resume_agent, and close_agent on them (#936).
+        let summary = match self
+            .subagent_manager
+            .as_ref()
+            .and_then(|m| m.format_running_for_compaction())
+        {
+            Some(block) => format!("{summary}\n\n{block}"),
+            None => summary,
+        };
+
         Self::apply_compaction_summary(context, &summary);
         Ok(summary)
     }

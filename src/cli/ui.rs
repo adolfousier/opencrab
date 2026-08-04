@@ -204,13 +204,14 @@ async fn spawn_cron_scheduler_for_profile(profile_name: String) {
             // `set_tool_registry`; the daemon builds its own factory, so it must
             // populate and wire the registry here too.
             let tool_registry = Arc::new(crate::brain::tools::registry::ToolRegistry::new());
-            crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, &config);
+            let subagent_manager = crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, &config);
             // Headless-safe runtime tools (dynamic tools.toml tools, tool_manage,
             // browser) so secondary-profile cron jobs match the primary profile's
             // functional tool set. Channel-send tools are intentionally NOT here
             // (no live channel state in the daemon — delivery uses `deliver_to`).
             crate::cli::tool_setup::register_runtime_tools(&tool_registry, &config);
             factory.set_tool_registry(tool_registry);
+            factory.set_subagent_manager(subagent_manager);
             let scheduler = crate::cron::CronScheduler::new(
                 CronJobRepository::new(db.pool().clone()),
                 CronJobRunRepository::new(db.pool().clone()),
@@ -306,7 +307,8 @@ async fn cmd_chat_inner(
     // session/channel/cron/a2a/config/slash, follow-up, discovery, sub-agents,
     // RSI) live in one place so the headless cron daemon shares the exact same
     // set. Browser/channel-send/media/rebuild/evolve are added below.
-    crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, config);
+    let subagent_manager =
+        crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, config);
 
     // Auto-detect VPS/cloud and disable vector embeddings if needed.
     crate::config::MemoryConfig::auto_apply_vps_defaults();
@@ -989,6 +991,7 @@ async fn cmd_chat_inner(
             .with_ssh_callback(Some(ssh_callback))
             .with_working_directory(working_directory.clone())
             .with_brain_path(brain_path)
+            .with_subagent_manager(subagent_manager)
             .with_session_updated_tx(session_updated_tx),
     );
 
