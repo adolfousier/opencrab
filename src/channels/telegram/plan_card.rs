@@ -21,15 +21,6 @@ use uuid::Uuid;
 /// because it carries the Approve/Discard keyboard.
 const TG_MSG_LIMIT: usize = 4096;
 
-/// Character budget for raw prose bodies before HTML conversion. We
-/// truncate the *raw markdown* body (not the HTML output) so the HTML
-/// produced by [`prose_body_lines`] is always well-formed — no orphaned
-/// tags from mid-tag byte cuts (#935). The HTML wrapper overhead
-/// (`<blockquote expandable>`, `<b>`, etc.) is ~80 chars per section,
-/// so 2200 chars of raw prose leaves comfortable headroom for title,
-/// checklist rows, goal, and wrappers inside the 4096-char cap.
-const CARD_PROSE_BUDGET: usize = 2200;
-
 /// Goal text budget (chars) on one card. The goal renders as a collapsed
 /// expandable (ADR 0005 Decision 12), so the cap only trims the expanded
 /// body, never the visible chrome.
@@ -51,30 +42,19 @@ pub(crate) fn render_plan_card_html(
     // expandable format as the flow chrome (ADR 0005 Decision 3): every
     // section is its own collapsed <blockquote expandable> with a bold
     // heading, so the card stays compact and each section expands on tap.
-    // Locked order: title, prose expandables, checklist rows. The raw
-    // markdown body is truncated BEFORE prose_body_lines so the HTML is
-    // always well-formed (#935).
+    // Locked order: title, prose expandables, checklist rows. No per-section
+    // budget — each section renders fully (matching chrome_classic); the
+    // 4096 hard-cap at the end drops whole sections from the tail if needed.
     if let Some(sections) = prose.filter(|s| !s.is_empty()) {
-        let mut budget = CARD_PROSE_BUDGET;
         for sec in sections {
-            if budget == 0 {
-                break;
-            }
-            // Truncate the raw markdown body by character count (not bytes)
-            // so prose_body_lines always processes complete text and every
-            // HTML tag it emits has a matching close.
-            let raw: String = sec.body.chars().take(budget).collect();
-            let used = raw.chars().count();
-            budget = budget.saturating_sub(used);
-            let full = prose_body_lines(&raw).join("\n");
+            let full = prose_body_lines(&sec.body).join("\n");
             if !out.is_empty() {
                 out.push('\n');
             }
             match &sec.heading {
                 Some(h) => out.push_str(&format!(
-                    "<blockquote expandable><b>{}</b>\n{}</blockquote>",
+                    "<blockquote expandable><b>{}</b>\n{full}</blockquote>",
                     escape_html(h),
-                    full
                 )),
                 None => out.push_str(&full),
             }
@@ -113,15 +93,38 @@ pub(crate) fn render_plan_card_html(
         }
     }
     // Hard 4096-char cap: if the card still exceeds Telegram's limit after
-    // per-section budgeting (the HTML wrapper tags add overhead that budgets
-    // don't account for), drop sections from the end until it fits. The full
-    // content is always available via /show-plan.
+    // full rendering, drop whole sections from the end until it fits.  Split
+    // by `<blockquote` boundaries so we never cut mid-tag.  The full prose
+    // is always available via /show-plan.
     if out.chars().count() > TG_MSG_LIMIT {
-        let mut parts: Vec<&str> = out.split('\n').collect();
-        while parts.len() > 1 && parts.join("\n").chars().count() > TG_MSG_LIMIT {
-            parts.pop();
+        // Split into segments: each <blockquote expandable>...<blockquote expandable>...</blockquote>
+        // block is one segment, plus the lines before/after blockquotes.
+        let mut segments: Vec<String> = Vec::new();
+        let mut current = String::new();
+        for line in out.split('\n') {
+            if line.starts_with("<blockquote expandable>") && !current.is_empty() {
+                segments.push(current);
+                current = String::new();
+            }
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+            if line.ends_with("</blockquote>") {
+                segments.push(current);
+                current = String::new();
+            }
         }
-        out = parts.join("\n");
+        if !current.is_empty() {
+            segments.push(current);
+        }
+        // Drop segments from the end until the card fits
+        while segments.len() > 1
+            && segments.iter().map(|s| s.chars().count() + 1).sum::<usize>() > TG_MSG_LIMIT + 1
+        {
+            segments.pop();
+        }
+        out = segments.join("\n");
     }
     (!out.is_empty()).then_some(out)
 }
@@ -140,7 +143,7 @@ mod tests {
     #[test]
     fn card_never_exceeds_4096_chars() {
         // Build a plan with massive prose that would definitely exceed 4096
-        // if not properly budgeted.
+        // if the hard cap didn't drop whole sections from the tail.
         let big_body = "x".repeat(10_000);
         let sections = vec![
             section("Section A", &big_body),
@@ -169,7 +172,7 @@ mod tests {
     #[test]
     fn prose_truncation_never_breaks_html_tags() {
         // Prose with HTML-producing content (code fences become <code> tags).
-        // The old code truncated the HTML output, which could cut mid-tag.
+        // Each section renders fully — HTML is always well-formed.
         let body = "some text\n```\nlet x = 1;\nlet y = 2;\nlet z = x + y;\n```\nmore text";
         let sections = vec![section("Code Section", body)];
         let html =
@@ -185,20 +188,34 @@ mod tests {
     }
 
     #[test]
-    fn large_prose_budget_never_produces_broken_html() {
-        // Stress test: prose that's exactly at the budget boundary with
-        // multibyte UTF-8 characters (3 bytes each in UTF-8).
-        let body = "🔥".repeat(800); // 2400 bytes but 800 chars
-        let sections = vec![section("Emoji Section", &body)];
+    fn small_prose_fully_preserved() {
+        // Prose that fits within 4096 is NOT truncated at all — the card
+        // shows full content matching chrome_classic behaviour.
+        let body = "Hello world. This is a short prose section.";
+        let sections = vec![section("Context", body)];
         let html =
             render_plan_card_html(Some("Title"), None, Some(&sections), None).unwrap();
-        // Must not contain partial HTML tags
-        assert!(!html.contains("<co"), "broken <code> tag in HTML");
+        assert!(html.contains("Hello world"), "prose was lost: {html}");
+        assert!(html.contains("<blockquote expandable>"), "no blockquote: {html}");
+    }
+
+    #[test]
+    fn huge_sections_dropped_from_tail() {
+        // When total exceeds 4096, whole <blockquote expandable> sections
+        // are dropped from the end. The first section is kept.
+        let body_a = "A content here.";
+        let body_b = "x".repeat(5000); // forces over 4096
+        let sections = vec![section("First", body_a), section("Second", &body_b)];
+        let html =
+            render_plan_card_html(Some("Title"), None, Some(&sections), None).unwrap();
         assert!(
             html.chars().count() <= TG_MSG_LIMIT,
             "card exceeded 4096 chars: {}",
             html.chars().count()
         );
+        assert!(html.contains("First"), "first section was dropped");
+        // Second section should be dropped to fit
+        assert!(!html.contains("Second"), "second section should have been dropped");
     }
 
     #[test]
@@ -244,7 +261,9 @@ mod tests {
 
     #[test]
     fn prose_with_cyrillic_no_panic() {
-        // Regression: byte-based truncation on multibyte Cyrillic panics
+        // Regression: byte-based truncation on multibyte Cyrillic panics.
+        // Now renders fully (no pre-truncation), with the 4096 cap
+        // dropping whole sections if needed.
         let body = "А".repeat(5000);
         let sections = vec![section("Кириллица", &body)];
         let html =
@@ -254,6 +273,27 @@ mod tests {
             "card exceeded 4096 chars: {}",
             html.chars().count()
         );
+    }
+
+    #[test]
+    fn cap_never_breaks_blockquote_tags() {
+        // When the 4096 cap drops sections, the remaining HTML must still
+        // have matched open/close tags.
+        let sections = vec![
+            section("A", &"a".repeat(2000)),
+            section("B", &"b".repeat(2000)),
+            section("C", &"c".repeat(2000)),
+        ];
+        let html =
+            render_plan_card_html(Some("Title"), None, Some(&sections), None).unwrap();
+        assert!(
+            html.chars().count() <= TG_MSG_LIMIT,
+            "card exceeded 4096: {}",
+            html.chars().count()
+        );
+        let bq_opens = html.matches("<blockquote").count();
+        let bq_closes = html.matches("</blockquote>").count();
+        assert_eq!(bq_opens, bq_closes, "mismatched blockquote tags in capped card");
     }
 }
 
