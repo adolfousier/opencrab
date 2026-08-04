@@ -743,6 +743,13 @@ pub(crate) async fn handle_message(
         .register_session_jid(session_id, reply_target.to_string())
         .await;
 
+    // Claim this session's background-task completions for WhatsApp (#940),
+    // so a completion is delivered by the surface that owns the session
+    // rather than by whichever service happened to run the command.
+    if let Some(enqueue) = agent.message_enqueue_callback() {
+        crate::brain::agent::service::background_tasks::register_session_route(session_id, enqueue);
+    }
+
     // Optional follow-up suggestions (#600): a bare numeric reply selects the
     // matching suggestion — rewrite the turn text to it. Any other message
     // clears the stale set so an old number can't fire later.

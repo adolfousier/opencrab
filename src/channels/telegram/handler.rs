@@ -2392,6 +2392,15 @@ pub(crate) async fn handle_message(
         .register_session_chat(session_id, msg.chat.id.0, topic_id)
         .await;
 
+    // Claim this session's background-task completions for Telegram (#940).
+    // The manager otherwise delivers to whichever service ran the command, so
+    // a session opened in the TUI answered there and this chat — the one that
+    // asked for the work — was left waiting on a reply that never arrived.
+    // Idempotent, so re-registering on every inbound message is free.
+    if let Some(enqueue) = agent.message_enqueue_callback() {
+        crate::brain::agent::service::background_tasks::register_session_route(session_id, enqueue);
+    }
+
     // Archive any shared images under the session's project files dir (when the
     // session is assigned to a project) so a project's media lives together and
     // survives the tmp purge. Rewrites the <<IMG:tmp>> marker to the archived

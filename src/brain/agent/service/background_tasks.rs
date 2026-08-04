@@ -14,6 +14,66 @@ use uuid::Uuid;
 
 use super::types::{MessageEnqueueCallback, QueuedUserMessage};
 
+/// Where a session's background-task completion must be delivered, keyed by
+/// session rather than by whichever surface happened to run the command.
+///
+/// Every surface builds its own `BackgroundTaskManager` from its own enqueue
+/// callback, so the completion used to follow the *executing* service. A
+/// channel-bound session driven from the TUI therefore reported back to the
+/// TUI, and the channel that started the work never heard the answer (#940).
+/// A channel registers its session here when it binds one; the manager
+/// consults this first and only falls back to its own callback when nothing
+/// claims the session (a genuinely TUI-local or CLI-local session).
+static SESSION_ROUTES: Mutex<Option<HashMap<Uuid, MessageEnqueueCallback>>> = Mutex::new(None);
+
+/// Bind `session_id`'s background-task completions to `enqueue`.
+///
+/// Idempotent: re-binding the same session replaces the route, which is what
+/// a reconnect or a bot restart needs.
+pub fn register_session_route(session_id: Uuid, enqueue: MessageEnqueueCallback) {
+    match SESSION_ROUTES.lock() {
+        Ok(mut guard) => {
+            guard
+                .get_or_insert_with(HashMap::new)
+                .insert(session_id, enqueue);
+        }
+        Err(e) => {
+            // Worth saying out loud: without the route this session's next
+            // background completion silently goes to the wrong surface.
+            tracing::error!(
+                target: "background_task",
+                "Could not register resume route for session {session_id}: {e}"
+            );
+        }
+    }
+}
+
+/// Who should receive `session_id`'s completion: the surface that claimed the
+/// session, falling back to `executing` when nothing did.
+///
+/// The whole fix in one line — pick by session, never by who ran the command —
+/// so it is a pure function and directly testable.
+pub fn resolve_route(
+    session_id: Uuid,
+    executing: &MessageEnqueueCallback,
+) -> MessageEnqueueCallback {
+    session_route(session_id).unwrap_or_else(|| executing.clone())
+}
+
+/// The surface that owns `session_id`'s completions, if one claimed it.
+fn session_route(session_id: Uuid) -> Option<MessageEnqueueCallback> {
+    match SESSION_ROUTES.lock() {
+        Ok(guard) => guard.as_ref()?.get(&session_id).cloned(),
+        Err(e) => {
+            tracing::error!(
+                target: "background_task",
+                "Could not read resume route for session {session_id}: {e}"
+            );
+            None
+        }
+    }
+}
+
 /// Result of a finished background command.
 #[derive(Debug, Clone)]
 pub struct CmdResult {
@@ -152,7 +212,12 @@ impl BackgroundTaskManager {
             // Only touches the in-memory map, so moving it earlier cannot
             // affect what gets delivered.
             this.mark_finished(session_id, &label);
-            (this.enqueue)(session_id, msg);
+            // Deliver to the surface that OWNS the session, not to whichever
+            // one executed the command. A channel session driven from the TUI
+            // runs on the TUI's service, so `this.enqueue` would answer into
+            // the TUI and leave the channel that asked for the work waiting on
+            // a reply that never comes (#940).
+            resolve_route(session_id, &this.enqueue)(session_id, msg);
         });
     }
 }

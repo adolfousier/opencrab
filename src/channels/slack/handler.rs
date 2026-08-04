@@ -1458,6 +1458,13 @@ async fn handle_message(
         .slack_state
         .register_session_channel(session_id, channel_id.clone())
         .await;
+
+    // Claim this session's background-task completions for Slack (#940), so a
+    // completion is delivered by the surface that owns the session rather than
+    // by whichever service happened to run the command.
+    if let Some(enqueue) = state.agent.message_enqueue_callback() {
+        crate::brain::agent::service::background_tasks::register_session_route(session_id, enqueue);
+    }
     let approval_cb = make_approval_callback(state.slack_state.clone());
 
     // Follow-up interrupt: cancel any running agent for this session before starting new work

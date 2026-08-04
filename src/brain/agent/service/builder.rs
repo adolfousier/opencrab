@@ -702,6 +702,14 @@ impl AgentService {
         self.background_manager.clone()
     }
 
+    /// This surface's enqueue producer, so a surface that owns a session can
+    /// claim its background-task completions (#940). Without this the
+    /// completion follows whichever service executed the command, which for a
+    /// channel session driven from the TUI is the wrong one.
+    pub fn message_enqueue_callback(&self) -> Option<super::types::MessageEnqueueCallback> {
+        self.message_enqueue_callback.clone()
+    }
+
     /// Push a message into `session_id`'s queue via the surface enqueue callback,
     /// if one is wired (#722). Returns `true` when enqueued. Used by the
     /// background-task watcher to resume a session on completion; the tool loop
