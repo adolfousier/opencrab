@@ -353,6 +353,7 @@ pub mod phantom_playback_claim_test;
 pub mod phantom_post_success_exemption_test;
 pub mod phantom_pronoun_drop_test;
 pub mod phantom_side_effect_test;
+pub mod plan_card_line_breaks_test;
 pub mod plan_card_lock_test;
 pub mod plan_card_persist_test;
 pub mod plan_card_rate_limit_test;

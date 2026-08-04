@@ -39,9 +39,75 @@ pub(crate) enum CollapsibleStyle {
     DetailsSummary,
 }
 
+/// One section of the card, before it is committed to a target's HTML dialect.
+///
+/// Sections describe WHAT they are; the serializer decides how they are
+/// separated. Letting each section pick its own line break is what collapsed
+/// the checklist into a single line (#941): prose was converted to `<p>` for
+/// the rich target and the title, checklist rows and goal separator were left
+/// on bare `\n`, which the rich renderer treats as ordinary whitespace.
+enum CardBlock {
+    /// Inline content that must occupy its own line (the title, a checklist
+    /// row). The serializer supplies whatever the target needs to break here.
+    Line(String),
+    /// Already block-level markup (`<details>`, `<blockquote>`, `<p>`-wrapped
+    /// prose) that must not be wrapped again — `<p>` cannot contain `<details>`.
+    Block(String),
+    /// A blank line before the goal on the classic card. The rich serializer
+    /// ignores it: block-level elements already space themselves.
+    ClassicGap,
+}
+
+/// Commit the card's sections to one target's HTML dialect.
+///
+/// This is the ONLY place a line-break convention is chosen. Adding a section
+/// cannot get it wrong, because sections no longer decide.
+fn serialize_card(style: CollapsibleStyle, blocks: &[CardBlock]) -> String {
+    let mut out = String::new();
+    match style {
+        // Classic `ParseMode::Html` is Telegram's limited dialect: a bare
+        // newline IS the line break and there is no `<p>`. One newline between
+        // blocks; `ClassicGap` contributes the second.
+        CollapsibleStyle::BlockquoteExpandable => {
+            for b in blocks {
+                match b {
+                    CardBlock::Line(s) | CardBlock::Block(s) => {
+                        if !out.is_empty() {
+                            out.push('\n');
+                        }
+                        out.push_str(s);
+                    }
+                    CardBlock::ClassicGap => {
+                        if !out.is_empty() {
+                            out.push('\n');
+                        }
+                    }
+                }
+            }
+        }
+        // `sendRichMessage` renders real HTML, where a newline is whitespace
+        // and collapses. Every standalone line needs its own block-level
+        // wrapper; the tags provide the spacing, so blocks join with nothing.
+        CollapsibleStyle::DetailsSummary => {
+            for b in blocks {
+                match b {
+                    CardBlock::Line(s) => {
+                        out.push_str("<p>");
+                        out.push_str(s);
+                        out.push_str("</p>");
+                    }
+                    CardBlock::Block(s) => out.push_str(s),
+                    CardBlock::ClassicGap => {}
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Unified plan card renderer. The two surfaces (classic sendMessage and rich
 /// sendRichMessage) share title, checklist, and goal logic; only the
-/// collapsible tag pair and truncation budget differ.
+/// collapsible tag pair, the truncation budget, and the HTML dialect differ.
 ///
 /// Returns `None` when the session has no plan content (no title and no
 /// checklist) — the caller removes the card in that case.
@@ -52,11 +118,11 @@ fn render_plan_card(
     prose: Option<&[ProseSection]>,
     goal: Option<&GoalSection>,
 ) -> Option<String> {
-    let mut out = String::new();
+    let mut blocks: Vec<CardBlock> = Vec::new();
 
     // Title: identical for both styles.
     if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
-        out.push_str(&format!("📋 <b>{}</b>", escape_html(t)));
+        blocks.push(CardBlock::Line(format!("📋 <b>{}</b>", escape_html(t))));
     }
 
     // Prose: style-dependent collapsible tags + truncation budget.
@@ -81,43 +147,33 @@ fn render_plan_card(
                 None => (sec.body.as_str(), 0),
             };
             budget = budget.map(|b| b.saturating_sub(chars_used));
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            match (&sec.heading, style) {
-                (Some(h), CollapsibleStyle::BlockquoteExpandable) => {
-                    let html = super::rich::markdown_to_html(body);
-                    out.push_str(&format!(
-                        "<blockquote expandable><b>{}</b>\n{html}</blockquote>",
-                        escape_html(h),
-                    ))
+            // Every arm yields block-level markup: a collapsible element, or
+            // prose the renderer has already wrapped for its target.
+            blocks.push(CardBlock::Block(match (&sec.heading, style) {
+                (Some(h), CollapsibleStyle::BlockquoteExpandable) => format!(
+                    "<blockquote expandable><b>{}</b>\n{}</blockquote>",
+                    escape_html(h),
+                    super::rich::markdown_to_html(body),
+                ),
+                (Some(h), CollapsibleStyle::DetailsSummary) => format!(
+                    "<details><summary><b>{}</b></summary>{}</details>",
+                    escape_html(h),
+                    super::rich::markdown_to_html_p(body),
+                ),
+                (None, CollapsibleStyle::DetailsSummary) => super::rich::markdown_to_html_p(body),
+                (None, CollapsibleStyle::BlockquoteExpandable) => {
+                    super::rich::markdown_to_html(body)
                 }
-                (Some(h), CollapsibleStyle::DetailsSummary) => {
-                    let html = super::rich::markdown_to_html_p(body);
-                    out.push_str(&format!(
-                        "<details><summary><b>{}</b></summary>{html}</details>",
-                        escape_html(h),
-                    ))
-                }
-                (None, CollapsibleStyle::DetailsSummary) => {
-                    let html = super::rich::markdown_to_html_p(body);
-                    out.push_str(&html)
-                }
-                (None, _) => {
-                    let html = super::rich::markdown_to_html(body);
-                    out.push_str(&html)
-                }
-            }
+            }));
         }
     }
 
-    // Checklist: identical for both styles.
+    // Checklist: identical for both styles. Each row is its own line, and the
+    // serializer decides what that means for the target — these rows rendering
+    // as one run-on paragraph is the bug this structure prevents (#941).
     if let Some(rows) = checklist {
         for row in rows {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(&escape_html(row));
+            blocks.push(CardBlock::Line(escape_html(row)));
         }
     }
 
@@ -126,13 +182,10 @@ fn render_plan_card(
         let text = g.text.trim();
         if !text.is_empty() {
             let has_prose = prose.is_some_and(|p| !p.is_empty());
-            if !out.is_empty() {
-                out.push('\n');
-                if checklist.is_some() || has_prose {
-                    out.push('\n');
-                }
+            if checklist.is_some() || has_prose {
+                blocks.push(CardBlock::ClassicGap);
             }
-            let goal_html = match style {
+            blocks.push(CardBlock::Block(match style {
                 CollapsibleStyle::BlockquoteExpandable => {
                     let capped = escape_html(truncate_chars(text, GOAL_TEXT_CAP));
                     format!(
@@ -145,11 +198,11 @@ fn render_plan_card(
                     g.prefix(true),
                     escape_html(text)
                 ),
-            };
-            out.push_str(&goal_html);
+            }));
         }
     }
 
+    let out = serialize_card(style, &blocks);
     (!out.is_empty()).then_some(out)
 }
 
