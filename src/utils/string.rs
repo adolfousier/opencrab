@@ -13,6 +13,23 @@ pub fn truncate_str(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+/// Truncate a string to at most `max_chars` characters. Unlike [`truncate_str`]
+/// which operates on bytes (halving effective length for Cyrillic, quartering
+/// for emoji), this counts actual characters so a budget of 2400 means 2400
+/// visible characters regardless of language.
+pub fn truncate_chars(s: &str, max_chars: usize) -> &str {
+    if s.chars().count() <= max_chars {
+        return s;
+    }
+    // Find the byte offset of the max_chars-th character.
+    let byte_end = s
+        .char_indices()
+        .nth(max_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    &s[..byte_end]
+}
+
 /// Returns true if `s` looks like a file path rather than a slash command.
 ///
 /// Slash commands are `/` followed by a single word with no additional slashes

@@ -32,5 +32,5 @@ pub use image::{
 pub use prompt_analyzer::PromptAnalyzer;
 pub use retry::{RetryConfig, RetryableError, retry, retry_with_check};
 pub use sanitize::{redact_secrets, redact_secrets_scoped, redact_tool_input};
-pub use string::{format_ctx_footer, strip_ctx_footer, truncate_str};
+pub use string::{format_ctx_footer, strip_ctx_footer, truncate_chars, truncate_str};
 pub use tool_context::{tool_context_hint, tool_status_source};
