@@ -143,6 +143,78 @@ pub(crate) fn build_migrations() -> Migrations<'static> {
     ])
 }
 
+/// Heal a database that partially carries migration 33's artifacts (#937).
+///
+/// If any of the three `tool_executions` columns added by migration 33
+/// already exist, add whichever are missing and make sure the analytics
+/// tables and indexes exist, then return `true` so the caller stamps
+/// `user_version` to 33. When nothing pre-exists returns `false` and the
+/// normal migration runs as-is.
+///
+/// The schema below mirrors `src/migrations/20260731000001_add_analytics_events.sql`,
+/// which stays the source of truth — keep both in sync.
+pub(crate) fn heal_analytics_migration_33(conn: &rusqlite::Connection) -> rusqlite::Result<bool> {
+    let cols: std::collections::HashSet<String> = conn
+        .prepare("PRAGMA table_info(tool_executions)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .collect();
+
+    let pre_existing = ["provider", "model", "duration_ms"]
+        .iter()
+        .any(|c| cols.contains(*c));
+    if !pre_existing {
+        return Ok(false);
+    }
+
+    if !cols.contains("provider") {
+        conn.execute_batch("ALTER TABLE tool_executions ADD COLUMN provider TEXT;")?;
+    }
+    if !cols.contains("model") {
+        conn.execute_batch("ALTER TABLE tool_executions ADD COLUMN model TEXT;")?;
+    }
+    if !cols.contains("duration_ms") {
+        conn.execute_batch("ALTER TABLE tool_executions ADD COLUMN duration_ms INTEGER;")?;
+    }
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS phantom_events (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL DEFAULT '',
+            provider TEXT,
+            model TEXT,
+            detected_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            resolved INTEGER NOT NULL DEFAULT 0,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            tools_after_retry INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_phantom_events_detected_at ON phantom_events(detected_at);
+        CREATE INDEX IF NOT EXISTS idx_phantom_events_session ON phantom_events(session_id);
+        CREATE TABLE IF NOT EXISTS streaming_recoveries (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL DEFAULT '',
+            provider TEXT,
+            model TEXT,
+            recovered_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            tool_count INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_streaming_recoveries_at ON streaming_recoveries(recovered_at);
+        CREATE TABLE IF NOT EXISTS brain_verify_events (
+            id TEXT PRIMARY KEY,
+            file_name TEXT NOT NULL,
+            event_type TEXT NOT NULL DEFAULT 'pass',
+            violations TEXT,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_brain_verify_events_at ON brain_verify_events(created_at);",
+    )?;
+
+    tracing::info!(
+        "Healed partial migration 33 state in tool_executions — analytics schema completed, advancing to version 33"
+    );
+    Ok(true)
+}
+
 /// Database connection manager
 pub struct Database {
     pub(crate) pool: Pool,
@@ -307,39 +379,17 @@ impl Database {
                     conn.pragma_update(None, "user_version", Self::MIGRATION_COUNT as i64)?;
                 }
 
-                // Defensive check for migration 33 (add_analytics_events):
-                // If tool_executions table already contains provider column from prior schema state,
-                // ensure migration does not fail with duplicate column name error.
-                if user_version < 33 {
-                    let has_provider: bool = conn
-                        .prepare("PRAGMA table_info(tool_executions)")?
-                        .query_map([], |r| r.get::<_, String>(1))?
-                        .filter_map(Result::ok)
-                        .any(|col| col == "provider");
-
-                    if has_provider {
-                        tracing::info!("Pre-existing provider column in tool_executions — safely advancing migration version to 33");
-                        conn.execute_batch(
-                            "CREATE TABLE IF NOT EXISTS phantom_events (
-                                id TEXT PRIMARY KEY, session_id TEXT NOT NULL DEFAULT '', provider TEXT, model TEXT,
-                                detected_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), resolved INTEGER NOT NULL DEFAULT 0,
-                                retry_count INTEGER NOT NULL DEFAULT 0, tools_after_retry INTEGER NOT NULL DEFAULT 0
-                            );
-                            CREATE INDEX IF NOT EXISTS idx_phantom_events_detected_at ON phantom_events(detected_at);
-                            CREATE INDEX IF NOT EXISTS idx_phantom_events_session ON phantom_events(session_id);
-                            CREATE TABLE IF NOT EXISTS streaming_recoveries (
-                                id TEXT PRIMARY KEY, session_id TEXT NOT NULL DEFAULT '', provider TEXT, model TEXT,
-                                recovered_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), tool_count INTEGER NOT NULL DEFAULT 1
-                            );
-                            CREATE INDEX IF NOT EXISTS idx_streaming_recoveries_at ON streaming_recoveries(recovered_at);
-                            CREATE TABLE IF NOT EXISTS brain_verify_events (
-                                id TEXT PRIMARY KEY, file_name TEXT NOT NULL, event_type TEXT NOT NULL DEFAULT 'pass',
-                                violations TEXT, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-                            );
-                            CREATE INDEX IF NOT EXISTS idx_brain_verify_events_at ON brain_verify_events(created_at);",
-                        )?;
-                        conn.pragma_update(None, "user_version", 33i64)?;
-                    }
+                // Defensive heal for migration 33 (add_analytics_events), #937:
+                // databases that already carry some of migration 33's artifacts
+                // (e.g. a provider column added by an intermediate build) would
+                // crash the migration's ALTER TABLE with "duplicate column name".
+                // Only fires when migration 33 is the NEXT migration to run
+                // (user_version == 32) so it can never skip migrations 1-32.
+                // Heals the schema to the full migration-33 state and stamps
+                // user_version so to_latest skips it; when nothing pre-exists
+                // the normal migration runs untouched.
+                if user_version == 32 && heal_analytics_migration_33(conn)? {
+                    conn.pragma_update(None, "user_version", 33i64)?;
                 }
 
                 migrations.to_latest(conn)
