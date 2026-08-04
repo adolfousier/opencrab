@@ -1185,8 +1185,14 @@ pub(crate) async fn open_flow(
             render_flow_details_state(&s)
         };
         if !details.is_empty() {
-            match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details, None)
-                .await
+            match super::rich::api::send_rich_html_id(
+                bot.token(),
+                chat.0,
+                thread_id,
+                &details,
+                None,
+            )
+            .await
             {
                 Ok(mid) => {
                     let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
@@ -1334,7 +1340,9 @@ pub(crate) async fn restick_flow_if_buried(
         if details.is_empty() {
             return;
         }
-        match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details, None).await {
+        match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details, None)
+            .await
+        {
             Ok(mid) => Some(MessageId(mid)),
             Err(e) => {
                 tracing::warn!(

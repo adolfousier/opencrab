@@ -333,7 +333,8 @@ impl ToolRegistry {
                     // approval for mutators during Editing") is satisfied.
                     tracing::info!(
                         "Plan gate: allowing '{}' (already approved) — {}",
-                        name, reason
+                        name,
+                        reason
                     );
                 } else {
                     tracing::info!(

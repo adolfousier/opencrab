@@ -221,11 +221,7 @@ async fn handle_edit_failure(
 
 /// Classify a plan card create failure. Suppresses future writes on rate-limit,
 /// warns on other errors.
-async fn handle_create_failure(
-    error: &str,
-    state: &TelegramState,
-    session_id: Uuid,
-) {
+async fn handle_create_failure(error: &str, state: &TelegramState, session_id: Uuid) {
     if let Some(wait) = super::rate_limit::parse_retry_after(error) {
         tracing::warn!(
             "Telegram plan card create throttled for session {session_id}: {error} — \
@@ -295,76 +291,68 @@ pub(crate) async fn refresh_plan_card(
             goal.as_ref(),
         )
     {
-            let kb_val = plan_kb
-                .keyboard()
-                .and_then(|m| serde_json::to_value(m).ok());
-            let rich_sig = format!("rich:{rich_html}\u{1}{plan_kb:?}");
-            if let Some((mid, last_sig)) = state.plan_card(session_id).await {
-                if last_sig == rich_sig {
-                    return;
-                }
-                match super::rich::api::edit_rich_html(
-                    bot.token(),
-                    chat.0,
-                    mid.0,
-                    &rich_html,
-                    kb_val.as_ref(),
-                )
-                .await
-                {
-                    Ok(()) => {
-                        state
-                            .set_plan_card(session_id, chat, thread_id, mid, rich_sig)
-                            .await;
-                        return;
-                    }
-                    Err(e) => {
-                        let outcome = handle_edit_failure(
-                            &e.to_string(),
-                            state,
-                            session_id,
-                            chat,
-                            thread_id,
-                            &rich_sig,
-                            mid,
-                        )
-                        .await;
-                        match outcome {
-                            EditOutcome::Saved | EditOutcome::Suppressed => return,
-                            EditOutcome::Gone => { /* fall through to create */ }
-                        }
-                    }
-                }
+        let kb_val = plan_kb
+            .keyboard()
+            .and_then(|m| serde_json::to_value(m).ok());
+        let rich_sig = format!("rich:{rich_html}\u{1}{plan_kb:?}");
+        if let Some((mid, last_sig)) = state.plan_card(session_id).await {
+            if last_sig == rich_sig {
+                return;
             }
-            // No live card or edit failed: create fresh via rich API.
-            match super::rich::api::send_rich_html_id(
+            match super::rich::api::edit_rich_html(
                 bot.token(),
                 chat.0,
-                thread_id,
+                mid.0,
                 &rich_html,
                 kb_val.as_ref(),
             )
             .await
             {
-                Ok(mid) => {
+                Ok(()) => {
                     state
-                        .set_plan_card(
-                            session_id,
-                            chat,
-                            thread_id,
-                            MessageId(mid),
-                            rich_sig,
-                        )
+                        .set_plan_card(session_id, chat, thread_id, mid, rich_sig)
                         .await;
                     return;
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Rich plan card create failed: {e} — falling back to HTML"
-                    );
+                    let outcome = handle_edit_failure(
+                        &e.to_string(),
+                        state,
+                        session_id,
+                        chat,
+                        thread_id,
+                        &rich_sig,
+                        mid,
+                    )
+                    .await;
+                    match outcome {
+                        EditOutcome::Saved | EditOutcome::Suppressed => return,
+                        EditOutcome::Gone => { /* fall through to create */ }
+                    }
                 }
             }
         }
+        // No live card or edit failed: create fresh via rich API.
+        match super::rich::api::send_rich_html_id(
+            bot.token(),
+            chat.0,
+            thread_id,
+            &rich_html,
+            kb_val.as_ref(),
+        )
+        .await
+        {
+            Ok(mid) => {
+                state
+                    .set_plan_card(session_id, chat, thread_id, MessageId(mid), rich_sig)
+                    .await;
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("Rich plan card create failed: {e} — falling back to HTML");
+            }
+        }
+    }
 
     // Classic HTML path (sendMessage, 4096 chars, <blockquote expandable>).
     let Some(html) = render_plan_card_html(
