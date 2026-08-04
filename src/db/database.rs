@@ -35,6 +35,114 @@ pub fn interact_err(e: InteractError) -> anyhow::Error {
     anyhow::anyhow!("Database interact error: {}", e)
 }
 
+/// Build the full ordered migration list.
+///
+/// Extracted from [`Database::run_migrations`] so tests can prepare a
+/// database at a specific version (e.g. `to_version(32)`) before exercising
+/// the migration runner. Order and content are the migration contract:
+/// never reorder or edit applied entries, only append new ones.
+pub(crate) fn build_migrations() -> Migrations<'static> {
+    Migrations::new(vec![
+        M::up(include_str!(
+            "../migrations/20251028000001_initial_schema.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20251028000002_modernize_schema.sql"
+        )),
+        M::up(include_str!("../migrations/20251111000001_add_plans.sql")),
+        M::up(include_str!(
+            "../migrations/20251113000001_add_plan_enhancements.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260224000001_add_a2a_tasks.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260226000001_add_session_provider.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260305000001_add_channel_messages.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260305000002_add_cron_jobs.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260306000001_add_usage_ledger.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260307000001_add_session_working_dir.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260308000001_add_pending_requests.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260330000001_pending_requests_channel_chat_id.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260402000001_add_cron_job_runs.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260412000001_add_feedback_ledger.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260415000001_add_tool_executions.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260415000002_add_session_category.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260415000003_fix_tool_executions_schema.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260416000001_add_message_input_tokens.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260421000001_add_message_thinking.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260426000001_add_recent_paths.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260507000001_add_cron_deliver_api_key.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260517000001_cron_jobs_text_recast.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260522000001_add_auto_title_attempted.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260529000001_add_channel_thread_id.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260606000001_add_message_cache_tokens.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260608000001_add_cron_job_profile.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260614000001_add_projects_and_file_size.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260626000001_add_goal_state.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260706000001_add_usage_ledger_provider.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260713000001_drop_orphaned_plans_tables.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260725000001_add_background_tasks.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260726000001_add_plan_cards.sql"
+        )),
+        M::up(include_str!(
+            "../migrations/20260731000001_add_analytics_events.sql"
+        )),
+    ])
+}
+
 /// Database connection manager
 pub struct Database {
     pub(crate) pool: Pool,
@@ -171,105 +279,7 @@ impl Database {
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
-        let migrations = Migrations::new(vec![
-            M::up(include_str!(
-                "../migrations/20251028000001_initial_schema.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20251028000002_modernize_schema.sql"
-            )),
-            M::up(include_str!("../migrations/20251111000001_add_plans.sql")),
-            M::up(include_str!(
-                "../migrations/20251113000001_add_plan_enhancements.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260224000001_add_a2a_tasks.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260226000001_add_session_provider.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260305000001_add_channel_messages.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260305000002_add_cron_jobs.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260306000001_add_usage_ledger.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260307000001_add_session_working_dir.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260308000001_add_pending_requests.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260330000001_pending_requests_channel_chat_id.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260402000001_add_cron_job_runs.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260412000001_add_feedback_ledger.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260415000001_add_tool_executions.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260415000002_add_session_category.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260415000003_fix_tool_executions_schema.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260416000001_add_message_input_tokens.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260421000001_add_message_thinking.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260426000001_add_recent_paths.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260507000001_add_cron_deliver_api_key.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260517000001_cron_jobs_text_recast.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260522000001_add_auto_title_attempted.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260529000001_add_channel_thread_id.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260606000001_add_message_cache_tokens.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260608000001_add_cron_job_profile.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260614000001_add_projects_and_file_size.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260626000001_add_goal_state.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260706000001_add_usage_ledger_provider.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260713000001_drop_orphaned_plans_tables.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260725000001_add_background_tasks.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260726000001_add_plan_cards.sql"
-            )),
-            M::up(include_str!(
-                "../migrations/20260731000001_add_analytics_events.sql"
-            )),
-        ]);
+        let migrations = build_migrations();
 
         self.pool
             .get()
