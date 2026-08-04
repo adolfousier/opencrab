@@ -951,7 +951,7 @@ pub(crate) async fn refresh_flow_rich_details(
         freeze_flow_block_and_strip_kb(bot, chat, streaming, mid, "rich size limit reached").await;
         return;
     }
-    match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details).await {
+    match super::rich::api::edit_rich_html(bot.token(), chat.0, mid.0, &details, None).await {
         // The plan Approve/Discard keyboard now rides the persistent plan card,
         // not the flow block (#580), so the flow block carries no reply_markup.
         Ok(_) => {}
@@ -1185,7 +1185,7 @@ pub(crate) async fn open_flow(
             render_flow_details_state(&s)
         };
         if !details.is_empty() {
-            match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details)
+            match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details, None)
                 .await
             {
                 Ok(mid) => {
@@ -1334,7 +1334,7 @@ pub(crate) async fn restick_flow_if_buried(
         if details.is_empty() {
             return;
         }
-        match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details).await {
+        match super::rich::api::send_rich_html_id(bot.token(), chat.0, thread_id, &details, None).await {
             Ok(mid) => Some(MessageId(mid)),
             Err(e) => {
                 tracing::warn!(

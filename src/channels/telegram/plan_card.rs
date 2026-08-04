@@ -7,15 +7,15 @@
 use super::TelegramState;
 use super::flow_chrome::{
     GoalSection, PlanKb, ProseSection, load_goal_section, load_plan_prose, load_plan_sections,
-    prose_body_lines,
 };
 use super::handler::escape_html;
 use super::send::message_in_thread;
 use crate::brain::agent::AgentService;
+use crate::config::Config;
 use crate::utils::truncate_chars;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{ParseMode, ThreadId};
+use teloxide::types::{MessageId, ParseMode, ThreadId};
 use uuid::Uuid;
 
 /// Total character budget for prose bodies on the card. The card also
@@ -46,9 +46,8 @@ pub(crate) fn render_plan_card_html(
     // section is its own collapsed <blockquote expandable> with a bold
     // heading, so the card stays compact and each section expands on tap.
     // Locked order: title, prose expandables, checklist rows. The body
-    // lines come from prose_body_lines and are already Telegram HTML
-    // (escaped + inline-formatted), so they are inserted raw — exactly
-    // like FlowSections::chrome_classic renders them.
+    // prose body rendered through the rich AST pipeline (tables → <pre> grids,
+    // code blocks → <pre><code>, headings → bold/italic), matching the flow chrome.
     if let Some(sections) = prose.filter(|s| !s.is_empty()) {
         let mut budget = CARD_PROSE_BUDGET;
         for sec in sections {
@@ -60,7 +59,7 @@ pub(crate) fn render_plan_card_html(
             // Truncating already-HTML output could cut mid-tag, causing
             // Telegram to strip the rich formatting entirely.
             let truncated_body = truncate_chars(&sec.body, budget);
-            let full = prose_body_lines(truncated_body).join("\n");
+            let full = super::rich::markdown_to_html(truncated_body);
             budget = budget.saturating_sub(truncated_body.chars().count());
             if !out.is_empty() {
                 out.push('\n');
@@ -108,8 +107,82 @@ pub(crate) fn render_plan_card_html(
     (!out.is_empty()).then_some(out)
 }
 
+/// Render the plan card using rich-native `<details><summary>` collapsible
+/// blocks instead of `<blockquote expandable>`. The rich API (Bot API 10.1)
+/// parses `<details><summary>` into native RichBlockDetails, which renders
+/// with proper collapse/expand behavior and a 32K char limit. No truncation
+/// is needed — prose renders in full.
+pub(crate) fn render_plan_card_rich_html(
+    title: Option<&str>,
+    checklist: Option<&[String]>,
+    prose: Option<&[ProseSection]>,
+    goal: Option<&GoalSection>,
+) -> Option<String> {
+    let mut out = String::new();
+    if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
+        out.push_str(&format!("📋 <b>{}</b>", escape_html(t)));
+    }
+    // Rich collapsible sections: each prose section becomes a native
+    // RichBlockDetails via <details><summary>, with full body — no budget
+    // cap needed (32K limit vs 4096 for sendMessage).
+    if let Some(sections) = prose.filter(|s| !s.is_empty()) {
+        for sec in sections {
+            let full = super::rich::markdown_to_html(&sec.body);
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            match &sec.heading {
+                Some(h) => out.push_str(&format!(
+                    "<details><summary><b>{}</b></summary>\n{full}</details>",
+                    escape_html(h),
+                )),
+                None => out.push_str(&full),
+            }
+        }
+    }
+    if let Some(rows) = checklist {
+        for row in rows {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&escape_html(row));
+        }
+    }
+    if let Some(g) = goal {
+        let text = g.text.trim();
+        if !text.is_empty() {
+            let has_prose = prose.is_some_and(|p| !p.is_empty());
+            if !out.is_empty() {
+                out.push('\n');
+                if checklist.is_some() || has_prose {
+                    out.push('\n');
+                }
+            }
+            // Rich collapsible goal — no truncation needed.
+            out.push_str(&format!(
+                "<details><summary>{} goal</summary>\n{}</details>",
+                g.prefix(true),
+                escape_html(text)
+            ));
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Serialise the keyboard into a JSON value for the rich API's `reply_markup`
+/// parameter. Returns `None` when there is no keyboard (e.g. completed plan).
+fn kb_json(kb: &PlanKb) -> Option<serde_json::Value> {
+    let markup = kb.keyboard()?;
+    serde_json::to_value(markup).ok()
+}
+
 /// Create or update the session's plan card to reflect the live plan state,
 /// carrying `plan_kb`. Removes the card when the plan is gone.
+///
+/// When `rich_messages` is enabled, the card is sent via `sendRichMessage`
+/// (32K char limit, native `<details><summary>` collapsibles). On any rich
+/// API failure, falls back to the classic HTML `sendMessage` path (4096 chars,
+/// `<blockquote expandable>`).
 pub(crate) async fn refresh_plan_card(
     bot: &Bot,
     chat: ChatId,
@@ -154,6 +227,100 @@ pub(crate) async fn refresh_plan_card(
     } else {
         None
     };
+    let use_rich = Config::current().channels.telegram.rich_messages;
+
+    // Try rich path first when enabled: sendRichMessage (32K, native
+    // <details><summary> collapsibles) with reply_markup for the keyboard.
+    if use_rich {
+        if let Some(rich_html) = render_plan_card_rich_html(
+            title.as_deref(),
+            checklist.as_deref(),
+            prose.as_deref(),
+            goal.as_ref(),
+        ) {
+            let kb_val = kb_json(&plan_kb);
+            let rich_sig =
+                format!("rich:{rich_html}\u{1}{plan_kb:?}");
+            if let Some((mid, last_sig)) = state.plan_card(session_id).await {
+                if last_sig == rich_sig {
+                    return;
+                }
+                match super::rich::api::edit_rich_html(
+                    bot.token(),
+                    chat.0,
+                    mid.0,
+                    &rich_html,
+                    kb_val.as_ref(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        state
+                            .set_plan_card(session_id, chat, thread_id, mid, rich_sig)
+                            .await;
+                        return;
+                    }
+                    Err(e) => {
+                        let es = e.to_string();
+                        if es.contains("message is not modified") {
+                            state
+                                .set_plan_card(session_id, chat, thread_id, mid, rich_sig)
+                                .await;
+                            return;
+                        }
+                        if let Some(wait) = super::rate_limit::parse_retry_after(&es) {
+                            tracing::warn!(
+                                "Telegram rich plan card edit throttled for {session_id}: {es} — \
+                                 pausing for {}s",
+                                wait.as_secs()
+                            );
+                            state
+                                .suppress_plan_card(
+                                    session_id,
+                                    wait + super::rate_limit::RETRY_MARGIN,
+                                )
+                                .await;
+                            return;
+                        }
+                        tracing::warn!(
+                            "Rich plan card edit failed ({mid:?}): {es} — falling back to HTML"
+                        );
+                        state.take_plan_card(session_id).await;
+                    }
+                }
+            }
+            // No live card or edit failed: create fresh via rich API.
+            match super::rich::api::send_rich_html_id(
+                bot.token(),
+                chat.0,
+                thread_id,
+                &rich_html,
+                kb_val.as_ref(),
+            )
+            .await
+            {
+                Ok(mid) => {
+                    state
+                        .set_plan_card(
+                            session_id,
+                            chat,
+                            thread_id,
+                            MessageId(mid),
+                            rich_sig,
+                        )
+                        .await;
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Rich plan card create failed: {e} — falling back to HTML"
+                    );
+                }
+            }
+        }
+    }
+
+    // Classic HTML path (sendMessage, 4096 chars, <blockquote expandable>).
     let Some(html) = render_plan_card_html(
         title.as_deref(),
         checklist.as_deref(),

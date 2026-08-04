@@ -113,42 +113,6 @@ pub(crate) fn split_plan_prose(md: &str) -> Vec<ProseSection> {
 /// Format the markdown body of one prose section into per-line Telegram
 /// HTML: fenced code lines as `<code>`, `#` headings as bold, list items as
 /// bullets, inline markdown elsewhere. Blank source lines come through as
-/// empty strings so the classic join keeps paragraph breaks; the rich path
-/// drops them (each line is already its own `<p>` block).
-pub(crate) fn prose_body_lines(body: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut in_fence = false;
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            out.push(format!("<code>{}</code>", escape_html(line)));
-            continue;
-        }
-        if trimmed.is_empty() {
-            out.push(String::new());
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            let content = trimmed.trim_start_matches('#').trim();
-            out.push(format!("<b>{}</b>", format_inline(&escape_html(content))));
-            continue;
-        }
-        if let Some(item) = trimmed
-            .strip_prefix("- ")
-            .or_else(|| trimmed.strip_prefix("* "))
-        {
-            out.push(format!("• {}", format_inline(&escape_html(item))));
-            continue;
-        }
-        out.push(format_inline(&escape_html(line)));
-    }
-    out
-}
-
 /// The flow-message Goal section (ADR 0005 Decision 10): the goal text plus
 /// whether it is a retained completed goal (the live `GoalManager` entry
 /// completed or cleared mid-turn). A completed goal keeps the `🎯 Goal:`
@@ -226,11 +190,7 @@ impl FlowSections {
         }
         if let Some(ref sections) = self.prose {
             for sec in sections {
-                let body: String = prose_body_lines(&sec.body)
-                    .into_iter()
-                    .filter(|l| !l.is_empty())
-                    .map(|l| format!("<p>{l}</p>"))
-                    .collect();
+                let body: String = super::rich::markdown_to_html(&sec.body);
                 match &sec.heading {
                     Some(h) => out.push_str(&format!(
                         "<details><summary>{}</summary>{body}</details>",
@@ -292,7 +252,7 @@ impl FlowSections {
         }
         if let Some(ref sections) = self.prose {
             for sec in sections {
-                let body = prose_body_lines(&sec.body).join("\n");
+                let body = super::rich::markdown_to_html(&sec.body);
                 match &sec.heading {
                     Some(h) => parts.push(format!(
                         "<blockquote expandable><b>{}</b>\n{body}</blockquote>",

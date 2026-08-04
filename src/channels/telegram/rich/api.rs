@@ -27,14 +27,20 @@ pub(crate) async fn send_rich_markdown(
 /// (#420 path A). The HTML input mode is parsed server-side into rich
 /// blocks, so `<details><summary>` becomes a native RichBlockDetails
 /// collapsible, which the markdown input mode cannot express.
+/// `reply_markup` is optional — pass `None` for no keyboard.
 pub(crate) async fn send_rich_html_id(
     token: &str,
     chat_id: i64,
     thread_id: Option<ThreadId>,
     html: &str,
+    reply_markup: Option<&serde_json::Value>,
 ) -> anyhow::Result<i32> {
     let url = format!("https://api.telegram.org/bot{token}/sendRichMessage");
-    let result = post_rich(&url, &build_body_html(chat_id, thread_id, html)).await?;
+    let mut body = build_body_html(chat_id, thread_id, html);
+    if let Some(kb) = reply_markup {
+        body["reply_markup"] = kb.clone();
+    }
+    let result = post_rich(&url, &body).await?;
     result
         .get("message_id")
         .and_then(serde_json::Value::as_i64)
@@ -43,18 +49,23 @@ pub(crate) async fn send_rich_html_id(
 }
 
 /// Edit an existing rich message with HTML input (#420 path A).
+/// `reply_markup` is optional — pass `None` to leave the keyboard unchanged.
 pub(crate) async fn edit_rich_html(
     token: &str,
     chat_id: i64,
     message_id: i32,
     html: &str,
+    reply_markup: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     let url = format!("https://api.telegram.org/bot{token}/editMessageText");
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "chat_id": chat_id,
         "message_id": message_id,
         "rich_message": { "html": html },
     });
+    if let Some(kb) = reply_markup {
+        body["reply_markup"] = kb.clone();
+    }
     post_and_check(&url, &body).await
 }
 
