@@ -179,6 +179,7 @@ pub mod custom_provider_live_fetch_regression_test;
 pub mod custom_provider_rename_keys_toml_test;
 pub mod custom_provider_section_resolver_test;
 pub mod db_database_test;
+pub mod db_migration_33_heal_test;
 pub mod db_models_test;
 pub mod db_repository_channel_message_test;
 pub mod db_repository_file_test;
