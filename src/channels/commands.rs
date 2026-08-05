@@ -2054,9 +2054,14 @@ pub async fn direct_model_switch(
             Err(loose_err) => return format!("⚠️ {loose_err}\n({exact_err})"),
         },
     };
-    if !crate::brain::provider::factory::is_known_provider_name(&config, &provider) {
+    // Declared in THIS config, not merely a provider this software supports.
+    // The message already promised that; the registry check did not deliver it,
+    // so `anthropic/claude-x` was accepted as a prefix with no such section and
+    // failed later inside create_provider_by_name with a confusing error (#939).
+    if !config.providers.is_declared(&provider) {
         return format!(
             "⚠️ Unknown provider '{provider}' — it must be a configured provider section. \
+             If that is the whole model name, qualify it, e.g. 'openrouter/{provider}/…'. \
              Send /models for the picker."
         );
     }

@@ -1588,6 +1588,39 @@ impl ProviderConfigs {
     /// entry that is enabled and (if `requires_api_key`) has an API key.
     /// Falls through to the first active custom provider, otherwise
     /// `("none", "none")`.
+    /// Has the user actually DECLARED this provider — is there a section for
+    /// it in their config?
+    ///
+    /// Deliberately different from `factory::is_known_provider_name`, which
+    /// answers "does this software support such a provider". That is too broad
+    /// for deciding whether `<x>/<model>` is a provider prefix: `anthropic` is
+    /// both a provider id and an OpenRouter vendor, so the registry answer
+    /// routes a valid OpenRouter model id at a provider the user may never
+    /// have set up (#939).
+    ///
+    /// Declared, not enabled: naming a provider explicitly is how a user points
+    /// at one that is not currently active, so requiring `enabled` would break
+    /// the case the prefix exists for.
+    pub fn is_declared(&self, name: &str) -> bool {
+        let bare = name.strip_prefix("custom:").unwrap_or(name);
+        if self
+            .custom
+            .as_ref()
+            .is_some_and(|m| m.contains_key(bare) || m.contains_key(&normalize_toml_key(bare)))
+        {
+            return true;
+        }
+        // Resolve aliases (`claude_cli` -> `claude-cli`) before consulting the
+        // registry, which is the single source of truth for what exists.
+        let Some(canonical) = crate::utils::providers::find_provider_meta(name).map(|m| m.id)
+        else {
+            return false;
+        };
+        self.provider_registry()
+            .iter()
+            .any(|(id, _, _, cfg)| *id == canonical && cfg.is_some())
+    }
+
     pub fn active_provider_and_model(&self) -> (String, String) {
         for (id, _display, requires_api_key, cfg) in self.provider_registry() {
             if let Some(c) = cfg

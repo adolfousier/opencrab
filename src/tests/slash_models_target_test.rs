@@ -8,9 +8,15 @@
 //! silently. The report described the custom-vs-custom case; the built-in
 //! fall-through was the larger half.
 //!
-//! The user-facing `/models` on channels was never affected — it goes through
-//! `direct_model_switch`, which already parsed the pair correctly. This covers
-//! the agent-tool path, which duplicated the decision and got it wrong.
+//! The user-facing `/models` on channels was never affected by that half — it
+//! goes through `direct_model_switch`, which already parsed the pair correctly.
+//!
+//! Both surfaces did share one flaw: they accepted a prefix that merely named a
+//! provider this software supports, rather than one the user has configured.
+//! `anthropic` is also an OpenRouter vendor, so `anthropic/claude-sonnet-4`
+//! resolved to a section that need not exist. Both now ask `is_declared`, so
+//! the same input means the provider when you have one and is a clear error
+//! when you do not.
 
 use crate::brain::tools::slash_command::{resolve_model_target, section_for_provider};
 use crate::config::{Config, ProviderConfig};
@@ -64,42 +70,69 @@ fn an_explicit_custom_prefix_wins_over_the_enabled_custom_provider() {
 }
 
 #[test]
-fn a_vendor_prefix_that_is_not_a_provider_stays_part_of_the_model_name() {
-    // OpenRouter ids are `vendor/model`. A vendor the registry does not know
-    // must not be mistaken for a provider, or a valid model id would be routed
-    // to a provider nobody asked for.
+fn an_undeclared_prefix_is_an_error_that_names_the_fix() {
+    // A vendor the user has not configured as a provider. Guessing either way
+    // is wrong, so say so and show the qualified form.
     let mut cfg = Config::default();
     cfg.providers.openrouter = Some(provider(true, Some("k")));
-    let (p, model) = resolve_model_target(&cfg, "tencent/hy3:free")
-        .expect("must fall back to the active provider");
-    assert_eq!(p, "openrouter", "'tencent' is a vendor, not a provider");
-    assert_eq!(
-        model, "tencent/hy3:free",
-        "the full id must survive as the model name"
+    let err = resolve_model_target(&cfg, "tencent/hy3:free").expect_err("tencent is not declared");
+    assert!(err.contains("tencent"), "must name the prefix: {err}");
+    assert!(
+        err.contains("openrouter/tencent/hy3:free"),
+        "must show the qualified form that works: {err}"
     );
 }
 
 #[test]
-fn a_registry_provider_name_before_the_slash_is_always_a_prefix() {
-    // Documents a genuine ambiguity rather than hiding it: `anthropic` is both
-    // a provider id and an OpenRouter vendor, and the prefix wins.
-    //
-    // This matches `direct_model_switch`, the path a user's `/models` actually
-    // takes, whose own error text tells them to write `<provider>/<model>`.
-    // Making the tool path differ would rebuild the split this change exists to
-    // remove. To set an OpenRouter model whose vendor collides with a provider
-    // name, write the provider explicitly: `openrouter/anthropic/claude-x`.
+fn the_vendor_provider_collision_is_settled_by_what_the_user_declared() {
+    // `anthropic` is both a provider id and an OpenRouter vendor. Asking the
+    // registry says "provider" every time, which routes a valid OpenRouter id
+    // at a section that may not exist. Asking THIS config resolves it.
     let mut cfg = Config::default();
     cfg.providers.openrouter = Some(provider(true, Some("k")));
-    let (p, model) = resolve_model_target(&cfg, "anthropic/claude-sonnet-4").expect("must resolve");
-    assert_eq!(p, "anthropic");
-    assert_eq!(model, "claude-sonnet-4");
 
-    // The escape hatch works, and only the first slash splits.
+    // Anthropic not configured → this is an OpenRouter model id, and the user
+    // is told how to say so rather than being silently misrouted.
+    let err = resolve_model_target(&cfg, "anthropic/claude-sonnet-4")
+        .expect_err("anthropic has no section here");
+    assert!(
+        err.contains("openrouter/anthropic/claude-sonnet-4"),
+        "{err}"
+    );
+
+    // The qualified form always works, and only the first slash splits.
     let (p, model) =
         resolve_model_target(&cfg, "openrouter/anthropic/claude-sonnet-4").expect("must resolve");
     assert_eq!(p, "openrouter");
     assert_eq!(model, "anthropic/claude-sonnet-4");
+
+    // Anthropic configured → the same input now means the provider, because
+    // the user has one.
+    cfg.providers.anthropic = Some(provider(true, Some("k")));
+    let (p, model) = resolve_model_target(&cfg, "anthropic/claude-sonnet-4").expect("must resolve");
+    assert_eq!(p, "anthropic");
+    assert_eq!(model, "claude-sonnet-4");
+}
+
+#[test]
+fn declared_but_disabled_still_counts_as_a_prefix() {
+    // Naming a provider is how you point at one that is not active. Requiring
+    // `enabled` would break exactly the case the prefix exists for.
+    let mut cfg = Config::default();
+    cfg.providers.openrouter = Some(provider(true, Some("k")));
+    cfg.providers.anthropic = Some(provider(false, None));
+    let (p, _) = resolve_model_target(&cfg, "anthropic/claude-sonnet-4").expect("must resolve");
+    assert_eq!(p, "anthropic");
+}
+
+#[test]
+fn an_alias_spelling_of_a_declared_provider_is_recognised() {
+    // Config sections use `claude_cli`; ids use `claude-cli`. Both must land.
+    let mut cfg = Config::default();
+    cfg.providers.claude_cli = Some(provider(true, None));
+    assert!(cfg.providers.is_declared("claude-cli"));
+    assert!(cfg.providers.is_declared("claude_cli"));
+    assert!(!cfg.providers.is_declared("codex-cli"), "not declared here");
 }
 
 #[test]

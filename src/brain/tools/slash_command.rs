@@ -33,25 +33,38 @@ pub(crate) fn section_for_provider(
 
 /// Resolve `/models <arg>` to the `(provider, model)` it targets.
 ///
-/// `<provider>/<model>` selects that provider, but ONLY when the prefix names
-/// a provider that is actually configured. A slash alone cannot mean a prefix:
-/// OpenRouter model ids are `vendor/model` (`anthropic/claude-sonnet-4`), so
-/// splitting on every slash would route a valid model name to a provider the
-/// user never mentioned. Anything else applies to the active provider.
+/// A slash means `<provider>/<model>`, and the provider must be one the user
+/// has declared. No slash means the model applies to the active provider.
 ///
-/// There is no hardcoded provider ladder here. The previous one tested six
-/// providers by name out of the twenty-two the registry knows, so a user on any
-/// of the other sixteen fell through to "first enabled custom provider" and had
-/// their model written into an unrelated section. When the target cannot be
-/// resolved this returns an error for the user instead of guessing (#939).
+/// The prefix is checked against declared config sections rather than the
+/// registry of everything this software supports. `anthropic` is both a
+/// provider id and an OpenRouter vendor, so a registry check routes
+/// `anthropic/claude-sonnet-4` at a provider the user may never have set up.
+/// Asking whether THEY configured it resolves that: if they did, the prefix is
+/// what they meant; if they did not, this is an OpenRouter-style id and they
+/// are told to qualify it as `openrouter/anthropic/claude-sonnet-4`.
+///
+/// Matches `direct_model_switch`, the path a user's `/models` takes, whose
+/// error already promised "it must be a configured provider section".
+///
+/// There is no hardcoded provider ladder. The previous one tested six providers
+/// by name out of the twenty-two the registry knows, so a user on any of the
+/// other sixteen fell through to "first enabled custom provider" and had their
+/// model written into an unrelated section (#939). Anything unresolvable is an
+/// error naming the problem, never a guess.
 pub(crate) fn resolve_model_target(
     config: &crate::config::Config,
     arg: &str,
 ) -> std::result::Result<(String, String), String> {
-    if let Ok((provider, model)) = crate::utils::provider_pair::parse_pair(arg)
-        && crate::brain::provider::factory::is_known_provider_name(config, &provider)
-    {
-        return Ok((provider, model));
+    if let Ok((provider, model)) = crate::utils::provider_pair::parse_pair(arg) {
+        if config.providers.is_declared(&provider) {
+            return Ok((provider, model));
+        }
+        return Err(format!(
+            "Unknown provider '{provider}' — it must be a configured provider section. \
+             If '{arg}' is the whole model name, qualify it with the provider that serves \
+             it, e.g. 'openrouter/{arg}'."
+        ));
     }
     let (active, _) = config.providers.active_provider_and_model();
     if active == "none" {
