@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Plan management tool
 pub struct PlanTool;
@@ -399,26 +399,27 @@ pub(crate) const MAX_DESCRIPTION_LENGTH: usize = 5000;
 pub(crate) const MAX_CONTEXT_LENGTH: usize = 5000;
 
 // ── Ralph Loop: Mechanical verification gate ────────────────────────
-// Loaded from ~/.opencrabs/safety/ralph_loop.toml. The TOML defines
-// verification commands per task type. Before accepting "success" on
-// a task, the gate runs those commands and rejects the completion if
-// any exit non-zero. This prevents the model from hallucinating
-// "clippy passed" when it didn't.
+// Config resolved per-project (#947): a `ralph_loop.toml` at the
+// session working dir wins, `~/.opencrabs/safety/ralph_loop.toml` is
+// the fallback. The TOML defines verification commands per task type.
+// Before accepting "success" on a task, the gate runs those commands
+// and rejects the completion if any exit non-zero. This prevents the
+// model from hallucinating "clippy passed" when it didn't.
 
 use std::sync::OnceLock;
 
 #[derive(Debug, Deserialize)]
-struct RalphLoopConfig {
+pub(crate) struct RalphLoopConfig {
     #[serde(default)]
-    forward: RalphForward,
+    pub(crate) forward: RalphForward,
     #[serde(default)]
     verification: RalphVerification,
 }
 
 #[derive(Debug, Deserialize)]
-struct RalphForward {
+pub(crate) struct RalphForward {
     #[serde(default = "default_max_iterations")]
-    max_iterations: u32,
+    pub(crate) max_iterations: u32,
     /// Run each plan task in a freshly spawned worker session (#908
     /// option A). When true (default), Ralph's fresh-by-construction
     /// policy applies and started tasks may run isolated; when false,
@@ -490,20 +491,43 @@ fn default_true() -> bool {
     true
 }
 
-/// The Ralph loop config, reloaded when the file changes on disk.
+/// Which `ralph_loop.toml` governs a session (#947): the project's own file
+/// at the session working dir wins outright when present; the machine-wide
+/// safety copy is the fallback.
 ///
-/// Was a `OnceLock`, so changing `max_iterations` or a verification command
-/// needed a restart. Keyed on mtime + length now, so an edit takes effect on
-/// the next task transition (#852).
-fn ralph_loop_config() -> Option<std::sync::Arc<RalphLoopConfig>> {
-    static CONFIG: OnceLock<Option<super::toml_hot_reload::HotToml<RalphLoopConfig>>> =
-        OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            super::toml_hot_reload::safety_path("ralph_loop.toml")
-                .map(|p| super::toml_hot_reload::HotToml::new(p, "Ralph loop config"))
-        })
-        .as_ref()?
+/// Pure so tests can exercise it with tempdirs.
+pub(crate) fn ralph_config_path(working_dir: &Path) -> Option<PathBuf> {
+    let project = working_dir.join("ralph_loop.toml");
+    if project.is_file() {
+        return Some(project);
+    }
+    super::toml_hot_reload::safety_path("ralph_loop.toml")
+}
+
+/// The Ralph loop config governing a session's project, reloaded when the
+/// file changes on disk.
+///
+/// Per-project since #947: `<working_dir>/ralph_loop.toml` is authoritative
+/// when present — including when it fails to parse, which yields `None`
+/// rather than silently falling back to the machine-wide file (a silent
+/// fallback is exactly how cargo verification commands leaked into non-Rust
+/// projects). Otherwise `~/.opencrabs/safety/ralph_loop.toml`. One
+/// mtime-keyed HotToml per resolved path, so hot reload (#852) works per
+/// project independently.
+pub(crate) fn ralph_loop_config(working_dir: &Path) -> Option<std::sync::Arc<RalphLoopConfig>> {
+    static CONFIG: OnceLock<
+        std::sync::Mutex<
+            std::collections::HashMap<PathBuf, super::toml_hot_reload::HotToml<RalphLoopConfig>>,
+        >,
+    > = OnceLock::new();
+    let path = ralph_config_path(working_dir)?;
+    let cache = CONFIG.get_or_init(Default::default);
+    let Ok(mut guard) = cache.lock() else {
+        return None;
+    };
+    guard
+        .entry(path.clone())
+        .or_insert_with(|| super::toml_hot_reload::HotToml::new(path, "Ralph loop config"))
         .get()
 }
 
@@ -640,7 +664,7 @@ fn verify_task_completion(
     task_order: usize,
     working_dir: &std::path::Path,
 ) -> std::result::Result<VerificationOutcome, String> {
-    let Some(config) = ralph_loop_config() else {
+    let Some(config) = ralph_loop_config(working_dir) else {
         return Ok(VerificationOutcome::Disabled);
     };
     if !config.verification.enabled {
@@ -1445,7 +1469,7 @@ impl Tool for PlanTool {
                             if matches!(status, TaskStatus::Failed) {
                                 let task = current_plan.get_task_by_order(order).unwrap();
                                 let current_retries = task.retry_count;
-                                let max_iter = ralph_loop_config()
+                                let max_iter = ralph_loop_config(&context.working_dir())
                                     .map(|c| c.forward.max_iterations)
                                     .unwrap_or(20);
                                 if (current_retries as u32) >= max_iter {
@@ -1482,11 +1506,13 @@ impl Tool for PlanTool {
                             // fresh_context (default true) is part of the
                             // request-resolution default; state_on_disk
                             // (default true) is a mechanical prerequisite.
-                            // Hot-reload preserved: ralph_loop_config()
-                            // re-reads the parsed toml each call (#852).
-                            let (fresh_context, state_on_disk) = ralph_loop_config()
-                                .map(|c| (c.forward.fresh_context, c.forward.state_on_disk))
-                                .unwrap_or((true, true));
+                            // Hot-reload preserved: ralph_loop_config re-reads
+                            // the parsed toml each call (#852); per-project
+                            // resolution since #947.
+                            let (fresh_context, state_on_disk) =
+                                ralph_loop_config(&context.working_dir())
+                                    .map(|c| (c.forward.fresh_context, c.forward.state_on_disk))
+                                    .unwrap_or((true, true));
                             let path = resolve_task_execution(
                                 isolated,
                                 config_enabled,
@@ -1655,7 +1681,7 @@ impl Tool for PlanTool {
                             )));
                         }
                         Ok(outcome) => {
-                            let policy = ralph_loop_config()
+                            let policy = ralph_loop_config(&context.working_dir())
                                 .map(|c| c.verification.criteria_policy)
                                 .unwrap_or_default();
                             match criteria_verdict(policy, has_criteria, outcome) {

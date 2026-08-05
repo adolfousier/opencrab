@@ -22,6 +22,27 @@ const BRAND_GOLD: Color = Color::Rgb(215, 100, 20);
 const ACCENT_GOLD: Color = Color::Rgb(215, 100, 20);
 
 /// Render the entire onboarding wizard
+/// The `[start, end)` slice of a list to draw so that `selected` stays visible
+/// and at most `max` rows are used.
+///
+/// Shared by the provider list and the model list on the same step. They each
+/// had their own copy of this arithmetic, which is how the provider list ended
+/// up without any — it filled an 80x24 terminal and pushed the fields below it
+/// off screen (#948). One implementation means a list cannot be added without
+/// the window that keeps the rest of the form reachable.
+///
+/// A list shorter than `max` returns the whole range, so short lists render
+/// exactly as they did before any windowing existed.
+pub(crate) fn visible_window(total: usize, selected: usize, max: usize) -> (usize, usize) {
+    if max == 0 || total <= max {
+        return (0, total);
+    }
+    // Centre the selection, then clamp so the window never runs past the end —
+    // without the clamp, selecting the last item leaves a window of blanks.
+    let start = selected.saturating_sub(max / 2).min(total - max);
+    (start, start + max)
+}
+
 pub fn render_onboarding(f: &mut Frame, wizard: &OnboardingWizard) {
     let area = f.area();
 
@@ -532,7 +553,28 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
     // Provider list — 8 static providers (0-7), then existing custom names (9+), then "+ New Custom" (8) last.
     // Visual order: 0-7, then 9+, then 8 (existing customs before add button).
     let display_order = wizard.ps.provider_display_order();
-    for &idx in &display_order {
+
+    // Window the list the same way the model list below is windowed (#916).
+    // Rendering every entry filled an 80x24 terminal — the default size, and
+    // what a zoomed-in display gives you — with providers alone, pushing the
+    // model and key fields off screen where they could not be seen or reached
+    // (#948). The count only grows: every custom provider the user adds is
+    // another row.
+    const MAX_VISIBLE_PROVIDERS: usize = 8;
+    let total_providers = display_order.len();
+    let sel_pos = display_order
+        .iter()
+        .position(|&i| i == wizard.ps.selected_provider)
+        .unwrap_or(0);
+    let (p_start, p_end) = visible_window(total_providers, sel_pos, MAX_VISIBLE_PROVIDERS);
+
+    if p_start > 0 {
+        lines.push(Line::from(Span::styled(
+            format!("   ↑ {} more", p_start),
+            Style::default().fg(Color::Gray),
+        )));
+    }
+    for &idx in &display_order[p_start..p_end] {
         let selected = idx == wizard.ps.selected_provider;
         let focused = wizard.auth_field == AuthField::Provider;
         let configured = wizard.ps.provider_has_credentials(idx);
@@ -593,6 +635,12 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
             spans.push(Span::styled(" ✓", Style::default().fg(Color::Green)));
         }
         lines.push(Line::from(spans));
+    }
+    if p_end < total_providers {
+        lines.push(Line::from(Span::styled(
+            format!("   ↓ {} more", total_providers - p_end),
+            Style::default().fg(Color::Gray),
+        )));
     }
 
     lines.push(Line::from(""));
@@ -778,11 +826,7 @@ fn render_provider_auth(lines: &mut Vec<Line<'static>>, wizard: &OnboardingWizar
 
             let total = visible.len();
             let safe_sel = wizard.ps.selected_model.min(total.saturating_sub(1));
-            let half = MAX_VISIBLE / 2;
-            let start = safe_sel
-                .saturating_sub(half)
-                .min(total.saturating_sub(MAX_VISIBLE));
-            let end = (start + MAX_VISIBLE).min(total);
+            let (start, end) = visible_window(total, safe_sel, MAX_VISIBLE);
 
             if start > 0 {
                 lines.push(Line::from(Span::styled(
