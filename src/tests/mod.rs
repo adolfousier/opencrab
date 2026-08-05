@@ -478,6 +478,7 @@ pub mod model_fetch_test;
 #[cfg(feature = "telegram")]
 pub mod parallel_tools_test;
 pub mod profile_test;
+pub mod retry_notice_drain_test;
 pub mod rsi_brain_dedup_test;
 pub mod rsi_command_patterns_test;
 pub mod rsi_fallback_wrap_test;

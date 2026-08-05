@@ -38,6 +38,37 @@ pub(crate) fn is_implausible_token_report(
     expected >= 1000 && reported > expected.saturating_mul(2)
 }
 
+/// Emit every retry the provider recorded, then drain them.
+///
+/// Called on both the success and the failure path. The success path had the
+/// only drain, so a turn that retried and then gave up reported nothing at all
+/// — the resilience was visible exactly when it did not matter and hidden on
+/// the one occasion the user is staring at an error wondering whether anything
+/// happened (#949). Draining on failure too also stops the notices leaking into
+/// whichever later turn happens to succeed next.
+fn emit_retry_notices(
+    provider: &std::sync::Arc<dyn crate::brain::provider::Provider>,
+    session_id: Uuid,
+    progress_callback: Option<&ProgressCallback>,
+) {
+    let notices = provider.take_retry_notices();
+    let Some(cb) = progress_callback else {
+        // No UI wired (a2a, RSI, subagent). Still drained above, so nothing
+        // carries into the next turn.
+        return;
+    };
+    for (attempt, max, reason) in notices {
+        cb(
+            session_id,
+            ProgressEvent::RetryAttempt {
+                attempt,
+                max,
+                reason,
+            },
+        );
+    }
+}
+
 /// What to do with a provider-reported input-token count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenReport {
@@ -2226,6 +2257,11 @@ impl AgentService {
                                     .collect::<Vec<_>>()
                                     .join(", "),
                             );
+                            emit_retry_notices(
+                                &self.provider_for_session(session_id),
+                                session_id,
+                                progress_callback.as_ref(),
+                            );
                             return Err(AgentError::Provider(last_err));
                         }
                     }
@@ -2360,6 +2396,11 @@ impl AgentService {
                                 },
                             );
                         }
+                        emit_retry_notices(
+                            &self.provider_for_session(session_id),
+                            session_id,
+                            progress_callback.as_ref(),
+                        );
                         return Err(AgentError::Provider(last_err));
                     } else {
                         // All retries failed — try fallback provider
@@ -2407,6 +2448,11 @@ impl AgentService {
                             .collect();
 
                         if stream_candidates.is_empty() {
+                            emit_retry_notices(
+                                &self.provider_for_session(session_id),
+                                session_id,
+                                progress_callback.as_ref(),
+                            );
                             return Err(AgentError::Provider(last_err));
                         }
 
@@ -2582,6 +2628,11 @@ impl AgentService {
                                         .collect::<Vec<_>>()
                                         .join(", "),
                                 );
+                                emit_retry_notices(
+                                    &self.provider_for_session(session_id),
+                                    session_id,
+                                    progress_callback.as_ref(),
+                                );
                                 return Err(AgentError::Provider(last_err));
                             }
                         }
@@ -2714,6 +2765,11 @@ impl AgentService {
                             .collect();
 
                         if stream_candidates.is_empty() {
+                            emit_retry_notices(
+                                &self.provider_for_session(session_id),
+                                session_id,
+                                progress_callback.as_ref(),
+                            );
                             return Err(AgentError::Provider(last_err));
                         }
 
@@ -2861,6 +2917,11 @@ impl AgentService {
                                     .collect::<Vec<_>>()
                                     .join(", "),
                             );
+                            emit_retry_notices(
+                                &self.provider_for_session(session_id),
+                                session_id,
+                                progress_callback.as_ref(),
+                            );
                             return Err(AgentError::Provider(last_err));
                         }
                     }
@@ -3005,6 +3066,11 @@ impl AgentService {
                                 .collect::<Vec<_>>()
                                 .join(", "),
                         );
+                        emit_retry_notices(
+                            &self.provider_for_session(session_id),
+                            session_id,
+                            progress_callback.as_ref(),
+                        );
                         return Err(AgentError::Provider(last_err));
                     }
                 }
@@ -3014,21 +3080,14 @@ impl AgentService {
             // blip, 5xx, rate limit) so the user SEES the resilience working
             // instead of an apparent instant jump to fallback. Drained once
             // per iteration; the FallbackProvider aggregates retries from the
-            // primary and every fallback tried this turn.
-            if let Some(ref cb) = progress_callback {
-                for (attempt, max, reason) in
-                    self.provider_for_session(session_id).take_retry_notices()
-                {
-                    cb(
-                        session_id,
-                        ProgressEvent::RetryAttempt {
-                            attempt,
-                            max,
-                            reason,
-                        },
-                    );
-                }
-            }
+            // primary and every fallback tried this turn. The failure exits
+            // above drain too, so a turn that retried and then gave up still
+            // reports the attempts (#949).
+            emit_retry_notices(
+                &self.provider_for_session(session_id),
+                session_id,
+                progress_callback.as_ref(),
+            );
 
             // Surface any sticky-fallback swap that the FallbackProvider
             // performed during this turn so the user sees which provider/model
