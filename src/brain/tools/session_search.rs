@@ -117,6 +117,7 @@ impl SessionSearchTool {
                 limit: None,
                 offset: 0,
                 query: None,
+                include_subagents: false,
             })
             .await
             .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;
@@ -166,6 +167,7 @@ impl SessionSearchTool {
                 limit: None,
                 offset: 0,
                 query: None,
+                include_subagents: false,
             })
             .await
             .map_err(|e| super::error::ToolError::Execution(e.to_string()))?;

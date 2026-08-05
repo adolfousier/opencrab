@@ -1572,6 +1572,7 @@ async fn format_sessions(
             limit: Some(10),
             offset: 0,
             query: query.map(str::to_string),
+            include_subagents: false,
         })
         .await
         .unwrap_or_default();

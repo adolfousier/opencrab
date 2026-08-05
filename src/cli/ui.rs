@@ -972,6 +972,19 @@ async fn cmd_chat_inner(
         tracing::info!("Reported {interrupted} background task(s) interrupted by restart");
     }
 
+    // Retire sub-agent sessions nobody will revisit (#931). Startup-only: they
+    // are created per `spawn_agent` and read by nothing afterwards, so there is
+    // no window where sweeping sooner would help. Never fatal — a failed sweep
+    // costs disk, not correctness.
+    match crate::services::SessionService::new(service_context.clone())
+        .prune_expired_subagent_sessions(config.agent.subagent_session_ttl_days)
+        .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("Pruned {n} expired sub-agent session(s)"),
+        Err(e) => tracing::warn!("Sub-agent session sweep failed: {e:#}"),
+    }
+
     let agent_service = Arc::new(
         AgentService::new(provider.clone(), service_context.clone(), config)
             .await

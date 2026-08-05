@@ -331,6 +331,7 @@ impl SessionService {
             limit: Some(1),
             offset: 0,
             query: None,
+            include_subagents: false,
         };
 
         let sessions = repo.list(options).await?;
@@ -349,5 +350,56 @@ impl SessionService {
         repo.count(true)
             .await
             .context("Failed to count archived sessions")
+    }
+
+    /// Delete sub-agent sessions untouched for longer than `ttl_days`, along
+    /// with every row keyed to them and their on-disk plan files. Returns how
+    /// many were removed.
+    ///
+    /// `ttl_days == 0` disables the sweep. Sub-agent sessions are created one
+    /// per `spawn_agent` and never revisited, so without this they accumulate
+    /// indefinitely (#931).
+    ///
+    /// Plan files resolve through the session's project, so each session's
+    /// paths are read BEFORE its row is deleted — afterwards the lookup would
+    /// silently fall back to the wrong directory and leave the files behind.
+    pub async fn prune_expired_subagent_sessions(&self, ttl_days: u32) -> Result<usize> {
+        if ttl_days == 0 {
+            return Ok(0);
+        }
+        let cutoff = Utc::now().timestamp() - (ttl_days as i64) * 86_400;
+        let repo = SessionRepository::new(self.context.pool());
+        let expired = repo
+            .subagent_sessions_older_than(cutoff)
+            .await
+            .context("Failed to list expired sub-agent sessions")?;
+        if expired.is_empty() {
+            return Ok(0);
+        }
+
+        let mut pruned = 0usize;
+        for id in expired {
+            // Resolve first, delete second — see the note above.
+            let archive = crate::utils::plan_files::archive_dir(id).await;
+            crate::utils::plan_files::discard_plan(id).await;
+            if archive.exists()
+                && let Err(e) = std::fs::remove_dir_all(&archive)
+            {
+                // Not fatal: the session row still goes, and a stale archive
+                // directory is inert. Say so rather than dropping it silently.
+                tracing::warn!(
+                    "Failed to remove archived plans for sub-agent session {id} at {}: {e}",
+                    archive.display()
+                );
+            }
+            match repo.purge(id).await {
+                Ok(()) => pruned += 1,
+                Err(e) => tracing::warn!("Failed to purge sub-agent session {id}: {e:#}"),
+            }
+        }
+        if pruned > 0 {
+            tracing::info!("Pruned {pruned} sub-agent session(s) older than {ttl_days} day(s)");
+        }
+        Ok(pruned)
     }
 }

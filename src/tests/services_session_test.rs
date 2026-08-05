@@ -154,6 +154,7 @@ async fn test_list_sessions() {
         limit: None,
         offset: 0,
         query: None,
+        include_subagents: false,
     };
 
     let sessions = service.list_sessions(options).await.unwrap();

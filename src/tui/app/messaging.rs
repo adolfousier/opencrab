@@ -583,6 +583,7 @@ impl App {
                 limit: Some(100),
                 offset: 0,
                 query: None,
+                include_subagents: false,
             })
             .await?;
 

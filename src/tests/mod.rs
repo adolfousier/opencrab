@@ -507,6 +507,7 @@ pub mod slash_autocomplete_dimensions_test;
 pub mod slash_command_resolution_test;
 pub mod slash_models_target_test;
 pub mod split_pane_test;
+pub mod subagent_session_ttl_test;
 pub mod subagent_test;
 pub mod subagent_tool_description_test;
 pub mod suggest_followups_test;

@@ -911,6 +911,17 @@ pub struct AgentConfig {
     #[serde(default = "default_auto_update")]
     pub auto_update: bool,
 
+    /// Days to keep a spawned sub-agent's session before it is pruned
+    /// (default: 7). `0` disables pruning and keeps them forever.
+    ///
+    /// Every `spawn_agent` creates a session of its own, and nothing ever
+    /// revisits them, so they accumulate along with their messages, tool
+    /// executions and on-disk plan files (#931). They are hidden from the
+    /// session list from the moment they are created; this only decides when
+    /// they stop taking up space.
+    #[serde(default = "default_subagent_session_ttl_days")]
+    pub subagent_session_ttl_days: u32,
+
     /// Override provider for autonomous RSI self-improvement cycles (e.g. "zhipu", "minimax").
     /// RSI runs on its own provider chain so it never competes with chat or sub-agents for quota.
     /// When set, RSI jobs use this provider instead of the session's active one.
@@ -1067,6 +1078,10 @@ fn default_auto_update() -> bool {
     true
 }
 
+fn default_subagent_session_ttl_days() -> u32 {
+    7
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -1081,6 +1096,7 @@ impl Default for AgentConfig {
             execute_provider: None,
             execute_model: None,
             auto_update: default_auto_update(),
+            subagent_session_ttl_days: default_subagent_session_ttl_days(),
             self_improvement_provider: None,
             self_improvement_model: None,
             eval_providers: Vec::new(),

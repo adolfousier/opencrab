@@ -21,7 +21,18 @@ pub struct SessionListOptions {
     pub offset: usize,
     /// Filter by title substring (case-insensitive LIKE match)
     pub query: Option<String>,
+    /// Include sessions spawned for sub-agents (`subagent: …`).
+    ///
+    /// Off by default: a sub-agent session is an implementation detail of one
+    /// `spawn_agent` call, not somewhere the user ever resumes, and a busy turn
+    /// can create several. Listing them buried real sessions (#931). They stay
+    /// in the database either way — this only decides whether a session list
+    /// shows them.
+    pub include_subagents: bool,
 }
+
+/// Title prefix every spawned sub-agent session carries, set by `spawn_agent`.
+pub const SUBAGENT_TITLE_PREFIX: &str = "subagent:";
 
 /// Repository for session operations
 #[derive(Clone)]
@@ -205,12 +216,99 @@ impl SessionRepository {
         Ok(())
     }
 
+    /// Every table that stores rows against a `session_id`.
+    ///
+    /// Only `messages` and `files` declare `ON DELETE CASCADE`; the other nine
+    /// carry a bare `session_id` column with no foreign key, so deleting a
+    /// session row leaves their rows behind forever. Listed explicitly so a new
+    /// table is a visible omission here rather than a silent leak.
+    const SESSION_SCOPED_TABLES: &'static [&'static str] = &[
+        "messages",
+        "files",
+        "usage_ledger",
+        "pending_requests",
+        "feedback_ledger",
+        "tool_executions",
+        "goal_state",
+        "background_tasks",
+        "plan_cards",
+        "phantom_events",
+        "streaming_recoveries",
+    ];
+
+    /// Sub-agent sessions last written before `cutoff_unix`, oldest first.
+    ///
+    /// Returned rather than deleted here because their on-disk plan files
+    /// resolve through the session's project, so the caller has to read that
+    /// before the row goes away.
+    pub async fn subagent_sessions_older_than(&self, cutoff_unix: i64) -> Result<Vec<Uuid>> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id FROM sessions \
+                     WHERE title LIKE ?1 AND updated_at < ?2 \
+                     ORDER BY updated_at ASC",
+                )?;
+                let rows = stmt.query_map(
+                    params![format!("{SUBAGENT_TITLE_PREFIX}%"), cutoff_unix],
+                    |row| row.get::<_, String>(0),
+                )?;
+                let mut out = Vec::new();
+                for r in rows {
+                    match Uuid::parse_str(&r?) {
+                        Ok(id) => out.push(id),
+                        // A malformed id would otherwise abort the whole sweep.
+                        Err(e) => tracing::warn!("Skipping session with unparseable id: {e}"),
+                    }
+                }
+                Ok::<_, rusqlite::Error>(out)
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to list expired sub-agent sessions")
+    }
+
+    /// Permanently remove a session and every row keyed to it.
+    ///
+    /// Unlike [`delete`](Self::delete), which archives the row and keeps it for
+    /// usage joins, this is a real delete — used only by the sub-agent sweep,
+    /// where the whole point is to stop the data accumulating (#931). Runs in
+    /// one transaction so a failure part-way cannot leave a session row whose
+    /// children are gone.
+    pub async fn purge(&self, id: Uuid) -> Result<()> {
+        let id_str = id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let tx = conn.transaction()?;
+                for table in Self::SESSION_SCOPED_TABLES {
+                    tx.execute(
+                        &format!("DELETE FROM {table} WHERE session_id = ?1"),
+                        params![id_str],
+                    )?;
+                }
+                tx.execute("DELETE FROM sessions WHERE id = ?1", params![id_str])?;
+                tx.commit()?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to purge session")?;
+        Ok(())
+    }
+
     /// List all sessions (most recent first)
     pub async fn list(&self, options: SessionListOptions) -> Result<Vec<Session>> {
         let include_archived = options.include_archived;
         let limit = options.limit;
         let offset = options.offset;
         let query = options.query;
+        let include_subagents = options.include_subagents;
 
         self.pool
             .get()
@@ -222,6 +320,16 @@ impl SessionRepository {
 
                 if !include_archived {
                     conditions.push("archived_at IS NULL".to_string());
+                }
+
+                if !include_subagents {
+                    // `title IS NULL` must pass: an untitled session is a real
+                    // one, and `NULL NOT LIKE …` is NULL, which SQLite treats
+                    // as false — so without this every untitled session would
+                    // silently vanish from the list.
+                    conditions.push(format!(
+                        "(title IS NULL OR title NOT LIKE '{SUBAGENT_TITLE_PREFIX}%')"
+                    ));
                 }
 
                 if let Some(ref q) = query {

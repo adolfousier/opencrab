@@ -493,6 +493,7 @@ async fn resolve_or_create_cron_session(ctx: &ServiceContext) -> anyhow::Result<
             limit: None,
             offset: 0,
             query: None,
+            include_subagents: false,
         })
         .await?;
     if let Some(existing) = sessions

@@ -89,6 +89,7 @@ mod session_db {
             limit: None,
             offset: 0,
             query: None,
+            include_subagents: false,
         };
         let sessions = svc.list_sessions(options).await.unwrap();
         let found = sessions.iter().find(|s| s.id == session.id).unwrap();

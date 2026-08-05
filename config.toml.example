@@ -361,6 +361,10 @@ profile_id = ""
 # default_model = "mimo-v2.5-pro"
 # subagent_provider = "zhipu"
 # subagent_model = "GLM 5"
+# Days to keep a spawned sub-agent's session before it is pruned, with its
+# messages, tool executions and plan files. 0 keeps them forever. They are
+# always hidden from the session list; this only decides when they are removed.
+# subagent_session_ttl_days = 7
 
 # Lazy tool-schema loading (default: true — RECOMMENDED). Each request ships
 # only the CORE tool schemas (~4k tokens) plus `tool_search`. The agent calls
