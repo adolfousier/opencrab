@@ -802,3 +802,430 @@ async fn discard_op_abandons_the_plan_and_show_plan_reports_state() {
     })
     .await;
 }
+
+// ── plan_session_override (#908 option A) ─────────────────────────
+
+/// Plan-driven spawn threading: a child context with a fresh session id
+/// but `plan_session_override` set to the parent's id resolves ALL plan
+/// state against the parent — start/complete operate on the parent's
+/// checklist, the writes land in the parent's plan file, and the child's
+/// own session never grows plan files of its own. The child stays fresh;
+/// the disk carries the plan.
+#[tokio::test]
+async fn plan_session_override_resolves_parent_plan() {
+    use crate::utils::plan_files::{PlanModeState, load_plan, plan_json_path, plan_mode_state};
+
+    in_temp_home(async {
+        let tool = PlanTool;
+        // Parent session owns a live approved checklist plan.
+        let parent_ctx = setup_plan_with_tasks(&tool, 2).await;
+        let parent_sid = parent_ctx.session_id;
+
+        // Child context: fresh session id + the parent override.
+        let mut child_ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let child_sid = child_ctx.session_id;
+        child_ctx.plan_session_override = Some(parent_sid);
+
+        // start from the child resolves the PARENT's plan, not the child's
+        // empty session.
+        let started = tool
+            .execute(serde_json::json!({ "operation": "start" }), &child_ctx)
+            .await
+            .unwrap();
+        assert!(started.success, "child start failed: {:?}", started.error);
+        assert!(
+            started.output.contains("Task #1"),
+            "child start must surface the parent's first task, got: {}",
+            started.output
+        );
+
+        // complete from the child writes the result back to the parent's plan.
+        let done = tool
+            .execute(
+                serde_json::json!({
+                    "operation": "complete",
+                    "task_order": 1,
+                    "action": "success",
+                    "output": "done from child"
+                }),
+                &child_ctx,
+            )
+            .await
+            .unwrap();
+        assert!(done.success, "child complete failed: {:?}", done.error);
+
+        // Disk truth: the PARENT's plan advanced — task 1 Completed, task 2
+        // auto-started.
+        let parent_plan = load_plan(parent_sid)
+            .await
+            .expect("parent plan must still exist");
+        assert_eq!(
+            parent_plan.tasks[0].status,
+            crate::tui::plan::TaskStatus::Completed
+        );
+        assert_eq!(
+            parent_plan.tasks[1].status,
+            crate::tui::plan::TaskStatus::InProgress
+        );
+
+        // The child's own session never grew plan state.
+        assert!(
+            !plan_json_path(child_sid).await.exists(),
+            "child must not create its own plan JSON"
+        );
+        assert_eq!(
+            plan_mode_state(child_sid).await,
+            PlanModeState::NoPlan,
+            "child session must stay NoPlan"
+        );
+    })
+    .await;
+}
+
+/// The override keys EVERY plan artifact to the overridden session, not
+/// just the JSON: an `init` executed from a child context with the
+/// override creates the plan under the parent's session id, and the
+/// child's own plan files stay absent.
+#[tokio::test]
+async fn plan_session_override_keys_init_to_parent() {
+    use crate::utils::plan_files::{load_plan, plan_json_path};
+
+    in_temp_home(async {
+        let tool = PlanTool;
+        let parent_sid = uuid::Uuid::new_v4();
+
+        let mut child_ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        let child_sid = child_ctx.session_id;
+        child_ctx.plan_session_override = Some(parent_sid);
+
+        let init = tool
+            .execute(
+                serde_json::json!({
+                    "operation": "init",
+                    "title": "Override init",
+                    "tasks": [{
+                        "title": "Only task",
+                        "description": "Single task for the override-init test",
+                        "task_type": "edit"
+                    }]
+                }),
+                &child_ctx,
+            )
+            .await
+            .unwrap();
+        assert!(init.success, "init via override failed: {:?}", init.error);
+
+        // The plan landed under the PARENT's session id.
+        let parent_plan = load_plan(parent_sid)
+            .await
+            .expect("plan must be keyed to the overridden session");
+        assert_eq!(parent_plan.session_id, parent_sid);
+        assert_eq!(parent_plan.title, "Override init");
+
+        // Nothing under the child's own session.
+        assert!(
+            !plan_json_path(child_sid).await.exists(),
+            "child must not create its own plan JSON"
+        );
+    })
+    .await;
+}
+
+// ── #908 task 4: isolated execution — decision table + worker plumbing ────
+
+/// Every row of `resolve_task_execution`, deterministic (#908 option A).
+/// Args: (explicit_request, config_enabled, fresh_context, state_on_disk,
+/// override_set, has_service_context, has_spawn_machinery,
+/// task_already_in_progress).
+#[test]
+fn task_execution_decision_table() {
+    use crate::brain::tools::plan_tool::{TaskExecutionPath, resolve_task_execution};
+    use TaskExecutionPath::*;
+
+    // Row 1 — recursion guard beats everything: a session already running
+    // as a plan worker (override set) executes inline even when isolation
+    // is explicitly requested and all machinery exists.
+    assert_eq!(
+        resolve_task_execution(Some(true), true, true, true, true, true, true, false),
+        Inline {
+            reason: "already inside a plan worker session"
+        }
+    );
+
+    // Row 2 — request resolution: nothing requested → inline.
+    assert_eq!(
+        resolve_task_execution(None, false, true, true, false, true, true, false),
+        Inline {
+            reason: "isolated execution not requested"
+        }
+    );
+    // Row 2 — an explicit false beats a config-on default.
+    assert_eq!(
+        resolve_task_execution(Some(false), true, true, true, false, true, true, false),
+        Inline {
+            reason: "isolated execution not requested"
+        }
+    );
+    // Row 2 — an explicit true beats a config-off default.
+    assert_eq!(
+        resolve_task_execution(Some(true), false, true, true, false, true, true, false),
+        Isolated
+    );
+    // Row 2 — Ralph fresh_context=false gates the config default: even
+    // with the config flag on, isolation is not requested. (Pure-fn test:
+    // ralph_loop_config() is process-wide via OnceLock, so the handler's
+    // toml read is exercised by hot reload, not here.)
+    assert_eq!(
+        resolve_task_execution(None, true, false, true, false, true, true, false),
+        Inline {
+            reason: "isolated execution not requested"
+        }
+    );
+    // Row 2 — an explicit per-call request bypasses the fresh_context
+    // gate (the Ralph loop passes Some(fresh_context) itself).
+    assert_eq!(
+        resolve_task_execution(Some(true), true, false, true, false, true, true, false),
+        Isolated
+    );
+
+    // Row 3 — requested but no session machinery → inline.
+    assert_eq!(
+        resolve_task_execution(Some(true), true, true, true, false, false, true, false),
+        Inline {
+            reason: "no session machinery (service context)"
+        }
+    );
+
+    // Row 4 — session machinery but no spawn machinery → inline.
+    assert_eq!(
+        resolve_task_execution(Some(true), true, true, true, false, true, false, false),
+        Inline {
+            reason: "no spawn machinery wired (manager/registry)"
+        }
+    );
+
+    // Row 5 — state_on_disk=false blocks isolation mechanically, EVEN
+    // when explicitly forced: without plan state threaded on disk a
+    // worker cannot operate on the parent checklist.
+    assert_eq!(
+        resolve_task_execution(Some(true), true, true, false, false, true, true, false),
+        Inline {
+            reason: "state_on_disk disabled — plan state cannot be threaded"
+        }
+    );
+
+    // Row 6 — InProgress task under config-default isolation resumes
+    // inline (idempotent retry / crashed-worker leftover).
+    assert_eq!(
+        resolve_task_execution(None, true, true, true, false, true, true, true),
+        Inline {
+            reason: "task already in progress — retry resumes inline"
+        }
+    );
+    // Row 6 exception — explicit isolation forces a fresh worker even for
+    // an InProgress task (start blocks, so no live worker can exist).
+    assert_eq!(
+        resolve_task_execution(Some(true), true, true, true, false, true, true, true),
+        Isolated
+    );
+
+    // Happy path — config-on, fresh_context default, machinery present,
+    // task not in progress.
+    assert_eq!(
+        resolve_task_execution(None, true, true, true, false, true, true, false),
+        Isolated
+    );
+}
+
+/// The worker brief is self-contained: title, description, acceptance
+/// criteria, working dir, epistemic flags, and the complete instruction
+/// with the RIGHT task_order. It is the worker's entire context besides
+/// the plan file — no parent conversation ever leaks in.
+#[tokio::test]
+async fn worker_brief_is_self_contained() {
+    in_temp_home(async {
+        let tool = PlanTool;
+        let ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        tool.execute(
+            serde_json::json!({
+                "operation": "init",
+                "title": "Brief test",
+                "tasks": [{
+                    "title": "T1",
+                    "description": "D1",
+                    "task_type": "edit",
+                    "acceptance_criteria": ["AC1", "AC2"]
+                }]
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+        let plan = crate::utils::plan_files::load_plan(ctx.session_id)
+            .await
+            .expect("plan must exist");
+        let brief = crate::brain::tools::plan_tool::build_worker_brief(
+            1,
+            &plan.tasks[0],
+            std::path::Path::new("/tmp/work"),
+            "\n\nEpistemic flags (1):\n  ⚠ [contradicted] plan:task:1: prior failure",
+        );
+        assert!(brief.contains("Task #1: T1"), "title missing:\n{brief}");
+        assert!(brief.contains("Description: D1"), "description missing");
+        assert!(
+            brief.contains("- AC1") && brief.contains("- AC2"),
+            "criteria missing"
+        );
+        assert!(brief.contains("/tmp/work"), "working dir missing");
+        assert!(brief.contains("Epistemic flags"), "epistemic flags missing");
+        assert!(
+            brief.contains("task_order=1"),
+            "complete instruction must name the right task_order:\n{brief}"
+        );
+        assert!(
+            brief.contains("PARENT's checklist"),
+            "brief must tell the worker its plan tool targets the parent"
+        );
+        assert!(
+            brief.contains("Work ONLY this task"),
+            "brief must forbid scope drift"
+        );
+
+        // Empty description and criteria are omitted, not rendered blank.
+        // (init validation rejects empty descriptions, so blank the fields
+        // on an in-memory clone instead.)
+        let mut bare_task = plan.tasks[0].clone();
+        bare_task.description = String::new();
+        bare_task.acceptance_criteria.clear();
+        let bare = crate::brain::tools::plan_tool::build_worker_brief(
+            1,
+            &bare_task,
+            std::path::Path::new("/tmp"),
+            "",
+        );
+        assert!(
+            !bare.contains("Description:"),
+            "empty description must be omitted"
+        );
+        assert!(
+            !bare.contains("Acceptance criteria:"),
+            "empty criteria must be omitted"
+        );
+        assert!(
+            !bare.contains("Epistemic flags"),
+            "empty epistemic note must be omitted"
+        );
+    })
+    .await;
+}
+
+/// `report_after_worker` trusts ONLY the plan file on disk — the worker's
+/// own claims never flip the verdict (#908: deterministic check beats
+/// narrative).
+#[tokio::test]
+async fn post_worker_report_trusts_disk_only() {
+    in_temp_home(async {
+        use crate::brain::tools::plan_tool::report_after_worker;
+        use crate::tui::plan::TaskStatus;
+        let tool = PlanTool;
+        let ctx = setup_plan_with_tasks(&tool, 2).await;
+        let sid = ctx.session_id;
+
+        // Completed on disk → success, whatever the worker said.
+        let mut plan = crate::utils::plan_files::load_plan(sid).await.unwrap();
+        plan.tasks[0].status = TaskStatus::Completed;
+        let (ok, report) = report_after_worker(1, Some(&plan), "I did great, trust me");
+        assert!(ok, "disk-Completed must be success: {report}");
+        assert!(report.contains("verified on disk"));
+        assert!(report.contains("Progress: 1/2 done"));
+
+        // Failed on disk → failure, even if the worker claims success.
+        let mut plan = crate::utils::plan_files::load_plan(sid).await.unwrap();
+        plan.tasks[0].status = TaskStatus::Failed;
+        let (ok, report) = report_after_worker(1, Some(&plan), "all green I promise");
+        assert!(!ok, "disk-Failed must be failure");
+        assert!(report.contains("FAILED"));
+
+        // Skipped on disk → legitimate resolution.
+        let mut plan = crate::utils::plan_files::load_plan(sid).await.unwrap();
+        plan.tasks[0].status = TaskStatus::Skipped;
+        let (ok, _) = report_after_worker(1, Some(&plan), "");
+        assert!(ok, "disk-Skipped is a legitimate resolution");
+
+        // Still InProgress on disk → NOT counted, despite glowing claims.
+        let mut plan = crate::utils::plan_files::load_plan(sid).await.unwrap();
+        plan.tasks[0].status = TaskStatus::InProgress;
+        let (ok, report) = report_after_worker(1, Some(&plan), "definitely done");
+        assert!(!ok, "disk-InProgress must not count as done");
+        assert!(report.contains("NOT counting"));
+
+        // Plan file vanished → honest failure.
+        let (ok, report) = report_after_worker(1, None, "done");
+        assert!(!ok);
+        assert!(report.contains("vanished"));
+    })
+    .await;
+}
+
+/// Handler integration: explicit isolation from inside a plan worker
+/// (override set) hits the recursion guard and stays inline — with an
+/// honest note. Deterministic: no spawn machinery needed.
+#[tokio::test]
+async fn start_isolated_from_worker_context_stays_inline() {
+    in_temp_home(async {
+        let tool = PlanTool;
+        let parent_ctx = setup_plan_with_tasks(&tool, 2).await;
+        let mut child_ctx = ToolExecutionContext::new(uuid::Uuid::new_v4());
+        child_ctx.plan_session_override = Some(parent_ctx.session_id);
+
+        let res = tool
+            .execute(
+                serde_json::json!({ "operation": "start", "isolated": true }),
+                &child_ctx,
+            )
+            .await
+            .unwrap();
+        assert!(res.success, "start must not fail: {:?}", res.error);
+        assert!(
+            res.output.contains("▶️ Task #1"),
+            "worker-context start must still surface full task details:\n{}",
+            res.output
+        );
+        assert!(
+            res.output.contains("already inside a plan worker session"),
+            "recursion guard must be reported honestly:\n{}",
+            res.output
+        );
+    })
+    .await;
+}
+
+/// Handler integration: explicit isolation on a surface without session
+/// machinery (plain test context) falls back inline with an honest note —
+/// never a silent downgrade.
+#[tokio::test]
+async fn start_isolated_without_machinery_falls_back_honestly() {
+    in_temp_home(async {
+        let tool = PlanTool;
+        let ctx = setup_plan_with_tasks(&tool, 2).await;
+        let res = tool
+            .execute(
+                serde_json::json!({ "operation": "start", "isolated": true }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(res.success, "start must not fail: {:?}", res.error);
+        assert!(
+            res.output.contains("no session machinery"),
+            "unavailable isolation must be reported:\n{}",
+            res.output
+        );
+        assert!(
+            res.output.contains("▶️ Task #1"),
+            "inline details must still render:\n{}",
+            res.output
+        );
+    })
+    .await;
+}

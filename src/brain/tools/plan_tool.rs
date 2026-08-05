@@ -70,6 +70,15 @@ enum PlanOperation {
     Start {
         #[serde(default)]
         task_order: Option<usize>,
+        /// Isolation request for this start (#908 option A). `Some(true)`
+        /// forces the task into a freshly spawned worker session when the
+        /// machinery allows (overriding the InProgress-retry-inline rule,
+        /// since `start` blocks and no live worker can exist mid-call);
+        /// `Some(false)` forces inline; `None` uses the config default
+        /// (`agent.plan_isolated_execution`). Ralph loops pass their
+        /// `fresh_context` value here.
+        #[serde(default)]
+        isolated: Option<bool>,
     },
     /// Finish a task and auto-start the next one (returning its full details).
     Complete {
@@ -406,10 +415,36 @@ struct RalphLoopConfig {
     verification: RalphVerification,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 struct RalphForward {
     #[serde(default = "default_max_iterations")]
     max_iterations: u32,
+    /// Run each plan task in a freshly spawned worker session (#908
+    /// option A). When true (default), Ralph's fresh-by-construction
+    /// policy applies and started tasks may run isolated; when false,
+    /// Ralph asks for continuity and tasks run inline. Only bites when
+    /// `agent.plan_isolated_execution` is on — the config flag is the
+    /// master switch, this key is Ralph's policy within it. An explicit
+    /// `isolated` on plan start overrides both.
+    #[serde(default = "default_true")]
+    fresh_context: bool,
+    /// Plan state lives on disk and is threaded to workers (#908). When
+    /// true (default), isolation is mechanically possible: the child
+    /// gets the parent's plan file via `plan_session_override`. When
+    /// false, a worker would run blind, so isolation is refused with an
+    /// honest note and tasks run inline.
+    #[serde(default = "default_true")]
+    state_on_disk: bool,
+}
+
+impl Default for RalphForward {
+    fn default() -> Self {
+        Self {
+            max_iterations: default_max_iterations(),
+            fresh_context: true,
+            state_on_disk: true,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -449,6 +484,10 @@ pub(crate) struct TaskTypeCommands {
 
 fn default_max_iterations() -> u32 {
     20
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// The Ralph loop config, reloaded when the file changes on disk.
@@ -813,6 +852,10 @@ impl Tool for PlanTool {
                     "minimum": 1,
                     "description": "Task number (1-based). Required for complete; optional for start (omit to pick the next task)."
                 },
+                "isolated": {
+                    "type": "boolean",
+                    "description": "start only: true forces this task to run in a freshly spawned isolated worker session (fresh context, ONLY the task brief plus the plan file — no parent conversation); false forces inline execution in the current session. Omit to use the config default (agent.plan_isolated_execution)."
+                },
                 "action": {
                     "type": "string",
                     "enum": ["success", "fail", "skip"],
@@ -856,12 +899,21 @@ impl Tool for PlanTool {
     async fn execute(&self, input: Value, context: &ToolExecutionContext) -> Result<ToolResult> {
         let operation: PlanOperation = serde_json::from_value(input)?;
 
+        // Plan-state session. Normally this session's own id, but a spawned
+        // child carrying a parent plan override (#908 option A) resolves ALL
+        // plan state against the parent's session id: the JSON, design .md,
+        // pre-init and autonomy markers, task goal and archives are keyed by
+        // session, so they move together or the two halves of one plan
+        // disagree. Path validation below is unchanged — the override only
+        // selects WHICH session's .opencrabs_plan_{uuid}.json resolves.
+        let plan_sid = context.plan_session_override.unwrap_or(context.session_id);
+
         // Load or create plan state from context (session-scoped)
         let session_dir = crate::config::opencrabs_home()
             .join("agents")
             .join("session");
         let _ = std::fs::create_dir_all(&session_dir);
-        let plan_filename = format!(".opencrabs_plan_{}.json", context.session_id);
+        let plan_filename = format!(".opencrabs_plan_{}.json", plan_sid);
         let plan_file = session_dir.join(&plan_filename);
 
         // Security: Validate plan file path
@@ -873,9 +925,8 @@ impl Tool for PlanTool {
         // the size guard applies. The engine's lifecycle state (NoPlan /
         // pre-init / post-init Editing / Active) is derived from the same
         // files.
-        let mut plan: Option<PlanDocument> =
-            crate::utils::plan_files::load_plan(context.session_id).await;
-        let state = crate::utils::plan_files::plan_mode_state(context.session_id).await;
+        let mut plan: Option<PlanDocument> = crate::utils::plan_files::load_plan(plan_sid).await;
+        let state = crate::utils::plan_files::plan_mode_state(plan_sid).await;
 
         let result = match operation {
             PlanOperation::Init {
@@ -995,7 +1046,7 @@ impl Tool for PlanTool {
                         .collect();
 
                     imported.id = uuid::Uuid::new_v4();
-                    imported.session_id = context.session_id;
+                    imported.session_id = plan_sid;
                     // Import is checklist-track: tasks are already structured,
                     // but the plan still goes to Editing first so the user can
                     // review before execution starts (start/complete are blocked
@@ -1132,7 +1183,7 @@ impl Tool for PlanTool {
                     // behavior and is refused toward the checklist track.
                     let slash_armed = matches!(state, PlanModeState::PreInitEditing)
                         && matches!(
-                            crate::utils::plan_files::pre_init_origin(context.session_id).await,
+                            crate::utils::plan_files::pre_init_origin(plan_sid).await,
                             crate::utils::plan_files::PreInitOrigin::Slash
                         );
                     if design && context.auto_approve && !slash_armed {
@@ -1154,7 +1205,7 @@ impl Tool for PlanTool {
                         );
                     }
 
-                    let mut new_plan = PlanDocument::new(context.session_id, title.clone());
+                    let mut new_plan = PlanDocument::new(plan_sid, title.clone());
                     new_plan.context = ctx;
                     new_plan.risks = risks;
                     new_plan.test_strategy = test_strategy;
@@ -1185,10 +1236,9 @@ impl Tool for PlanTool {
                     let count = new_plan.tasks.len();
                     plan = Some(new_plan);
 
-                    let md_path =
-                        crate::utils::plan_files::create_design_md(context.session_id, &title)
-                            .await
-                            .map_err(ToolError::Io)?;
+                    let md_path = crate::utils::plan_files::create_design_md(plan_sid, &title)
+                        .await
+                        .map_err(ToolError::Io)?;
 
                     if design {
                         format!(
@@ -1295,7 +1345,10 @@ impl Tool for PlanTool {
                 )
             }
 
-            PlanOperation::Start { task_order } => {
+            PlanOperation::Start {
+                task_order,
+                isolated,
+            } => {
                 if let Some(reason) = checklist_blocked_reason(state) {
                     return Ok(ToolResult::error(reason));
                 }
@@ -1415,6 +1468,110 @@ impl Tool for PlanTool {
                             current_plan.status = PlanStatus::Active;
                         }
 
+                        // #908 option A — isolated execution branch. Routes
+                        // the started task to a freshly spawned worker
+                        // session when isolation resolves (decision table:
+                        // resolve_task_execution); otherwise falls through
+                        // to the long-standing inline path below.
+                        let mut isolation_note: Option<String> = None;
+                        if !already_done {
+                            let config_enabled = crate::config::Config::load()
+                                .map(|c| c.agent.plan_isolated_execution)
+                                .unwrap_or(false);
+                            // Ralph keys gate isolation from the loop side:
+                            // fresh_context (default true) is part of the
+                            // request-resolution default; state_on_disk
+                            // (default true) is a mechanical prerequisite.
+                            // Hot-reload preserved: ralph_loop_config()
+                            // re-reads the parsed toml each call (#852).
+                            let (fresh_context, state_on_disk) = ralph_loop_config()
+                                .map(|c| (c.forward.fresh_context, c.forward.state_on_disk))
+                                .unwrap_or((true, true));
+                            let path = resolve_task_execution(
+                                isolated,
+                                config_enabled,
+                                fresh_context,
+                                state_on_disk,
+                                context.plan_session_override.is_some(),
+                                context.service_context.is_some(),
+                                context.subagent_manager.is_some()
+                                    && context.parent_tool_registry.is_some(),
+                                matches!(status, TaskStatus::InProgress),
+                            );
+                            match path {
+                                TaskExecutionPath::Isolated => {
+                                    let snapshot = current_plan
+                                        .get_task_by_order(order)
+                                        .cloned()
+                                        .expect("task resolved above");
+                                    let brief = build_worker_brief(
+                                        order,
+                                        &snapshot,
+                                        &context.working_dir(),
+                                        &epistemic_task_flags(),
+                                    );
+                                    // Persist InProgress BEFORE the spawn so
+                                    // the worker, the TUI and any observer
+                                    // agree on the plan state on disk.
+                                    if let Err(e) =
+                                        crate::utils::plan_files::save_plan(current_plan).await
+                                    {
+                                        return Ok(ToolResult::error(format!(
+                                            "could not persist plan before spawn: {e}"
+                                        )));
+                                    }
+                                    tracing::info!(
+                                        "plan start #{order}: routing to isolated worker session"
+                                    );
+                                    match spawn_plan_worker(context, plan_sid, order, brief).await {
+                                        Ok(worker_output) => {
+                                            // Disk verdict — the worker's own
+                                            // claims mean nothing (#908: a
+                                            // deterministic check beats
+                                            // narrative).
+                                            let reloaded =
+                                                crate::utils::plan_files::load_plan(plan_sid).await;
+                                            let (ok, report) = report_after_worker(
+                                                order,
+                                                reloaded.as_ref(),
+                                                &worker_output,
+                                            );
+                                            tracing::info!(
+                                                "plan start #{order}: worker returned, disk verdict ok={ok}"
+                                            );
+                                            return Ok(if ok {
+                                                ToolResult::success(report)
+                                            } else {
+                                                ToolResult::error(report)
+                                            });
+                                        }
+                                        Err(e) => {
+                                            // Spawn itself failed: honest
+                                            // inline fallback. The plan keeps
+                                            // its InProgress mark; the inline
+                                            // path below picks the task up.
+                                            tracing::warn!(
+                                                "plan start #{order}: isolated spawn failed ({e}); falling back inline"
+                                            );
+                                            isolation_note = Some(format!(
+                                                "⚠️ Isolated execution was requested but the spawn failed: {e}. Running this task inline instead."
+                                            ));
+                                        }
+                                    }
+                                }
+                                TaskExecutionPath::Inline { reason } => {
+                                    if isolated.is_some() {
+                                        isolation_note = Some(format!(
+                                            "⚠️ Isolation was requested but is unavailable: {reason}. Running inline."
+                                        ));
+                                    }
+                                    tracing::debug!(
+                                        "plan start #{order}: inline execution ({reason})"
+                                    );
+                                }
+                            }
+                        }
+
                         let done = current_plan
                             .tasks
                             .iter()
@@ -1427,36 +1584,9 @@ impl Tool for PlanTool {
                         // Epistemic Orient gate (#886): surface relevant
                         // low-confidence beliefs so the agent sees prior
                         // failures / uncertain outcomes before starting work.
-                        let epistemic_note = {
-                            let relevant: Vec<String> =
-                                super::epistemic::list_by_prefix("plan:task:")
-                                    .into_iter()
-                                    .filter(|b| {
-                                        matches!(
-                                            b.confidence,
-                                            super::epistemic::Confidence::Contradicted
-                                                | super::epistemic::Confidence::Uncertain
-                                        )
-                                    })
-                                    .map(|b| {
-                                        format!(
-                                            "  ⚠ [{}] {}: {}",
-                                            b.confidence.label(),
-                                            b.key,
-                                            b.value
-                                        )
-                                    })
-                                    .collect();
-                            if relevant.is_empty() {
-                                String::new()
-                            } else {
-                                format!("\n\nEpistemic flags ({}):", relevant.len())
-                                    + "\n"
-                                    + &relevant.join("\n")
-                            }
-                        };
+                        let epistemic_note = epistemic_task_flags();
 
-                        if already_done {
+                        let result = if already_done {
                             format!(
                                 "Task #{order}: {} — already {status:?}.\n\n{details}{epistemic_note}\n\n\
                                  Progress: {done}/{total} done.",
@@ -1469,6 +1599,10 @@ impl Tool for PlanTool {
                                  with task_order={order}.",
                                 task.title
                             )
+                        };
+                        match isolation_note {
+                            Some(note) => format!("{result}\n\n{note}"),
+                            None => result,
                         }
                     }
                 }
@@ -1575,7 +1709,7 @@ impl Tool for PlanTool {
                 // the goal: the retry via `start` re-surfaces it).
                 let resolved = current_plan.get_task_by_order(task_order).unwrap();
                 if verb != "failed" && !resolved.acceptance_criteria.is_empty() {
-                    clear_task_goal(context, context.session_id).await;
+                    clear_task_goal(context, plan_sid).await;
                 }
 
                 let title = current_plan
@@ -1636,7 +1770,7 @@ impl Tool for PlanTool {
             // try_approve, so re-saving the stale local copy would clobber it;
             // the autonomy ops touch a session marker, not the plan.
             PlanOperation::Approve => {
-                if !crate::utils::plan_files::is_plan_autonomy(context.session_id).await {
+                if !crate::utils::plan_files::is_plan_autonomy(plan_sid).await {
                     return Ok(ToolResult::error(
                         "Self-approval is off for this session. The user approves the plan via \
                          the Approve button or /execute. If the user told you to proceed \
@@ -1645,7 +1779,7 @@ impl Tool for PlanTool {
                             .to_string(),
                     ));
                 }
-                return match crate::utils::plan_mode::try_approve(context.session_id).await {
+                return match crate::utils::plan_mode::try_approve(plan_sid).await {
                     crate::utils::plan_mode::ApproveOutcome::Refused(msg) => {
                         Ok(ToolResult::error(msg))
                     }
@@ -1657,7 +1791,7 @@ impl Tool for PlanTool {
                 };
             }
             PlanOperation::GrantAutonomy => {
-                crate::utils::plan_files::set_plan_autonomy(context.session_id, true)
+                crate::utils::plan_files::set_plan_autonomy(plan_sid, true)
                     .await
                     .map_err(|e| {
                         ToolError::InvalidInput(format!("Failed to grant autonomy: {e}"))
@@ -1671,7 +1805,7 @@ impl Tool for PlanTool {
                 ));
             }
             PlanOperation::RevokeAutonomy => {
-                crate::utils::plan_files::set_plan_autonomy(context.session_id, false)
+                crate::utils::plan_files::set_plan_autonomy(plan_sid, false)
                     .await
                     .map_err(|e| {
                         ToolError::InvalidInput(format!("Failed to revoke autonomy: {e}"))
@@ -1692,7 +1826,7 @@ impl Tool for PlanTool {
                 // never touch this tool. Sessions with granted plan autonomy
                 // keep the old behavior: the user explicitly handed the agent
                 // the keys (cron / a2a / hands-off flows).
-                if !crate::utils::plan_files::is_plan_autonomy(context.session_id).await {
+                if !crate::utils::plan_files::is_plan_autonomy(plan_sid).await {
                     return Ok(ToolResult::error(
                         "Discarding a plan is a user action: ask the user to run /discard \
                          or tap the plan card's Discard button. If the user asked you in \
@@ -1703,17 +1837,17 @@ impl Tool for PlanTool {
                 }
                 let reply = if let Some(ref svc) = context.service_context {
                     // Full discard (also clears the plan's goal).
-                    crate::utils::plan_mode::discard(context.session_id, svc).await
+                    crate::utils::plan_mode::discard(plan_sid, svc).await
                 } else {
                     // No service context: just remove the plan files.
-                    crate::utils::plan_files::discard_plan(context.session_id).await;
+                    crate::utils::plan_files::discard_plan(plan_sid).await;
                     "🗑️ Plan discarded — back to no plan.".to_string()
                 };
                 return Ok(ToolResult::success(reply));
             }
             PlanOperation::ShowPlan => {
                 return Ok(ToolResult::success(
-                    crate::utils::plan_mode::show_plan(context.session_id).await,
+                    crate::utils::plan_mode::show_plan(plan_sid).await,
                 ));
             }
         };
@@ -1739,6 +1873,248 @@ impl Tool for PlanTool {
 
         Ok(ToolResult::success(result))
     }
+}
+
+/// Epistemic Orient gate (#886): collect contradicted / uncertain plan-task
+/// beliefs so the agent sees prior failures before starting work. Used by
+/// both inline starts and the isolated-worker brief.
+fn epistemic_task_flags() -> String {
+    let relevant: Vec<String> = super::epistemic::list_by_prefix("plan:task:")
+        .into_iter()
+        .filter(|b| {
+            matches!(
+                b.confidence,
+                super::epistemic::Confidence::Contradicted
+                    | super::epistemic::Confidence::Uncertain
+            )
+        })
+        .map(|b| format!("  ⚠ [{}] {}: {}", b.confidence.label(), b.key, b.value))
+        .collect();
+    if relevant.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nEpistemic flags ({}):", relevant.len()) + "\n" + &relevant.join("\n")
+    }
+}
+
+// ── #908 option A: isolated plan-task execution ───────────────────────────
+//
+// A started plan task runs either INLINE (the current session executes it,
+// the long-standing behavior) or ISOLATED: a freshly spawned child session
+// receives ONLY the task brief plus the parent's plan file (threaded via
+// `plan_session_override`) — never the parent's conversation. Spawn is
+// fresh by construction and must stay fresh; the disk is the interface
+// between iterations.
+
+/// Where a started plan task executes.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum TaskExecutionPath {
+    Isolated,
+    Inline { reason: &'static str },
+}
+
+/// Decision table for task isolation (#908 option A). Pure function: every
+/// row is a deterministic test, and the start handler only supplies facts
+/// it already holds. Rows, in order:
+///
+/// 1. Recursion guard — a session already running as a plan worker (it
+///    carries a plan override) executes inline; spawning again would nest
+///    workers without bound.
+/// 2. Request resolution — an explicit per-call flag wins; otherwise the
+///    config default (`agent.plan_isolated_execution`) AND the Ralph
+///    `fresh_context` key (default true). Ralph loops pass
+///    `Some(fresh_context)`.
+/// 3. Machinery — spawning needs session services.
+/// 4. Machinery — spawning needs a sub-agent manager AND a parent registry.
+/// 5. Ralph `state_on_disk` — isolation is mechanically impossible without
+///    plan state threaded on disk, even when explicitly forced.
+/// 6. Idempotent retry — an InProgress task resumes inline, UNLESS
+///    isolation is explicitly forced. `start` blocks until the worker
+///    returns, so when start is callable there is never a live worker: an
+///    InProgress task under explicit isolation is a crashed leftover or an
+///    auto-started next task, both safe to hand to a fresh worker.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_task_execution(
+    explicit_request: Option<bool>,
+    config_enabled: bool,
+    fresh_context: bool,
+    state_on_disk: bool,
+    override_set: bool,
+    has_service_context: bool,
+    has_spawn_machinery: bool,
+    task_already_in_progress: bool,
+) -> TaskExecutionPath {
+    use TaskExecutionPath::*;
+    if override_set {
+        return Inline {
+            reason: "already inside a plan worker session",
+        };
+    }
+    if !explicit_request.unwrap_or(config_enabled && fresh_context) {
+        return Inline {
+            reason: "isolated execution not requested",
+        };
+    }
+    if !has_service_context {
+        return Inline {
+            reason: "no session machinery (service context)",
+        };
+    }
+    if !has_spawn_machinery {
+        return Inline {
+            reason: "no spawn machinery wired (manager/registry)",
+        };
+    }
+    if !state_on_disk {
+        return Inline {
+            reason: "state_on_disk disabled — plan state cannot be threaded",
+        };
+    }
+    if task_already_in_progress && explicit_request != Some(true) {
+        return Inline {
+            reason: "task already in progress — retry resumes inline",
+        };
+    }
+    Isolated
+}
+
+/// Task brief handed to an isolated plan worker. The child session is
+/// FRESH: this brief plus the parent's plan file is everything it gets —
+/// no parent conversation, never. Keep it self-contained.
+pub(crate) fn build_worker_brief(
+    order: usize,
+    task: &PlanTask,
+    working_dir: &Path,
+    epistemic_note: &str,
+) -> String {
+    let mut brief = format!(
+        "You are a plan-task worker running in a fresh session. The parent's plan file is \
+         threaded to you: your `plan` tool operates on the PARENT's checklist.\n\n\
+         ▶️ Task #{}: {}\n",
+        order, task.title
+    );
+    if !task.description.trim().is_empty() {
+        brief.push_str(&format!("\nDescription: {}\n", task.description));
+    }
+    if !task.acceptance_criteria.is_empty() {
+        brief.push_str("\nAcceptance criteria:\n");
+        for c in &task.acceptance_criteria {
+            brief.push_str(&format!("- {c}\n"));
+        }
+    }
+    brief.push_str(&format!("\nWorking directory: {}\n", working_dir.display()));
+    if !epistemic_note.trim().is_empty() {
+        brief.push_str(&format!("\n{epistemic_note}\n"));
+    }
+    brief.push_str(&format!(
+        "\nRules:\n\
+         1. Do the work with real tool calls. Verify with real commands before claiming anything.\n\
+         2. When the task is done, call `plan` with operation=complete, task_order={}, \
+         action=success|fail, and an honest output summary. Never claim success you did not verify.\n\
+         3. Work ONLY this task. Do not start other tasks; do not init, approve, or discard plans.\n",
+        order
+    ));
+    brief
+}
+
+/// Honest post-spawn verdict. The worker's own claims mean nothing here —
+/// completion is read from the plan file on disk (deterministic check
+/// beats narrative). Returns (success, report).
+pub(crate) fn report_after_worker(
+    order: usize,
+    reloaded: Option<&PlanDocument>,
+    worker_output: &str,
+) -> (bool, String) {
+    let Some(plan) = reloaded else {
+        return (
+            false,
+            format!(
+                "❌ Plan file vanished after the worker run for task #{order}. Nothing verified."
+            ),
+        );
+    };
+    let Some(task) = plan.get_task_by_order(order) else {
+        return (
+            false,
+            format!(
+                "❌ Task #{order} missing from the plan after the worker run. Nothing verified."
+            ),
+        );
+    };
+    let done = plan
+        .tasks
+        .iter()
+        .filter(|t| matches!(t.status, TaskStatus::Completed))
+        .count();
+    let progress = format!("Progress: {done}/{} done.", plan.tasks.len());
+    match &task.status {
+        TaskStatus::Completed => (
+            true,
+            format!(
+                "✅ Task #{} ({}) completed by the isolated worker — verified on disk.\n{progress}\n\nWorker summary: {worker_output}",
+                order, task.title
+            ),
+        ),
+        TaskStatus::Failed => (
+            false,
+            format!(
+                "❌ Task #{} ({}) FAILED in the isolated worker (disk-verified).\n{progress}\n\nWorker summary: {worker_output}\n\nRetry with start task_order={order}.",
+                order, task.title
+            ),
+        ),
+        TaskStatus::Skipped => (
+            true,
+            format!(
+                "⏭️ Task #{} ({}) skipped by the isolated worker (disk-verified).\n{progress}",
+                order, task.title
+            ),
+        ),
+        other => (
+            false,
+            format!(
+                "⚠️ The isolated worker ended but task #{order} is still {other:?} on disk — NOT counting it as done.\n{progress}\n\nWorker summary: {worker_output}\n\nRetry with start task_order={order}."
+            ),
+        ),
+    }
+}
+
+/// Spawn a fresh worker session for one plan task (#908 option A). The
+/// child gets ONLY the brief plus the parent's plan file (`plan_session`
+/// input → `plan_session_override` on the child context) — no parent
+/// conversation. Blocks until the worker finishes. Returns the worker's
+/// final output; Err means the spawn itself failed (caller falls back to
+/// inline execution).
+async fn spawn_plan_worker(
+    context: &ToolExecutionContext,
+    plan_sid: uuid::Uuid,
+    order: usize,
+    brief: String,
+) -> std::result::Result<String, ToolError> {
+    let manager = context
+        .subagent_manager
+        .clone()
+        .ok_or_else(|| ToolError::Execution("no sub-agent manager wired".to_string()))?;
+    let registry = context
+        .parent_tool_registry
+        .clone()
+        .ok_or_else(|| ToolError::Execution("no parent tool registry wired".to_string()))?;
+    let spawn_tool = crate::brain::tools::subagent::SpawnAgentTool::new(manager, registry);
+    let input = serde_json::json!({
+        "prompt": brief,
+        "label": format!("plan-task-{order}"),
+        "agent_type": "general",
+        "plan_session": plan_sid.to_string(),
+    });
+    let res = spawn_tool.execute(input, context).await?;
+    if !res.success {
+        let msg = res
+            .error
+            .clone()
+            .filter(|e| !e.trim().is_empty())
+            .unwrap_or(res.output);
+        return Err(ToolError::Execution(format!("spawn failed: {msg}")));
+    }
+    Ok(res.output)
 }
 
 #[cfg(test)]

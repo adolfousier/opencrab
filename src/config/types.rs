@@ -906,6 +906,16 @@ pub struct AgentConfig {
     #[serde(default)]
     pub execute_model: Option<String>,
 
+    /// Route plan-task `start` through isolated execution (#908 option A):
+    /// each started task runs in a freshly spawned child session that gets
+    /// ONLY the task brief plus the parent's plan file threaded via
+    /// `plan_session_override`. Default false keeps the long-standing
+    /// behavior: `start` returns the task details and the current session
+    /// executes inline. Ralph loops with `fresh_context = true` request
+    /// isolation explicitly per call regardless of this flag.
+    #[serde(default)]
+    pub plan_isolated_execution: bool,
+
     /// Auto-install new releases on startup without prompting (default: true).
     /// When false, the user is shown an update prompt dialog instead.
     #[serde(default = "default_auto_update")]
@@ -1095,6 +1105,7 @@ impl Default for AgentConfig {
             plan_model: None,
             execute_provider: None,
             execute_model: None,
+            plan_isolated_execution: false,
             auto_update: default_auto_update(),
             subagent_session_ttl_days: default_subagent_session_ttl_days(),
             self_improvement_provider: None,
