@@ -611,6 +611,72 @@ pub(crate) fn handler_state() -> Option<Arc<HandlerState>> {
 /// update is rejected, a plain-text update with the footer appended retries;
 /// if that fails too, the footer is dropped with a warn — a standalone
 /// footer post is never an option.
+/// Render the turn's step group into Slack, creating the message on the first
+/// step and updating it on every one after.
+///
+/// Shared by tool steps and narration so a note folds into the same collapsible
+/// block as the tools it sits between (#943). Narration used to take a separate
+/// `chat_post_message` path, which put the agent's thinking in the channel as
+/// an ordinary message.
+async fn sync_step_group<'a>(
+    session: &SlackClientSession<'a, slack_morphism::hyper_tokio::SlackClientHyperHttpsConnector>,
+    slack_state: &Arc<SlackState>,
+    channel: SlackChannelId,
+    thread_ts: Option<SlackTs>,
+    group_ts: &Arc<Mutex<Option<SlackTs>>>,
+    entries: Vec<super::tool_group::GroupEntry>,
+) {
+    use super::tool_group::GroupState;
+    let mut gts = group_ts.lock().await;
+    match gts.as_ref() {
+        Some(ts) => {
+            let group = slack_state
+                .upsert_tool_group(
+                    ts.to_string(),
+                    GroupState {
+                        channel: channel.clone(),
+                        entries,
+                        expanded: false,
+                    },
+                )
+                .await;
+            let content = super::tool_group::render(&group, ts);
+            let upd = SlackApiChatUpdateRequest::new(channel, content, ts.clone());
+            if let Err(e) = session.chat_update(&upd).await {
+                tracing::warn!("Slack: chat_update failed (step group append): {e}");
+            }
+        }
+        None => {
+            // First step: post with a placeholder ts in the button id, then
+            // re-render with the real ts.
+            let group = GroupState {
+                channel: channel.clone(),
+                entries,
+                expanded: false,
+            };
+            let content = super::tool_group::render(&group, &SlackTs::new("0".into()));
+            let mut req = SlackApiChatPostMessageRequest::new(channel.clone(), content);
+            if let Some(ref ts) = thread_ts {
+                req = req.with_thread_ts(ts.clone());
+            }
+            match session.chat_post_message(&req).await {
+                Ok(resp) => {
+                    let fixed = super::tool_group::render(&group, &resp.ts);
+                    let upd = SlackApiChatUpdateRequest::new(channel, fixed, resp.ts.clone());
+                    if let Err(e) = session.chat_update(&upd).await {
+                        tracing::warn!("Slack: chat_update failed (step group ts fixup): {e}");
+                    }
+                    slack_state
+                        .upsert_tool_group(resp.ts.to_string(), group)
+                        .await;
+                    *gts = Some(resp.ts);
+                }
+                Err(e) => tracing::warn!("Slack: failed to post step group message: {e}"),
+            }
+        }
+    }
+}
+
 async fn append_footer_via_update<'a>(
     session: &SlackClientSession<'a, slack_morphism::hyper_tokio::SlackClientHyperHttpsConnector>,
     channel_id: &str,
@@ -1584,74 +1650,22 @@ async fn handle_message(
                         // collapsed by default with an Expand toggle (#373).
                         let entries = {
                             let mut t = tools.lock().await;
-                            t.push(GroupEntry {
+                            t.push(GroupEntry::Tool {
                                 name: tool_name,
                                 context: ctx,
                                 status: None,
                             });
                             t.clone()
                         };
-                        let mut gts = group_ts.lock().await;
-                        match gts.as_ref() {
-                            Some(ts) => {
-                                let group = slack_state_grp
-                                    .upsert_tool_group(
-                                        ts.to_string(),
-                                        GroupState {
-                                            channel: channel.clone(),
-                                            entries,
-                                            expanded: false,
-                                        },
-                                    )
-                                    .await;
-                                let content = super::tool_group::render(&group, ts);
-                                let upd =
-                                    SlackApiChatUpdateRequest::new(channel, content, ts.clone());
-                                if let Err(e) = session.chat_update(&upd).await {
-                                    tracing::warn!(
-                                        "Slack: chat_update failed (tool group append): {e}"
-                                    );
-                                }
-                            }
-                            None => {
-                                // First tool: post with a placeholder ts in the
-                                // button id, then re-render with the real ts.
-                                let group = GroupState {
-                                    channel: channel.clone(),
-                                    entries,
-                                    expanded: false,
-                                };
-                                let content =
-                                    super::tool_group::render(&group, &SlackTs::new("0".into()));
-                                let mut req =
-                                    SlackApiChatPostMessageRequest::new(channel.clone(), content);
-                                if let Some(ref ts) = thread_ts_inner {
-                                    req = req.with_thread_ts(ts.clone());
-                                }
-                                match session.chat_post_message(&req).await {
-                                    Ok(resp) => {
-                                        let fixed = super::tool_group::render(&group, &resp.ts);
-                                        let upd = SlackApiChatUpdateRequest::new(
-                                            channel,
-                                            fixed,
-                                            resp.ts.clone(),
-                                        );
-                                        if let Err(e) = session.chat_update(&upd).await {
-                                            tracing::warn!(
-                                                "Slack: chat_update failed (tool group ts fixup): {e}"
-                                            );
-                                        }
-                                        slack_state_grp
-                                            .upsert_tool_group(resp.ts.to_string(), group)
-                                            .await;
-                                        *gts = Some(resp.ts);
-                                    }
-                                    Err(e) => tracing::warn!(
-                                        "Slack: failed to post tool group message: {e}"
-                                    ),
-                                }
-                            }
-                        }
+                        sync_step_group(
+                            &session,
+                            &slack_state_grp,
+                            channel,
+                            thread_ts_inner,
+                            &group_ts,
+                            entries,
+                        )
+                        .await;
                     });
                 }
                 ProgressEvent::ToolCompleted {
@@ -1662,12 +1676,16 @@ async fn handle_message(
                         let session = client.open_session(&token);
                         let entries = {
                             let mut t = tools.lock().await;
-                            if let Some(entry) = t
-                                .iter_mut()
-                                .rev()
-                                .find(|e| e.name == tool_name && e.status.is_none())
+                            if let Some(GroupEntry::Tool { status, .. }) =
+                                t.iter_mut().rev().find(|e| {
+                                    matches!(
+                                        e,
+                                        GroupEntry::Tool { name, status: None, .. }
+                                            if *name == tool_name
+                                    )
+                                })
                             {
-                                entry.status = Some(success);
+                                *status = Some(success);
                             }
                             t.clone()
                         };
@@ -1736,29 +1754,32 @@ async fn handle_message(
                     // doesn't break hash-match against the final.
                     let (text_clean, _vid_paths) = crate::utils::extract_vid_markers(&text_clean);
                     let text_clone = text_clean;
+                    let _ = &ts_ref; // narration no longer becomes a standalone message
+                    let group_ts = tool_group_ts_cb.clone();
                     let handle = tokio::spawn(async move {
+                        if text_clone.trim().is_empty() {
+                            return;
+                        }
                         let session = client.open_session(&token);
+                        // Fold the narration into the turn's step group instead
+                        // of posting it as its own message (#943). Standalone it
+                        // read as an answer, and on a turn that ended with an
+                        // empty final the empty-final guard promoted it to one.
                         let text_fmt = crate::utils::slack_fmt::markdown_to_mrkdwn(&text_clone);
-                        let mut req = SlackApiChatPostMessageRequest::new(
+                        let entries = {
+                            let mut t = tools.lock().await;
+                            t.push(GroupEntry::Note(text_fmt));
+                            t.clone()
+                        };
+                        sync_step_group(
+                            &session,
+                            &slack_state_grp,
                             channel,
-                            SlackMessageContent::new().with_text(text_fmt.clone()),
-                        );
-                        if let Some(ref ts) = thread_ts_resp {
-                            req = req.with_thread_ts(ts.clone());
-                        }
-                        match session.chat_post_message(&req).await {
-                            Ok(resp) => {
-                                use std::collections::hash_map::DefaultHasher;
-                                use std::hash::{Hash, Hasher};
-                                let mut hasher = DefaultHasher::new();
-                                text_fmt.hash(&mut hasher);
-                                let content_hash = hasher.finish();
-                                ts_ref.lock().await.push((resp.ts, content_hash, text_fmt));
-                            }
-                            Err(e) => {
-                                tracing::debug!("Slack: failed to send intermediate text: {}", e);
-                            }
-                        }
+                            thread_ts_resp,
+                            &group_ts,
+                            entries,
+                        )
+                        .await;
                     });
                     if let Ok(mut g) = intermediate_handles_cb.lock() {
                         g.push(handle);

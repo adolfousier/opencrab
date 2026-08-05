@@ -1,0 +1,158 @@
+//! Regression (#943): the agent's between-tool narration folds into the
+//! collapsible step group instead of being posted as its own chat message.
+//!
+//! Posted standalone it sat in the channel looking like an answer, and on a
+//! turn that ended with an empty final the empty-final guard promoted it to
+//! one — permanently, because that path skips the delete-the-intermediates
+//! step. Folding it in matches what Telegram's flow block already does.
+
+use crate::channels::slack::tool_group::{GroupEntry, GroupState, render};
+use slack_morphism::prelude::{SlackChannelId, SlackMessageContent, SlackTs};
+
+fn tool(name: &str, status: Option<bool>) -> GroupEntry {
+    GroupEntry::Tool {
+        name: name.to_string(),
+        context: String::new(),
+        status,
+    }
+}
+
+fn group(entries: Vec<GroupEntry>, expanded: bool) -> GroupState {
+    GroupState {
+        channel: SlackChannelId::new("C1".into()),
+        entries,
+        expanded,
+    }
+}
+
+fn text_of(content: &SlackMessageContent) -> String {
+    content.text.clone().unwrap_or_default()
+}
+
+/// The narration from the reported thread.
+const NARRATION: &str = "Let me verify one thing properly before I report it";
+
+#[test]
+fn collapsed_group_hides_narration() {
+    // The whole point: thinking must not be visible until asked for.
+    let g = group(
+        vec![
+            tool("bash", Some(true)),
+            GroupEntry::Note(NARRATION.to_string()),
+            tool("read_file", Some(true)),
+        ],
+        false,
+    );
+    let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
+    assert!(
+        !text.contains(NARRATION),
+        "collapsed group must not show narration. Got:\n{text}"
+    );
+}
+
+#[test]
+fn expanded_group_shows_narration_in_order() {
+    // Folding it away must not lose it — expanding shows the real sequence.
+    let g = group(
+        vec![
+            tool("bash", Some(true)),
+            GroupEntry::Note(NARRATION.to_string()),
+            tool("read_file", Some(true)),
+        ],
+        true,
+    );
+    let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
+    assert!(text.contains(NARRATION), "expanded must show it: {text}");
+
+    let note_at = text.find(NARRATION).expect("narration present");
+    let bash_at = text.find("bash").expect("bash present");
+    let read_at = text.find("read_file").expect("read_file present");
+    assert!(
+        bash_at < note_at && note_at < read_at,
+        "steps must render in the order they happened. Got:\n{text}"
+    );
+}
+
+#[test]
+fn summary_counts_steps_and_tools_separately_when_they_differ() {
+    // "3 tool calls" beside five folded lines would misdescribe the contents.
+    let g = group(
+        vec![
+            tool("bash", Some(true)),
+            GroupEntry::Note("thinking".to_string()),
+            GroupEntry::Note("more thinking".to_string()),
+            tool("read_file", Some(true)),
+        ],
+        false,
+    );
+    let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
+    assert!(text.contains("4 steps"), "got: {text}");
+    assert!(text.contains("2 tool calls"), "got: {text}");
+}
+
+#[test]
+fn summary_stays_tool_only_when_there_is_no_narration() {
+    // A tools-only turn must read exactly as before this change.
+    let g = group(
+        vec![tool("bash", Some(true)), tool("read_file", Some(true))],
+        false,
+    );
+    let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
+    assert!(text.contains("2 tool calls"), "got: {text}");
+    assert!(
+        !text.contains("step"),
+        "no narration means no step count to explain. Got:\n{text}"
+    );
+}
+
+#[test]
+fn narration_does_not_count_as_a_running_step() {
+    // A note is a record of something already said. Counting it as running
+    // would leave the group showing "running" forever after the tools finish.
+    let g = group(
+        vec![
+            tool("bash", Some(true)),
+            GroupEntry::Note(NARRATION.to_string()),
+        ],
+        false,
+    );
+    let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
+    assert!(
+        !text.contains("running"),
+        "a finished turn must not report a running step. Got:\n{text}"
+    );
+    assert!(text.contains("✅"), "got: {text}");
+}
+
+#[test]
+fn a_running_tool_is_still_reported_alongside_narration() {
+    let g = group(
+        vec![GroupEntry::Note(NARRATION.to_string()), tool("bash", None)],
+        false,
+    );
+    let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
+    assert!(text.contains("1 running"), "got: {text}");
+}
+
+#[test]
+fn a_failed_tool_is_still_reported_alongside_narration() {
+    let g = group(
+        vec![
+            GroupEntry::Note(NARRATION.to_string()),
+            tool("bash", Some(false)),
+        ],
+        false,
+    );
+    let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
+    assert!(text.contains("1 failed"), "got: {text}");
+    assert!(text.contains("❌"), "got: {text}");
+}
+
+#[test]
+fn a_lone_narration_step_renders_without_a_summary_header() {
+    // Single-entry groups render as one plain line; a note must follow the
+    // same rule rather than falling through to a bare summary with no body.
+    let g = group(vec![GroupEntry::Note(NARRATION.to_string())], false);
+    let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
+    assert!(text.contains(NARRATION), "got: {text}");
+}
