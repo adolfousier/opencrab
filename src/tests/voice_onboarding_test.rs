@@ -6,12 +6,23 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::config::profile::with_home_override;
 use crate::tui::onboarding::{
     OnboardingStep, OnboardingWizard, SttProvider, TtsProvider, VoiceField, WizardAction,
 };
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::empty())
+}
+
+/// Step-scoped saves (#926) mean leaving VoiceSetup/Channels writes config
+/// on transition, so tests that cross those boundaries run against a temp
+/// home instead of the user's real one (#912 isolation pattern).
+fn in_temp_home(f: impl FnOnce()) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let opencrabs = dir.path().join(".opencrabs");
+    std::fs::create_dir_all(&opencrabs).expect("create .opencrabs");
+    with_home_override(opencrabs, f);
 }
 
 // ─── STT mode selection ─────────────────────────────────────────────────────
@@ -313,37 +324,41 @@ fn tts_mode_cycles_with_up() {
 
 #[test]
 fn tts_off_enter_advances_to_next_step() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::TtsModeSelect;
-    wizard.tts_provider = TtsProvider::Off; // Off
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::TtsModeSelect;
+        wizard.tts_provider = TtsProvider::Off; // Off
 
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
-    // Enter on Continue advances to next step
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
+        // Enter on Continue advances to next step
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]
 fn tts_api_enter_advances_to_next_step() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::TtsModeSelect;
-    wizard.tts_provider = TtsProvider::OpenAi; // API
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::TtsModeSelect;
+        wizard.tts_provider = TtsProvider::OpenAi; // API
 
-    // TtsModeSelect -> TtsApiVoiceSelect
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.voice_field, VoiceField::TtsApiVoiceSelect);
-    // TtsApiVoiceSelect -> TtsApiKey
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.voice_field, VoiceField::TtsApiKey);
-    // TtsApiKey -> Continue
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
-    // Continue -> ImageSetup
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        // TtsModeSelect -> TtsApiVoiceSelect
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.voice_field, VoiceField::TtsApiVoiceSelect);
+        // TtsApiVoiceSelect -> TtsApiKey
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.voice_field, VoiceField::TtsApiKey);
+        // TtsApiKey -> Continue
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
+        // Continue -> ImageSetup
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]
@@ -397,48 +412,54 @@ fn tts_backtab_goes_to_local_model_in_local_mode() {
 
 #[test]
 fn full_api_flow_stt_to_tts_to_next_step() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::VoiceSetup;
-    wizard.voice_field = VoiceField::SttModeSelect;
-    wizard.stt_provider = SttProvider::Groq; // API mode
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
+        wizard.voice_field = VoiceField::SttModeSelect;
+        wizard.stt_provider = SttProvider::Groq; // API mode
 
-    // Tab → GroqApiKey
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Tab));
-    assert_eq!(wizard.voice_field, VoiceField::GroqApiKey);
+        // Tab → GroqApiKey
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Tab));
+        assert_eq!(wizard.voice_field, VoiceField::GroqApiKey);
 
-    // Type a key
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Char('x')));
-    assert_eq!(wizard.groq_api_key_input, "x");
+        // Type a key
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Char('x')));
+        assert_eq!(wizard.groq_api_key_input, "x");
 
-    // Tab → TtsModeSelect
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Tab));
-    assert_eq!(wizard.voice_field, VoiceField::TtsModeSelect);
+        // Tab → TtsModeSelect
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Tab));
+        assert_eq!(wizard.voice_field, VoiceField::TtsModeSelect);
 
-    // Enter (tts_mode=0 Off) → Continue
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.voice_field, VoiceField::Continue);
-    // Enter on Continue → next step
-    crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        // Enter (tts_mode=0 Off) → Continue
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.voice_field, VoiceField::Continue);
+        // Enter on Continue → next step
+        crate::tui::onboarding::voice::handle_key(&mut wizard, key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]
 fn navigation_channels_to_voice_sets_stt_mode_select() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::Channels;
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::Channels;
 
-    wizard.next_step();
-    assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
-    assert_eq!(wizard.voice_field, VoiceField::SttModeSelect);
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
+        assert_eq!(wizard.voice_field, VoiceField::SttModeSelect);
+    });
 }
 
 #[test]
 fn navigation_voice_to_image() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.step = OnboardingStep::VoiceSetup;
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.step = OnboardingStep::VoiceSetup;
 
-    wizard.next_step();
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]

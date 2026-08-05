@@ -1,5 +1,16 @@
+use crate::config::profile::with_home_override;
 use crate::tui::onboarding::*;
 use crossterm::event::{KeyCode, KeyEvent};
+
+/// Step-scoped saves (#926) mean `next_step()` writes config on a real
+/// transition, so tests that cross a section-owning step run against a
+/// temp home instead of the user's real one (#912 isolation pattern).
+fn in_temp_home(f: impl FnOnce()) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let opencrabs = dir.path().join(".opencrabs");
+    std::fs::create_dir_all(&opencrabs).expect("create .opencrabs");
+    with_home_override(opencrabs, f);
+}
 
 #[test]
 fn test_wizard_creation() {
@@ -21,110 +32,118 @@ fn test_step_navigation() {
 
 #[test]
 fn test_advanced_mode_all_steps() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.mode = WizardMode::Advanced;
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.mode = WizardMode::Advanced;
 
-    wizard.next_step(); // ModeSelect -> Workspace
-    assert_eq!(wizard.step, OnboardingStep::Workspace);
-    wizard.next_step(); // Workspace -> ProviderAuth (detect_existing_key clears api_key_input)
-    assert_eq!(wizard.step, OnboardingStep::ProviderAuth);
-    wizard.ps.api_key_input = "test-key".to_string(); // set key AFTER reaching ProviderAuth
-    wizard.next_step(); // ProviderAuth -> Channels
-    assert_eq!(wizard.step, OnboardingStep::Channels);
-    wizard.next_step(); // Channels -> VoiceSetup
-    assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
-    wizard.next_step(); // VoiceSetup -> ImageSetup (Advanced)
-    assert_eq!(wizard.step, OnboardingStep::ImageSetup);
-    wizard.next_step(); // ImageSetup -> Daemon
-    assert_eq!(wizard.step, OnboardingStep::Daemon);
-    wizard.next_step(); // Daemon -> HealthCheck
-    assert_eq!(wizard.step, OnboardingStep::HealthCheck);
+        wizard.next_step(); // ModeSelect -> Workspace
+        assert_eq!(wizard.step, OnboardingStep::Workspace);
+        wizard.next_step(); // Workspace -> ProviderAuth (detect_existing_key clears api_key_input)
+        assert_eq!(wizard.step, OnboardingStep::ProviderAuth);
+        wizard.ps.api_key_input = "test-key".to_string(); // set key AFTER reaching ProviderAuth
+        wizard.next_step(); // ProviderAuth -> Channels
+        assert_eq!(wizard.step, OnboardingStep::Channels);
+        wizard.next_step(); // Channels -> VoiceSetup
+        assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
+        wizard.next_step(); // VoiceSetup -> ImageSetup (Advanced)
+        assert_eq!(wizard.step, OnboardingStep::ImageSetup);
+        wizard.next_step(); // ImageSetup -> Daemon
+        assert_eq!(wizard.step, OnboardingStep::Daemon);
+        wizard.next_step(); // Daemon -> HealthCheck
+        assert_eq!(wizard.step, OnboardingStep::HealthCheck);
+    });
 }
 
 #[test]
 fn test_channels_telegram_goes_to_telegram_setup() {
-    let mut wizard = clean_wizard();
-    wizard.mode = WizardMode::Advanced;
-    wizard.step = OnboardingStep::Channels;
+    in_temp_home(|| {
+        let mut wizard = clean_wizard();
+        wizard.mode = WizardMode::Advanced;
+        wizard.step = OnboardingStep::Channels;
 
-    // Enable Telegram in channel toggles
-    wizard.channel_toggles[0].1 = true;
+        // Enable Telegram in channel toggles
+        wizard.channel_toggles[0].1 = true;
 
-    // Enter Telegram setup (focus on Telegram, press Enter)
-    wizard.focused_field = 0;
-    wizard.handle_key(key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
+        // Enter Telegram setup (focus on Telegram, press Enter)
+        wizard.focused_field = 0;
+        wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
 
-    // Complete Telegram → back to Channels
-    wizard.next_step();
-    assert_eq!(wizard.step, OnboardingStep::Channels);
+        // Complete Telegram → back to Channels
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::Channels);
 
-    // Continue to VoiceSetup
-    wizard.focused_field = wizard.channel_toggles.len();
-    wizard.handle_key(key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
+        // Continue to VoiceSetup
+        wizard.focused_field = wizard.channel_toggles.len();
+        wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
+    });
 }
 
 #[test]
 fn test_channels_whatsapp_skips_to_voice() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.mode = WizardMode::Advanced;
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.mode = WizardMode::Advanced;
 
-    wizard.next_step(); // ModeSelect -> Workspace
-    wizard.next_step(); // Workspace -> ProviderAuth
-    wizard.ps.api_key_input = "test-key".to_string();
-    wizard.next_step(); // ProviderAuth -> Channels
+        wizard.next_step(); // ModeSelect -> Workspace
+        wizard.next_step(); // Workspace -> ProviderAuth
+        wizard.ps.api_key_input = "test-key".to_string();
+        wizard.next_step(); // ProviderAuth -> Channels
 
-    // Enable WhatsApp only (no token sub-step)
-    wizard.channel_toggles[2].1 = true;
-    wizard.next_step(); // Channels -> VoiceSetup (WhatsApp has no sub-step)
-    assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
-    // Verify channel_toggles WhatsApp is enabled
-    assert!(wizard.channel_toggles[2].1);
+        // Enable WhatsApp only (no token sub-step)
+        wizard.channel_toggles[2].1 = true;
+        wizard.next_step(); // Channels -> VoiceSetup (WhatsApp has no sub-step)
+        assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
+        // Verify channel_toggles WhatsApp is enabled
+        assert!(wizard.channel_toggles[2].1);
+    });
 }
 
 #[test]
 fn test_channels_full_chain_telegram_discord_slack() {
-    let mut wizard = clean_wizard();
-    wizard.mode = WizardMode::Advanced;
-    wizard.step = OnboardingStep::Channels;
+    in_temp_home(|| {
+        let mut wizard = clean_wizard();
+        wizard.mode = WizardMode::Advanced;
+        wizard.step = OnboardingStep::Channels;
 
-    // Enable all three token-based channels
-    wizard.channel_toggles[0].1 = true; // Telegram
-    wizard.channel_toggles[1].1 = true; // Discord
-    wizard.channel_toggles[3].1 = true; // Slack
+        // Enable all three token-based channels
+        wizard.channel_toggles[0].1 = true; // Telegram
+        wizard.channel_toggles[1].1 = true; // Discord
+        wizard.channel_toggles[3].1 = true; // Slack
 
-    // Enter Telegram setup
-    wizard.focused_field = 0;
-    wizard.handle_key(key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
+        // Enter Telegram setup
+        wizard.focused_field = 0;
+        wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::TelegramSetup);
 
-    // Complete Telegram → back to Channels
-    wizard.next_step();
-    assert_eq!(wizard.step, OnboardingStep::Channels);
+        // Complete Telegram → back to Channels
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::Channels);
 
-    // Enter Discord setup
-    wizard.focused_field = 1;
-    wizard.handle_key(key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::DiscordSetup);
+        // Enter Discord setup
+        wizard.focused_field = 1;
+        wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::DiscordSetup);
 
-    // Complete Discord → back to Channels
-    wizard.next_step();
-    assert_eq!(wizard.step, OnboardingStep::Channels);
+        // Complete Discord → back to Channels
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::Channels);
 
-    // Enter Slack setup
-    wizard.focused_field = 3;
-    wizard.handle_key(key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::SlackSetup);
+        // Enter Slack setup
+        wizard.focused_field = 3;
+        wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::SlackSetup);
 
-    // Complete Slack → back to Channels
-    wizard.next_step();
-    assert_eq!(wizard.step, OnboardingStep::Channels);
+        // Complete Slack → back to Channels
+        wizard.next_step();
+        assert_eq!(wizard.step, OnboardingStep::Channels);
 
-    // Continue to VoiceSetup
-    wizard.focused_field = wizard.channel_toggles.len();
-    wizard.handle_key(key(KeyCode::Enter));
-    assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
+        // Continue to VoiceSetup
+        wizard.focused_field = wizard.channel_toggles.len();
+        wizard.handle_key(key(KeyCode::Enter));
+        assert_eq!(wizard.step, OnboardingStep::VoiceSetup);
+    });
 }
 
 #[test]
@@ -353,16 +372,18 @@ fn test_handle_key_complete_step_returns_complete() {
 
 #[test]
 fn test_quickstart_skips_channels_voice() {
-    let mut wizard = OnboardingWizard::new();
-    wizard.mode = WizardMode::QuickStart;
+    in_temp_home(|| {
+        let mut wizard = OnboardingWizard::new();
+        wizard.mode = WizardMode::QuickStart;
 
-    wizard.next_step(); // ModeSelect -> Workspace
-    assert_eq!(wizard.step, OnboardingStep::Workspace);
-    wizard.next_step(); // Workspace -> ProviderAuth
-    assert_eq!(wizard.step, OnboardingStep::ProviderAuth);
-    wizard.ps.api_key_input = "test-key".to_string();
-    wizard.next_step(); // ProviderAuth -> Daemon (QuickStart skips Channels & Voice)
-    assert_eq!(wizard.step, OnboardingStep::Daemon);
+        wizard.next_step(); // ModeSelect -> Workspace
+        assert_eq!(wizard.step, OnboardingStep::Workspace);
+        wizard.next_step(); // Workspace -> ProviderAuth
+        assert_eq!(wizard.step, OnboardingStep::ProviderAuth);
+        wizard.ps.api_key_input = "test-key".to_string();
+        wizard.next_step(); // ProviderAuth -> Daemon (QuickStart skips Channels & Voice)
+        assert_eq!(wizard.step, OnboardingStep::Daemon);
+    });
 }
 
 #[test]

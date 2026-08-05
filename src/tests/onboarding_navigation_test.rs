@@ -3,10 +3,21 @@
 //! Covers the wizard step flow for both QuickStart and Advanced modes,
 //! plus edge cases around validation and back-navigation.
 
+use crate::config::profile::with_home_override;
 use crate::tui::onboarding::{OnboardingStep, OnboardingWizard, WizardMode};
 
 fn wizard() -> OnboardingWizard {
     OnboardingWizard::default()
+}
+
+/// Step-scoped saves (#926) mean `next_step()` writes config on a real
+/// transition, so tests that cross a section-owning step run against a
+/// temp home instead of the user's real one (#912 isolation pattern).
+fn in_temp_home(f: impl FnOnce()) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let opencrabs = dir.path().join(".opencrabs");
+    std::fs::create_dir_all(&opencrabs).expect("create .opencrabs");
+    with_home_override(opencrabs, f);
 }
 
 // ── next_step: Advanced mode flow ───────────────────────────────
@@ -21,12 +32,14 @@ fn mode_select_to_workspace() {
 
 #[test]
 fn provider_auth_to_channels_in_advanced() {
-    let mut w = wizard();
-    w.step = OnboardingStep::ProviderAuth;
-    w.mode = WizardMode::Advanced;
-    w.ps.api_key_input = "sk-test-key".to_string();
-    w.next_step();
-    assert_eq!(w.step, OnboardingStep::Channels);
+    in_temp_home(|| {
+        let mut w = wizard();
+        w.step = OnboardingStep::ProviderAuth;
+        w.mode = WizardMode::Advanced;
+        w.ps.api_key_input = "sk-test-key".to_string();
+        w.next_step();
+        assert_eq!(w.step, OnboardingStep::Channels);
+    });
 }
 
 #[test]
@@ -43,26 +56,32 @@ fn provider_auth_requires_api_key() {
 
 #[test]
 fn channels_to_voice_setup() {
-    let mut w = wizard();
-    w.step = OnboardingStep::Channels;
-    w.next_step();
-    assert_eq!(w.step, OnboardingStep::VoiceSetup);
+    in_temp_home(|| {
+        let mut w = wizard();
+        w.step = OnboardingStep::Channels;
+        w.next_step();
+        assert_eq!(w.step, OnboardingStep::VoiceSetup);
+    });
 }
 
 #[test]
 fn voice_setup_to_image_setup() {
-    let mut w = wizard();
-    w.step = OnboardingStep::VoiceSetup;
-    w.next_step();
-    assert_eq!(w.step, OnboardingStep::ImageSetup);
+    in_temp_home(|| {
+        let mut w = wizard();
+        w.step = OnboardingStep::VoiceSetup;
+        w.next_step();
+        assert_eq!(w.step, OnboardingStep::ImageSetup);
+    });
 }
 
 #[test]
 fn image_setup_to_daemon() {
-    let mut w = wizard();
-    w.step = OnboardingStep::ImageSetup;
-    w.next_step();
-    assert_eq!(w.step, OnboardingStep::Daemon);
+    in_temp_home(|| {
+        let mut w = wizard();
+        w.step = OnboardingStep::ImageSetup;
+        w.next_step();
+        assert_eq!(w.step, OnboardingStep::Daemon);
+    });
 }
 
 #[test]
@@ -93,30 +112,34 @@ fn brain_setup_stays_when_not_generated() {
 
 #[test]
 fn channel_setup_returns_to_channels() {
-    for step in [
-        OnboardingStep::TelegramSetup,
-        OnboardingStep::DiscordSetup,
-        OnboardingStep::WhatsAppSetup,
-        OnboardingStep::SlackSetup,
-        OnboardingStep::TrelloSetup,
-    ] {
-        let mut w = wizard();
-        w.step = step;
-        w.next_step();
-        assert_eq!(w.step, OnboardingStep::Channels, "failed for {:?}", step);
-    }
+    in_temp_home(|| {
+        for step in [
+            OnboardingStep::TelegramSetup,
+            OnboardingStep::DiscordSetup,
+            OnboardingStep::WhatsAppSetup,
+            OnboardingStep::SlackSetup,
+            OnboardingStep::TrelloSetup,
+        ] {
+            let mut w = wizard();
+            w.step = step;
+            w.next_step();
+            assert_eq!(w.step, OnboardingStep::Channels, "failed for {:?}", step);
+        }
+    });
 }
 
 // ── next_step: QuickStart mode ──────────────────────────────────
 
 #[test]
 fn quickstart_provider_auth_skips_channels_to_daemon() {
-    let mut w = wizard();
-    w.mode = WizardMode::QuickStart;
-    w.step = OnboardingStep::ProviderAuth;
-    w.ps.api_key_input = "key".to_string();
-    w.next_step();
-    assert_eq!(w.step, OnboardingStep::Daemon);
+    in_temp_home(|| {
+        let mut w = wizard();
+        w.mode = WizardMode::QuickStart;
+        w.step = OnboardingStep::ProviderAuth;
+        w.ps.api_key_input = "key".to_string();
+        w.next_step();
+        assert_eq!(w.step, OnboardingStep::Daemon);
+    });
 }
 
 // ── next_step: clears error and focused_field ───────────────────

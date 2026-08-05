@@ -330,6 +330,84 @@ impl OnboardingWizard {
                 self.step,
                 OnboardingStep::ProviderAuth | OnboardingStep::Complete
             );
+        let write_channels = !self.quick_jump
+            || matches!(
+                self.step,
+                OnboardingStep::Channels
+                    | OnboardingStep::TelegramSetup
+                    | OnboardingStep::DiscordSetup
+                    | OnboardingStep::WhatsAppSetup
+                    | OnboardingStep::SlackSetup
+                    | OnboardingStep::TrelloSetup
+                    | OnboardingStep::Complete
+            );
+        let write_voice = !self.quick_jump
+            || matches!(
+                self.step,
+                OnboardingStep::VoiceSetup | OnboardingStep::Complete
+            );
+        let write_image = !self.quick_jump
+            || matches!(
+                self.step,
+                OnboardingStep::ImageSetup | OnboardingStep::Complete
+            );
+
+        self.write_scoped_config(
+            write_provider,
+            write_channels,
+            write_voice,
+            write_image,
+            true,
+        )
+    }
+
+    /// Step-scoped save (#926): commit ONLY the config section owned by
+    /// `completed_step`. Called on every successful wizard transition so an
+    /// interrupted onboard keeps each step already confirmed, instead of
+    /// losing all of it to the single end-of-wizard write.
+    ///
+    /// Reuses the exact write path of `apply_config` (merge via write_key,
+    /// never whole-file overwrite), so the two cannot drift apart. Template
+    /// seeding and daemon install are completion tasks, not config sections,
+    /// so they stay out of step-scoped saves. Steps that own no section
+    /// (mode, workspace, daemon, health, brain, complete) save nothing.
+    pub fn apply_step_config(&self, completed_step: OnboardingStep) -> Result<(), String> {
+        let (section, write_provider, write_channels, write_voice, write_image) =
+            match completed_step {
+                OnboardingStep::ProviderAuth => ("provider", true, false, false, false),
+                OnboardingStep::Channels
+                | OnboardingStep::TelegramSetup
+                | OnboardingStep::DiscordSetup
+                | OnboardingStep::WhatsAppSetup
+                | OnboardingStep::SlackSetup
+                | OnboardingStep::TrelloSetup => ("channels", false, true, false, false),
+                OnboardingStep::VoiceSetup => ("voice", false, false, true, false),
+                OnboardingStep::ImageSetup => ("image", false, false, false, true),
+                // Owns no config section, nothing to persist.
+                _ => return Ok(()),
+            };
+        self.write_scoped_config(
+            write_provider,
+            write_channels,
+            write_voice,
+            write_image,
+            false,
+        )
+        .map_err(|e| format!("{} step: {}", section, e))
+    }
+
+    /// Shared write path behind `apply_config` and `apply_step_config`.
+    /// `finalize` also runs the completion-only tasks (template seeding,
+    /// daemon install) in their original position; step-scoped saves pass
+    /// false so a mid-wizard save never seeds templates or installs services.
+    fn write_scoped_config(
+        &self,
+        write_provider: bool,
+        write_channels: bool,
+        write_voice: bool,
+        write_image: bool,
+        finalize: bool,
+    ) -> Result<(), String> {
         // Empty-custom_name guard: a custom provider with no name typed yet
         // would format the section as `providers.custom.` (empty subkey) and
         // corrupt config.toml, so the write cannot proceed without one.
@@ -353,27 +431,6 @@ impl OnboardingWizard {
                     .to_string(),
             );
         }
-        let write_channels = !self.quick_jump
-            || matches!(
-                self.step,
-                OnboardingStep::Channels
-                    | OnboardingStep::TelegramSetup
-                    | OnboardingStep::DiscordSetup
-                    | OnboardingStep::WhatsAppSetup
-                    | OnboardingStep::SlackSetup
-                    | OnboardingStep::TrelloSetup
-                    | OnboardingStep::Complete
-            );
-        let write_voice = !self.quick_jump
-            || matches!(
-                self.step,
-                OnboardingStep::VoiceSetup | OnboardingStep::Complete
-            );
-        let write_image = !self.quick_jump
-            || matches!(
-                self.step,
-                OnboardingStep::ImageSetup | OnboardingStep::Complete
-            );
 
         // Groq key for STT/TTS
         let groq_key = if !self.groq_api_key_input.is_empty() && !self.has_existing_groq_key() {
@@ -1134,8 +1191,11 @@ impl OnboardingWizard {
             }
         } // end if write_channels
 
-        // Seed workspace templates (use AI-generated content when available)
-        if self.seed_templates {
+        // Seed workspace templates (use AI-generated content when available).
+        // Completion-only: a step-scoped save (finalize=false) must not seed
+        // early. Leaving the provider step would otherwise write static
+        // brain files before BrainSetup has generated anything (#926).
+        if finalize && self.seed_templates {
             let workspace = PathBuf::from(&self.workspace_path);
             std::fs::create_dir_all(&workspace)
                 .map_err(|e| format!("Failed to create workspace: {}", e))?;
@@ -1160,8 +1220,9 @@ impl OnboardingWizard {
             }
         }
 
-        // Install daemon if requested
-        if self.install_daemon
+        // Install daemon if requested. Completion-only, same as seeding (#926).
+        if finalize
+            && self.install_daemon
             && let Err(e) = install_daemon_service()
         {
             tracing::warn!("Failed to install daemon: {}", e);

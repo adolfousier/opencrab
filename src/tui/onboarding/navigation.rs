@@ -19,7 +19,22 @@ impl OnboardingWizard {
     pub fn next_step(&mut self) {
         // Wrapped so every path out of the step machine below — including the
         // early returns on validation errors — records where the user ended up.
+        let prev_step = self.step;
         self.next_step_inner();
+        // Step-scoped save (#926): a successful transition (the step actually
+        // changed, no validation error) commits the config section owned by
+        // the step just completed, so an interrupted wizard keeps everything
+        // already confirmed instead of losing it to the single end-of-wizard
+        // write. On failure, surface it and stay put: nothing was persisted,
+        // so the user retries the same step rather than moving on with an
+        // unsaved foundation.
+        if self.step != prev_step
+            && self.error_message.is_none()
+            && let Err(e) = self.apply_step_config(prev_step)
+        {
+            self.error_message = Some(e);
+            self.step = prev_step;
+        }
         self.persist_progress();
     }
 
