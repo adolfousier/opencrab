@@ -68,6 +68,25 @@ fn entry_icon(status: Option<bool>) -> &'static str {
     }
 }
 
+/// The narration held in a group, joined, or `None` if there is none.
+///
+/// Used only when a turn's final response comes back empty: the folded text is
+/// then the whole answer, and leaving it inside a collapsed group means posting
+/// nothing at all (#951). Tool rows are excluded — they are a record of what
+/// ran, not something to say back to the user.
+pub(crate) fn notes_text(entries: &[GroupEntry]) -> Option<String> {
+    let joined = entries
+        .iter()
+        .filter_map(|e| match e {
+            GroupEntry::Note(text) => Some(text.trim()),
+            GroupEntry::Tool { .. } => None,
+        })
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (!joined.is_empty()).then_some(joined)
+}
+
 /// One rendered line for a step.
 fn entry_line(entry: &GroupEntry) -> String {
     match entry {

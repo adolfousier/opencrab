@@ -156,3 +156,55 @@ fn a_lone_narration_step_renders_without_a_summary_header() {
     let text = text_of(&render(&g, &SlackTs::new("1.0".into())));
     assert!(text.contains(NARRATION), "got: {text}");
 }
+
+// ── Salvage when the final response is empty (#951) ──────────────────────────
+//
+// #943 stopped narration being posted standalone, which also emptied the
+// buffer the empty-final guard fed on. A turn whose final came back empty then
+// posted nothing at all — the answer stayed sealed in a collapsed group. These
+// pin the salvage path.
+
+use crate::channels::slack::tool_group::notes_text;
+
+#[test]
+fn a_group_with_no_narration_has_nothing_to_salvage() {
+    // Tool rows are a record of what ran, not something to say back. Posting
+    // them as an answer would be worse than posting nothing.
+    let entries = vec![tool("bash", Some(true)), tool("read_file", Some(true))];
+    assert_eq!(notes_text(&entries), None);
+}
+
+#[test]
+fn an_empty_group_has_nothing_to_salvage() {
+    assert_eq!(notes_text(&[]), None);
+}
+
+#[test]
+fn narration_is_recovered_in_order() {
+    // When the final is empty this text IS the answer, so order and content
+    // both have to survive.
+    let entries = vec![
+        GroupEntry::Note("First finding.".to_string()),
+        tool("bash", Some(true)),
+        GroupEntry::Note("Second finding.".to_string()),
+    ];
+    let salvaged = notes_text(&entries).expect("two notes are present");
+    let first = salvaged.find("First finding.").expect("first present");
+    let second = salvaged.find("Second finding.").expect("second present");
+    assert!(first < second, "order must hold:\n{salvaged}");
+    assert!(
+        !salvaged.contains("bash"),
+        "tool rows must not leak into the answer:\n{salvaged}"
+    );
+}
+
+#[test]
+fn blank_notes_do_not_produce_an_empty_answer() {
+    // Posting a whitespace-only message reads as a broken reply; returning
+    // None lets the caller log that it had nothing instead.
+    let entries = vec![
+        GroupEntry::Note("   ".to_string()),
+        GroupEntry::Note("\n".to_string()),
+    ];
+    assert_eq!(notes_text(&entries), None);
+}

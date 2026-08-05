@@ -677,6 +677,37 @@ async fn sync_step_group<'a>(
     }
 }
 
+/// Post a reply with the context footer attached, as its own message.
+///
+/// The salvage path for a turn whose final response is empty: there is no
+/// earlier message to edit the footer into, so it goes out with the text.
+async fn post_final_text<'a>(
+    session: &SlackClientSession<'a, slack_morphism::hyper_tokio::SlackClientHyperHttpsConnector>,
+    channel_id: &str,
+    thread_ts: Option<&SlackTs>,
+    text: &str,
+    footer: &str,
+) {
+    let mrkdwn = crate::utils::slack_fmt::markdown_to_mrkdwn(text);
+    let mut blocks = super::blocks::blocks_from_mrkdwn(&mrkdwn);
+    if !footer.is_empty() {
+        blocks.push(super::blocks::context_footer(footer));
+    }
+    let mut req = SlackApiChatPostMessageRequest::new(
+        SlackChannelId::new(channel_id.to_string()),
+        SlackMessageContent::new()
+            .with_text(mrkdwn)
+            .with_blocks(blocks),
+    );
+    if let Some(ts) = thread_ts {
+        req = req.with_thread_ts(ts.clone());
+    }
+    if let Err(e) = session.chat_post_message(&req).await {
+        // The answer is lost if this fails, so it is an error, not a debug.
+        tracing::error!("Slack: failed to post salvaged final response: {e}");
+    }
+}
+
 async fn append_footer_via_update<'a>(
     session: &SlackClientSession<'a, slack_morphism::hyper_tokio::SlackClientHyperHttpsConnector>,
     channel_id: &str,
@@ -1596,6 +1627,13 @@ async fn handle_message(
     let intermediate_handles_cb = intermediate_handles.clone();
     let intermediate_handles_final = intermediate_handles.clone();
 
+    // The turn's folded steps. Declared out here, not inside the callback, so
+    // the delivery path can reach the narration when the final response comes
+    // back empty — otherwise the answer is sealed inside a collapsed group and
+    // nothing is posted at all (#951).
+    let steps: Arc<Mutex<Vec<super::tool_group::GroupEntry>>> = Arc::new(Mutex::new(Vec::new()));
+    let steps_final = steps.clone();
+
     // Build progress callback — sends tool call status as Slack messages
     #[allow(clippy::type_complexity)]
     let progress_cb: crate::brain::agent::ProgressCallback = {
@@ -1603,7 +1641,7 @@ async fn handle_message(
 
         use super::tool_group::{GroupEntry, GroupState};
 
-        let tools: Arc<Mutex<Vec<GroupEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let tools = steps;
         // ts of the single grouped tool message for this turn, once posted.
         let tool_group_ts: Arc<Mutex<Option<SlackTs>>> = Arc::new(Mutex::new(None));
         let bot_token_cb = state.current_bot_token();
@@ -1986,6 +2024,27 @@ async fn handle_message(
                     if let Some((ts, _hash, text)) = intermediates.last() {
                         append_footer_via_update(&session, &channel_id, ts, text, &footer).await;
                     }
+                    return;
+                }
+                // Nothing was posted standalone, because narration now folds
+                // into the step group (#943). When the final is empty that
+                // folded text is the only answer there is, and leaving it
+                // sealed in a collapsed group posts nothing at all (#951).
+                let salvaged = super::tool_group::notes_text(&steps_final.lock().await);
+                if let Some(answer) = salvaged {
+                    tracing::info!(
+                        "Slack: final response is empty — posting the folded narration as the answer ({} chars)",
+                        answer.len()
+                    );
+                    post_final_text(&session, &channel_id, thread_ts.as_ref(), &answer, &footer)
+                        .await;
+                } else {
+                    // Neither a final nor any narration. Say so: a turn that
+                    // deliberately posts nothing is indistinguishable from one
+                    // that lost its answer, which is how #951 went unnoticed.
+                    tracing::warn!(
+                        "Slack: turn produced neither a final response nor narration — nothing to post"
+                    );
                 }
                 return;
             }
