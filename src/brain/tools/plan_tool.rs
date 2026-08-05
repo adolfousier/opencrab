@@ -1477,7 +1477,7 @@ impl Tool for PlanTool {
                         if !already_done {
                             let config_enabled = crate::config::Config::load()
                                 .map(|c| c.agent.plan_isolated_execution)
-                                .unwrap_or(false);
+                                .unwrap_or(true);
                             // Ralph keys gate isolation from the loop side:
                             // fresh_context (default true) is part of the
                             // request-resolution default; state_on_disk

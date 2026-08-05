@@ -909,11 +909,13 @@ pub struct AgentConfig {
     /// Route plan-task `start` through isolated execution (#908 option A):
     /// each started task runs in a freshly spawned child session that gets
     /// ONLY the task brief plus the parent's plan file threaded via
-    /// `plan_session_override`. Default false keeps the long-standing
-    /// behavior: `start` returns the task details and the current session
-    /// executes inline. Ralph loops with `fresh_context = true` request
-    /// isolation explicitly per call regardless of this flag.
-    #[serde(default)]
+    /// `plan_session_override`. Default TRUE: isolation is the only sane
+    /// default for autonomous execution — Ralph loops run fresh-context and
+    /// spawn is fresh by construction with no non-isolated mode. Set false
+    /// to keep the legacy behavior: `start` returns the task details and the
+    /// current session executes inline. An explicit `isolated` on plan start
+    /// overrides this flag either way.
+    #[serde(default = "default_plan_isolated_execution")]
     pub plan_isolated_execution: bool,
 
     /// Auto-install new releases on startup without prompting (default: true).
@@ -1088,6 +1090,10 @@ fn default_auto_update() -> bool {
     true
 }
 
+fn default_plan_isolated_execution() -> bool {
+    true
+}
+
 fn default_subagent_session_ttl_days() -> u32 {
     7
 }
@@ -1105,7 +1111,7 @@ impl Default for AgentConfig {
             plan_model: None,
             execute_provider: None,
             execute_model: None,
-            plan_isolated_execution: false,
+            plan_isolated_execution: true,
             auto_update: default_auto_update(),
             subagent_session_ttl_days: default_subagent_session_ttl_days(),
             self_improvement_provider: None,

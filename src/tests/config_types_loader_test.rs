@@ -180,6 +180,9 @@ fn test_agent_config_default() {
     assert_eq!(agent.max_concurrent, 4);
     // #678: debug_logs defaults OFF; enabling is opt-in (flag or config).
     assert!(!agent.debug_logs);
+    // #908: isolation is the only sane default for autonomous execution —
+    // Ralph loops and spawned agents are isolated by construction.
+    assert!(agent.plan_isolated_execution);
 }
 
 #[test]
@@ -192,6 +195,17 @@ fn test_agent_config_debug_logs_toml() {
     // Absent → default OFF (old configs stay valid).
     let absent: Config = toml::from_str("[agent]\nmax_concurrent = 2\n").unwrap();
     assert!(!absent.agent.debug_logs);
+}
+
+#[test]
+fn test_agent_config_plan_isolated_execution_toml() {
+    // #908 follow-up: isolation defaults ON; explicit opt-out stays available.
+    let off: Config = toml::from_str("[agent]\nplan_isolated_execution = false\n").unwrap();
+    assert!(!off.agent.plan_isolated_execution);
+    // Absent → default ON (isolation by default; a bare `#[serde(default)]`
+    // would have silently kept this false for every existing config).
+    let absent: Config = toml::from_str("[agent]\nmax_concurrent = 2\n").unwrap();
+    assert!(absent.agent.plan_isolated_execution);
 }
 
 #[test]
