@@ -317,9 +317,15 @@ impl ToolRegistry {
         // are deterministically refused with an instructive reason. Checked
         // after validation so the model's params are sane, before approval
         // so the user is never prompted for a call that cannot run.
-        match super::plan_gate::check_plan_gate(context.session_id, name, &tool.hints(), &input)
-            .await
-        {
+        //
+        // #908 option A: the gate keys on the PLAN session, not the raw
+        // session id. A spawned plan worker carries the parent's plan
+        // override, so its mutators are gated by the PARENT's plan state
+        // (write freeze during Editing, autonomy grant, seed window) —
+        // matching the spawn-time #649 lock. Without an override this is
+        // exactly session_id: normal sessions behave as before.
+        let plan_sid = context.plan_session_override.unwrap_or(context.session_id);
+        match super::plan_gate::check_plan_gate(plan_sid, name, &tool.hints(), &input).await {
             super::plan_gate::GateDecision::Allow => { /* proceed */ }
             super::plan_gate::GateDecision::Deny(reason) => {
                 tracing::info!("Plan gate denied tool '{}': session is plan-gated", name);
@@ -360,7 +366,7 @@ impl ToolRegistry {
         let is_md_write = tool
             .capabilities()
             .contains(&crate::brain::tools::r#trait::ToolCapability::WriteFiles)
-            && super::plan_gate::write_targets_session_md(context.session_id, &input).await;
+            && super::plan_gate::write_targets_session_md(plan_sid, &input).await;
         let result = tool.execute(input, context).await?;
 
         // Editing mirror: a successful write to the session plan .md syncs
@@ -369,7 +375,7 @@ impl ToolRegistry {
         // (TUI chrome, Telegram sections) sees the fresh design. Advisory
         // template warnings are logged, never blocking.
         if result.success && is_md_write {
-            let warnings = crate::utils::plan_files::sync_md_to_json(context.session_id).await;
+            let warnings = crate::utils::plan_files::sync_md_to_json(plan_sid).await;
             if !warnings.is_empty() {
                 tracing::debug!(
                     "Plan .md template warnings after write: {}",
