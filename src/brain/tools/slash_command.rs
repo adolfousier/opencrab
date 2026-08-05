@@ -9,6 +9,61 @@ use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
+/// The config section a provider id writes to.
+///
+/// Custom keys are checked first, matching `is_known_provider_name`, so a
+/// section the user declared themselves wins for its own name. Returns `None`
+/// for anything the registry does not know — the caller reports that rather
+/// than picking a section.
+pub(crate) fn section_for_provider(
+    config: &crate::config::Config,
+    provider: &str,
+) -> Option<String> {
+    let bare = provider.strip_prefix("custom:").unwrap_or(provider);
+    if config
+        .providers
+        .custom
+        .as_ref()
+        .is_some_and(|m| m.contains_key(bare))
+    {
+        return Some(format!("providers.custom.{bare}"));
+    }
+    crate::utils::providers::config_section(provider)
+}
+
+/// Resolve `/models <arg>` to the `(provider, model)` it targets.
+///
+/// `<provider>/<model>` selects that provider, but ONLY when the prefix names
+/// a provider that is actually configured. A slash alone cannot mean a prefix:
+/// OpenRouter model ids are `vendor/model` (`anthropic/claude-sonnet-4`), so
+/// splitting on every slash would route a valid model name to a provider the
+/// user never mentioned. Anything else applies to the active provider.
+///
+/// There is no hardcoded provider ladder here. The previous one tested six
+/// providers by name out of the twenty-two the registry knows, so a user on any
+/// of the other sixteen fell through to "first enabled custom provider" and had
+/// their model written into an unrelated section. When the target cannot be
+/// resolved this returns an error for the user instead of guessing (#939).
+pub(crate) fn resolve_model_target(
+    config: &crate::config::Config,
+    arg: &str,
+) -> std::result::Result<(String, String), String> {
+    if let Ok((provider, model)) = crate::utils::provider_pair::parse_pair(arg)
+        && crate::brain::provider::factory::is_known_provider_name(config, &provider)
+    {
+        return Ok((provider, model));
+    }
+    let (active, _) = config.providers.active_provider_and_model();
+    if active == "none" {
+        return Err(format!(
+            "No active provider, so there is nothing to apply '{arg}' to. \
+             Enable and configure one via config_manager or /onboard, or name it \
+             explicitly as '<provider>/{arg}'."
+        ));
+    }
+    Ok((active, arg.to_string()))
+}
+
 /// Split a possibly multi-word `command` field into `(command, args)`.
 ///
 /// Models sometimes pass `command='/goal debug the build'` with an empty
@@ -491,53 +546,27 @@ impl SlashCommandTool {
 
         // If a model name was provided, switch to it
         if !model_arg.is_empty() {
-            // Detect active provider section
-            let provider = &config.providers;
-            let section = if provider.anthropic.as_ref().is_some_and(|p| p.enabled) {
-                "providers.anthropic"
-            } else if provider.openai.as_ref().is_some_and(|p| p.enabled) {
-                "providers.openai"
-            } else if provider.gemini.as_ref().is_some_and(|p| p.enabled) {
-                "providers.gemini"
-            } else if provider.openrouter.as_ref().is_some_and(|p| p.enabled) {
-                "providers.openrouter"
-            } else if provider.minimax.as_ref().is_some_and(|p| p.enabled) {
-                "providers.minimax"
-            } else if provider.claude_cli.as_ref().is_some_and(|p| p.enabled) {
-                "providers.claude_cli"
-            } else {
-                // Check custom providers
-                let custom = provider
-                    .custom
-                    .as_ref()
-                    .and_then(|m| m.iter().find(|(_, p)| p.enabled))
-                    .map(|(name, _)| name.clone());
-                if let Some(ref name) = custom {
-                    return match crate::config::Config::write_key(
-                        &format!("providers.custom.{}", name),
-                        "default_model",
-                        model_arg,
-                    ) {
-                        Ok(()) => Ok(ToolResult::success(format!(
-                            "Model switched to '{}' on custom provider '{}'.",
-                            model_arg, name
-                        ))),
-                        Err(e) => Ok(ToolResult::error(format!("Failed to write config: {}", e))),
-                    };
-                }
-                return Ok(ToolResult::error(
-                    "No active provider found. Configure one via config_manager or /onboard."
-                        .into(),
-                ));
+            let (provider_id, model) = match resolve_model_target(&config, model_arg) {
+                Ok(pair) => pair,
+                Err(e) => return Ok(ToolResult::error(e)),
             };
-
-            return match crate::config::Config::write_key(section, "default_model", model_arg) {
+            let Some(section) = section_for_provider(&config, &provider_id) else {
+                // Reachable only if a provider is known but has no section —
+                // a registry gap. Name it rather than writing somewhere else.
+                return Ok(ToolResult::error(format!(
+                    "Provider '{provider_id}' has no config section to write to. \
+                     This is a provider-registry gap — please report it."
+                )));
+            };
+            return match crate::config::Config::write_key(&section, "default_model", &model) {
                 Ok(()) => Ok(ToolResult::success(format!(
-                    "Model switched to '{}'. Config updated at [{section}].default_model. \
-                     The change takes effect on the next request.",
-                    model_arg
+                    "Model switched to '{model}' on provider '{provider_id}'. \
+                     Config updated at [{section}].default_model. \
+                     The change takes effect on the next request."
                 ))),
-                Err(e) => Ok(ToolResult::error(format!("Failed to write config: {}", e))),
+                Err(e) => Ok(ToolResult::error(format!(
+                    "Failed to write [{section}].default_model: {e}"
+                ))),
             };
         }
 

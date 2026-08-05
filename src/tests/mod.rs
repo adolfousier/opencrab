@@ -505,6 +505,7 @@ pub mod slack_send_content_type_test;
 pub mod slack_tool_group_test;
 pub mod slash_autocomplete_dimensions_test;
 pub mod slash_command_resolution_test;
+pub mod slash_models_target_test;
 pub mod split_pane_test;
 pub mod subagent_test;
 pub mod subagent_tool_description_test;
