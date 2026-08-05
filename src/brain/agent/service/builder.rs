@@ -361,6 +361,15 @@ pub struct AgentService {
     /// summary (#936). `None` when the agent was constructed without the
     /// manager (child agents, tests that don't need it).
     pub(super) subagent_manager: Option<Arc<crate::brain::tools::subagent::SubAgentManager>>,
+
+    /// Plan-state session override (#908 option A). When set, this agent's
+    /// tool contexts resolve plan state (plan JSON, design `.md`, pre-init
+    /// and autonomy markers, plan-task goal) against the given session
+    /// instead of the session the turn runs in. Spawned plan workers carry
+    /// the parent's session id here so they operate on the parent's
+    /// checklist while their own session stays fresh. `None` — the normal
+    /// case — resolves against the session's own id.
+    pub(super) plan_session_override: Option<Uuid>,
 }
 
 impl AgentService {
@@ -419,6 +428,7 @@ impl AgentService {
             session_updated_tx: None,
             fallback_providers: Self::build_fallback_providers(config).await,
             subagent_manager: None,
+            plan_session_override: None,
         }
     }
 
@@ -759,6 +769,16 @@ impl AgentService {
     /// Clone the sub-agent manager handle (for carrying across service rebuilds).
     pub fn subagent_manager(&self) -> Option<Arc<crate::brain::tools::subagent::SubAgentManager>> {
         self.subagent_manager.clone()
+    }
+
+    /// Point this agent's plan state at another session (#908 option A).
+    /// Plan-driven execution passes the parent's session id when spawning a
+    /// task worker, so the worker's `plan` tool resolves the parent's
+    /// checklist while the worker session itself stays fresh. `None` (the
+    /// default) keeps plan state session-local.
+    pub fn with_plan_session_override(mut self, plan_session: Option<Uuid>) -> Self {
+        self.plan_session_override = plan_session;
+        self
     }
 
     /// Set the working directory for tool execution

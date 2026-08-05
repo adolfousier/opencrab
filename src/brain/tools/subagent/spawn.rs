@@ -75,6 +75,10 @@ impl Tool for SpawnAgentTool {
                 "model": {
                     "type": "string",
                     "description": "Optional model override for THIS spawn (model id as the chosen provider accepts it, e.g., 'glm-5', 'deepseek-coder'). Highest precedence — overrides config.agent.subagent_model. Pair with `provider` when the model lives on a provider other than the parent session's."
+                },
+                "plan_session": {
+                    "type": "string",
+                    "description": "Optional session UUID whose plan state this child operates on (#908). When set, the child's plan tool resolves that session's plan (JSON, design .md, markers, task goal) instead of its own. Plan-driven execution passes the parent session id here so a task worker sees the parent's checklist; the child's own session stays fresh. Omit for normal sub-agents."
                 }
             },
             "required": ["prompt"]
@@ -108,6 +112,24 @@ impl Tool for SpawnAgentTool {
                 .and_then(|v| v.as_str())
                 .unwrap_or("general"),
         );
+
+        // Optional plan-state override (#908 option A): plan-driven
+        // execution hands the child the PARENT's session id so the worker's
+        // plan tool resolves the parent's checklist while the worker session
+        // itself stays fresh. A malformed UUID is a hard error — silently
+        // falling back to the child's own session would let the worker run
+        // against an empty plan and report success on nothing.
+        let plan_session_override = match input
+            .get("plan_session")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(raw) => Some(uuid::Uuid::parse_str(raw).map_err(|e| {
+                ToolError::InvalidInput(format!("'plan_session' must be a valid UUID: {e}"))
+            })?),
+            None => None,
+        };
 
         // We need a ServiceContext to create a session for the child
         let service_context = context
@@ -232,7 +254,8 @@ impl Tool for SpawnAgentTool {
                     .await
                     .with_tool_registry(Arc::new(child_registry))
                     .with_auto_approve_tools(true) // children auto-approve (parent already approved spawn)
-                    .with_working_directory(context.working_dir());
+                    .with_working_directory(context.working_dir())
+                    .with_plan_session_override(plan_session_override);
 
             Arc::new(agent)
         };

@@ -59,6 +59,25 @@ pub struct ToolExecutionContext {
     /// on surfaces without the enqueue producer, where bash runs inline.
     pub background_manager:
         Option<Arc<crate::brain::agent::service::background_tasks::BackgroundTaskManager>>,
+
+    /// Plan-state session override (#908 option A). When set, plan state —
+    /// the plan JSON, design `.md`, pre-init and autonomy markers, and the
+    /// plan-task goal — resolves against THIS session id instead of
+    /// `session_id`. Spawned plan workers carry the parent's session id here
+    /// so their `plan` tool operates on the parent's checklist while the
+    /// child's own session stays fresh. `None` (the default everywhere except
+    /// plan-driven spawns) resolves against the session's own id.
+    pub plan_session_override: Option<Uuid>,
+
+    /// Sub-agent manager (#908). When present, tools may spawn child
+    /// sessions directly — plan `start` uses this for isolated task
+    /// execution. `None` on surfaces without sub-agent support.
+    pub subagent_manager: Option<Arc<crate::brain::tools::subagent::SubAgentManager>>,
+
+    /// The session's live tool registry (#908). Handed to spawned children
+    /// so their registries inherit the parent's tools (filtered per agent
+    /// type). `None` where no registry is wired.
+    pub parent_tool_registry: Option<Arc<crate::brain::tools::ToolRegistry>>,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -90,6 +109,9 @@ impl ToolExecutionContext {
             question_callback: None,
             progress_callback: None,
             background_manager: None,
+            plan_session_override: None,
+            subagent_manager: None,
+            parent_tool_registry: None,
         }
     }
 

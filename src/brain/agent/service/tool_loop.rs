@@ -1126,6 +1126,9 @@ impl AgentService {
         tool_context.question_callback = question_callback.clone();
         tool_context.progress_callback = progress_callback.clone();
         tool_context.background_manager = self.background_manager.clone();
+        tool_context.plan_session_override = self.plan_session_override;
+        tool_context.subagent_manager = self.subagent_manager.clone();
+        tool_context.parent_tool_registry = Some(self.tool_registry.clone());
 
         // Tool execution loop
         let mut iteration = 0;
@@ -5433,6 +5436,9 @@ impl AgentService {
                                     question_callback: tool_context.question_callback.clone(),
                                     progress_callback: tool_context.progress_callback.clone(),
                                     background_manager: tool_context.background_manager.clone(),
+                                    plan_session_override: tool_context.plan_session_override,
+                                    subagent_manager: tool_context.subagent_manager.clone(),
+                                    parent_tool_registry: tool_context.parent_tool_registry.clone(),
                                 };
 
                                 // Execute the tool with approved context, racing against cancel

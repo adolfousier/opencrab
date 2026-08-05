@@ -2172,6 +2172,9 @@ pub(crate) async fn cmd_evolve(config: &crate::config::Config, check_only: bool)
         question_callback: None,
         progress_callback: None,
         background_manager: None,
+        plan_session_override: None,
+        subagent_manager: None,
+        parent_tool_registry: None,
     };
 
     let result = tool.execute(input, &context).await?;

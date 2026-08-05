@@ -370,6 +370,9 @@ mod send_input_tool {
             question_callback: None,
             progress_callback: None,
             background_manager: None,
+            plan_session_override: None,
+            subagent_manager: None,
+            parent_tool_registry: None,
         }
     }
 
@@ -525,6 +528,9 @@ mod close_agent_tool {
             question_callback: None,
             progress_callback: None,
             background_manager: None,
+            plan_session_override: None,
+            subagent_manager: None,
+            parent_tool_registry: None,
         }
     }
 
@@ -653,6 +659,9 @@ mod wait_agent_tool {
             question_callback: None,
             progress_callback: None,
             background_manager: None,
+            plan_session_override: None,
+            subagent_manager: None,
+            parent_tool_registry: None,
         }
     }
 
@@ -1273,6 +1282,9 @@ mod team_delete_tool {
             question_callback: None,
             progress_callback: None,
             background_manager: None,
+            plan_session_override: None,
+            subagent_manager: None,
+            parent_tool_registry: None,
         }
     }
 
@@ -1401,6 +1413,9 @@ mod team_broadcast_tool {
             question_callback: None,
             progress_callback: None,
             background_manager: None,
+            plan_session_override: None,
+            subagent_manager: None,
+            parent_tool_registry: None,
         }
     }
 
