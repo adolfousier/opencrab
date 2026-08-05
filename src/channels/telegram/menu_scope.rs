@@ -23,3 +23,27 @@ pub fn means_not_a_member(err: &str) -> bool {
     let upper = err.to_ascii_uppercase();
     NOT_A_MEMBER.iter().any(|code| upper.contains(code))
 }
+
+/// The supergroup id a migrated group moved to, if this error reports one.
+///
+/// A basic group that upgrades to a supergroup gets a new chat id, and every
+/// later call against the old one fails. Telegram hands the replacement back in
+/// the message itself:
+///
+/// ```text
+/// The group has been migrated to a supergroup with ID #-1004441241066
+/// ```
+///
+/// so recovery needs no extra API call — the failure carries its own fix
+/// (#946). Parsed from the rendered string for the same reason
+/// `means_not_a_member` is: teloxide surfaces these as opaque API text.
+pub fn migrated_to(err: &str) -> Option<i64> {
+    let tail = err.split("migrated to a supergroup with ID").nth(1)?;
+    let digits: String = tail
+        .trim()
+        .trim_start_matches('#')
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    digits.parse().ok()
+}

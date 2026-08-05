@@ -1165,6 +1165,75 @@ impl Config {
         Ok(())
     }
 
+    /// Move a config section to a new key, keeping its contents.
+    ///
+    /// Returns `true` if the section existed and was moved. A destination that
+    /// already exists is left alone and `false` is returned: the newer entry is
+    /// the live one, and overwriting it with the stale copy would undo whatever
+    /// has been configured since.
+    ///
+    /// Written for a Telegram group that migrates to a supergroup and takes a
+    /// new chat id (#946) — the settings are still the user's, only the key
+    /// they hang from changed.
+    pub fn rename_section(from: &str, to: &str) -> Result<bool> {
+        use toml_edit::DocumentMut;
+
+        let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let path =
+            Self::system_config_path().unwrap_or_else(|| opencrabs_home().join("config.toml"));
+        if !path.exists() {
+            return Ok(false);
+        }
+        let mut doc: DocumentMut = fs::read_to_string(&path)?.parse()?;
+
+        let from_parts: Vec<&str> = from.split('.').collect();
+        let to_parts: Vec<&str> = to.split('.').collect();
+        let (Some(from_leaf), Some(to_leaf)) = (from_parts.last(), to_parts.last()) else {
+            return Ok(false);
+        };
+
+        // Both keys are resolved under their own parents, so this also handles a
+        // move between different parent tables.
+        let Some(parent) = Self::descend_mut(doc.as_table_mut(), &from_parts) else {
+            return Ok(false);
+        };
+        let Some(item) = parent.get(from_leaf).cloned() else {
+            return Ok(false);
+        };
+
+        let Some(dest) = Self::descend_mut(doc.as_table_mut(), &to_parts) else {
+            return Ok(false);
+        };
+        if dest.contains_key(to_leaf) {
+            tracing::info!("Not moving [{from}] to [{to}]: destination already exists");
+            return Ok(false);
+        }
+        dest.insert(to_leaf, item);
+
+        if let Some(parent) = Self::descend_mut(doc.as_table_mut(), &from_parts) {
+            parent.remove(from_leaf);
+        }
+        tracing::info!("Moved config section [{from}] to [{to}]");
+
+        Self::backup_config(&path, 7);
+        crate::config::types::io::atomic_write(&path, &doc.to_string())?;
+        Ok(true)
+    }
+
+    /// Walk to the parent table of a dotted section path. `None` when any
+    /// component is missing or is not a table.
+    fn descend_mut<'a>(
+        root: &'a mut toml_edit::Table,
+        parts: &[&str],
+    ) -> Option<&'a mut toml_edit::Table> {
+        let mut current = root;
+        for part in &parts[..parts.len().saturating_sub(1)] {
+            current = current.get_mut(part)?.as_table_mut()?;
+        }
+        Some(current)
+    }
+
     /// Clean up custom provider entries that have no base_url and no default_model.
     /// These are ghost entries created when disabling all providers on save.
     ///

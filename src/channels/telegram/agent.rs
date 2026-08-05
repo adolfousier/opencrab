@@ -1916,6 +1916,27 @@ async fn register_scoped_menus(bot: &Bot, commands: Vec<teloxide::types::BotComm
             })
             .await
         {
+            // A basic group that upgraded to a supergroup has a new chat id, and
+            // every call against the old one fails from then on. Follow it once
+            // and move the config entry across; otherwise this warns per user
+            // per refresh forever and the group never gets its menus (#946).
+            if let Some(new_id) = super::menu_scope::migrated_to(&e.to_string()) {
+                let from = format!("channels.telegram.groups.{group_id}");
+                let to = format!("channels.telegram.groups.{new_id}");
+                match crate::config::Config::rename_section(&from, &to) {
+                    Ok(true) => tracing::info!(
+                        "Telegram: group {group_id} migrated to supergroup {new_id} — config moved"
+                    ),
+                    Ok(false) => tracing::info!(
+                        "Telegram: group {group_id} migrated to supergroup {new_id}, already registered"
+                    ),
+                    Err(err) => tracing::warn!(
+                        "Telegram: group {group_id} migrated to {new_id} but the config move failed: {err}"
+                    ),
+                }
+                // Every member call would fail the same way on the dead id.
+                continue;
+            }
             tracing::warn!("Telegram: failed to set owner menu in {group_id}: {e}");
         }
         // Everyone else already allowed there: empty, since every command is
