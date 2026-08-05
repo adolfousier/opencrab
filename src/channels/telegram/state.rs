@@ -123,6 +123,18 @@ pub struct TelegramState {
     /// Photo debounce tokens: (chat_id, user_id, media_group_id) → CancellationToken
     /// Each new photo in the same album cancels the previous timer and starts a new 3s one.
     photo_debounce: Mutex<HashMap<PhotoBufferKey, CancellationToken>>,
+    /// Fragments of a client-split long message: (chat_id, user_id) → texts, in
+    /// arrival order.
+    ///
+    /// A message too long for one send is split by the Telegram client, and
+    /// unlike an album the pieces carry NO grouping id — nothing marks fragment
+    /// two as a continuation. Only near-limit messages are buffered, so an
+    /// ordinary message never waits (#950).
+    text_buffer: Mutex<HashMap<(i64, i64), Vec<String>>>,
+    /// Debounce tokens for the above: each new fragment cancels the previous
+    /// timer and starts a fresh one, so the window measures the gap between
+    /// fragments rather than the age of the first.
+    text_debounce: Mutex<HashMap<(i64, i64), CancellationToken>>,
     /// Active /cowork conversations: user_id → CoworkState
     cowork_conversations: Mutex<HashMap<i64, cowork::CoworkState>>,
     /// Cowork session lookup: session_id → CoworkState (for startgroup detection)
@@ -222,6 +234,8 @@ impl TelegramState {
             plan_card_restick: Mutex::new(HashMap::new()),
             photo_buffer: Mutex::new(HashMap::new()),
             photo_debounce: Mutex::new(HashMap::new()),
+            text_buffer: Mutex::new(HashMap::new()),
+            text_debounce: Mutex::new(HashMap::new()),
             cowork_conversations: Mutex::new(HashMap::new()),
             cowork_sessions: Mutex::new(HashMap::new()),
             active_senders: Mutex::new(HashMap::new()),
@@ -920,6 +934,54 @@ impl TelegramState {
     pub async fn cleanup_photo_debounce(&self, chat_id: i64, user_id: i64, media_group_id: &str) {
         let key = (chat_id, user_id, media_group_id.to_string());
         self.photo_debounce.lock().await.remove(&key);
+    }
+
+    /// Buffer a fragment of a possibly-split message. Returns how many are held.
+    pub async fn buffer_text(&self, chat_id: i64, user_id: i64, text: String) -> usize {
+        let mut buffer = self.text_buffer.lock().await;
+        let frags = buffer.entry((chat_id, user_id)).or_default();
+        frags.push(text);
+        frags.len()
+    }
+
+    /// Start (or restart) the wait for another fragment from this sender.
+    ///
+    /// Cancels any timer already running for the pair, so the window measures
+    /// the gap between fragments rather than the age of the first one.
+    pub async fn reset_text_debounce(&self, chat_id: i64, user_id: i64) -> CancellationToken {
+        let token = CancellationToken::new();
+        let mut debounce = self.text_debounce.lock().await;
+        if let Some(old) = debounce.insert((chat_id, user_id), token.clone()) {
+            old.cancel();
+        }
+        token
+    }
+
+    /// Wait for the gap to pass, or until another fragment cancels it.
+    /// `true` means the window expired and the message is complete.
+    ///
+    /// Short on purpose: the client emits the pieces back to back — measured at
+    /// 56ms apart — so this only has to outlast network jitter, and it is paid
+    /// solely by messages already at the split threshold.
+    pub async fn wait_text_debounce(&self, token: CancellationToken) -> bool {
+        tokio::select! {
+            _ = token.cancelled() => false,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(1500)) => true,
+        }
+    }
+
+    /// Take every buffered fragment for this sender, in arrival order.
+    pub async fn drain_text_buffer(&self, chat_id: i64, user_id: i64) -> Vec<String> {
+        self.text_buffer
+            .lock()
+            .await
+            .remove(&(chat_id, user_id))
+            .unwrap_or_default()
+    }
+
+    /// Drop the debounce token once the fragments have been dispatched.
+    pub async fn cleanup_text_debounce(&self, chat_id: i64, user_id: i64) {
+        self.text_debounce.lock().await.remove(&(chat_id, user_id));
     }
 
     // ── Cowork state management ──────────────────────────────────────────

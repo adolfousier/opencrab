@@ -366,6 +366,30 @@ pub(crate) async fn fire_reaction(bot: &Bot, chat_id: ChatId, msg_id: MessageId,
     }
 }
 
+/// Telegram's per-message text limit, in UTF-16 code units. A message longer
+/// than this is split by the client before it is ever sent.
+const TELEGRAM_TEXT_LIMIT: usize = 4096;
+
+/// How close to the limit a message must land before it is treated as possibly
+/// one piece of a larger one.
+///
+/// Clients break at a whitespace boundary rather than exactly on the limit, so
+/// a fragment lands a little short of it. The margin covers that without
+/// catching ordinary long messages, which are nowhere near 4KB.
+const SPLIT_MARGIN: usize = 128;
+
+/// Could this text be one fragment of a message the client had to split?
+///
+/// Length is the only signal available: unlike an album, split text carries no
+/// grouping id, so nothing marks a fragment as a continuation. Gating on length
+/// is what keeps the debounce off the path of every normal message — only a
+/// message that actually reached the send limit waits for a sibling (#950).
+pub(crate) fn is_split_candidate(text: &str) -> bool {
+    // Measured in UTF-16, matching how Telegram counts its own limit: a message
+    // of emoji or CJK hits the ceiling at far fewer `char`s than bytes.
+    text.encode_utf16().count() >= TELEGRAM_TEXT_LIMIT - SPLIT_MARGIN
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_message(
     bot: Bot,
@@ -2899,6 +2923,49 @@ pub(crate) async fn handle_message(
             }
         }
     }
+
+    // A message too long for one send is split by the Telegram client into
+    // several, and unlike an album the pieces carry no grouping id. Answering
+    // the first one alone made the agent reply to half a sentence and report
+    // the message as cut off (#950). Hold a near-limit fragment briefly; if a
+    // continuation follows it resets the wait, and the joined text dispatches
+    // as one prompt.
+    //
+    // Only near-limit messages wait, so an ordinary message is never delayed.
+    let text = if is_split_candidate(&text) {
+        let chat_id = msg.chat.id.0;
+        let sender = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
+        let held = telegram_state
+            .buffer_text(chat_id, sender, text.clone())
+            .await;
+        let token = telegram_state.reset_text_debounce(chat_id, sender).await;
+        if !telegram_state.wait_text_debounce(token).await {
+            // Another fragment arrived and took over the wait. It owns the
+            // buffer now and will dispatch everything, this one included.
+            tracing::info!(
+                "Telegram: holding fragment {held} of a split message from {sender} in {chat_id}"
+            );
+            return Ok(());
+        }
+        telegram_state.cleanup_text_debounce(chat_id, sender).await;
+        let fragments = telegram_state.drain_text_buffer(chat_id, sender).await;
+        if fragments.len() > 1 {
+            tracing::info!(
+                "Telegram: joined {} fragments of a split message from {sender} in {chat_id}",
+                fragments.len()
+            );
+        }
+        // Newline, not empty: Telegram's clients break long text at a
+        // whitespace boundary, so the pieces are whole lines. Joining with
+        // nothing would run the last word of one into the first of the next.
+        if fragments.is_empty() {
+            text
+        } else {
+            fragments.join("\n")
+        }
+    } else {
+        text
+    };
 
     tracing::info!(
         "Telegram: reaching agent processing — text={:?}, is_voice={}, is_dm={}, chat={}",
