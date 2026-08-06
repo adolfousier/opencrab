@@ -6574,17 +6574,33 @@ impl AgentService {
         // intermediates (#838): there the partial is dropped and only the
         // continuation is delivered (#859).
         if let Some(partial) = truncation_partial.as_deref() {
-            let joined = super::truncation::join_continuation(partial, &final_text);
-            if joined != final_text {
-                tracing::info!(
-                    "Truncation continue: joined {} char partial with {} char continuation \
-                     into {} chars",
-                    partial.chars().count(),
-                    final_text.chars().count(),
-                    joined.chars().count()
-                );
+            use super::truncation::Continuation;
+            match super::truncation::join_continuation(partial, &final_text) {
+                Continuation::Extended(joined) => {
+                    tracing::info!(
+                        "Truncation continue: joined {} char partial with {} char continuation \
+                         into {} chars",
+                        partial.chars().count(),
+                        final_text.chars().count(),
+                        joined.chars().count()
+                    );
+                    final_text = joined;
+                }
+                Continuation::Echoed(still_partial) => {
+                    // The continuation recovered nothing — the model echoed the
+                    // tail it was asked to continue from. Only one attempt is
+                    // made (`truncated_mid_sentence_retry_used`), so this answer
+                    // is as complete as it will get. Delivering it unmarked told
+                    // the user a sentence ending at a colon was finished (#956).
+                    tracing::warn!(
+                        "Truncation continue FAILED: {} char continuation added nothing to the \
+                         {} char partial (model echoed the tail) — delivering it marked incomplete",
+                        final_text.chars().count(),
+                        partial.chars().count(),
+                    );
+                    final_text = format!("{still_partial}{}", super::truncation::INCOMPLETE_MARKER);
+                }
             }
-            final_text = joined;
         }
 
         // Turn-end phantom verdict (#752): a turn that ran ZERO tools and ends

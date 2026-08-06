@@ -117,23 +117,47 @@ pub(super) fn try_emit_truncation_continue(
 /// Observed cost: a 551-token answer was replaced by a 60-character provider
 /// refusal, because the refusal was the tail of the partial AND the whole of
 /// the continuation. The user saw only the refusal.
-pub(crate) fn join_continuation(partial: &str, continuation: &str) -> String {
+/// What a continuation attempt actually achieved.
+///
+/// The two outcomes used to be one `String`, which meant a continuation that
+/// recovered nothing was indistinguishable from one that worked — so a turn cut
+/// off mid-sentence was delivered as a finished answer (#956).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Continuation {
+    /// The continuation carried the answer forward.
+    Extended(String),
+    /// It added nothing: the model echoed the tail it was asked to continue
+    /// from, or returned nothing at all. The text is STILL truncated.
+    Echoed(String),
+}
+
+/// Note appended to an answer that is still cut off after the continuation
+/// failed. Telling the user is the only honest option left: the alternative is
+/// presenting a sentence that stops at a colon as a completed reply.
+pub(crate) const INCOMPLETE_MARKER: &str =
+    "\n\n_(cut off here — the model did not continue. Ask it to finish this.)_";
+
+pub(crate) fn join_continuation(partial: &str, continuation: &str) -> Continuation {
     let p = partial.trim_end();
     let c = continuation.trim();
     if p.is_empty() {
-        return c.to_string();
+        return Continuation::Extended(c.to_string());
     }
+    // Nothing came back, so nothing was recovered.
     if c.is_empty() {
-        return p.to_string();
+        return Continuation::Echoed(p.to_string());
     }
     // The continuation repeated ground the partial already covers. This is the
     // reported case: the model echoed the tail it was asked to continue from.
+    // Not appending it is right — but the answer is still truncated, and
+    // saying so is the caller's job.
     if p.contains(c) {
-        return p.to_string();
+        return Continuation::Echoed(p.to_string());
     }
-    // The model restarted and reproduced the partial in full.
+    // The model restarted and reproduced the partial in full. That IS forward
+    // progress: the restart carries the whole answer, not just the tail.
     if c.contains(p) {
-        return c.to_string();
+        return Continuation::Extended(c.to_string());
     }
     // A genuine continuation. A separator is inserted only when neither side
     // supplies one: the cut can land mid-word, where joining with a space would
@@ -142,9 +166,9 @@ pub(crate) fn join_continuation(partial: &str, continuation: &str) -> String {
     let needs_space = !p.ends_with(char::is_whitespace)
         && !c.starts_with(char::is_whitespace)
         && !p.ends_with(char::is_alphanumeric);
-    if needs_space {
+    Continuation::Extended(if needs_space {
         format!("{p} {c}")
     } else {
         format!("{p}{c}")
-    }
+    })
 }
