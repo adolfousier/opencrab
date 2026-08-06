@@ -28,6 +28,7 @@ pub mod custom_openai_compatible;
 pub mod factory;
 pub mod fallback;
 pub mod gemini;
+pub mod health;
 pub mod kimi_plan;
 pub mod kimi_reasoning;
 pub mod model_fetch;
