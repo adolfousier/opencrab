@@ -1576,6 +1576,16 @@ impl AgentService {
                 .await
             {
                 Ok(resp) => {
+                    // #952: a successful primary response proves the provider
+                    // has recovered from any prior quota-exhaustion mark.
+                    // Clear the breaker instantly (no TTL wait) so future
+                    // fallback walks consider it again. Hard monthly-quota
+                    // providers do not fluke-succeed; a 200 here means
+                    // genuine recovery, so the streak reset below is correct.
+                    let ok_name = self.provider_name_for_session(session_id);
+                    if crate::brain::provider::health::is_exhausted(&ok_name) {
+                        crate::brain::provider::health::clear(&ok_name);
+                    }
                     // Primary succeeded on first try (no retry / no
                     // fallback rescue needed). Reset the consecutive-
                     // failure streak so a future hiccup starts fresh
@@ -1935,6 +1945,14 @@ impl AgentService {
                         crate::brain::provider::ProviderError::StreamError(s) if s.contains("rate limit") || s.contains("hit your limit")
                     ) || matches!(
                         &e,
+                        crate::brain::provider::ProviderError::StreamError(s)
+                            if crate::brain::provider::error::is_quota_exhausted_message(s)
+                    ) || matches!(
+                        &e,
+                        crate::brain::provider::ProviderError::ApiError { status, .. }
+                            if *status == 429
+                    ) || matches!(
+                        &e,
                         crate::brain::provider::ProviderError::ApiError { status, .. }
                             if *status == 401 || *status == 403 || *status == 402
                     ) || matches!(&e, crate::brain::provider::ProviderError::InvalidApiKey) =>
@@ -2036,6 +2054,14 @@ impl AgentService {
                         Some(reason),
                     );
 
+                    // Quota circuit breaker (#952): a HARD quota never lifts
+                    // inside this turn. Mark the provider so the fallback
+                    // walk below skips it and future turns fast-fail instead
+                    // of burning backoff.
+                    if e.is_quota_exhausted() {
+                        crate::brain::provider::health::mark_exhausted(&primary_from_name);
+                    }
+
                     if let Some(ref cb) = progress_callback {
                         let prefix = if is_model_mismatch {
                             format!(
@@ -2068,17 +2094,52 @@ impl AgentService {
                     // swap may already have this session on opencode2 while
                     // `self.provider` still holds opencode).
                     let active_name = self.provider_name_for_session(session_id);
+                    // Quota circuit breaker (#952): never send a request to a
+                    // provider the breaker has marked exhausted. Skipped
+                    // names are reported in the final summary so the user
+                    // knows they exist but were not tried.
                     let candidates: Vec<_> = self
                         .fallback_providers
                         .iter()
                         .filter(|p| p.name() != active_name)
+                        .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
+                        .collect();
+                    let skipped: Vec<String> = self
+                        .fallback_providers
+                        .iter()
+                        .filter(|p| p.name() != active_name)
+                        .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
+                        .map(|p| p.name().to_string())
                         .collect();
 
                     if candidates.is_empty() {
+                        // #952: every fallback was breaker-skipped — tell
+                        // the user WHY instead of dying with a bare error.
+                        if let Some(ref cb) = progress_callback {
+                            let reason = crate::brain::provider::error::short_error_reason(&e);
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: crate::brain::provider::error::chain_exhausted_summary(
+                                        &primary_from_name,
+                                        &reason,
+                                        &[],
+                                        &skipped,
+                                    ),
+                                },
+                            );
+                        }
                         return Err(AgentError::Provider(e));
                     }
 
+                    // #952: name the PRIMARY's failure reason in the final
+                    // summary — capture before the walk overwrites last_err.
+                    let primary_reason = crate::brain::provider::error::short_error_reason(&e);
                     let mut last_err = e;
+                    // Per-candidate failure ledger for the final summary
+                    // (#952): "provider/model: reason" for every fallback
+                    // that was tried and died.
+                    let mut tried: Vec<String> = Vec::new();
                     // stream_complete returns (LLMResponse, Option<String>);
                     // we also need fb_name / fb_model alongside for the
                     // ProviderSwitched event emitted once on success.
@@ -2178,6 +2239,19 @@ impl AgentService {
                                 // the next candidate iteration starts
                                 // clean.
                                 drop(restore_guard);
+                                // Quota circuit breaker (#952): a fallback
+                                // that dies on a hard quota is marked too,
+                                // so later walks in this turn and future
+                                // turns skip it.
+                                if fb_err.is_quota_exhausted() {
+                                    crate::brain::provider::health::mark_exhausted(&fb_name);
+                                }
+                                tried.push(format!(
+                                    "{}/{}: {}",
+                                    fb_name,
+                                    fb_model,
+                                    crate::brain::provider::error::short_error_reason(&fb_err)
+                                ));
                                 tracing::warn!(
                                     "Fallback '{}' failed: {} — trying next",
                                     fallback.name(),
@@ -2262,6 +2336,24 @@ impl AgentService {
                                 session_id,
                                 progress_callback.as_ref(),
                             );
+                            // #952: human-readable chain-exhaustion
+                            // summary naming the dead primary, every
+                            // fallback tried, and the quota-skipped
+                            // providers.
+                            if let Some(ref cb) = progress_callback {
+                                cb(
+                                    session_id,
+                                    ProgressEvent::SelfHealingAlert {
+                                        message:
+                                            crate::brain::provider::error::chain_exhausted_summary(
+                                                &primary_from_name,
+                                                &primary_reason,
+                                                &tried,
+                                                &skipped,
+                                            ),
+                                    },
+                                );
+                            }
                             return Err(AgentError::Provider(last_err));
                         }
                     }
@@ -2435,6 +2527,8 @@ impl AgentService {
                         }
 
                         // Walk the entire fallback chain, skipping the active provider.
+                        // Quota circuit breaker (#952): skip providers the
+                        // breaker has marked exhausted.
                         let stream_active_name = self
                             .provider
                             .read()
@@ -2445,6 +2539,14 @@ impl AgentService {
                             .fallback_providers
                             .iter()
                             .filter(|p| p.name() != stream_active_name)
+                            .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
+                            .collect();
+                        let stream_skipped: Vec<String> = self
+                            .fallback_providers
+                            .iter()
+                            .filter(|p| p.name() != stream_active_name)
+                            .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
+                            .map(|p| p.name().to_string())
                             .collect();
 
                         if stream_candidates.is_empty() {
@@ -2453,9 +2555,32 @@ impl AgentService {
                                 session_id,
                                 progress_callback.as_ref(),
                             );
+                            // #952: every fallback was breaker-skipped —
+                            // report the chain state instead of a bare error.
+                            if let Some(ref cb) = progress_callback {
+                                let reason =
+                                    crate::brain::provider::error::short_error_reason(&last_err);
+                                cb(
+                                    session_id,
+                                    ProgressEvent::SelfHealingAlert {
+                                        message:
+                                            crate::brain::provider::error::chain_exhausted_summary(
+                                                &stream_active_name,
+                                                &reason,
+                                                &[],
+                                                &stream_skipped,
+                                            ),
+                                    },
+                                );
+                            }
                             return Err(AgentError::Provider(last_err));
                         }
 
+                        // #952: capture the PRIMARY's reason before the walk
+                        // overwrites last_err, and ledger every tried fallback.
+                        let stream_primary_reason =
+                            crate::brain::provider::error::short_error_reason(&last_err);
+                        let mut stream_tried: Vec<String> = Vec::new();
                         let mut stream_succeeded = None;
                         for fallback in &stream_candidates {
                             let fb_name = fallback.name().to_string();
@@ -2612,6 +2737,15 @@ impl AgentService {
                                         fb_name,
                                         fb_err
                                     );
+                                    // #952: mark a fallback that dies on a
+                                    // hard quota so future turns skip it.
+                                    if fb_err.is_quota_exhausted() {
+                                        crate::brain::provider::health::mark_exhausted(&fb_name);
+                                    }
+                                    stream_tried.push(format!(
+                                        "{fb_name}/{fb_model}: {}",
+                                        crate::brain::provider::error::short_error_reason(&fb_err)
+                                    ));
                                     last_err = fb_err;
                                 }
                             }
@@ -2633,6 +2767,20 @@ impl AgentService {
                                     session_id,
                                     progress_callback.as_ref(),
                                 );
+                                // #952: human-readable chain-exhaustion summary.
+                                if let Some(ref cb) = progress_callback {
+                                    cb(
+                                        session_id,
+                                        ProgressEvent::SelfHealingAlert {
+                                            message: crate::brain::provider::error::chain_exhausted_summary(
+                                                &stream_active_name,
+                                                &stream_primary_reason,
+                                                &stream_tried,
+                                                &stream_skipped,
+                                            ),
+                                        },
+                                    );
+                                }
                                 return Err(AgentError::Provider(last_err));
                             }
                         }
@@ -2758,10 +2906,20 @@ impl AgentService {
                             .ok()
                             .map(|p| p.name().to_string())
                             .unwrap_or_default();
+                        // Quota circuit breaker (#952): skip providers the
+                        // breaker has marked exhausted.
                         let stream_candidates: Vec<_> = self
                             .fallback_providers
                             .iter()
                             .filter(|p| p.name() != stream_active_name)
+                            .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
+                            .collect();
+                        let stream_skipped: Vec<String> = self
+                            .fallback_providers
+                            .iter()
+                            .filter(|p| p.name() != stream_active_name)
+                            .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
+                            .map(|p| p.name().to_string())
                             .collect();
 
                         if stream_candidates.is_empty() {
@@ -2770,9 +2928,32 @@ impl AgentService {
                                 session_id,
                                 progress_callback.as_ref(),
                             );
+                            // #952: every fallback was breaker-skipped —
+                            // report the chain state instead of a bare error.
+                            if let Some(ref cb) = progress_callback {
+                                let reason =
+                                    crate::brain::provider::error::short_error_reason(&last_err);
+                                cb(
+                                    session_id,
+                                    ProgressEvent::SelfHealingAlert {
+                                        message:
+                                            crate::brain::provider::error::chain_exhausted_summary(
+                                                &stream_active_name,
+                                                &reason,
+                                                &[],
+                                                &stream_skipped,
+                                            ),
+                                    },
+                                );
+                            }
                             return Err(AgentError::Provider(last_err));
                         }
 
+                        // #952: capture the PRIMARY's reason before the walk
+                        // overwrites last_err, and ledger every tried fallback.
+                        let stream_primary_reason =
+                            crate::brain::provider::error::short_error_reason(&last_err);
+                        let mut stream_tried: Vec<String> = Vec::new();
                         let mut stream_succeeded = None;
                         for fallback in &stream_candidates {
                             let fb_name = fallback.name().to_string();
@@ -2901,6 +3082,15 @@ impl AgentService {
                                         fb_model,
                                         fb_err
                                     );
+                                    // #952: mark a fallback that dies on a
+                                    // hard quota so future turns skip it.
+                                    if fb_err.is_quota_exhausted() {
+                                        crate::brain::provider::health::mark_exhausted(&fb_name);
+                                    }
+                                    stream_tried.push(format!(
+                                        "{fb_name}/{fb_model}: {}",
+                                        crate::brain::provider::error::short_error_reason(&fb_err)
+                                    ));
                                 }
                             }
                         }
@@ -2922,6 +3112,21 @@ impl AgentService {
                                 session_id,
                                 progress_callback.as_ref(),
                             );
+                            // #952: human-readable chain-exhaustion summary.
+                            if let Some(ref cb) = progress_callback {
+                                cb(
+                                    session_id,
+                                    ProgressEvent::SelfHealingAlert {
+                                        message:
+                                            crate::brain::provider::error::chain_exhausted_summary(
+                                                &stream_active_name,
+                                                &stream_primary_reason,
+                                                &stream_tried,
+                                                &stream_skipped,
+                                            ),
+                                    },
+                                );
+                            }
                             return Err(AgentError::Provider(last_err));
                         }
                     }
@@ -2943,10 +3148,29 @@ impl AgentService {
                         Some(&err_msg),
                     );
 
+                    // Quota circuit breaker (#952): a hard quota (e.g. HTTP
+                    // 402 Payment Required) reaches this catch-all because
+                    // the rate-limit arm only guards 429 + quota phrases.
+                    // Mark it so the fallback walk below and future turns
+                    // skip this provider instead of retrying it.
+                    if e.is_quota_exhausted() {
+                        crate::brain::provider::health::mark_exhausted(&active_name);
+                    }
+
+                    // Quota circuit breaker (#952): skip providers the
+                    // breaker has marked exhausted.
                     let fallback_candidates: Vec<_> = self
                         .fallback_providers
                         .iter()
                         .filter(|p| p.name() != active_name)
+                        .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
+                        .collect();
+                    let fallback_skipped: Vec<String> = self
+                        .fallback_providers
+                        .iter()
+                        .filter(|p| p.name() != active_name)
+                        .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
+                        .map(|p| p.name().to_string())
                         .collect();
 
                     if fallback_candidates.is_empty() {
@@ -2956,19 +3180,41 @@ impl AgentService {
                             active_name
                         );
                         if let Some(ref cb) = progress_callback {
-                            cb(
-                                session_id,
-                                ProgressEvent::SelfHealingAlert {
-                                    message: "No fallback provider available. \
-                                         Configure one with /onboard:provider"
-                                        .to_string(),
-                                },
-                            );
+                            if fallback_skipped.is_empty() {
+                                cb(
+                                    session_id,
+                                    ProgressEvent::SelfHealingAlert {
+                                        message: "No fallback provider available. \
+                                             Configure one with /onboard:provider"
+                                            .to_string(),
+                                    },
+                                );
+                            } else {
+                                // #952: fallbacks EXIST but the breaker
+                                // skipped every one — say so explicitly.
+                                let reason = crate::brain::provider::error::short_error_reason(&e);
+                                cb(
+                                    session_id,
+                                    ProgressEvent::SelfHealingAlert {
+                                        message:
+                                            crate::brain::provider::error::chain_exhausted_summary(
+                                                &active_name,
+                                                &reason,
+                                                &[],
+                                                &fallback_skipped,
+                                            ),
+                                    },
+                                );
+                            }
                         }
                         return Err(AgentError::Provider(e));
                     }
 
+                    // #952: capture the PRIMARY's reason before the walk
+                    // overwrites last_err, and ledger every tried fallback.
+                    let primary_reason = crate::brain::provider::error::short_error_reason(&e);
                     let mut last_err = e;
+                    let mut tried: Vec<String> = Vec::new();
                     let mut succeeded = None;
 
                     for fallback in &fallback_candidates {
@@ -3049,6 +3295,16 @@ impl AgentService {
                                     fb_model,
                                     fb_err
                                 );
+                                // #952: a fallback that dies on a hard quota
+                                // is marked so later walks + future turns
+                                // skip it instead of retrying.
+                                if fb_err.is_quota_exhausted() {
+                                    crate::brain::provider::health::mark_exhausted(&fb_name);
+                                }
+                                tried.push(format!(
+                                    "{fb_name}/{fb_model}: {}",
+                                    crate::brain::provider::error::short_error_reason(&fb_err)
+                                ));
                                 last_err = fb_err;
                             }
                         }
@@ -3071,6 +3327,20 @@ impl AgentService {
                             session_id,
                             progress_callback.as_ref(),
                         );
+                        // #952: human-readable chain-exhaustion summary.
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: crate::brain::provider::error::chain_exhausted_summary(
+                                        &active_name,
+                                        &primary_reason,
+                                        &tried,
+                                        &fallback_skipped,
+                                    ),
+                                },
+                            );
+                        }
                         return Err(AgentError::Provider(last_err));
                     }
                 }
@@ -4671,6 +4941,16 @@ impl AgentService {
                         .fallback_providers
                         .iter()
                         .filter(|p| p.name() != active_name)
+                        // Quota circuit breaker (#952): skip providers
+                        // the breaker has marked exhausted.
+                        .filter(|p| !crate::brain::provider::health::is_exhausted(p.name()))
+                        .collect();
+                    let skipped: Vec<String> = self
+                        .fallback_providers
+                        .iter()
+                        .filter(|p| p.name() != active_name)
+                        .filter(|p| crate::brain::provider::health::is_exhausted(p.name()))
+                        .map(|p| p.name().to_string())
                         .collect();
 
                     if candidates.is_empty() {
@@ -4678,17 +4958,28 @@ impl AgentService {
                         // alert so the user knows to swap manually — do
                         // NOT exit silently.
                         if let Some(ref cb) = progress_callback {
-                            cb(
-                                session_id,
-                                ProgressEvent::SelfHealingAlert {
-                                    message: format!(
-                                        "Model '{}/{}' refused to answer after {} nudges \
-                                         and no fallback provider is configured. Use \
-                                         /models to switch.",
-                                        active_name, model_name, EMPTY_REASONING_MAX_NUDGES,
-                                    ),
-                                },
-                            );
+                            let message = if skipped.is_empty() {
+                                format!(
+                                    "Model '{}/{}' refused to answer after {} nudges \
+                                     and no fallback provider is configured. Use \
+                                     /models to switch.",
+                                    active_name, model_name, EMPTY_REASONING_MAX_NUDGES,
+                                )
+                            } else {
+                                // #952: fallbacks EXIST but the breaker
+                                // skipped every one — name them so the user
+                                // knows why no rescue happened.
+                                format!(
+                                    "Model '{}/{}' refused to answer after {} nudges. \
+                                     Fallback provider(s) {} are marked quota-exhausted \
+                                     and were skipped. Use /models to switch.",
+                                    active_name,
+                                    model_name,
+                                    EMPTY_REASONING_MAX_NUDGES,
+                                    skipped.join(", "),
+                                )
+                            };
+                            cb(session_id, ProgressEvent::SelfHealingAlert { message });
                         }
                         // Fall through: final_response = Some(response); break
                         // happens below (existing path). The user sees the
@@ -4816,6 +5107,11 @@ impl AgentService {
                                         fb_name,
                                         fb_err,
                                     );
+                                    // #952: mark a fallback that dies on a
+                                    // hard quota so future walks skip it.
+                                    if fb_err.is_quota_exhausted() {
+                                        crate::brain::provider::health::mark_exhausted(&fb_name);
+                                    }
                                 }
                             }
                         }
