@@ -85,9 +85,53 @@ pub fn is_repetitive_tool_guardrail(msg: &str) -> bool {
         || (l.contains("repeated") && l.contains("consecutive rounds"))
 }
 
+/// Phrase vocabulary for HARD quota / billing limits (monthly cap, free
+/// tier exhausted, no credit) as opposed to a transient per-minute
+/// throttle. A hard quota will not lift inside any retry window, so
+/// retrying it only burns backoff (#952). Deliberately conservative: an
+/// unknown 429 wording stays retryable, because transient throttling is
+/// the common case and a false "hard quota" classification would skip
+/// retries that would have succeeded.
+const QUOTA_EXHAUSTION_PHRASES: &[&str] = &[
+    "exceeded your current quota",
+    "insufficient_quota",
+    "insufficient balance",
+    "no credit balance",
+    "credit balance is insufficient",
+    "out of credits",
+    "no credits left",
+    "quota exceeded",
+    "quota_exceeded",
+    "quota exhausted",
+    "quota_exhausted",
+    "exhausted your quota",
+    "monthly limit",
+    "monthly quota",
+    "free tier quota",
+    "free allocated quota",
+    "allocated quota",
+    "allocationquota",
+    "reached your monthly",
+    "billing_hard_limit",
+    "hard limit reached",
+];
+
+/// True when an error/message body describes a HARD quota or billing
+/// limit rather than a transient throttle (#952).
+pub fn is_quota_exhausted_message(msg: &str) -> bool {
+    let l = msg.to_lowercase();
+    QUOTA_EXHAUSTION_PHRASES.iter().any(|p| l.contains(p))
+}
+
 impl ProviderError {
     /// Check if error is retryable
     pub fn is_retryable(&self) -> bool {
+        // Hard quota / billing limits never lift inside a retry window —
+        // bail straight to the fallback chain instead of burning the whole
+        // backoff budget against a wall (#952).
+        if self.is_quota_exhausted() {
+            return false;
+        }
         match self {
             ProviderError::HttpError(_)
             | ProviderError::RateLimitExceeded(_)
@@ -235,6 +279,75 @@ impl ProviderError {
             _ => false,
         }
     }
+
+    /// True when this error signals a HARD quota or billing limit that
+    /// will not lift inside any retry window (monthly cap, free tier
+    /// exhausted, no credit, billing cap). Distinct from a transient
+    /// per-minute throttle, which stays retryable (#952).
+    pub fn is_quota_exhausted(&self) -> bool {
+        match self {
+            ProviderError::RateLimitExceeded(msg) => is_quota_exhausted_message(msg),
+            ProviderError::ApiError {
+                status, message, ..
+            } if *status == 429 => is_quota_exhausted_message(message),
+            // 402 Payment Required: billing cap / out of credit. Hard stop.
+            ProviderError::ApiError { status: 402, .. } => true,
+            ProviderError::StreamError(msg) => is_quota_exhausted_message(msg),
+            _ => false,
+        }
+    }
+}
+
+/// One-line, user-facing classification of a provider failure for retry
+/// notices and fallback-chain summaries (#952): "quota exhausted",
+/// "rate limited", "auth error", "server error 502", "timeout", ...
+pub fn short_error_reason(err: &ProviderError) -> String {
+    if err.is_quota_exhausted() {
+        return "quota exhausted".to_string();
+    }
+    match err {
+        ProviderError::RateLimitExceeded(_) => "rate limited".to_string(),
+        ProviderError::ApiError { status, .. } if *status == 429 => "rate limited".to_string(),
+        ProviderError::ApiError { status: 401, .. }
+        | ProviderError::ApiError { status: 403, .. } => "auth error".to_string(),
+        ProviderError::ApiError { status, .. } if *status >= 500 => {
+            format!("server error {status}")
+        }
+        ProviderError::ApiError { status, .. } => format!("HTTP {status}"),
+        ProviderError::InvalidApiKey => "missing/invalid API key".to_string(),
+        ProviderError::ModelNotFound(_) => "model not found".to_string(),
+        ProviderError::Timeout(_) => "timeout".to_string(),
+        ProviderError::StreamError(_) => "stream error".to_string(),
+        ProviderError::HttpError(_) => "connection error".to_string(),
+        _ => "transient error".to_string(),
+    }
+}
+
+/// User-facing summary for "every provider in the chain failed" (#952).
+/// Names the primary and each fallback attempted with its failure reason,
+/// plus providers skipped by the quota circuit breaker, and ends with an
+/// actionable hint — instead of leaking the bare error string of whichever
+/// provider happened to die last.
+pub fn chain_exhausted_summary(
+    primary: &str,
+    primary_reason: &str,
+    tried: &[String],
+    skipped: &[String],
+) -> String {
+    let mut lines = vec![format!(
+        "All providers in the fallback chain failed. {primary}: {primary_reason}."
+    )];
+    for t in tried {
+        lines.push(format!("Fallback {t}"));
+    }
+    if !skipped.is_empty() {
+        lines.push(format!("Skipped (quota-exhausted): {}", skipped.join(", ")));
+    }
+    lines.push(
+        "Switch to a working provider via /models, or wait for the quota window to reset."
+            .to_string(),
+    );
+    lines.join("\n")
 }
 
 /// True when a provider error body describes a transient overload/capacity
