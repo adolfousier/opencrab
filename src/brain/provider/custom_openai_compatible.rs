@@ -102,8 +102,22 @@ fn retry_reason(err: &super::error::ProviderError) -> String {
         // instead of a flat "connection error" that tells the user nothing.
         ProviderError::HttpError(e) => super::error::describe_reqwest_error(e),
         ProviderError::Timeout(_) => "timed out".to_string(),
-        ProviderError::RateLimitExceeded(_) => "rate limited".to_string(),
-        ProviderError::ApiError { status, .. } if *status == 429 => "rate limited".to_string(),
+        ProviderError::RateLimitExceeded(_) => {
+            // #952: a HARD monthly/billing quota will not lift on retry —
+            // say so instead of the generic throttle label.
+            if err.is_quota_exhausted() {
+                "quota exhausted".to_string()
+            } else {
+                "rate limited".to_string()
+            }
+        }
+        ProviderError::ApiError { status, .. } if *status == 429 => {
+            if err.is_quota_exhausted() {
+                "quota exhausted".to_string()
+            } else {
+                "rate limited".to_string()
+            }
+        }
         ProviderError::ApiError { status, .. } if *status >= 500 => {
             format!("server error {status}")
         }
@@ -3480,7 +3494,13 @@ impl Provider for OpenAIProvider {
             &retry_config,
             |attempt, max, err| {
                 if let Ok(mut v) = notices.lock() {
-                    v.push((attempt, max, format!("{} — {}", pname, retry_reason(err))));
+                    // provider/model in the notice so users can tell WHICH
+                    // pair is retrying when several share a model name (#952)
+                    v.push((
+                        attempt,
+                        max,
+                        format!("{}/{} — {}", pname, model, retry_reason(err)),
+                    ));
                 }
             },
         )
