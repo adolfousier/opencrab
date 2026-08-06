@@ -1559,3 +1559,32 @@ pub fn strip_fenced_code(window: &str) -> String {
     }
     out
 }
+
+/// Cap on normalized length for loop-match text (#957).
+const LOOP_MATCH_MAX_CHARS: usize = 400;
+
+/// Normalize text for loop detection (#957).
+///
+/// Lowercase, drop digits and punctuation/symbols, collapse whitespace, cap
+/// at [`LOOP_MATCH_MAX_CHARS`]. Letters from any script survive (Cyrillic
+/// included), so a counter-incremented repeat like "Отправляю 1
+/// подтверждение" collides with "Отправляю 2 подтверждение" while genuinely
+/// different commands stay apart.
+///
+/// Shared by both loop-guard layers: the bash near-match in the tool loop
+/// and the cross-turn announcement ring buffer.
+pub fn normalize_loop_text(text: &str) -> String {
+    let mut buf = String::with_capacity(text.len().min(LOOP_MATCH_MAX_CHARS * 4));
+    for ch in text.chars() {
+        if ch.is_alphabetic() {
+            for lc in ch.to_lowercase() {
+                buf.push(lc);
+            }
+        } else if ch.is_whitespace() {
+            buf.push(' ');
+        }
+        // digits, punctuation, symbols: dropped
+    }
+    let collapsed = buf.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(LOOP_MATCH_MAX_CHARS).collect()
+}

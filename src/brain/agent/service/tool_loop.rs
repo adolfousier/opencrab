@@ -1226,6 +1226,11 @@ impl AgentService {
         // the reloadable history must always contain what the user saw.
         let mut pending_phantom_content: Option<String> = None;
         let mut recent_tool_calls: Vec<String> = Vec::new(); // Track tool calls to detect loops
+        // Normalized bash signatures (#957): the exact-match hard-break only
+        // fires on identical args, so Luna-style echo loops that differ by a
+        // counter slip past it. Store the normalized bash command text each
+        // turn so the near-match detector below can count collisions.
+        let mut recent_bash_normalized: Vec<String> = Vec::new();
         let mut stream_retry_count = 0u32; // Track consecutive stream drop retries
         // Retry up to 5 times on dropped streams / transient provider errors —
         // flaky providers (e.g. intermittent 404s mid-run) recover with a few
@@ -1280,6 +1285,10 @@ impl AgentService {
         // (identical name+args) dominates the recent window, nudge the model to
         // stop instead of cutting the turn silently (#507).
         let mut identical_call_loop_nudged: bool = false;
+        // Fires at most once per turn: the first time near-identical `bash`
+        // calls (same command, differing only in a counter/number/whitespace)
+        // dominate the bash window, nudge the model to stop echoing (#957).
+        let mut bash_near_match_nudged: bool = false;
         // Tracks whether the CURRENT iteration is a same-provider continuation
         // requested after a truncated-mid-sentence detection. Reset at the top
         // of every iteration; set true just before `continue;` from the
@@ -5472,6 +5481,100 @@ impl AgentService {
                     );
                     final_response = Some(response);
                     break;
+                }
+            }
+
+            // Bash near-match (#957): the exact-match hard-break above only
+            // fires when the SAME command+args repeat consecutively. Luna-style
+            // echo loops issue near-identical commands that differ only in a
+            // counter or incrementing number, so every one is a distinct
+            // signature and slips past every guard. Normalize the bash command
+            // text and count how many recent bash calls collide with it; nudge
+            // once, then break if the model keeps re-issuing near-duplicates.
+            if is_modification_tool && current_call_signature.starts_with("bash:") {
+                const BASH_NEAR_WINDOW: usize = 8;
+                const BASH_NEAR_NUDGE_AT: usize = 3;
+                const BASH_NEAR_BREAK_AT: usize = 4;
+                let normalized_bash = tool_uses
+                    .iter()
+                    .filter(|(_, name, _)| name.as_str() == "bash")
+                    .map(|(_, _, input)| {
+                        let cmd = input
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        format!(
+                            "bash:{}",
+                            crate::brain::agent::service::helpers::normalize_loop_text(cmd)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                recent_bash_normalized.push(normalized_bash.clone());
+                if recent_bash_normalized.len() > 50 {
+                    recent_bash_normalized.remove(0);
+                }
+                let near_in_window = {
+                    let start = recent_bash_normalized
+                        .len()
+                        .saturating_sub(BASH_NEAR_WINDOW);
+                    recent_bash_normalized[start..]
+                        .iter()
+                        .filter(|c| *c == &normalized_bash)
+                        .count()
+                };
+                match repeat_loop_action(
+                    &recent_bash_normalized,
+                    &normalized_bash,
+                    BASH_NEAR_WINDOW,
+                    BASH_NEAR_NUDGE_AT,
+                    BASH_NEAR_BREAK_AT,
+                    bash_near_match_nudged,
+                ) {
+                    RepeatLoopAction::Break => {
+                        tracing::warn!(
+                            "⚠️ Near-identical bash loop persisted after nudge: '{}' recurred \
+                             {}x in last {} bash iterations — breaking loop.",
+                            normalized_bash,
+                            near_in_window,
+                            BASH_NEAR_WINDOW,
+                        );
+                        final_response = Some(response);
+                        break;
+                    }
+                    RepeatLoopAction::Nudge => {
+                        tracing::warn!(
+                            "Near-identical bash loop: '{}' recurred {}x in last {} bash \
+                             iterations — nudging agent.",
+                            normalized_bash,
+                            near_in_window,
+                            BASH_NEAR_WINDOW,
+                        );
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: format!(
+                                        "Stuck re-issuing near-identical `bash` commands ({}x) \
+                                         — nudging the agent to stop echoing and act",
+                                        near_in_window,
+                                    ),
+                                },
+                            );
+                        }
+                        context.add_message(Message::user(format!(
+                            "[System: You have run `bash` with nearly identical commands {} times \
+                             in the last {} steps — they differ only in numbers, counters, or \
+                             whitespace, so they return the same kind of result. Repeating \
+                             near-duplicate shell commands will not move you forward. Use the \
+                             output you already have, or take a genuinely different action. Do \
+                             not re-issue another near-identical command.]",
+                            near_in_window, BASH_NEAR_WINDOW,
+                        )));
+                        bash_near_match_nudged = true;
+                        continue;
+                    }
+                    RepeatLoopAction::Continue => {}
                 }
             }
 
