@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Near-identical loop detection: a bash near-match in the tool loop normalizes echo-style commands (counters, punctuation, whitespace) and runs them through the #507 nudge-then-break machinery, and a per-session ring of the last 5 outgoing texts nudges then aborts cross-turn announcement loops. Both catch loops that every exact-match guard missed, born from a real incident of 18+ reworded announcements narrating a no-op bash echo loop (#957).
 - Install options in the README were numbered with three separate "Option 3" headings.
 - Ralph verification ran in the directory OpenCrabs was launched from rather than the session's own, so a plan in one repo was gated on another repo's build results. With a clean launch directory it reported success for a repo it never inspected (#921).
 - Linux dev binaries could not be cross-compiled on an arm64 host: cross publishes amd64-only images, and host build artifacts leaked into the container and failed on a glibc mismatch.
