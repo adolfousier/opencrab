@@ -396,6 +396,7 @@ pub mod provider_retry_consolidation_test;
 pub mod provider_sync_test;
 pub mod qr_render_test;
 pub mod queued_message_test;
+pub mod quota_circuit_breaker_test;
 pub mod qwen_detect_test;
 pub mod qwen_preserve_thinking_test;
 pub mod qwen_tool_extractor_test;
