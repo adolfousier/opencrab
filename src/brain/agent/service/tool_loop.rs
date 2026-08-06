@@ -6706,6 +6706,61 @@ impl AgentService {
             }
         }
 
+        // Cross-turn announcement loop guard (#957) — the text layer. The
+        // bash-echo half of the Luna pattern is caught by the near-match
+        // check in the tool layer above; this catches the reworded
+        // announcements that each land as a separate, internally clean
+        // turn. Ring of the last 5 outgoing texts per session; 3
+        // near-duplicates trip a system nudge (the text still delivers —
+        // detect and surface, #954 philosophy), a second trip aborts
+        // through the repetition -> loop-message path. Checked BEFORE the
+        // #752 phantom replacement so the ring judges the model's own
+        // words and the canned phantom string can never trip the guard.
+        if !final_text.trim().is_empty() {
+            let action = {
+                let mut rings = self.session_outgoing_text_ring.write().unwrap();
+                rings
+                    .entry(session_id)
+                    .or_default()
+                    .record_and_check(&final_text)
+            };
+            match action {
+                super::announcement_loop::TextLoopAction::Abort => {
+                    tracing::warn!(
+                        "⚠️ Cross-turn announcement loop persisted after nudge — aborting turn \
+                         (#957)"
+                    );
+                    return Err(AgentError::Internal(
+                        "Repetition detected: near-identical announcements repeated across turns"
+                            .to_string(),
+                    ));
+                }
+                super::announcement_loop::TextLoopAction::Nudge => {
+                    tracing::warn!(
+                        "Cross-turn announcement loop: near-identical outgoing text recurred — \
+                         nudging agent (#957)"
+                    );
+                    if let Some(ref cb) = progress_callback {
+                        cb(
+                            session_id,
+                            ProgressEvent::SelfHealingAlert {
+                                message: "Agent is re-announcing the same pending action across \
+                                          turns — nudging it to act or report"
+                                    .into(),
+                            },
+                        );
+                    }
+                    context.add_message(Message::user(
+                        "[System: You have now announced essentially the same pending action \
+                         three times across recent turns without completing it or reporting a \
+                         failure. Do NOT announce it again. Either execute it now and report \
+                         the concrete result, or state plainly why it cannot be done.]",
+                    ));
+                }
+                super::announcement_loop::TextLoopAction::Continue => {}
+            }
+        }
+
         // Turn-end phantom verdict (#752): a turn that ran ZERO tools and ends
         // with a narration promising or claiming action ("On it, filing the
         // issue... Let me check the repo first", unbacked side effects, or a

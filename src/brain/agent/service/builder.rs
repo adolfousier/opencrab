@@ -245,6 +245,15 @@ pub struct AgentService {
     /// transient nudge to once-per-entry instead of every turn.
     pub(super) session_pressure_warned: std::sync::RwLock<HashMap<Uuid, bool>>,
 
+    /// Per-session ring buffer of outgoing assistant texts (#957). The
+    /// cross-turn announcement guard: near-identical turn-final texts that
+    /// repeat within the ring nudge once, then abort. Lives here (not in
+    /// the per-turn context) because the context is reloaded from the DB
+    /// each turn while the loop spans turns. Restart re-arms the guard —
+    /// same accepted semantics as #507's flags.
+    pub(super) session_outgoing_text_ring:
+        std::sync::RwLock<HashMap<Uuid, super::announcement_loop::OutgoingTextRing>>,
+
     /// Service context for database operations
     pub(super) context: ServiceContext,
 
@@ -389,6 +398,7 @@ impl AgentService {
             session_primary_failure_streak: std::sync::RwLock::new(HashMap::new()),
             active_skills: std::sync::RwLock::new(HashMap::new()),
             session_pressure_warned: std::sync::RwLock::new(HashMap::new()),
+            session_outgoing_text_ring: std::sync::RwLock::new(HashMap::new()),
             context,
             tool_registry: Arc::new(ToolRegistry::new()),
             max_tool_iterations: 0, // 0 = unlimited (loop detection is the safety net)
