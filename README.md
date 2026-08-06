@@ -1385,10 +1385,10 @@ Then just type `opencrabs` to start. The onboarding wizard handles everything on
 ### Option 2: Install via Homebrew
 
 ```bash
-brew install adolfousier/opencrabs/opencrabs
+brew install opencrabs
 ```
 
-Downloads the prebuilt binary for your platform (macOS arm64/amd64, Linux arm64/amd64) with `rtk` bundled. No Rust toolchain needed, and `brew upgrade opencrabs` tracks releases. The archive hash is verified on download.
+Installs from homebrew-core, with prebuilt bottles for macOS and Linux maintained by Homebrew. The formula is bumped automatically on every release, and `brew upgrade opencrabs` tracks the latest version.
 
 ### Option 3: Install via Cargo
 
