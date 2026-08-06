@@ -1,6 +1,6 @@
 # Anonymized reconstruction of the GPT Luna loop (#957).
 #
-# Reported-by: @leshchenko1979 (OC Dev). The original log is not
+# Reported in the OC Dev group. The original log is not
 # redistributable; these lines rebuild its documented shape — a bash echo
 # loop (fake work, zero state change, counter incremented) narrated by
 # near-identical announcements turn after turn. All names, IDs, and
