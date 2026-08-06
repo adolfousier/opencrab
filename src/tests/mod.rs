@@ -197,6 +197,7 @@ pub mod doc_gen_xlsx_test;
 pub mod duplicate_submit_test;
 pub mod empty_reasoning_stub_test;
 pub mod epistemic_plan_start_test;
+pub mod file_versions_test;
 pub mod generate_image_filename_test;
 pub mod git_branch_test;
 pub mod glob_tool_test;

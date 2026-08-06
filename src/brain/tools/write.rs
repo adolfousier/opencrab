@@ -161,10 +161,31 @@ impl Tool for WriteTool {
             return Ok(ToolResult::error(msg));
         }
 
+        // Several agents share this working directory by design, and this tool
+        // replaces the file wholesale with content composed from a read in an
+        // EARLIER call. If the file moved since then, writing it destroys the
+        // other agent's change with nothing reported. Refuse and let the agent
+        // re-read — it can do that; it cannot detect a silent clobber (#954).
+        let on_disk = fs::read_to_string(&path).await.ok();
+        if super::file_versions::is_stale_write(context.session_id, &path, on_disk.as_deref()) {
+            tracing::warn!(
+                "write_file refused for {}: changed since this session read it — \
+                 concurrent agents in one working directory",
+                path.display()
+            );
+            return Ok(ToolResult::error(super::file_versions::refusal_message(
+                &path,
+            )));
+        }
+
         // Write the file
         fs::write(&path, &input.content)
             .await
             .map_err(ToolError::Io)?;
+
+        // The session now knows the file as what it just wrote, so its next
+        // write is not mistaken for a stale one.
+        super::file_versions::record(context.session_id, &path, &input.content);
 
         // Track file in session (fire and forget, path-only)
         if let Some(ref sc) = context.service_context {

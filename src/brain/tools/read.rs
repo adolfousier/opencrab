@@ -165,6 +165,11 @@ impl Tool for ReadTool {
                 // Small file: read entire contents directly
                 let contents = fs::read_to_string(&path).await.map_err(ToolError::Io)?;
                 let line_count = contents.lines().count();
+                // Remember what this session saw, so a later whole-file write
+                // can tell its own output from another agent's change (#954).
+                // Only whole-file reads qualify: a partial read is not a basis
+                // for replacing the file.
+                super::file_versions::record(context.session_id, &path, &contents);
                 (contents, line_count, None)
             };
 

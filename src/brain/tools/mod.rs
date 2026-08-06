@@ -17,6 +17,7 @@ pub mod tool_name_heal;
 // Tool implementations - Phase 1: Essential File Operations
 pub mod bash;
 pub mod edit;
+pub mod file_versions;
 pub mod glob;
 pub mod grep;
 pub mod hashline;
