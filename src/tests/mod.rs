@@ -328,6 +328,7 @@ pub mod incident_log_dedup_test;
 pub mod click_to_expand_test;
 pub mod kimi_reasoning_test;
 pub mod lazy_tools_test;
+pub mod legacy_doc_support_test;
 pub mod local_provider_gate_test;
 pub mod mouse_fragment_filter_test;
 pub mod nonstream_compat_test;
