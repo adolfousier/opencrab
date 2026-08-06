@@ -26,6 +26,26 @@ fn decoded_text(e: &quick_xml::events::BytesText<'_>) -> Option<String> {
     Some(quick_xml::escape::unescape(&raw).ok()?.into_owned())
 }
 
+/// Dump every sheet of an already-opened calamine workbook into `output`
+/// as `=== Sheet: name ===` blocks with ` | `-joined rows (#955).
+fn dump_workbook_sheets<RS, R>(workbook: &mut R, output: &mut String)
+where
+    RS: std::io::Read + std::io::Seek,
+    R: calamine::Reader<RS>,
+{
+    let sheet_names = workbook.sheet_names().to_vec();
+    for sheet_name in &sheet_names {
+        if let Ok(range) = workbook.worksheet_range(sheet_name) {
+            output.push_str(&format!("\n=== Sheet: {} ===\n", sheet_name));
+            for row in range.rows() {
+                let cells: Vec<String> = row.iter().map(|cell| cell.to_string()).collect();
+                output.push_str(&cells.join(" | "));
+                output.push('\n');
+            }
+        }
+    }
+}
+
 /// Document Parser Tool - extracts text from various document formats
 pub struct DocParserTool;
 
@@ -117,7 +137,7 @@ impl Tool for DocParserTool {
     }
 
     fn description(&self) -> &str {
-        "Parse and extract text content from documents (PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML, JSON, XML). \
+        "Parse and extract text content from documents (PDF, DOC, DOCX, XLSX, XLSM, XLSB, XLS, ODS, CSV, TXT, MD, HTML, JSON, XML). \
         Use this whenever an incoming PDF's inline preview was truncated — the file is \
         saved at the path included in the preview message; pass that path here with \
         `page_range` (e.g. \"31-60\") or `pages` to read the rest. \
@@ -133,7 +153,7 @@ impl Tool for DocParserTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the document file (PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML, JSON, XML)"
+                    "description": "Path to the document file (PDF, DOC, DOCX, XLSX, XLSM, XLSB, XLS, ODS, CSV, TXT, MD, HTML, JSON, XML)"
                 },
                 "max_chars": {
                     "type": "integer",
@@ -214,8 +234,9 @@ impl Tool for DocParserTool {
 
         let (text, metadata) = match extension.as_str() {
             "pdf" => self.parse_pdf(&path, &input).await?,
+            "doc" => self.parse_legacy_doc(&path).await?,
             "docx" => self.parse_docx(&path).await?,
-            "xlsx" | "xls" => self.parse_excel(&path).await?,
+            "xlsx" | "xlsm" | "xlsb" | "xls" | "ods" => self.parse_excel(&path).await?,
             "csv" => self.parse_csv(&path).await?,
             "txt" | "md" | "markdown" | "rst" | "text" => {
                 self.parse_text(&path, &extension).await?
@@ -225,7 +246,7 @@ impl Tool for DocParserTool {
             "xml" => self.parse_xml(&path).await?,
             _ => {
                 return Ok(ToolResult::error(format!(
-                    "Unsupported document format: .{}. Supported formats: PDF, DOCX, XLSX, XLS, CSV, TXT, MD, HTML, JSON, XML",
+                    "Unsupported document format: .{}. Supported formats: PDF, DOC, DOCX, XLSX, XLSM, XLSB, XLS, ODS, CSV, TXT, MD, HTML, JSON, XML",
                     extension
                 )));
             }
@@ -626,12 +647,16 @@ impl DocParserTool {
         Ok((text.trim().to_string(), metadata))
     }
 
-    /// Parse Excel spreadsheets (XLSX, XLS)
+    /// Parse spreadsheets: XLSX, XLSM (OOXML), XLSB, XLS (BIFF), ODS.
+    ///
+    /// calamine 0.36 reads all five natively; the dispatch previously only
+    /// routed xlsx/xls to it (#955). XLSM shares the XLSX reader since both
+    /// are zipped OOXML packages.
     async fn parse_excel(&self, path: &Path) -> Result<(String, ParsedMetadata)> {
         let path = path.to_path_buf();
 
         tokio::task::spawn_blocking(move || {
-            use calamine::{Reader, Xls, Xlsx, open_workbook};
+            use calamine::{Ods, Xls, Xlsb, Xlsx, open_workbook};
 
             let extension = path
                 .extension()
@@ -642,55 +667,25 @@ impl DocParserTool {
             let mut output = String::new();
 
             match extension.as_str() {
-                "xlsx" => {
+                "xlsx" | "xlsm" => {
                     let mut workbook: Xlsx<_> = open_workbook(&path)
                         .map_err(|e| ToolError::Execution(format!("Failed to open XLSX: {}", e)))?;
-
-                    let sheet_names = workbook.sheet_names().to_vec();
-
-                    for sheet_name in &sheet_names {
-                        if let Ok(range) = workbook.worksheet_range(sheet_name) {
-                            output.push_str(&format!("\n=== Sheet: {} ===\n", sheet_name));
-
-                            for row in range.rows() {
-                                let cells: Vec<String> = row
-                                    .iter()
-                                    .map(|cell| {
-                                        let val = cell.to_string();
-                                        if val.is_empty() { "".to_string() } else { val }
-                                    })
-                                    .collect();
-
-                                output.push_str(&cells.join(" | "));
-                                output.push('\n');
-                            }
-                        }
-                    }
+                    dump_workbook_sheets(&mut workbook, &mut output);
+                }
+                "xlsb" => {
+                    let mut workbook: Xlsb<_> = open_workbook(&path)
+                        .map_err(|e| ToolError::Execution(format!("Failed to open XLSB: {}", e)))?;
+                    dump_workbook_sheets(&mut workbook, &mut output);
                 }
                 "xls" => {
                     let mut workbook: Xls<_> = open_workbook(&path)
                         .map_err(|e| ToolError::Execution(format!("Failed to open XLS: {}", e)))?;
-
-                    let sheet_names = workbook.sheet_names().to_vec();
-
-                    for sheet_name in &sheet_names {
-                        if let Ok(range) = workbook.worksheet_range(sheet_name) {
-                            output.push_str(&format!("\n=== Sheet: {} ===\n", sheet_name));
-
-                            for row in range.rows() {
-                                let cells: Vec<String> = row
-                                    .iter()
-                                    .map(|cell| {
-                                        let val = cell.to_string();
-                                        if val.is_empty() { "".to_string() } else { val }
-                                    })
-                                    .collect();
-
-                                output.push_str(&cells.join(" | "));
-                                output.push('\n');
-                            }
-                        }
-                    }
+                    dump_workbook_sheets(&mut workbook, &mut output);
+                }
+                "ods" => {
+                    let mut workbook: Ods<_> = open_workbook(&path)
+                        .map_err(|e| ToolError::Execution(format!("Failed to open ODS: {}", e)))?;
+                    dump_workbook_sheets(&mut workbook, &mut output);
                 }
                 _ => {
                     return Err(ToolError::Execution(format!(
@@ -710,6 +705,31 @@ impl DocParserTool {
         })
         .await
         .map_err(|e| ToolError::Execution(format!("Excel parsing task failed: {}", e)))?
+    }
+
+    /// Parse legacy binary Word documents (.doc, Word 97-2003, OLE/CFB).
+    ///
+    /// rwml's dependency-light core (default-features off: no docx/zip, no
+    /// render stack) extracts the MS-DOC text layer. We keep our own DOCX
+    /// parser for the modern format (#955).
+    async fn parse_legacy_doc(&self, path: &Path) -> Result<(String, ParsedMetadata)> {
+        let path = path.to_path_buf();
+
+        tokio::task::spawn_blocking(move || {
+            let bytes = std::fs::read(&path).map_err(ToolError::Io)?;
+            let text = rwml::extract_text(&bytes)
+                .map_err(|e| ToolError::Execution(format!("Failed to parse legacy DOC: {}", e)))?;
+
+            let metadata = ParsedMetadata {
+                page_count: None,
+                title: None,
+                author: None,
+            };
+
+            Ok((text.trim().to_string(), metadata))
+        })
+        .await
+        .map_err(|e| ToolError::Execution(format!("Legacy DOC parsing task failed: {}", e)))?
     }
 
     /// Parse CSV files

@@ -909,6 +909,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfb"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8a4f8e55be323b378facfcf1f06aa97f6ec17cf4ac84fb17325093aaf62da41"
+dependencies = [
+ "byteorder",
+ "fnv",
+ "uuid",
+]
+
+[[package]]
 name = "cff-parser"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5103,6 +5114,7 @@ dependencies = [
  "rust_xlsxwriter",
  "rustls",
  "rwhisper",
+ "rwml",
  "scraper",
  "serde",
  "serde_json",
@@ -7036,6 +7048,18 @@ dependencies = [
  "thiserror 2.0.19",
  "tokenizers",
  "tracing",
+]
+
+[[package]]
+name = "rwml"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60622a9a0980c92b92b8b26cde3868b7f7631a25a9a76dce23c060c7130c857b"
+dependencies = [
+ "cfb",
+ "encoding_rs",
+ "thiserror 2.0.19",
+ "wasm-bindgen",
 ]
 
 [[package]]

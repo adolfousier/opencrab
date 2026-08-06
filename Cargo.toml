@@ -151,6 +151,11 @@ pdfium-render = { version = "=0.9.1", optional = true }
 zip = "6.0"
 quick-xml = "0.41"
 calamine = "0.36"
+# Legacy Word 97-2003 (.doc, OLE/CFB) text extraction (#955). Core only:
+# default-features off skips the docx/zip/quick-xml/flate2 path (we parse
+# DOCX ourselves) and the heavy render stack. Net-new deps: cfb, encoding_rs
+# (thiserror already shared). Pure Rust, no build.rs.
+rwml = { version = "0.1", default-features = false }
 tiktoken-rs = "0.9.1"
 
 # Archive extraction (for /evolve self-update)
