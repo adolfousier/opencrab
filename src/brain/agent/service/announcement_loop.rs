@@ -1,10 +1,13 @@
-//! Cross-turn announcement loop guard (#957) — the text layer.
+//! Announcement loop guard (#957, extended by #961) — the text layer.
 //!
 //! Second half of the Luna fix: a per-session ring buffer of outgoing
 //! assistant texts. The tool layer catches the near-identical `bash`
-//! echoes; this layer catches the 18+ reworded announcements that each
-//! land as a separate, internally clean turn, so every within-turn guard
-//! (#507, phantom intent-loop, #740, #788) misses them.
+//! echoes; this layer catches the reworded announcements that each land
+//! as a separate, internally clean turn, so every within-turn guard
+//! (#507, phantom intent-loop, #740, #788) misses them. Since #961 the
+//! ring also sees intermediate (between-tool-calls) text, catching the
+//! DeepSeek v4 flash pattern of re-announcing the same pending action
+//! inside a single turn.
 //!
 //! Detect and surface, don't prevent (the #954 guard philosophy): the
 //! first trip still delivers the text plus a system nudge; only a second
@@ -15,22 +18,32 @@ use std::collections::{HashSet, VecDeque};
 
 use super::helpers::normalize_loop_text;
 
-/// Outgoing texts remembered per session (#957).
-pub const TEXT_LOOP_RING_CAP: usize = 5;
+/// Outgoing texts remembered per session (#957, raised 5 -> 8 for #961:
+/// cap 5 evicted the early duplicates of the DeepSeek v4 flash zip-send
+/// pattern before the ring could ever trip).
+pub const TEXT_LOOP_RING_CAP: usize = 8;
 /// Near-duplicate hits within the ring that trip the guard (#957).
 pub const TEXT_LOOP_TRIP_AT: usize = 3;
 /// Jaccard similarity threshold on normalized word sets (#957).
 const NEAR_DUPLICATE_JACCARD: f64 = 0.8;
-/// Below this many normalized words, word-set Jaccard is too coarse —
+/// Overlap-coefficient threshold on normalized word sets (#961): a short
+/// reworded announcement whose words are almost all contained in a
+/// longer one still counts as a near-duplicate even when Jaccard is
+/// dragged down by the length difference ("Sending the zip:" vs "Sending
+/// the zip to this thread now:").
+const NEAR_DUPLICATE_OVERLAP: f64 = 0.8;
+/// Below this many normalized words, word-set ratios are too coarse —
 /// only exact normalized equality counts.
 const NEAR_DUPLICATE_MIN_WORDS: usize = 3;
 
-/// Near-duplicate check for loop detection (#957).
+/// Near-duplicate check for loop detection (#957, extended for #961).
 ///
-/// Jaccard similarity >= 0.8 on normalized word sets, with an equality
-/// fallback: short texts (< 3 normalized words) only count as duplicates
-/// when their normalized forms are identical, because word-set Jaccard is
-/// too coarse below a handful of words.
+/// Jaccard similarity >= 0.8 on normalized word sets, plus an
+/// overlap-coefficient clause (>= 0.8 of the SMALLER word set shared)
+/// for reworded pairs where one text is much shorter than the other.
+/// Equality fallback: short texts (< 3 normalized words) only count as
+/// duplicates when their normalized forms are identical, because word-set
+/// ratios are too coarse below a handful of words.
 pub fn near_duplicate(a: &str, b: &str) -> bool {
     let na = normalize_loop_text(a);
     let nb = normalize_loop_text(b);
@@ -47,7 +60,9 @@ pub fn near_duplicate(a: &str, b: &str) -> bool {
     }
     let inter = wa.intersection(&wb).count() as f64;
     let union = wa.union(&wb).count() as f64;
-    union > 0.0 && inter / union >= NEAR_DUPLICATE_JACCARD
+    let min_len = wa.len().min(wb.len()) as f64;
+    (union > 0.0 && inter / union >= NEAR_DUPLICATE_JACCARD)
+        || (min_len > 0.0 && inter / min_len >= NEAR_DUPLICATE_OVERLAP)
 }
 
 /// Outcome of checking an outgoing text against the session ring (#957).
@@ -95,5 +110,12 @@ impl OutgoingTextRing {
         } else {
             TextLoopAction::Continue
         }
+    }
+
+    /// Peek at the most recently recorded text (#961). Lets a later hook
+    /// skip re-recording text an earlier hook already judged, so one
+    /// outgoing text can never double-count toward the trip threshold.
+    pub fn last_recorded(&self) -> Option<&str> {
+        self.ring.back().map(String::as_str)
     }
 }

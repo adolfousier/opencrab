@@ -1,0 +1,30 @@
+# Anonymized reconstruction of the DeepSeek v4 flash zip-send loop (#961).
+#
+# Forwarded to the OC Dev group: a bot asked to send a zip archive to a
+# chat fell into an announce-activate-re-announce spiral — eight reworded
+# "sending now" announcements, each preceded by a tool_search
+# re-activation of the send tool, without the send ever landing. The
+# model had been rate-limited on its primary provider and fell back to
+# DeepSeek v4 flash right before the loop started; the pattern never
+# reproduced on other models. All names, IDs, chat references, and tool
+# queries are replaced with generic equivalents.
+#
+# Format: tool_search|<query> — the re-activation attempts between
+#                          announcements (reworded each time, so the
+#                          exact-match guards never saw a repeat)
+#         text|<announcement> — the reworded outgoing announcements
+text|Zip ready. Now sending it to this chat via telegram_send, searching for the tool first:
+tool_search|send a document file to telegram
+text|Sending the zip to this thread now:
+tool_search|telegram send message
+text|telegram_send is activated, sending the zip to this thread:
+tool_search|send document to telegram
+text|Sending the zip to this thread:
+tool_search|activate telegram send
+text|telegram_send is activated, sending the document now:
+tool_search|telegram send schema
+text|telegram_send is activated, I have the schema. Sending the document now:
+tool_search|send file to telegram chat
+text|Right, I have the schema. Sending now:
+tool_search|telegram send tool
+text|Sending the zip:

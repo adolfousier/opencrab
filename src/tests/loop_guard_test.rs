@@ -214,9 +214,9 @@ fn varied_genuine_texts_never_trip() {
 
 #[test]
 fn ring_rotation_still_trips_after_old_entries_drop() {
-    // The ring caps at 5: fill it with distinct texts first, then start
-    // the loop. Old distinct entries fall out and the near-duplicates
-    // still reach the trip threshold.
+    // The ring caps at 8 (#961): fill it with distinct texts first, then
+    // start the loop. Old distinct entries fall out and the
+    // near-duplicates still reach the trip threshold.
     let mut ring = OutgoingTextRing::default();
     for t in [
         "First unrelated answer about the config audit",
@@ -224,6 +224,9 @@ fn ring_rotation_still_trips_after_old_entries_drop() {
         "Third unrelated answer summarizing the migration",
         "Fourth unrelated answer about the flaky test fix",
         "Fifth unrelated answer closing out the review",
+        "Sixth unrelated answer about the onboarding flow",
+        "Seventh unrelated answer covering the rate limits",
+        "Eighth unrelated answer wrapping up the retrospective",
     ] {
         assert_eq!(ring.record_and_check(t), TextLoopAction::Continue);
     }
@@ -287,4 +290,84 @@ fn luna_announcements_trip_the_ring() {
     }
     assert!(saw_nudge, "the fixture never tripped the nudge");
     assert!(saw_abort, "the fixture never escalated to abort");
+}
+
+// ---- #961 regression: DeepSeek v4 flash zip-send loop ----
+
+#[test]
+fn subset_announcement_counts_as_near_duplicate() {
+    // The overlap-coefficient clause (#961): a short reworded
+    // announcement whose words are almost all contained in a longer one
+    // counts as a near-duplicate even though Jaccard is dragged down by
+    // the length difference.
+    assert!(near_duplicate(
+        "Sending the zip to this thread now:",
+        "Sending the zip:"
+    ));
+}
+
+#[test]
+fn overlap_clause_spares_unrelated_texts() {
+    assert!(!near_duplicate(
+        "Sending the zip to this thread now:",
+        "Running the test suite again"
+    ));
+}
+
+const ZIP_SEND_FIXTURE: &str = include_str!("fixtures/alexey_zip_send_loop.txt");
+
+fn zip_send_fixture_lines(prefix: &str) -> Vec<String> {
+    ZIP_SEND_FIXTURE
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#') && l.starts_with(prefix))
+        .map(|l| l[prefix.len()..].to_string())
+        .collect()
+}
+
+#[test]
+fn deepseek_zip_send_announcements_nudge_then_abort() {
+    // The text layer against the real #961 shape: the eight reworded
+    // "sending now" announcements from the DeepSeek v4 flash zip-send
+    // loop. With the overlap coefficient and the cap-8 ring the trip
+    // sequence is exactly three cleans, nudge at the fourth, three more
+    // cleans, abort at the eighth.
+    let texts = zip_send_fixture_lines("text|");
+    assert_eq!(texts.len(), 8, "fixture must carry all eight announcements");
+    let mut ring = OutgoingTextRing::default();
+    let expected = [
+        TextLoopAction::Continue,
+        TextLoopAction::Continue,
+        TextLoopAction::Continue,
+        TextLoopAction::Nudge,
+        TextLoopAction::Continue,
+        TextLoopAction::Continue,
+        TextLoopAction::Continue,
+        TextLoopAction::Abort,
+    ];
+    for (t, want) in texts.iter().zip(&expected) {
+        assert_eq!(ring.record_and_check(t), *want, "text: {t}");
+    }
+}
+
+#[test]
+fn deepseek_zip_send_tool_queries_are_reworded_not_identical() {
+    // Documents the tool-layer gap from #961: the re-activation queries
+    // were reworded every attempt, so none are identical even after
+    // normalization — the exact-match guards never saw a repeat at all.
+    // (The generalized near-match catches counter/punctuation variants;
+    // these deep rewordings are the text layer's job.)
+    let queries = zip_send_fixture_lines("tool_search|");
+    assert!(
+        queries.len() >= 7,
+        "fixture must carry the re-activation spiral"
+    );
+    let mut seen = std::collections::HashSet::new();
+    for q in &queries {
+        let n = normalize_loop_text(q);
+        assert!(
+            !seen.contains(&n),
+            "query repeat would invalidate the #961 shape: {n}"
+        );
+        seen.insert(n);
+    }
 }

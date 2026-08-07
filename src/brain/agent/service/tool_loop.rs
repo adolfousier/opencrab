@@ -6480,11 +6480,75 @@ impl AgentService {
                     },
                 );
             }
+            // Within-turn announcement loop guard (#961) — the
+            // intermediate-text half. The #957 ring only saw turn-FINAL
+            // text, but the DeepSeek v4 flash zip-send pattern
+            // re-announces "sending now" between tool calls INSIDE one
+            // turn: every announcement rides a clean iteration, so no
+            // guard ever saw a repeat. Feed each iteration's outgoing
+            // text through the same per-session ring — first trip nudges
+            // (system message the next iteration sees), second trip ends
+            // the turn through the repetition path. Compute the text
+            // BEFORE `clean_content` moves into the message below.
+            let outgoing_iteration_text: String = clean_content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             let assistant_msg = Message {
                 role: crate::brain::provider::Role::Assistant,
                 content: clean_content,
             };
             context.add_message(assistant_msg);
+            if !outgoing_iteration_text.trim().is_empty() {
+                let action = {
+                    let mut rings = self.session_outgoing_text_ring.write().unwrap();
+                    rings
+                        .entry(session_id)
+                        .or_default()
+                        .record_and_check(&outgoing_iteration_text)
+                };
+                match action {
+                    super::announcement_loop::TextLoopAction::Abort => {
+                        tracing::warn!(
+                            "⚠️ Within-turn announcement loop persisted after nudge — ending \
+                             turn (#961)"
+                        );
+                        return Err(AgentError::Internal(
+                            "Repetition detected: near-identical announcements repeated within \
+                             the turn"
+                                .to_string(),
+                        ));
+                    }
+                    super::announcement_loop::TextLoopAction::Nudge => {
+                        tracing::warn!(
+                            "Within-turn announcement loop: near-identical intermediate text \
+                             recurred — nudging agent (#961)"
+                        );
+                        if let Some(ref cb) = progress_callback {
+                            cb(
+                                session_id,
+                                ProgressEvent::SelfHealingAlert {
+                                    message: "Agent is re-announcing the same pending action \
+                                              between tool calls — nudging it to act or report"
+                                        .into(),
+                                },
+                            );
+                        }
+                        context.add_message(Message::user(
+                            "[System: You have announced essentially the same pending action \
+                             repeatedly within this turn without completing it or reporting a \
+                             failure. Do NOT announce it again. Either execute it now and \
+                             report the concrete result, or state plainly why it cannot be \
+                             done.]",
+                        ));
+                    }
+                    super::announcement_loop::TextLoopAction::Continue => {}
+                }
+            }
 
             // Cap oversized tool_result bodies BEFORE they enter context.
             // A single 1 MB read_file output (e.g., an HTML file with an
@@ -6714,22 +6778,27 @@ impl AgentService {
         // bash-echo half of the Luna pattern is caught by the near-match
         // check in the tool layer above; this catches the reworded
         // announcements that each land as a separate, internally clean
-        // turn. Ring of the last 5 outgoing texts per session; 3
-        // near-duplicates trip a system nudge (the text still delivers —
-        // detect and surface, #954 philosophy), a second trip aborts
-        // through the repetition -> loop-message path. Checked BEFORE the
-        // #752 phantom replacement so the ring judges the model's own
-        // words and the canned phantom string can never trip the guard.
+        // turn. Ring of the last 8 outgoing texts per session (same ring
+        // the within-turn hook above feeds, #961); 3 near-duplicates trip
+        // a system nudge (the text still delivers — detect and surface,
+        // #954 philosophy), a second trip aborts through the repetition
+        // -> loop-message path. Checked BEFORE the #752 phantom
+        // replacement so the ring judges the model's own words and the
+        // canned phantom string can never trip the guard.
         if !final_text.trim().is_empty() {
             let action = {
                 let mut rings = self.session_outgoing_text_ring.write().unwrap();
-                rings
-                    .entry(session_id)
-                    .or_default()
-                    .record_and_check(&final_text)
+                let ring = rings.entry(session_id).or_default();
+                // Dedupe (#961): the within-turn hook may have already recorded
+                // this exact text; re-recording it would double-count one
+                // outgoing text toward the trip threshold.
+                match ring.last_recorded() {
+                    Some(last) if last == final_text => None,
+                    _ => Some(ring.record_and_check(&final_text)),
+                }
             };
             match action {
-                super::announcement_loop::TextLoopAction::Abort => {
+                Some(super::announcement_loop::TextLoopAction::Abort) => {
                     tracing::warn!(
                         "⚠️ Cross-turn announcement loop persisted after nudge — aborting turn \
                          (#957)"
@@ -6739,7 +6808,7 @@ impl AgentService {
                             .to_string(),
                     ));
                 }
-                super::announcement_loop::TextLoopAction::Nudge => {
+                Some(super::announcement_loop::TextLoopAction::Nudge) => {
                     tracing::warn!(
                         "Cross-turn announcement loop: near-identical outgoing text recurred — \
                          nudging agent (#957)"
@@ -6761,7 +6830,7 @@ impl AgentService {
                          the concrete result, or state plainly why it cannot be done.]",
                     ));
                 }
-                super::announcement_loop::TextLoopAction::Continue => {}
+                Some(super::announcement_loop::TextLoopAction::Continue) | None => {}
             }
         }
 
