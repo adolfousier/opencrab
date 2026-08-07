@@ -39,7 +39,7 @@ fn media_tool_redirect(path: &std::path::Path) -> Option<String> {
         "mp4" | "m4v" | "mov" | "webm" | "mkv" | "avi" | "3gp" | "flv" => Some(format!(
             "'{p}' is a video. Call analyze_video(path='{p}', question='...') to view it."
         )),
-        "pdf" | "docx" | "doc" | "pptx" | "xlsx" | "epub" => Some(format!(
+        "pdf" | "docx" | "doc" | "pptx" | "xlsx" | "xlsb" | "xlsm" | "ods" | "epub" => Some(format!(
             "'{p}' is a document. Call parse_document(path='{p}') to read its text\
              {}.",
             if ext == "pdf" {

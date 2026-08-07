@@ -369,7 +369,7 @@ pub(crate) const TEXT_EXTENSIONS: &[&str] = &[
 /// Document extensions for auto-detection (paste a path → the agent is given
 /// the path and told to call `parse_document` / `pdf_to_images`). Binary
 /// formats, so we never inline their bytes — only surface the path.
-pub(crate) const DOC_EXTENSIONS: &[&str] = &[".pdf", ".docx", ".doc", ".pptx", ".xlsx", ".epub"];
+pub(crate) const DOC_EXTENSIONS: &[&str] = &[".pdf", ".docx", ".doc", ".pptx", ".xlsx", ".xlsb", ".xlsm", ".ods", ".epub"];
 
 /// A single tool call entry within a grouped display
 #[derive(Debug, Clone)]

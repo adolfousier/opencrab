@@ -161,6 +161,9 @@ pub fn mime_from_ext(filename: &str) -> &'static str {
         "pdf" => "application/pdf",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "xls" => "application/vnd.ms-excel",
+        "xlsb" => "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+        "xlsm" => "application/vnd.ms-excel.sheet.macroEnabled.12",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
         "zip" => "application/zip",
         "mp4" | "m4v" => "video/mp4",
         "mov" => "video/quicktime",
@@ -378,6 +381,9 @@ pub fn process_file_with_vision(
         effective,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // .xlsx
         | "application/vnd.ms-excel" // .xls
+        | "application/vnd.ms-excel.sheet.binary.macroEnabled.12" // .xlsb
+        | "application/vnd.ms-excel.sheet.macroEnabled.12"       // .xlsm
+        | "application/vnd.oasis.opendocument.spreadsheet"       // .ods
         | "application/xlsx"
         | "application/xls"
     ) {
