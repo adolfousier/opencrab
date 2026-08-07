@@ -434,6 +434,7 @@ pub mod utils_install_test;
 pub mod utils_retry_test;
 pub mod utils_sanitize_test;
 pub mod utils_string_test;
+pub mod vba_modules_test;
 mod xiaomi_config_default_test;
 mod xiaomi_keyed_provider_regression_test;
 mod xiaomi_onboarding_test;

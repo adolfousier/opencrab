@@ -4,6 +4,7 @@
 
 use super::error::{Result, ToolError};
 use super::r#trait::{Tool, ToolCapability, ToolExecutionContext, ToolResult};
+use super::vba_modules;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -652,6 +653,9 @@ impl DocParserTool {
     /// calamine 0.36 reads all five natively; the dispatch previously only
     /// routed xlsx/xls to it (#955). XLSM shares the XLSX reader since both
     /// are zipped OOXML packages.
+    ///
+    /// The three macro-capable formats also get their VBA project dumped
+    /// after the sheets (#960). ODS does not: it carries Basic, not VBA.
     async fn parse_excel(&self, path: &Path) -> Result<(String, ParsedMetadata)> {
         let path = path.to_path_buf();
 
@@ -671,16 +675,19 @@ impl DocParserTool {
                     let mut workbook: Xlsx<_> = open_workbook(&path)
                         .map_err(|e| ToolError::Execution(format!("Failed to open XLSX: {}", e)))?;
                     dump_workbook_sheets(&mut workbook, &mut output);
+                    vba_modules::append(&mut workbook, &mut output);
                 }
                 "xlsb" => {
                     let mut workbook: Xlsb<_> = open_workbook(&path)
                         .map_err(|e| ToolError::Execution(format!("Failed to open XLSB: {}", e)))?;
                     dump_workbook_sheets(&mut workbook, &mut output);
+                    vba_modules::append(&mut workbook, &mut output);
                 }
                 "xls" => {
                     let mut workbook: Xls<_> = open_workbook(&path)
                         .map_err(|e| ToolError::Execution(format!("Failed to open XLS: {}", e)))?;
                     dump_workbook_sheets(&mut workbook, &mut output);
+                    vba_modules::append(&mut workbook, &mut output);
                 }
                 "ods" => {
                     let mut workbook: Ods<_> = open_workbook(&path)
