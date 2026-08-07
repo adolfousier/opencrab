@@ -196,7 +196,7 @@ fn evolve_sweeps_stale_units_before_scheduling_restart() {
     // Sentinel: the schedule path must call the cleanup before spawning
     // the restart. Removing it re-introduces the accumulation bug where
     // failed opencrabs-evolve-* units pile up forever.
-    let src = include_str!("../brain/tools/evolve.rs");
+    let src = include_str!("../brain/tools/evolve/mod.rs");
     assert!(
         src.contains("build_systemd_cleanup_command(use_user_units)"),
         "evolve must sweep stale evolve units (reset-failed) before scheduling a \
@@ -208,7 +208,7 @@ fn evolve_sweeps_stale_units_before_scheduling_restart() {
 
 #[test]
 fn restart_status_messages_are_distinct_per_outcome() {
-    let src = include_str!("../brain/tools/evolve.rs");
+    let src = include_str!("../brain/tools/evolve/mod.rs");
     assert!(
         src.contains("Evolved from v{current} to v{latest}."),
         "the Scheduled branch must confirm the evolve completed"
@@ -234,7 +234,7 @@ fn restart_status_messages_are_distinct_per_outcome() {
 fn no_units_matched_message_mentions_user_flag() {
     // The user-facing message should guide the user toward
     // `systemctl --user restart` as well as the system variant.
-    let src = include_str!("../brain/tools/evolve.rs");
+    let src = include_str!("../brain/tools/evolve/mod.rs");
     assert!(
         src.contains("systemctl --user restart"),
         "NoUnitsMatched user message must mention --user restart as an option"
@@ -243,7 +243,7 @@ fn no_units_matched_message_mentions_user_flag() {
 
 #[test]
 fn spawn_failed_message_mentions_user_flag() {
-    let src = include_str!("../brain/tools/evolve.rs");
+    let src = include_str!("../brain/tools/evolve/mod.rs");
     assert!(
         src.contains("systemctl --user restart"),
         "SpawnFailed user message must mention --user restart as an option"
@@ -255,7 +255,7 @@ fn evolve_falls_back_to_user_level_when_system_level_empty() {
     // The core fix in PR #162: when system-level count returns 0,
     // evolve must check user-level units before giving up.
     // This sentinel ensures the fallback logic doesn't get removed.
-    let src = include_str!("../brain/tools/evolve.rs");
+    let src = include_str!("../brain/tools/evolve/mod.rs");
     assert!(
         src.contains("count_matching_systemd_units(SYSTEMD_UNIT_PATTERN, true)"),
         "evolve must fall back to user-level unit count when system-level returns 0, \
@@ -267,7 +267,7 @@ fn evolve_falls_back_to_user_level_when_system_level_empty() {
 fn evolve_logs_user_level_unit_count_on_fallback() {
     // When the fallback triggers, evolve must log the user-level count
     // so operators can debug "why didn't my daemon restart" from logs.
-    let src = include_str!("../brain/tools/evolve.rs");
+    let src = include_str!("../brain/tools/evolve/mod.rs");
     assert!(
         src.contains("using {n} user-level units"),
         "evolve must log user-level unit count on fallback for debugging, \

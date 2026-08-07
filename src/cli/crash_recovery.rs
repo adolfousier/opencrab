@@ -378,6 +378,10 @@ pub async fn show_crash_recovery(error_msg: &str) -> Result<CrashRecoveryAction>
             InstallMethod::PrebuiltBinary => entry.download_url.is_some(),
             // cargo install and source: any tagged release can be installed
             InstallMethod::CargoInstall | InstallMethod::Source(_) => true,
+            // Homebrew serves whatever its formula currently points at, so a
+            // specific older tag is not selectable here. The single Homebrew
+            // entry is offered below instead of a per-version list (#963).
+            InstallMethod::Homebrew => false,
         };
 
         if available {
@@ -437,6 +441,15 @@ pub async fn show_crash_recovery(error_msg: &str) -> Result<CrashRecoveryAction>
                 InstallMethod::Source(root) => {
                     source_install_version(root, &entry.tag, &entry.version).await
                 }
+                // Unreachable: a Homebrew install marks every entry
+                // unselectable above, so nothing lands in `selectable`. Kept
+                // explicit rather than a catch-all so a future variant is a
+                // compile error here instead of silently downloading a binary
+                // over a package manager's file (#963).
+                InstallMethod::Homebrew => Err(anyhow::anyhow!(
+                    "This build is managed by Homebrew. Reinstall with \
+                     `brew reinstall opencrabs`, or `brew upgrade opencrabs` for the latest."
+                )),
             };
 
             match result {
