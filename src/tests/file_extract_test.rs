@@ -163,6 +163,33 @@ fn case_insensitive_ext() {
     assert_eq!(mime_from_ext("image.PNG"), "image/png");
 }
 
+// ── Excel spreadsheet extensions (xlsb/xlsm/ods) ─────────────────────────
+
+#[test]
+fn ext_excel_spreadsheet_all_formats() {
+    assert_eq!(
+        mime_from_ext("data.xlsx"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    assert_eq!(mime_from_ext("data.xls"), "application/vnd.ms-excel");
+    assert_eq!(
+        mime_from_ext("data.xlsb"),
+        "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+    );
+    assert_eq!(
+        mime_from_ext("data.xlsm"),
+        "application/vnd.ms-excel.sheet.macroEnabled.12"
+    );
+    assert_eq!(
+        mime_from_ext("data.ods"),
+        "application/vnd.oasis.opendocument.spreadsheet"
+    );
+    // case-insensitive
+    assert_eq!(mime_from_ext("data.XLSB"), "application/vnd.ms-excel.sheet.binary.macroEnabled.12");
+    assert_eq!(mime_from_ext("data.XLSM"), "application/vnd.ms-excel.sheet.macroEnabled.12");
+    assert_eq!(mime_from_ext("data.ODS"), "application/vnd.oasis.opendocument.spreadsheet");
+}
+
 // ── classify_file ───────────────────────────────────────────────
 
 #[test]
