@@ -34,7 +34,7 @@ fn normalize_collapses_whitespace_and_caps_length() {
 
 #[test]
 fn normalize_keeps_cyrillic_letters() {
-    // Alexey's Luna log was Russian; the guard must normalize it cleanly.
+    // The reported log was Russian; the guard must normalize it cleanly.
     assert_eq!(
         normalize_loop_text("Отправляю 6 подтверждений в ДДС!"),
         "отправляю подтверждений в ддс"
@@ -314,7 +314,7 @@ fn overlap_clause_spares_unrelated_texts() {
     ));
 }
 
-const ZIP_SEND_FIXTURE: &str = include_str!("fixtures/alexey_zip_send_loop.txt");
+const ZIP_SEND_FIXTURE: &str = include_str!("fixtures/zip_send_announcement_loop.txt");
 
 fn zip_send_fixture_lines(prefix: &str) -> Vec<String> {
     ZIP_SEND_FIXTURE

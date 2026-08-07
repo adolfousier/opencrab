@@ -194,7 +194,7 @@ mod real_world_scenario {
     use crate::brain::tools::brain_file_safety::{AppendDedup, filter_duplicate_append};
 
     #[test]
-    fn alexey_soul_md_16_entries_would_be_blocked() {
+    fn soul_md_16_entries_would_be_blocked() {
         // Simulates the actual scenario from issue #197: SOUL.md has a rule
         // with 16 ADDED entries, and the 17th would be blocked.
         let mut existing = String::from(

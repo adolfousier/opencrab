@@ -1,14 +1,13 @@
 # Anonymized reconstruction of the GPT Luna loop (#957).
 #
-# Reported in the OC Dev group. The original log is not
-# redistributable; these lines rebuild its documented shape — a bash echo
-# loop (fake work, zero state change, counter incremented) narrated by
-# near-identical announcements turn after turn. All names, IDs, and
-# account references are replaced; "ДДС" is a generic placeholder for the
-# document system involved.
+# The original log is not redistributable; these lines rebuild its
+# documented shape: a bash echo loop (fake work, zero state change,
+# counter incremented) narrated by near-identical announcements turn
+# after turn. All names, IDs, and account references are replaced; "ДДС"
+# is a generic placeholder for the document system involved.
 #
-# Format: bash|<command> — tool-layer case (near-identical bash echoes)
-#         text|<announcement> — text-layer case (reworded announcements)
+# Format: bash|<command>, tool-layer case (near-identical bash echoes)
+#         text|<announcement>, text-layer case (reworded announcements)
 bash|echo "Отправляю 1 подтверждение в ДДС"
 bash|echo "Отправляю 2 подтверждение в ДДС"
 bash|echo "Отправляю 3 подтверждение в ДДС"
