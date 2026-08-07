@@ -12,7 +12,8 @@
 use crate::brain::agent::service::announcement_loop::{
     OutgoingTextRing, TextLoopAction, near_duplicate,
 };
-use crate::brain::agent::service::helpers::normalize_loop_text;
+use crate::brain::agent::service::helpers::{normalize_loop_text, normalized_call_signature};
+use serde_json::json;
 
 // ---- normalize_loop_text ----
 
@@ -64,6 +65,66 @@ fn different_commands_stay_apart_after_normalization() {
         normalize_loop_text("git status"),
         normalize_loop_text("ls -la")
     );
+}
+
+// ---- normalized_call_signature (#961) ----
+
+#[test]
+fn counter_variant_tool_search_queries_collide() {
+    // The #961 DeepSeek v4 flash pattern: tool_search re-issued with only a
+    // trailing counter moving between attempts must collapse to the SAME
+    // near-match signature so the generalized tool-layer guard can count it.
+    let a = normalized_call_signature(
+        "tool_search",
+        &json!({"query": "send a document file to telegram"}),
+    );
+    let b = normalized_call_signature(
+        "tool_search",
+        &json!({"query": "send a document file to telegram 2"}),
+    );
+    assert_eq!(a, b);
+}
+
+#[test]
+fn signature_collapses_counters_punctuation_and_case() {
+    // Regression guard for the #957 bash path under the generalized helper.
+    let a = normalized_call_signature("bash", &json!({"command": "echo \"Attempt 1 of 6\""}));
+    let b = normalized_call_signature("bash", &json!({"command": "echo attempt 2 of 6"}));
+    assert_eq!(a, b);
+}
+
+#[test]
+fn different_tool_search_queries_stay_apart() {
+    let a = normalized_call_signature(
+        "tool_search",
+        &json!({"query": "send a document file to telegram"}),
+    );
+    let b = normalized_call_signature("tool_search", &json!({"query": "schedule a cron job"}));
+    assert_ne!(a, b);
+}
+
+#[test]
+fn signature_is_namespaced_by_tool_name() {
+    // Same args under different tool names must not collide.
+    let a = normalized_call_signature("tool_search", &json!({"query": "send"}));
+    let b = normalized_call_signature("telegram_send", &json!({"query": "send"}));
+    assert_ne!(a, b);
+}
+
+#[test]
+fn read_file_chunk_offsets_would_collide_hence_excluded() {
+    // Documents WHY the tool loop excludes read_file from the near-match:
+    // once digits are stripped, chunked reads differing only in start_line
+    // collapse to the same signature and would trip a false positive.
+    let a = normalized_call_signature(
+        "read_file",
+        &json!({"path": "src/main.rs", "start_line": 100, "line_count": 50}),
+    );
+    let b = normalized_call_signature(
+        "read_file",
+        &json!({"path": "src/main.rs", "start_line": 150, "line_count": 50}),
+    );
+    assert_eq!(a, b);
 }
 
 // ---- near_duplicate ----

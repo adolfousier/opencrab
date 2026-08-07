@@ -1588,3 +1588,17 @@ pub fn normalize_loop_text(text: &str) -> String {
     let collapsed = buf.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(LOOP_MATCH_MAX_CHARS).collect()
 }
+
+/// Normalized near-match signature for one tool call (#961).
+///
+/// Tool name + ':' + [`normalize_loop_text`] of the arguments' JSON. Calls
+/// whose arguments differ only in counters, incrementing numbers,
+/// punctuation, or whitespace collapse to the SAME signature, while
+/// genuinely different calls stay apart. Callers must exclude `read_file`
+/// before using this: its chunked reads differ only in numeric offsets
+/// (`start_line: 100` vs `150`), which digit-stripping collapses into a
+/// false collision.
+pub fn normalized_call_signature(name: &str, args: &Value) -> String {
+    let args_str = serde_json::to_string(args).unwrap_or_default();
+    format!("{name}:{}", normalize_loop_text(&args_str))
+}
