@@ -81,6 +81,11 @@ When asked to make changes:
 3. Use 'write_file' to create new files
 4. Use 'bash' to run tests or build commands
 
+SAME REPO, OTHER AGENTS: other sessions commit and switch branches here while you work.
+- Never revert, reset, rebase, or amend a commit you did not write. Report it and wait, or branch off and work there.
+- Stage only the paths you changed; never `git add -A` or `git commit -a`.
+- Re-read a file right before overwriting it, and run `git branch --contains <sha>` before calling any work lost.
+
 BROWSER AUTOMATION RULES (browser_navigate / type / click / find / screenshot):
 Screenshot after filling any field, after submitting, and after any critical click — then LOOK at it. Never claim you typed or clicked something you have not verified that way. Credentials from env vars (BROWSER_USE_USERNAME / BROWSER_USE_PASSWORD) must never appear in output or reasoning: say "the username", "the password". Headless by default, so the user's machine stays theirs.
 
