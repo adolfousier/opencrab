@@ -278,6 +278,7 @@ mod repository {
     use crate::db::CronJobRepository;
     use crate::db::Database;
     use crate::db::models::CronJob;
+    use crate::db::repository::CronJobPatch;
 
     async fn setup() -> (Database, CronJobRepository) {
         let db = Database::connect_in_memory()
@@ -460,6 +461,104 @@ mod repository {
         let (_db, repo) = setup().await;
         let jobs = repo.list_all().await.unwrap();
         assert!(jobs.is_empty());
+    }
+
+    // --- update_fields (patch-in-place, #966) ---
+
+    #[tokio::test]
+    async fn test_update_fields_partial_patch_keeps_everything_else() {
+        let (_db, repo) = setup().await;
+        let job = make_job("patch-job", "0 9 * * *");
+        let id = job.id.to_string();
+        repo.insert(&job).await.unwrap();
+
+        // The exact Adi use case: change the provider override, keep prompt.
+        let patch = CronJobPatch {
+            provider: Some(Some("openai".to_string())),
+            ..Default::default()
+        };
+        let updated = repo.update_fields(&id, patch).await.unwrap();
+        assert!(updated);
+
+        let found = repo.find_by_id(&id).await.unwrap().unwrap();
+        assert_eq!(found.id.to_string(), id, "row id must never change");
+        assert_eq!(found.provider.as_deref(), Some("openai"));
+        assert_eq!(found.prompt, "Test prompt", "prompt must stay intact");
+        assert_eq!(found.cron_expr, "0 9 * * *");
+        assert_eq!(found.timezone, "UTC");
+        assert!(found.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_update_fields_clears_optional_override() {
+        let (_db, repo) = setup().await;
+        let mut job = make_job("clear-job", "0 9 * * *");
+        job.provider = Some("anthropic".to_string());
+        let id = job.id.to_string();
+        repo.insert(&job).await.unwrap();
+
+        // Some(None) = clear back to NULL.
+        let patch = CronJobPatch {
+            provider: Some(None),
+            ..Default::default()
+        };
+        repo.update_fields(&id, patch).await.unwrap();
+
+        let found = repo.find_by_id(&id).await.unwrap().unwrap();
+        assert!(found.provider.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_fields_reset_next_run() {
+        let (_db, repo) = setup().await;
+        let job = make_job("reset-job", "0 9 * * *");
+        let id = job.id.to_string();
+        repo.insert(&job).await.unwrap();
+
+        // trigger_now stamps next_run_at; a schedule change must clear it so
+        // the scheduler recomputes from the new expression.
+        repo.trigger_now(&id).await.unwrap();
+        let found = repo.find_by_id(&id).await.unwrap().unwrap();
+        assert!(found.next_run_at.is_some());
+
+        let patch = CronJobPatch {
+            cron_expr: Some("30 18 * * Mon-Fri".to_string()),
+            reset_next_run: true,
+            ..Default::default()
+        };
+        repo.update_fields(&id, patch).await.unwrap();
+
+        let found = repo.find_by_id(&id).await.unwrap().unwrap();
+        assert_eq!(found.cron_expr, "30 18 * * Mon-Fri");
+        assert!(
+            found.next_run_at.is_none(),
+            "reset_next_run must NULL next_run_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_fields_empty_patch_is_noop() {
+        let (_db, repo) = setup().await;
+        let job = make_job("noop-job", "0 9 * * *");
+        let id = job.id.to_string();
+        repo.insert(&job).await.unwrap();
+
+        let updated = repo
+            .update_fields(&id, CronJobPatch::default())
+            .await
+            .unwrap();
+        assert!(!updated, "empty patch must not write");
+    }
+
+    #[tokio::test]
+    async fn test_update_fields_nonexistent_job() {
+        let (_db, repo) = setup().await;
+        let patch = CronJobPatch {
+            prompt: Some("x".to_string()),
+            ..Default::default()
+        };
+        let updated = repo.update_fields("no-such-id", patch).await.unwrap();
+        assert!(!updated);
     }
 }
 
@@ -821,6 +920,222 @@ mod tool {
         let result = tool.execute(input, &ctx()).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("telegram:123456"));
+    }
+
+    // --- update action (#966) ---
+
+    async fn create_job(tool: &CronManageTool, name: &str) -> String {
+        let input = serde_json::json!({
+            "action": "create",
+            "name": name,
+            "cron": "0 9 * * *",
+            "prompt": "Keep this prompt"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success, "setup create failed: {}", result.output);
+        // Pull the id back out of the confirmation output.
+        result
+            .output
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("ID: "))
+            .expect("create output must contain the job ID")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn test_update_provider_keeps_prompt_and_id() {
+        let (_db, tool) = setup().await;
+        let id = create_job(&tool, "Adi Job").await;
+
+        // The incident scenario: switch the provider override without
+        // touching the prompt (previously required raw sqlite).
+        let input = serde_json::json!({
+            "action": "update",
+            "job_id": id,
+            "provider": "openrouter"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success, "update failed: {}", result.output);
+        assert!(result.output.contains("provider -> openrouter"));
+        assert!(result.output.contains("updated"));
+
+        // Verify through list that the prompt survived.
+        let list = tool
+            .execute(serde_json::json!({"action": "list"}), &ctx())
+            .await
+            .unwrap();
+        assert!(list.output.contains("Keep this prompt"));
+    }
+
+    #[tokio::test]
+    async fn test_update_accepts_name_as_job_id() {
+        let (_db, tool) = setup().await;
+        create_job(&tool, "Named Job").await;
+
+        let input = serde_json::json!({
+            "action": "update",
+            "job_id": "Named Job",
+            "thinking": "on"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success, "update by name failed: {}", result.output);
+        assert!(result.output.contains("thinking -> on"));
+    }
+
+    #[tokio::test]
+    async fn test_update_schedule_recomputes_next_runs() {
+        let (_db, tool) = setup().await;
+        let id = create_job(&tool, "Reschedule Me").await;
+
+        let input = serde_json::json!({
+            "action": "update",
+            "job_id": id,
+            "cron": "30 18 * * Mon-Fri",
+            "tz": "Europe/London"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success, "update failed: {}", result.output);
+        assert!(
+            result.output.contains("Next runs (recomputed)"),
+            "a changed schedule must echo recomputed fire times: {}",
+            result.output
+        );
+        assert!(result.output.contains("Verify"));
+    }
+
+    #[tokio::test]
+    async fn test_update_rejects_invalid_cron() {
+        let (_db, tool) = setup().await;
+        let id = create_job(&tool, "Bad Cron").await;
+
+        let input = serde_json::json!({
+            "action": "update",
+            "job_id": id,
+            "cron": "99 99 * * *"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(!result.success);
+        assert!(
+            result.output.contains("Invalid cron expression")
+                || result
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.contains("Invalid cron expression")),
+            "got: {}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_rejects_unknown_timezone() {
+        let (_db, tool) = setup().await;
+        let id = create_job(&tool, "Bad TZ Update").await;
+
+        let input = serde_json::json!({
+            "action": "update",
+            "job_id": id,
+            "tz": "Mars/Phobos"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(!result.success);
+        assert!(
+            result.output.contains("Unknown timezone")
+                || result
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.contains("Unknown timezone")),
+            "got: {}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_clears_provider_with_empty_string() {
+        let (_db, tool) = setup().await;
+        let id = create_job(&tool, "Clear Override").await;
+
+        let set = serde_json::json!({
+            "action": "update",
+            "job_id": id,
+            "provider": "openai"
+        });
+        assert!(tool.execute(set, &ctx()).await.unwrap().success);
+
+        let clear = serde_json::json!({
+            "action": "update",
+            "job_id": id,
+            "provider": ""
+        });
+        let result = tool.execute(clear, &ctx()).await.unwrap();
+        assert!(result.success, "clear failed: {}", result.output);
+        assert!(result.output.contains("provider -> (cleared)"));
+    }
+
+    #[tokio::test]
+    async fn test_update_with_no_fields_errors() {
+        let (_db, tool) = setup().await;
+        let id = create_job(&tool, "Nothing To Do").await;
+
+        let input = serde_json::json!({"action": "update", "job_id": id});
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(!result.success);
+        assert!(
+            result.output.contains("Nothing to update")
+                || result
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.contains("Nothing to update")),
+            "got: {}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_identical_values_is_a_noop_success() {
+        let (_db, tool) = setup().await;
+        let id = create_job(&tool, "Same Same").await;
+
+        let input = serde_json::json!({
+            "action": "update",
+            "job_id": id,
+            "cron": "0 9 * * *",
+            "prompt": "Keep this prompt"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(result.success);
+        assert!(
+            result.output.contains("unchanged"),
+            "identical values must report a no-op: {}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_missing_job() {
+        let (_db, tool) = setup().await;
+        let input = serde_json::json!({
+            "action": "update",
+            "job_id": "ghost",
+            "provider": "openai"
+        });
+        let result = tool.execute(input, &ctx()).await.unwrap();
+        assert!(!result.success);
+        assert!(
+            result.output.contains("No cron job found")
+                || result
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.contains("No cron job found")),
+            "got: {}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_requires_approval() {
+        let (_db, tool) = setup().await;
+        let input = serde_json::json!({"action": "update", "job_id": "x"});
+        assert!(tool.requires_approval_for_input(&input));
     }
 }
 

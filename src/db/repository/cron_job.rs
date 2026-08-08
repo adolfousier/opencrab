@@ -19,6 +19,71 @@ impl<T> OptionalExt<T> for rusqlite::Result<T> {
     }
 }
 
+/// Owned SQL bind value for the dynamic UPDATE built by
+/// [`CronJobRepository::update_fields`].
+enum SqlVal {
+    Text(String),
+    Int(i32),
+    Null,
+}
+
+impl rusqlite::ToSql for SqlVal {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(match self {
+            SqlVal::Text(s) => rusqlite::types::ToSqlOutput::Borrowed(
+                rusqlite::types::ValueRef::Text(s.as_bytes()),
+            ),
+            SqlVal::Int(i) => {
+                rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Integer(i64::from(*i)))
+            }
+            SqlVal::Null => rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Null),
+        })
+    }
+}
+
+/// Patch for [`CronJobRepository::update_fields`].
+///
+/// Every field is tri-state: `None` = keep the current value, `Some(x)` = set.
+/// For the optional string overrides, `Some(None)` clears the column back to
+/// NULL and `Some(Some(v))` sets it. The row id is never touched: an update
+/// patches the existing row in place.
+#[derive(Debug, Clone, Default)]
+pub struct CronJobPatch {
+    pub name: Option<String>,
+    pub cron_expr: Option<String>,
+    pub timezone: Option<String>,
+    pub prompt: Option<String>,
+    pub provider: Option<Option<String>>,
+    pub model: Option<Option<String>>,
+    pub thinking: Option<String>,
+    pub auto_approve: Option<bool>,
+    pub deliver_to: Option<Option<String>>,
+    pub deliver_api_key: Option<Option<String>>,
+    pub enabled: Option<bool>,
+    /// When true, `next_run_at` is reset to NULL so the scheduler recomputes
+    /// the next fire time from the (possibly changed) schedule on the next
+    /// tick. Set this whenever `cron_expr` or `timezone` changes.
+    pub reset_next_run: bool,
+}
+
+impl CronJobPatch {
+    /// True when no field was provided (nothing to write).
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.cron_expr.is_none()
+            && self.timezone.is_none()
+            && self.prompt.is_none()
+            && self.provider.is_none()
+            && self.model.is_none()
+            && self.thinking.is_none()
+            && self.auto_approve.is_none()
+            && self.deliver_to.is_none()
+            && self.deliver_api_key.is_none()
+            && self.enabled.is_none()
+            && !self.reset_next_run
+    }
+}
+
 #[derive(Clone)]
 pub struct CronJobRepository {
     pool: Pool,
@@ -201,6 +266,101 @@ impl CronJobRepository {
             .map_err(interact_err)?
             .context("Failed to set cron job enabled")?;
         Ok(rows > 0)
+    }
+
+    /// Patch an existing job in place. Only the fields set in `patch` are
+    /// written; everything else keeps its current value and the row id is
+    /// never touched. Returns false when the job does not exist or the patch
+    /// is empty (nothing to write).
+    ///
+    /// The UPDATE statement only lists the provided columns, so a concurrent
+    /// scheduler tick writing `last_run_at`/`next_run_at` is never clobbered
+    /// by a stale full-row snapshot (#966).
+    pub async fn update_fields(&self, id: &str, patch: CronJobPatch) -> Result<bool> {
+        if patch.is_empty() {
+            return Ok(false);
+        }
+        let id = id.to_string();
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| -> anyhow::Result<bool> {
+                fn push(sets: &mut Vec<String>, vals: &mut Vec<SqlVal>, col: &str, v: SqlVal) {
+                    sets.push(format!("{col} = ?{}", vals.len() + 1));
+                    vals.push(v);
+                }
+                fn push_opt(
+                    sets: &mut Vec<String>,
+                    vals: &mut Vec<SqlVal>,
+                    col: &str,
+                    v: Option<Option<String>>,
+                ) {
+                    match v {
+                        Some(Some(s)) => push(sets, vals, col, SqlVal::Text(s)),
+                        Some(None) => push(sets, vals, col, SqlVal::Null),
+                        None => {}
+                    }
+                }
+
+                let mut sets: Vec<String> = Vec::new();
+                let mut vals: Vec<SqlVal> = Vec::new();
+
+                if let Some(v) = patch.name {
+                    push(&mut sets, &mut vals, "name", SqlVal::Text(v));
+                }
+                if let Some(v) = patch.cron_expr {
+                    push(&mut sets, &mut vals, "cron_expr", SqlVal::Text(v));
+                }
+                if let Some(v) = patch.timezone {
+                    push(&mut sets, &mut vals, "timezone", SqlVal::Text(v));
+                }
+                if let Some(v) = patch.prompt {
+                    push(&mut sets, &mut vals, "prompt", SqlVal::Text(v));
+                }
+                push_opt(&mut sets, &mut vals, "provider", patch.provider);
+                push_opt(&mut sets, &mut vals, "model", patch.model);
+                if let Some(v) = patch.thinking {
+                    push(&mut sets, &mut vals, "thinking", SqlVal::Text(v));
+                }
+                if let Some(v) = patch.auto_approve {
+                    push(
+                        &mut sets,
+                        &mut vals,
+                        "auto_approve",
+                        SqlVal::Int(i32::from(v)),
+                    );
+                }
+                push_opt(&mut sets, &mut vals, "deliver_to", patch.deliver_to);
+                push_opt(
+                    &mut sets,
+                    &mut vals,
+                    "deliver_api_key",
+                    patch.deliver_api_key,
+                );
+                if let Some(v) = patch.enabled {
+                    push(&mut sets, &mut vals, "enabled", SqlVal::Int(i32::from(v)));
+                }
+                if patch.reset_next_run {
+                    push(&mut sets, &mut vals, "next_run_at", SqlVal::Null);
+                }
+
+                // Bump updated_at the same way every other write on this
+                // table does.
+                sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')".to_string());
+
+                let sql = format!(
+                    "UPDATE cron_jobs SET {} WHERE id = ?{}",
+                    sets.join(", "),
+                    vals.len() + 1
+                );
+                vals.push(SqlVal::Text(id));
+                let rows = conn.execute(&sql, rusqlite::params_from_iter(vals))?;
+                Ok(rows > 0)
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to update cron job")
     }
 
     /// Set next_run_at to a past timestamp so the scheduler fires it on the next tick.

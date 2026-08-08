@@ -21,7 +21,7 @@ pub mod usage_ledger;
 pub use analytics_event::AnalyticsEventRepository;
 pub use background_task::{BackgroundTaskRepository, BackgroundTaskRow};
 pub use channel_message::{ChannelMessageRepository, TopicSummary};
-pub use cron_job::CronJobRepository;
+pub use cron_job::{CronJobPatch, CronJobRepository};
 pub use cron_job_run::CronJobRunRepository;
 pub use feedback_ledger::FeedbackLedgerRepository;
 pub use file::FileRepository;
