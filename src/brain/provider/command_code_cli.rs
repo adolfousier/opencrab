@@ -520,6 +520,13 @@ impl Provider for CommandCodeCliProvider {
     }
 
     fn context_window(&self, _model: &str) -> Option<u32> {
+        // The user's `providers.<name>.context_window` wins (#973). The
+        // README promises this override works on every provider including
+        // the CLI ones, and the field was already stored and exposed here;
+        // only this method ignored it.
+        if let Some(cw) = self.configured_context_window {
+            return Some(cw);
+        }
         // Command Code routes to upstream models (DeepSeek/GLM/MiMo/etc.) that
         // typically expose a 200k context window. Safe default for compaction.
         Some(200_000)

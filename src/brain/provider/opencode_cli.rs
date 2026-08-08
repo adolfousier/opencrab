@@ -758,7 +758,14 @@ impl Provider for OpenCodeCliProvider {
     }
 
     fn context_window(&self, _model: &str) -> Option<u32> {
-        Some(128_000) // Conservative default
+        // The user's `providers.<name>.context_window` wins (#973). The
+        // README promises this override works on every provider including
+        // the CLI ones, and the field was already stored and exposed here;
+        // only this method ignored it.
+        if let Some(cw) = self.configured_context_window {
+            return Some(cw);
+        }
+        Some(128_000)
     }
 
     fn calculate_cost(&self, model: &str, input_tokens: u32, output_tokens: u32) -> f64 {

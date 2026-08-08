@@ -735,6 +735,13 @@ impl Provider for CodexCliProvider {
     }
 
     fn context_window(&self, _model: &str) -> Option<u32> {
+        // The user's `providers.<name>.context_window` wins (#973). The
+        // README promises this override works on every provider including
+        // the CLI ones, and the field was already stored and exposed here;
+        // only this method ignored it.
+        if let Some(cw) = self.configured_context_window {
+            return Some(cw);
+        }
         // GPT-5 family ships with a 400k context window per OpenAI's docs;
         // older o-series models cap at 200k. Use the smaller value as a
         // safe default — pricing/compaction logic will respect this.

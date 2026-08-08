@@ -327,6 +327,7 @@ pub mod hashline_test;
 pub mod image_util_test;
 pub mod incident_log_dedup_test;
 //pub mod integration_test;
+pub mod cli_context_window_test;
 pub mod click_to_expand_test;
 pub mod kimi_reasoning_test;
 pub mod lazy_tools_test;
