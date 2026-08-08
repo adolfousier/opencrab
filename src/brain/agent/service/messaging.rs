@@ -144,6 +144,13 @@ impl AgentService {
             .stream(request)
             .await
             .map_err(AgentError::Provider)?;
+        // Per-call provenance (#969): which chain entry served this call.
+        tracing::info!(
+            "Streaming call served: session={} {} model='{}'",
+            session_id,
+            provider.provenance_label(),
+            model_name,
+        );
 
         Ok(AgentStreamResponse {
             session_id,

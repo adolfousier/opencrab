@@ -247,7 +247,21 @@ impl AgentService {
             handshake_timeout_for(provider.cli_handles_tools(), provider.base_url());
         let mut stream =
             match tokio::time::timeout(handshake_timeout, provider.stream(request)).await {
-                Ok(Ok(s)) => s,
+                Ok(Ok(s)) => {
+                    // Per-call provenance (#969): which chain entry actually
+                    // served this call, with the session id so an incident
+                    // can tell "fallback advanced" apart from "different
+                    // session". Read AFTER the await: a sticky promote
+                    // happens inside provider.stream(), so the label must
+                    // reflect the entry that won the handshake.
+                    tracing::info!(
+                        "Streaming call served: session={} {} model='{}'",
+                        session_id,
+                        provider.provenance_label(),
+                        request_model,
+                    );
+                    s
+                }
                 Ok(Err(e)) => {
                     crate::config::health::record_failure(provider.name(), &e.to_string());
                     return Err(e);

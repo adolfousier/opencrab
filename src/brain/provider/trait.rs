@@ -150,6 +150,14 @@ pub trait Provider: Send + Sync {
         None
     }
 
+    /// One-line provenance label for per-call logging: which entry is
+    /// currently serving calls. Chain wrappers report `primary 'name'`
+    /// or `fallback #N 'name'`; plain providers report `'name'`.
+    /// Logging/diagnostics only — never used for routing decisions.
+    fn provenance_label(&self) -> String {
+        format!("'{}'", self.name())
+    }
+
     /// True when this provider is itself a chain wrapper (i.e.
     /// `FallbackProvider`). Callers that want to install a provider as
     /// the session's active backend use this to decide whether to wrap

@@ -232,8 +232,8 @@ impl Provider for FallbackProvider {
             Err(e) if !Self::should_try_next(&e) => return Err(e),
             Err(e) => {
                 tracing::warn!(
-                    "Active provider '{}' failed: {} — trying next in chain",
-                    active.name(),
+                    "Chain entry {} failed: {} — trying next in chain",
+                    self.provenance_label(),
                     e
                 );
                 last_err = Some(e);
@@ -261,7 +261,12 @@ impl Provider for FallbackProvider {
                     return Ok(resp);
                 }
                 Err(e) => {
-                    tracing::warn!("Fallback provider '{}' failed: {}", fb.name(), e);
+                    tracing::warn!(
+                        "Chain entry fallback #{} '{}' failed: {}",
+                        offset + 1,
+                        fb.name(),
+                        e
+                    );
                     last_err = Some(e);
                 }
             }
@@ -285,8 +290,8 @@ impl Provider for FallbackProvider {
             Err(e) if !Self::should_try_next(&e) => return Err(e),
             Err(e) => {
                 tracing::warn!(
-                    "Active provider '{}' stream failed: {} — trying next in chain",
-                    active.name(),
+                    "Chain entry {} stream failed: {} — trying next in chain",
+                    self.provenance_label(),
                     e
                 );
                 last_err = Some(e);
@@ -313,7 +318,12 @@ impl Provider for FallbackProvider {
                     return Ok(stream);
                 }
                 Err(e) => {
-                    tracing::warn!("Fallback provider '{}' stream failed: {}", fb.name(), e);
+                    tracing::warn!(
+                        "Chain entry fallback #{} '{}' stream failed: {}",
+                        offset + 1,
+                        fb.name(),
+                        e
+                    );
                     last_err = Some(e);
                 }
             }
@@ -443,6 +453,15 @@ impl Provider for FallbackProvider {
             None
         } else {
             Some(self.fallbacks[idx - 1].default_model().to_string())
+        }
+    }
+
+    fn provenance_label(&self) -> String {
+        let idx = self.active.load(Ordering::Acquire);
+        if idx == 0 {
+            format!("primary '{}'", self.primary.name())
+        } else {
+            format!("fallback #{} '{}'", idx, self.fallbacks[idx - 1].name())
         }
     }
 }
