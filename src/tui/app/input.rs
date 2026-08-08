@@ -984,6 +984,171 @@ impl App {
     }
 
     /// Handle keys in chat mode
+    /// Abort the in-flight turn, preserving everything already on screen.
+    ///
+    /// Shared by double-Escape and by a typed stop intent (#965), so the two
+    /// cannot drift: streamed text and tool groups are committed to history
+    /// BEFORE the task dies, queued messages are dropped so they cannot leak
+    /// into the next turn, and pending approvals are denied so agent callbacks
+    /// do not hang waiting on a turn that no longer exists.
+    pub(crate) async fn abort_active_turn(&mut self) {
+        // Second Escape within 3 seconds — abort
+        // PERSIST visible streaming content to DB BEFORE killing the task.
+        // This prevents data loss: everything shown on screen survives cancel.
+        if let Some(ref session) = self.current_session {
+            self.persist_streaming_state(session.id).await;
+        }
+        // Cancel the active cancel token (cooperative)
+        if let Some(token) = &self.cancel_token {
+            token.cancel();
+        }
+        // Hard-abort the agent task as a backstop
+        if let Some(handle) = self.task_abort_handle.take() {
+            handle.abort();
+        }
+        // Also cancel any stashed session token (e.g. from session switch)
+        if let Some(ref session) = self.current_session {
+            if let Some(stashed) = self.session_cancel_tokens.remove(&session.id) {
+                stashed.cancel();
+            }
+            self.processing_sessions.remove(&session.id);
+        }
+        self.is_processing = false;
+        self.processing_started_at = None;
+        // Flush any in-flight tool group into the message list
+        // BEFORE touching streaming state. Per-tool DB persistence
+        // already wrote them to the message row, but the TUI's
+        // DisplayMessage for the group only exists as
+        // `active_tool_group` until the next flush point. Without
+        // this, the user watches tools execute, hits Escape-twice,
+        // and the whole group vanishes from view — only
+        // reappearing on session reload from DB. Commit it to
+        // `self.messages` so the history stays stable across cancel.
+        let had_tool_activity = self
+            .active_tool_group
+            .as_ref()
+            .is_some_and(|g| !g.calls.is_empty());
+        if let Some(group) = self.active_tool_group.take()
+            && !group.calls.is_empty()
+        {
+            let count = group.calls.len();
+            self.messages.push(DisplayMessage {
+                id: Uuid::new_v4(),
+                role: "tool_group".to_string(),
+                content: format!("{} tool call{}", count, if count == 1 { "" } else { "s" }),
+                timestamp: chrono::Utc::now(),
+                token_count: None,
+                cost: None,
+                approval: None,
+                approve_menu: None,
+                details: None,
+                expanded: false,
+                expanded_full: false,
+                tool_group: Some(group),
+                duration_secs: None,
+            });
+        }
+        // Promote any in-progress streaming text + reasoning to
+        // a permanent assistant DisplayMessage BEFORE clearing
+        // them. Without this the user sees streaming content
+        // during the turn, hits Escape-twice, and the whole
+        // response vanishes from the in-memory history — the
+        // DB still has it (persist_streaming_state above wrote
+        // it) but rendering pulls from `self.messages`, so the
+        // chat appears to reset to just the user's message
+        // until restart. Push now so the render matches what
+        // the user actually saw on screen.
+        let stash_text = self.streaming_response.take();
+        let stash_reasoning = self.streaming_reasoning.take();
+        let has_visible_text = stash_text
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let has_visible_reasoning = stash_reasoning
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if has_visible_text || has_visible_reasoning {
+            let content = stash_text
+                .as_deref()
+                .map(crate::utils::sanitize::strip_llm_artifacts)
+                .unwrap_or_default();
+            self.messages.push(DisplayMessage {
+                id: Uuid::new_v4(),
+                role: "assistant".to_string(),
+                content,
+                timestamp: chrono::Utc::now(),
+                token_count: None,
+                cost: None,
+                approval: None,
+                approve_menu: None,
+                details: stash_reasoning,
+                expanded: false,
+                expanded_full: false,
+                tool_group: None,
+                duration_secs: None,
+            });
+        }
+        // Cancelled before the agent produced ANYTHING: pull the
+        // just-sent query back into the input (editable, ready to
+        // resend) and remove it from the transcript + DB, so an
+        // unanswered query doesn't linger and duplicate on resend
+        // (#698). Only when the input is empty (don't clobber a
+        // new draft) and the trailing message is that user query.
+        if should_restore_cancelled_query(
+            has_visible_text,
+            has_visible_reasoning,
+            had_tool_activity,
+            self.intermediate_text_received,
+        ) && self.input_buffer.trim().is_empty()
+            && self.messages.last().is_some_and(|m| m.role == "user")
+        {
+            if let Some(m) = self.messages.pop() {
+                self.input_buffer = m.content;
+                self.cursor_position = self.input_buffer.len();
+            }
+            if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
+                // Drop the unanswered query AND its empty assistant
+                // placeholder as a pair — the placeholder is the
+                // trailing DB row, so deleting only the last user
+                // row would miss the query and leave it lingering
+                // in the next turn's context, duplicating on
+                // resend (#730).
+                let repo =
+                    crate::db::repository::MessageRepository::new(self.session_service.pool());
+                if let Err(e) = repo.delete_trailing_unanswered_pair(sid).await {
+                    tracing::warn!("Cancel-restore: failed to delete unanswered message pair: {e}");
+                }
+            }
+        }
+        self.streaming_render_cache = None;
+        self.cancel_token = None;
+        self.escape_pending_at = None;
+        self.streaming_output_tokens = 0;
+        self.intermediate_text_received = false;
+        // Drop any queued user message — otherwise it would
+        // survive the cancel and get injected into the NEXT
+        // unrelated turn, appearing as a duplicate in chat.
+        if let Some(sid) = self.current_session.as_ref().map(|s| s.id)
+            && let Ok(mut q) = self.queued_messages.lock()
+        {
+            q.remove(&sid);
+        }
+        // Deny any pending approvals so agent callbacks don't hang
+        for msg in &mut self.messages {
+            if let Some(ref mut approval) = msg.approval
+                && approval.state == ApprovalState::Pending
+            {
+                let _ = approval.response_tx.send(ToolApprovalResponse {
+                    request_id: approval.request_id,
+                    approved: false,
+                    reason: Some("Operation cancelled".to_string()),
+                });
+                approval.state = ApprovalState::Denied("Operation cancelled".to_string());
+            }
+        }
+    }
+
     pub(crate) async fn handle_chat_key(
         &mut self,
         event: crossterm::event::KeyEvent,
@@ -1412,6 +1577,23 @@ impl App {
                 return Ok(());
             }
 
+            // A typed stop intent aborts the running turn instead of queueing
+            // another message (#965). The TUI previously had no text-based
+            // stop at all: cancelling was key-driven, so typing "stop" just
+            // added to the pile the agent was already working through.
+            //
+            // Gated on a turn actually being in flight. With nothing running
+            // there is nothing to cancel and the words are ordinary input.
+            if self.is_processing && crate::utils::stop_intent::is_stop_intent(content.trim()) {
+                self.input_buffer.clear();
+                self.cursor_position = 0;
+                self.slash_suggestions_active = false;
+                self.dismiss_emoji_picker();
+                self.abort_active_turn().await;
+                self.push_system_message("Operation cancelled.".to_string());
+                return Ok(());
+            }
+
             // Bang operator: `!cmd args` runs a shell command directly in the
             // current working directory and pushes stdout/stderr as a system
             // message — no LLM, no tool approval. Mirrors Claude Code's `!`.
@@ -1526,169 +1708,7 @@ impl App {
             if self.is_processing {
                 if let Some(pending_at) = self.escape_pending_at {
                     if pending_at.elapsed() < std::time::Duration::from_secs(3) {
-                        // Second Escape within 3 seconds — abort
-                        // PERSIST visible streaming content to DB BEFORE killing the task.
-                        // This prevents data loss: everything shown on screen survives cancel.
-                        if let Some(ref session) = self.current_session {
-                            self.persist_streaming_state(session.id).await;
-                        }
-                        // Cancel the active cancel token (cooperative)
-                        if let Some(token) = &self.cancel_token {
-                            token.cancel();
-                        }
-                        // Hard-abort the agent task as a backstop
-                        if let Some(handle) = self.task_abort_handle.take() {
-                            handle.abort();
-                        }
-                        // Also cancel any stashed session token (e.g. from session switch)
-                        if let Some(ref session) = self.current_session {
-                            if let Some(stashed) = self.session_cancel_tokens.remove(&session.id) {
-                                stashed.cancel();
-                            }
-                            self.processing_sessions.remove(&session.id);
-                        }
-                        self.is_processing = false;
-                        self.processing_started_at = None;
-                        // Flush any in-flight tool group into the message list
-                        // BEFORE touching streaming state. Per-tool DB persistence
-                        // already wrote them to the message row, but the TUI's
-                        // DisplayMessage for the group only exists as
-                        // `active_tool_group` until the next flush point. Without
-                        // this, the user watches tools execute, hits Escape-twice,
-                        // and the whole group vanishes from view — only
-                        // reappearing on session reload from DB. Commit it to
-                        // `self.messages` so the history stays stable across cancel.
-                        let had_tool_activity = self
-                            .active_tool_group
-                            .as_ref()
-                            .is_some_and(|g| !g.calls.is_empty());
-                        if let Some(group) = self.active_tool_group.take()
-                            && !group.calls.is_empty()
-                        {
-                            let count = group.calls.len();
-                            self.messages.push(DisplayMessage {
-                                id: Uuid::new_v4(),
-                                role: "tool_group".to_string(),
-                                content: format!(
-                                    "{} tool call{}",
-                                    count,
-                                    if count == 1 { "" } else { "s" }
-                                ),
-                                timestamp: chrono::Utc::now(),
-                                token_count: None,
-                                cost: None,
-                                approval: None,
-                                approve_menu: None,
-                                details: None,
-                                expanded: false,
-                                expanded_full: false,
-                                tool_group: Some(group),
-                                duration_secs: None,
-                            });
-                        }
-                        // Promote any in-progress streaming text + reasoning to
-                        // a permanent assistant DisplayMessage BEFORE clearing
-                        // them. Without this the user sees streaming content
-                        // during the turn, hits Escape-twice, and the whole
-                        // response vanishes from the in-memory history — the
-                        // DB still has it (persist_streaming_state above wrote
-                        // it) but rendering pulls from `self.messages`, so the
-                        // chat appears to reset to just the user's message
-                        // until restart. Push now so the render matches what
-                        // the user actually saw on screen.
-                        let stash_text = self.streaming_response.take();
-                        let stash_reasoning = self.streaming_reasoning.take();
-                        let has_visible_text = stash_text
-                            .as_deref()
-                            .map(|s| !s.trim().is_empty())
-                            .unwrap_or(false);
-                        let has_visible_reasoning = stash_reasoning
-                            .as_deref()
-                            .map(|s| !s.trim().is_empty())
-                            .unwrap_or(false);
-                        if has_visible_text || has_visible_reasoning {
-                            let content = stash_text
-                                .as_deref()
-                                .map(crate::utils::sanitize::strip_llm_artifacts)
-                                .unwrap_or_default();
-                            self.messages.push(DisplayMessage {
-                                id: Uuid::new_v4(),
-                                role: "assistant".to_string(),
-                                content,
-                                timestamp: chrono::Utc::now(),
-                                token_count: None,
-                                cost: None,
-                                approval: None,
-                                approve_menu: None,
-                                details: stash_reasoning,
-                                expanded: false,
-                                expanded_full: false,
-                                tool_group: None,
-                                duration_secs: None,
-                            });
-                        }
-                        // Cancelled before the agent produced ANYTHING: pull the
-                        // just-sent query back into the input (editable, ready to
-                        // resend) and remove it from the transcript + DB, so an
-                        // unanswered query doesn't linger and duplicate on resend
-                        // (#698). Only when the input is empty (don't clobber a
-                        // new draft) and the trailing message is that user query.
-                        if should_restore_cancelled_query(
-                            has_visible_text,
-                            has_visible_reasoning,
-                            had_tool_activity,
-                            self.intermediate_text_received,
-                        ) && self.input_buffer.trim().is_empty()
-                            && self.messages.last().is_some_and(|m| m.role == "user")
-                        {
-                            if let Some(m) = self.messages.pop() {
-                                self.input_buffer = m.content;
-                                self.cursor_position = self.input_buffer.len();
-                            }
-                            if let Some(sid) = self.current_session.as_ref().map(|s| s.id) {
-                                // Drop the unanswered query AND its empty assistant
-                                // placeholder as a pair — the placeholder is the
-                                // trailing DB row, so deleting only the last user
-                                // row would miss the query and leave it lingering
-                                // in the next turn's context, duplicating on
-                                // resend (#730).
-                                let repo = crate::db::repository::MessageRepository::new(
-                                    self.session_service.pool(),
-                                );
-                                if let Err(e) = repo.delete_trailing_unanswered_pair(sid).await {
-                                    tracing::warn!(
-                                        "Cancel-restore: failed to delete unanswered message pair: {e}"
-                                    );
-                                }
-                            }
-                        }
-                        self.streaming_render_cache = None;
-                        self.cancel_token = None;
-                        self.escape_pending_at = None;
-                        self.streaming_output_tokens = 0;
-                        self.intermediate_text_received = false;
-                        // Drop any queued user message — otherwise it would
-                        // survive the cancel and get injected into the NEXT
-                        // unrelated turn, appearing as a duplicate in chat.
-                        if let Some(sid) = self.current_session.as_ref().map(|s| s.id)
-                            && let Ok(mut q) = self.queued_messages.lock()
-                        {
-                            q.remove(&sid);
-                        }
-                        // Deny any pending approvals so agent callbacks don't hang
-                        for msg in &mut self.messages {
-                            if let Some(ref mut approval) = msg.approval
-                                && approval.state == ApprovalState::Pending
-                            {
-                                let _ = approval.response_tx.send(ToolApprovalResponse {
-                                    request_id: approval.request_id,
-                                    approved: false,
-                                    reason: Some("Operation cancelled".to_string()),
-                                });
-                                approval.state =
-                                    ApprovalState::Denied("Operation cancelled".to_string());
-                            }
-                        }
+                        self.abort_active_turn().await;
                     } else if event.code == KeyCode::Char('a')
                         && event.modifiers == KeyModifiers::CONTROL
                     {

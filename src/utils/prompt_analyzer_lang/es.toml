@@ -71,3 +71,13 @@ web_search = [
     "buscar en línea",
     "googlea",
 ]
+
+# "Detente" (#965). Ver en.toml para la regla de una sola palabra.
+stop_intent = [
+  "alto", "espera", "esperate", "detente", "detente ya", "para ya",
+  "un momento", "un segundo", "un minuto", "espera un momento",
+  "espera un segundo", "aguanta", "quieto", "por favor para",
+]
+
+# Vocativos que se quitan del FINAL antes de comparar con stop_intent (#965).
+stop_address = ["cangrejo", "cangrejos", "opencrabs", "bot", "tio", "hermano", "porfa", "por favor", "ahora", "ya"]

@@ -1478,9 +1478,9 @@ async fn handle_message(
         format!("{user_name}: {content}")
     };
 
-    // Fast-cancel: "stop" exact match — cancel and reply immediately.
+    // Fast-cancel: any recognised stop intent, in any supported language (#965).
     // MUST run before content is moved into agent_input below.
-    if content.trim().eq_ignore_ascii_case("stop") {
+    if crate::utils::stop_intent::is_stop_command_or_intent(&content) {
         state.slack_state.cancel_session(session_id).await;
         let token = SlackApiToken::new(SlackApiTokenValue::from(state.current_bot_token()));
         let session = client.open_session(&token);

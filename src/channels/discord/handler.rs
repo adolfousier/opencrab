@@ -391,14 +391,14 @@ pub(crate) async fn handle_message(
         }
     };
 
-    // Fast-cancel: "stop" exact match — cancel and reply immediately.
+    // Fast-cancel: any recognised stop intent, in any supported language (#965).
     //
     // Cancellation is scoped to explicit stop requests and genuine follow-up
     // messages (handled at dispatch by store_cancel_token, which cancels the
     // prior token before starting new work). Channel commands like /models,
     // /help, /usage, /new must NEVER abort an in-flight task: switching models
     // applies to the next run, it does not drop current work (#266).
-    if msg.content.trim().eq_ignore_ascii_case("stop") {
+    if crate::utils::stop_intent::is_stop_command_or_intent(&msg.content) {
         discord_state.cancel_session(session_id).await;
         let _ = msg.channel_id.say(&ctx.http, "Operation cancelled.").await;
         return;

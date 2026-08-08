@@ -71,3 +71,13 @@ web_search = [
     "pesquisar online",
     "google",
 ]
+
+# "Pare" (#965). Ver en.toml para a regra de palavra unica.
+stop_intent = [
+  "pare", "para", "espera", "espere", "aguarda", "aguarde", "calma",
+  "um momento", "um segundo", "um minuto", "espera ai", "peraí", "pera ai",
+  "pare agora", "para tudo", "por favor pare",
+]
+
+# Vocativos removidos do FIM antes de comparar com stop_intent (#965).
+stop_address = ["caranguejo", "caranguejos", "opencrabs", "bot", "mano", "cara", "por favor", "pfv", "agora", "ja"]

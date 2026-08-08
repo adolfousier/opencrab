@@ -18,6 +18,7 @@ pub mod providers;
 pub mod retry;
 pub mod sanitize;
 pub mod slack_fmt;
+pub mod stop_intent;
 pub mod string;
 pub mod text_complete;
 mod tool_context;

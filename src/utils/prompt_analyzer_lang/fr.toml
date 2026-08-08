@@ -71,3 +71,13 @@ web_search = [
     "chercher en ligne",
     "google",
 ]
+
+# "Arrete" (#965). Voir en.toml pour la regle du mot unique.
+stop_intent = [
+  "stop", "arrete", "arretez", "attends", "attendez", "doucement",
+  "un moment", "une seconde", "une minute", "attends un moment",
+  "attends une seconde", "arrete tout", "stp arrete",
+]
+
+# Vocatifs retires de la FIN avant comparaison avec stop_intent (#965).
+stop_address = ["crabe", "crabes", "opencrabs", "bot", "mec", "frere", "stp", "svp", "sil te plait", "maintenant"]

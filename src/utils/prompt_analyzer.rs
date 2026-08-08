@@ -40,6 +40,20 @@ pub struct AnalyzerLang {
     pub bash: Vec<String>,
     #[serde(default)]
     pub web_search: Vec<String>,
+    /// Phrases that mean "stop what you are doing right now" (#965).
+    ///
+    /// Read by [`crate::utils::stop_intent`], which scans every language via
+    /// [`all_langs`] rather than guessing one. Single-word entries only match
+    /// a whole message; multi-word entries may also match a leading clause.
+    /// See that module for why the two behave differently.
+    #[serde(default)]
+    pub stop_intent: Vec<String>,
+    /// Address terms stripped from the END of a message before matching
+    /// [`Self::stop_intent`] (#965), so "stop crab" and "hold on crabs" reduce
+    /// to a bare interrupt. Only ever stripped as a trailing run, never from
+    /// the middle, so "stop the bot container" keeps its object.
+    #[serde(default)]
+    pub stop_address: Vec<String>,
 }
 
 /// Embedded TOML content (compile-time validated).

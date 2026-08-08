@@ -71,3 +71,13 @@ web_search = [
     "cari online",
     "google",
 ]
+
+# "Berhenti" (#965). Lihat en.toml untuk aturan satu kata.
+stop_intent = [
+  "berhenti", "stop", "tunggu", "sebentar", "tahan", "sabar",
+  "tunggu dulu", "tunggu sebentar", "sebentar dulu", "berhenti dulu",
+  "jangan dulu", "stop dulu",
+]
+
+# Sapaan yang dibuang dari AKHIR sebelum dicocokkan ke stop_intent (#965).
+stop_address = ["kepiting", "opencrabs", "bot", "bro", "gan", "mas", "tolong", "please", "sekarang", "dong"]

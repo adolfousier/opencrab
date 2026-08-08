@@ -2380,7 +2380,7 @@ pub(crate) async fn handle_message(
         session_id,
     );
 
-    // Fast-cancel: "/stop" or "stop" exact match — cancel and reply immediately.
+    // Fast-cancel: any recognised stop intent, in any supported language (#965).
     // Prevents the agent from receiving the stop message and running more tool calls.
     //
     // Cancellation is scoped to explicit stop requests and genuine follow-up
@@ -2391,7 +2391,7 @@ pub(crate) async fn handle_message(
     // why there is no unconditional cancel here.
     if let Some(text) = msg.text() {
         let trimmed = text.trim();
-        if trimmed.eq_ignore_ascii_case("/stop") || trimmed.eq_ignore_ascii_case("stop") {
+        if crate::utils::stop_intent::is_stop_command_or_intent(trimmed) {
             telegram_state.cancel_session(session_id).await;
             bot.send_message(msg.chat.id, "Operation cancelled.")
                 .reply_parameters(ReplyParameters::new(msg.id))

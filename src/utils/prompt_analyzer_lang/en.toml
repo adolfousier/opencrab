@@ -75,3 +75,21 @@ web_search = [
     "look up online",
     "web search",
 ]
+
+# "Stop what you are doing" (#965). Single-word entries match only a whole
+# message, so "stop the docker container" is left alone; multi-word entries
+# may also open a message, so "hold on, I need to check something" cancels.
+stop_intent = [
+  "stop", "halt", "abort", "cancel", "wait", "freeze", "pause",
+  "stop it", "stop now", "stop please", "please stop", "stop stop",
+  "hold on", "hold up", "hang on", "hold off",
+  "wait a sec", "wait a second", "wait a minute", "wait up",
+  "one sec", "one second", "one moment", "just a sec", "just a second",
+  "stop and wait", "dont do anything", "do not do anything",
+]
+
+# Vocatives stripped from the END of a message before matching stop_intent
+# (#965), so "stop crab", "hold on crabs" and "stop please" all reduce to a
+# bare interrupt. Never stripped from the middle, so "stop the bot container"
+# is untouched.
+stop_address = ["crab", "crabs", "opencrabs", "opencrabsbot", "bot", "bro", "dude", "man", "guys", "please", "pls", "plz", "now", "already"]
