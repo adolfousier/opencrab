@@ -1090,6 +1090,8 @@ api_key = "nvapi-..."
 
 **Per-session provider:** Each session remembers which provider and model it was using. Switch to Claude in one session, Kimi in another — when you `/sessions` switch between them, the provider restores automatically. No need to `/models` every time. New sessions inherit the current provider.
 
+**What `enabled = false` actually means:** it only removes the provider from the default-selection scan above. It does NOT disable the provider. By-name usage ignores the flag entirely: per-session provider restoration, `/models` switching, the `[fallback]` chain, and the `[image.vision] provider` override can all still reach a provider marked `enabled = false`. Such a provider works perfectly fine when it has an API key, or when its CLI is authenticated and working on the same machine. Think of `enabled = false` as "not the default", not "dead" (#270).
+
 ### Fallback Providers
 
 If your primary provider goes down, fallback providers are tried automatically in sequence. Any provider with API keys already configured can be a fallback:

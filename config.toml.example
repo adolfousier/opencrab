@@ -13,6 +13,14 @@
 # path = "~/.opencrabs/opencrabs.db"  # Default; only override if needed
 
 [providers]
+# NOTE on the `enabled` flag: `enabled = false` only removes a provider from the
+# default-selection scan (new sessions pick the first enabled provider, in
+# priority order). It does NOT disable the provider. By-name usage ignores the
+# flag entirely: per-session provider restoration, /models switching, the
+# [providers.fallback] chain, and the [image.vision] provider override can all
+# still reach a provider marked enabled = false, and it works fine with an API
+# key or an authenticated CLI on this machine. Think "not the default", not
+# "dead".
 # ========================================
 # Xiaomi MiMo
 # ========================================
