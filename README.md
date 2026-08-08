@@ -879,7 +879,9 @@ Enable and choose the plan in `config.toml`:
 [providers.moonshot]
 enabled = true
 default_model = "k3"
-endpoint_type = "api"  # "api" (API plan) or "coding" (Coding plan)
+endpoint_type = "api"      # "api" (API plan) or "coding" (Coding plan)
+reasoning_effort = "max"   # Kimi reasoning control: "max" on K3, "on"/"off" on K2.x.
+                           # Sent only when the active model accepts it; otherwise a no-op.
 ```
 
 Moonshot offers two endpoint types selectable during onboarding or via `/models`:
@@ -2052,6 +2054,15 @@ redact_sensitive_data = true     # global default: redact IPs, tokens, passwords
 debug_logs = false               # enable debug file logging from config, on top of the --debug flag; hot-reloads on change (flip with the agent or by editing this)
 default_provider = "xiaomi"      # main chat default provider (new sessions inherit, existing pick up on resume)
 default_model = "mimo-v2.5-pro"  # main chat default model
+context_limit = 200000           # usable context window in tokens. Enforced at this default when absent,
+                                 # so a model with a larger window is still held to 200k until you raise it.
+max_tokens = 65536               # cap on output tokens per API call
+silent_compaction = false        # false (default) keeps the agent's post-compaction narration; true switches
+                                 # to a silent-continuation prompt so a compaction passes without comment
+plan_isolated_execution = true   # default: each started plan task runs in a fresh child session seeded only
+                                 # with the task brief and the parent's plan file. false shares the parent session
+subagent_session_ttl_days = 7    # days a spawned sub-agent's session is kept before pruning. Nothing revisits
+                                 # them, so they accumulate with their messages, tool rows and plan files. 0 keeps forever
 
 # ── Runaway-reasoning guards ──────────────────────────────────────────────────
 # Both are enforced at their defaults even when absent from this file.
@@ -2066,6 +2077,16 @@ thinking_loop_timeout_secs = 600 # kill a stream that runs this long with zero t
                                  # with phantom enforcement. Armed per request and disabled for the rest
                                  # of a stream once any tool call lands, so treat it as a backstop and
                                  # let reasoning_token_budget do the real work. 0 disables.
+
+# ── Provider registry ─────────────────────────────────────────────────────────
+# Optional discovery service that can add providers automatically. Enabled by
+# default, so if no registry is running the lookups simply fail and nothing
+# else is affected. Set enabled = false to switch it off outright.
+[provider_registry]
+enabled = true                   # default true
+base_url = "http://localhost:8080"
+auto_update = true               # refresh providers on startup
+update_interval_seconds = 3600   # refresh cadence; 0 = startup only
 
 # ── Channels ──────────────────────────────────────────────────────────────────
 
