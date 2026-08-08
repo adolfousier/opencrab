@@ -407,6 +407,7 @@ pub mod qwen_preserve_thinking_test;
 pub mod qwen_tool_extractor_test;
 pub mod qwen_tool_marker_strip_test;
 pub mod react_marker_test;
+pub mod reasoning_budget_test;
 pub mod reasoning_lines_test;
 pub mod rename_session_test;
 pub mod respond_to_group_persist_test;

@@ -609,6 +609,27 @@ impl AgentService {
                                     }
                                     reasoning_window.drain(..drain);
                                 }
+                                // Per-turn reasoning budget (#970). Counted per TURN,
+                                // not per stream: a turn can burn far past any
+                                // per-request ceiling while no single iteration ever
+                                // reaches it. Exiting the way the repetition guard
+                                // does hands control back to the tool loop, which
+                                // sees empty text plus reasoning and fires the nudge
+                                // that actually resolves this.
+                                if super::reasoning_budget::charge(
+                                    session_id,
+                                    crate::brain::agent::context::AgentContext::estimate_tokens(
+                                        &text,
+                                    ),
+                                ) {
+                                    tracing::warn!(
+                                        "🧠 Reasoning budget exhausted after {} bytes this \
+                                         turn. Cutting the stream so the no-answer nudge runs.",
+                                        reasoning_buf.len(),
+                                    );
+                                    stop_reason = Some(StopReason::EndTurn);
+                                    break;
+                                }
                                 if detect_text_repetition(
                                     &reasoning_window,
                                     REASONING_REPEAT_MIN_MATCH,
@@ -644,6 +665,27 @@ impl AgentService {
                                         drain += 1;
                                     }
                                     reasoning_window.drain(..drain);
+                                }
+                                // Per-turn reasoning budget (#970). Counted per TURN,
+                                // not per stream: a turn can burn far past any
+                                // per-request ceiling while no single iteration ever
+                                // reaches it. Exiting the way the repetition guard
+                                // does hands control back to the tool loop, which
+                                // sees empty text plus reasoning and fires the nudge
+                                // that actually resolves this.
+                                if super::reasoning_budget::charge(
+                                    session_id,
+                                    crate::brain::agent::context::AgentContext::estimate_tokens(
+                                        &thinking,
+                                    ),
+                                ) {
+                                    tracing::warn!(
+                                        "🧠 Reasoning budget exhausted after {} bytes this \
+                                         turn. Cutting the stream so the no-answer nudge runs.",
+                                        reasoning_buf.len(),
+                                    );
+                                    stop_reason = Some(StopReason::EndTurn);
+                                    break;
                                 }
                                 if detect_text_repetition(
                                     &reasoning_window,

@@ -2053,6 +2053,20 @@ debug_logs = false               # enable debug file logging from config, on top
 default_provider = "xiaomi"      # main chat default provider (new sessions inherit, existing pick up on resume)
 default_model = "mimo-v2.5-pro"  # main chat default model
 
+# ── Runaway-reasoning guards ──────────────────────────────────────────────────
+# Both are enforced at their defaults even when absent from this file.
+reasoning_token_budget = 16000   # reasoning tokens ONE TURN may spend before the stream is cut and
+                                 # the "reasoned without answering" nudge takes over. Counted per turn,
+                                 # not per request, so a model that reasons a little under the limit on
+                                 # each of several iterations still trips it. 0 disables.
+                                 # Override per provider with providers.<name>.reasoning_token_budget
+                                 # (works for providers.custom.* too) to tighten only the model family
+                                 # that actually runs away.
+thinking_loop_timeout_secs = 600 # kill a stream that runs this long with zero tool calls, then retry
+                                 # with phantom enforcement. Armed per request and disabled for the rest
+                                 # of a stream once any tool call lands, so treat it as a backstop and
+                                 # let reasoning_token_budget do the real work. 0 disables.
+
 # ── Channels ──────────────────────────────────────────────────────────────────
 
 [channels.telegram]

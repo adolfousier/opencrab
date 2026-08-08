@@ -460,6 +460,27 @@ impl AgentService {
             ));
         }
 
+        // Arm the per-turn reasoning budget (#970) around the WHOLE loop, so it
+        // spans every iteration. A per-stream ceiling misses a turn that
+        // reasons a little under the limit again and again, which is how a run
+        // reached 900s and 30k reasoning tokens with the 600s per-request
+        // thinking-loop timeout still armed. A per-provider value wins over the
+        // global so the model family that actually runs away can be tightened
+        // without penalising every other model.
+        let reasoning_budget = {
+            let cfg = crate::config::Config::current();
+            let provider = self.provider_name_for_session(session_id);
+            crate::brain::provider::factory::provider_config_by_name(&cfg, &provider)
+                .and_then(|p| p.reasoning_token_budget)
+                .unwrap_or(cfg.agent.reasoning_token_budget)
+        };
+
+        // Armed for the whole turn and released on drop, so an early return or
+        // a cancel cannot leave the entry behind. Deliberately NOT a wrapper
+        // future: nesting `run_tool_loop_inner` one frame deeper overflows the
+        // worker stack.
+        let _budget_guard = super::reasoning_budget::arm(session_id, reasoning_budget);
+
         // Run the actual loop
         let result = self
             .run_tool_loop_inner(
@@ -475,6 +496,15 @@ impl AgentService {
                 question_callback,
             )
             .await;
+
+        // Read before `_budget_guard` drops. Records what a real turn actually
+        // spends, so the configured ceiling can be tuned against evidence
+        // instead of guessed at again.
+        if let Some(left) = super::reasoning_budget::remaining(session_id) {
+            tracing::debug!(
+                "Reasoning budget: {left}/{reasoning_budget} tokens unspent at turn end"
+            );
+        }
 
         if has_progress_override && let Some(ref tx) = self.session_updated_tx {
             let _ =
