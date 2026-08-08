@@ -26,8 +26,14 @@ pub struct ProviderRegistryConfig {
     pub update_interval_seconds: u64,
 }
 
+/// Opt-in (#972). Nothing should present itself as an enabled integration
+/// because the user left a section out of their config. The other providers
+/// default to enabled for the opposite reason: they sit behind
+/// `Option<ProviderConfig>`, so writing the block IS the opt-in. This one is
+/// not optional at the type level, so an absent section would otherwise mean
+/// "on".
 fn default_enabled() -> bool {
-    true
+    false
 }
 
 fn default_base_url() -> String {

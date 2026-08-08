@@ -2079,11 +2079,13 @@ thinking_loop_timeout_secs = 600 # kill a stream that runs this long with zero t
                                  # let reasoning_token_budget do the real work. 0 disables.
 
 # ── Provider registry ─────────────────────────────────────────────────────────
-# Optional discovery service that can add providers automatically. Enabled by
-# default, so if no registry is running the lookups simply fail and nothing
-# else is affected. Set enabled = false to switch it off outright.
+# Optional discovery service that can add providers automatically. Opt-in: the
+# whole section defaults to disabled, so leaving it out changes nothing.
+# The update loop is not wired into startup yet, so these values are inert
+# today even when enabled; they exist so the integration can be turned on
+# without a config migration later.
 [provider_registry]
-enabled = true                   # default true
+enabled = false                  # default false
 base_url = "http://localhost:8080"
 auto_update = true               # refresh providers on startup
 update_interval_seconds = 3600   # refresh cadence; 0 = startup only

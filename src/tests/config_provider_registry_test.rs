@@ -4,7 +4,8 @@ use tokio;
 #[test]
 fn test_default_config() {
     let config = ProviderRegistryConfig::default();
-    assert!(config.enabled);
+    // Opt-in (#972): leaving the section out must not enable an integration.
+    assert!(!config.enabled);
     assert_eq!(config.base_url, "http://localhost:8080");
     assert!(config.auto_update);
     assert_eq!(config.update_interval_seconds, 3600);

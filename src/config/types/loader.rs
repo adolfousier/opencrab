@@ -876,7 +876,9 @@ impl Config {
 
         // provider registry options
         if let Ok(enabled) = std::env::var("OPENCRABS_PROVIDER_REGISTRY_ENABLED") {
-            config.provider_registry.enabled = enabled.parse().unwrap_or(true);
+            // Unparseable means off, not on (#972): an opt-in integration must
+            // not switch itself on because someone typo'd the env var.
+            config.provider_registry.enabled = enabled.parse().unwrap_or(false);
         }
 
         if let Ok(base_url) = std::env::var("OPENCRABS_PROVIDER_REGISTRY_URL") {

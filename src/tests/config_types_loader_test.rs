@@ -7,7 +7,9 @@ use tempfile::NamedTempFile;
 #[test]
 fn test_default_config() {
     let config = Config::default();
-    assert!(config.provider_registry.enabled);
+    // Opt-in (#972): a default config must not present an enabled integration
+    // the user never asked for.
+    assert!(!config.provider_registry.enabled);
     assert_eq!(config.logging.level, "info");
     assert!(!config.debug.debug_lsp);
     assert!(!config.debug.profiling);
@@ -29,8 +31,15 @@ fn test_config_validation_invalid_log_level() {
 #[test]
 fn test_config_validation_empty_provider_registry_url() {
     let mut config = Config::default();
+    // The URL only has to be present when the registry is actually on, and it
+    // is off by default now (#972), so enable it to test the invariant.
+    config.provider_registry.enabled = true;
     config.provider_registry.base_url = String::new();
     assert!(config.validate().is_err());
+
+    // Disabled, an empty URL is simply unused and must not fail validation.
+    config.provider_registry.enabled = false;
+    assert!(config.validate().is_ok());
 }
 
 #[test]
