@@ -93,7 +93,14 @@ async fn test_update_message_usage() {
         .unwrap();
 
     message_service
-        .update_message_usage(message.id, 100, 0.05, None, None, None)
+        .update_message_usage(
+            message.id,
+            crate::services::message::MessageUsage {
+                token_count: 100,
+                cost: 0.05,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
 
@@ -250,7 +257,14 @@ async fn test_calculate_totals() {
         .await
         .unwrap();
     message_service
-        .update_message_usage(msg1.id, 100, 0.05, None, None, None)
+        .update_message_usage(
+            msg1.id,
+            crate::services::message::MessageUsage {
+                token_count: 100,
+                cost: 0.05,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
 
@@ -259,7 +273,14 @@ async fn test_calculate_totals() {
         .await
         .unwrap();
     message_service
-        .update_message_usage(msg2.id, 200, 0.10, None, None, None)
+        .update_message_usage(
+            msg2.id,
+            crate::services::message::MessageUsage {
+                token_count: 200,
+                cost: 0.10,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
 

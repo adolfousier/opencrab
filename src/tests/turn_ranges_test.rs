@@ -19,6 +19,7 @@ fn msg(role: &str, content: &str) -> DisplayMessage {
         expanded: false,
         expanded_full: false,
         tool_group: None,
+        duration_secs: None,
     }
 }
 

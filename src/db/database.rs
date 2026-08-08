@@ -140,6 +140,9 @@ pub(crate) fn build_migrations() -> Migrations<'static> {
         M::up(include_str!(
             "../migrations/20260731000001_add_analytics_events.sql"
         )),
+        M::up(include_str!(
+            "../migrations/20260808000001_add_message_duration.sql"
+        )),
     ])
 }
 
@@ -347,7 +350,7 @@ impl Database {
     }
 
     /// Total number of migrations defined below — keep in sync when adding new ones.
-    pub const MIGRATION_COUNT: usize = 33;
+    pub const MIGRATION_COUNT: usize = 34;
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {

@@ -205,6 +205,7 @@ fn push_message_routes_to_pending_messages_for_background() {
         expanded: false,
         expanded_full: false,
         tool_group: None,
+        duration_secs: None,
     };
     {
         let mut routing = SessionStateMut::Background(&mut bg);
@@ -239,6 +240,7 @@ fn last_message_mut_returns_latest_pending_for_background() {
                 expanded: false,
                 expanded_full: false,
                 tool_group: None,
+                duration_secs: None,
             });
         }
         let last = routing
@@ -275,6 +277,7 @@ fn clear_turn_state_preserves_pending_messages() {
             expanded: false,
             expanded_full: false,
             tool_group: None,
+            duration_secs: None,
         });
         routing.append_streaming_chunk("in flight");
         routing.set_processing(true);

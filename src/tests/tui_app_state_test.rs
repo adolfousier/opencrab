@@ -17,6 +17,7 @@ fn test_display_message_from_db_message() {
         cache_creation_tokens: None,
         cache_read_tokens: None,
         thinking: None,
+        duration_secs: None,
     };
 
     let display_msg: DisplayMessage = msg.into();
@@ -40,6 +41,7 @@ fn test_display_message_thinking_from_db() {
         cache_creation_tokens: None,
         cache_read_tokens: None,
         thinking: Some("I need to analyze this carefully...".to_string()),
+        duration_secs: None,
     };
 
     let display_msg: DisplayMessage = msg.into();

@@ -8,6 +8,23 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use uuid::Uuid;
 
+/// Everything recorded on an assistant row once its turn ends.
+///
+/// Grouped rather than passed as six positional arguments: the list had grown
+/// past the point where a caller could get the order right by reading the call
+/// site, and `duration_secs` (#964) would have been the eighth.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MessageUsage {
+    pub token_count: i64,
+    pub cost: f64,
+    /// Server-reported prompt tokens for the request that produced the row.
+    pub input_tokens: Option<i64>,
+    pub cache_creation_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    /// Wall-clock seconds the turn took, from a monotonic clock (#964).
+    pub duration_secs: Option<i64>,
+}
+
 /// Service for managing messages
 #[derive(Clone)]
 pub struct MessageService {
@@ -45,6 +62,7 @@ impl MessageService {
             cache_creation_tokens: None,
             cache_read_tokens: None,
             thinking: None,
+            duration_secs: None,
         };
 
         repo.create(&message)
@@ -96,18 +114,21 @@ impl MessageService {
     /// `input_tokens` is the server-reported prompt token count for the
     /// request that produced this assistant response. It overrides the
     /// prior value if any (always the latest server reading).
-    pub async fn update_message_usage(
-        &self,
-        id: Uuid,
-        token_count: i64,
-        cost: f64,
-        input_tokens: Option<i64>,
-        cache_creation_tokens: Option<i64>,
-        cache_read_tokens: Option<i64>,
-    ) -> Result<()> {
+    pub async fn update_message_usage(&self, id: Uuid, usage: MessageUsage) -> Result<()> {
+        let MessageUsage {
+            token_count,
+            cost,
+            input_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+            duration_secs,
+        } = usage;
         let mut message = self.get_message_required(id).await?;
         message.token_count = Some(token_count);
         message.cost = Some(cost);
+        if duration_secs.is_some() {
+            message.duration_secs = duration_secs;
+        }
         if input_tokens.is_some() {
             message.input_tokens = input_tokens;
         }

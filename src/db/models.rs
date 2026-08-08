@@ -230,6 +230,13 @@ pub struct Message {
     /// thinking blocks in the TUI. CLI providers store reasoning inline
     /// inside `content` as `<!-- reasoning -->` markers instead.
     pub thinking: Option<String>,
+    /// Wall-clock seconds the turn took, measured from a monotonic clock and
+    /// stamped at turn end (#964). Populated only on assistant rows.
+    ///
+    /// Stored rather than re-derived: the assistant row is created at turn
+    /// START and updated in place, so its `created_at` matches the triggering
+    /// user message and any timestamp subtraction collapses to zero.
+    pub duration_secs: Option<i64>,
 }
 
 impl Message {
@@ -247,6 +254,8 @@ impl Message {
             cache_creation_tokens: row.get("cache_creation_tokens").ok(),
             cache_read_tokens: row.get("cache_read_tokens").ok(),
             thinking: row.get("thinking").ok().flatten(),
+            // `.ok()` so rows from before the column existed still load.
+            duration_secs: row.get("duration_secs").ok().flatten(),
         })
     }
 
@@ -265,6 +274,7 @@ impl Message {
             cache_creation_tokens: None,
             cache_read_tokens: None,
             thinking: None,
+            duration_secs: None,
         }
     }
 }

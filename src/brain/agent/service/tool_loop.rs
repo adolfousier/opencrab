@@ -1198,6 +1198,12 @@ impl AgentService {
         // directive and no completion text (#439): the reaction is an ack
         // for no-op turns, never a substitute for reporting executed work.
         let mut reaction_only_nudge_used: bool = false;
+        // Wall clock for the turn, stamped onto the assistant row at the end
+        // (#964). Deliberately wall time, not `total_streaming_active_secs`:
+        // the header answers "how long did this take" and tool execution and
+        // approval waits are part of that answer. Monotonic, so it is immune
+        // to clock adjustments mid-turn.
+        let turn_started_at = std::time::Instant::now();
         let mut total_input_tokens = 0u32;
         let mut total_output_tokens = 0u32;
         let mut total_cache_creation = 0u32;
@@ -6902,11 +6908,14 @@ impl AgentService {
         message_service
             .update_message_usage(
                 assistant_db_msg.id,
-                total_tokens as i64,
-                cost,
-                Some(stored_input_tokens),
-                Some(total_cache_creation as i64),
-                Some(total_cache_read as i64),
+                crate::services::message::MessageUsage {
+                    token_count: total_tokens as i64,
+                    cost,
+                    input_tokens: Some(stored_input_tokens),
+                    cache_creation_tokens: Some(total_cache_creation as i64),
+                    cache_read_tokens: Some(total_cache_read as i64),
+                    duration_secs: Some(turn_started_at.elapsed().as_secs() as i64),
+                },
             )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;

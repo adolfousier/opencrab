@@ -1,0 +1,13 @@
+-- Wall-clock duration of the turn that produced this assistant message (#964).
+--
+-- The TUI header used to re-derive this by subtracting the turn's first and
+-- last message timestamps. That collapses to zero for 94.5% of turns, because
+-- the assistant row is created at turn START and updated in place, so it
+-- carries the same created_at as the user message that triggered it. The
+-- duration therefore vanished the moment a turn settled.
+--
+-- Written at turn end alongside the token and cost fields, so it survives a
+-- reload instead of being recomputed from timestamps that cannot express it.
+-- NULL for rows written before this column existed; readers fall back to the
+-- old subtraction for those.
+ALTER TABLE messages ADD COLUMN duration_secs INTEGER;

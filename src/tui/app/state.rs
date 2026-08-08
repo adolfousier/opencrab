@@ -425,6 +425,10 @@ pub struct DisplayMessage {
     pub expanded_full: bool,
     /// Grouped tool calls (for role == "tool_group")
     pub tool_group: Option<ToolCallGroup>,
+    /// Wall-clock seconds the turn took, stamped at turn end and persisted
+    /// (#964). Only ever set on assistant rows. `None` on rows written before
+    /// the column existed, which fall back to the timestamp subtraction.
+    pub duration_secs: Option<i64>,
 }
 
 impl DisplayMessage {
@@ -474,6 +478,7 @@ impl From<Message> for DisplayMessage {
             expanded: false,
             expanded_full: false,
             tool_group: None,
+            duration_secs: msg.duration_secs,
         }
     }
 }
@@ -2185,6 +2190,7 @@ impl App {
                     expanded: false,
                     expanded_full: false,
                     tool_group: Some(group),
+                    duration_secs: None,
                 };
 
                 // Raw vs stripped accounting for the "eating intermediate
@@ -2275,6 +2281,7 @@ impl App {
                             expanded: false,
                             expanded_full: false,
                             tool_group: None,
+                            duration_secs: None,
                         });
                         // DB persistence happens in tool_loop's per-iteration
                         // append_content with `<!-- reasoning -->` markers — this
@@ -2310,6 +2317,7 @@ impl App {
                             expanded: false,
                             expanded_full: false,
                             tool_group: None,
+                            duration_secs: None,
                         });
                         if let Some(group) = state.take_active_tool_group() {
                             state.push_message(make_tool_group(group));
@@ -2366,6 +2374,7 @@ impl App {
                             expanded: false,
                             expanded_full: false,
                             tool_group: Some(group),
+                            duration_secs: None,
                         });
                     }
 
@@ -2382,6 +2391,7 @@ impl App {
                         expanded: false,
                         expanded_full: false,
                         tool_group: None,
+                        duration_secs: None,
                     });
                 }
 
@@ -2504,6 +2514,7 @@ impl App {
                             expanded: false,
                             expanded_full: false,
                             tool_group: Some(group),
+                            duration_secs: None,
                         });
                     }
                 }
@@ -2536,6 +2547,7 @@ impl App {
                         expanded: false,
                         expanded_full: false,
                         tool_group: None,
+                        duration_secs: None,
                     });
                     self.build_msg_idx = Some(self.messages.len() - 1);
                 }
@@ -3584,6 +3596,7 @@ impl App {
                 expanded: false,
                 expanded_full: false,
                 tool_group: Some(group),
+                duration_secs: None,
             });
         }
         // Persist the error as a permanent chat bubble so the user
@@ -3613,6 +3626,7 @@ impl App {
                 expanded: false,
                 expanded_full: false,
                 tool_group: None,
+                duration_secs: None,
             });
         }
         self.error_message = Some(error);
@@ -3749,6 +3763,7 @@ impl App {
                 expanded: false,
                 expanded_full: false,
                 tool_group: None,
+                duration_secs: None,
             });
         }
 
@@ -3777,6 +3792,7 @@ impl App {
             expanded: false,
             expanded_full: false,
             tool_group: None,
+            duration_secs: None,
         });
         // Auto-collapse all tool groups so the approval dialog is immediately visible
         if let Some(ref mut group) = self.active_tool_group {

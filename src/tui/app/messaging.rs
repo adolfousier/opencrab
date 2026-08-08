@@ -498,6 +498,7 @@ impl App {
             expanded: false,
             expanded_full: false,
             tool_group: None,
+            duration_secs: None,
         }
     }
 
@@ -779,6 +780,7 @@ impl App {
                     expanded: false,
                     expanded_full: false,
                     tool_group: None,
+                    duration_secs: None,
                 });
                 self.scroll_offset = 0;
                 true
@@ -1609,6 +1611,7 @@ impl App {
                 expanded: false,
                 expanded_full: false,
                 tool_group: None,
+                duration_secs: None,
             });
             *first_text = false;
         }
@@ -1777,6 +1780,7 @@ impl App {
                         calls,
                         expanded: false,
                     }),
+                    duration_secs: None,
                 });
             }
             remaining = &after_marker[close_end..];
@@ -1811,6 +1815,7 @@ impl App {
                 expanded: false,
                 expanded_full: false,
                 tool_group: None,
+                duration_secs: None,
             });
         }
 
@@ -2237,6 +2242,7 @@ impl App {
             expanded: false,
             expanded_full: false,
             tool_group: None,
+            duration_secs: None,
         });
         // Only scroll to bottom if user hasn't scrolled up manually
         if self.auto_scroll {
@@ -2439,6 +2445,7 @@ impl App {
                     expanded: false,
                     expanded_full: false,
                     tool_group: None,
+                    duration_secs: None,
                 };
                 self.messages.push(user_msg);
             }
@@ -2720,6 +2727,7 @@ impl App {
                 expanded: false,
                 expanded_full: false,
                 tool_group: Some(group),
+                duration_secs: None,
             });
         }
 
@@ -2780,6 +2788,12 @@ impl App {
                 }
                 last_assistant.token_count = Some(response.usage.output_tokens as i64);
                 last_assistant.cost = Some(response.cost);
+                // Stamp the elapsed time before `processing_started_at` is
+                // cleared below (#964). Without this the settled header has
+                // nothing to show until the session is reloaded from the DB.
+                if let Some(started) = self.processing_started_at {
+                    last_assistant.duration_secs = Some(started.elapsed().as_secs() as i64);
+                }
                 if reasoning_details.is_some() {
                     last_assistant.details = reasoning_details.clone();
                 }
@@ -2803,6 +2817,9 @@ impl App {
                     expanded: false,
                     expanded_full: false,
                     tool_group: None,
+                    duration_secs: self
+                        .processing_started_at
+                        .map(|t| t.elapsed().as_secs() as i64),
                 });
             }
         } else {
@@ -2820,6 +2837,9 @@ impl App {
                 expanded: false,
                 expanded_full: false,
                 tool_group: None,
+                duration_secs: self
+                    .processing_started_at
+                    .map(|t| t.elapsed().as_secs() as i64),
             };
             self.messages.push(assistant_msg);
         }

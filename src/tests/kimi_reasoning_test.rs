@@ -37,6 +37,7 @@ fn assistant_db_row(content: &str, thinking: Option<&str>) -> DbMessage {
         cache_creation_tokens: None,
         cache_read_tokens: None,
         thinking: thinking.map(String::from),
+        duration_secs: None,
     }
 }
 
@@ -125,6 +126,7 @@ fn from_db_messages_skips_thinking_on_user_rows() {
         cache_creation_tokens: None,
         cache_read_tokens: None,
         thinking: Some("leaked reasoning".to_string()),
+        duration_secs: None,
     };
     let ctx = AgentContext::from_db_messages(session_id, vec![row], 200_000);
     assert_eq!(ctx.messages.len(), 1);

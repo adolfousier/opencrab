@@ -68,8 +68,9 @@ impl MessageRepository {
                 conn.execute(
                     "INSERT INTO messages (id, session_id, role, content, sequence,
                                          created_at, token_count, cost, input_tokens,
-                                         cache_creation_tokens, cache_read_tokens, thinking)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                                         cache_creation_tokens, cache_read_tokens, thinking,
+                                         duration_secs)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         m.id.to_string(),
                         m.session_id.to_string(),
@@ -83,6 +84,7 @@ impl MessageRepository {
                         m.cache_creation_tokens,
                         m.cache_read_tokens,
                         m.thinking,
+                        m.duration_secs,
                     ],
                 )?;
 
@@ -115,8 +117,9 @@ impl MessageRepository {
                 conn.execute(
                     "UPDATE messages
                      SET content = ?1, token_count = ?2, cost = ?3, input_tokens = ?4,
-                         cache_creation_tokens = ?5, cache_read_tokens = ?6, thinking = ?7
-                     WHERE id = ?8",
+                         cache_creation_tokens = ?5, cache_read_tokens = ?6, thinking = ?7,
+                         duration_secs = ?8
+                     WHERE id = ?9",
                     params![
                         m.content,
                         m.token_count,
@@ -125,6 +128,7 @@ impl MessageRepository {
                         m.cache_creation_tokens,
                         m.cache_read_tokens,
                         m.thinking,
+                        m.duration_secs,
                         m.id.to_string()
                     ],
                 )

@@ -1583,6 +1583,7 @@ impl App {
                                 expanded: false,
                                 expanded_full: false,
                                 tool_group: Some(group),
+                                duration_secs: None,
                             });
                         }
                         // Promote any in-progress streaming text + reasoning to
@@ -1623,6 +1624,7 @@ impl App {
                                 expanded: false,
                                 expanded_full: false,
                                 tool_group: None,
+                                duration_secs: None,
                             });
                         }
                         // Cancelled before the agent produced ANYTHING: pull the

@@ -35,6 +35,8 @@ impl AgentService {
         display_text: Option<String>,
         model: Option<String>,
     ) -> Result<AgentResponse> {
+        // Wall clock for the turn, stamped onto the assistant row below (#964).
+        let turn_started_at = std::time::Instant::now();
         // Prepare message context (common setup logic)
         let (_model_name, request, message_service, session_service) = self
             .prepare_message_context_with_display(session_id, user_message, display_text, model)
@@ -77,11 +79,14 @@ impl AgentService {
         message_service
             .update_message_usage(
                 assistant_db_msg.id,
-                total_tokens as i64,
-                cost,
-                Some(billable_input as i64),
-                Some(response.usage.cache_creation_tokens as i64),
-                Some(response.usage.cache_read_tokens as i64),
+                crate::services::message::MessageUsage {
+                    token_count: total_tokens as i64,
+                    cost,
+                    input_tokens: Some(billable_input as i64),
+                    cache_creation_tokens: Some(response.usage.cache_creation_tokens as i64),
+                    cache_read_tokens: Some(response.usage.cache_read_tokens as i64),
+                    duration_secs: Some(turn_started_at.elapsed().as_secs() as i64),
+                },
             )
             .await
             .map_err(|e| AgentError::Database(e.to_string()))?;

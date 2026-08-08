@@ -237,7 +237,14 @@ pub(crate) fn turn_summary(messages: &[DisplayMessage], turn: TurnRange) -> Turn
             s.has_error = true;
         }
     }
-    if let (Some(first), Some(last)) = (slice.first(), slice.last()) {
+    // Prefer the duration stamped at turn end (#964). The fallback below
+    // subtracts stored timestamps, which collapses to zero for ~94% of turns:
+    // the assistant row is created at turn START and updated in place, so it
+    // carries the same created_at as the user message that triggered it. That
+    // is why the duration used to vanish the instant a turn settled.
+    if let Some(secs) = slice.iter().rev().find_map(|m| m.duration_secs) {
+        s.duration_secs = secs.max(0);
+    } else if let (Some(first), Some(last)) = (slice.first(), slice.last()) {
         s.duration_secs = (last.timestamp - first.timestamp).num_seconds().max(0);
     }
     s

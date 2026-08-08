@@ -35,6 +35,7 @@ fn make_tool_group_msg(num_calls: usize) -> DisplayMessage {
             calls,
             expanded: false,
         }),
+        duration_secs: None,
     }
 }
 
@@ -53,6 +54,7 @@ fn make_thinking_only_msg() -> DisplayMessage {
         expanded: false,
         expanded_full: false,
         tool_group: None,
+        duration_secs: None,
     }
 }
 
@@ -71,6 +73,7 @@ fn make_assistant_msg(text: &str) -> DisplayMessage {
         expanded: false,
         expanded_full: false,
         tool_group: None,
+        duration_secs: None,
     }
 }
 

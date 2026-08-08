@@ -27,6 +27,7 @@ fn base_msg(role: &str) -> DisplayMessage {
         expanded: false,
         expanded_full: false,
         tool_group: None,
+        duration_secs: None,
     }
 }
 
