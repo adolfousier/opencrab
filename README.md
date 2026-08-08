@@ -2817,7 +2817,7 @@ default_model = "mimo-v2.5-pro"
 force_default = true                 # push this pair to ALL sessions on reload, not just new ones
 ```
 
-**Self-Improvement Provider and Model** — run RSI cycles on a dedicated provider+model pair, separate from your interactive chat. Set both under `[agent]` in `config.toml`; the model is paired with the provider exactly like `subagent_provider`/`subagent_model`. When `self_improvement_provider` is unset, RSI inherits your active provider; when `self_improvement_model` is unset, it uses that provider's default model.
+**Self-Improvement Provider and Model** — run RSI cycles on a dedicated provider+model pair, separate from your interactive chat. Set both under `[agent]` in `config.toml`; the model is paired with the provider exactly like `subagent_provider`/`subagent_model`. When `self_improvement_provider` is unset, RSI inherits your active provider; when `self_improvement_model` is unset, it uses that provider's default model. **Scope:** these two keys drive ONLY the built-in RSI engine. RSI scheduled as a cron job runs on the provider/model stored in the cron row itself (the `cron_manage` provider/model overrides), and `self_improvement_provider`/`self_improvement_model` are dormant there: changing them has no effect on cron-driven cycles.
 
 ```toml
 [agent]

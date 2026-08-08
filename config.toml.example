@@ -392,6 +392,9 @@ profile_id = ""
 # paired with the provider, same as subagent_provider/subagent_model.
 # Unset self_improvement_provider → inherit the active provider; unset
 # self_improvement_model → use that provider's default model.
+# Scope: these keys drive ONLY the built-in RSI engine. RSI scheduled as a
+# cron job runs on the provider/model stored in the cron row itself, and
+# these keys are dormant there.
 # self_improvement_provider = "zhipu"
 # self_improvement_model = "glm-5.1"
 
