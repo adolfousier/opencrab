@@ -40,7 +40,8 @@ fn tools_ran_nudge_steers_to_writing_the_answer() {
 
 #[test]
 fn stub_carries_reasoning_as_thinking_block() {
-    let msg = assistant_reasoning_stub(Some("The user wants the pricing table. I have the data."));
+    let msg = assistant_reasoning_stub(Some("The user wants the pricing table. I have the data."))
+        .expect("reasoning present, so a stub must be produced");
     assert_eq!(msg.role, Role::Assistant);
     match msg.content.first() {
         Some(ContentBlock::Thinking { thinking, .. }) => {
@@ -51,15 +52,63 @@ fn stub_carries_reasoning_as_thinking_block() {
 }
 
 #[test]
-fn stub_is_empty_when_no_reasoning() {
-    // No reasoning to preserve -> a bare empty assistant message.
+fn nothing_is_appended_when_there_is_no_reasoning() {
+    // Was a bare empty assistant message. Harmless while only one nudge could
+    // fire; destructive once the escalation reached 5/5, because five
+    // `[empty assistant] [nudge]` pairs accumulated on the context and that
+    // same context was handed to every fallback, so all of them returned
+    // nothing (#979). With no reasoning there is nothing to preserve, so the
+    // caller must append no message at all.
     for reasoning in [None, Some(""), Some("   \n  ")] {
-        let msg = assistant_reasoning_stub(reasoning);
         assert!(
-            !msg.content
-                .iter()
-                .any(|b| matches!(b, ContentBlock::Thinking { .. })),
-            "no Thinking block when reasoning is absent/blank: {reasoning:?}"
+            assistant_reasoning_stub(reasoning).is_none(),
+            "must append nothing when reasoning is absent/blank: {reasoning:?}"
         );
     }
+}
+
+// ── Fallback context (#979) ──────────────────────────────────────────────────
+
+use crate::brain::agent::service::helpers::fallback_messages;
+use crate::brain::provider::Message;
+
+fn convo(n: usize) -> Vec<Message> {
+    (0..n).map(|i| Message::user(format!("m{i}"))).collect()
+}
+
+#[test]
+fn a_fallback_gets_the_conversation_from_before_the_nudging() {
+    // 3 real messages, then 4 appended by the nudge escalation.
+    let messages = convo(7);
+    let trimmed = fallback_messages(Some(3), &messages);
+    assert_eq!(trimmed.len(), 3, "scaffolding must be dropped");
+}
+
+#[test]
+fn no_boundary_means_no_trimming() {
+    // No nudge ever fired, so there is nothing to strip and the full
+    // conversation must survive.
+    let messages = convo(5);
+    assert_eq!(fallback_messages(None, &messages).len(), 5);
+}
+
+#[test]
+fn an_out_of_range_boundary_never_loses_history() {
+    // Defensive: a stale or impossible marker must not truncate to garbage.
+    let messages = convo(4);
+    assert_eq!(fallback_messages(Some(99), &messages).len(), 4);
+}
+
+#[test]
+fn a_boundary_at_the_end_is_a_no_op() {
+    let messages = convo(4);
+    assert_eq!(fallback_messages(Some(4), &messages).len(), 4);
+}
+
+#[test]
+fn a_zero_boundary_yields_an_empty_conversation() {
+    // Only reachable if nudging began before any message existed, which is not
+    // a real state, but the arithmetic must still be exact rather than clamped.
+    let messages = convo(3);
+    assert!(fallback_messages(Some(0), &messages).is_empty());
 }

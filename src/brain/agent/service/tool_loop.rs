@@ -1308,6 +1308,10 @@ impl AgentService {
         // to emit visible text we walk the fallback chain (sticky swap) so
         // the turn never silently disappears.
         let mut empty_reasoning_retries: u32 = 0;
+        // Message count before the first empty-answer nudge, so the fallback
+        // chain retries against the user's real request rather than the nudge
+        // scaffolding that already failed on the primary (#979).
+        let mut pre_nudge_len: Option<usize> = None;
         const EMPTY_REASONING_MAX_NUDGES: u32 = 5;
         // Local reasoning models (notably Qwen3.6-35B on MLX) periodically
         // emit an EOS token mid-sentence — the response looks complete from
@@ -4974,10 +4978,23 @@ impl AgentService {
                         // scratch on every nudge. Dropping it (an empty assistant
                         // message) made qwen re-derive ~20k tokens per nudge, up to
                         // 5 nudges, i.e. the 200s runaway reasoning loop (#692).
-                        // Empty only when there is genuinely no reasoning to keep.
-                        context.add_message(super::helpers::assistant_reasoning_stub(
-                            reasoning_text.as_deref(),
-                        ));
+                        // Nothing is appended when there is no reasoning to keep:
+                        // an empty assistant message carries no information and
+                        // corrupts the conversation. That is what left five
+                        // `[empty assistant] [nudge]` pairs on the context and
+                        // made every fallback answer nothing (#979).
+                        //
+                        // Remember where the conversation stood BEFORE the first
+                        // nudge so a fallback gets the user's actual request
+                        // instead of the scaffolding. Captured once.
+                        if pre_nudge_len.is_none() {
+                            pre_nudge_len = Some(context.messages.len());
+                        }
+                        if let Some(stub) =
+                            super::helpers::assistant_reasoning_stub(reasoning_text.as_deref())
+                        {
+                            context.add_message(stub);
+                        }
                         context.add_message(Message::user(nudge.to_string()));
                         continue;
                     }
@@ -5057,9 +5074,14 @@ impl AgentService {
                                 );
                             }
 
-                            let mut fb_req =
-                                LLMRequest::new(fb_model.clone(), context.messages.clone())
-                                    .with_max_tokens(self.max_tokens);
+                            // A fallback is a fresh attempt at what the user asked, not a
+                            // continuation of the failed nudge dialogue. Handing it the
+                            // scaffolding meant every provider answered a conversation full
+                            // of "you did not answer" turns (#979).
+                            let fb_messages =
+                                super::helpers::fallback_messages(pre_nudge_len, &context.messages);
+                            let mut fb_req = LLMRequest::new(fb_model.clone(), fb_messages)
+                                .with_max_tokens(self.max_tokens);
                             fb_req.working_directory = Some(
                                 self.get_working_directory_for_session(session_id)
                                     .to_string_lossy()

@@ -111,17 +111,45 @@ pub(crate) fn empty_reasoning_nudge(no_tools_yet: bool, attempt: u32) -> &'stati
 /// reasoning_content in history — so carry it as a leading `Thinking` block (the
 /// encoder emits it as `reasoning_content`). Dropping it (an empty message) makes
 /// the model re-reason from scratch on every nudge, i.e. the 200s runaway loop.
-/// Empty only when there is genuinely no reasoning to preserve.
-pub(crate) fn assistant_reasoning_stub(reasoning: Option<&str>) -> Message {
+/// Returns `None` when there is no reasoning to preserve: the caller must then
+/// append NOTHING. It previously returned an empty assistant message in that
+/// case, which was harmless while only one nudge could ever fire, and actively
+/// destructive once the escalation reached 5/5 (#979). Five `[empty assistant]
+/// [nudge]` pairs accumulated on the context, and that same context was handed
+/// to every fallback provider, so all of them answered a conversation full of
+/// empty assistant turns and returned nothing.
+/// Conversation to hand a fallback provider after the nudges failed (#979).
+///
+/// A fallback is a fresh attempt at what the user asked, not a continuation of
+/// the dialogue that just failed. `pre_nudge_len` is where the conversation
+/// stood before the first nudge, so everything after it is scaffolding: "you
+/// reasoned without answering", repeated up to five times. Sending that made
+/// every fallback answer a conversation full of failure notices and return
+/// nothing.
+///
+/// Falls back to the full list when no boundary was recorded (no nudge ever
+/// fired) or when it is out of range, so this can only ever trim scaffolding,
+/// never lose real history.
+pub(crate) fn fallback_messages(
+    pre_nudge_len: Option<usize>,
+    messages: &[Message],
+) -> Vec<Message> {
+    match pre_nudge_len {
+        Some(n) if n <= messages.len() => messages[..n].to_vec(),
+        _ => messages.to_vec(),
+    }
+}
+
+pub(crate) fn assistant_reasoning_stub(reasoning: Option<&str>) -> Option<Message> {
     match reasoning {
-        Some(r) if !r.trim().is_empty() => Message {
+        Some(r) if !r.trim().is_empty() => Some(Message {
             role: crate::brain::provider::Role::Assistant,
             content: vec![ContentBlock::Thinking {
                 thinking: r.to_string(),
                 signature: None,
             }],
-        },
-        _ => Message::assistant(String::new()),
+        }),
+        _ => None,
     }
 }
 
