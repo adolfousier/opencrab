@@ -28,6 +28,12 @@ const RSI_MAX_TOOL_ITERATIONS: usize = 10;
 /// At 1 hour per cycle, 24 cycles = once per day.
 const DEDUP_SCAN_EVERY_N_CYCLES: u64 = 24;
 
+/// Consecutive converged agent cycles after which agent runs pause (#977).
+/// Two in a row, not one: a single oddly-phrased summary must not pause
+/// the engine, but the live transcript showed the model saying "nothing
+/// new" 46 times in 9 days, so real convergence always repeats.
+const RSI_CONVERGENCE_PAUSE_AFTER: u64 = 2;
+
 /// Sentinel dimensions that fire as "failures" by design (self-heal
 /// detectors, regression probes). Excluded from opportunity surfacing so
 /// they don't show up as noise like "phantom_intent_loop has 100% failure".
@@ -81,6 +87,38 @@ pub(crate) fn hash_opportunities(keys: &[String]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(keys.join("\n---\n").as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Whether an RSI agent summary reports "nothing new to do" or echoes a
+/// user stop instruction (#977). Both mean the next cycle would burn a
+/// paid turn to say the same thing. Consecutive occurrences pause agent
+/// runs until the finding set actually changes (see the loop below); the
+/// engine, digest and dedup scan keep running.
+///
+/// Markers come from the live transcript: "Same data. Stopping." and
+/// "Converged. No improvements applied." alternated with "Retired. No
+/// further RSI action taken" 46 times over 9 days, each a full paid
+/// turn. Matching is lowercase-contains, deliberately loose — the model
+/// rephrases, the meaning doesn't change.
+pub(crate) fn summary_signals_convergence(summary: &str) -> bool {
+    let s = summary.to_lowercase();
+    const MARKERS: &[&str] = &[
+        // Model self-reports of "nothing to do".
+        "same data",
+        "no improvements applied",
+        "no improvements were applied",
+        "nothing to improve",
+        "nothing new to improve",
+        "converged",
+        "retired",
+        "no further rsi action",
+        // User stop instructions echoed back by the agent.
+        "stop rsi",
+        "stopping rsi",
+        "stopped rsi",
+        "stand down",
+    ];
+    MARKERS.iter().any(|m| s.contains(m))
 }
 
 /// Write the startup digest to `~/.opencrabs/rsi/digest.md`.
@@ -923,6 +961,19 @@ pub fn spawn_rsi_engine(
             .ok()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
+        // Convergence-pause state (#977): consecutive "nothing new" agent
+        // summaries increment the streak; at RSI_CONVERGENCE_PAUSE_AFTER
+        // the `rsi/paused` marker stops agent runs until the finding set
+        // changes. Both persist across restarts — without that, every
+        // restart re-paid for the same converged cycles. Delete
+        // `rsi/paused` to unpause manually.
+        let convergence_streak_path =
+            crate::config::opencrabs_home().join("rsi/convergence_streak");
+        let paused_path = crate::config::opencrabs_home().join("rsi/paused");
+        let mut convergence_streak: u64 = std::fs::read_to_string(&convergence_streak_path)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
         loop {
             let delay = if first_iteration {
                 first_iteration = false;
@@ -1306,16 +1357,31 @@ pub fn spawn_rsi_engine(
                         opportunities.len(),
                         &current_hash[..12.min(current_hash.len())]
                     );
-                    let _ = notification_tx.send(RsiNotification::AgentCycleComplete {
-                        summary: format!(
-                            "Converged — {} opportunity/opportunities identical to previous cycle; \
-                             no agent run.",
-                            opportunities.len()
-                        ),
-                    });
+                    // While paused (#977), stay fully silent: the hourly
+                    // "Converged" notification is itself the noise the
+                    // pause exists to stop.
+                    if !paused_path.exists() {
+                        let _ = notification_tx.send(RsiNotification::AgentCycleComplete {
+                            summary: format!(
+                                "Converged — {} opportunity/opportunities identical to previous cycle; \
+                                 no agent run.",
+                                opportunities.len()
+                            ),
+                        });
+                    }
                 }
                 // empty + duplicate = baseline match, stay silent
             } else {
+                // Finding set changed — a new finding appeared or one
+                // cleared. This is also the unpause trigger (#977):
+                // convergence pause releases on genuinely new findings,
+                // never on a timer.
+                if paused_path.exists() {
+                    let _ = std::fs::remove_file(&paused_path);
+                    convergence_streak = 0;
+                    let _ = std::fs::write(&convergence_streak_path, "0");
+                    tracing::info!("RSI: finding set changed — unpausing autonomous agent");
+                }
                 // Surface every opportunity to the TUI / channels, then
                 // spawn the autonomous improvement agent.
                 for opp in &opportunities {
@@ -1336,8 +1402,44 @@ pub fn spawn_rsi_engine(
                         Ok(summary) => {
                             let short: String = summary.chars().take(200).collect();
                             tracing::info!("RSI agent completed: {short}");
-                            let _ = notification_tx
-                                .send(RsiNotification::AgentCycleComplete { summary });
+                            let _ = notification_tx.send(RsiNotification::AgentCycleComplete {
+                                summary: summary.clone(),
+                            });
+
+                            // Convergence pause (#977): summaries that say
+                            // "nothing new" (or echo a user stop) repeat
+                            // until the finding set changes. Count them;
+                            // at threshold, stop paying for agent runs.
+                            if summary_signals_convergence(&summary) {
+                                convergence_streak += 1;
+                                let _ = std::fs::write(
+                                    &convergence_streak_path,
+                                    convergence_streak.to_string(),
+                                );
+                                if convergence_streak >= RSI_CONVERGENCE_PAUSE_AFTER
+                                    && !paused_path.exists()
+                                {
+                                    let _ = std::fs::write(
+                                        &paused_path,
+                                        convergence_streak.to_string(),
+                                    );
+                                    tracing::info!(
+                                        "RSI: {convergence_streak} consecutive converged cycles \
+                                         — pausing agent runs until the finding set changes"
+                                    );
+                                    let _ = notification_tx
+                                        .send(RsiNotification::AgentCycleComplete {
+                                            summary: format!(
+                                                "RSI paused after {convergence_streak} consecutive \
+                                                 converged cycles; resumes automatically when a new \
+                                                 finding appears."
+                                            ),
+                                        });
+                                }
+                            } else {
+                                convergence_streak = 0;
+                                let _ = std::fs::write(&convergence_streak_path, "0");
+                            }
                         }
                         Err(e) => {
                             tracing::warn!("RSI agent cycle failed: {e}");

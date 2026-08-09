@@ -1573,3 +1573,57 @@ mod rsi_prompt_text {
         );
     }
 }
+
+// --- Convergence pause detection (#977) ---
+// The model told a live install "nothing new" 46 times in 9 days
+// ("Same data. Stopping.", "Converged. No improvements applied.",
+// "Retired. No further RSI action taken"), each a paid turn.
+// summary_signals_convergence recognises those self-reports plus the
+// agent echoing a user stop instruction, so the loop can pause agent
+// runs after consecutive convergence.
+#[cfg(test)]
+mod convergence_detection {
+    use crate::brain::rsi::summary_signals_convergence;
+
+    #[test]
+    fn retired_self_report_is_convergence() {
+        assert!(summary_signals_convergence(
+            "Retired. No further RSI action taken."
+        ));
+    }
+
+    #[test]
+    fn same_data_stopping_is_convergence() {
+        assert!(summary_signals_convergence("Same data. Stopping."));
+    }
+
+    #[test]
+    fn converged_no_improvements_is_convergence() {
+        assert!(summary_signals_convergence(
+            "Converged. No improvements applied."
+        ));
+    }
+
+    #[test]
+    fn user_stop_echo_is_convergence() {
+        assert!(summary_signals_convergence(
+            "Understood, stopping RSI as you asked. No further cycles will run."
+        ));
+    }
+
+    #[test]
+    fn a_productive_cycle_is_not_convergence() {
+        assert!(!summary_signals_convergence(
+            "Applied two improvements: tightened the hashline_edit retry path and \
+             filed a proposal for the cron timezone bug."
+        ));
+    }
+
+    #[test]
+    fn an_error_report_is_not_convergence() {
+        // Provider failures are transient; they must not feed the pause.
+        assert!(!summary_signals_convergence(
+            "Could not finish: provider returned 429 rate limit."
+        ));
+    }
+}
