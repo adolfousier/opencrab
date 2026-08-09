@@ -15,8 +15,25 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// Interval between RSI cycles (analyze + improve).
+/// Base interval between RSI cycles (analyze + improve) — the first rung
+/// of the backoff ladder (#977).
 const RSI_CYCLE_INTERVAL_SECS: u64 = 3600; // 1 hour
+
+/// Backoff ladder for the cycle interval (#977): each consecutive agent
+/// run that applied nothing pushes the next cycle one rung out —
+/// 1h -> 4h -> 12h -> 24h. The moment an improvement actually applies,
+/// the streak resets to the first rung (see the loop below). The fixed
+/// hourly interval was part of the burn: an install with zero
+/// improvements since 2026-07-30 still got polled every hour.
+const RSI_BACKOFF_LADDER_SECS: &[u64] = &[RSI_CYCLE_INTERVAL_SECS, 4 * 3600, 12 * 3600, 24 * 3600];
+
+/// Cycle interval for a given zero-improvement streak (#977). Streak 0 =
+/// base 1h; each consecutive agent run that applies nothing climbs one
+/// rung; capped at the last rung (24h).
+pub(crate) fn rsi_interval_for_streak(streak: u64) -> u64 {
+    let idx = (streak as usize).min(RSI_BACKOFF_LADDER_SECS.len() - 1);
+    RSI_BACKOFF_LADDER_SECS[idx]
+}
 
 /// Minimum feedback entries before RSI attempts improvements.
 const RSI_MIN_ENTRIES: i64 = 50;
@@ -846,7 +863,9 @@ async fn run_rsi_agent_cycle(
 /// Spawn the background RSI engine.
 ///
 /// - Writes startup digest immediately
-/// - Every `RSI_CYCLE_INTERVAL_SECS`, checks if there are actionable patterns
+/// - Checks for actionable patterns on the backoff-ladder interval
+///   (`rsi_interval_for_streak`: 1h base, out to 24h on consecutive
+///   zero-improvement agent runs, reset by an applied improvement)
 /// - When opportunities are found, spawns an autonomous agent to apply improvements
 /// - Emits notifications to TUI via the provided channel
 pub fn spawn_rsi_engine(
@@ -918,22 +937,39 @@ pub fn spawn_rsi_engine(
         // would just write "Converged. No improvements applied." again).
         let opportunities_hash_path =
             crate::config::opencrabs_home().join("rsi/last_opportunities_hash");
+        // Zero-improvement backoff state (#977): consecutive agent runs that
+        // applied nothing push the cycle interval out along
+        // RSI_BACKOFF_LADDER_SECS. Persisted across restarts — without the
+        // file, every restart reset the ladder and a converged install went
+        // back to hourly polling.
+        let zero_improvement_streak_path =
+            crate::config::opencrabs_home().join("rsi/zero_improvement_streak");
+        let mut zero_improvement_streak: u64 =
+            std::fs::read_to_string(&zero_improvement_streak_path)
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0);
+        // Append-only ledger of applied improvements; growth across an agent
+        // run is the mechanical "a real improvement happened" signal that
+        // resets the ladder (no text matching on summaries).
+        let improvements_ledger_path = crate::config::opencrabs_home().join("rsi/improvements.md");
+        let current_interval = rsi_interval_for_streak(zero_improvement_streak);
         let initial_delay = if let Ok(meta) = std::fs::metadata(&last_cycle_path) {
             let elapsed = meta
                 .modified()
                 .ok()
                 .and_then(|t| t.elapsed().ok())
                 .map(|d| d.as_secs())
-                .unwrap_or(RSI_CYCLE_INTERVAL_SECS);
-            if elapsed >= RSI_CYCLE_INTERVAL_SECS {
+                .unwrap_or(current_interval);
+            if elapsed >= current_interval {
                 // Overdue — run soon (30s grace for app to stabilize)
                 30
             } else {
-                RSI_CYCLE_INTERVAL_SECS - elapsed
+                current_interval - elapsed
             }
         } else {
             // First run ever — use full interval
-            RSI_CYCLE_INTERVAL_SECS
+            current_interval
         };
         tracing::info!(
             "RSI engine: first cycle in {}m{}s",
@@ -979,7 +1015,7 @@ pub fn spawn_rsi_engine(
                 first_iteration = false;
                 initial_delay
             } else {
-                RSI_CYCLE_INTERVAL_SECS
+                rsi_interval_for_streak(zero_improvement_streak)
             };
             tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
 
@@ -1396,6 +1432,9 @@ pub fn spawn_rsi_engine(
                          dimensions excluded; not a raw failure count), spawning autonomous agent",
                         opportunities.len()
                     );
+                    let ledger_before = std::fs::metadata(&improvements_ledger_path)
+                        .map(|m| m.len())
+                        .unwrap_or(0);
                     match run_rsi_agent_cycle(repo.pool().clone(), &config_clone, &opportunities)
                         .await
                     {
@@ -1440,6 +1479,35 @@ pub fn spawn_rsi_engine(
                                 convergence_streak = 0;
                                 let _ = std::fs::write(&convergence_streak_path, "0");
                             }
+
+                            // Zero-improvement backoff (#977): the ledger grows
+                            // iff this run APPLIED an improvement. No growth →
+                            // one rung out; growth → back to the base hour.
+                            // Provider failures (the Err arm) don't move the
+                            // ladder — they are transient, not a verdict on the
+                            // data.
+                            let ledger_after = std::fs::metadata(&improvements_ledger_path)
+                                .map(|m| m.len())
+                                .unwrap_or(0);
+                            if ledger_after > ledger_before {
+                                if zero_improvement_streak > 0 {
+                                    tracing::info!(
+                                        "RSI: improvement applied — cycle interval back to 1h"
+                                    );
+                                }
+                                zero_improvement_streak = 0;
+                            } else {
+                                zero_improvement_streak += 1;
+                            }
+                            let _ = std::fs::write(
+                                &zero_improvement_streak_path,
+                                zero_improvement_streak.to_string(),
+                            );
+                            tracing::debug!(
+                                "RSI: zero-improvement streak {zero_improvement_streak}, \
+                                 next interval {}h",
+                                rsi_interval_for_streak(zero_improvement_streak) / 3600
+                            );
                         }
                         Err(e) => {
                             tracing::warn!("RSI agent cycle failed: {e}");

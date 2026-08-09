@@ -1627,3 +1627,33 @@ mod convergence_detection {
         ));
     }
 }
+
+// --- Zero-improvement backoff ladder (#977) ---
+// Fixed hourly polling was part of the burn: installs with nothing left
+// to improve kept paying for a cycle every hour. The ladder pushes the
+// interval out on consecutive zero-improvement agent runs and resets
+// the moment an improvement actually applies.
+#[cfg(test)]
+mod backoff_ladder {
+    use crate::brain::rsi::rsi_interval_for_streak;
+
+    #[test]
+    fn fresh_engine_runs_hourly() {
+        assert_eq!(rsi_interval_for_streak(0), 3600);
+    }
+
+    #[test]
+    fn streaks_climb_one_rung_at_a_time() {
+        assert_eq!(rsi_interval_for_streak(1), 4 * 3600);
+        assert_eq!(rsi_interval_for_streak(2), 12 * 3600);
+        assert_eq!(rsi_interval_for_streak(3), 24 * 3600);
+    }
+
+    #[test]
+    fn the_ladder_caps_at_24h() {
+        // Never grows unbounded — a converged install polls daily, and
+        // any real improvement resets to 1h anyway.
+        assert_eq!(rsi_interval_for_streak(4), 24 * 3600);
+        assert_eq!(rsi_interval_for_streak(10_000), 24 * 3600);
+    }
+}
