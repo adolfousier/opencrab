@@ -37,6 +37,11 @@ pub(crate) async fn flush_intermediates(
             // from resume + follow-up paths), so the directive is stripped but
             // no reaction fires here (#261).
             let (text, _react_emoji) = crate::utils::extract_react_marker(&text);
+            // #690 follow-up (#980): re-expand a collapsed table BEFORE the
+            // dedup check, the #582 gate and the sends, so a collapsed report
+            // passes the gate and both delivery paths render a grid instead of
+            // raw pipes. Idempotent on well-formed tables.
+            let text = super::rich::reflow_collapsed_tables(&text);
             {
                 let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
                 if s.sent_intermediates.iter().any(|prev| prev == &text) {
@@ -166,7 +171,13 @@ pub(crate) async fn try_send_intermediate_rich(
 /// which the model may emit before a tool call (e.g. text + `plan complete` in
 /// one step) — is surfaced.
 pub(crate) fn is_deliverable_rich_report(text: &str) -> bool {
-    super::rich::contains_table(text) && text.trim().chars().count() >= 200
+    // #690 follow-up (#980): a table collapsed onto ONE line is invisible to
+    // contains_table (which needs the header and separator each on their own
+    // line), so a collapsed report would fail this gate and get buried in the
+    // folded log as raw pipes. Reflow first — the same recovery the final-
+    // response and HTML-render paths already apply. Idempotent.
+    let reflowed = super::rich::reflow_collapsed_tables(text);
+    super::rich::contains_table(&reflowed) && text.trim().chars().count() >= 200
 }
 
 /// Deliver `text` as its own message (rich-first, HTML fallback) and record it
@@ -180,6 +191,11 @@ pub(crate) async fn deliver_intermediate_message(
     streaming: &Arc<std::sync::Mutex<StreamingState>>,
     text: &str,
 ) -> bool {
+    // #690 follow-up (#980): re-expand a collapsed table once, up front, so the
+    // dedup record, the rich send and the HTML fallback all see the same
+    // expanded shape. The HTML path reflows again internally but is idempotent.
+    let expanded = super::rich::reflow_collapsed_tables(text);
+    let text = expanded.as_str();
     {
         let s = streaming.lock().unwrap_or_else(|e| e.into_inner());
         if s.sent_intermediates.iter().any(|prev| prev == text) {

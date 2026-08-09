@@ -849,3 +849,24 @@ fn deliverable_rich_report_surfaces_tables_not_narration() {
     // A table under the length floor isn't worth its own message.
     assert!(!is_deliverable_rich_report("| a | b |\n|-|-|\n| 1 | 2 |"));
 }
+
+#[test]
+fn deliverable_rich_report_detects_collapsed_tables() {
+    // #690 follow-up (#980): the model sometimes jams a report table onto ONE
+    // line. contains_table cannot see that shape, so the gate must reflow
+    // before detecting or the report folds into the log as raw pipes — the
+    // exact burial #582 fixed, re-opened for the collapsed shape.
+    use crate::channels::telegram::intermediates::is_deliverable_rich_report;
+
+    let collapsed = "## Summary\n\n\
+        | Fix | Verdict | Medium Gaps | Low Gaps | Cosmetic ||-----|---------|-------------|----------|----------|| hashline_edit (#573) | PASS | 4 | 4 | 3 || http_request (#574) | PASS | 3 | 8 | 1 || slash_command (#574) | PASS | 0 | 5 | 0 || TOTAL | PASS | 7 | 17 | 4 |\n\n\
+        No data loss, no security issues, no regressions. All three fixes are correct and isolated.";
+    assert!(is_deliverable_rich_report(collapsed));
+
+    // Same collapsed table but under the length floor still folds.
+    assert!(!is_deliverable_rich_report("| a | b ||-|-|| 1 | 2 |"));
+    // Prose with a lone pipe is still not a report.
+    assert!(!is_deliverable_rich_report(
+        "Checking the a|b split now, will report once the run finishes and the numbers settle."
+    ));
+}
