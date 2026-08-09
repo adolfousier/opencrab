@@ -213,6 +213,28 @@ impl FeedbackLedgerRepository {
             .context("Failed to count feedback entries")
     }
 
+    /// Count ACTIONABLE events only: real tool failures, user corrections and
+    /// provider errors (#977). `total_count()` includes `tool_success`, which
+    /// is recorded on every tool call anywhere, so it climbs on any busy
+    /// install and is useless as a "anything new to improve?" signal.
+    pub async fn count_actionable(&self) -> Result<i64> {
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(|conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM feedback_ledger \
+                     WHERE event_type IN ('tool_failure', 'user_correction', 'provider_error')",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to count actionable feedback entries")
+    }
+
     /// Count events since a given RFC3339 timestamp
     pub async fn count_since(&self, since: &str) -> Result<i64> {
         let s = since.to_string();

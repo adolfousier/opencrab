@@ -915,7 +915,16 @@ pub fn spawn_rsi_engine(
         let cycle_number_path = crate::config::opencrabs_home().join("rsi/cycle_number");
 
         let mut first_iteration = true;
-        let mut last_seen_count: i64 = 0;
+        // Baseline of ACTIONABLE ledger events (tool_failure + user_correction
+        // + provider_error) seen at the last cycle, persisted across restarts
+        // (#977): without the file, every restart reset the baseline to 0 and
+        // the first cycle after it re-analyzed stale data.
+        let last_actionable_path =
+            crate::config::opencrabs_home().join("rsi/last_actionable_count");
+        let mut last_seen_actionable: i64 = std::fs::read_to_string(&last_actionable_path)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
         // Persist cycle_number across restarts so the dedup scan
         // (every 24 cycles) actually fires. Without this, frequent
         // restarts reset the counter and dedup never triggers.
@@ -944,14 +953,27 @@ pub fn spawn_rsi_engine(
                 continue;
             }
 
-            // Skip if no new feedback since last cycle — same data = same analysis
-            if total == last_seen_count {
-                tracing::debug!("RSI cycle: feedback count unchanged ({total}), skipping");
+            // Skip if no new ACTIONABLE feedback since last cycle (#977). The
+            // old gate compared `total`, which includes `tool_success`
+            // (recorded on every tool call anywhere), so it climbed on any
+            // busy install and the skip never fired: every cycle paid for a
+            // full analysis even when nothing had failed. Deltas of real
+            // failures, user corrections and provider errors are the only
+            // signal that new improvements are possible.
+            let actionable = match repo.count_actionable().await {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if actionable == last_seen_actionable {
+                tracing::debug!(
+                    "RSI cycle: actionable feedback unchanged ({actionable} failures/corrections/provider errors), skipping"
+                );
                 // Still stamp the file so restart timer stays accurate
                 let _ = std::fs::write(&last_cycle_path, "");
                 continue;
             }
-            last_seen_count = total;
+            last_seen_actionable = actionable;
+            let _ = std::fs::write(&last_actionable_path, actionable.to_string());
 
             let _ = notification_tx.send(RsiNotification::CycleStarted);
             tracing::info!("RSI cycle: analyzing {total} feedback entries");
