@@ -614,7 +614,7 @@ async fn run_rsi_agent_cycle(
     opportunities: &[String],
 ) -> anyhow::Result<String> {
     use crate::brain::agent::AgentService;
-    use crate::services::{ServiceContext, SessionService};
+    use crate::services::{MessageService, ServiceContext, SessionService};
 
     // Resolve RSI provider: prefer self_improvement_provider, fall back to user's active provider
     let active_provider = config.providers.active_provider_and_model().0;
@@ -684,9 +684,14 @@ async fn run_rsi_agent_cycle(
         .with_system_brain(RSI_AGENT_PROMPT.to_string())
         .with_brain_path(brain_path);
 
-    // Reuse a persistent RSI session — keeps context across cycles so the agent
-    // knows what it already improved and doesn't repeat work.
-    let session_service = SessionService::new(service_ctx);
+    // Reuse one persistent RSI session ROW (keeps the session list clean and the
+    // #805 pair-repinning logic working), but seal its history before each cycle
+    // with a compaction marker (#977): the context loader then picks up only the
+    // marker + the fresh prompt instead of every cycle since creation. Cross-cycle
+    // continuity lives in rsi/improvements.md, rsi/digest.md and the feedback
+    // ledger, not in session history, which the agent cannot act on anyway: each
+    // cycle starts from feedback_analyze.
+    let session_service = SessionService::new(service_ctx.clone());
     let mut session = match session_service
         .find_session_by_title("RSI autonomous cycle")
         .await?
@@ -766,6 +771,25 @@ async fn run_rsi_agent_cycle(
     // visible in the log instead of closing as a success (#842).
     let gaps = crate::brain::rsi_disposition::capability_count(opportunities);
     let proposals_before = pending_proposal_count();
+
+    // Fresh context per cycle (#977): seal all prior cycles behind a compaction
+    // marker so `messages_from_last_compaction` loads only the marker + this
+    // cycle's prompt. The old behavior re-fed the entire history every cycle:
+    // one session had grown to 1,985 messages (~313M tokens, $50) inside a 1M
+    // context window, with every cycle paying for all of it while adding
+    // nothing. The banner line is stripped before the model sees it
+    // (strip_compaction_banner), so only the short note below reaches it.
+    let message_service = MessageService::new(service_ctx.clone());
+    message_service
+        .create_message(
+            session.id,
+            "user".to_string(),
+            "[CONTEXT COMPACTION — RSI cycles are stateless by design. Prior cycles \
+             are sealed; durable state lives in rsi/improvements.md, rsi/digest.md \
+             and the feedback ledger. Start fresh from the feedback data.]"
+                .to_string(),
+        )
+        .await?;
 
     let response = agent
         .send_message_with_tools(session.id, prompt, model)
