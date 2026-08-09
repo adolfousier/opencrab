@@ -4915,15 +4915,22 @@ impl AgentService {
                 //   3. If no fallback succeeds, emit a final visible
                 //      SelfHealingAlert so the user knows to switch
                 //      providers manually — never a silent drop.
-                let has_meaningful_reasoning = reasoning_text
-                    .as_deref()
-                    .map(|r| r.trim().len() >= 40)
-                    .unwrap_or(false);
-                if iteration > 0
-                    && !is_cli_provider
-                    && iteration_text.trim().is_empty()
-                    && has_meaningful_reasoning
-                {
+                //
+                // The trigger is an empty ANSWER, full stop. It used to also
+                // require 40+ chars of reasoning, which let the worst case
+                // escape: a model that answered nothing AND reasoned nothing
+                // failed the check, so it was never nudged and the turn ended
+                // delivering nothing. In practice the first empty-with-
+                // reasoning reply nudged (1/5), the retry came back completely
+                // silent, and the turn was dropped — so the counter never
+                // reached 2/5, the budget was never exhausted, and the fallback
+                // chain below was never reached (#978). Going quieter must not
+                // be a way out of the guard.
+                if super::helpers::should_nudge_empty_answer(
+                    iteration,
+                    is_cli_provider,
+                    &iteration_text,
+                ) {
                     if empty_reasoning_retries < EMPTY_REASONING_MAX_NUDGES {
                         empty_reasoning_retries += 1;
                         let attempt = empty_reasoning_retries;

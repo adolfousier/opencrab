@@ -34,6 +34,26 @@ pub(crate) fn is_mimo_model(model: &str) -> bool {
 /// The old text ("tool results above are sufficient — do not call more tools")
 /// sabotaged exactly that and left the agent narrating with no way to act. Only
 /// once a tool HAS run do we steer toward "write the answer from the results".
+/// Should a completed iteration that produced no answer be nudged (#978)?
+///
+/// The trigger is an empty ANSWER and nothing else. It previously also demanded
+/// 40+ characters of reasoning, which let the worst case escape: a reply with no
+/// answer AND no reasoning failed the check, so it was never nudged and the turn
+/// simply ended delivering nothing. That capped the counter at 1/5 in practice,
+/// which in turn meant the retry budget was never exhausted and the fallback
+/// chain was never walked. Going quieter must not be a way out of the guard.
+///
+/// CLI providers are excluded because they run their own loop internally, and
+/// iteration 0 is excluded because the opening call has not yet had a chance to
+/// act on anything.
+pub(crate) fn should_nudge_empty_answer(
+    iteration: usize,
+    is_cli_provider: bool,
+    iteration_text: &str,
+) -> bool {
+    iteration > 0 && !is_cli_provider && iteration_text.trim().is_empty()
+}
+
 pub(crate) fn empty_reasoning_nudge(no_tools_yet: bool, attempt: u32) -> &'static str {
     if no_tools_yet {
         match attempt {
