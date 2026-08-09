@@ -47,6 +47,20 @@ pub enum AgentError {
     Internal(String),
 }
 
+impl AgentError {
+    /// Build a `Database` error that PRESERVES the full anyhow cause
+    /// chain ("outer context: inner cause: ...").
+    ///
+    /// The old inline `e.to_string()` at every call site kept only the
+    /// outermost anyhow context, so the underlying SQLite error code
+    /// (BUSY, FULL, IOERR, LOCKED) vanished from both the user-facing
+    /// message and the logs, making field diagnosis of persistence
+    /// failures impossible (#974).
+    pub fn db(e: anyhow::Error) -> Self {
+        AgentError::Database(format!("{:#}", e))
+    }
+}
+
 /// Result type for agent operations
 pub type Result<T> = std::result::Result<T, AgentError>;
 

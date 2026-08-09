@@ -61,7 +61,7 @@ impl AgentService {
         let _session = session_service
             .get_session(session_id)
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?
+            .map_err(AgentError::db)?
             .ok_or(AgentError::SessionNotFound(session_id))?;
 
         // Load conversation context with budget-aware message trimming
@@ -69,7 +69,7 @@ impl AgentService {
         let all_db_messages = message_service
             .list_messages_for_session(session_id)
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         let model_name = model.unwrap_or_else(|| {
             self.provider_for_session(session_id)
@@ -116,7 +116,7 @@ impl AgentService {
                 display_text.unwrap_or(user_message),
             )
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         // Build base LLM request
         let request = LLMRequest::new(model_name.clone(), context.messages.clone())

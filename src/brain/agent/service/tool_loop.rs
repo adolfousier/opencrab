@@ -584,7 +584,7 @@ impl AgentService {
         let session = session_service
             .get_session(session_id)
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?
+            .map_err(AgentError::db)?
             .ok_or(AgentError::SessionNotFound(session_id))?;
 
         // Load conversation context with budget-aware message trimming
@@ -592,7 +592,7 @@ impl AgentService {
         let all_db_messages = message_service
             .list_messages_for_session(session_id)
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         // Resolve model name: explicit caller arg > session's saved model >
         // current provider's default. The session.model fallback is critical
@@ -1003,7 +1003,7 @@ impl AgentService {
             let _user_db_msg = message_service
                 .create_message(session_id, "user".to_string(), safe_message)
                 .await
-                .map_err(|e| AgentError::Database(e.to_string()))?;
+                .map_err(AgentError::db)?;
         }
 
         // Create assistant message placeholder NOW for real-time persistence.
@@ -1011,7 +1011,7 @@ impl AgentService {
         let mut assistant_db_msg = message_service
             .create_message(session_id, "assistant".to_string(), String::new())
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         // Manual /compact: force compaction, persist summary to DB, return a brief
         // confirmation to the user. The full summary is for the agent, not the user.
@@ -1030,13 +1030,13 @@ impl AgentService {
                     message_service
                         .create_message(session_id, "user".to_string(), compaction_marker)
                         .await
-                        .map_err(|e| AgentError::Database(e.to_string()))?;
+                        .map_err(AgentError::db)?;
 
                     // Persist summary as the assistant response (for DB/search continuity)
                     message_service
                         .append_content(assistant_db_msg.id, &summary)
                         .await
-                        .map_err(|e| AgentError::Database(e.to_string()))?;
+                        .map_err(AgentError::db)?;
 
                     // Add a brief continuation prompt to context — matches
                     // auto-compaction behavior but uses a short sentence instead
@@ -1051,7 +1051,7 @@ impl AgentService {
                     message_service
                         .create_message(session_id, "user".to_string(), cont_text.clone())
                         .await
-                        .map_err(|e| AgentError::Database(e.to_string()))?;
+                        .map_err(AgentError::db)?;
                     context.add_message(Message::user(cont_text));
 
                     if let Some(ref cb) = progress_callback {
@@ -1095,7 +1095,7 @@ impl AgentService {
                     message_service
                         .append_content(assistant_db_msg.id, &error_msg)
                         .await
-                        .map_err(|e2| AgentError::Database(e2.to_string()))?;
+                        .map_err(AgentError::db)?;
 
                     return Ok(AgentResponse {
                         message_id: assistant_db_msg.id,
@@ -4432,7 +4432,7 @@ impl AgentService {
                     assistant_db_msg = message_service
                         .create_message(session_id, "assistant".to_string(), String::new())
                         .await
-                        .map_err(|e| AgentError::Database(e.to_string()))?;
+                        .map_err(AgentError::db)?;
                     // Retarget the CLI live persister at the fresh row so
                     // segments streamed after the queued message land below it.
                     *cli_persist_msg_id.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -6708,7 +6708,7 @@ impl AgentService {
                 assistant_db_msg = message_service
                     .create_message(session_id, "assistant".to_string(), String::new())
                     .await
-                    .map_err(|e| AgentError::Database(e.to_string()))?;
+                    .map_err(AgentError::db)?;
             }
         }
 
@@ -6948,7 +6948,7 @@ impl AgentService {
                 },
             )
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         // Update session token usage. The pair is resolved here, not read back
         // off the session row, so a fallback's spend is attributed to the
@@ -6962,7 +6962,7 @@ impl AgentService {
                 &self.provider_model_for_session(session_id),
             )
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         // Notify the TUI that this session was updated (enables live refresh when
         // a remote channel — Telegram, WhatsApp, Discord, Slack — processes a message).

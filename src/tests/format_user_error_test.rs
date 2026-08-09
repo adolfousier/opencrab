@@ -13,6 +13,7 @@
 
 use crate::brain::agent::{AgentError, format_user_error};
 use crate::brain::provider::ProviderError;
+use anyhow::Context;
 
 // Build a synthetic `AgentError::Provider(ProviderError::ApiError)` that
 // stringifies as `Provider error: API error (NNN) [type]: msg` — the
@@ -163,5 +164,44 @@ fn unknown_4xx_includes_status_and_raw_for_debuggability() {
     assert!(
         msg.contains("teapot") || msg.contains("self-heal"),
         "either the raw body or the self-heal context must appear: {msg}"
+    );
+}
+
+// ------------------------------------------------------------------
+// AgentError::db — anyhow chain preservation (#974)
+// ------------------------------------------------------------------
+
+#[test]
+fn db_error_preserves_full_anyhow_chain() {
+    let cause = anyhow::anyhow!("database is locked").context("Failed to create message");
+    let msg = AgentError::db(cause).to_string();
+    assert_eq!(
+        msg, "Database error: Failed to create message: database is locked",
+        "the SQLite cause must survive the AgentError boundary (#974)"
+    );
+}
+
+#[test]
+fn db_error_single_level_unchanged() {
+    let cause = anyhow::anyhow!("disk I/O error");
+    assert_eq!(
+        AgentError::db(cause).to_string(),
+        "Database error: disk I/O error",
+        "single-level errors must render exactly as before (#974)"
+    );
+}
+
+#[test]
+fn format_user_error_surfaces_sqlite_cause() {
+    let cause = anyhow::anyhow!("database or disk is full").context("Failed to create message");
+    let msg = format_user_error(&AgentError::db(cause));
+    assert!(
+        msg.contains("database or disk is full"),
+        "the underlying SQLite cause must reach the user, not just the \
+         outer context (#974): {msg}"
+    );
+    assert!(
+        msg.contains("Failed to create message"),
+        "the outer context must stay visible too: {msg}"
     );
 }

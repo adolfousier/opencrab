@@ -57,7 +57,7 @@ impl AgentService {
         let assistant_db_msg = message_service
             .create_message(session_id, "assistant".to_string(), assistant_text.clone())
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         // Calculate total tokens and cost for this message
         let billable_input = response.usage.input_tokens
@@ -89,7 +89,7 @@ impl AgentService {
                 },
             )
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         // Update session token usage with the pair that served it (#807).
         session_service
@@ -101,7 +101,7 @@ impl AgentService {
                 &self.provider_model_for_session(session_id),
             )
             .await
-            .map_err(|e| AgentError::Database(e.to_string()))?;
+            .map_err(AgentError::db)?;
 
         Ok(AgentResponse {
             message_id: assistant_db_msg.id,
